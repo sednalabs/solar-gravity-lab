@@ -15,6 +15,12 @@ layout(location = 5) in float inReserved;
 
 layout(location = 0) out vec4 vColor;
 
+const uint KIND_STAR = 0u;
+const uint KIND_PLANET = 1u;
+const uint KIND_DWARF_PLANET = 2u;
+const uint KIND_PROBE = 5u;
+const uint KIND_TEST_OBJECT = 6u;
+
 vec4 unpackArgb(uint argb) {
     float a = float((argb >> 24) & 0xFFu) / 255.0;
     float r = float((argb >> 16) & 0xFFu) / 255.0;
@@ -24,19 +30,19 @@ vec4 unpackArgb(uint argb) {
 }
 
 float minimumDiameterForKind(uint kind) {
-    if (kind == 0u) {
-        return 6.0;
+    if (kind == KIND_STAR) {
+        return 8.0;
     }
-    if (kind == 1u) {
-        return 4.5;
+    if (kind == KIND_PLANET) {
+        return 5.6;
     }
-    if (kind == 2u) {
-        return 3.5;
+    if (kind == KIND_DWARF_PLANET) {
+        return 4.6;
     }
-    if (kind == 5u || kind == 6u) {
-        return 2.0;
+    if (kind == KIND_PROBE || kind == KIND_TEST_OBJECT) {
+        return 3.2;
     }
-    return 2.5;
+    return 3.4;
 }
 
 vec2 worldToClip(vec2 worldPositionM) {

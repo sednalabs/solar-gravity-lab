@@ -180,12 +180,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun setSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
-        applyObserverTargetIfNeeded(latestScene)
+        applyObserverTargetIfNeeded(latestScene, snapToSuggestedRadius = observerMode != ObserverMode.FREE)
+        packetDirty = true
+        renderLatestScene()
     }
 
     override fun setObserverMode(mode: ObserverMode) {
         observerMode = mode
-        applyObserverTargetIfNeeded(latestScene)
+        applyObserverTargetIfNeeded(latestScene, snapToSuggestedRadius = mode != ObserverMode.FREE)
         packetDirty = true
         renderLatestScene()
     }
@@ -235,13 +237,23 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
 
-    private fun applyObserverTargetIfNeeded(frame: RenderSceneFrame) {
-        val targetCenterM = ObserverCameraResolver.resolveCameraCenterM(
+    private fun applyObserverTargetIfNeeded(
+        frame: RenderSceneFrame,
+        snapToSuggestedRadius: Boolean = false,
+    ) {
+        val target = ObserverCameraResolver.resolveCameraTarget(
             frame = frame,
             selectedBodyId = selectedBodyId,
             observerMode = observerMode,
         ) ?: return
-        cameraState = cameraState.copy(centerM = targetCenterM)
+        cameraState = cameraState.copy(
+            centerM = target.centerM,
+            viewRadiusM = if (snapToSuggestedRadius) {
+                target.suggestedViewRadiusM.coerceIn(minViewRadiusM, maxViewRadiusM)
+            } else {
+                cameraState.viewRadiusM
+            },
+        )
     }
 
     private fun ensureRenderer(): Boolean {
@@ -283,6 +295,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (packetDirty || latestPacket == null) {
             latestPacket = NativeScenePacket.fromScene(
                 frame = latestScene,
+                selectedBodyId = selectedBodyId,
                 cameraState = cameraState,
                 viewportWidthPx = width.coerceAtLeast(1),
                 viewportHeightPx = height.coerceAtLeast(1),

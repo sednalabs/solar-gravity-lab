@@ -5,7 +5,6 @@ import android.util.AttributeSet
 import android.view.View
 import android.widget.FrameLayout
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
-import com.graciousgazelles.solarlab.feature.lab.ui.SolarSystemGLSurfaceView
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
@@ -20,8 +19,8 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private val capabilities = RenderDeviceCapabilities.query(context)
     private val sceneAssembler = RenderSceneAssembler()
 
-    private var requestedBackend: RenderBackend = if (capabilities.supportsVulkan) RenderBackend.AUTO else RenderBackend.OPENGL
-    private var activeBackend: RenderBackend = RenderBackend.OPENGL
+    private val requestedBackend: RenderBackend = RenderBackend.VULKAN
+    private var activeBackend: RenderBackend = RenderBackend.VULKAN
     private var activeSurface: SolarRenderSurface? = null
     private var activeSurfaceView: View? = null
     private var latestScene: RenderSceneFrame? = null
@@ -39,7 +38,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     )
 
     init {
-        installPreferredSurface(reason = "Renderer host initialised.")
+        installVulkanOnlySurface(reason = "Renderer host initialised.")
     }
 
     fun submitSnapshot(snapshot: SimulationSnapshot) {
@@ -83,15 +82,6 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
 
     fun observerMode(): ObserverMode = observerMode
 
-    fun cycleBackendPreference() {
-        requestedBackend = when (requestedBackend) {
-            RenderBackend.AUTO -> RenderBackend.VULKAN
-            RenderBackend.VULKAN -> RenderBackend.OPENGL
-            RenderBackend.OPENGL -> RenderBackend.AUTO
-        }
-        installPreferredSurface(reason = "Backend preference switched to ${requestedBackend.name}.")
-    }
-
     fun backendPreference(): RenderBackend = requestedBackend
 
     fun setOnBackendStatusChangedListener(listener: ((RenderBackendStatus) -> Unit)?) {
@@ -114,28 +104,23 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.release()
     }
 
-    private fun installPreferredSurface(reason: String) {
-        val preferred = when (requestedBackend) {
-            RenderBackend.AUTO -> if (capabilities.supportsVulkan) RenderBackend.VULKAN else RenderBackend.OPENGL
-            else -> requestedBackend
-        }
-
+    private fun installVulkanOnlySurface(reason: String) {
         activeSurface?.onHostPause()
         activeSurface?.release()
         activeSurface = null
         activeSurfaceView?.let(::removeView)
         activeSurfaceView = null
+        activeBackend = RenderBackend.VULKAN
 
-        when (preferred) {
-            RenderBackend.VULKAN -> installVulkanFirst(reason)
-            RenderBackend.OPENGL -> installOpenGl("$reason Using OpenGL ES renderer.")
-            RenderBackend.AUTO -> installOpenGl("$reason Auto fell back to OpenGL ES.")
-        }
-    }
-
-    private fun installVulkanFirst(reason: String) {
         if (!capabilities.supportsVulkan || !SolarLabVulkanBridge.isRuntimeAvailable()) {
-            installOpenGl("$reason Vulkan unavailable, using OpenGL ES fallback.")
+            updateStatus(
+                RenderBackendStatus(
+                    requested = requestedBackend,
+                    active = RenderBackend.VULKAN,
+                    isHardwareAccelerated = false,
+                    message = "$reason Vulkan renderer unavailable on this device/build. OpenGL fallback is disabled.",
+                ),
+            )
             return
         }
 
@@ -143,7 +128,14 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
             context = context,
             statusCallback = { updateStatus(it.copy(requested = requestedBackend)) },
             fatalInitCallback = { message ->
-                installOpenGl("Vulkan failed: $message Falling back to OpenGL ES.")
+                updateStatus(
+                    RenderBackendStatus(
+                        requested = requestedBackend,
+                        active = RenderBackend.VULKAN,
+                        isHardwareAccelerated = false,
+                        message = "Vulkan failed: $message OpenGL fallback is disabled.",
+                    ),
+                )
             },
         )
         attachSurface(vulkanView, RenderBackend.VULKAN)
@@ -153,19 +145,6 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
                 active = RenderBackend.VULKAN,
                 isHardwareAccelerated = true,
                 message = "$reason Vulkan backend selected.",
-            ),
-        )
-    }
-
-    private fun installOpenGl(message: String) {
-        val glView = SolarSystemGLSurfaceView(context)
-        attachSurface(glView, RenderBackend.OPENGL)
-        updateStatus(
-            RenderBackendStatus(
-                requested = requestedBackend,
-                active = RenderBackend.OPENGL,
-                isHardwareAccelerated = true,
-                message = message,
             ),
         )
     }

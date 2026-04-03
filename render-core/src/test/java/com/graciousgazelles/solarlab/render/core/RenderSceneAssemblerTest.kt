@@ -147,6 +147,55 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    fun nativePacketBrightensAndEnlargesSelectedBodyAndTrail() {
+        val selectedColor = 0xFF336699.toInt()
+        val unselectedColor = 0xFF445566.toInt()
+        val frame = RenderSceneFrame(
+            epochSeconds = 0.0,
+            authoritativeBodies = listOf(
+                RenderBody(
+                    id = "selected",
+                    name = "Selected",
+                    positionM = Vector3d.ZERO,
+                    radiusM = 10.0,
+                    colorArgb = selectedColor,
+                    kind = RenderBodyKind.COMET,
+                    isMassive = false,
+                ),
+                RenderBody(
+                    id = "other",
+                    name = "Other",
+                    positionM = Vector3d(1_000.0, 0.0, 0.0),
+                    radiusM = 10.0,
+                    colorArgb = unselectedColor,
+                    kind = RenderBodyKind.COMET,
+                    isMassive = false,
+                ),
+            ),
+            tracerBodies = emptyList(),
+            trails = listOf(
+                RenderTrail(
+                    bodyId = "selected",
+                    colorArgb = selectedColor,
+                    alpha = 0.5f,
+                    pointsM = listOf(Vector3d.ZERO, Vector3d(10.0, 0.0, 0.0)),
+                ),
+            ),
+            sourceRevision = 9L,
+        )
+
+        val packet = NativeScenePacket.fromScene(
+            frame = frame,
+            selectedBodyId = "selected",
+        )
+
+        assertTrue(packet.authoritativeRadiiM[0] > packet.authoritativeRadiiM[1])
+        assertTrue(packet.authoritativeColorsArgb[0] != selectedColor)
+        assertEquals(unselectedColor, packet.authoritativeColorsArgb[1])
+        assertTrue(packet.trailColorsArgb.all { it != selectedColor })
+    }
+
+    @Test
     fun clearRemovesTrailHistorySoFirstFrameAfterResetHasNoTrail() {
         val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
         val firstSnapshot = SimulationSnapshot(
@@ -172,6 +221,40 @@ class RenderSceneAssemblerTest {
 
         val firstFrameAfterReset = assembler.assemble(firstSnapshot.copy(epochSeconds = 3.0))
         assertTrue(firstFrameAfterReset.trails.isEmpty())
+    }
+
+    @Test
+    fun assembleTracksMoonAndProbeTrailsToPreserveReadableMotion() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
+        val firstSnapshot = SimulationSnapshot(
+            epochSeconds = 1.0,
+            bodies = listOf(
+                body("earth", GravitationalRole.MASSIVE, BodyCategory.PLANET),
+                body("moon", GravitationalRole.TRACER, BodyCategory.MOON).copy(
+                    hostBodyId = "earth",
+                    positionM = Vector3d(384_400_000.0, 0.0, 0.0),
+                ),
+                body("probe", GravitationalRole.TRACER, BodyCategory.PROBE).copy(
+                    positionM = Vector3d(600_000_000.0, 0.0, 0.0),
+                ),
+            ),
+        )
+        val secondSnapshot = firstSnapshot.copy(
+            epochSeconds = 2.0,
+            bodies = listOf(
+                firstSnapshot.bodies[0].copy(positionM = Vector3d(10_000.0, 0.0, 0.0)),
+                firstSnapshot.bodies[1].copy(positionM = Vector3d(384_450_000.0, 20_000.0, 0.0)),
+                firstSnapshot.bodies[2].copy(positionM = Vector3d(601_000_000.0, 80_000.0, 0.0)),
+            ),
+        )
+
+        val firstFrame = assembler.assemble(firstSnapshot)
+        assertTrue(firstFrame.trails.isEmpty())
+
+        val secondFrame = assembler.assemble(secondSnapshot)
+        val trailIds = secondFrame.trails.map { it.bodyId }.toSet()
+        assertTrue("moon" in trailIds)
+        assertTrue("probe" in trailIds)
     }
 
     private fun body(id: String, role: GravitationalRole, category: BodyCategory): BodyState = BodyState(

@@ -10,6 +10,8 @@ void main() {
         discard;
     }
 
-    float edgeFade = 1.0 - smoothstep(0.78, 1.0, distanceFromCenter);
-    outColor = vec4(vColor.rgb, vColor.a * edgeFade);
+    float edgeFade = 1.0 - smoothstep(0.72, 1.0, distanceFromCenter);
+    float coreBoost = 1.0 - smoothstep(0.0, 0.34, distanceFromCenter);
+    vec3 boosted = min(vColor.rgb * (0.84 + 0.36 * coreBoost), vec3(1.0));
+    outColor = vec4(boosted, vColor.a * edgeFade);
 }

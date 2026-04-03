@@ -2,6 +2,7 @@ package com.graciousgazelles.solarlab.render.core
 
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.BodyCategory
+import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import kotlin.collections.ArrayDeque
@@ -50,7 +51,7 @@ class RenderSceneAssembler(
                 RenderTrail(
                     bodyId = id,
                     colorArgb = body.colorArgb,
-                    alpha = 0.25f,
+                    alpha = body.trailAlpha(),
                     pointsM = history.toList(),
                 )
             }
@@ -66,9 +67,7 @@ class RenderSceneAssembler(
     }
 
     private fun updateTrailHistory(snapshot: SimulationSnapshot) {
-        val trackedBodies = snapshot.bodies.filter {
-            it.gravitationalRole == GravitationalRole.MASSIVE || it.category == BodyCategory.DWARF_PLANET
-        }
+        val trackedBodies = snapshot.bodies.filter { it.shouldTrackTrail() }
         val activeIds = trackedBodies.map { it.id }.toSet()
         trackedTrailHistory.keys.retainAll(activeIds)
 
@@ -80,6 +79,25 @@ class RenderSceneAssembler(
             }
         }
     }
+}
+
+private fun BodyState.shouldTrackTrail(): Boolean = when {
+    gravitationalRole == GravitationalRole.MASSIVE -> true
+    category == BodyCategory.DWARF_PLANET -> true
+    category == BodyCategory.MOON -> true
+    category == BodyCategory.COMET -> true
+    category == BodyCategory.PROBE -> true
+    category == BodyCategory.TEST_OBJECT -> true
+    else -> false
+}
+
+private fun BodyState.trailAlpha(): Float = when {
+    category == BodyCategory.STAR -> 0.20f
+    gravitationalRole == GravitationalRole.MASSIVE -> 0.34f
+    category == BodyCategory.DWARF_PLANET -> 0.42f
+    category == BodyCategory.MOON -> 0.46f
+    category == BodyCategory.COMET || category == BodyCategory.PROBE || category == BodyCategory.TEST_OBJECT -> 0.62f
+    else -> 0.30f
 }
 
 private fun BodyCategory.toRenderKind(): RenderBodyKind = when (this) {

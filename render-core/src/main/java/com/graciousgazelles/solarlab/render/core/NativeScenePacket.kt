@@ -47,6 +47,7 @@ data class NativeScenePacket(
             viewportWidthPx: Int = 1920,
             viewportHeightPx: Int = 1080,
             policy: ScenePacketBuildPolicy = ScenePacketBuildPolicy(),
+            selectedBodyId: String? = null,
         ): NativeScenePacket {
             val view = cameraState?.let {
                 SceneView(
@@ -65,7 +66,7 @@ data class NativeScenePacket(
                     view.classify(body.positionM) != null
                 }
             }
-            val authoritativePack = packBodies(authoritativeBodies)
+            val authoritativePack = packBodies(authoritativeBodies, selectedBodyId)
 
             val tracerSelection = if (view == null) {
                 TracerSelection(
@@ -77,9 +78,9 @@ data class NativeScenePacket(
                 selectTracerTiers(frame.tracerBodies, view, policy)
             }
 
-            val nearPack = packBodies(tracerSelection.near)
-            val mediumPack = packBodies(tracerSelection.medium)
-            val farPack = packBodies(tracerSelection.far)
+            val nearPack = packBodies(tracerSelection.near, selectedBodyId)
+            val mediumPack = packBodies(tracerSelection.medium, selectedBodyId)
+            val farPack = packBodies(tracerSelection.far, selectedBodyId)
 
             val simplifiedTrails = if (view == null) {
                 frame.trails.map { trail ->
@@ -90,7 +91,7 @@ data class NativeScenePacket(
                     simplifyTrail(trail, view, policy)
                 }
             }
-            val trailPack = packTrails(simplifiedTrails)
+            val trailPack = packTrails(simplifiedTrails, selectedBodyId)
 
             return NativeScenePacket(
                 sourceRevision = frame.sourceRevision,
@@ -236,7 +237,10 @@ data class NativeScenePacket(
             }
         }
 
-        private fun packBodies(bodies: List<RenderBody>): PackedBodies {
+        private fun packBodies(
+            bodies: List<RenderBody>,
+            selectedBodyId: String?,
+        ): PackedBodies {
             val positions = DoubleArray(bodies.size * 3)
             val radii = FloatArray(bodies.size)
             val colors = IntArray(bodies.size)
@@ -246,30 +250,65 @@ data class NativeScenePacket(
                 positions[offset] = body.positionM.x
                 positions[offset + 1] = body.positionM.y
                 positions[offset + 2] = body.positionM.z
-                radii[index] = body.radiusM.toFloat()
-                colors[index] = body.colorArgb
+                val isSelected = body.id == selectedBodyId
+                radii[index] = (body.radiusM * if (isSelected) selectedRadiusBoost(body.kind) else 1.0).toFloat()
+                colors[index] = if (isSelected) brightenArgb(body.colorArgb) else body.colorArgb
                 kinds[index] = body.kind.ordinal
             }
             return PackedBodies(positions, radii, colors, kinds)
         }
 
-        private fun packTrails(trails: List<RenderTrail>): PackedTrails {
+        private fun packTrails(
+            trails: List<RenderTrail>,
+            selectedBodyId: String?,
+        ): PackedTrails {
             val trailVertexCount = trails.sumOf { it.pointsM.size }
             val trailPositions = DoubleArray(trailVertexCount * 3)
             val trailColors = IntArray(trailVertexCount)
             val trailVertexCounts = IntArray(trails.size)
             var trailOffset = 0
             trails.forEachIndexed { trailIndex, trail ->
+                val trailColor = if (trail.bodyId == selectedBodyId) {
+                    brightenArgb(trail.colorArgb)
+                } else {
+                    trail.colorArgb
+                }
                 trailVertexCounts[trailIndex] = trail.pointsM.size
                 trail.pointsM.forEach { point ->
                     trailPositions[trailOffset * 3] = point.x
                     trailPositions[trailOffset * 3 + 1] = point.y
                     trailPositions[trailOffset * 3 + 2] = point.z
-                    trailColors[trailOffset] = trail.colorArgb
+                    trailColors[trailOffset] = trailColor
                     trailOffset += 1
                 }
             }
             return PackedTrails(trailPositions, trailColors, trailVertexCounts)
+        }
+
+        private fun selectedRadiusBoost(kind: RenderBodyKind): Double = when (kind) {
+            RenderBodyKind.STAR -> 1.12
+            RenderBodyKind.PLANET,
+            RenderBodyKind.DWARF_PLANET,
+            -> 1.24
+            RenderBodyKind.ASTEROID -> 1.38
+            RenderBodyKind.COMET,
+            RenderBodyKind.PROBE,
+            RenderBodyKind.TEST_OBJECT,
+            -> 1.48
+        }
+
+        private fun brightenArgb(argb: Int): Int {
+            val alpha = (argb ushr 24) and 0xFF
+            val red = (argb ushr 16) and 0xFF
+            val green = (argb ushr 8) and 0xFF
+            val blue = argb and 0xFF
+            val boostedRed = red + ((255 - red) * 0.28).toInt()
+            val boostedGreen = green + ((255 - green) * 0.28).toInt()
+            val boostedBlue = blue + ((255 - blue) * 0.28).toInt()
+            return (alpha shl 24) or
+                (boostedRed.coerceIn(0, 255) shl 16) or
+                (boostedGreen.coerceIn(0, 255) shl 8) or
+                boostedBlue.coerceIn(0, 255)
         }
     }
 }

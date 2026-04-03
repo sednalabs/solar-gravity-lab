@@ -5,6 +5,7 @@ import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.DensityPreset
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
+import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -82,6 +83,63 @@ class ObserverCameraResolverTest {
     }
 
     @Test
+    fun resolveSuggestedViewRadiusKeepsStarHostedPlanetReadable() {
+        val au = PhysicalConstants.ASTRONOMICAL_UNIT_M
+        val frame = scene(
+            body(
+                id = "sun",
+                positionM = Vector3d.ZERO,
+                kind = RenderBodyKind.STAR,
+                radiusM = 696_340_000.0,
+            ),
+            body(
+                id = "earth",
+                positionM = Vector3d(au, 0.0, 0.0),
+                hostBodyId = "sun",
+                kind = RenderBodyKind.PLANET,
+                radiusM = 6_371_000.0,
+            ),
+        )
+
+        val radius = ObserverCameraResolver.resolveSuggestedViewRadiusM(
+            frame = frame,
+            selectedBodyId = "earth",
+            observerMode = ObserverMode.FOLLOW_SELECTED,
+        )
+
+        assertEquals(2.2 * au, radius ?: 0.0, 0.01 * au)
+    }
+
+    @Test
+    fun resolveSuggestedViewRadiusUsesLocalMoonSystemScale() {
+        val earthPosition = Vector3d(PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0)
+        val moonOffset = 384_400_000.0
+        val frame = scene(
+            body(
+                id = "earth",
+                positionM = earthPosition,
+                kind = RenderBodyKind.PLANET,
+                radiusM = 6_371_000.0,
+            ),
+            body(
+                id = "moon",
+                positionM = Vector3d(earthPosition.x + moonOffset, 0.0, 0.0),
+                hostBodyId = "earth",
+                kind = RenderBodyKind.PLANET,
+                radiusM = 1_737_000.0,
+            ),
+        )
+
+        val radius = ObserverCameraResolver.resolveSuggestedViewRadiusM(
+            frame = frame,
+            selectedBodyId = "moon",
+            observerMode = ObserverMode.FOLLOW_SELECTED_HOST,
+        )
+
+        assertEquals(moonOffset * 2.2, radius ?: 0.0, 5_000_000.0)
+    }
+
+    @Test
     fun renderSceneAssemblerPreservesHostBodyIdForObserverResolution() {
         val assembler = RenderSceneAssembler()
         val snapshot = SimulationSnapshot(
@@ -108,13 +166,15 @@ class ObserverCameraResolverTest {
         id: String,
         positionM: Vector3d,
         hostBodyId: String? = null,
+        kind: RenderBodyKind = RenderBodyKind.PLANET,
+        radiusM: Double = 1.0,
     ): RenderBody = RenderBody(
         id = id,
         name = id,
         positionM = positionM,
-        radiusM = 1.0,
+        radiusM = radiusM,
         colorArgb = 0xFFFFFFFF.toInt(),
-        kind = RenderBodyKind.PLANET,
+        kind = kind,
         isMassive = true,
         hostBodyId = hostBodyId,
     )

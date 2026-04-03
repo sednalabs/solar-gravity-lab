@@ -1,176 +1,265 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
-    android:orientation="vertical"
-    android:padding="12dp"
+    android:background="@color/solar_background"
+    android:clipToPadding="false"
     tools:context=".MainActivity">
-
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:scrollbars="none">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/buttonStartPause"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/action_start" />
-
-            <Button
-                android:id="@+id/buttonStep"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_step" />
-
-            <Button
-                android:id="@+id/buttonTimeBack"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_time_back" />
-
-            <Button
-                android:id="@+id/buttonTimeForward"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_time_forward" />
-
-            <Button
-                android:id="@+id/buttonStepQuantum"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_step_quantum" />
-
-            <Button
-                android:id="@+id/buttonSpeedDown"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_speed_down" />
-
-            <Button
-                android:id="@+id/buttonSpeedUp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_speed_up" />
-
-            <Button
-                android:id="@+id/buttonFollow"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:enabled="false"
-                android:text="@string/action_observer_free" />
-
-            <Button
-                android:id="@+id/buttonReset"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_reset" />
-
-            <Button
-                android:id="@+id/buttonAddBody"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_add_object" />
-
-            <Button
-                android:id="@+id/buttonEditBody"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:enabled="false"
-                android:text="@string/action_edit_selected" />
-
-            <Button
-                android:id="@+id/buttonCollisionMode"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_collision_merge" />
-
-            <Button
-                android:id="@+id/buttonBackend"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/action_backend_auto" />
-        </LinearLayout>
-    </HorizontalScrollView>
-
-    <TextView
-        android:id="@+id/textTimeline"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:fontFamily="monospace"
-        android:padding="8dp"
-        android:textColor="#FFA5D6A7"
-        android:textSize="12sp"
-        tools:text="Timeline: JD 2451545.0 | Catalog | Speed 6 h/s | Step 6 h" />
-
-    <TextView
-        android:id="@+id/textSelection"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:fontFamily="monospace"
-        android:padding="8dp"
-        android:text="@string/selection_none"
-        android:textColor="#FFFFF59D"
-        android:textSize="12sp" />
-
-    <TextView
-        android:id="@+id/textBackend"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:fontFamily="monospace"
-        android:padding="8dp"
-        android:textColor="#FF90CAF9"
-        android:textSize="12sp"
-        tools:text="Backend: Vulkan" />
-
-    <TextView
-        android:id="@+id/textDiagnostics"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:fontFamily="monospace"
-        android:padding="8dp"
-        android:textColor="#CCFFFFFF"
-        android:textSize="12sp"
-        tools:text="Diagnostics..." />
-
-    <TextView
-        android:id="@+id/textControlsHint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="@string/controls_hint"
-        android:textColor="#88FFFFFF"
-        android:textSize="12sp" />
 
     <com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
         android:id="@+id/renderHost"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="8dp"
-        android:layout_weight="1" />
-</LinearLayout>
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:clipToPadding="false"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipToPadding="false"
+            android:gravity="top"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_overlay_panel"
+                android:elevation="8dp"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/textTimeline"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/solar_timeline_text"
+                    android:textSize="13sp"
+                    tools:text="Catalog timeline | JD(TDB) 2451545.00000\nSpeed 6 h/s • Step 6 h" />
+
+                <TextView
+                    android:id="@+id/textSelectionTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:text="@string/selection_none_title"
+                    android:textColor="@color/solar_selection_text"
+                    android:textSize="15sp"
+                    tools:text="Europa • Moon" />
+
+                <TextView
+                    android:id="@+id/textSelectionDetail"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
+                    android:maxLines="3"
+                    android:text="@string/selection_none"
+                    android:textColor="@color/solar_hint_text"
+                    android:textSize="12sp"
+                    tools:text="Tracer • host Jupiter&#10;Speed 13.7 km/s • 670,900 km from center" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/buttonInfoToggle"
+                style="@style/Widget.SolarLab.OverlayButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="@string/action_info_show" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/panelInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_overlay_panel"
+            android:elevation="6dp"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/textBackend"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/solar_backend_text"
+                android:textSize="12sp"
+                tools:text="Backend: Vulkan" />
+
+            <TextView
+                android:id="@+id/textDiagnostics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/solar_diagnostics_text"
+                android:textSize="11sp"
+                tools:text="Diagnostics..." />
+
+            <TextView
+                android:id="@+id/textControlsHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="@string/controls_hint"
+                android:textColor="@color/solar_hint_text"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:clipToPadding="false"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_control_rail"
+            android:elevation="10dp"
+            android:orientation="vertical"
+            android:padding="10dp">
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/buttonStartPause"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/action_start" />
+
+                    <Button
+                        android:id="@+id/buttonStep"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_step" />
+
+                    <Button
+                        android:id="@+id/buttonTimeBack"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_time_back" />
+
+                    <Button
+                        android:id="@+id/buttonTimeForward"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_time_forward" />
+
+                    <Button
+                        android:id="@+id/buttonStepQuantum"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_step_quantum" />
+
+                    <Button
+                        android:id="@+id/buttonSpeedDown"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_speed_down" />
+
+                    <Button
+                        android:id="@+id/buttonSpeedUp"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_speed_up" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/buttonFollow"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:enabled="false"
+                        android:text="@string/action_observer_free" />
+
+                    <Button
+                        android:id="@+id/buttonReset"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_reset" />
+
+                    <Button
+                        android:id="@+id/buttonAddBody"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_add_object" />
+
+                    <Button
+                        android:id="@+id/buttonEditBody"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:enabled="false"
+                        android:text="@string/action_edit_selected" />
+
+                    <Button
+                        android:id="@+id/buttonCollisionMode"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_collision_merge" />
+                </LinearLayout>
+            </HorizontalScrollView>
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>
