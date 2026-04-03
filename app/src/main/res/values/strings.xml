@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">SolarLab</string>
+    <string name="action_start">Start</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_step">Step</string>
+    <string name="action_reset">Reset</string>
+    <string name="action_backend_auto">Backend: Auto</string>
+    <string name="action_backend_vulkan">Backend: Vulkan</string>
+    <string name="action_backend_opengl">Backend: OpenGL</string>
+    <string name="controls_hint">Pinch to zoom. Drag to pan. Double-tap to reset view. Use the backend button to cycle Auto / Vulkan / OpenGL.</string>
+</resources>

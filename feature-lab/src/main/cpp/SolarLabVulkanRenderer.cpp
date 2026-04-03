@@ -1,0 +1,2512 @@
+#include "SolarLabVulkanRenderer.h"
+
+#include <android/asset_manager.h>
+#include <android/log.h>
+#include <vulkan/vulkan_android.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+constexpr const char* kLogTag = "SolarLabVulkan";
+constexpr float kNearTracerAlpha = 0.40f;
+constexpr float kMediumTracerAlpha = 0.30f;
+constexpr float kFarTracerAlpha = 0.18f;
+constexpr float kMediumTracerPointSizePx = 2.25f;
+constexpr float kFarTracerPointSizePx = 1.20f;
+constexpr float kTrailAlpha = 0.82f;
+constexpr float kDefaultMaxPointSizePx = 64.0f;
+constexpr uint32_t kComputeLocalSizeX = 64U;
+
+VkDrawIndirectCommand MakeInitialIndirectCommand() {
+    return VkDrawIndirectCommand{
+        .vertexCount = 0,
+        .instanceCount = 1,
+        .firstVertex = 0,
+        .firstInstance = 0,
+    };
+}
+
+uint32_t RoundUpWorkgroups(uint32_t itemCount, uint32_t localSize) {
+    if (itemCount == 0U || localSize == 0U) {
+        return 0U;
+    }
+    return (itemCount + localSize - 1U) / localSize;
+}
+
+void LogInfo(const std::string& message) {
+    __android_log_print(ANDROID_LOG_INFO, kLogTag, "%s", message.c_str());
+}
+
+void LogError(const std::string& message) {
+    __android_log_print(ANDROID_LOG_ERROR, kLogTag, "%s", message.c_str());
+}
+
+template <typename T>
+size_t ByteSize(const std::vector<T>& values) {
+    return values.size() * sizeof(T);
+}
+
+uint32_t ApplyAlphaToArgb(uint32_t argb, float alphaScale) {
+    const uint32_t baseAlpha = ((argb >> 24U) & 0xFFU) == 0U ? 0xFFU : ((argb >> 24U) & 0xFFU);
+    const uint32_t scaledAlpha = static_cast<uint32_t>(std::clamp(std::lround(baseAlpha * alphaScale), 0l, 255l));
+    return (argb & 0x00FFFFFFU) | (scaledAlpha << 24U);
+}
+
+uint32_t SafeCount3(size_t positionsCount, size_t peerCountA, size_t peerCountB, size_t peerCountC) {
+    return static_cast<uint32_t>(std::min({positionsCount / 3U, peerCountA, peerCountB, peerCountC}));
+}
+
+uint32_t SafeCount3(size_t positionsCount, size_t peerCountA, size_t peerCountB) {
+    return static_cast<uint32_t>(std::min({positionsCount / 3U, peerCountA, peerCountB}));
+}
+
+float KindMinimumBillboardDiameterPx(uint32_t kind) {
+    switch (kind) {
+        case 0U:  // STAR
+            return 6.0f;
+        case 1U:  // PLANET
+            return 4.5f;
+        case 2U:  // DWARF_PLANET
+            return 3.5f;
+        case 5U:  // PROBE
+        case 6U:  // TEST_OBJECT
+            return 2.0f;
+        default:
+            return 2.5f;
+    }
+}
+
+VkVertexInputBindingDescription MakeBindingDescription(uint32_t binding, uint32_t stride) {
+    return VkVertexInputBindingDescription{
+        .binding = binding,
+        .stride = stride,
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+    };
+}
+
+VkVertexInputAttributeDescription MakeAttributeDescription(uint32_t location, uint32_t binding, VkFormat format, uint32_t offset) {
+    return VkVertexInputAttributeDescription{
+        .location = location,
+        .binding = binding,
+        .format = format,
+        .offset = offset,
+    };
+}
+
+}  // namespace
+
+SolarLabVulkanRenderer::SolarLabVulkanRenderer() {
+    backendLabelCache_ = "Vulkan SPIR-V graphics pipelines pending initial scene upload";
+    sceneSummaryCache_ = "Scene not uploaded.";
+}
+
+SolarLabVulkanRenderer::~SolarLabVulkanRenderer() {
+    Cleanup();
+}
+
+bool SolarLabVulkanRenderer::IsRuntimeAvailable() {
+    uint32_t instanceVersion = 0;
+    const auto result = vkEnumerateInstanceVersion(&instanceVersion);
+    return result == VK_SUCCESS;
+}
+
+void SolarLabVulkanRenderer::SetAssetManager(AAssetManager* assetManager) {
+    std::scoped_lock lock(stateMutex_);
+    assetManager_ = assetManager;
+}
+
+bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width, int height) {
+    std::scoped_lock lock(stateMutex_);
+    Cleanup();
+
+    if (assetManager_ == nullptr) {
+        SetError("AAssetManager must be set before Vulkan initialisation so compiled SPIR-V shaders can be loaded.");
+        return false;
+    }
+    if (!CreateInstance()) {
+        return false;
+    }
+    if (!CreateSurface(env, surface)) {
+        return false;
+    }
+    if (!PickPhysicalDevice()) {
+        return false;
+    }
+    if (!CreateDevice()) {
+        return false;
+    }
+    if (!CreateDescriptorResources()) {
+        return false;
+    }
+    if (!CreateComputePipelines()) {
+        return false;
+    }
+    if (!CreateSwapchain(width, height)) {
+        return false;
+    }
+    if (!CreateRenderPass()) {
+        return false;
+    }
+    if (!CreateFramebuffers()) {
+        return false;
+    }
+    if (!CreateGraphicsPipelines()) {
+        return false;
+    }
+    if (!CreateCommandPool()) {
+        return false;
+    }
+    if (!AllocateAndRecordCommandBuffers()) {
+        return false;
+    }
+    if (!CreateSyncObjects()) {
+        return false;
+    }
+
+    backendLabelCache_ = std::string("Vulkan SPIR-V graphics pipelines") + (computeCompactionEnabled_ ? " + compute compaction" : " + direct medium/far draws");
+    sceneSummaryCache_ = BuildSceneSummaryLocked();
+    LogInfo("Vulkan renderer initialised with SPIR-V graphics pipelines" + std::string(computeCompactionEnabled_ ? " and compute compaction." : " without compute compaction."));
+    return true;
+}
+
+bool SolarLabVulkanRenderer::Resize(JNIEnv* env, jobject surface, int width, int height) {
+    std::scoped_lock lock(stateMutex_);
+    if (instance_ == VK_NULL_HANDLE) {
+        return Initialize(env, surface, width, height);
+    }
+
+    if (device_ != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(device_);
+    }
+
+    DestroySurfaceResources();
+
+    if (!CreateSurface(env, surface)) {
+        return false;
+    }
+    if (!CreateSwapchain(width, height)) {
+        return false;
+    }
+    if (!CreateRenderPass()) {
+        return false;
+    }
+    if (!CreateFramebuffers()) {
+        return false;
+    }
+    if (!CreateGraphicsPipelines()) {
+        return false;
+    }
+    if (!AllocateAndRecordCommandBuffers()) {
+        return false;
+    }
+    backendLabelCache_ = std::string("Vulkan SPIR-V graphics pipelines") + (computeCompactionEnabled_ ? " + compute compaction" : " + direct medium/far draws");
+    sceneSummaryCache_ = BuildSceneSummaryLocked();
+    return true;
+}
+
+void SolarLabVulkanRenderer::DestroySurface() {
+    std::scoped_lock lock(stateMutex_);
+    if (device_ != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(device_);
+    }
+    DestroySurfaceResources();
+    if (surface_ != VK_NULL_HANDLE && instance_ != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+    }
+    if (nativeWindow_ != nullptr) {
+        ANativeWindow_release(nativeWindow_);
+        nativeWindow_ = nullptr;
+    }
+}
+
+void SolarLabVulkanRenderer::SubmitScene(
+    int64_t sourceRevision,
+    std::vector<double> authoritativePositionsM,
+    std::vector<float> authoritativeRadiiM,
+    std::vector<int32_t> authoritativeColorsArgb,
+    std::vector<int32_t> authoritativeKinds,
+    std::vector<double> tracerNearPositionsM,
+    std::vector<float> tracerNearRadiiM,
+    std::vector<int32_t> tracerNearColorsArgb,
+    std::vector<int32_t> tracerNearKinds,
+    std::vector<double> tracerMediumPositionsM,
+    std::vector<float> tracerMediumRadiiM,
+    std::vector<int32_t> tracerMediumColorsArgb,
+    std::vector<int32_t> tracerMediumKinds,
+    std::vector<double> tracerFarPositionsM,
+    std::vector<float> tracerFarRadiiM,
+    std::vector<int32_t> tracerFarColorsArgb,
+    std::vector<int32_t> tracerFarKinds,
+    std::vector<double> trailPositionsM,
+    std::vector<int32_t> trailColorsArgb,
+    std::vector<int32_t> trailVertexCounts) {
+    std::scoped_lock lock(stateMutex_);
+    sceneBuffers_.sourceRevision = sourceRevision;
+    sceneBuffers_.authoritativePositionsM = std::move(authoritativePositionsM);
+    sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
+    sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
+    sceneBuffers_.authoritativeKinds = std::move(authoritativeKinds);
+    sceneBuffers_.tracerNearPositionsM = std::move(tracerNearPositionsM);
+    sceneBuffers_.tracerNearRadiiM = std::move(tracerNearRadiiM);
+    sceneBuffers_.tracerNearColorsArgb = std::move(tracerNearColorsArgb);
+    sceneBuffers_.tracerNearKinds = std::move(tracerNearKinds);
+    sceneBuffers_.tracerMediumPositionsM = std::move(tracerMediumPositionsM);
+    sceneBuffers_.tracerMediumRadiiM = std::move(tracerMediumRadiiM);
+    sceneBuffers_.tracerMediumColorsArgb = std::move(tracerMediumColorsArgb);
+    sceneBuffers_.tracerMediumKinds = std::move(tracerMediumKinds);
+    sceneBuffers_.tracerFarPositionsM = std::move(tracerFarPositionsM);
+    sceneBuffers_.tracerFarRadiiM = std::move(tracerFarRadiiM);
+    sceneBuffers_.tracerFarColorsArgb = std::move(tracerFarColorsArgb);
+    sceneBuffers_.tracerFarKinds = std::move(tracerFarKinds);
+    sceneBuffers_.trailPositionsM = std::move(trailPositionsM);
+    sceneBuffers_.trailColorsArgb = std::move(trailColorsArgb);
+    sceneBuffers_.trailVertexCounts = std::move(trailVertexCounts);
+
+    if (sceneGpuStreams_.uploadedRevision != sourceRevision) {
+        backendLabelCache_ = "Vulkan SPIR-V graphics pipelines pending scene upload";
+        sceneSummaryCache_ = BuildSceneSummaryLocked();
+        commandBuffersRevision_ = -1;
+    }
+}
+
+void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM) {
+    std::scoped_lock lock(stateMutex_);
+    cameraCenterX_ = centerX;
+    cameraCenterY_ = centerY;
+    cameraCenterZ_ = centerZ;
+    cameraViewRadiusM_ = viewRadiusM;
+}
+
+bool SolarLabVulkanRenderer::Render() {
+    std::scoped_lock lock(stateMutex_);
+    if (device_ == VK_NULL_HANDLE || swapchain_ == VK_NULL_HANDLE || commandBuffers_.empty()) {
+        SetError("Render requested before Vulkan swapchain initialisation completed.");
+        return false;
+    }
+
+    const auto fenceResult = vkWaitForFences(device_, 1, &inFlightFence_, VK_TRUE, std::numeric_limits<uint64_t>::max());
+    if (fenceResult != VK_SUCCESS) {
+        SetError("vkWaitForFences failed.");
+        return false;
+    }
+    vkResetFences(device_, 1, &inFlightFence_);
+
+    if (!EnsureSceneGpuStreamsLocked()) {
+        return false;
+    }
+    if (!UpdateSceneUniformBufferLocked()) {
+        return false;
+    }
+    if (commandBuffersRevision_ != sceneGpuStreams_.uploadedRevision) {
+        if (!AllocateAndRecordCommandBuffers()) {
+            return false;
+        }
+    }
+
+    uint32_t imageIndex = 0;
+    const auto acquireResult = vkAcquireNextImageKHR(
+        device_,
+        swapchain_,
+        std::numeric_limits<uint64_t>::max(),
+        imageAvailableSemaphore_,
+        VK_NULL_HANDLE,
+        &imageIndex);
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+        SetError("Swapchain out of date; surface resize is required.");
+        return false;
+    }
+    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
+        SetError("vkAcquireNextImageKHR failed.");
+        return false;
+    }
+
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    const VkSubmitInfo submitInfo{
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &imageAvailableSemaphore_,
+        .pWaitDstStageMask = waitStages,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &commandBuffers_[imageIndex],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &renderFinishedSemaphore_,
+    };
+
+    const auto submitResult = vkQueueSubmit(graphicsQueue_, 1, &submitInfo, inFlightFence_);
+    if (submitResult != VK_SUCCESS) {
+        SetError("vkQueueSubmit failed.");
+        return false;
+    }
+
+    const VkPresentInfoKHR presentInfo{
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &renderFinishedSemaphore_,
+        .swapchainCount = 1,
+        .pSwapchains = &swapchain_,
+        .pImageIndices = &imageIndex,
+        .pResults = nullptr,
+    };
+
+    const auto presentResult = vkQueuePresentKHR(presentQueue_, &presentInfo);
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+        SetError("Swapchain present reported it is out of date.");
+        return false;
+    }
+    if (presentResult != VK_SUCCESS) {
+        SetError("vkQueuePresentKHR failed.");
+        return false;
+    }
+
+    lastError_.clear();
+    return true;
+}
+
+std::string SolarLabVulkanRenderer::LastError() const {
+    std::scoped_lock lock(stateMutex_);
+    return lastError_;
+}
+
+std::string SolarLabVulkanRenderer::BackendLabel() const {
+    std::scoped_lock lock(stateMutex_);
+    return backendLabelCache_;
+}
+
+std::string SolarLabVulkanRenderer::SceneSummary() const {
+    std::scoped_lock lock(stateMutex_);
+    return sceneSummaryCache_;
+}
+
+bool SolarLabVulkanRenderer::CreateInstance() {
+    const std::array<const char*, 2> instanceExtensions = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
+    };
+
+    const VkApplicationInfo applicationInfo{
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pNext = nullptr,
+        .pApplicationName = "SolarLab",
+        .applicationVersion = VK_MAKE_VERSION(0, 8, 0),
+        .pEngineName = "SolarLab",
+        .engineVersion = VK_MAKE_VERSION(0, 8, 0),
+        .apiVersion = VK_API_VERSION_1_1,
+    };
+
+    const VkInstanceCreateInfo instanceCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .pApplicationInfo = &applicationInfo,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = nullptr,
+        .enabledExtensionCount = static_cast<uint32_t>(instanceExtensions.size()),
+        .ppEnabledExtensionNames = instanceExtensions.data(),
+    };
+
+    if (vkCreateInstance(&instanceCreateInfo, nullptr, &instance_) != VK_SUCCESS) {
+        SetError("vkCreateInstance failed.");
+        return false;
+    }
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateSurface(JNIEnv* env, jobject surface) {
+    if (surface_ != VK_NULL_HANDLE && instance_ != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+    }
+    if (nativeWindow_ != nullptr) {
+        ANativeWindow_release(nativeWindow_);
+        nativeWindow_ = nullptr;
+    }
+
+    nativeWindow_ = ANativeWindow_fromSurface(env, surface);
+    if (nativeWindow_ == nullptr) {
+        SetError("ANativeWindow_fromSurface returned null.");
+        return false;
+    }
+
+    const VkAndroidSurfaceCreateInfoKHR createInfo{
+        .sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .flags = 0,
+        .window = nativeWindow_,
+    };
+
+    if (vkCreateAndroidSurfaceKHR(instance_, &createInfo, nullptr, &surface_) != VK_SUCCESS) {
+        SetError("vkCreateAndroidSurfaceKHR failed.");
+        return false;
+    }
+    return true;
+}
+
+bool SolarLabVulkanRenderer::PickPhysicalDevice() {
+    uint32_t deviceCount = 0;
+    if (vkEnumeratePhysicalDevices(instance_, &deviceCount, nullptr) != VK_SUCCESS || deviceCount == 0) {
+        SetError("No Vulkan physical devices were found.");
+        return false;
+    }
+
+    std::vector<VkPhysicalDevice> devices(deviceCount);
+    vkEnumeratePhysicalDevices(instance_, &deviceCount, devices.data());
+
+    VkPhysicalDevice fallbackDevice = VK_NULL_HANDLE;
+    uint32_t fallbackQueueIndex = UINT32_MAX;
+
+    for (const auto& candidate : devices) {
+        uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &queueFamilyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &queueFamilyCount, queueFamilies.data());
+
+        for (uint32_t queueIndex = 0; queueIndex < queueFamilyCount; ++queueIndex) {
+            VkBool32 supportsPresent = VK_FALSE;
+            vkGetPhysicalDeviceSurfaceSupportKHR(candidate, queueIndex, surface_, &supportsPresent);
+            const bool supportsGraphics = (queueFamilies[queueIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+            const bool supportsCompute = (queueFamilies[queueIndex].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
+            if (!supportsGraphics || supportsPresent != VK_TRUE) {
+                continue;
+            }
+            if (supportsCompute) {
+                physicalDevice_ = candidate;
+                graphicsQueueFamilyIndex_ = queueIndex;
+                presentQueueFamilyIndex_ = queueIndex;
+                graphicsQueueSupportsCompute_ = true;
+                vkGetPhysicalDeviceFeatures(candidate, &supportedFeatures_);
+                vkGetPhysicalDeviceProperties(candidate, &physicalDeviceProperties_);
+                enabledFeatures_ = {};
+                enabledFeatures_.largePoints = supportedFeatures_.largePoints;
+                return true;
+            }
+            if (fallbackDevice == VK_NULL_HANDLE) {
+                fallbackDevice = candidate;
+                fallbackQueueIndex = queueIndex;
+            }
+        }
+    }
+
+    if (fallbackDevice != VK_NULL_HANDLE) {
+        physicalDevice_ = fallbackDevice;
+        graphicsQueueFamilyIndex_ = fallbackQueueIndex;
+        presentQueueFamilyIndex_ = fallbackQueueIndex;
+        graphicsQueueSupportsCompute_ = false;
+        vkGetPhysicalDeviceFeatures(fallbackDevice, &supportedFeatures_);
+        vkGetPhysicalDeviceProperties(fallbackDevice, &physicalDeviceProperties_);
+        enabledFeatures_ = {};
+        enabledFeatures_.largePoints = supportedFeatures_.largePoints;
+        return true;
+    }
+
+    SetError("No Vulkan queue family with graphics + present support was found.");
+    return false;
+}
+
+bool SolarLabVulkanRenderer::CreateDevice() {
+    const float queuePriority = 1.0f;
+    const VkDeviceQueueCreateInfo queueCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .queueFamilyIndex = graphicsQueueFamilyIndex_,
+        .queueCount = 1,
+        .pQueuePriorities = &queuePriority,
+    };
+
+    const std::array<const char*, 1> deviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    const VkDeviceCreateInfo createInfo{
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &queueCreateInfo,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = nullptr,
+        .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
+        .ppEnabledExtensionNames = deviceExtensions.data(),
+        .pEnabledFeatures = &enabledFeatures_,
+    };
+
+    if (vkCreateDevice(physicalDevice_, &createInfo, nullptr, &device_) != VK_SUCCESS) {
+        SetError("vkCreateDevice failed.");
+        return false;
+    }
+
+    vkGetDeviceQueue(device_, graphicsQueueFamilyIndex_, 0, &graphicsQueue_);
+    vkGetDeviceQueue(device_, presentQueueFamilyIndex_, 0, &presentQueue_);
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
+    VkSurfaceCapabilitiesKHR capabilities{};
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice_, surface_, &capabilities) != VK_SUCCESS) {
+        SetError("vkGetPhysicalDeviceSurfaceCapabilitiesKHR failed.");
+        return false;
+    }
+
+    uint32_t formatCount = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice_, surface_, &formatCount, nullptr);
+    std::vector<VkSurfaceFormatKHR> formats(formatCount);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice_, surface_, &formatCount, formats.data());
+    if (formats.empty()) {
+        SetError("Surface reported no Vulkan formats.");
+        return false;
+    }
+
+    uint32_t presentModeCount = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice_, surface_, &presentModeCount, nullptr);
+    std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice_, surface_, &presentModeCount, presentModes.data());
+    if (presentModes.empty()) {
+        SetError("Surface reported no Vulkan present modes.");
+        return false;
+    }
+
+    const auto chosenFormat = ChooseSurfaceFormat(formats);
+    const auto presentMode = ChoosePresentMode(presentModes);
+    const auto extent = ChooseExtent(capabilities, width, height);
+
+    uint32_t imageCount = capabilities.minImageCount + 1;
+    if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount) {
+        imageCount = capabilities.maxImageCount;
+    }
+
+    const VkSwapchainCreateInfoKHR createInfo{
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .flags = 0,
+        .surface = surface_,
+        .minImageCount = imageCount,
+        .imageFormat = chosenFormat.format,
+        .imageColorSpace = chosenFormat.colorSpace,
+        .imageExtent = extent,
+        .imageArrayLayers = 1,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+        .preTransform = capabilities.currentTransform,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = presentMode,
+        .clipped = VK_TRUE,
+        .oldSwapchain = VK_NULL_HANDLE,
+    };
+
+    if (vkCreateSwapchainKHR(device_, &createInfo, nullptr, &swapchain_) != VK_SUCCESS) {
+        SetError("vkCreateSwapchainKHR failed.");
+        return false;
+    }
+
+    swapchainImageFormat_ = chosenFormat.format;
+    swapchainExtent_ = extent;
+
+    vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount, nullptr);
+    swapchainImages_.resize(imageCount);
+    vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount, swapchainImages_.data());
+
+    swapchainImageViews_.resize(swapchainImages_.size());
+    for (size_t index = 0; index < swapchainImages_.size(); ++index) {
+        const VkImageViewCreateInfo imageViewCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .image = swapchainImages_[index],
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = swapchainImageFormat_,
+            .components = {
+                .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+        if (vkCreateImageView(device_, &imageViewCreateInfo, nullptr, &swapchainImageViews_[index]) != VK_SUCCESS) {
+            SetError("vkCreateImageView failed.");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateRenderPass() {
+    const VkAttachmentDescription colorAttachment{
+        .flags = 0,
+        .format = swapchainImageFormat_,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    };
+
+    const VkAttachmentReference colorAttachmentReference{
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    const VkSubpassDescription subpassDescription{
+        .flags = 0,
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .inputAttachmentCount = 0,
+        .pInputAttachments = nullptr,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachmentReference,
+        .pResolveAttachments = nullptr,
+        .pDepthStencilAttachment = nullptr,
+        .preserveAttachmentCount = 0,
+        .pPreserveAttachments = nullptr,
+    };
+
+    const VkSubpassDependency dependency{
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = 0,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dependencyFlags = 0,
+    };
+
+    const VkRenderPassCreateInfo renderPassCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .attachmentCount = 1,
+        .pAttachments = &colorAttachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpassDescription,
+        .dependencyCount = 1,
+        .pDependencies = &dependency,
+    };
+
+    if (vkCreateRenderPass(device_, &renderPassCreateInfo, nullptr, &renderPass_) != VK_SUCCESS) {
+        SetError("vkCreateRenderPass failed.");
+        return false;
+    }
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateFramebuffers() {
+    framebuffers_.resize(swapchainImageViews_.size());
+    for (size_t index = 0; index < swapchainImageViews_.size(); ++index) {
+        VkImageView attachments[] = {swapchainImageViews_[index]};
+        const VkFramebufferCreateInfo framebufferCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .renderPass = renderPass_,
+            .attachmentCount = 1,
+            .pAttachments = attachments,
+            .width = swapchainExtent_.width,
+            .height = swapchainExtent_.height,
+            .layers = 1,
+        };
+        if (vkCreateFramebuffer(device_, &framebufferCreateInfo, nullptr, &framebuffers_[index]) != VK_SUCCESS) {
+            SetError("vkCreateFramebuffer failed.");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateCommandPool() {
+    if (commandPool_ != VK_NULL_HANDLE) {
+        return true;
+    }
+
+    const VkCommandPoolCreateInfo createInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = graphicsQueueFamilyIndex_,
+    };
+
+    if (vkCreateCommandPool(device_, &createInfo, nullptr, &commandPool_) != VK_SUCCESS) {
+        SetError("vkCreateCommandPool failed.");
+        return false;
+    }
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateDescriptorResources() {
+    if (device_ == VK_NULL_HANDLE) {
+        SetError("Cannot create descriptor resources before the Vulkan device exists.");
+        return false;
+    }
+
+    if (!EnsureHostVisibleBuffer(sizeof(SceneUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, "scene-uniform", sceneUniformBuffer_)) {
+        return false;
+    }
+
+    if (sceneDescriptorSetLayout_ == VK_NULL_HANDLE) {
+        const VkDescriptorSetLayoutBinding binding{
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+            .pImmutableSamplers = nullptr,
+        };
+        const VkDescriptorSetLayoutCreateInfo layoutCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .bindingCount = 1,
+            .pBindings = &binding,
+        };
+        if (vkCreateDescriptorSetLayout(device_, &layoutCreateInfo, nullptr, &sceneDescriptorSetLayout_) != VK_SUCCESS) {
+            SetError("vkCreateDescriptorSetLayout failed.");
+            return false;
+        }
+    }
+
+    if (descriptorPool_ == VK_NULL_HANDLE) {
+        const VkDescriptorPoolSize poolSize{
+            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+        };
+        const VkDescriptorPoolCreateInfo poolCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .maxSets = 1,
+            .poolSizeCount = 1,
+            .pPoolSizes = &poolSize,
+        };
+        if (vkCreateDescriptorPool(device_, &poolCreateInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
+            SetError("vkCreateDescriptorPool failed.");
+            return false;
+        }
+    }
+
+    if (sceneDescriptorSet_ == VK_NULL_HANDLE) {
+        const VkDescriptorSetAllocateInfo allocateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .descriptorPool = descriptorPool_,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &sceneDescriptorSetLayout_,
+        };
+        if (vkAllocateDescriptorSets(device_, &allocateInfo, &sceneDescriptorSet_) != VK_SUCCESS) {
+            SetError("vkAllocateDescriptorSets failed.");
+            return false;
+        }
+    }
+
+    const VkDescriptorBufferInfo bufferInfo{
+        .buffer = sceneUniformBuffer_.buffer,
+        .offset = 0,
+        .range = sizeof(SceneUniformData),
+    };
+    const VkWriteDescriptorSet write{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = sceneDescriptorSet_,
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .pImageInfo = nullptr,
+        .pBufferInfo = &bufferInfo,
+        .pTexelBufferView = nullptr,
+    };
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+
+    if (graphicsPipelineLayout_ == VK_NULL_HANDLE) {
+        const VkPipelineLayoutCreateInfo layoutCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .setLayoutCount = 1,
+            .pSetLayouts = &sceneDescriptorSetLayout_,
+            .pushConstantRangeCount = 0,
+            .pPushConstantRanges = nullptr,
+        };
+        if (vkCreatePipelineLayout(device_, &layoutCreateInfo, nullptr, &graphicsPipelineLayout_) != VK_SUCCESS) {
+            SetError("vkCreatePipelineLayout failed.");
+            return false;
+        }
+    }
+
+    if (!graphicsQueueSupportsCompute_) {
+        computeCompactionEnabled_ = false;
+        return true;
+    }
+
+    if (computeDescriptorSetLayout_ == VK_NULL_HANDLE) {
+        const std::array<VkDescriptorSetLayoutBinding, 4> bindings = {{
+            {
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
+            {
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
+            {
+                .binding = 2,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
+            {
+                .binding = 3,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
+        }};
+        const VkDescriptorSetLayoutCreateInfo layoutCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+        if (vkCreateDescriptorSetLayout(device_, &layoutCreateInfo, nullptr, &computeDescriptorSetLayout_) != VK_SUCCESS) {
+            SetError("vkCreateDescriptorSetLayout failed for compute descriptors.");
+            return false;
+        }
+    }
+
+    if (computeDescriptorPool_ == VK_NULL_HANDLE) {
+        const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
+            {
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 2,
+            },
+            {
+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 6,
+            },
+        }};
+        const VkDescriptorPoolCreateInfo poolCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .maxSets = 2,
+            .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+            .pPoolSizes = poolSizes.data(),
+        };
+        if (vkCreateDescriptorPool(device_, &poolCreateInfo, nullptr, &computeDescriptorPool_) != VK_SUCCESS) {
+            SetError("vkCreateDescriptorPool failed for compute descriptors.");
+            return false;
+        }
+    }
+
+    if (tracerMediumComputeDescriptorSet_ == VK_NULL_HANDLE || tracerFarComputeDescriptorSet_ == VK_NULL_HANDLE) {
+        const std::array<VkDescriptorSetLayout, 2> layouts = {computeDescriptorSetLayout_, computeDescriptorSetLayout_};
+        const VkDescriptorSetAllocateInfo allocateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .descriptorPool = computeDescriptorPool_,
+            .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+            .pSetLayouts = layouts.data(),
+        };
+        std::array<VkDescriptorSet, 2> sets{};
+        if (vkAllocateDescriptorSets(device_, &allocateInfo, sets.data()) != VK_SUCCESS) {
+            SetError("vkAllocateDescriptorSets failed for compute descriptors.");
+            return false;
+        }
+        tracerMediumComputeDescriptorSet_ = sets[0];
+        tracerFarComputeDescriptorSet_ = sets[1];
+    }
+
+    if (computePipelineLayout_ == VK_NULL_HANDLE) {
+        const VkPushConstantRange pushConstantRange{
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            .offset = 0,
+            .size = sizeof(ComputePushConstants),
+        };
+        const VkPipelineLayoutCreateInfo layoutCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .setLayoutCount = 1,
+            .pSetLayouts = &computeDescriptorSetLayout_,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &pushConstantRange,
+        };
+        if (vkCreatePipelineLayout(device_, &layoutCreateInfo, nullptr, &computePipelineLayout_) != VK_SUCCESS) {
+            SetError("vkCreatePipelineLayout failed for compute pipeline layout.");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
+    if (renderPass_ == VK_NULL_HANDLE || graphicsPipelineLayout_ == VK_NULL_HANDLE) {
+        SetError("Cannot create graphics pipelines before the render pass and pipeline layout are ready.");
+        return false;
+    }
+
+    DestroyGraphicsPipelines();
+
+    const std::vector<VkVertexInputBindingDescription> billboardBindings = {
+        MakeBindingDescription(0, sizeof(BillboardVertex)),
+    };
+    const std::vector<VkVertexInputAttributeDescription> billboardAttributes = {
+        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, x)),
+        MakeAttributeDescription(1, 0, VK_FORMAT_R32_SFLOAT, offsetof(BillboardVertex, radiusM)),
+        MakeAttributeDescription(2, 0, VK_FORMAT_R32_UINT, offsetof(BillboardVertex, colorArgb)),
+        MakeAttributeDescription(3, 0, VK_FORMAT_R32_UINT, offsetof(BillboardVertex, kind)),
+        MakeAttributeDescription(4, 0, VK_FORMAT_R32_SFLOAT, offsetof(BillboardVertex, alpha)),
+        MakeAttributeDescription(5, 0, VK_FORMAT_R32_SFLOAT, offsetof(BillboardVertex, reserved)),
+    };
+    if (!CreateGraphicsPipeline(
+            "billboard",
+            "shaders/solarlab/billboard.vert.spv",
+            "shaders/solarlab/billboard.frag.spv",
+            VK_PRIMITIVE_TOPOLOGY_POINT_LIST,
+            false,
+            billboardBindings,
+            billboardAttributes,
+            billboardPipeline_)) {
+        DestroyGraphicsPipelines();
+        return false;
+    }
+
+    const std::vector<VkVertexInputBindingDescription> mediumBindings = {
+        MakeBindingDescription(0, sizeof(CheapPointVertex)),
+    };
+    const std::vector<VkVertexInputAttributeDescription> mediumAttributes = {
+        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(CheapPointVertex, x)),
+        MakeAttributeDescription(1, 0, VK_FORMAT_R32_UINT, offsetof(CheapPointVertex, colorArgb)),
+        MakeAttributeDescription(2, 0, VK_FORMAT_R32_SFLOAT, offsetof(CheapPointVertex, sizePx)),
+    };
+    if (!CreateGraphicsPipeline(
+            "cheap-point",
+            "shaders/solarlab/cheap_point.vert.spv",
+            "shaders/solarlab/cheap_point.frag.spv",
+            VK_PRIMITIVE_TOPOLOGY_POINT_LIST,
+            false,
+            mediumBindings,
+            mediumAttributes,
+            mediumPointPipeline_)) {
+        DestroyGraphicsPipelines();
+        return false;
+    }
+
+    const std::vector<VkVertexInputBindingDescription> densityBindings = {
+        MakeBindingDescription(0, sizeof(DensityPointVertex)),
+    };
+    const std::vector<VkVertexInputAttributeDescription> densityAttributes = {
+        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(DensityPointVertex, x)),
+        MakeAttributeDescription(1, 0, VK_FORMAT_R32_UINT, offsetof(DensityPointVertex, colorArgb)),
+        MakeAttributeDescription(2, 0, VK_FORMAT_R32_UINT, offsetof(DensityPointVertex, densityWeight)),
+    };
+    if (!CreateGraphicsPipeline(
+            "density-point",
+            "shaders/solarlab/density_point.vert.spv",
+            "shaders/solarlab/density_point.frag.spv",
+            VK_PRIMITIVE_TOPOLOGY_POINT_LIST,
+            true,
+            densityBindings,
+            densityAttributes,
+            farDensityPipeline_)) {
+        DestroyGraphicsPipelines();
+        return false;
+    }
+
+    const std::vector<VkVertexInputBindingDescription> trailBindings = {
+        MakeBindingDescription(0, sizeof(TrailVertex)),
+    };
+    const std::vector<VkVertexInputAttributeDescription> trailAttributes = {
+        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(TrailVertex, x)),
+        MakeAttributeDescription(1, 0, VK_FORMAT_R32_UINT, offsetof(TrailVertex, colorArgb)),
+        MakeAttributeDescription(2, 0, VK_FORMAT_R32_SFLOAT, offsetof(TrailVertex, alpha)),
+    };
+    if (!CreateGraphicsPipeline(
+            "trail",
+            "shaders/solarlab/trail.vert.spv",
+            "shaders/solarlab/trail.frag.spv",
+            VK_PRIMITIVE_TOPOLOGY_LINE_STRIP,
+            false,
+            trailBindings,
+            trailAttributes,
+            trailPipeline_)) {
+        DestroyGraphicsPipelines();
+        return false;
+    }
+
+    backendLabelCache_ = std::string("Vulkan SPIR-V graphics pipelines") + (enabledFeatures_.largePoints ? " + largePoints" : " (point sizes clamped)");
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateComputePipelines() {
+    computeCompactionEnabled_ = false;
+    if (!graphicsQueueSupportsCompute_ || computePipelineLayout_ == VK_NULL_HANDLE) {
+        return true;
+    }
+
+    DestroyComputePipelines();
+
+    if (!CreateComputePipeline("compact-medium", "shaders/solarlab/compact_medium.comp.spv", mediumComputePipeline_)) {
+        LogError(lastError_);
+        lastError_.clear();
+        DestroyComputePipelines();
+        return true;
+    }
+    if (!CreateComputePipeline("compact-far", "shaders/solarlab/compact_far.comp.spv", farComputePipeline_)) {
+        LogError(lastError_);
+        lastError_.clear();
+        DestroyComputePipelines();
+        return true;
+    }
+
+    computeCompactionEnabled_ = true;
+    return true;
+}
+
+bool SolarLabVulkanRenderer::AllocateAndRecordCommandBuffers() {
+    if (commandPool_ == VK_NULL_HANDLE) {
+        SetError("Command pool is not available for command buffer allocation.");
+        return false;
+    }
+
+    if (!commandBuffers_.empty()) {
+        vkFreeCommandBuffers(device_, commandPool_, static_cast<uint32_t>(commandBuffers_.size()), commandBuffers_.data());
+        commandBuffers_.clear();
+    }
+
+    commandBuffers_.resize(framebuffers_.size());
+    const VkCommandBufferAllocateInfo allocateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .commandPool = commandPool_,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = static_cast<uint32_t>(commandBuffers_.size()),
+    };
+    if (vkAllocateCommandBuffers(device_, &allocateInfo, commandBuffers_.data()) != VK_SUCCESS) {
+        SetError("vkAllocateCommandBuffers failed.");
+        return false;
+    }
+
+    for (size_t index = 0; index < commandBuffers_.size(); ++index) {
+        const VkCommandBufferBeginInfo beginInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .pInheritanceInfo = nullptr,
+        };
+        if (vkBeginCommandBuffer(commandBuffers_[index], &beginInfo) != VK_SUCCESS) {
+            SetError("vkBeginCommandBuffer failed.");
+            return false;
+        }
+
+        if (!RecordComputePassLocked(commandBuffers_[index])) {
+            return false;
+        }
+
+        const VkMemoryBarrier hostToGraphicsBarrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+        };
+        vkCmdPipelineBarrier(
+            commandBuffers_[index],
+            VK_PIPELINE_STAGE_HOST_BIT,
+            VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+            0,
+            1,
+            &hostToGraphicsBarrier,
+            0,
+            nullptr,
+            0,
+            nullptr);
+
+        const VkClearValue clearColor = {{{0.0f, 0.0f, 0.03f, 1.0f}}};
+        const VkRenderPassBeginInfo renderPassBeginInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .pNext = nullptr,
+            .renderPass = renderPass_,
+            .framebuffer = framebuffers_[index],
+            .renderArea = {
+                .offset = {0, 0},
+                .extent = swapchainExtent_,
+            },
+            .clearValueCount = 1,
+            .pClearValues = &clearColor,
+        };
+        vkCmdBeginRenderPass(commandBuffers_[index], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        if (!RecordSceneBindingsLocked(commandBuffers_[index])) {
+            return false;
+        }
+        vkCmdEndRenderPass(commandBuffers_[index]);
+
+        if (vkEndCommandBuffer(commandBuffers_[index]) != VK_SUCCESS) {
+            SetError("vkEndCommandBuffer failed.");
+            return false;
+        }
+    }
+
+    commandBuffersRevision_ = sceneGpuStreams_.uploadedRevision;
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateSyncObjects() {
+    if (imageAvailableSemaphore_ != VK_NULL_HANDLE && renderFinishedSemaphore_ != VK_NULL_HANDLE && inFlightFence_ != VK_NULL_HANDLE) {
+        return true;
+    }
+
+    const VkSemaphoreCreateInfo semaphoreCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+    };
+    const VkFenceCreateInfo fenceCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+
+    if (vkCreateSemaphore(device_, &semaphoreCreateInfo, nullptr, &imageAvailableSemaphore_) != VK_SUCCESS ||
+        vkCreateSemaphore(device_, &semaphoreCreateInfo, nullptr, &renderFinishedSemaphore_) != VK_SUCCESS ||
+        vkCreateFence(device_, &fenceCreateInfo, nullptr, &inFlightFence_) != VK_SUCCESS) {
+        SetError("Failed to create Vulkan synchronisation objects.");
+        return false;
+    }
+    return true;
+}
+
+void SolarLabVulkanRenderer::DestroySurfaceResources() {
+    if (device_ == VK_NULL_HANDLE) {
+        return;
+    }
+
+    if (!commandBuffers_.empty() && commandPool_ != VK_NULL_HANDLE) {
+        vkFreeCommandBuffers(device_, commandPool_, static_cast<uint32_t>(commandBuffers_.size()), commandBuffers_.data());
+        commandBuffers_.clear();
+    }
+    commandBuffersRevision_ = -1;
+
+    DestroyGraphicsPipelines();
+
+    for (auto framebuffer : framebuffers_) {
+        vkDestroyFramebuffer(device_, framebuffer, nullptr);
+    }
+    framebuffers_.clear();
+
+    if (renderPass_ != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device_, renderPass_, nullptr);
+        renderPass_ = VK_NULL_HANDLE;
+    }
+
+    for (auto imageView : swapchainImageViews_) {
+        vkDestroyImageView(device_, imageView, nullptr);
+    }
+    swapchainImageViews_.clear();
+    swapchainImages_.clear();
+
+    if (swapchain_ != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device_, swapchain_, nullptr);
+        swapchain_ = VK_NULL_HANDLE;
+    }
+}
+
+void SolarLabVulkanRenderer::Cleanup() {
+    if (device_ != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(device_);
+    }
+
+    DestroySceneGpuStreams();
+    DestroySurfaceResources();
+    DestroyDescriptorResources();
+
+    if (device_ != VK_NULL_HANDLE) {
+        if (imageAvailableSemaphore_ != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device_, imageAvailableSemaphore_, nullptr);
+            imageAvailableSemaphore_ = VK_NULL_HANDLE;
+        }
+        if (renderFinishedSemaphore_ != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device_, renderFinishedSemaphore_, nullptr);
+            renderFinishedSemaphore_ = VK_NULL_HANDLE;
+        }
+        if (inFlightFence_ != VK_NULL_HANDLE) {
+            vkDestroyFence(device_, inFlightFence_, nullptr);
+            inFlightFence_ = VK_NULL_HANDLE;
+        }
+        if (commandPool_ != VK_NULL_HANDLE) {
+            vkDestroyCommandPool(device_, commandPool_, nullptr);
+            commandPool_ = VK_NULL_HANDLE;
+        }
+    }
+
+    if (surface_ != VK_NULL_HANDLE && instance_ != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+    }
+    if (nativeWindow_ != nullptr) {
+        ANativeWindow_release(nativeWindow_);
+        nativeWindow_ = nullptr;
+    }
+
+    if (device_ != VK_NULL_HANDLE) {
+        vkDestroyDevice(device_, nullptr);
+        device_ = VK_NULL_HANDLE;
+    }
+
+    if (instance_ != VK_NULL_HANDLE) {
+        vkDestroyInstance(instance_, nullptr);
+        instance_ = VK_NULL_HANDLE;
+    }
+
+    physicalDevice_ = VK_NULL_HANDLE;
+    graphicsQueue_ = VK_NULL_HANDLE;
+    presentQueue_ = VK_NULL_HANDLE;
+    graphicsQueueFamilyIndex_ = UINT32_MAX;
+    presentQueueFamilyIndex_ = UINT32_MAX;
+    sceneGpuStreams_.uploadedRevision = -1;
+    uploadStats_ = StreamUploadStats{};
+    backendLabelCache_ = "Vulkan SPIR-V graphics pipelines cleaned up";
+    sceneSummaryCache_ = "Scene not uploaded.";
+}
+
+void SolarLabVulkanRenderer::SetError(const std::string& message) {
+    lastError_ = message;
+    LogError(message);
+}
+
+VkSurfaceFormatKHR SolarLabVulkanRenderer::ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) const {
+    for (const auto& format : formats) {
+        if (format.format == VK_FORMAT_B8G8R8A8_UNORM && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return format;
+        }
+    }
+    return formats.front();
+}
+
+VkPresentModeKHR SolarLabVulkanRenderer::ChoosePresentMode(const std::vector<VkPresentModeKHR>& presentModes) const {
+    for (const auto& presentMode : presentModes) {
+        if (presentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+            return presentMode;
+        }
+    }
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+VkExtent2D SolarLabVulkanRenderer::ChooseExtent(const VkSurfaceCapabilitiesKHR& capabilities, int width, int height) const {
+    if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+        return capabilities.currentExtent;
+    }
+
+    VkExtent2D actualExtent{
+        .width = static_cast<uint32_t>(width),
+        .height = static_cast<uint32_t>(height),
+    };
+    actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+    actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+    return actualExtent;
+}
+
+bool SolarLabVulkanRenderer::EnsureSceneGpuStreamsLocked() {
+    if (sceneGpuStreams_.uploadedRevision == sceneBuffers_.sourceRevision) {
+        return true;
+    }
+    return UploadSceneGpuStreamsLocked();
+}
+
+bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
+    if (device_ == VK_NULL_HANDLE || physicalDevice_ == VK_NULL_HANDLE) {
+        SetError("Cannot upload scene streams before the Vulkan device is ready.");
+        return false;
+    }
+
+    DestroySceneGpuStreams();
+
+    std::vector<BillboardVertex> authoritativeVertices;
+    const uint32_t authoritativeCount = SafeCount3(
+        sceneBuffers_.authoritativePositionsM.size(),
+        sceneBuffers_.authoritativeRadiiM.size(),
+        sceneBuffers_.authoritativeColorsArgb.size(),
+        sceneBuffers_.authoritativeKinds.size());
+    authoritativeVertices.reserve(authoritativeCount);
+    for (uint32_t index = 0; index < authoritativeCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        authoritativeVertices.push_back(BillboardVertex{
+            .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 2U]),
+            .radiusM = sceneBuffers_.authoritativeRadiiM[index],
+            .colorArgb = static_cast<uint32_t>(sceneBuffers_.authoritativeColorsArgb[index]),
+            .kind = static_cast<uint32_t>(sceneBuffers_.authoritativeKinds[index]),
+            .alpha = 1.0f,
+            .reserved = 0.0f,
+        });
+    }
+
+    std::vector<BillboardVertex> tracerNearVertices;
+    const uint32_t tracerNearCount = SafeCount3(
+        sceneBuffers_.tracerNearPositionsM.size(),
+        sceneBuffers_.tracerNearRadiiM.size(),
+        sceneBuffers_.tracerNearColorsArgb.size(),
+        sceneBuffers_.tracerNearKinds.size());
+    tracerNearVertices.reserve(tracerNearCount);
+    for (uint32_t index = 0; index < tracerNearCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        tracerNearVertices.push_back(BillboardVertex{
+            .x = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base + 2U]),
+            .radiusM = sceneBuffers_.tracerNearRadiiM[index],
+            .colorArgb = static_cast<uint32_t>(sceneBuffers_.tracerNearColorsArgb[index]),
+            .kind = static_cast<uint32_t>(sceneBuffers_.tracerNearKinds[index]),
+            .alpha = kNearTracerAlpha,
+            .reserved = 0.0f,
+        });
+    }
+
+    std::vector<CheapPointVertex> tracerMediumVertices;
+    const uint32_t tracerMediumCount = SafeCount3(
+        sceneBuffers_.tracerMediumPositionsM.size(),
+        sceneBuffers_.tracerMediumRadiiM.size(),
+        sceneBuffers_.tracerMediumColorsArgb.size());
+    tracerMediumVertices.reserve(tracerMediumCount);
+    for (uint32_t index = 0; index < tracerMediumCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const float radiusM = sceneBuffers_.tracerMediumRadiiM[index];
+        const float sizePx = std::max(
+            kMediumTracerPointSizePx,
+            radiusM > 0.0f ? 0.75f * static_cast<float>(std::log10(radiusM + 10.0f)) : kMediumTracerPointSizePx);
+        tracerMediumVertices.push_back(CheapPointVertex{
+            .x = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 1U]),
+            .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerMediumColorsArgb[index]), kMediumTracerAlpha),
+            .sizePx = sizePx,
+        });
+    }
+
+    std::vector<DensityPointVertex> tracerFarVertices;
+    const uint32_t tracerFarCount = SafeCount3(
+        sceneBuffers_.tracerFarPositionsM.size(),
+        sceneBuffers_.tracerFarRadiiM.size(),
+        sceneBuffers_.tracerFarColorsArgb.size());
+    tracerFarVertices.reserve(tracerFarCount);
+    for (uint32_t index = 0; index < tracerFarCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const float radiusM = sceneBuffers_.tracerFarRadiiM[index];
+        const uint32_t densityWeight = static_cast<uint32_t>(std::clamp(std::lround(std::max(1.0f, radiusM > 0.0f ? std::log10(radiusM + 10.0f) : 1.0f)), 1l, 4l));
+        tracerFarVertices.push_back(DensityPointVertex{
+            .x = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 1U]),
+            .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerFarColorsArgb[index]), kFarTracerAlpha),
+            .densityWeight = densityWeight,
+        });
+    }
+
+    std::vector<TrailVertex> trailVertices;
+    const uint32_t trailPointCount = SafeCount3(
+        sceneBuffers_.trailPositionsM.size(),
+        sceneBuffers_.trailColorsArgb.size(),
+        sceneBuffers_.trailColorsArgb.size());
+    trailVertices.reserve(trailPointCount);
+    for (uint32_t index = 0; index < trailPointCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        trailVertices.push_back(TrailVertex{
+            .x = static_cast<float>(sceneBuffers_.trailPositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.trailPositionsM[base + 1U]),
+            .colorArgb = static_cast<uint32_t>(sceneBuffers_.trailColorsArgb[index]),
+            .alpha = kTrailAlpha,
+        });
+    }
+
+    sceneGpuStreams_.authoritative.path = DrawPath::BillboardSprite;
+    sceneGpuStreams_.authoritative.label = "authoritative";
+    sceneGpuStreams_.authoritative.strideBytes = sizeof(BillboardVertex);
+    sceneGpuStreams_.authoritative.plannedUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    sceneGpuStreams_.authoritative.vertexCount = authoritativeCount;
+
+    sceneGpuStreams_.tracerNear.path = DrawPath::BillboardSprite;
+    sceneGpuStreams_.tracerNear.label = "tracer-near";
+    sceneGpuStreams_.tracerNear.strideBytes = sizeof(BillboardVertex);
+    sceneGpuStreams_.tracerNear.plannedUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    sceneGpuStreams_.tracerNear.vertexCount = tracerNearCount;
+
+    sceneGpuStreams_.tracerMedium.path = DrawPath::CheapPointSprite;
+    sceneGpuStreams_.tracerMedium.label = "tracer-medium";
+    sceneGpuStreams_.tracerMedium.strideBytes = sizeof(CheapPointVertex);
+    sceneGpuStreams_.tracerMedium.plannedUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    sceneGpuStreams_.tracerMedium.vertexCount = tracerMediumCount;
+
+    sceneGpuStreams_.tracerFar.path = DrawPath::DensityPoint;
+    sceneGpuStreams_.tracerFar.label = "tracer-far";
+    sceneGpuStreams_.tracerFar.strideBytes = sizeof(DensityPointVertex);
+    sceneGpuStreams_.tracerFar.plannedUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    sceneGpuStreams_.tracerFar.vertexCount = tracerFarCount;
+
+    sceneGpuStreams_.trails.path = DrawPath::ThinLineStrip;
+    sceneGpuStreams_.trails.label = "trails";
+    sceneGpuStreams_.trails.strideBytes = sizeof(TrailVertex);
+    sceneGpuStreams_.trails.plannedUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    sceneGpuStreams_.trails.vertexCount = trailPointCount;
+    sceneGpuStreams_.trailStripVertexCounts.clear();
+
+    auto uploadStream = [this](const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
+        if (sizeBytes == 0) {
+            DestroyGpuBuffer(target);
+            return true;
+        }
+        if (!EnsureHostVisibleBuffer(static_cast<VkDeviceSize>(sizeBytes), usage, label, target)) {
+            return false;
+        }
+        return UploadBytes(data, sizeBytes, target);
+    };
+
+    if (!uploadStream(authoritativeVertices.data(), ByteSize(authoritativeVertices), sceneGpuStreams_.authoritative.plannedUsage, sceneGpuStreams_.authoritative.label, sceneGpuStreams_.authoritative.vertexBuffer)) {
+        return false;
+    }
+    if (!uploadStream(tracerNearVertices.data(), ByteSize(tracerNearVertices), sceneGpuStreams_.tracerNear.plannedUsage, sceneGpuStreams_.tracerNear.label, sceneGpuStreams_.tracerNear.vertexBuffer)) {
+        return false;
+    }
+    if (!uploadStream(tracerMediumVertices.data(), ByteSize(tracerMediumVertices), sceneGpuStreams_.tracerMedium.plannedUsage, sceneGpuStreams_.tracerMedium.label, sceneGpuStreams_.tracerMedium.vertexBuffer)) {
+        return false;
+    }
+    if (!uploadStream(tracerFarVertices.data(), ByteSize(tracerFarVertices), sceneGpuStreams_.tracerFar.plannedUsage, sceneGpuStreams_.tracerFar.label, sceneGpuStreams_.tracerFar.vertexBuffer)) {
+        return false;
+    }
+    if (!uploadStream(trailVertices.data(), ByteSize(trailVertices), sceneGpuStreams_.trails.plannedUsage, sceneGpuStreams_.trails.label, sceneGpuStreams_.trails.vertexBuffer)) {
+        return false;
+    }
+
+    uint32_t remainingTrailVertices = trailPointCount;
+    for (int32_t rawCount : sceneBuffers_.trailVertexCounts) {
+        if (remainingTrailVertices < 2U) {
+            break;
+        }
+        const uint32_t stripCount = static_cast<uint32_t>(std::max(rawCount, 0));
+        if (stripCount < 2U) {
+            continue;
+        }
+        const uint32_t clampedCount = std::min(stripCount, remainingTrailVertices);
+        if (clampedCount < 2U) {
+            continue;
+        }
+        sceneGpuStreams_.trailStripVertexCounts.push_back(clampedCount);
+        remainingTrailVertices -= clampedCount;
+    }
+
+    const bool canCompute = computeCompactionEnabled_ &&
+        tracerMediumComputeDescriptorSet_ != VK_NULL_HANDLE &&
+        tracerFarComputeDescriptorSet_ != VK_NULL_HANDLE &&
+        mediumComputePipeline_ != VK_NULL_HANDLE &&
+        farComputePipeline_ != VK_NULL_HANDLE;
+
+    sceneGpuStreams_.tracerMediumCompute.enabled = canCompute && tracerMediumCount > 0U;
+    sceneGpuStreams_.tracerMediumCompute.path = DrawPath::CheapPointSprite;
+    sceneGpuStreams_.tracerMediumCompute.label = "tracer-medium-compute";
+    sceneGpuStreams_.tracerMediumCompute.sourceVertexCount = tracerMediumCount;
+    sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX = RoundUpWorkgroups(tracerMediumCount, kComputeLocalSizeX);
+
+    sceneGpuStreams_.tracerFarCompute.enabled = canCompute && tracerFarCount > 0U;
+    sceneGpuStreams_.tracerFarCompute.path = DrawPath::DensityPoint;
+    sceneGpuStreams_.tracerFarCompute.label = "tracer-far-compute";
+    sceneGpuStreams_.tracerFarCompute.sourceVertexCount = tracerFarCount;
+    sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX = RoundUpWorkgroups(tracerFarCount, kComputeLocalSizeX);
+
+    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
+        if (!EnsureHostVisibleBuffer(
+                static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerMediumVertices), sizeof(CheapPointVertex))),
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                sceneGpuStreams_.tracerMediumCompute.label,
+                sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer)) {
+            return false;
+        }
+        if (!EnsureHostVisibleBuffer(
+                sizeof(VkDrawIndirectCommand),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                "tracer-medium-indirect",
+                sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer)) {
+            return false;
+        }
+        const auto initCommand = MakeInitialIndirectCommand();
+        if (!UploadBytes(&initCommand, sizeof(initCommand), sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer)) {
+            return false;
+        }
+    }
+
+    if (sceneGpuStreams_.tracerFarCompute.enabled) {
+        if (!EnsureHostVisibleBuffer(
+                static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerFarVertices), sizeof(DensityPointVertex))),
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                sceneGpuStreams_.tracerFarCompute.label,
+                sceneGpuStreams_.tracerFarCompute.outputVertexBuffer)) {
+            return false;
+        }
+        if (!EnsureHostVisibleBuffer(
+                sizeof(VkDrawIndirectCommand),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                "tracer-far-indirect",
+                sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer)) {
+            return false;
+        }
+        const auto initCommand = MakeInitialIndirectCommand();
+        if (!UploadBytes(&initCommand, sizeof(initCommand), sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer)) {
+            return false;
+        }
+    }
+
+    if (canCompute && !UpdateComputeDescriptorSetsLocked()) {
+        return false;
+    }
+
+    sceneGpuStreams_.uploadedRevision = sceneBuffers_.sourceRevision;
+    sceneGpuStreams_.totalBytes =
+        sceneGpuStreams_.authoritative.vertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerNear.vertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMedium.vertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFar.vertexBuffer.sizeBytes +
+        sceneGpuStreams_.trails.vertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes;
+
+    uploadStats_.sourceRevision = sceneBuffers_.sourceRevision;
+    uploadStats_.bytesUploaded = sceneGpuStreams_.totalBytes;
+    uploadStats_.authoritativeCount = authoritativeCount;
+    uploadStats_.tracerNearCount = tracerNearCount;
+    uploadStats_.tracerMediumCount = tracerMediumCount;
+    uploadStats_.tracerFarCount = tracerFarCount;
+    uploadStats_.trailVertexCount = trailPointCount;
+    uploadStats_.trailStripCount = static_cast<uint32_t>(sceneGpuStreams_.trailStripVertexCounts.size());
+
+    backendLabelCache_ = std::string("Vulkan SPIR-V graphics pipelines") + (canCompute ? " + compute compaction" : (enabledFeatures_.largePoints ? " + largePoints" : " (point sizes clamped)"));
+    sceneSummaryCache_ = BuildSceneSummaryLocked();
+    commandBuffersRevision_ = -1;
+    LogInfo("Uploaded Vulkan draw streams for revision " + std::to_string(sceneBuffers_.sourceRevision) + (canCompute ? " with compute-ready compaction buffers." : " with direct draw buffers."));
+    return true;
+}
+
+bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
+    if (sceneUniformBuffer_.memory == VK_NULL_HANDLE || swapchainExtent_.width == 0 || swapchainExtent_.height == 0) {
+        SetError("Cannot update scene uniform buffer before descriptor resources and swapchain are ready.");
+        return false;
+    }
+
+    const float widthPx = static_cast<float>(std::max<uint32_t>(swapchainExtent_.width, 1U));
+    const float heightPx = static_cast<float>(std::max<uint32_t>(swapchainExtent_.height, 1U));
+    const float minDimensionPx = std::max(1.0f, std::min(widthPx, heightPx));
+    const float viewRadiusM = static_cast<float>(std::max(cameraViewRadiusM_, 1.0));
+    const float halfSpanX = viewRadiusM * (widthPx / minDimensionPx);
+    const float halfSpanY = viewRadiusM * (heightPx / minDimensionPx);
+    const float metersPerPixel = (2.0f * viewRadiusM) / minDimensionPx;
+    const float maxPointSizePx = enabledFeatures_.largePoints
+        ? std::max(1.0f, std::min(physicalDeviceProperties_.limits.pointSizeRange[1], kDefaultMaxPointSizePx))
+        : 1.0f;
+
+    const SceneUniformData uniformData{
+        .centerSpan = {
+            static_cast<float>(cameraCenterX_),
+            static_cast<float>(cameraCenterY_),
+            std::max(halfSpanX, 1.0e-6f),
+            std::max(halfSpanY, 1.0e-6f),
+        },
+        .metrics = {
+            std::max(metersPerPixel, 1.0e-6f),
+            minDimensionPx,
+            maxPointSizePx,
+            enabledFeatures_.largePoints ? 1.0f : 0.0f,
+        },
+        .viewport = {
+            widthPx,
+            heightPx,
+            0.0f,
+            0.0f,
+        },
+    };
+
+    return UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_);
+}
+
+bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
+    if (!computeCompactionEnabled_ || computeDescriptorSetLayout_ == VK_NULL_HANDLE) {
+        return true;
+    }
+
+    auto updateSet = [this](VkDescriptorSet set, const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect) {
+        const VkDescriptorBufferInfo uniformInfo{
+            .buffer = sceneUniformBuffer_.buffer,
+            .offset = 0,
+            .range = sizeof(SceneUniformData),
+        };
+        const VkDescriptorBufferInfo sourceInfo{
+            .buffer = source.buffer,
+            .offset = 0,
+            .range = source.sizeBytes,
+        };
+        const VkDescriptorBufferInfo outputInfo{
+            .buffer = output.buffer,
+            .offset = 0,
+            .range = output.sizeBytes,
+        };
+        const VkDescriptorBufferInfo indirectInfo{
+            .buffer = indirect.buffer,
+            .offset = 0,
+            .range = indirect.sizeBytes,
+        };
+        const std::array<VkWriteDescriptorSet, 4> writes = {{
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 0,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &uniformInfo,
+                .pTexelBufferView = nullptr,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 1,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &sourceInfo,
+                .pTexelBufferView = nullptr,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 2,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &outputInfo,
+                .pTexelBufferView = nullptr,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 3,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &indirectInfo,
+                .pTexelBufferView = nullptr,
+            },
+        }};
+        vkUpdateDescriptorSets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    };
+
+    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
+        if (tracerMediumComputeDescriptorSet_ == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerMedium.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.buffer == VK_NULL_HANDLE) {
+            SetError("Medium tracer compute descriptors could not be updated because one or more buffers were missing.");
+            return false;
+        }
+        updateSet(
+            tracerMediumComputeDescriptorSet_,
+            sceneGpuStreams_.tracerMedium.vertexBuffer,
+            sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer,
+            sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
+    }
+
+    if (sceneGpuStreams_.tracerFarCompute.enabled) {
+        if (tracerFarComputeDescriptorSet_ == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerFar.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.buffer == VK_NULL_HANDLE) {
+            SetError("Far tracer compute descriptors could not be updated because one or more buffers were missing.");
+            return false;
+        }
+        updateSet(
+            tracerFarComputeDescriptorSet_,
+            sceneGpuStreams_.tracerFar.vertexBuffer,
+            sceneGpuStreams_.tracerFarCompute.outputVertexBuffer,
+            sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer);
+    }
+
+    return true;
+}
+
+bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuffer) {
+    if (!computeCompactionEnabled_) {
+        return true;
+    }
+    if (commandBuffer == VK_NULL_HANDLE) {
+        SetError("Cannot record compute work into a null command buffer.");
+        return false;
+    }
+    if (computePipelineLayout_ == VK_NULL_HANDLE) {
+        return true;
+    }
+
+    const VkMemoryBarrier hostToComputeBarrier{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+    };
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_HOST_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        1,
+        &hostToComputeBarrier,
+        0,
+        nullptr,
+        0,
+        nullptr);
+
+    const bool runMedium = sceneGpuStreams_.tracerMediumCompute.enabled && mediumComputePipeline_ != VK_NULL_HANDLE;
+    const bool runFar = sceneGpuStreams_.tracerFarCompute.enabled && farComputePipeline_ != VK_NULL_HANDLE;
+    if (!runMedium && !runFar) {
+        return true;
+    }
+
+    const auto initialIndirect = MakeInitialIndirectCommand();
+    if (runMedium) {
+        vkCmdUpdateBuffer(
+            commandBuffer,
+            sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.buffer,
+            0,
+            sizeof(initialIndirect),
+            &initialIndirect);
+    }
+    if (runFar) {
+        vkCmdUpdateBuffer(
+            commandBuffer,
+            sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.buffer,
+            0,
+            sizeof(initialIndirect),
+            &initialIndirect);
+    }
+
+    std::vector<VkBufferMemoryBarrier> transferToComputeBarriers;
+    if (runMedium) {
+        transferToComputeBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.buffer,
+            .offset = 0,
+            .size = sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.sizeBytes,
+        });
+    }
+    if (runFar) {
+        transferToComputeBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.buffer,
+            .offset = 0,
+            .size = sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes,
+        });
+    }
+    if (!transferToComputeBarriers.empty()) {
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0,
+            0,
+            nullptr,
+            static_cast<uint32_t>(transferToComputeBarriers.size()),
+            transferToComputeBarriers.data(),
+            0,
+            nullptr);
+    }
+
+    if (runMedium) {
+        const ComputePushConstants pushConstants{.sourceCount = sceneGpuStreams_.tracerMediumCompute.sourceVertexCount};
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, mediumComputePipeline_);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_, 0, 1, &tracerMediumComputeDescriptorSet_, 0, nullptr);
+        vkCmdPushConstants(commandBuffer, computePipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+        vkCmdDispatch(commandBuffer, sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX, 1, 1);
+    }
+    if (runFar) {
+        const ComputePushConstants pushConstants{.sourceCount = sceneGpuStreams_.tracerFarCompute.sourceVertexCount};
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, farComputePipeline_);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_, 0, 1, &tracerFarComputeDescriptorSet_, 0, nullptr);
+        vkCmdPushConstants(commandBuffer, computePipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+        vkCmdDispatch(commandBuffer, sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX, 1, 1);
+    }
+
+    const VkMemoryBarrier computeToGraphicsBarrier{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+    };
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+        0,
+        1,
+        &computeToGraphicsBarrier,
+        0,
+        nullptr,
+        0,
+        nullptr);
+
+    return true;
+}
+
+bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBuffer) {
+    if (commandBuffer == VK_NULL_HANDLE) {
+        SetError("Cannot record scene bindings into a null command buffer.");
+        return false;
+    }
+    if (graphicsPipelineLayout_ == VK_NULL_HANDLE || sceneDescriptorSet_ == VK_NULL_HANDLE) {
+        SetError("Graphics pipelines cannot be recorded before descriptor resources are ready.");
+        return false;
+    }
+
+    const VkViewport viewport{
+        .x = 0.0f,
+        .y = 0.0f,
+        .width = static_cast<float>(swapchainExtent_.width),
+        .height = static_cast<float>(swapchainExtent_.height),
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    };
+    const VkRect2D scissor{
+        .offset = {0, 0},
+        .extent = swapchainExtent_,
+    };
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    auto bindAndDraw = [this, commandBuffer](VkPipeline pipeline, const DrawStreamBuffers& stream) {
+        if (pipeline == VK_NULL_HANDLE || stream.vertexCount == 0 || stream.vertexBuffer.buffer == VK_NULL_HANDLE) {
+            return;
+        }
+        const VkBuffer buffer = stream.vertexBuffer.buffer;
+        const VkDeviceSize offset = 0;
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineLayout_, 0, 1, &sceneDescriptorSet_, 0, nullptr);
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &buffer, &offset);
+        vkCmdDraw(commandBuffer, stream.vertexCount, 1, 0, 0);
+    };
+
+    auto bindAndDrawIndirect = [this, commandBuffer](VkPipeline pipeline, const ComputeDrawStreamBuffers& stream) {
+        if (pipeline == VK_NULL_HANDLE || !stream.enabled || stream.outputVertexBuffer.buffer == VK_NULL_HANDLE || stream.indirectCommandBuffer.buffer == VK_NULL_HANDLE) {
+            return;
+        }
+        const VkBuffer buffer = stream.outputVertexBuffer.buffer;
+        const VkDeviceSize offset = 0;
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineLayout_, 0, 1, &sceneDescriptorSet_, 0, nullptr);
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &buffer, &offset);
+        vkCmdDrawIndirect(commandBuffer, stream.indirectCommandBuffer.buffer, 0, 1, sizeof(VkDrawIndirectCommand));
+    };
+
+    bindAndDraw(billboardPipeline_, sceneGpuStreams_.authoritative);
+    bindAndDraw(billboardPipeline_, sceneGpuStreams_.tracerNear);
+    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
+        bindAndDrawIndirect(mediumPointPipeline_, sceneGpuStreams_.tracerMediumCompute);
+    } else {
+        bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
+    }
+    if (sceneGpuStreams_.tracerFarCompute.enabled) {
+        bindAndDrawIndirect(farDensityPipeline_, sceneGpuStreams_.tracerFarCompute);
+    } else {
+        bindAndDraw(farDensityPipeline_, sceneGpuStreams_.tracerFar);
+    }
+
+    if (trailPipeline_ != VK_NULL_HANDLE && sceneGpuStreams_.trails.vertexCount > 1 && sceneGpuStreams_.trails.vertexBuffer.buffer != VK_NULL_HANDLE) {
+        const VkBuffer trailBuffer = sceneGpuStreams_.trails.vertexBuffer.buffer;
+        const VkDeviceSize trailOffset = 0;
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trailPipeline_);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineLayout_, 0, 1, &sceneDescriptorSet_, 0, nullptr);
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &trailBuffer, &trailOffset);
+        uint32_t firstVertex = 0;
+        for (uint32_t stripVertexCount : sceneGpuStreams_.trailStripVertexCounts) {
+            if (stripVertexCount >= 2U) {
+                vkCmdDraw(commandBuffer, stripVertexCount, 1, firstVertex, 0);
+                firstVertex += stripVertexCount;
+            }
+        }
+    }
+
+    return true;
+}
+
+void SolarLabVulkanRenderer::DestroyGpuBuffer(GpuBuffer& buffer) {
+    if (device_ == VK_NULL_HANDLE) {
+        buffer = GpuBuffer{};
+        return;
+    }
+    if (buffer.buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, buffer.buffer, nullptr);
+    }
+    if (buffer.memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, buffer.memory, nullptr);
+    }
+    buffer = GpuBuffer{};
+}
+
+void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
+    DestroyGpuBuffer(sceneGpuStreams_.authoritative.vertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerNear.vertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMedium.vertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFar.vertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.trails.vertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.outputVertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer);
+    sceneGpuStreams_ = SceneGpuStreams{};
+    commandBuffersRevision_ = -1;
+}
+
+void SolarLabVulkanRenderer::DestroyGraphicsPipelines() {
+    if (device_ == VK_NULL_HANDLE) {
+        billboardPipeline_ = VK_NULL_HANDLE;
+        mediumPointPipeline_ = VK_NULL_HANDLE;
+        farDensityPipeline_ = VK_NULL_HANDLE;
+        trailPipeline_ = VK_NULL_HANDLE;
+        return;
+    }
+    if (billboardPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, billboardPipeline_, nullptr);
+        billboardPipeline_ = VK_NULL_HANDLE;
+    }
+    if (mediumPointPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, mediumPointPipeline_, nullptr);
+        mediumPointPipeline_ = VK_NULL_HANDLE;
+    }
+    if (farDensityPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, farDensityPipeline_, nullptr);
+        farDensityPipeline_ = VK_NULL_HANDLE;
+    }
+    if (trailPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, trailPipeline_, nullptr);
+        trailPipeline_ = VK_NULL_HANDLE;
+    }
+}
+
+void SolarLabVulkanRenderer::DestroyComputePipelines() {
+    computeCompactionEnabled_ = false;
+    if (device_ == VK_NULL_HANDLE) {
+        mediumComputePipeline_ = VK_NULL_HANDLE;
+        farComputePipeline_ = VK_NULL_HANDLE;
+        return;
+    }
+    if (mediumComputePipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, mediumComputePipeline_, nullptr);
+        mediumComputePipeline_ = VK_NULL_HANDLE;
+    }
+    if (farComputePipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, farComputePipeline_, nullptr);
+        farComputePipeline_ = VK_NULL_HANDLE;
+    }
+}
+
+void SolarLabVulkanRenderer::DestroyDescriptorResources() {
+    DestroyGraphicsPipelines();
+    DestroyComputePipelines();
+    DestroyGpuBuffer(sceneUniformBuffer_);
+
+    if (device_ == VK_NULL_HANDLE) {
+        sceneDescriptorSet_ = VK_NULL_HANDLE;
+        descriptorPool_ = VK_NULL_HANDLE;
+        sceneDescriptorSetLayout_ = VK_NULL_HANDLE;
+        graphicsPipelineLayout_ = VK_NULL_HANDLE;
+        tracerMediumComputeDescriptorSet_ = VK_NULL_HANDLE;
+        tracerFarComputeDescriptorSet_ = VK_NULL_HANDLE;
+        computeDescriptorPool_ = VK_NULL_HANDLE;
+        computeDescriptorSetLayout_ = VK_NULL_HANDLE;
+        computePipelineLayout_ = VK_NULL_HANDLE;
+        return;
+    }
+
+    if (computePipelineLayout_ != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, computePipelineLayout_, nullptr);
+        computePipelineLayout_ = VK_NULL_HANDLE;
+    }
+    if (computeDescriptorPool_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device_, computeDescriptorPool_, nullptr);
+        computeDescriptorPool_ = VK_NULL_HANDLE;
+    }
+    if (computeDescriptorSetLayout_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, computeDescriptorSetLayout_, nullptr);
+        computeDescriptorSetLayout_ = VK_NULL_HANDLE;
+    }
+    tracerMediumComputeDescriptorSet_ = VK_NULL_HANDLE;
+    tracerFarComputeDescriptorSet_ = VK_NULL_HANDLE;
+
+    if (graphicsPipelineLayout_ != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, graphicsPipelineLayout_, nullptr);
+        graphicsPipelineLayout_ = VK_NULL_HANDLE;
+    }
+    if (descriptorPool_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
+        descriptorPool_ = VK_NULL_HANDLE;
+    }
+    if (sceneDescriptorSetLayout_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, sceneDescriptorSetLayout_, nullptr);
+        sceneDescriptorSetLayout_ = VK_NULL_HANDLE;
+    }
+    sceneDescriptorSet_ = VK_NULL_HANDLE;
+}
+
+bool SolarLabVulkanRenderer::EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& buffer) {
+    if (buffer.buffer != VK_NULL_HANDLE && buffer.sizeBytes >= sizeBytes && buffer.usage == usage) {
+        return true;
+    }
+
+    DestroyGpuBuffer(buffer);
+
+    const VkBufferCreateInfo bufferCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .size = sizeBytes,
+        .usage = usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+    if (vkCreateBuffer(device_, &bufferCreateInfo, nullptr, &buffer.buffer) != VK_SUCCESS) {
+        SetError(std::string("vkCreateBuffer failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        return false;
+    }
+
+    VkMemoryRequirements memoryRequirements{};
+    vkGetBufferMemoryRequirements(device_, buffer.buffer, &memoryRequirements);
+
+    const uint32_t memoryTypeIndex = FindMemoryType(
+        memoryRequirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (memoryTypeIndex == UINT32_MAX) {
+        SetError(std::string("No host-visible Vulkan memory type found for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        DestroyGpuBuffer(buffer);
+        return false;
+    }
+
+    const VkMemoryAllocateInfo allocateInfo{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = memoryRequirements.size,
+        .memoryTypeIndex = memoryTypeIndex,
+    };
+    if (vkAllocateMemory(device_, &allocateInfo, nullptr, &buffer.memory) != VK_SUCCESS) {
+        SetError(std::string("vkAllocateMemory failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        DestroyGpuBuffer(buffer);
+        return false;
+    }
+
+    if (vkBindBufferMemory(device_, buffer.buffer, buffer.memory, 0) != VK_SUCCESS) {
+        SetError(std::string("vkBindBufferMemory failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        DestroyGpuBuffer(buffer);
+        return false;
+    }
+
+    buffer.sizeBytes = sizeBytes;
+    buffer.usage = usage;
+    buffer.debugLabel = label;
+    return true;
+}
+
+bool SolarLabVulkanRenderer::UploadBytes(const void* data, size_t sizeBytes, GpuBuffer& buffer) {
+    if (sizeBytes == 0) {
+        return true;
+    }
+    if (buffer.memory == VK_NULL_HANDLE || buffer.sizeBytes < sizeBytes) {
+        SetError("Upload requested for an invalid or undersized Vulkan buffer.");
+        return false;
+    }
+
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, buffer.memory, 0, static_cast<VkDeviceSize>(sizeBytes), 0, &mapped) != VK_SUCCESS || mapped == nullptr) {
+        SetError(std::string("vkMapMemory failed for ") + (buffer.debugLabel != nullptr ? buffer.debugLabel : "unnamed stream") + ".");
+        return false;
+    }
+    std::memcpy(mapped, data, sizeBytes);
+    vkUnmapMemory(device_, buffer.memory);
+    return true;
+}
+
+uint32_t SolarLabVulkanRenderer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const {
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties);
+    for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
+        const bool matchesType = (typeFilter & (1U << index)) != 0U;
+        const bool matchesProperties = (memoryProperties.memoryTypes[index].propertyFlags & properties) == properties;
+        if (matchesType && matchesProperties) {
+            return index;
+        }
+    }
+    return UINT32_MAX;
+}
+
+std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
+    std::ostringstream out;
+    out << "rev=" << uploadStats_.sourceRevision
+        << " A=" << uploadStats_.authoritativeCount
+        << " TN=" << uploadStats_.tracerNearCount
+        << " TM=" << uploadStats_.tracerMediumCount
+        << " TF=" << uploadStats_.tracerFarCount
+        << " TL=" << uploadStats_.trailVertexCount
+        << '/' << uploadStats_.trailStripCount
+        << " bytes=" << uploadStats_.bytesUploaded
+        << " paths=["
+        << DrawPathName(sceneGpuStreams_.authoritative.path) << ','
+        << DrawPathName(sceneGpuStreams_.tracerNear.path) << ','
+        << DrawPathName(sceneGpuStreams_.tracerMedium.path) << ','
+        << DrawPathName(sceneGpuStreams_.tracerFar.path) << ','
+        << DrawPathName(sceneGpuStreams_.trails.path) << ']'
+        << " compute=["
+        << (sceneGpuStreams_.tracerMediumCompute.enabled ? "TM:" : "TM:-")
+        << sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX << ','
+        << (sceneGpuStreams_.tracerFarCompute.enabled ? "TF:" : "TF:-")
+        << sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX << ']'
+        << " gp=["
+        << (billboardPipeline_ != VK_NULL_HANDLE ? "bb" : "--") << ','
+        << (mediumPointPipeline_ != VK_NULL_HANDLE ? "mp" : "--") << ','
+        << (farDensityPipeline_ != VK_NULL_HANDLE ? "fp" : "--") << ','
+        << (trailPipeline_ != VK_NULL_HANDLE ? "tr" : "--") << ']'
+        << " cp=["
+        << (mediumComputePipeline_ != VK_NULL_HANDLE ? "mc" : "--") << ','
+        << (farComputePipeline_ != VK_NULL_HANDLE ? "fc" : "--") << ']';
+    return out.str();
+}
+
+const char* SolarLabVulkanRenderer::DrawPathName(DrawPath path) {
+    switch (path) {
+        case DrawPath::BillboardSprite:
+            return "sprite";
+        case DrawPath::CheapPointSprite:
+            return "cheap-point";
+        case DrawPath::DensityPoint:
+            return "density-point";
+        case DrawPath::ThinLineStrip:
+            return "thin-line";
+        case DrawPath::None:
+        default:
+            return "none";
+    }
+}
+
+bool SolarLabVulkanRenderer::LoadShaderModuleFromAssets(const char* assetPath, VkShaderModule& shaderModule) {
+    shaderModule = VK_NULL_HANDLE;
+    if (assetManager_ == nullptr) {
+        SetError("Cannot load shaders because the AAssetManager is unavailable.");
+        return false;
+    }
+
+    AAsset* asset = AAssetManager_open(assetManager_, assetPath, AASSET_MODE_BUFFER);
+    if (asset == nullptr) {
+        SetError(std::string("Failed to open SPIR-V asset: ") + assetPath);
+        return false;
+    }
+
+    const off_t length = AAsset_getLength(asset);
+    if (length <= 0) {
+        AAsset_close(asset);
+        SetError(std::string("SPIR-V asset was empty: ") + assetPath);
+        return false;
+    }
+    if ((length % 4) != 0) {
+        AAsset_close(asset);
+        SetError(std::string("SPIR-V asset length was not a multiple of 4 bytes: ") + assetPath);
+        return false;
+    }
+
+    std::vector<uint8_t> bytes(static_cast<size_t>(length));
+    const int bytesRead = AAsset_read(asset, bytes.data(), length);
+    AAsset_close(asset);
+    if (bytesRead != length) {
+        SetError(std::string("Failed to fully read SPIR-V asset: ") + assetPath);
+        return false;
+    }
+
+    std::vector<uint32_t> words(bytes.size() / sizeof(uint32_t));
+    std::memcpy(words.data(), bytes.data(), bytes.size());
+
+    const VkShaderModuleCreateInfo createInfo{
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = bytes.size(),
+        .pCode = words.data(),
+    };
+    if (vkCreateShaderModule(device_, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+        SetError(std::string("vkCreateShaderModule failed for asset: ") + assetPath);
+        return false;
+    }
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
+    const char* label,
+    const char* vertexShaderAssetPath,
+    const char* fragmentShaderAssetPath,
+    VkPrimitiveTopology topology,
+    bool additiveBlending,
+    const std::vector<VkVertexInputBindingDescription>& bindings,
+    const std::vector<VkVertexInputAttributeDescription>& attributes,
+    VkPipeline& pipeline) {
+    VkShaderModule vertexShader = VK_NULL_HANDLE;
+    VkShaderModule fragmentShader = VK_NULL_HANDLE;
+    if (!LoadShaderModuleFromAssets(vertexShaderAssetPath, vertexShader)) {
+        return false;
+    }
+    if (!LoadShaderModuleFromAssets(fragmentShaderAssetPath, fragmentShader)) {
+        vkDestroyShaderModule(device_, vertexShader, nullptr);
+        return false;
+    }
+
+    const VkPipelineShaderStageCreateInfo shaderStages[] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vertexShader,
+            .pName = "main",
+            .pSpecializationInfo = nullptr,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = fragmentShader,
+            .pName = "main",
+            .pSpecializationInfo = nullptr,
+        },
+    };
+
+    const VkPipelineVertexInputStateCreateInfo vertexInputState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .vertexBindingDescriptionCount = static_cast<uint32_t>(bindings.size()),
+        .pVertexBindingDescriptions = bindings.data(),
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size()),
+        .pVertexAttributeDescriptions = attributes.data(),
+    };
+
+    const VkPipelineInputAssemblyStateCreateInfo inputAssemblyState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .topology = topology,
+        .primitiveRestartEnable = VK_FALSE,
+    };
+
+    const VkViewport dummyViewport{
+        .x = 0.0f,
+        .y = 0.0f,
+        .width = static_cast<float>(std::max<uint32_t>(swapchainExtent_.width, 1U)),
+        .height = static_cast<float>(std::max<uint32_t>(swapchainExtent_.height, 1U)),
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    };
+    const VkRect2D dummyScissor{
+        .offset = {0, 0},
+        .extent = swapchainExtent_,
+    };
+    const VkPipelineViewportStateCreateInfo viewportState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .viewportCount = 1,
+        .pViewports = &dummyViewport,
+        .scissorCount = 1,
+        .pScissors = &dummyScissor,
+    };
+
+    const VkPipelineRasterizationStateCreateInfo rasterizationState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .depthClampEnable = VK_FALSE,
+        .rasterizerDiscardEnable = VK_FALSE,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_NONE,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .depthBiasEnable = VK_FALSE,
+        .depthBiasConstantFactor = 0.0f,
+        .depthBiasClamp = 0.0f,
+        .depthBiasSlopeFactor = 0.0f,
+        .lineWidth = 1.0f,
+    };
+
+    const VkPipelineMultisampleStateCreateInfo multisampleState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .sampleShadingEnable = VK_FALSE,
+        .minSampleShading = 1.0f,
+        .pSampleMask = nullptr,
+        .alphaToCoverageEnable = VK_FALSE,
+        .alphaToOneEnable = VK_FALSE,
+    };
+
+    const VkStencilOpState emptyStencil{};
+    const VkPipelineDepthStencilStateCreateInfo depthStencilState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .depthTestEnable = VK_FALSE,
+        .depthWriteEnable = VK_FALSE,
+        .depthCompareOp = VK_COMPARE_OP_ALWAYS,
+        .depthBoundsTestEnable = VK_FALSE,
+        .stencilTestEnable = VK_FALSE,
+        .front = emptyStencil,
+        .back = emptyStencil,
+        .minDepthBounds = 0.0f,
+        .maxDepthBounds = 1.0f,
+    };
+
+    const VkPipelineColorBlendAttachmentState colorBlendAttachment{
+        .blendEnable = VK_TRUE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = additiveBlending ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+    };
+
+    const VkPipelineColorBlendStateCreateInfo colorBlendState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .logicOpEnable = VK_FALSE,
+        .logicOp = VK_LOGIC_OP_COPY,
+        .attachmentCount = 1,
+        .pAttachments = &colorBlendAttachment,
+        .blendConstants = {0.0f, 0.0f, 0.0f, 0.0f},
+    };
+
+    const VkDynamicState dynamicStates[] = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR,
+    };
+    const VkPipelineDynamicStateCreateInfo dynamicState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStates)),
+        .pDynamicStates = dynamicStates,
+    };
+
+    const VkGraphicsPipelineCreateInfo pipelineCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .stageCount = 2,
+        .pStages = shaderStages,
+        .pVertexInputState = &vertexInputState,
+        .pInputAssemblyState = &inputAssemblyState,
+        .pTessellationState = nullptr,
+        .pViewportState = &viewportState,
+        .pRasterizationState = &rasterizationState,
+        .pMultisampleState = &multisampleState,
+        .pDepthStencilState = &depthStencilState,
+        .pColorBlendState = &colorBlendState,
+        .pDynamicState = &dynamicState,
+        .layout = graphicsPipelineLayout_,
+        .renderPass = renderPass_,
+        .subpass = 0,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = -1,
+    };
+
+    const VkResult createResult = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline);
+    vkDestroyShaderModule(device_, fragmentShader, nullptr);
+    vkDestroyShaderModule(device_, vertexShader, nullptr);
+
+    if (createResult != VK_SUCCESS) {
+        SetError(std::string("vkCreateGraphicsPipelines failed for ") + label + ".");
+        pipeline = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+
+bool SolarLabVulkanRenderer::CreateComputePipeline(
+    const char* label,
+    const char* computeShaderAssetPath,
+    VkPipeline& pipeline) {
+    VkShaderModule computeShader = VK_NULL_HANDLE;
+    if (!LoadShaderModuleFromAssets(computeShaderAssetPath, computeShader)) {
+        return false;
+    }
+
+    const VkPipelineShaderStageCreateInfo shaderStage{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = computeShader,
+        .pName = "main",
+        .pSpecializationInfo = nullptr,
+    };
+
+    const VkComputePipelineCreateInfo createInfo{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .stage = shaderStage,
+        .layout = computePipelineLayout_,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = -1,
+    };
+
+    const VkResult createResult = vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &createInfo, nullptr, &pipeline);
+    vkDestroyShaderModule(device_, computeShader, nullptr);
+    if (createResult != VK_SUCCESS) {
+        SetError(std::string("vkCreateComputePipelines failed for ") + label + ".");
+        pipeline = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}

@@ -1,0 +1,70 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std140) uniform SceneUniforms {
+    vec4 centerSpan;
+    vec4 metrics;
+    vec4 viewport;
+} uScene;
+
+struct CheapPointVertex {
+    vec2 positionM;
+    uint colorArgb;
+    float sizePx;
+};
+
+layout(set = 0, binding = 1, std430) readonly buffer SourceVertices {
+    CheapPointVertex src[];
+} uSource;
+
+layout(set = 0, binding = 2, std430) writeonly buffer OutputVertices {
+    CheapPointVertex dst[];
+} uOutput;
+
+layout(set = 0, binding = 3, std430) buffer DrawCommandBuffer {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+} uDraw;
+
+layout(push_constant) uniform PushConstants {
+    uint sourceCount;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+} uPush;
+
+bool isInsideExtendedView(vec2 positionM) {
+    vec2 delta = abs(positionM - uScene.centerSpan.xy);
+    vec2 span = max(uScene.centerSpan.zw, vec2(1e-6)) * 1.05;
+    return all(lessThanEqual(delta, span));
+}
+
+uint mediumStrideForZoom() {
+    float zoom = max(uScene.metrics.x / 2.5e8, 1.0);
+    return 1u + uint(clamp(floor(log2(zoom)), 0.0, 4.0));
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= uPush.sourceCount) {
+        return;
+    }
+
+    CheapPointVertex candidate = uSource.src[index];
+    if (!isInsideExtendedView(candidate.positionM)) {
+        return;
+    }
+
+    uint stride = mediumStrideForZoom();
+    if (stride > 1u && (index % stride) != 0u) {
+        return;
+    }
+
+    candidate.sizePx = min(candidate.sizePx + float(stride - 1u) * 0.15, max(uScene.metrics.z, 1.0));
+
+    uint outputIndex = atomicAdd(uDraw.vertexCount, 1u);
+    uOutput.dst[outputIndex] = candidate;
+}
