@@ -1,4 +1,16 @@
 <resources>
     <color name="black">#000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="solar_background">#02070D</color>
+    <color name="solar_overlay_panel">#D8141B25</color>
+    <color name="solar_control_rail">#E0111820</color>
+    <color name="solar_overlay_stroke">#4D8FC7FF</color>
+    <color name="solar_button_fill">#FF223142</color>
+    <color name="solar_button_fill_secondary">#FF1A2734</color>
+    <color name="solar_button_text">#FFF4FBFF</color>
+    <color name="solar_timeline_text">#FF99E1FF</color>
+    <color name="solar_selection_text">#FFFFE8A6</color>
+    <color name="solar_backend_text">#FF9AD7FF</color>
+    <color name="solar_diagnostics_text">#D9F3F8FF</color>
+    <color name="solar_hint_text">#C2D8E4F5</color>
 </resources>

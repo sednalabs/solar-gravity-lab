@@ -1,10 +1,13 @@
 package com.graciousgazelles.solarlab.app
 
 import android.os.Bundle
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import com.graciousgazelles.solarlab.app.databinding.ActivityMainBinding
 import com.graciousgazelles.solarlab.core.math.Vector3d
+import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.CollisionMode
+import com.graciousgazelles.solarlab.core.model.GravitationalRole
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.TimelineMode
 import com.graciousgazelles.solarlab.feature.lab.LabFrame
@@ -14,7 +17,6 @@ import com.graciousgazelles.solarlab.feature.lab.TimelineStatus
 import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListener
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.render.core.ObserverMode
-import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 
 class MainActivity : AppCompatActivity(), LabFrameListener {
@@ -29,6 +31,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var currentCollisionMode: CollisionMode = CollisionMode.MERGE
     private var resumeSimulationOnForeground: Boolean = false
     private var resumeSimulationAfterModalInteraction: Boolean = false
+    private var infoPanelVisible: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -120,17 +123,17 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             updateCollisionButtonText()
         }
 
-        binding.buttonBackend.setOnClickListener {
-            binding.renderHost.cycleBackendPreference()
-            updateBackendButtonText(binding.renderHost.backendPreference())
+        binding.buttonInfoToggle.setOnClickListener {
+            infoPanelVisible = !infoPanelVisible
+            updateInfoPanelVisibility()
         }
 
-        updateBackendButtonText(binding.renderHost.backendPreference())
         updateCollisionButtonText()
         updateTimelineControls(null)
         updateAddButtonText()
         updateSelectedBodySummary()
         updateObserverButtonText()
+        updateInfoPanelVisibility()
 
         session.dispatchCurrentFrame()
         session.start()
@@ -188,7 +191,10 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     private fun onBackendStatusChanged(status: RenderBackendStatus) {
         binding.textBackend.text = status.message
-        updateBackendButtonText(status.requested)
+        if (!status.isHardwareAccelerated && !infoPanelVisible) {
+            infoPanelVisible = true
+            updateInfoPanelVisibility()
+        }
     }
 
     private fun showAddBodyDialog() {
@@ -274,6 +280,10 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     private fun updateSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
+        if (bodyId == null && observerMode != ObserverMode.FREE) {
+            observerMode = ObserverMode.FREE
+            binding.renderHost.setObserverMode(observerMode)
+        }
         binding.renderHost.setSelectedBodyId(bodyId)
         binding.buttonEditBody.isEnabled = bodyId != null && pendingAddDraft == null
         updateSelectedBodySummary()
@@ -306,13 +316,27 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
                 if (body == null) {
                     getString(R.string.selection_none)
                 } else {
-                    buildString {
-                        appendLine("Selected: ${body.name} (${body.category.name.lowercase().replace('_', ' ')})")
-                        appendLine("Mass: ${body.massKg.toEditorString()} kg | Radius: ${body.radiusM.toEditorString()} m")
-                        body.hostBodyId?.let { appendLine("Host: $it") }
-                        appendLine("Pos: [${body.positionM.x.toEditorString()}, ${body.positionM.y.toEditorString()}, ${body.positionM.z.toEditorString()}] m")
-                        append("Vel: [${body.velocityMps.x.toEditorString()}, ${body.velocityMps.y.toEditorString()}, ${body.velocityMps.z.toEditorString()}] m/s")
-                    }
+                    val headline = getString(
+                        R.string.selection_format,
+                        body.name,
+                        prettyCategoryLabel(body.category),
+                    )
+                    val roleLine = body.hostBodyId?.let { hostBodyId ->
+                        getString(
+                            R.string.selection_host_format,
+                            prettyRoleLabel(body.gravitationalRole),
+                            hostBodyId,
+                        )
+                    } ?: prettyRoleLabel(body.gravitationalRole)
+                    val motionLine = getString(
+                        R.string.selection_motion_format,
+                        formatSpeed(body.velocityMps.magnitude()),
+                        getString(
+                            R.string.selection_distance_format,
+                            formatDistance(body.positionM.magnitude()),
+                        ),
+                    )
+                    listOf(headline, roleLine, motionLine).joinToString(separator = "\n")
                 }
             }
         }
@@ -334,21 +358,27 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         return frame.diagnostics.toPrettyString() + "\n" + collisionText
     }
 
-    private fun buildTimelineText(timeline: TimelineStatus): String = buildString {
-        append("Timeline: ")
+    private fun buildTimelineText(timeline: TimelineStatus): String {
         val modeLabel = when (timeline.mode) {
-            TimelineMode.CATALOG -> "catalog"
-            TimelineMode.SANDBOX_BRANCH -> "sandbox"
+            TimelineMode.CATALOG -> getString(R.string.timeline_label_catalog)
+            TimelineMode.SANDBOX_BRANCH -> getString(R.string.timeline_label_sandbox)
         }
-        append(modeLabel)
-        timeline.absoluteJulianDateTdb?.let {
-            append(" | JD(TDB) ")
-            append("%.5f".format(it))
+        return if (timeline.absoluteJulianDateTdb != null) {
+            getString(
+                R.string.timeline_format_with_epoch,
+                modeLabel,
+                timeline.absoluteJulianDateTdb,
+                timeline.playbackSpeed.label,
+                timeline.stepQuantum.label,
+            )
+        } else {
+            getString(
+                R.string.timeline_format_without_epoch,
+                modeLabel,
+                timeline.playbackSpeed.label,
+                timeline.stepQuantum.label,
+            )
         }
-        append(" | Speed ")
-        append(timeline.playbackSpeed.label)
-        append(" | Step ")
-        append(timeline.stepQuantum.label)
     }
 
     private fun prepareForModalInteraction() {
@@ -388,7 +418,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonStepQuantum.isEnabled = pendingAddDraft == null
         binding.buttonSpeedDown.isEnabled = pendingAddDraft == null
         binding.buttonSpeedUp.isEnabled = pendingAddDraft == null
-        binding.buttonFollow.isEnabled = pendingAddDraft == null
+        binding.buttonFollow.isEnabled = pendingAddDraft == null && (selectedBodyId != null || observerMode != ObserverMode.FREE)
         binding.buttonStartPause.text = if (session.isRunning()) {
             getString(R.string.action_pause)
         } else {
@@ -416,18 +446,13 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         }
     }
 
-    private fun updateBackendButtonText(requested: RenderBackend) {
-        binding.buttonBackend.text = when (requested) {
-            RenderBackend.AUTO -> getString(R.string.action_backend_auto)
-            RenderBackend.VULKAN -> getString(R.string.action_backend_vulkan)
-            RenderBackend.OPENGL -> getString(R.string.action_backend_opengl)
-        }
-    }
-
     private fun updateTimelineControls(timeline: TimelineStatus?) {
-        binding.buttonStepQuantum.text = "Step: ${timeline?.stepQuantum?.label ?: session.stepQuantumPreset().label}"
-        binding.buttonSpeedDown.text = "Speed -"
-        binding.buttonSpeedUp.text = "Speed +"
+        binding.buttonStepQuantum.text = getString(
+            R.string.action_step_quantum_format,
+            timeline?.stepQuantum?.label ?: session.stepQuantumPreset().label,
+        )
+        binding.buttonSpeedDown.text = getString(R.string.action_speed_down)
+        binding.buttonSpeedUp.text = getString(R.string.action_speed_up)
         updateObserverButtonText()
         updateSimulationButtons()
     }
@@ -437,6 +462,48 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             ObserverMode.FREE -> getString(R.string.action_observer_free)
             ObserverMode.FOLLOW_SELECTED -> getString(R.string.action_observer_selected)
             ObserverMode.FOLLOW_SELECTED_HOST -> getString(R.string.action_observer_selected_host)
+        }
+    }
+
+    private fun updateInfoPanelVisibility() {
+        binding.panelInfo.visibility = if (infoPanelVisible) View.VISIBLE else View.GONE
+        binding.buttonInfoToggle.text = if (infoPanelVisible) {
+            getString(R.string.action_info_hide)
+        } else {
+            getString(R.string.action_info_show)
+        }
+    }
+
+    private fun prettyCategoryLabel(category: BodyCategory): String = when (category) {
+        BodyCategory.STAR -> "Star"
+        BodyCategory.PLANET -> "Planet"
+        BodyCategory.MOON -> "Moon"
+        BodyCategory.DWARF_PLANET -> "Dwarf planet"
+        BodyCategory.ASTEROID -> "Asteroid"
+        BodyCategory.COMET -> "Comet"
+        BodyCategory.TEST_OBJECT -> "Test object"
+        BodyCategory.PROBE -> "Probe"
+    }
+
+    private fun prettyRoleLabel(role: GravitationalRole): String = when (role) {
+        GravitationalRole.MASSIVE -> "Massive body"
+        GravitationalRole.TRACER -> "Tracer"
+    }
+
+    private fun formatSpeed(speedMps: Double): String = when {
+        speedMps >= 1_000.0 -> "%.1f km/s".format(speedMps / 1_000.0)
+        else -> "%.0f m/s".format(speedMps)
+    }
+
+    private fun formatDistance(distanceM: Double): String = when {
+        distanceM >= 0.01 * PhysicalConstants.ASTRONOMICAL_UNIT_M -> {
+            "%.2f AU".format(distanceM / PhysicalConstants.ASTRONOMICAL_UNIT_M)
+        }
+        distanceM >= 1_000_000.0 -> {
+            "%.0f km".format(distanceM / 1_000.0)
+        }
+        else -> {
+            "%.0f m".format(distanceM)
         }
     }
 

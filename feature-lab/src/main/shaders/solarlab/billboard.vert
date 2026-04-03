@@ -25,18 +25,18 @@ vec4 unpackArgb(uint argb) {
 
 float minimumDiameterForKind(uint kind) {
     if (kind == 0u) {
-        return 6.0;
+        return 8.0;
     }
     if (kind == 1u) {
-        return 4.5;
+        return 5.6;
     }
     if (kind == 2u) {
-        return 3.5;
+        return 4.6;
     }
     if (kind == 5u || kind == 6u) {
-        return 2.0;
+        return 3.2;
     }
-    return 2.5;
+    return 3.4;
 }
 
 vec2 worldToClip(vec2 worldPositionM) {

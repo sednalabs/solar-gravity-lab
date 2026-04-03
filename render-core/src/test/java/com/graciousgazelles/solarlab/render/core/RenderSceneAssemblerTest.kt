@@ -174,6 +174,40 @@ class RenderSceneAssemblerTest {
         assertTrue(firstFrameAfterReset.trails.isEmpty())
     }
 
+    @Test
+    fun assembleTracksMoonAndProbeTrailsToPreserveReadableMotion() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
+        val firstSnapshot = SimulationSnapshot(
+            epochSeconds = 1.0,
+            bodies = listOf(
+                body("earth", GravitationalRole.MASSIVE, BodyCategory.PLANET),
+                body("moon", GravitationalRole.TRACER, BodyCategory.MOON).copy(
+                    hostBodyId = "earth",
+                    positionM = Vector3d(384_400_000.0, 0.0, 0.0),
+                ),
+                body("probe", GravitationalRole.TRACER, BodyCategory.PROBE).copy(
+                    positionM = Vector3d(600_000_000.0, 0.0, 0.0),
+                ),
+            ),
+        )
+        val secondSnapshot = firstSnapshot.copy(
+            epochSeconds = 2.0,
+            bodies = listOf(
+                firstSnapshot.bodies[0].copy(positionM = Vector3d(10_000.0, 0.0, 0.0)),
+                firstSnapshot.bodies[1].copy(positionM = Vector3d(384_450_000.0, 20_000.0, 0.0)),
+                firstSnapshot.bodies[2].copy(positionM = Vector3d(601_000_000.0, 80_000.0, 0.0)),
+            ),
+        )
+
+        val firstFrame = assembler.assemble(firstSnapshot)
+        assertTrue(firstFrame.trails.isEmpty())
+
+        val secondFrame = assembler.assemble(secondSnapshot)
+        val trailIds = secondFrame.trails.map { it.bodyId }.toSet()
+        assertTrue("moon" in trailIds)
+        assertTrue("probe" in trailIds)
+    }
+
     private fun body(id: String, role: GravitationalRole, category: BodyCategory): BodyState = BodyState(
         id = id,
         name = id,
