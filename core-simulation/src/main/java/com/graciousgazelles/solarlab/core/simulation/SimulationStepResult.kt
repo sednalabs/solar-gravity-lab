@@ -6,4 +6,5 @@ data class SimulationStepResult(
     val snapshot: SimulationSnapshot,
     val diagnostics: SystemDiagnostics,
     val collisions: List<CollisionEvent>,
+    val diagnosticsFresh: Boolean = true,
 )

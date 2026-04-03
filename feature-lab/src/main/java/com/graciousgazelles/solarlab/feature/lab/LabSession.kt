@@ -3,6 +3,7 @@ package com.graciousgazelles.solarlab.feature.lab
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
@@ -37,6 +38,8 @@ class LabSession private constructor(
     private var playbackSpeedPreset: PlaybackSpeedPreset = DEFAULT_PLAYBACK_SPEED
     private var stepQuantumPreset: StepQuantumPreset = DEFAULT_STEP_QUANTUM
     private var lastTickNanoTime: Long = 0L
+    private var runningTickCount: Int = 0
+    private val perfSamples = PerfSampleAccumulator()
 
     private var scheduledTask: ScheduledFuture<*>? = null
     private var engine: SimulationEngine = SimulationEngine(defaultScenarioFactory(defaultCatalogEpochJdTdb), config)
@@ -54,6 +57,7 @@ class LabSession private constructor(
         if (running) return
         running = true
         lastTickNanoTime = 0L
+        runningTickCount = 0
         scheduledTask = executor.scheduleAtFixedRate(
             { tick() },
             0L,
@@ -65,6 +69,7 @@ class LabSession private constructor(
     fun pause() {
         running = false
         lastTickNanoTime = 0L
+        runningTickCount = 0
         scheduledTask?.cancel(false)
         scheduledTask = null
     }
@@ -85,8 +90,20 @@ class LabSession private constructor(
 
     fun stepOnce() {
         executor.execute {
-            val result = advanceBySimulationSeconds(stepQuantumPreset.seconds)
-            emitFrame(result.snapshot, result.diagnostics, result.collisions)
+            val advanceStartNs = System.nanoTime()
+            val result = advanceBySimulationSeconds(
+                totalSeconds = stepQuantumPreset.seconds,
+                requestFreshDiagnostics = true,
+            )
+            val advanceDurationNs = System.nanoTime() - advanceStartNs
+            emitFrame(
+                snapshot = result.snapshot,
+                diagnostics = result.diagnostics,
+                diagnosticsFresh = result.diagnosticsFresh,
+                collisions = result.collisions,
+                simulationAdvanceDurationNs = advanceDurationNs,
+                recordPerformanceSample = false,
+            )
         }
     }
 
@@ -118,8 +135,20 @@ class LabSession private constructor(
                 engine.reset(defaultScenarioFactory(targetJd))
                 emitCurrentFrame(emptyList())
             } else if (direction > 0) {
-                val result = advanceBySimulationSeconds(stepQuantumPreset.seconds)
-                emitFrame(result.snapshot, result.diagnostics, result.collisions)
+                val advanceStartNs = System.nanoTime()
+                val result = advanceBySimulationSeconds(
+                    totalSeconds = stepQuantumPreset.seconds,
+                    requestFreshDiagnostics = true,
+                )
+                val advanceDurationNs = System.nanoTime() - advanceStartNs
+                emitFrame(
+                    snapshot = result.snapshot,
+                    diagnostics = result.diagnostics,
+                    diagnosticsFresh = result.diagnosticsFresh,
+                    collisions = result.collisions,
+                    simulationAdvanceDurationNs = advanceDurationNs,
+                    recordPerformanceSample = false,
+                )
             } else {
                 emitCurrentFrame(emptyList())
             }
@@ -191,36 +220,75 @@ class LabSession private constructor(
         lastTickNanoTime = now
         val simDeltaSeconds = realDeltaSeconds * playbackSpeedPreset.simSecondsPerRealSecond
         if (simDeltaSeconds <= 0.0) return
-        val result = advanceBySimulationSeconds(simDeltaSeconds)
-        emitFrame(result.snapshot, result.diagnostics, result.collisions)
+        val requestFreshDiagnostics = shouldRefreshDiagnosticsForRunningTick()
+        val advanceStartNs = System.nanoTime()
+        val result = advanceBySimulationSeconds(
+            totalSeconds = simDeltaSeconds,
+            requestFreshDiagnostics = requestFreshDiagnostics,
+        )
+        val advanceDurationNs = System.nanoTime() - advanceStartNs
+        emitFrame(
+            snapshot = result.snapshot,
+            diagnostics = result.diagnostics,
+            diagnosticsFresh = result.diagnosticsFresh,
+            collisions = result.collisions,
+            simulationAdvanceDurationNs = advanceDurationNs,
+            recordPerformanceSample = true,
+        )
     }
 
-    private fun advanceBySimulationSeconds(totalSeconds: Double): com.graciousgazelles.solarlab.core.simulation.SimulationStepResult {
+    private fun advanceBySimulationSeconds(
+        totalSeconds: Double,
+        requestFreshDiagnostics: Boolean,
+    ): com.graciousgazelles.solarlab.core.simulation.SimulationStepResult {
         var remaining = totalSeconds
         var latestResult = com.graciousgazelles.solarlab.core.simulation.SimulationStepResult(
             snapshot = engine.snapshot(),
-            diagnostics = engine.diagnostics(),
+            diagnostics = engine.diagnostics(forceRecompute = false),
             collisions = emptyList(),
+            diagnosticsFresh = true,
         )
         val allCollisions = mutableListOf<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>()
         while (remaining > 0.0) {
             val substep = remaining.coerceAtMost(MAX_SIMULATION_SUBSTEP_SECONDS)
-            latestResult = engine.step(substep)
+            val isFinalSubstep = (remaining - substep) <= SUBSTEP_EPSILON_SECONDS
+            val recomputeDiagnostics = requestFreshDiagnostics && isFinalSubstep
+            latestResult = engine.step(
+                deltaTimeSeconds = substep,
+                recomputeDiagnostics = recomputeDiagnostics,
+            )
             allCollisions += latestResult.collisions
             remaining -= substep
+        }
+        if (allCollisions.isNotEmpty() && !latestResult.diagnosticsFresh) {
+            latestResult = latestResult.copy(
+                diagnostics = engine.diagnostics(forceRecompute = true),
+                diagnosticsFresh = true,
+            )
         }
         return latestResult.copy(collisions = allCollisions)
     }
 
     private fun emitCurrentFrame(collisions: List<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>) {
-        emitFrame(engine.snapshot(), engine.diagnostics(), collisions)
+        emitFrame(
+            snapshot = engine.snapshot(),
+            diagnostics = engine.diagnostics(),
+            diagnosticsFresh = true,
+            collisions = collisions,
+            simulationAdvanceDurationNs = 0L,
+            recordPerformanceSample = false,
+        )
     }
 
     private fun emitFrame(
         snapshot: SimulationSnapshot,
         diagnostics: com.graciousgazelles.solarlab.core.simulation.SystemDiagnostics,
+        diagnosticsFresh: Boolean,
         collisions: List<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>,
+        simulationAdvanceDurationNs: Long,
+        recordPerformanceSample: Boolean,
     ) {
+        val frameBuildStartNs = System.nanoTime()
         if (snapshot.isCatalogBacked) {
             latestCatalogCheckpoint = snapshot
         }
@@ -228,6 +296,7 @@ class LabSession private constructor(
         val frame = LabFrame(
             snapshot = snapshot,
             diagnostics = diagnostics,
+            diagnosticsFresh = diagnosticsFresh,
             collisions = collisions,
             timeline = TimelineStatus(
                 mode = snapshot.timelineMode,
@@ -239,15 +308,84 @@ class LabSession private constructor(
                 canStepBackward = backControlAction != BackControlAction.None,
             ),
         )
+        val frameBuildDurationNs = System.nanoTime() - frameBuildStartNs
+        val handoffStartNs = System.nanoTime()
         mainHandler.post {
+            if (recordPerformanceSample) {
+                val handoffLatencyNs = System.nanoTime() - handoffStartNs
+                val perfSummary = perfSamples.record(
+                    simulationAdvanceDurationNs = simulationAdvanceDurationNs,
+                    frameBuildDurationNs = frameBuildDurationNs,
+                    handoffLatencyNs = handoffLatencyNs,
+                )
+                if (perfSummary != null) {
+                    Log.i(TAG, perfSummary)
+                }
+            }
             listener.onLabFrame(frame)
         }
     }
 
+    private fun shouldRefreshDiagnosticsForRunningTick(): Boolean {
+        runningTickCount += 1
+        return (runningTickCount % RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS) == 0
+    }
+
+    private class PerfSampleAccumulator {
+        private var sampleCount: Int = 0
+        private var simulationAdvanceTotalNs: Long = 0L
+        private var frameBuildTotalNs: Long = 0L
+        private var handoffLatencyTotalNs: Long = 0L
+        private var simulationAdvanceMaxNs: Long = 0L
+        private var frameBuildMaxNs: Long = 0L
+        private var handoffLatencyMaxNs: Long = 0L
+
+        fun record(
+            simulationAdvanceDurationNs: Long,
+            frameBuildDurationNs: Long,
+            handoffLatencyNs: Long,
+        ): String? {
+            sampleCount += 1
+            simulationAdvanceTotalNs += simulationAdvanceDurationNs
+            frameBuildTotalNs += frameBuildDurationNs
+            handoffLatencyTotalNs += handoffLatencyNs
+            simulationAdvanceMaxNs = maxOf(simulationAdvanceMaxNs, simulationAdvanceDurationNs)
+            frameBuildMaxNs = maxOf(frameBuildMaxNs, frameBuildDurationNs)
+            handoffLatencyMaxNs = maxOf(handoffLatencyMaxNs, handoffLatencyNs)
+            if (sampleCount < PERF_LOG_SAMPLE_WINDOW_FRAMES) {
+                return null
+            }
+            val summary = "PerfStats window=$sampleCount " +
+                "simAvgMs=${toMillis(simulationAdvanceTotalNs, sampleCount)} simMaxMs=${toMillis(simulationAdvanceMaxNs)} " +
+                "buildAvgMs=${toMillis(frameBuildTotalNs, sampleCount)} buildMaxMs=${toMillis(frameBuildMaxNs)} " +
+                "handoffAvgMs=${toMillis(handoffLatencyTotalNs, sampleCount)} handoffMaxMs=${toMillis(handoffLatencyMaxNs)}"
+            reset()
+            return summary
+        }
+
+        private fun reset() {
+            sampleCount = 0
+            simulationAdvanceTotalNs = 0L
+            frameBuildTotalNs = 0L
+            handoffLatencyTotalNs = 0L
+            simulationAdvanceMaxNs = 0L
+            frameBuildMaxNs = 0L
+            handoffLatencyMaxNs = 0L
+        }
+
+        private fun toMillis(nanoseconds: Long): String = "%.3f".format(nanoseconds / 1_000_000.0)
+
+        private fun toMillis(totalNanoseconds: Long, count: Int): String = "%.3f".format((totalNanoseconds / count.toDouble()) / 1_000_000.0)
+    }
+
     companion object {
+        private const val TAG: String = "LabSessionPerf"
         private const val FRAME_PERIOD_MS: Long = 16L
         private const val MAX_REAL_DELTA_SECONDS: Double = 0.25
         private const val MAX_SIMULATION_SUBSTEP_SECONDS: Double = 3600.0
+        private const val RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS: Int = 4
+        private const val PERF_LOG_SAMPLE_WINDOW_FRAMES: Int = 120
+        private const val SUBSTEP_EPSILON_SECONDS: Double = 1.0e-9
         private val DEFAULT_PLAYBACK_SPEED: PlaybackSpeedPreset = PlaybackSpeedPreset.SIX_HOURS_PER_SECOND
         private val DEFAULT_STEP_QUANTUM: StepQuantumPreset = StepQuantumPreset.SIX_HOURS
 

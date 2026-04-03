@@ -7,6 +7,7 @@ import com.graciousgazelles.solarlab.core.simulation.SystemDiagnostics
 data class LabFrame(
     val snapshot: SimulationSnapshot,
     val diagnostics: SystemDiagnostics,
+    val diagnosticsFresh: Boolean,
     val collisions: List<CollisionEvent>,
     val timeline: TimelineStatus,
 )

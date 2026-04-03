@@ -360,8 +360,15 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     }
 
     private fun buildDiagnosticsText(frame: LabFrame): String {
+        val diagnosticsText = buildString {
+            if (!frame.diagnosticsFresh) {
+                append(getString(R.string.diagnostics_cached_notice))
+                append('\n')
+            }
+            append(frame.diagnostics.toPrettyString())
+        }
         if (frame.collisions.isEmpty()) {
-            return frame.diagnostics.toPrettyString()
+            return diagnosticsText
         }
         val collisionText = frame.collisions.joinToString(separator = "\n") { collision ->
             when (collision.collisionMode) {
@@ -371,7 +378,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
                 CollisionMode.NONE -> "Collision: ${collision.primaryBodyId} / ${collision.secondaryBodyId}"
             }
         }
-        return frame.diagnostics.toPrettyString() + "\n" + collisionText
+        return diagnosticsText + "\n" + collisionText
     }
 
     private fun buildTimelineText(timeline: TimelineStatus): String {

@@ -25,6 +25,8 @@ class SimulationEngine(
     private var provenanceLabel: String? = initialSnapshot.provenanceLabel
     private var provenanceSource: String? = initialSnapshot.provenanceSource
     private var bodies: MutableList<MutableBody> = initialSnapshot.bodies.map(MutableBody::fromState).toMutableList()
+    private var diagnosticsCache: SystemDiagnostics = computeDiagnostics()
+    private var diagnosticsDirty: Boolean = false
 
     fun snapshot(): SimulationSnapshot = SimulationSnapshot(
         epochSeconds = epochSeconds,
@@ -35,7 +37,13 @@ class SimulationEngine(
         provenanceSource = provenanceSource,
     )
 
-    fun diagnostics(): SystemDiagnostics = computeDiagnostics()
+    fun diagnostics(forceRecompute: Boolean = true): SystemDiagnostics {
+        if (forceRecompute) {
+            diagnosticsCache = computeDiagnostics()
+            diagnosticsDirty = false
+        }
+        return diagnosticsCache
+    }
 
     fun reset(snapshot: SimulationSnapshot) {
         epochSeconds = snapshot.epochSeconds
@@ -44,6 +52,7 @@ class SimulationEngine(
         provenanceLabel = snapshot.provenanceLabel
         provenanceSource = snapshot.provenanceSource
         bodies = snapshot.bodies.map(MutableBody::fromState).toMutableList()
+        markDiagnosticsDirty()
     }
 
     fun body(bodyId: String): BodyState? = bodies.firstOrNull { it.id == bodyId }?.toState()
@@ -51,6 +60,7 @@ class SimulationEngine(
     fun addBody(body: BodyState) {
         markSandboxBranch("User-edited sandbox", "local-edit")
         bodies += MutableBody.fromState(body)
+        markDiagnosticsDirty()
     }
 
     fun updateBody(body: BodyState): Boolean {
@@ -58,6 +68,7 @@ class SimulationEngine(
         if (index < 0) return false
         markSandboxBranch("User-edited sandbox", "local-edit")
         bodies[index] = MutableBody.fromState(body)
+        markDiagnosticsDirty()
         return true
     }
 
@@ -66,18 +77,25 @@ class SimulationEngine(
         if (index < 0) return false
         markSandboxBranch("User-edited sandbox", "local-edit")
         bodies.removeAt(index)
+        markDiagnosticsDirty()
         return true
     }
 
-    fun step(deltaTimeSeconds: Double): SimulationStepResult {
+    fun step(
+        deltaTimeSeconds: Double,
+        recomputeDiagnostics: Boolean = true,
+    ): SimulationStepResult {
         require(deltaTimeSeconds > 0.0) { "deltaTimeSeconds must be > 0" }
 
         if (bodies.isEmpty()) {
             epochSeconds += deltaTimeSeconds
+            markDiagnosticsDirty()
+            val diagnostics = diagnostics(forceRecompute = recomputeDiagnostics)
             return SimulationStepResult(
                 snapshot = snapshot(),
-                diagnostics = computeDiagnostics(),
+                diagnostics = diagnostics,
                 collisions = emptyList(),
+                diagnosticsFresh = !diagnosticsDirty,
             )
         }
 
@@ -111,11 +129,14 @@ class SimulationEngine(
         if (collisions.isNotEmpty()) {
             markSandboxBranch("Collision-evolved sandbox", "collision")
         }
+        markDiagnosticsDirty()
+        val diagnostics = diagnostics(forceRecompute = recomputeDiagnostics)
 
         return SimulationStepResult(
             snapshot = snapshot(),
-            diagnostics = computeDiagnostics(),
+            diagnostics = diagnostics,
             collisions = collisions,
+            diagnosticsFresh = !diagnosticsDirty,
         )
     }
 
@@ -667,6 +688,10 @@ class SimulationEngine(
         }
         provenanceLabel = label
         provenanceSource = source
+    }
+
+    private fun markDiagnosticsDirty() {
+        diagnosticsDirty = true
     }
 
     private data class CollisionCandidate(
