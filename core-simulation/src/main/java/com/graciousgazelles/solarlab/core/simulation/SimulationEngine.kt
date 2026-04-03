@@ -143,29 +143,60 @@ class SimulationEngine(
     private fun computeAccelerations(): List<Vector3d> {
         if (bodies.isEmpty()) return emptyList()
 
+        val bodyCount = bodies.size
+        val gravitationalConstant = config.gravitationalConstant
         val softeningSquared = config.softeningLengthM * config.softeningLengthM
-        val accelerations = MutableList(bodies.size) { Vector3d.ZERO }
-        val massiveIndices = bodies.indices.filter { bodies[it].gravitationalRole == GravitationalRole.MASSIVE }
+        val accelerations = MutableList(bodyCount) { Vector3d.ZERO }
+        val massiveCount = bodies.count { it.gravitationalRole == GravitationalRole.MASSIVE }
+        if (massiveCount == 0) return accelerations
 
-        for (i in bodies.indices) {
+        val sourceIndices = IntArray(massiveCount)
+        val sourceMasses = DoubleArray(massiveCount)
+        val sourcePosX = DoubleArray(massiveCount)
+        val sourcePosY = DoubleArray(massiveCount)
+        val sourcePosZ = DoubleArray(massiveCount)
+        var sourceCursor = 0
+        for (bodyIndex in 0 until bodyCount) {
+            val sourceBody = bodies[bodyIndex]
+            if (sourceBody.gravitationalRole != GravitationalRole.MASSIVE) continue
+
+            sourceIndices[sourceCursor] = bodyIndex
+            sourceMasses[sourceCursor] = sourceBody.massKg
+            sourcePosX[sourceCursor] = sourceBody.positionM.x
+            sourcePosY[sourceCursor] = sourceBody.positionM.y
+            sourcePosZ[sourceCursor] = sourceBody.positionM.z
+            sourceCursor += 1
+        }
+
+        for (i in 0 until bodyCount) {
             val body = bodies[i]
-            var acceleration = Vector3d.ZERO
+            val bodyPosition = body.positionM
+            val bodyX = bodyPosition.x
+            val bodyY = bodyPosition.y
+            val bodyZ = bodyPosition.z
+            var accelerationX = 0.0
+            var accelerationY = 0.0
+            var accelerationZ = 0.0
 
-            for (j in massiveIndices) {
-                if (i == j) continue
-                val sourceBody = bodies[j]
-                val delta = sourceBody.positionM - body.positionM
-                val distanceSquared = delta.magnitudeSquared() + softeningSquared
+            for (sourceIndex in 0 until massiveCount) {
+                if (sourceIndices[sourceIndex] == i) continue
+
+                val dx = sourcePosX[sourceIndex] - bodyX
+                val dy = sourcePosY[sourceIndex] - bodyY
+                val dz = sourcePosZ[sourceIndex] - bodyZ
+                val distanceSquared = (dx * dx) + (dy * dy) + (dz * dz) + softeningSquared
                 if (distanceSquared == 0.0) continue
 
                 val invDistance = 1.0 / sqrt(distanceSquared)
                 val invDistanceCubed = invDistance * invDistance * invDistance
-                val sourceMass = sourceBody.massKg
-                val contribution = delta * (config.gravitationalConstant * sourceMass * invDistanceCubed)
-                acceleration += contribution
+                val scale = gravitationalConstant * sourceMasses[sourceIndex] * invDistanceCubed
+
+                accelerationX += dx * scale
+                accelerationY += dy * scale
+                accelerationZ += dz * scale
             }
 
-            accelerations[i] = acceleration
+            accelerations[i] = Vector3d(accelerationX, accelerationY, accelerationZ)
         }
 
         return accelerations
