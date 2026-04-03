@@ -7,7 +7,11 @@ default_url='https://services.gradle.org/distributions/gradle-8.13-bin.zip'
 
 dist_url="$default_url"
 if [[ -f "$wrapper_props" ]]; then
-  parsed_url="$(sed -n 's/^distributionUrl=//p' "$wrapper_props" | tail -n 1)"
+  parsed_url="$(
+    sed -n 's/^[[:space:]]*distributionUrl[[:space:]]*=[[:space:]]*//p' "$wrapper_props" |
+      tr -d '\r' |
+      tail -n 1
+  )"
   if [[ -n "$parsed_url" ]]; then
     dist_url="${parsed_url//\\:/:}"
   fi
@@ -22,7 +26,7 @@ mkdir -p "$install_root" "$extract_root"
 
 if [[ ! -f "$archive_path" ]]; then
   echo "Downloading ${dist_url}" >&2
-  curl -fsSL "$dist_url" -o "$archive_path"
+  curl -fsSL --retry 3 --retry-connrefused "$dist_url" -o "$archive_path"
 fi
 
 gradle_home="$(find "$extract_root" -maxdepth 1 -mindepth 1 -type d -name 'gradle-*' | sort | tail -n 1 || true)"
