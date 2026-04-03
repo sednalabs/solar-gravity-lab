@@ -7,7 +7,7 @@ to stay honest about what is actually being shipped.
 
 ### Internal dev preview
 
-- Version line: `0.1.0-alpha.2`
+- Version line: `0.1.0-alpha.3`
 - Android build type: `prerelease`
 - Base application id: `com.sednalabs.solarlab`
 - Package id suffix: `.internal`
@@ -15,7 +15,7 @@ to stay honest about what is actually being shipped.
 - Signing: default debug key
 - Intended use: sideloaded device testing and internal review
 
-This is the first installable phone build channel, but it is not a public
+This is the current installable phone build channel, but it is not a public
 production release. It is best thought of as an internal dev preview that uses
 conservative semver prerelease numbering instead of a polished launch label.
 

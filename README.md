@@ -10,7 +10,7 @@ The architecture is split on purpose:
 
 The public name is **Solar Gravity Lab**. Some internal package/module names still use `solarlab` for historical reasons.
 
-## Current status (snapshot: April 3, 2026)
+## Current status (snapshot: April 4, 2026)
 
 This repository is an active engineering scaffold, not a finished app release.
 
@@ -23,7 +23,10 @@ What is implemented and usable today:
 - Continuous collision handling with merge and elastic response modes.
 - Barycentric recentering for seeded systems.
 - Epoch-tagged seeded major-planet states with bundle/fallback layering.
+- Bundled authoritative Horizons seed data for the seeded major-body baseline.
+- Shipped runtime catalog packs for planetary moons and curated small bodies.
 - Catalog-backed timeline semantics for seeded starts, with sandbox-branch behavior once the user edits or materially diverges the system.
+- Deterministic physics-accuracy telemetry artifacts through the remote validation lane.
 - Granular playback-speed and step-quantum controls.
 - Renderer host that prefers Vulkan and falls back to OpenGL ES when needed.
 - Native Vulkan pipeline with swapchain/render-pass/framebuffer/command recording, scene-packet ingestion, SPIR-V graphics pipelines, and compute-based medium/far tracer compaction.
@@ -32,8 +35,6 @@ What is implemented and usable today:
 
 What is intentionally incomplete:
 
-- No bundled, authoritative DE/Horizons seed file in this repo yet (seed-bundle path exists; fallback catalogue is used when no bundle is present).
-- Moon/small-body catalog loaders and template assets are present, but the repo does not yet ship live packaged catalog TSVs under the runtime filenames the loaders expect.
 - GPU-side tracer integration is not implemented yet (simulation remains authoritative on CPU).
 - Synthetic asteroid/Oort populations are generated approximations, not catalogue-complete object sets.
 - Backward time travel for sandbox-diverged runs is not implemented yet; reverse stepping is currently reset/catalog-rebuild only.
@@ -126,7 +127,7 @@ This repo currently relies on a remote-first validation workflow documented in [
 Important current notes:
 
 - `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
-- The current installable preview line uses version `0.1.0-alpha.2`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
+- The current installable preview line uses version `0.1.0-alpha.3`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
 - Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
 
 If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md), [`docs/catalog-ingest-handoff.md`](docs/catalog-ingest-handoff.md), and [`docs/release-channels.md`](docs/release-channels.md).
@@ -140,10 +141,10 @@ If you want broader implementation context, see [`docs/architecture.md`](docs/ar
 
 ## Near-term milestones
 
-1. Add and validate a first authoritative Horizons/DE-style seed bundle asset.
-2. Package real moon and curated small-body catalog TSVs behind the existing loader/parser path.
+1. Promote sandbox rewind/checkpoint support onto `main` so seeded vs diverged timeline control is more usable on-device.
+2. Add collision fragmentation semantics beyond merge and elastic response.
 3. Complete the next Vulkan compute milestones (including GPU-side tracer integration).
-4. Keep the pure JVM core green as the baseline while expanding Android validation coverage.
+4. Expand the physics-accuracy telemetry scenarios and tighten its acceptance thresholds as mechanics evolve.
 5. Improve interaction UX further without weakening simulation correctness, especially around observer modes and sandbox rewind.
 
 ## Non-goals for this phase
