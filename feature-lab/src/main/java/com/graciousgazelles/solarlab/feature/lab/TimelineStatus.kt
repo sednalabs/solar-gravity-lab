@@ -9,5 +9,6 @@ data class TimelineStatus(
     val playbackSpeed: PlaybackSpeedPreset,
     val stepQuantum: StepQuantumPreset,
     val canJumpAbsolute: Boolean,
+    // True when Back has a valid action (catalog step or sandbox checkpoint restore).
     val canStepBackward: Boolean,
 )
