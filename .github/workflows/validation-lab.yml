@@ -25,6 +25,7 @@ on:
           - auto
           - bootstrap
           - core-jvm
+          - physics-accuracy
           - android-host
           - full
         default: auto
@@ -52,6 +53,7 @@ jobs:
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       core_jvm: ${{ steps.plan.outputs.core_jvm }}
       android_assemble: ${{ steps.plan.outputs.android_assemble }}
+      physics_accuracy_telemetry: ${{ steps.plan.outputs.physics_accuracy_telemetry }}
       lane_summary: ${{ steps.plan.outputs.lane_summary }}
     steps:
       - name: Compute active lanes
@@ -72,6 +74,7 @@ jobs:
           wrapper_bootstrap='false'
           core_jvm='false'
           android_assemble='false'
+          physics_accuracy_telemetry='false'
           profile_intent='targeted'
           profile_notes='One active slice only; use this to prove the current seam before widening.'
 
@@ -107,11 +110,15 @@ jobs:
             core-jvm)
               core_jvm='true'
               ;;
+            physics-accuracy)
+              physics_accuracy_telemetry='true'
+              ;;
             android-host)
               android_assemble='true'
               ;;
             full)
               core_jvm='true'
+              physics_accuracy_telemetry='true'
               android_assemble='true'
               ;;
             *)
@@ -124,8 +131,8 @@ jobs:
             wrapper_bootstrap='true'
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, core_jvm=%s, android_assemble=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$core_jvm" "$android_assemble")"
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, core_jvm=%s, physics_accuracy_telemetry=%s, android_assemble=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$core_jvm" "$physics_accuracy_telemetry" "$android_assemble")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
@@ -133,6 +140,7 @@ jobs:
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "core_jvm=${core_jvm}" >> "$GITHUB_OUTPUT"
           echo "android_assemble=${android_assemble}" >> "$GITHUB_OUTPUT"
+          echo "physics_accuracy_telemetry=${physics_accuracy_telemetry}" >> "$GITHUB_OUTPUT"
           echo "lane_summary=${lane_summary}" >> "$GITHUB_OUTPUT"
 
   wrapper-bootstrap:
@@ -249,6 +257,45 @@ jobs:
             **/build/reports/tests/test/**
             **/build/test-results/test/**
 
+  physics-accuracy-telemetry:
+    name: Physics accuracy telemetry
+    needs: metadata
+    if: ${{ needs.metadata.outputs.physics_accuracy_telemetry == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup standalone Gradle
+        shell: bash
+        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
+
+      - name: Run telemetry tests and generate physics-accuracy report artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${STANDALONE_GRADLE}" --no-daemon \
+            :core-simulation:test --tests com.graciousgazelles.solarlab.core.simulation.PhysicsAccuracyTelemetryReportGeneratorTest \
+            :core-simulation:generatePhysicsAccuracyTelemetryReport
+
+      - name: Upload physics telemetry artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physics-accuracy-telemetry-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            core-simulation/build/reports/physics-accuracy/**
+            core-simulation/build/reports/tests/test/**
+            core-simulation/build/test-results/test/**
+
   android-assemble:
     name: Android assemble debug
     needs: metadata
@@ -310,6 +357,7 @@ jobs:
       - metadata
       - wrapper-bootstrap
       - core-jvm
+      - physics-accuracy-telemetry
       - android-assemble
     if: ${{ always() }}
     runs-on: ubuntu-24.04
@@ -327,5 +375,6 @@ jobs:
             echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
             echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
             echo "- core-jvm: \`${{ needs['core-jvm'].result }}\`"
+            echo "- physics-accuracy-telemetry: \`${{ needs['physics-accuracy-telemetry'].result }}\`"
             echo "- android-assemble: \`${{ needs['android-assemble'].result }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

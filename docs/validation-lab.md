@@ -16,7 +16,7 @@ Workflow file:
 - `.github/workflows/validation-lab.yml`
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 
-The workflow currently supports three lane families:
+The workflow currently supports four lane families:
 
 1. `wrapper-bootstrap`
    Generates `gradle/wrapper/gradle-wrapper.jar` remotely from the distribution
@@ -25,7 +25,11 @@ The workflow currently supports three lane families:
 2. `core-jvm`
    Runs `check` for the pure JVM modules:
    `core-math`, `core-model`, `core-simulation`, and `render-core`.
-3. `android-assemble`
+3. `physics-accuracy-telemetry`
+   Runs focused JVM tests for deterministic report generation and writes
+   physics-accuracy telemetry artifacts (JSON + Markdown) under
+   `core-simulation/build/reports/physics-accuracy/`.
+4. `android-assemble`
    Installs Android SDK/NDK/CMake packages on a GitHub-hosted Ubuntu runner and
    attempts `:app:assembleDebug`.
 
@@ -56,10 +60,24 @@ seam, and avoid rerunning wrapper bootstrap unless you explicitly ask for it.
   Run only wrapper generation.
 - `core-jvm`
   Run only the pure JVM checks.
+- `physics-accuracy`
+  Run only the deterministic physics-accuracy telemetry/report path.
 - `android-host`
   Run only Android assembly.
 - `full`
   Run all currently-defined lanes.
+
+## Physics telemetry dispatch
+
+Use the explicit lane when you need the first artifact-based physics-accuracy
+evidence slice without widening to Android work:
+
+- `profile=targeted`
+- `lane_set=physics-accuracy`
+
+This path intentionally does not change `lane_set=auto` semantics. `auto`
+continues to select the trusted baseline for each profile, while
+`physics-accuracy` is an explicit opt-in telemetry run.
 
 ## Wrapper generation
 
