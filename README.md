@@ -100,6 +100,13 @@ branches can offload bootstrap work, targeted JVM slices, frontier-style next
 blocker harvests, and broader Android checkpoints without burning local host
 compute.
 
+For phone testing, use `.github/workflows/prerelease-apk.yml` to build an
+installable `prerelease` APK artifact on GitHub Actions. That path is meant for
+ultra-alpha sideloading only: it uses the application id
+`com.graciousgazelles.solarlab.alpha` and is signed with the default debug key,
+so it is appropriate for device testing but not for a public production
+release.
+
 For contributors, the most reliable near-term validation target is the pure JVM core:
 
 - `core-math`
@@ -109,9 +116,10 @@ For contributors, the most reliable near-term validation target is the pure JVM 
 
 This repo currently relies on a remote-first validation workflow documented in [`docs/validation-lab.md`](docs/validation-lab.md).
 
-Important current note:
+Important current notes:
 
 - `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
+- The first formal preview line uses version `0.1.0-alpha.1`. That is intentionally conservative semver-style prerelease numbering rather than a public “1.0” style launch signal.
 
 If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md).
 

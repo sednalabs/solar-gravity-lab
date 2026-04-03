@@ -11,8 +11,8 @@ android {
         applicationId = "com.graciousgazelles.solarlab"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0-core"
+        versionCode = 2
+        versionName = "0.1.0-alpha.1"
     }
 
     buildTypes {
@@ -22,6 +22,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+
+        create("prerelease") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            applicationIdSuffix = ".alpha"
+            signingConfig = signingConfigs.getByName("debug")
+            resValue("string", "app_name", "Solar Gravity Lab Ultra Alpha")
         }
     }
 

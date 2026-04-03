@@ -1,0 +1,114 @@
+name: prerelease-apk
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to package
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-prerelease-apk:
+    name: Build installable prerelease APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses and install build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.2.12479018"
+
+      - name: Assemble prerelease APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon :app:assemblePrerelease
+
+      - name: Derive artifact metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          metadata = json.loads(
+              Path("app/build/outputs/apk/prerelease/output-metadata.json").read_text()
+          )
+          element = metadata["elements"][0]
+          version_name = element["versionName"]
+          safe_version = "".join(
+              ch if ch.isalnum() or ch in "._-" else "-"
+              for ch in version_name
+          )
+
+          print(f"apk_name={element['outputFile']}")
+          print(f"version_code={element['versionCode']}")
+          print(f"version_name={version_name}")
+          print(f"safe_version={safe_version}")
+          PY
+
+      - name: Stage packaged artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          artifact_name="solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-ultra-alpha.apk"
+          cp \
+            "app/build/outputs/apk/prerelease/${{ steps.meta.outputs.apk_name }}" \
+            "dist/${artifact_name}"
+          sha256sum "dist/${artifact_name}" > "dist/${artifact_name}.sha256"
+
+      - name: Upload prerelease APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-ultra-alpha-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            dist/*.apk
+            dist/*.sha256
+            app/build/outputs/apk/prerelease/output-metadata.json
+
+      - name: Emit summary
+        shell: bash
+        run: |
+          {
+            echo "## prerelease-apk"
+            echo
+            echo "- ref: \`${{ inputs.ref != '' && inputs.ref || github.ref_name }}\`"
+            echo "- version: \`${{ steps.meta.outputs.version_name }}\`"
+            echo "- versionCode: \`${{ steps.meta.outputs.version_code }}\`"
+            echo "- build type: \`prerelease\`"
+            echo "- package id: \`com.graciousgazelles.solarlab.alpha\`"
+            echo "- signing: debug key for sideload testing only"
+            echo "- artifact: \`solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-ultra-alpha.apk\`"
+          } >> "$GITHUB_STEP_SUMMARY"

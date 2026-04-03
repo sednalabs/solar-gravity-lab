@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">SolarLab</string>
+    <string name="app_name">Solar Gravity Lab</string>
     <string name="action_start">Start</string>
     <string name="action_pause">Pause</string>
     <string name="action_step">Step</string>
