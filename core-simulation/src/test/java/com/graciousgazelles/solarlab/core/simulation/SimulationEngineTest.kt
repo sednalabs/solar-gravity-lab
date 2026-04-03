@@ -171,6 +171,52 @@ class SimulationEngineTest {
     }
 
     @Test
+    fun `colliding bodies fragment with conserved mass and momentum`() {
+        val a = BodyState(
+            id = "a",
+            name = "A",
+            category = BodyCategory.TEST_OBJECT,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 10.0,
+            radiusM = 5.0,
+            densityKgPerM3 = DensityPreset.ROCKY_KG_PER_M3,
+            positionM = Vector3d(-4.0, 0.0, 0.0),
+            velocityMps = Vector3d(1.0, 0.0, 0.0),
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+        val b = BodyState(
+            id = "b",
+            name = "B",
+            category = BodyCategory.TEST_OBJECT,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 20.0,
+            radiusM = 5.0,
+            densityKgPerM3 = DensityPreset.ROCKY_KG_PER_M3,
+            positionM = Vector3d(4.0, 0.0, 0.0),
+            velocityMps = Vector3d(-1.0, 0.0, 0.0),
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+
+        val initialMomentumX = (a.massKg * a.velocityMps.x) + (b.massKg * b.velocityMps.x)
+        val initialMass = a.massKg + b.massKg
+        val engine = SimulationEngine(
+            initialSnapshot = SimulationSnapshot(epochSeconds = 0.0, bodies = listOf(a, b)),
+            config = SimulationConfig(collisionMode = CollisionMode.FRAGMENTATION, gravitationalConstant = 0.0),
+        )
+
+        val result = engine.step(1.0)
+
+        assertEquals(CollisionMode.FRAGMENTATION, result.collisions.first().collisionMode)
+        assertEquals(1, result.collisions.size)
+        assertEquals(2, result.snapshot.bodies.size)
+        assertEquals(2, result.collisions.first().resultBodyIds.size)
+        assertEquals(initialMass, result.snapshot.bodies.sumOf { it.massKg }, 1e-6)
+
+        val finalMomentumX = result.snapshot.bodies.sumOf { it.massKg * it.velocityMps.x }
+        assertEquals(initialMomentumX, finalMomentumX, 1e-6)
+    }
+
+    @Test
     fun `bodies can be added updated and removed`() {
         val engine = SimulationEngine(SimulationSnapshot(epochSeconds = 0.0, bodies = emptyList()))
         val body = BodyFactory.sphericalBody(

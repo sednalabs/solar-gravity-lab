@@ -111,10 +111,10 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
         binding.buttonCollisionMode.setOnClickListener {
             currentCollisionMode = when (currentCollisionMode) {
-                CollisionMode.NONE,
-                CollisionMode.ELASTIC,
-                -> CollisionMode.MERGE
+                CollisionMode.NONE -> CollisionMode.MERGE
                 CollisionMode.MERGE -> CollisionMode.ELASTIC
+                CollisionMode.ELASTIC -> CollisionMode.FRAGMENTATION
+                CollisionMode.FRAGMENTATION -> CollisionMode.MERGE
             }
             session.setCollisionMode(currentCollisionMode)
             updateCollisionButtonText()
@@ -327,6 +327,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             when (collision.collisionMode) {
                 CollisionMode.MERGE -> "Collision: ${collision.primaryBodyId} + ${collision.secondaryBodyId} → ${collision.resultLabel}"
                 CollisionMode.ELASTIC -> "Collision: ${collision.primaryBodyId} ↔ ${collision.secondaryBodyId} (elastic)"
+                CollisionMode.FRAGMENTATION -> "Collision: ${collision.primaryBodyId} ↔ ${collision.secondaryBodyId} (fragmentation)"
                 CollisionMode.NONE -> "Collision: ${collision.primaryBodyId} / ${collision.secondaryBodyId}"
             }
         }
@@ -411,6 +412,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             CollisionMode.MERGE,
             -> getString(R.string.action_collision_merge)
             CollisionMode.ELASTIC -> getString(R.string.action_collision_elastic)
+            CollisionMode.FRAGMENTATION -> getString(R.string.action_collision_fragmentation)
         }
     }
 

@@ -10,6 +10,7 @@ import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.core.model.TimelineMode
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -94,6 +95,7 @@ class SimulationEngine(
                 emptyList()
             }
             CollisionMode.MERGE,
+            CollisionMode.FRAGMENTATION,
             CollisionMode.ELASTIC,
             -> resolveCollisionsDuringDrift(deltaTimeSeconds)
         }
@@ -159,7 +161,7 @@ class SimulationEngine(
                 break
             }
 
-            if (config.collisionMode == CollisionMode.ELASTIC) {
+            if (config.collisionMode != CollisionMode.NONE) {
                 correctPassiveOverlaps()
             }
 
@@ -179,6 +181,7 @@ class SimulationEngine(
             val event = when (config.collisionMode) {
                 CollisionMode.MERGE -> resolveMergeCollision(candidate, impactOffset)
                 CollisionMode.ELASTIC -> resolveElasticCollision(candidate, impactOffset)
+                CollisionMode.FRAGMENTATION -> resolveFragmentationCollision(candidate, impactOffset)
                 CollisionMode.NONE -> error("Collision resolution called while collision mode is NONE")
             }
             collisions += event
@@ -261,6 +264,7 @@ class SimulationEngine(
         if (c <= 0.0) {
             return when (config.collisionMode) {
                 CollisionMode.MERGE -> 0.0
+                CollisionMode.FRAGMENTATION -> 0.0
                 CollisionMode.ELASTIC -> if (relativePosition.dot(relativeVelocity) < 0.0) 0.0 else null
                 CollisionMode.NONE -> null
             }
@@ -303,6 +307,119 @@ class SimulationEngine(
             resultBodyIds = listOf(merged.id),
             resultLabel = merged.name,
             impactTimeOffsetSeconds = impactTimeOffsetSeconds,
+        )
+    }
+
+    private fun resolveFragmentationCollision(
+        candidate: CollisionCandidate,
+        impactTimeOffsetSeconds: Double,
+    ): CollisionEvent {
+        val primary = bodies[candidate.i]
+        val secondary = bodies[candidate.j]
+        val fragments = fragmentsFromCollision(primary, secondary)
+
+        bodies[candidate.i] = fragments[0]
+        bodies[candidate.j] = fragments[1]
+
+        return CollisionEvent(
+            collisionMode = CollisionMode.FRAGMENTATION,
+            primaryBodyId = primary.id,
+            secondaryBodyId = secondary.id,
+            resultBodyIds = fragments.map { it.id },
+            resultLabel = "${primary.name} + ${secondary.name} → ${fragments.first().name}, ${fragments.last().name}",
+            impactTimeOffsetSeconds = impactTimeOffsetSeconds,
+        )
+    }
+
+    private fun fragmentsFromCollision(
+        primary: MutableBody,
+        secondary: MutableBody,
+    ): List<MutableBody> {
+        val totalMass = primary.massKg + secondary.massKg
+        val fragmentMasses = when {
+            totalMass <= 0.0 -> listOf(0.0, 0.0)
+            else -> {
+                val fragmentOneMass = totalMass * FRAGMENTATION_PRIMARY_MASS_FRACTION
+                val fragmentTwoMass = totalMass - fragmentOneMass
+                listOf(fragmentOneMass, fragmentTwoMass)
+            }
+        }
+
+        val fragmentDensity = when {
+            totalMass <= 0.0 -> max(primary.densityKgPerM3, secondary.densityKgPerM3)
+            else -> {
+                val massWeightedDensity = (primary.massKg * primary.densityKgPerM3) + (secondary.massKg * secondary.densityKgPerM3)
+                if (massWeightedDensity > 0.0) massWeightedDensity / totalMass else max(primary.densityKgPerM3, secondary.densityKgPerM3)
+            }
+        }
+
+        val combinedMomentum = (primary.velocityMps * primary.massKg) + (secondary.velocityMps * secondary.massKg)
+        val centerOfMassVelocity = if (totalMass > 0.0) combinedMomentum / totalMass else (primary.velocityMps + secondary.velocityMps) * 0.5
+        val normal = collisionNormal(primary, secondary)
+        val relativeNormalSpeed = abs((secondary.velocityMps - primary.velocityMps).dot(normal))
+        val desiredOffsetSpeed = max(relativeNormalSpeed * FRAGMENTATION_VELOCITY_FRACTION, FRAGMENTATION_MIN_OFFSET_SPEED)
+
+        val firstMass = fragmentMasses[0]
+        val secondMass = fragmentMasses[1]
+        val firstVelocityOffset = if (firstMass > 0.0) desiredOffsetSpeed * (secondMass / totalMass) else 0.0
+        val secondVelocityOffset = if (secondMass > 0.0) desiredOffsetSpeed * (firstMass / totalMass) else 0.0
+
+        val fragmentRole = if (primary.gravitationalRole == GravitationalRole.MASSIVE || secondary.gravitationalRole == GravitationalRole.MASSIVE) {
+            GravitationalRole.MASSIVE
+        } else {
+            GravitationalRole.TRACER
+        }
+        val category = chooseCategory(primary.category, secondary.category)
+        val color = blendColors(primary.colorArgb, secondary.colorArgb, firstMass, secondMass)
+
+        val firstRadius = BodyFactory.radiusFromMassAndDensity(
+            massKg = firstMass,
+            densityKgPerM3 = fragmentDensity,
+        )
+        val secondRadius = BodyFactory.radiusFromMassAndDensity(
+            massKg = secondMass,
+            densityKgPerM3 = fragmentDensity,
+        )
+
+        val centerOfMassPosition = if (totalMass > 0.0) {
+            ((primary.positionM * primary.massKg) + (secondary.positionM * secondary.massKg)) / totalMass
+        } else {
+            (primary.positionM + secondary.positionM) * 0.5
+        }
+
+        val separation = (firstRadius + secondRadius) * FRAGMENTATION_SEPARATION_MULTIPLIER
+        val firstPosition = centerOfMassPosition - (normal * separation * 0.5)
+        val secondPosition = centerOfMassPosition + (normal * separation * 0.5)
+        val firstVelocity = centerOfMassVelocity + (normal * firstVelocityOffset)
+        val secondVelocity = centerOfMassVelocity - (normal * secondVelocityOffset)
+
+        return listOf(
+            MutableBody(
+                id = "frag:${primary.id}+${secondary.id}:1",
+                name = "${primary.name} fragment 1",
+                category = category,
+                gravitationalRole = fragmentRole,
+                massKg = firstMass,
+                radiusM = firstRadius,
+                densityKgPerM3 = fragmentDensity,
+                positionM = firstPosition,
+                velocityMps = firstVelocity,
+                colorArgb = color,
+                hostBodyId = null,
+            ),
+            MutableBody(
+                id = "frag:${primary.id}+${secondary.id}:2",
+                name = "${secondary.name} fragment 2",
+                category = category,
+                gravitationalRole = fragmentRole,
+                massKg = secondMass,
+                radiusM = secondRadius,
+                densityKgPerM3 = fragmentDensity,
+                positionM = secondPosition,
+                velocityMps = secondVelocity,
+                colorArgb = color,
+                hostBodyId = null,
+            ),
         )
     }
 
@@ -606,5 +723,9 @@ class SimulationEngine(
         private const val COLLISION_TIME_EPSILON: Double = 1.0e-9
         private const val COLLISION_DISTANCE_EPSILON: Double = 1.0e-6
         private const val MAX_COLLISION_ITERATIONS_PER_STEP: Int = 1024
+        private const val FRAGMENTATION_PRIMARY_MASS_FRACTION: Double = 0.5
+        private const val FRAGMENTATION_VELOCITY_FRACTION: Double = 0.5
+        private const val FRAGMENTATION_MIN_OFFSET_SPEED: Double = 0.5
+        private const val FRAGMENTATION_SEPARATION_MULTIPLIER: Double = 1.05
     }
 }
