@@ -67,7 +67,7 @@ The workflow bootstraps Gradle without relying on `./gradlew` by:
 
 1. reading `distributionUrl` from `gradle/wrapper/gradle-wrapper.properties`
 2. downloading that Gradle distribution directly
-3. running `gradle wrapper --gradle-version 8.13 --distribution-type bin`
+3. running gradle wrapper
 
 This means the wrapper JAR can be generated entirely on GitHub Actions without
 spending local Orchard compute.
