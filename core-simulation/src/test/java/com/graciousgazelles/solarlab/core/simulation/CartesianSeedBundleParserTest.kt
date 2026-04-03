@@ -32,6 +32,15 @@ class CartesianSeedBundleParserTest {
         assertTrue(validation.warnings.isEmpty())
     }
 
+    @Test
+    fun `validator rejects bundle missing required bodies`() {
+        val bundle = CartesianSeedBundleParser.parse(sampleBundleText())
+        val validation = CartesianSeedBundleValidator.validate(bundle)
+
+        assertTrue(validation.errors.any { it.contains("missing required bodies") })
+        assertTrue(!validation.isUsable)
+    }
+
     private fun sampleBundleText(): String = """
         # SolarLab Horizons Seed Bundle v1
         bundle_version=1
