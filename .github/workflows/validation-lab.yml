@@ -245,7 +245,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # `yes` exits with SIGPIPE once sdkmanager stops reading, so temporarily
+          # disable pipefail to keep a successful license acceptance from looking
+          # like a step failure.
+          set +o pipefail
           yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
