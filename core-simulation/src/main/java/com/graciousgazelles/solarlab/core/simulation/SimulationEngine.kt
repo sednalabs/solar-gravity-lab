@@ -369,19 +369,8 @@ class SimulationEngine(
         }
         val category = chooseCategory(primary.category, secondary.category)
         val color = blendColors(primary.colorArgb, secondary.colorArgb, firstMass, secondMass)
-
-        val primaryVelocityTangent = primary.velocityMps - (normal * primary.velocityMps.dot(normal))
-        val secondaryVelocityTangent = secondary.velocityMps - (normal * secondary.velocityMps.dot(normal))
-        val targetTangentialMomentum = (primaryVelocityTangent * primary.massKg) + (secondaryVelocityTangent * secondary.massKg)
-        val tangentialMass = firstMass + secondMass
-        val tangentialMomentumDelta = if (tangentialMass > 0.0) {
-            (targetTangentialMomentum - ((primaryVelocityTangent * firstMass) + (secondaryVelocityTangent * secondMass))) / tangentialMass
-        } else {
-            Vector3d.ZERO
-        }
-
-        val firstVelocityTangent = primaryVelocityTangent + tangentialMomentumDelta
-        val secondVelocityTangent = secondaryVelocityTangent + tangentialMomentumDelta
+        val combinedMomentum = (primary.velocityMps * primary.massKg) + (secondary.velocityMps * secondary.massKg)
+        val centerOfMassVelocity = if (totalMass > 0.0) combinedMomentum / totalMass else (primary.velocityMps + secondary.velocityMps) * 0.5
 
         val firstRadius = BodyFactory.radiusFromMassAndDensity(
             massKg = firstMass,
@@ -401,8 +390,8 @@ class SimulationEngine(
         val separation = (firstRadius + secondRadius) * FRAGMENTATION_SEPARATION_MULTIPLIER
         val firstPosition = centerOfMassPosition - (normal * separation * 0.5)
         val secondPosition = centerOfMassPosition + (normal * separation * 0.5)
-        val firstVelocity = firstVelocityTangent + (normal * (-firstVelocityOffset))
-        val secondVelocity = secondVelocityTangent + (normal * secondVelocityOffset)
+        val firstVelocity = centerOfMassVelocity - (normal * firstVelocityOffset)
+        val secondVelocity = centerOfMassVelocity + (normal * secondVelocityOffset)
 
         return listOf(
             MutableBody(
