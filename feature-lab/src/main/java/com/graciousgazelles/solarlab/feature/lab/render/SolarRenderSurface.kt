@@ -1,5 +1,6 @@
 package com.graciousgazelles.solarlab.feature.lab.render
 
+import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 
 internal interface SolarRenderSurface {
@@ -8,7 +9,7 @@ internal interface SolarRenderSurface {
     fun setInteractionListener(listener: RenderInteractionListener?) {}
     fun setInteractionMode(mode: SceneInteractionMode) {}
     fun setSelectedBodyId(bodyId: String?) {}
-    fun setFollowBodyId(bodyId: String?) {}
+    fun setObserverMode(mode: ObserverMode) {}
     fun onHostResume() {}
     fun onHostPause() {}
     fun release() {}

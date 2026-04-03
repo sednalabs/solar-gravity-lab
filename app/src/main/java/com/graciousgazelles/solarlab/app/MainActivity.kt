@@ -13,6 +13,7 @@ import com.graciousgazelles.solarlab.feature.lab.LabSession
 import com.graciousgazelles.solarlab.feature.lab.TimelineStatus
 import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListener
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
+import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 
@@ -23,7 +24,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     private var latestFrame: LabFrame? = null
     private var selectedBodyId: String? = null
-    private var followedBodyId: String? = null
+    private var observerMode: ObserverMode = ObserverMode.FREE
     private var pendingAddDraft: EditableBodyDraft? = null
     private var currentCollisionMode: CollisionMode = CollisionMode.MERGE
     private var resumeSimulationOnForeground: Boolean = false
@@ -83,13 +84,13 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         }
 
         binding.buttonFollow.setOnClickListener {
-            toggleFollowSelected()
+            cycleObserverMode()
         }
 
         binding.buttonReset.setOnClickListener {
             cancelPendingPlacement(shouldResume = false)
+            setObserverMode(ObserverMode.FREE)
             updateSelectedBodyId(null)
-            setFollowedBodyId(null)
             session.resetDefault()
             binding.renderHost.resetScene()
             binding.renderHost.resetCamera()
@@ -129,7 +130,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         updateTimelineControls(null)
         updateAddButtonText()
         updateSelectedBodySummary()
-        updateFollowButtonText()
+        updateObserverButtonText()
 
         session.dispatchCurrentFrame()
         session.start()
@@ -149,10 +150,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             updateSelectedBodySummary()
         }
 
-        if (followedBodyId != null && frame.snapshot.bodies.none { it.id == followedBodyId }) {
-            setFollowedBodyId(null)
-        }
-        updateFollowButtonText()
+        updateObserverButtonText()
     }
 
     override fun onResume() {
@@ -233,9 +231,6 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             },
             onDelete = {
                 session.removeBody(body.id)
-                if (followedBodyId == body.id) {
-                    setFollowedBodyId(null)
-                }
                 updateSelectedBodyId(null)
             },
             onDismiss = {
@@ -280,26 +275,26 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private fun updateSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
         binding.renderHost.setSelectedBodyId(bodyId)
-        if (bodyId == null && followedBodyId != null) {
-            setFollowedBodyId(null)
-        } else if (bodyId != null && followedBodyId != null) {
-            setFollowedBodyId(bodyId)
-        }
         binding.buttonEditBody.isEnabled = bodyId != null && pendingAddDraft == null
         updateSelectedBodySummary()
-        updateFollowButtonText()
+        updateObserverButtonText()
         updateSimulationButtons()
     }
 
-    private fun setFollowedBodyId(bodyId: String?) {
-        followedBodyId = bodyId
-        binding.renderHost.setFollowBodyId(bodyId)
-        updateFollowButtonText()
+    private fun setObserverMode(mode: ObserverMode) {
+        observerMode = mode
+        binding.renderHost.setObserverMode(mode)
+        updateObserverButtonText()
+        updateSimulationButtons()
     }
 
-    private fun toggleFollowSelected() {
-        val selected = selectedBodyId ?: return
-        setFollowedBodyId(if (followedBodyId == selected) null else selected)
+    private fun cycleObserverMode() {
+        val nextMode = when (observerMode) {
+            ObserverMode.FREE -> ObserverMode.FOLLOW_SELECTED
+            ObserverMode.FOLLOW_SELECTED -> ObserverMode.FOLLOW_SELECTED_HOST
+            ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
+        }
+        setObserverMode(nextMode)
     }
 
     private fun updateSelectedBodySummary() {
@@ -392,7 +387,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonStepQuantum.isEnabled = pendingAddDraft == null
         binding.buttonSpeedDown.isEnabled = pendingAddDraft == null
         binding.buttonSpeedUp.isEnabled = pendingAddDraft == null
-        binding.buttonFollow.isEnabled = selectedBodyId != null && pendingAddDraft == null
+        binding.buttonFollow.isEnabled = pendingAddDraft == null
         binding.buttonStartPause.text = if (session.isRunning()) {
             getString(R.string.action_pause)
         } else {
@@ -431,16 +426,15 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonStepQuantum.text = "Step: ${timeline?.stepQuantum?.label ?: session.stepQuantumPreset().label}"
         binding.buttonSpeedDown.text = "Speed -"
         binding.buttonSpeedUp.text = "Speed +"
-        updateFollowButtonText()
+        updateObserverButtonText()
         updateSimulationButtons()
     }
 
-    private fun updateFollowButtonText() {
-        val selected = selectedBodyId
-        binding.buttonFollow.text = if (selected != null && followedBodyId == selected) {
-            getString(R.string.action_unfollow_selected)
-        } else {
-            getString(R.string.action_follow_selected)
+    private fun updateObserverButtonText() {
+        binding.buttonFollow.text = when (observerMode) {
+            ObserverMode.FREE -> getString(R.string.action_observer_free)
+            ObserverMode.FOLLOW_SELECTED -> getString(R.string.action_observer_selected)
+            ObserverMode.FOLLOW_SELECTED_HOST -> getString(R.string.action_observer_selected_host)
         }
     }
 
