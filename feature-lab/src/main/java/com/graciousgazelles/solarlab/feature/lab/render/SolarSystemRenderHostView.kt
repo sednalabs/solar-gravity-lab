@@ -20,7 +20,6 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private val sceneAssembler = RenderSceneAssembler()
 
     private val requestedBackend: RenderBackend = RenderBackend.VULKAN
-    private var activeBackend: RenderBackend = RenderBackend.VULKAN
     private var activeSurface: SolarRenderSurface? = null
     private var activeSurfaceView: View? = null
     private var latestScene: RenderSceneFrame? = null
@@ -32,7 +31,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
         requested = requestedBackend,
-        active = activeBackend,
+        active = requestedBackend,
         isHardwareAccelerated = true,
         message = "Preparing renderer.",
     )
@@ -110,7 +109,6 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface = null
         activeSurfaceView?.let(::removeView)
         activeSurfaceView = null
-        activeBackend = RenderBackend.VULKAN
 
         if (!capabilities.supportsVulkan || !SolarLabVulkanBridge.isRuntimeAvailable()) {
             updateStatus(
@@ -118,7 +116,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
                     requested = requestedBackend,
                     active = RenderBackend.VULKAN,
                     isHardwareAccelerated = false,
-                    message = "$reason Vulkan renderer unavailable on this device/build. OpenGL fallback is disabled.",
+                    message = "$reason Vulkan renderer unavailable on this device/build.",
                 ),
             )
             return
@@ -133,12 +131,12 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
                         requested = requestedBackend,
                         active = RenderBackend.VULKAN,
                         isHardwareAccelerated = false,
-                        message = "Vulkan failed: $message OpenGL fallback is disabled.",
+                        message = "Vulkan failed: $message",
                     ),
                 )
             },
         )
-        attachSurface(vulkanView, RenderBackend.VULKAN)
+        attachSurface(vulkanView)
         updateStatus(
             RenderBackendStatus(
                 requested = requestedBackend,
@@ -149,8 +147,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         )
     }
 
-    private fun attachSurface(view: View, backend: RenderBackend) {
-        activeBackend = backend
+    private fun attachSurface(view: View) {
         activeSurfaceView = view
         activeSurface = view as SolarRenderSurface
         activeSurface?.setInteractionListener(interactionListener)

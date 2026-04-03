@@ -258,7 +258,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private fun ensureRenderer(): Boolean {
         if (!canAttemptVulkan()) {
-            fatalInitCallback("Vulkan backend requested, but the runtime or native library is unavailable.")
+            fatalInitCallback("Vulkan runtime or native library is unavailable.")
             return false
         }
         if (rendererHandle != 0L) return true
