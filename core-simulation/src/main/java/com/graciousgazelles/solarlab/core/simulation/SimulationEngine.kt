@@ -390,8 +390,8 @@ class SimulationEngine(
         val separation = (firstRadius + secondRadius) * FRAGMENTATION_SEPARATION_MULTIPLIER
         val firstPosition = centerOfMassPosition - (normal * separation * 0.5)
         val secondPosition = centerOfMassPosition + (normal * separation * 0.5)
-        val firstVelocity = centerOfMassVelocity + (normal * firstVelocityOffset)
-        val secondVelocity = centerOfMassVelocity - (normal * secondVelocityOffset)
+        val firstVelocity = centerOfMassVelocity - (normal * firstVelocityOffset)
+        val secondVelocity = centerOfMassVelocity + (normal * secondVelocityOffset)
 
         return listOf(
             MutableBody(
