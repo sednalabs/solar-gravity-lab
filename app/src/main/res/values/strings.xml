@@ -16,6 +16,7 @@
     <string name="action_speed_down">Speed -</string>
     <string name="action_speed_up">Speed +</string>
     <string name="action_collision_merge">Collisions: Merge</string>
+    <string name="action_collision_fragmentation">Collisions: Fragmentation</string>
     <string name="action_collision_elastic">Collisions: Elastic</string>
     <string name="action_backend_auto">Backend: Auto</string>
     <string name="action_backend_vulkan">Backend: Vulkan</string>
