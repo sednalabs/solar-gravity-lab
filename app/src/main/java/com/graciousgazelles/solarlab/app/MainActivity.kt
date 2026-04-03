@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
         binding.buttonReset.setOnClickListener {
             session.resetDefault()
+            binding.renderHost.resetScene()
             binding.renderHost.resetCamera()
             binding.buttonStartPause.text = getString(R.string.action_start)
         }

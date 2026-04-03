@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "com.graciousgazelles.solarlab.feature.lab"
     compileSdk = libs.versions.compileSdk.get().toInt()
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
@@ -44,9 +45,9 @@ android {
 
 dependencies {
     implementation(project(":core-math"))
-    implementation(project(":core-model"))
-    implementation(project(":core-simulation"))
-    implementation(project(":render-core"))
+    api(project(":core-model"))
+    api(project(":core-simulation"))
+    api(project(":render-core"))
     implementation(libs.androidx.core.ktx)
 
     testImplementation(libs.junit)

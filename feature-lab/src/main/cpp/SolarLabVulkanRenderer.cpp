@@ -2,6 +2,7 @@
 
 #include <android/asset_manager.h>
 #include <android/log.h>
+#include <android/native_window_jni.h>
 #include <vulkan/vulkan_android.h>
 
 #include <algorithm>

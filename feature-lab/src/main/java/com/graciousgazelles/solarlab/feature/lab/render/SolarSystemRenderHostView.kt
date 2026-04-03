@@ -43,6 +43,11 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.submitScene(scene)
     }
 
+    fun resetScene() {
+        sceneAssembler.clear()
+        latestScene = null
+    }
+
     fun resetCamera() {
         activeSurface?.resetCamera()
     }

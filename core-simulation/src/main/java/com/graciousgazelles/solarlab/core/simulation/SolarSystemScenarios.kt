@@ -241,6 +241,7 @@ object SolarSystemScenarios {
     fun withSyntheticAsteroidBelt(
         base: SimulationSnapshot,
         count: Int,
+        config: SimulationConfig = SimulationConfig(),
         seed: Long = 42L,
     ): SimulationSnapshot {
         val random = Random(seed)
@@ -259,7 +260,7 @@ object SolarSystemScenarios {
                 add(
                     tracerAroundPrimary(
                         primary = sun,
-                        config = SimulationConfig(),
+                        config = config,
                         id = "belt-$index",
                         name = "Belt $index",
                         category = BodyCategory.ASTEROID,
@@ -284,6 +285,7 @@ object SolarSystemScenarios {
     fun withSyntheticOortShell(
         base: SimulationSnapshot,
         count: Int,
+        config: SimulationConfig = SimulationConfig(),
         seed: Long = 43L,
     ): SimulationSnapshot {
         val random = Random(seed)
@@ -304,7 +306,7 @@ object SolarSystemScenarios {
                 add(
                     tracerAroundPrimary(
                         primary = sun,
-                        config = SimulationConfig(),
+                        config = config,
                         id = "oort-$index",
                         name = "Oort $index",
                         category = BodyCategory.COMET,
@@ -333,8 +335,8 @@ object SolarSystemScenarios {
         seedBundle: CartesianSeedBundle? = null,
     ): SimulationSnapshot {
         val base = majorBodiesWithDwarfs(config = config, seedBundle = seedBundle)
-        val withBelt = withSyntheticAsteroidBelt(base, count = asteroidCount)
-        return withSyntheticOortShell(withBelt, count = oortCount)
+        val withBelt = withSyntheticAsteroidBelt(base, count = asteroidCount, config = config)
+        return withSyntheticOortShell(withBelt, count = oortCount, config = config)
     }
 
     private fun seed(

@@ -48,7 +48,7 @@ object CartesianSeedBundleValidator {
 
         val missing = requiredBodyIds.filterNot(bundle::hasRecord)
         if (missing.isNotEmpty()) {
-            warnings += "Bundle is missing bodies: ${missing.joinToString(", ")}"
+            errors += "Bundle is missing required bodies: ${missing.joinToString(", ")}"
         }
 
         bundle.recordsByBodyId.values.forEach { record ->
