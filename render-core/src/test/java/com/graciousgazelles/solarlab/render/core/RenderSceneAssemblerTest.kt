@@ -147,6 +147,55 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    fun nativePacketBrightensAndEnlargesSelectedBodyAndTrail() {
+        val selectedColor = 0xFF336699.toInt()
+        val unselectedColor = 0xFF445566.toInt()
+        val frame = RenderSceneFrame(
+            epochSeconds = 0.0,
+            authoritativeBodies = listOf(
+                RenderBody(
+                    id = "selected",
+                    name = "Selected",
+                    positionM = Vector3d.ZERO,
+                    radiusM = 10.0,
+                    colorArgb = selectedColor,
+                    kind = RenderBodyKind.COMET,
+                    isMassive = false,
+                ),
+                RenderBody(
+                    id = "other",
+                    name = "Other",
+                    positionM = Vector3d(1_000.0, 0.0, 0.0),
+                    radiusM = 10.0,
+                    colorArgb = unselectedColor,
+                    kind = RenderBodyKind.COMET,
+                    isMassive = false,
+                ),
+            ),
+            tracerBodies = emptyList(),
+            trails = listOf(
+                RenderTrail(
+                    bodyId = "selected",
+                    colorArgb = selectedColor,
+                    alpha = 0.5f,
+                    pointsM = listOf(Vector3d.ZERO, Vector3d(10.0, 0.0, 0.0)),
+                ),
+            ),
+            sourceRevision = 9L,
+        )
+
+        val packet = NativeScenePacket.fromScene(
+            frame = frame,
+            selectedBodyId = "selected",
+        )
+
+        assertTrue(packet.authoritativeRadiiM[0] > packet.authoritativeRadiiM[1])
+        assertTrue(packet.authoritativeColorsArgb[0] != selectedColor)
+        assertEquals(unselectedColor, packet.authoritativeColorsArgb[1])
+        assertTrue(packet.trailColorsArgb.all { it != selectedColor })
+    }
+
+    @Test
     fun clearRemovesTrailHistorySoFirstFrameAfterResetHasNoTrail() {
         val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
         val firstSnapshot = SimulationSnapshot(

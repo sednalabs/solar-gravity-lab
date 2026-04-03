@@ -295,6 +295,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (packetDirty || latestPacket == null) {
             latestPacket = NativeScenePacket.fromScene(
                 frame = latestScene,
+                selectedBodyId = selectedBodyId,
                 cameraState = cameraState,
                 viewportWidthPx = width.coerceAtLeast(1),
                 viewportHeightPx = height.coerceAtLeast(1),
