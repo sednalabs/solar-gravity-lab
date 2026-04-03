@@ -1,0 +1,297 @@
+name: validation-lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to validate
+        required: false
+        type: string
+      profile:
+        description: Validation profile
+        required: true
+        type: choice
+        options:
+          - targeted
+          - frontier
+          - broad
+          - full
+        default: targeted
+      lane_set:
+        description: Which lane bundle to run
+        required: true
+        type: choice
+        options:
+          - auto
+          - bootstrap
+          - core-jvm
+          - android-host
+          - full
+        default: auto
+      write_wrapper:
+        description: Commit generated wrapper files back to the branch
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: Resolve validation plan
+    runs-on: ubuntu-24.04
+    outputs:
+      checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
+      wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
+      core_jvm: ${{ steps.plan.outputs.core_jvm }}
+      android_assemble: ${{ steps.plan.outputs.android_assemble }}
+      lane_summary: ${{ steps.plan.outputs.lane_summary }}
+    steps:
+      - name: Compute active lanes
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          checkout_ref='${{ inputs.ref }}'
+          if [[ -z "$checkout_ref" ]]; then
+            checkout_ref='${{ github.ref_name }}'
+          fi
+
+          profile='${{ inputs.profile }}'
+          lane_set='${{ inputs.lane_set }}'
+
+          wrapper_bootstrap='false'
+          core_jvm='false'
+          android_assemble='false'
+
+          case "$lane_set" in
+            auto)
+              wrapper_bootstrap='true'
+              core_jvm='true'
+              if [[ "$profile" != 'targeted' ]]; then
+                android_assemble='true'
+              fi
+              ;;
+            bootstrap)
+              wrapper_bootstrap='true'
+              ;;
+            core-jvm)
+              wrapper_bootstrap='true'
+              core_jvm='true'
+              ;;
+            android-host)
+              wrapper_bootstrap='true'
+              android_assemble='true'
+              ;;
+            full)
+              wrapper_bootstrap='true'
+              core_jvm='true'
+              android_assemble='true'
+              ;;
+            *)
+              echo "Unknown lane_set: ${lane_set}" >&2
+              exit 1
+              ;;
+          esac
+
+          lane_summary="$(printf 'wrapper_bootstrap=%s, core_jvm=%s, android_assemble=%s' \
+            "$wrapper_bootstrap" "$core_jvm" "$android_assemble")"
+
+          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+          echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
+          echo "core_jvm=${core_jvm}" >> "$GITHUB_OUTPUT"
+          echo "android_assemble=${android_assemble}" >> "$GITHUB_OUTPUT"
+          echo "lane_summary=${lane_summary}" >> "$GITHUB_OUTPUT"
+
+  wrapper-bootstrap:
+    name: Wrapper bootstrap
+    needs: metadata
+    if: ${{ needs.metadata.outputs.wrapper_bootstrap == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup standalone Gradle
+        shell: bash
+        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
+
+      - name: Generate Gradle wrapper files
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${STANDALONE_GRADLE}" --no-daemon wrapper --gradle-version 8.13 --distribution-type bin
+          git status --short
+
+      - name: Upload wrapper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-wrapper-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            gradlew
+            gradlew.bat
+            gradle/wrapper/gradle-wrapper.properties
+            gradle/wrapper/gradle-wrapper.jar
+
+      - name: Commit wrapper files back to branch
+        if: ${{ inputs.write_wrapper }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          checkout_ref='${{ needs.metadata.outputs.checkout_ref }}'
+          if [[ "$checkout_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Refuses to push wrapper files back to a detached SHA ref: ${checkout_ref}" >&2
+            exit 1
+          fi
+
+          branch_name="$checkout_ref"
+          if [[ "$branch_name" == refs/heads/* ]]; then
+            branch_name="${branch_name#refs/heads/}"
+          fi
+          if [[ "$branch_name" == refs/tags/* ]]; then
+            echo "Refuses to push wrapper files back to a tag ref: ${checkout_ref}" >&2
+            exit 1
+          fi
+
+          git checkout -B "$branch_name"
+          git add gradlew gradlew.bat gradle/wrapper/gradle-wrapper.properties gradle/wrapper/gradle-wrapper.jar
+
+          if git diff --cached --quiet; then
+            echo "No wrapper changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Generate Gradle wrapper jar"
+          git push origin "HEAD:${branch_name}"
+
+  core-jvm:
+    name: Core JVM checks
+    needs: metadata
+    if: ${{ needs.metadata.outputs.core_jvm == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup standalone Gradle
+        shell: bash
+        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
+
+      - name: Run pure JVM module checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${STANDALONE_GRADLE}" --no-daemon \
+            :core-math:check \
+            :core-model:check \
+            :core-simulation:check \
+            :render-core:check
+
+      - name: Upload JVM test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-jvm-reports-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            **/build/reports/tests/test/**
+            **/build/test-results/test/**
+
+  android-assemble:
+    name: Android assemble debug
+    needs: metadata
+    if: ${{ needs.metadata.outputs.android_assemble == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses and install build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.2.12479018"
+
+      - name: Setup standalone Gradle
+        shell: bash
+        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
+
+      - name: Assemble debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${STANDALONE_GRADLE}" --no-daemon :app:assembleDebug
+
+      - name: Upload Android artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-assemble-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            app/build/outputs/**
+            **/build/reports/**
+
+  summary:
+    name: Validation summary
+    needs:
+      - metadata
+      - wrapper-bootstrap
+      - core-jvm
+      - android-assemble
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Emit summary
+        shell: bash
+        run: |
+          {
+            echo "## validation-lab"
+            echo
+            echo "- ref: \`${{ needs.metadata.outputs.checkout_ref }}\`"
+            echo "- lanes: \`${{ needs.metadata.outputs.lane_summary }}\`"
+            echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
+            echo "- core-jvm: \`${{ needs['core-jvm'].result }}\`"
+            echo "- android-assemble: \`${{ needs['android-assemble'].result }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

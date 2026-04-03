@@ -89,6 +89,11 @@ Because this environment does not include a full Android SDK/NDK toolchain, the 
 
 The standard Gradle wrapper scripts and properties are present, but `gradle/wrapper/gradle-wrapper.jar` still needs to be regenerated or restored before `./gradlew` is fully self-contained.
 
+Remote-first validation is now intended to happen through the dispatch-only
+GitHub Actions workflow documented in `docs/validation-lab.md`, so Orchard
+branches can offload wrapper bootstrap, JVM checks, and broader Android
+checkpoints without burning local host compute.
+
 The render handoff is now a little stronger: the Vulkan path receives a camera-aware `NativeScenePacket` with authoritative bodies, three tracer LOD tiers, simplified trails, and a source revision for future native caching.
 
 
