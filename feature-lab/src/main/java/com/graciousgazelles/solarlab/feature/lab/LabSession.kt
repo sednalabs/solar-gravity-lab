@@ -99,8 +99,10 @@ class LabSession private constructor(
             emitFrame(
                 snapshot = result.snapshot,
                 diagnostics = result.diagnostics,
+                diagnosticsFresh = result.diagnosticsFresh,
                 collisions = result.collisions,
                 simulationAdvanceDurationNs = advanceDurationNs,
+                recordPerformanceSample = false,
             )
         }
     }
@@ -142,8 +144,10 @@ class LabSession private constructor(
                 emitFrame(
                     snapshot = result.snapshot,
                     diagnostics = result.diagnostics,
+                    diagnosticsFresh = result.diagnosticsFresh,
                     collisions = result.collisions,
                     simulationAdvanceDurationNs = advanceDurationNs,
+                    recordPerformanceSample = false,
                 )
             } else {
                 emitCurrentFrame(emptyList())
@@ -226,8 +230,10 @@ class LabSession private constructor(
         emitFrame(
             snapshot = result.snapshot,
             diagnostics = result.diagnostics,
+            diagnosticsFresh = result.diagnosticsFresh,
             collisions = result.collisions,
             simulationAdvanceDurationNs = advanceDurationNs,
+            recordPerformanceSample = true,
         )
     }
 
@@ -267,16 +273,20 @@ class LabSession private constructor(
         emitFrame(
             snapshot = engine.snapshot(),
             diagnostics = engine.diagnostics(),
+            diagnosticsFresh = true,
             collisions = collisions,
             simulationAdvanceDurationNs = 0L,
+            recordPerformanceSample = false,
         )
     }
 
     private fun emitFrame(
         snapshot: SimulationSnapshot,
         diagnostics: com.graciousgazelles.solarlab.core.simulation.SystemDiagnostics,
+        diagnosticsFresh: Boolean,
         collisions: List<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>,
         simulationAdvanceDurationNs: Long,
+        recordPerformanceSample: Boolean,
     ) {
         val frameBuildStartNs = System.nanoTime()
         if (snapshot.isCatalogBacked) {
@@ -286,6 +296,7 @@ class LabSession private constructor(
         val frame = LabFrame(
             snapshot = snapshot,
             diagnostics = diagnostics,
+            diagnosticsFresh = diagnosticsFresh,
             collisions = collisions,
             timeline = TimelineStatus(
                 mode = snapshot.timelineMode,
@@ -300,14 +311,16 @@ class LabSession private constructor(
         val frameBuildDurationNs = System.nanoTime() - frameBuildStartNs
         val handoffStartNs = System.nanoTime()
         mainHandler.post {
-            val handoffLatencyNs = System.nanoTime() - handoffStartNs
-            val perfSummary = perfSamples.record(
-                simulationAdvanceDurationNs = simulationAdvanceDurationNs,
-                frameBuildDurationNs = frameBuildDurationNs,
-                handoffLatencyNs = handoffLatencyNs,
-            )
-            if (perfSummary != null) {
-                Log.i(TAG, perfSummary)
+            if (recordPerformanceSample) {
+                val handoffLatencyNs = System.nanoTime() - handoffStartNs
+                val perfSummary = perfSamples.record(
+                    simulationAdvanceDurationNs = simulationAdvanceDurationNs,
+                    frameBuildDurationNs = frameBuildDurationNs,
+                    handoffLatencyNs = handoffLatencyNs,
+                )
+                if (perfSummary != null) {
+                    Log.i(TAG, perfSummary)
+                }
             }
             listener.onLabFrame(frame)
         }
