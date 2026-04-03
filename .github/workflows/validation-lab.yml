@@ -42,6 +42,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
+
 jobs:
   metadata:
     name: Resolve validation plan
@@ -160,6 +163,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+
+      - name: Restore standalone Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/standalone-gradle
+          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Setup standalone Gradle
         shell: bash
@@ -232,6 +242,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+
+      - name: Restore standalone Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/standalone-gradle
+          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Setup standalone Gradle
         shell: bash
@@ -241,7 +258,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "${STANDALONE_GRADLE}" --no-daemon \
+          "${STANDALONE_GRADLE}" --no-daemon --configure-on-demand \
             :core-math:check \
             :core-model:check \
             :core-simulation:check \
@@ -272,6 +289,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+
+      - name: Restore standalone Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/standalone-gradle
+          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Setup standalone Gradle
         shell: bash
@@ -281,7 +305,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "${STANDALONE_GRADLE}" --no-daemon \
+          "${STANDALONE_GRADLE}" --no-daemon --configure-on-demand \
             :core-simulation:test --tests com.graciousgazelles.solarlab.core.simulation.PhysicsAccuracyTelemetryReportGeneratorTest \
             :core-simulation:generatePhysicsAccuracyTelemetryReport
 
@@ -311,8 +335,27 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+
+      - name: Restore standalone Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/standalone-gradle
+          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - uses: android-actions/setup-android@v3
+
+      - name: Restore Android SDK component cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/licenses
+            /usr/local/lib/android/sdk/platform-tools
+            /usr/local/lib/android/sdk/platforms/android-36
+            /usr/local/lib/android/sdk/build-tools/36.0.0
+            /usr/local/lib/android/sdk/cmake/3.22.1
+            /usr/local/lib/android/sdk/ndk/27.2.12479018
+          key: validation-lab-android-sdk-${{ runner.os }}-api36-bt36.0.0-cmake3.22.1-ndk27.2.12479018
 
       - name: Accept Android SDK licenses and install build toolchain
         shell: bash

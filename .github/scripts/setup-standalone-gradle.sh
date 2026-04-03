@@ -18,7 +18,7 @@ if [[ -f "$wrapper_props" ]]; then
 fi
 
 archive_name="${dist_url##*/}"
-install_root="${RUNNER_TEMP:-/tmp}/standalone-gradle"
+install_root="${STANDALONE_GRADLE_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/standalone-gradle}"
 archive_path="${install_root}/${archive_name}"
 extract_root="${install_root}/extract"
 
