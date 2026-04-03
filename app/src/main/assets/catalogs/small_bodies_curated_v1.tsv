@@ -1,0 +1,15 @@
+body_id	name	category	role	host_body_id	mass_kg	radius_m	color_argb	epoch_jd_tdb	a_m	e	i_deg	node_deg	peri_deg	mean_deg	enabled_by_default	notes
+vesta	Vesta	ASTEROID	MASSIVE	sun	2.590760e+20	2.626000e+05	FFBDBDBD	2.451545e+06	3.532006e+11	8.900000e-02	7.140000e+00	1.038000e+02	1.509000e+02	4.000000e+01	true	Built-in starter definition placeholder.
+pallas	Pallas	ASTEROID	MASSIVE	sun	2.140000e+20	2.560000e+05	FFBDBDBD	2.451545e+06	4.148349e+11	2.310000e-01	3.484000e+01	1.731000e+02	3.102000e+02	2.200000e+02	true	Built-in starter definition placeholder.
+hygiea	Hygiea	ASTEROID	MASSIVE	sun	8.320000e+19	2.170000e+05	FFBDBDBD	2.451545e+06	4.698869e+11	1.170000e-01	3.830000e+00	2.832000e+02	3.134000e+02	1.200000e+02	true	Built-in starter definition placeholder.
+psyche	Psyche	ASTEROID	TRACER	sun	2.300000e+19	1.130000e+05	FFBDBDBD	2.451545e+06	4.372746e+11	1.400000e-01	3.100000e+00	1.500000e+02	2.280000e+02	2.800000e+02	true	Built-in starter definition placeholder.
+eros	Eros	ASTEROID	TRACER	sun	6.687000e+15	8.420000e+03	FFBDBDBD	2.451545e+06	2.181137e+11	2.230000e-01	1.083000e+01	3.044000e+02	1.787000e+02	6.000000e+01	true	Built-in starter definition placeholder.
+bennu	Bennu	ASTEROID	TRACER	sun	7.329000e+10	2.450000e+02	FFBDBDBD	2.451545e+06	1.685070e+11	2.037000e-01	6.030000e+00	2.060000e+00	6.622000e+01	3.000000e+02	true	Built-in starter definition placeholder.
+ryugu	Ryugu	ASTEROID	TRACER	sun	4.500000e+11	4.480000e+02	FFBDBDBD	2.451545e+06	1.779616e+11	1.902000e-01	5.880000e+00	2.514500e+02	2.116100e+02	1.700000e+02	true	Built-in starter definition placeholder.
+itokawa	Itokawa	ASTEROID	TRACER	sun	3.510000e+10	1.650000e+02	FFBDBDBD	2.451545e+06	1.980676e+11	2.800000e-01	1.620000e+00	6.910000e+01	1.628000e+02	2.500000e+01	true	Built-in starter definition placeholder.
+apophis	Apophis	ASTEROID	TRACER	sun	6.100000e+10	1.850000e+02	FFBDBDBD	2.451545e+06	1.379891e+11	1.912000e-01	3.340000e+00	2.044000e+02	1.264000e+02	3.200000e+02	true	Built-in starter definition placeholder.
+didymos	Didymos	ASTEROID	TRACER	sun	5.240000e+11	3.900000e+02	FFBDBDBD	2.451545e+06	2.459389e+11	3.840000e-01	3.410000e+00	7.320000e+01	3.196000e+02	8.000000e+01	true	Built-in starter definition placeholder.
+halley	1P/Halley	COMET	TRACER	sun	2.200000e+14	5.500000e+03	FF9ED0FF	2.451545e+06	2.667928e+12	9.670000e-01	1.622600e+02	5.842000e+01	1.113300e+02	3.800000e+01	true	Built-in starter definition placeholder.
+encke	2P/Encke	COMET	TRACER	sun	3.500000e+13	2.400000e+03	FF9ED0FF	2.451545e+06	3.313593e+11	8.500000e-01	1.178000e+01	3.346000e+02	1.865000e+02	1.400000e+02	true	Built-in starter definition placeholder.
+churyumov-gerasimenko	67P/Churyumov-Gerasimenko	COMET	TRACER	sun	9.980000e+12	2.000000e+03	FF9ED0FF	2.451545e+06	5.180574e+11	6.410000e-01	7.040000e+00	5.017000e+01	1.278000e+01	9.000000e+01	true	Built-in starter definition placeholder.
+wild-2	81P/Wild 2	COMET	TRACER	sun	2.300000e+13	2.000000e+03	FF9ED0FF	2.451545e+06	5.156639e+11	5.380000e-01	3.240000e+00	1.361000e+02	4.100000e+01	2.600000e+02	true	Built-in starter definition placeholder.
