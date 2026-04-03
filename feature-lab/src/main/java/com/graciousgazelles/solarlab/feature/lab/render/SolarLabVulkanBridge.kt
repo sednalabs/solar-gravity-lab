@@ -109,8 +109,9 @@ internal object SolarLabVulkanBridge {
     private fun NativeScenePacket.contentMatches(other: NativeScenePacket?): Boolean {
         if (other == null) return false
         if (this === other) return true
-        return sourceRevision == other.sourceRevision &&
-            authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
+        // `sourceRevision` changes on every assembled snapshot, so dedupe must
+        // compare the rendered packet content rather than the revision counter.
+        return authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
             authoritativeRadiiM.contentEquals(other.authoritativeRadiiM) &&
             authoritativeColorsArgb.contentEquals(other.authoritativeColorsArgb) &&
             authoritativeKinds.contentEquals(other.authoritativeKinds) &&
