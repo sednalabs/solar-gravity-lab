@@ -20,26 +20,18 @@ What is implemented and usable today:
 - Pure Kotlin/JVM core modules for math, domain model, simulation, and render-scene assembly.
 - N-body simulation with double-precision state.
 - Massive-body vs tracer-body dynamics.
-- Continuous collision handling with merge and elastic response modes.
+- Merge-collision handling with linear momentum conservation.
 - Barycentric recentering for seeded systems.
 - Epoch-tagged seeded major-planet states with bundle/fallback layering.
 - Renderer host that prefers Vulkan and falls back to OpenGL ES when needed.
 - Native Vulkan pipeline with swapchain/render-pass/framebuffer/command recording, scene-packet ingestion, SPIR-V graphics pipelines, and compute-based medium/far tracer compaction.
-- Granular timeline controls with configurable playback-speed and step-quantum presets.
-- Catalog-backed absolute-epoch scenario rebuilding for seeded solar-system starts.
-- Follow-selected-body camera behavior in both OpenGL and Vulkan surface paths.
-- Starter in-app catalog for major planetary moons plus curated asteroids/comets, with asset-driven import hooks for richer external catalogs.
-- Tap-to-select inspection plus add/edit/remove body controls from the Android UI.
-- Scene placement for new bodies, with optional drag-to-launch in the X/Y plane.
-- Continuous collision detection with merge and elastic response modes.
 
 What is intentionally incomplete:
 
 - No bundled, authoritative DE/Horizons seed file in this repo yet (seed-bundle path exists; fallback catalogue is used when no bundle is present).
 - GPU-side tracer integration is not implemented yet (simulation remains authoritative on CPU).
 - Synthetic asteroid/Oort populations are generated approximations, not catalogue-complete object sets.
-- Backward time travel for sandbox-diverged runs is not implemented yet; reverse stepping is currently catalog-reset only.
-- Collision model supports merge and elastic response, but not fragmentation.
+- Collision model is merge-only (no fragmentation/elastic models).
 - Android app UX is still minimal and engineering-focused.
 
 ## Project modules
@@ -64,8 +56,7 @@ What is intentionally incomplete:
 - Body categories:
   - Massive bodies mutually interact.
   - Tracer bodies feel massive bodies but do not perturb others.
-- Collision handling: continuous collision sweep during drift with merge or elastic response modes.
-- Timeline semantics: catalog-backed absolute epochs until the user edits the system or collisions branch the sandbox.
+- Collision handling: merge, conserve total mass + linear momentum, derive merged radius from combined volume.
 
 This model is meant to be physically credible while remaining scalable on mobile hardware.
 
@@ -111,10 +102,9 @@ compute.
 
 For phone testing, use `.github/workflows/prerelease-apk.yml` to build an
 installable `prerelease` APK artifact on GitHub Actions. That path is meant for
-ultra-alpha sideloading only: it uses the application id
-`com.graciousgazelles.solarlab.alpha` and is signed with the default debug key,
-so it is appropriate for device testing but not for a public production
-release.
+internal dev preview sideloading only: it uses the application id
+`com.sednalabs.solarlab.internal` and is signed with the default debug key, so
+it is appropriate for device testing but not for a public production release.
 
 For contributors, the most reliable near-term validation target is the pure JVM core:
 
@@ -128,9 +118,10 @@ This repo currently relies on a remote-first validation workflow documented in [
 Important current notes:
 
 - `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
-- The first formal preview line uses version `0.1.0-alpha.1`. That is intentionally conservative semver-style prerelease numbering rather than a public “1.0” style launch signal.
+- The first installable preview line uses version `0.1.0-alpha.1`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
+- Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
 
-If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md).
+If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md) and [`docs/release-channels.md`](docs/release-channels.md).
 
 ## Getting started
 
@@ -144,8 +135,7 @@ If you want broader implementation context, see [`docs/architecture.md`](docs/ar
 1. Add and validate a first authoritative Horizons/DE-style seed bundle asset.
 2. Complete the next Vulkan compute milestones (including GPU-side tracer integration).
 3. Keep the pure JVM core green as the baseline while expanding Android validation coverage.
-4. Replace starter moon/small-body orbital elements with authoritative imported catalogs / ephemeris packs.
-5. Improve interaction UX further (richer creation tools, better in-flight inspectors, observer modes) without weakening simulation correctness.
+4. Improve interaction UX (camera controls, object targeting/inspection, time controls) without weakening simulation correctness.
 
 ## Non-goals for this phase
 

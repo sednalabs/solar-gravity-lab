@@ -8,7 +8,7 @@ android {
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "com.graciousgazelles.solarlab"
+        applicationId = "com.sednalabs.solarlab"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 2
@@ -27,9 +27,9 @@ android {
         create("prerelease") {
             initWith(getByName("release"))
             matchingFallbacks += listOf("release")
-            applicationIdSuffix = ".alpha"
+            applicationIdSuffix = ".internal"
             signingConfig = signingConfigs.getByName("debug")
-            resValue("string", "app_name", "Solar Gravity Lab Ultra Alpha")
+            resValue("string", "app_name", "Solar Gravity Lab Dev Preview")
         }
     }
 
