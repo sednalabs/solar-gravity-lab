@@ -308,24 +308,36 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     }
 
     private fun updateSelectedBodySummary() {
-        val selectionText = when {
-            pendingAddDraft != null -> getString(R.string.selection_pending_add)
-            selectedBodyId == null -> getString(R.string.selection_none)
+        val selectionCard = when {
+            pendingAddDraft != null -> SelectionCardText(
+                title = getString(R.string.selection_pending_add_title),
+                detail = getString(R.string.selection_pending_add),
+            )
+            selectedBodyId == null -> SelectionCardText(
+                title = getString(R.string.selection_none_title),
+                detail = getString(R.string.selection_none),
+            )
             else -> {
                 val body = latestFrame?.snapshot?.bodies?.firstOrNull { it.id == selectedBodyId }
                 if (body == null) {
-                    getString(R.string.selection_none)
+                    SelectionCardText(
+                        title = getString(R.string.selection_none_title),
+                        detail = getString(R.string.selection_none),
+                    )
                 } else {
                     val headline = getString(
                         R.string.selection_format,
                         body.name,
                         prettyCategoryLabel(body.category),
                     )
-                    val roleLine = body.hostBodyId?.let { hostBodyId ->
+                    val hostName = body.hostBodyId?.let { hostBodyId ->
+                        latestFrame?.snapshot?.bodies?.firstOrNull { it.id == hostBodyId }?.name ?: hostBodyId
+                    }
+                    val roleLine = hostName?.let { resolvedHostName ->
                         getString(
                             R.string.selection_host_format,
                             prettyRoleLabel(body.gravitationalRole),
-                            hostBodyId,
+                            resolvedHostName,
                         )
                     } ?: prettyRoleLabel(body.gravitationalRole)
                     val motionLine = getString(
@@ -336,11 +348,15 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
                             formatDistance(body.positionM.magnitude()),
                         ),
                     )
-                    listOf(headline, roleLine, motionLine).joinToString(separator = "\n")
+                    SelectionCardText(
+                        title = headline,
+                        detail = listOf(roleLine, motionLine).joinToString(separator = "\n"),
+                    )
                 }
             }
         }
-        binding.textSelection.text = selectionText
+        binding.textSelectionTitle.text = selectionCard.title
+        binding.textSelectionDetail.text = selectionCard.detail
     }
 
     private fun buildDiagnosticsText(frame: LabFrame): String {
@@ -511,4 +527,9 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
         private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
     }
+
+    private data class SelectionCardText(
+        val title: String,
+        val detail: String,
+    )
 }

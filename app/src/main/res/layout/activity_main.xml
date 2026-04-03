@@ -47,15 +47,29 @@
                     tools:text="Catalog timeline | JD(TDB) 2451545.00000\nSpeed 6 h/s • Step 6 h" />
 
                 <TextView
-                    android:id="@+id/textSelection"
+                    android:id="@+id/textSelectionTitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:text="@string/selection_none_title"
+                    android:textColor="@color/solar_selection_text"
+                    android:textSize="15sp"
+                    tools:text="Europa • Moon" />
+
+                <TextView
+                    android:id="@+id/textSelectionDetail"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
                     android:maxLines="3"
                     android:text="@string/selection_none"
-                    android:textColor="@color/solar_selection_text"
-                    android:textSize="14sp" />
+                    android:textColor="@color/solar_hint_text"
+                    android:textSize="12sp"
+                    tools:text="Tracer • host Jupiter&#10;Speed 13.7 km/s • 670,900 km from center" />
             </LinearLayout>
 
             <Button

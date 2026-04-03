@@ -25,7 +25,9 @@
     <string name="action_info_show">Info</string>
     <string name="action_info_hide">Hide info</string>
     <string name="controls_hint">Pinch to zoom. Drag to pan. Tap a body to select it. Follow mode locks the camera to the selected body or its host, and the time-step controls move catalog time by the chosen step.</string>
+    <string name="selection_none_title">No body selected</string>
     <string name="selection_none">Tap a moving body to select it, then use Follow to keep it in view.</string>
+    <string name="selection_pending_add_title">Place new body</string>
     <string name="selection_pending_add">Tap to place the new body, or drag to set its launch direction and speed.</string>
     <string name="timeline_label_catalog">Catalog timeline</string>
     <string name="timeline_label_sandbox">Sandbox timeline</string>
