@@ -12,6 +12,8 @@ internal object SolarLabVulkanBridge {
             System.loadLibrary(LIBRARY_NAME)
         }.isSuccess
     }
+    private var lastSubmittedHandle: Long = 0L
+    private var lastSubmittedPacket: NativeScenePacket? = null
 
     fun isRuntimeAvailable(): Boolean = isLibraryLoaded && nativeIsVulkanRuntimeAvailable()
 
@@ -19,24 +21,41 @@ internal object SolarLabVulkanBridge {
 
     fun destroyRenderer(handle: Long) {
         if (isLibraryLoaded && handle != 0L) {
+            clearSubmissionCache(handle)
             nativeDestroyRenderer(handle)
         }
     }
 
-    fun onSurfaceCreated(handle: Long, surface: Surface, width: Int, height: Int): Boolean =
-        isLibraryLoaded && handle != 0L && nativeOnSurfaceCreated(handle, surface, width, height)
+    fun onSurfaceCreated(handle: Long, surface: Surface, width: Int, height: Int): Boolean {
+        if (!isLibraryLoaded || handle == 0L) return false
+        val created = nativeOnSurfaceCreated(handle, surface, width, height)
+        if (created) {
+            clearSubmissionCache(handle)
+        }
+        return created
+    }
 
-    fun onSurfaceChanged(handle: Long, surface: Surface, width: Int, height: Int): Boolean =
-        isLibraryLoaded && handle != 0L && nativeOnSurfaceChanged(handle, surface, width, height)
+    fun onSurfaceChanged(handle: Long, surface: Surface, width: Int, height: Int): Boolean {
+        if (!isLibraryLoaded || handle == 0L) return false
+        val changed = nativeOnSurfaceChanged(handle, surface, width, height)
+        if (changed) {
+            clearSubmissionCache(handle)
+        }
+        return changed
+    }
 
     fun onSurfaceDestroyed(handle: Long) {
         if (isLibraryLoaded && handle != 0L) {
+            clearSubmissionCache(handle)
             nativeOnSurfaceDestroyed(handle)
         }
     }
 
     fun submitScene(handle: Long, packet: NativeScenePacket) {
         if (!isLibraryLoaded || handle == 0L) return
+        if (handle == lastSubmittedHandle && packet.contentMatches(lastSubmittedPacket)) {
+            return
+        }
         nativeSubmitScene(
             handle = handle,
             sourceRevision = packet.sourceRevision,
@@ -60,6 +79,8 @@ internal object SolarLabVulkanBridge {
             trailColorsArgb = packet.trailColorsArgb,
             trailVertexCounts = packet.trailVertexCounts,
         )
+        lastSubmittedHandle = handle
+        lastSubmittedPacket = packet
     }
 
     fun setCamera(handle: Long, centerX: Double, centerY: Double, centerZ: Double, viewRadiusM: Double) {
@@ -78,6 +99,38 @@ internal object SolarLabVulkanBridge {
 
     fun sceneSummary(handle: Long): String =
         if (isLibraryLoaded && handle != 0L) nativeGetSceneSummary(handle) else "Scene summary unavailable"
+
+    private fun clearSubmissionCache(handle: Long) {
+        if (lastSubmittedHandle != handle) return
+        lastSubmittedHandle = 0L
+        lastSubmittedPacket = null
+    }
+
+    private fun NativeScenePacket.contentMatches(other: NativeScenePacket?): Boolean {
+        if (other == null) return false
+        if (this === other) return true
+        // `sourceRevision` changes on every assembled snapshot, so dedupe must
+        // compare the rendered packet content rather than the revision counter.
+        return authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
+            authoritativeRadiiM.contentEquals(other.authoritativeRadiiM) &&
+            authoritativeColorsArgb.contentEquals(other.authoritativeColorsArgb) &&
+            authoritativeKinds.contentEquals(other.authoritativeKinds) &&
+            tracerNearPositionsM.contentEquals(other.tracerNearPositionsM) &&
+            tracerNearRadiiM.contentEquals(other.tracerNearRadiiM) &&
+            tracerNearColorsArgb.contentEquals(other.tracerNearColorsArgb) &&
+            tracerNearKinds.contentEquals(other.tracerNearKinds) &&
+            tracerMediumPositionsM.contentEquals(other.tracerMediumPositionsM) &&
+            tracerMediumRadiiM.contentEquals(other.tracerMediumRadiiM) &&
+            tracerMediumColorsArgb.contentEquals(other.tracerMediumColorsArgb) &&
+            tracerMediumKinds.contentEquals(other.tracerMediumKinds) &&
+            tracerFarPositionsM.contentEquals(other.tracerFarPositionsM) &&
+            tracerFarRadiiM.contentEquals(other.tracerFarRadiiM) &&
+            tracerFarColorsArgb.contentEquals(other.tracerFarColorsArgb) &&
+            tracerFarKinds.contentEquals(other.tracerFarKinds) &&
+            trailPositionsM.contentEquals(other.trailPositionsM) &&
+            trailColorsArgb.contentEquals(other.trailColorsArgb) &&
+            trailVertexCounts.contentEquals(other.trailVertexCounts)
+    }
 
     private external fun nativeIsVulkanRuntimeAvailable(): Boolean
     private external fun nativeCreateRenderer(assetManager: AssetManager): Long
