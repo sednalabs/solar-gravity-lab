@@ -76,7 +76,9 @@ object ObserverCameraResolver {
             ObserverMode.FOLLOW_SELECTED -> selectedBody?.let { body ->
                 ResolvedTarget(
                     focus = body,
-                    companion = body.hostBodyId?.let(frame::bodyById),
+                    companion = body.hostBodyId?.let { hostBodyId ->
+                        frame.bodyById(hostBodyId)
+                    },
                 )
             }
             ObserverMode.FOLLOW_SELECTED_HOST -> selectedBody?.hostBodyId?.let { hostBodyId ->
