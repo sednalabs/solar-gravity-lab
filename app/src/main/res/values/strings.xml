@@ -37,4 +37,19 @@
     <string name="selection_host_format">%1$s • host %2$s</string>
     <string name="selection_motion_format">Speed %1$s • %2$s</string>
     <string name="selection_distance_format">%1$s from center</string>
+    <string name="category_star">Star</string>
+    <string name="category_planet">Planet</string>
+    <string name="category_moon">Moon</string>
+    <string name="category_dwarf_planet">Dwarf planet</string>
+    <string name="category_asteroid">Asteroid</string>
+    <string name="category_comet">Comet</string>
+    <string name="category_test_object">Test object</string>
+    <string name="category_probe">Probe</string>
+    <string name="role_massive_body">Massive body</string>
+    <string name="role_tracer">Tracer</string>
+    <string name="format_speed_kmps">%.1f km/s</string>
+    <string name="format_speed_mps">%.0f m/s</string>
+    <string name="format_distance_au">%.2f AU</string>
+    <string name="format_distance_km">%.0f km</string>
+    <string name="format_distance_m">%.0f m</string>
 </resources>

@@ -491,35 +491,35 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     }
 
     private fun prettyCategoryLabel(category: BodyCategory): String = when (category) {
-        BodyCategory.STAR -> "Star"
-        BodyCategory.PLANET -> "Planet"
-        BodyCategory.MOON -> "Moon"
-        BodyCategory.DWARF_PLANET -> "Dwarf planet"
-        BodyCategory.ASTEROID -> "Asteroid"
-        BodyCategory.COMET -> "Comet"
-        BodyCategory.TEST_OBJECT -> "Test object"
-        BodyCategory.PROBE -> "Probe"
+        BodyCategory.STAR -> getString(R.string.category_star)
+        BodyCategory.PLANET -> getString(R.string.category_planet)
+        BodyCategory.MOON -> getString(R.string.category_moon)
+        BodyCategory.DWARF_PLANET -> getString(R.string.category_dwarf_planet)
+        BodyCategory.ASTEROID -> getString(R.string.category_asteroid)
+        BodyCategory.COMET -> getString(R.string.category_comet)
+        BodyCategory.TEST_OBJECT -> getString(R.string.category_test_object)
+        BodyCategory.PROBE -> getString(R.string.category_probe)
     }
 
     private fun prettyRoleLabel(role: GravitationalRole): String = when (role) {
-        GravitationalRole.MASSIVE -> "Massive body"
-        GravitationalRole.TRACER -> "Tracer"
+        GravitationalRole.MASSIVE -> getString(R.string.role_massive_body)
+        GravitationalRole.TRACER -> getString(R.string.role_tracer)
     }
 
     private fun formatSpeed(speedMps: Double): String = when {
-        speedMps >= 1_000.0 -> "%.1f km/s".format(speedMps / 1_000.0)
-        else -> "%.0f m/s".format(speedMps)
+        speedMps >= 1_000.0 -> getString(R.string.format_speed_kmps, speedMps / 1_000.0)
+        else -> getString(R.string.format_speed_mps, speedMps)
     }
 
     private fun formatDistance(distanceM: Double): String = when {
         distanceM >= 0.01 * PhysicalConstants.ASTRONOMICAL_UNIT_M -> {
-            "%.2f AU".format(distanceM / PhysicalConstants.ASTRONOMICAL_UNIT_M)
+            getString(R.string.format_distance_au, distanceM / PhysicalConstants.ASTRONOMICAL_UNIT_M)
         }
         distanceM >= 1_000_000.0 -> {
-            "%.0f km".format(distanceM / 1_000.0)
+            getString(R.string.format_distance_km, distanceM / 1_000.0)
         }
         else -> {
-            "%.0f m".format(distanceM)
+            getString(R.string.format_distance_m, distanceM)
         }
     }
 

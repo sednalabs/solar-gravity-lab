@@ -25,6 +25,11 @@ constexpr float kFarTracerPointSizePx = 1.60f;
 constexpr float kTrailAlpha = 0.90f;
 constexpr float kDefaultMaxPointSizePx = 64.0f;
 constexpr uint32_t kComputeLocalSizeX = 64U;
+constexpr uint32_t kBodyKindStar = 0U;
+constexpr uint32_t kBodyKindPlanet = 1U;
+constexpr uint32_t kBodyKindDwarfPlanet = 2U;
+constexpr uint32_t kBodyKindProbe = 5U;
+constexpr uint32_t kBodyKindTestObject = 6U;
 
 VkDrawIndirectCommand MakeInitialIndirectCommand() {
     return VkDrawIndirectCommand{
@@ -71,14 +76,14 @@ uint32_t SafeCount3(size_t positionsCount, size_t peerCountA, size_t peerCountB)
 
 float KindMinimumBillboardDiameterPx(uint32_t kind) {
     switch (kind) {
-        case 0U:  // STAR
+        case kBodyKindStar:
             return 8.0f;
-        case 1U:  // PLANET
+        case kBodyKindPlanet:
             return 5.6f;
-        case 2U:  // DWARF_PLANET
+        case kBodyKindDwarfPlanet:
             return 4.6f;
-        case 5U:  // PROBE
-        case 6U:  // TEST_OBJECT
+        case kBodyKindProbe:
+        case kBodyKindTestObject:
             return 3.2f;
         default:
             return 3.4f;
