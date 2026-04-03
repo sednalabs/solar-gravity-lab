@@ -27,8 +27,11 @@ class RenderSceneAssemblerTest {
         val frame = assembler.assemble(snapshot)
         assertEquals(1, frame.authoritativeBodies.size)
         assertEquals(1, frame.tracerBodies.size)
-        assertTrue(frame.trails.isNotEmpty())
+        assertTrue(frame.trails.isEmpty())
         assertTrue(frame.sourceRevision > 0)
+
+        val secondFrame = assembler.assemble(snapshot.copy(epochSeconds = 2.0))
+        assertTrue(secondFrame.trails.isNotEmpty())
     }
 
     @Test
