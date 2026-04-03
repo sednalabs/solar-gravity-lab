@@ -5,6 +5,8 @@ import android.opengl.GLSurfaceView
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.render.core.CameraState
+import com.graciousgazelles.solarlab.render.core.ObserverCameraResolver
+import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBody
 import com.graciousgazelles.solarlab.render.core.RenderBodyKind
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
@@ -31,7 +33,7 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
 
     private var cameraState: CameraState = CameraState()
     private var selectedBodyId: String? = null
-    private var followBodyId: String? = null
+    private var observerMode: ObserverMode = ObserverMode.FREE
 
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
     private val maxViewRadiusM: Double = 150_000.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M
@@ -93,7 +95,7 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
     @Synchronized
     fun submitScene(scene: RenderSceneFrame) {
         this.scene = scene
-        applyFollowTargetIfNeeded(scene)
+        applyObserverTargetIfNeeded(scene)
     }
 
     @Synchronized
@@ -102,17 +104,18 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
     @Synchronized
     fun setSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
+        applyObserverTargetIfNeeded(scene)
     }
 
     @Synchronized
-    fun setFollowBodyId(bodyId: String?) {
-        followBodyId = bodyId
-        applyFollowTargetIfNeeded(scene)
+    fun setObserverMode(mode: ObserverMode) {
+        observerMode = mode
+        applyObserverTargetIfNeeded(scene)
     }
 
     @Synchronized
     fun panByPixels(distanceX: Float, distanceY: Float) {
-        if (followBodyId != null) return
+        if (ObserverCameraResolver.isCameraLocked(scene, selectedBodyId, observerMode)) return
         val metersPerPixel = currentMetersPerPixel(cameraState.viewRadiusM)
         cameraState = cameraState.copy(
             centerM = Vector3d(
@@ -137,10 +140,13 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
     }
 
     @Synchronized
-    private fun applyFollowTargetIfNeeded(frame: RenderSceneFrame) {
-        val targetId = followBodyId ?: return
-        val target = (frame.authoritativeBodies + frame.tracerBodies).firstOrNull { it.id == targetId } ?: return
-        cameraState = cameraState.copy(centerM = target.positionM)
+    private fun applyObserverTargetIfNeeded(frame: RenderSceneFrame) {
+        val targetCenterM = ObserverCameraResolver.resolveCameraCenterM(
+            frame = frame,
+            selectedBodyId = selectedBodyId,
+            observerMode = observerMode,
+        ) ?: return
+        cameraState = cameraState.copy(centerM = targetCenterM)
     }
 
     private fun drawBodies(

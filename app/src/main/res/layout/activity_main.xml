@@ -74,7 +74,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:enabled="false"
-                android:text="@string/action_follow_selected" />
+                android:text="@string/action_observer_free" />
 
             <Button
                 android:id="@+id/buttonReset"

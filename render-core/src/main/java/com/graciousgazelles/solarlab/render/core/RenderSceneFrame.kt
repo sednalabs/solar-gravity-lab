@@ -20,6 +20,7 @@ data class RenderBody(
     val colorArgb: Int,
     val kind: RenderBodyKind,
     val isMassive: Boolean,
+    val hostBodyId: String? = null,
 )
 
 data class RenderTrail(
