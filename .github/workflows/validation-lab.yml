@@ -127,6 +127,7 @@ jobs:
               ;;
             full)
               core_jvm='true'
+              feature_lab_unit='true'
               physics_accuracy_telemetry='true'
               android_assemble='true'
               ;;

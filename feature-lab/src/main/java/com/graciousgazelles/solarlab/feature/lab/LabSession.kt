@@ -221,7 +221,10 @@ class LabSession private constructor(
         val simDeltaSeconds = realDeltaSeconds * playbackSpeedPreset.simSecondsPerRealSecond
         if (simDeltaSeconds <= 0.0) return
         val requestFreshDiagnostics = shouldRefreshDiagnosticsForRunningTick()
-        val effectiveMaxSubstepSeconds = effectivePlaybackMaxSubstepSeconds(simDeltaSeconds)
+        val effectiveMaxSubstepSeconds = effectivePlaybackMaxSubstepSeconds(
+            totalSeconds = simDeltaSeconds,
+            collisionMode = config.collisionMode,
+        )
         val advanceStartNs = System.nanoTime()
         val result = advanceBySimulationSeconds(
             totalSeconds = simDeltaSeconds,
@@ -440,7 +443,13 @@ class LabSession private constructor(
             )
         }
 
-        internal fun effectivePlaybackMaxSubstepSeconds(totalSeconds: Double): Double {
+        internal fun effectivePlaybackMaxSubstepSeconds(
+            totalSeconds: Double,
+            collisionMode: CollisionMode,
+        ): Double {
+            if (collisionMode != CollisionMode.NONE) {
+                return MAX_SIMULATION_SUBSTEP_SECONDS
+            }
             val adaptiveSubstep = totalSeconds / PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK
             return adaptiveSubstep.coerceIn(
                 minimumValue = MAX_SIMULATION_SUBSTEP_SECONDS,
