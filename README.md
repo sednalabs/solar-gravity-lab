@@ -37,7 +37,7 @@ What is intentionally incomplete:
 
 - GPU-side tracer integration is not implemented yet (simulation remains authoritative on CPU).
 - Synthetic asteroid/Oort populations are generated approximations, not catalogue-complete object sets.
-- Backward time travel for sandbox-diverged runs is not implemented yet; reverse stepping is currently reset/catalog-rebuild only.
+- Backward time travel for sandbox-diverged runs restores the latest catalog-backed checkpoint; arbitrary multi-step sandbox history is still not implemented.
 - Collision model supports merge and elastic response, but not fragmentation.
 - Android app UX is still minimal and engineering-focused.
 
