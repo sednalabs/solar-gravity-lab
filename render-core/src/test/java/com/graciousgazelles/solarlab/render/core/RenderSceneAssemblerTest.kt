@@ -146,6 +146,34 @@ class RenderSceneAssemblerTest {
         assertEquals(100.0f, packet.tracerNearRadiiM.maxOrNull() ?: 0.0f)
     }
 
+    @Test
+    fun clearRemovesTrailHistorySoFirstFrameAfterResetHasNoTrail() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
+        val firstSnapshot = SimulationSnapshot(
+            epochSeconds = 1.0,
+            bodies = listOf(
+                body("sun", GravitationalRole.MASSIVE, BodyCategory.STAR)
+                    .copy(positionM = Vector3d(0.0, 0.0, 0.0)),
+            ),
+        )
+        val secondSnapshot = firstSnapshot.copy(
+            epochSeconds = 2.0,
+            bodies = listOf(
+                firstSnapshot.bodies.single().copy(positionM = Vector3d(1_000.0, 0.0, 0.0)),
+            ),
+        )
+
+        val frameBeforeReset = assembler.assemble(firstSnapshot)
+        assertTrue(frameBeforeReset.trails.isEmpty())
+        val populatedFrame = assembler.assemble(secondSnapshot)
+        assertEquals(1, populatedFrame.trails.size)
+
+        assembler.clear()
+
+        val firstFrameAfterReset = assembler.assemble(firstSnapshot.copy(epochSeconds = 3.0))
+        assertTrue(firstFrameAfterReset.trails.isEmpty())
+    }
+
     private fun body(id: String, role: GravitationalRole, category: BodyCategory): BodyState = BodyState(
         id = id,
         name = id,
