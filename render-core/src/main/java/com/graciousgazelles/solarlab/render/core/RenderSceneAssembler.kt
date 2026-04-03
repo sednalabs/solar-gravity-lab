@@ -84,6 +84,7 @@ class RenderSceneAssembler(
 private fun BodyCategory.toRenderKind(): RenderBodyKind = when (this) {
     BodyCategory.STAR -> RenderBodyKind.STAR
     BodyCategory.PLANET -> RenderBodyKind.PLANET
+    BodyCategory.MOON -> RenderBodyKind.PLANET
     BodyCategory.DWARF_PLANET -> RenderBodyKind.DWARF_PLANET
     BodyCategory.ASTEROID -> RenderBodyKind.ASTEROID
     BodyCategory.COMET -> RenderBodyKind.COMET

@@ -14,8 +14,10 @@ import com.graciousgazelles.solarlab.render.core.NativeScenePacket
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
+import com.graciousgazelles.solarlab.render.core.SceneInteractionMath
 import com.graciousgazelles.solarlab.render.core.ScenePacketBuildPolicy
 import kotlin.math.max
+import kotlin.math.sqrt
 
 internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     context: Context,
@@ -31,6 +33,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
     private var cameraState: CameraState = CameraState()
+    private var interactionListener: RenderInteractionListener? = null
+    private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
+    private var selectedBodyId: String? = null
+    private var followBodyId: String? = null
+    private var placementStartScreen: Pair<Float, Float>? = null
 
     private val scenePacketPolicy = ScenePacketBuildPolicy()
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
@@ -40,6 +47,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (interactionMode == SceneInteractionMode.PLACE_BODY) {
+                    return false
+                }
                 val scaleFactor = detector.scaleFactor
                 if (scaleFactor > 0f) {
                     cameraState = cameraState.copy(
@@ -57,12 +67,28 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
 
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
+                val bodyId = SceneInteractionMath.pickBodyIdAtScreenPoint(
+                    frame = latestScene,
+                    cameraState = cameraState,
+                    viewportWidthPx = width.coerceAtLeast(1),
+                    viewportHeightPx = height.coerceAtLeast(1),
+                    screenXPx = e.x,
+                    screenYPx = e.y,
+                )
+                interactionListener?.onBodySelectionChanged(bodyId)
+                return true
+            }
+
             override fun onScroll(
                 e1: MotionEvent?,
                 e2: MotionEvent,
                 distanceX: Float,
                 distanceY: Float,
             ): Boolean {
+                if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
+                if (followBodyId != null) return false
                 val metersPerPixel = currentMetersPerPixel(cameraState.viewRadiusM)
                 cameraState = cameraState.copy(
                     centerM = Vector3d(
@@ -76,6 +102,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
                 resetCamera()
                 return true
             }
@@ -130,6 +157,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun submitScene(frame: RenderSceneFrame) {
         latestScene = frame
+        applyFollowTargetIfNeeded(frame)
         packetDirty = true
         renderLatestScene()
     }
@@ -137,6 +165,26 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     override fun resetCamera() {
         cameraState = CameraState()
         onCameraChanged()
+    }
+
+    override fun setInteractionListener(listener: RenderInteractionListener?) {
+        interactionListener = listener
+    }
+
+    override fun setInteractionMode(mode: SceneInteractionMode) {
+        interactionMode = mode
+        placementStartScreen = null
+    }
+
+    override fun setSelectedBodyId(bodyId: String?) {
+        selectedBodyId = bodyId
+    }
+
+    override fun setFollowBodyId(bodyId: String?) {
+        followBodyId = bodyId
+        applyFollowTargetIfNeeded(latestScene)
+        packetDirty = true
+        renderLatestScene()
     }
 
     override fun release() {
@@ -149,9 +197,45 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (interactionMode == SceneInteractionMode.PLACE_BODY) {
+            return handlePlacementTouch(event)
+        }
         val scaled = scaleDetector.onTouchEvent(event)
         val gestured = gestureDetector.onTouchEvent(event)
         return scaled || gestured || super.onTouchEvent(event)
+    }
+
+    private fun handlePlacementTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                placementStartScreen = event.x to event.y
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                val start = placementStartScreen ?: (event.x to event.y)
+                placementStartScreen = null
+                val startWorld = screenToWorld(start)
+                val endWorld = screenToWorld(event.x to event.y)
+                val dx = event.x - start.first
+                val dy = event.y - start.second
+                interactionListener?.onPlacementGesture(startWorld, endWorld, sqrt((dx * dx) + (dy * dy)))
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                placementStartScreen = null
+                return true
+            }
+        }
+        return true
+    }
+
+
+    private fun applyFollowTargetIfNeeded(frame: RenderSceneFrame) {
+        val targetId = followBodyId ?: return
+        val target = (frame.authoritativeBodies + frame.tracerBodies).firstOrNull { it.id == targetId } ?: return
+        cameraState = cameraState.copy(centerM = target.positionM)
     }
 
     private fun ensureRenderer(): Boolean {
@@ -217,6 +301,15 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val minDimension = max(1, minOf(width, height))
         return (2.0 * viewRadiusM) / minDimension
     }
+
+    private fun screenToWorld(screen: Pair<Float, Float>): Vector3d = SceneInteractionMath.screenToWorldPoint(
+        screenXPx = screen.first,
+        screenYPx = screen.second,
+        cameraState = cameraState,
+        viewportWidthPx = width.coerceAtLeast(1),
+        viewportHeightPx = height.coerceAtLeast(1),
+        worldZ = 0.0,
+    )
 
     private fun reportStatus(message: String) {
         statusCallback(

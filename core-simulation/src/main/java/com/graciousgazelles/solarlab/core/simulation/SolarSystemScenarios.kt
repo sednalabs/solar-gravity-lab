@@ -11,6 +11,7 @@ import com.graciousgazelles.solarlab.core.model.OrbitalElements
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
+import com.graciousgazelles.solarlab.core.model.TimelineMode
 import kotlin.math.acos
 import kotlin.random.Random
 
@@ -29,12 +30,17 @@ object SolarSystemScenarios {
     private const val COLOR_BELT: Int = 0x77C8C8C8
     private const val COLOR_OORT: Int = 0x55A0C4FF
 
+    fun defaultSeedJulianDateTdb(seedBundle: CartesianSeedBundle? = null): Double =
+        seedBundle?.metadata?.epochJdTdb ?: JplApproximateSeedCatalog.DEFAULT_SEED_JULIAN_DATE_TDB
+
     fun majorBodiesWithDwarfs(
         config: SimulationConfig = SimulationConfig(),
         seedBundle: CartesianSeedBundle? = null,
+        julianDateTdb: Double = defaultSeedJulianDateTdb(seedBundle),
     ): SimulationSnapshot {
+        val authoritativeBundle = seedBundle?.takeIf { kotlin.math.abs(it.metadata.epochJdTdb - julianDateTdb) <= 1.0e-9 }
         val sun = bodyFromCartesianRecordOrDefault(
-            record = seedBundle?.recordFor("sun"),
+            record = authoritativeBundle?.recordFor("sun"),
             id = "sun",
             name = "Sun",
             category = BodyCategory.STAR,
@@ -47,9 +53,10 @@ object SolarSystemScenarios {
         val bodies = mutableListOf<BodyState>()
         bodies += sun
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "mercury",
             name = "Mercury",
             category = BodyCategory.PLANET,
@@ -58,9 +65,10 @@ object SolarSystemScenarios {
             colorArgb = COLOR_MERCURY,
         )
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "venus",
             name = "Venus",
             category = BodyCategory.PLANET,
@@ -69,9 +77,10 @@ object SolarSystemScenarios {
             colorArgb = COLOR_VENUS,
         )
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "earth",
             name = "Earth",
             category = BodyCategory.PLANET,
@@ -80,9 +89,10 @@ object SolarSystemScenarios {
             colorArgb = COLOR_EARTH,
         )
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "mars",
             name = "Mars",
             category = BodyCategory.PLANET,
@@ -91,9 +101,10 @@ object SolarSystemScenarios {
             colorArgb = COLOR_MARS,
         )
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "jupiter",
             name = "Jupiter",
             category = BodyCategory.PLANET,
@@ -102,9 +113,10 @@ object SolarSystemScenarios {
             colorArgb = COLOR_JUPITER,
         )
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "saturn",
             name = "Saturn",
             category = BodyCategory.PLANET,
@@ -113,9 +125,10 @@ object SolarSystemScenarios {
             colorArgb = COLOR_SATURN,
         )
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "uranus",
             name = "Uranus",
             category = BodyCategory.PLANET,
@@ -124,9 +137,10 @@ object SolarSystemScenarios {
             colorArgb = COLOR_URANUS,
         )
         bodies += seededFromCatalogOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "neptune",
             name = "Neptune",
             category = BodyCategory.PLANET,
@@ -135,7 +149,7 @@ object SolarSystemScenarios {
             colorArgb = COLOR_NEPTUNE,
         )
         bodies += seededAroundPrimaryOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
             id = "ceres",
@@ -154,7 +168,7 @@ object SolarSystemScenarios {
             ),
         )
         bodies += seededAroundPrimaryOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
             id = "pluto",
@@ -173,7 +187,7 @@ object SolarSystemScenarios {
             ),
         )
         bodies += seededAroundPrimaryOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
             id = "haumea",
@@ -192,7 +206,7 @@ object SolarSystemScenarios {
             ),
         )
         bodies += seededAroundPrimaryOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
             id = "makemake",
@@ -211,7 +225,7 @@ object SolarSystemScenarios {
             ),
         )
         bodies += seededAroundPrimaryOrBundle(
-            bundle = seedBundle,
+            bundle = authoritativeBundle,
             primary = sun,
             config = config,
             id = "eris",
@@ -231,9 +245,11 @@ object SolarSystemScenarios {
         )
 
         return SimulationSnapshot(
-            // The simulation clock still starts at t=0, but the body states may now come from a
-            // bundled absolute epoch in the seed bundle metadata.
             epochSeconds = 0.0,
+            referenceEpochJdTdb = julianDateTdb,
+            timelineMode = TimelineMode.CATALOG,
+            provenanceLabel = authoritativeBundle?.metadata?.datasetName ?: "Built-in approximate solar catalog",
+            provenanceSource = authoritativeBundle?.metadata?.source ?: "built-in-catalog",
             bodies = OrbitalMechanics.recenterToBarycenter(bodies),
         )
     }
@@ -333,10 +349,89 @@ object SolarSystemScenarios {
         oortCount: Int = 96,
         config: SimulationConfig = SimulationConfig(),
         seedBundle: CartesianSeedBundle? = null,
+        julianDateTdb: Double = defaultSeedJulianDateTdb(seedBundle),
+        importedCatalogBodies: List<CatalogBodyDefinition> = emptyList(),
+        includeStarterPlanetaryMoons: Boolean = true,
+        includeCuratedSmallBodies: Boolean = true,
+        includeSyntheticAsteroidBelt: Boolean = true,
+        includeSyntheticOortCloud: Boolean = true,
     ): SimulationSnapshot {
-        val base = majorBodiesWithDwarfs(config = config, seedBundle = seedBundle)
-        val withBelt = withSyntheticAsteroidBelt(base, count = asteroidCount, config = config)
-        return withSyntheticOortShell(withBelt, count = oortCount, config = config)
+        var scenario = majorBodiesWithDwarfs(
+            config = config,
+            seedBundle = seedBundle,
+            julianDateTdb = julianDateTdb,
+        )
+
+        val importedMoons = importedCatalogBodies.filter { it.category == BodyCategory.MOON }
+        val importedSmallBodies = importedCatalogBodies.filter { it.category != BodyCategory.MOON }
+        val mergedCatalog = BuiltInSolarCatalog.mergedDefinitions(
+            importedPlanetaryMoons = importedMoons,
+            importedSmallBodies = importedSmallBodies,
+        )
+
+        if (includeStarterPlanetaryMoons || importedMoons.isNotEmpty() || importedSmallBodies.isNotEmpty()) {
+            val selectedCatalog = mergedCatalog.filter { definition ->
+                when (definition.category) {
+                    BodyCategory.MOON -> includeStarterPlanetaryMoons || importedMoons.any { it.id == definition.id }
+                    BodyCategory.ASTEROID, BodyCategory.COMET -> includeCuratedSmallBodies || importedSmallBodies.any { it.id == definition.id }
+                    else -> true
+                }
+            }
+            scenario = withCatalogBodies(
+                base = scenario,
+                definitions = selectedCatalog,
+                julianDateTdb = julianDateTdb,
+                config = config,
+            )
+        }
+
+        val withBelt = if (includeSyntheticAsteroidBelt && asteroidCount > 0) {
+            withSyntheticAsteroidBelt(scenario, count = asteroidCount, config = config)
+        } else {
+            scenario
+        }
+        return if (includeSyntheticOortCloud && oortCount > 0) {
+            withSyntheticOortShell(withBelt, count = oortCount, config = config)
+        } else {
+            withBelt
+        }
+    }
+
+    fun withCatalogBodies(
+        base: SimulationSnapshot,
+        definitions: List<CatalogBodyDefinition>,
+        julianDateTdb: Double,
+        config: SimulationConfig = SimulationConfig(),
+    ): SimulationSnapshot {
+        if (definitions.isEmpty()) return base
+
+        val resolvedBodies = base.bodies.toMutableList()
+        val bodiesById = resolvedBodies.associateBy { it.id }.toMutableMap()
+        val pending = definitions.filter { definition ->
+            definition.enabledByDefault && !bodiesById.containsKey(definition.id)
+        }.toMutableList()
+
+        var progress = true
+        while (pending.isNotEmpty() && progress) {
+            progress = false
+            val iterator = pending.iterator()
+            while (iterator.hasNext()) {
+                val definition = iterator.next()
+                val host = bodiesById[definition.hostBodyId] ?: continue
+                val state = stateFromCatalogDefinition(
+                    definition = definition,
+                    host = host,
+                    julianDateTdb = julianDateTdb,
+                    config = config,
+                )
+                resolvedBodies += state
+                bodiesById[state.id] = state
+                iterator.remove()
+                progress = true
+            }
+        }
+
+        return base.copy(bodies = OrbitalMechanics.recenterToBarycenter(resolvedBodies))
     }
 
     private fun seed(
@@ -359,6 +454,7 @@ object SolarSystemScenarios {
         bundle: CartesianSeedBundle?,
         primary: BodyState,
         config: SimulationConfig,
+        julianDateTdb: Double,
         id: String,
         name: String,
         category: BodyCategory,
@@ -376,6 +472,7 @@ object SolarSystemScenarios {
                 massKg = massKg,
                 radiusM = radiusM,
                 colorArgb = colorArgb,
+                hostBodyId = primary.id,
             )
         }
         if (bundled != null) return bundled
@@ -385,6 +482,7 @@ object SolarSystemScenarios {
             primaryMassKg = primary.massKg,
             bodyMassKg = massKg,
             gravitationalConstant = config.gravitationalConstant,
+            julianDateTdb = julianDateTdb,
         )
 
         return realBody(
@@ -395,6 +493,7 @@ object SolarSystemScenarios {
             massKg = massKg,
             radiusM = radiusM,
             colorArgb = colorArgb,
+            hostBodyId = primary.id,
             positionM = primary.positionM + stateVector.positionM,
             velocityMps = primary.velocityMps + stateVector.velocityMps,
         )
@@ -422,6 +521,7 @@ object SolarSystemScenarios {
                 massKg = massKg,
                 radiusM = radiusM,
                 colorArgb = colorArgb,
+                hostBodyId = primary.id,
             )
         }
         if (bundled != null) return bundled
@@ -448,6 +548,7 @@ object SolarSystemScenarios {
         massKg: Double,
         radiusM: Double,
         colorArgb: Int,
+        hostBodyId: String? = null,
     ): BodyState = realBody(
         id = id,
         name = name,
@@ -456,6 +557,7 @@ object SolarSystemScenarios {
         massKg = massKg,
         radiusM = radiusM,
         colorArgb = colorArgb,
+        hostBodyId = hostBodyId,
         positionM = record?.positionM ?: Vector3d.ZERO,
         velocityMps = record?.velocityMps ?: Vector3d.ZERO,
     )
@@ -486,6 +588,7 @@ object SolarSystemScenarios {
             massKg = massKg,
             radiusM = radiusM,
             colorArgb = colorArgb,
+            hostBodyId = primary.id,
             positionM = primary.positionM + stateVector.positionM,
             velocityMps = primary.velocityMps + stateVector.velocityMps,
         )
@@ -519,6 +622,34 @@ object SolarSystemScenarios {
             positionM = primary.positionM + stateVector.positionM,
             velocityMps = primary.velocityMps + stateVector.velocityMps,
             colorArgb = colorArgb,
+            hostBodyId = primary.id,
+        )
+    }
+
+    private fun stateFromCatalogDefinition(
+        definition: CatalogBodyDefinition,
+        host: BodyState,
+        julianDateTdb: Double,
+        config: SimulationConfig,
+    ): BodyState {
+        val stateVector = OrbitalMechanics.stateVectorAroundPrimaryAtEpoch(
+            primaryMassKg = host.massKg,
+            bodyMassKg = definition.massKg,
+            orbit = definition.orbit,
+            targetJulianDateTdb = julianDateTdb,
+            gravitationalConstant = config.gravitationalConstant,
+        )
+        return realBody(
+            id = definition.id,
+            name = definition.name,
+            category = definition.category,
+            gravitationalRole = definition.gravitationalRole,
+            massKg = definition.massKg,
+            radiusM = definition.radiusM,
+            colorArgb = definition.colorArgb,
+            hostBodyId = host.id,
+            positionM = host.positionM + stateVector.positionM,
+            velocityMps = host.velocityMps + stateVector.velocityMps,
         )
     }
 
@@ -530,6 +661,7 @@ object SolarSystemScenarios {
         massKg: Double,
         radiusM: Double,
         colorArgb: Int,
+        hostBodyId: String? = null,
         positionM: Vector3d = Vector3d.ZERO,
         velocityMps: Vector3d = Vector3d.ZERO,
     ): BodyState {
@@ -537,6 +669,7 @@ object SolarSystemScenarios {
             ?: when (category) {
                 BodyCategory.STAR -> DensityPreset.GAS_GIANT_KG_PER_M3
                 BodyCategory.PLANET -> DensityPreset.ROCKY_KG_PER_M3
+                BodyCategory.MOON -> DensityPreset.ICY_KG_PER_M3
                 BodyCategory.DWARF_PLANET -> DensityPreset.ICY_KG_PER_M3
                 BodyCategory.ASTEROID -> DensityPreset.ROCKY_KG_PER_M3
                 BodyCategory.COMET -> DensityPreset.ICY_KG_PER_M3
@@ -555,6 +688,7 @@ object SolarSystemScenarios {
             positionM = positionM,
             velocityMps = velocityMps,
             colorArgb = colorArgb,
+            hostBodyId = hostBodyId,
         )
     }
 

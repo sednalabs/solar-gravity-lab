@@ -4,17 +4,11 @@ This repository uses a dispatch-only remote validation workflow so we can keep
 heavy build/test work off the local Orchard host and use GitHub-hosted runners
 for measurement where possible.
 
-Documentation-only updates should normally use the lightweight automatic
-`docs-sanity` workflow instead of manually dispatching `validation-lab`, unless
-the docs change is coupled to behavior or build logic that genuinely needs a
-JVM/Android proof run.
-
 ## Current workflow
 
 Workflow file:
 
 - `.github/workflows/validation-lab.yml`
-- `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 
 The workflow currently supports three lane families:
 
@@ -88,15 +82,3 @@ spending local Orchard compute.
    surface the next blocker family without widening further than necessary.
 4. Reserve `profile=broad` or `profile=full` for milestone checkpoints once the
    active frontier queue is under control.
-
-## Cheap path for docs-only changes
-
-If a change only touches `README.md`, `docs/**`, or the docs-sanity workflow
-itself, let `.github/workflows/docs-sanity.yml` answer the first question:
-
-- do the repository markdown links still resolve?
-- did we avoid accidentally widening documentation edits into Android/JVM work?
-
-That keeps documentation maintenance fast and cheap while preserving
-`validation-lab` as the deliberate remote compute path for real code or build
-surface changes.

@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - release/**
-    paths-ignore:
-      - "README.md"
-      - "docs/**"
-      - ".github/workflows/docs-sanity.yml"
-      - ".github/scripts/check_markdown_links.py"
   workflow_dispatch:
     inputs:
       ref:
@@ -25,7 +20,7 @@ permissions:
 
 jobs:
   build-prerelease-apk:
-    name: Build internal dev preview APK
+    name: Build installable prerelease APK
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -90,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          artifact_name="solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-internal-dev-preview.apk"
+          artifact_name="solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-ultra-alpha.apk"
           cp \
             "app/build/outputs/apk/prerelease/${{ steps.meta.outputs.apk_name }}" \
             "dist/${artifact_name}"
@@ -99,7 +94,7 @@ jobs:
       - name: Upload prerelease APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-internal-dev-preview-${{ github.run_id }}
+          name: solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-ultra-alpha-${{ github.run_id }}
           if-no-files-found: error
           path: |
             dist/*.apk
@@ -116,7 +111,7 @@ jobs:
             echo "- version: \`${{ steps.meta.outputs.version_name }}\`"
             echo "- versionCode: \`${{ steps.meta.outputs.version_code }}\`"
             echo "- build type: \`prerelease\`"
-            echo "- package id: \`com.sednalabs.solarlab.internal\`"
-            echo "- signing: debug key for internal sideload testing only"
-            echo "- artifact: \`solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-internal-dev-preview.apk\`"
+            echo "- package id: \`com.graciousgazelles.solarlab.alpha\`"
+            echo "- signing: debug key for sideload testing only"
+            echo "- artifact: \`solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-ultra-alpha.apk\`"
           } >> "$GITHUB_STEP_SUMMARY"
