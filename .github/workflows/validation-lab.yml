@@ -47,6 +47,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
+      profile_intent: ${{ steps.plan.outputs.profile_intent }}
+      profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       core_jvm: ${{ steps.plan.outputs.core_jvm }}
       android_assemble: ${{ steps.plan.outputs.android_assemble }}
@@ -65,16 +67,37 @@ jobs:
 
           profile='${{ inputs.profile }}'
           lane_set='${{ inputs.lane_set }}'
+          write_wrapper='${{ inputs.write_wrapper }}'
 
           wrapper_bootstrap='false'
           core_jvm='false'
           android_assemble='false'
+          profile_intent='targeted'
+          profile_notes='One active slice only; use this to prove the current seam before widening.'
+
+          case "$profile" in
+            targeted)
+              profile_intent='targeted'
+              profile_notes='One active slice only; use this to prove the current seam before widening.'
+              ;;
+            frontier)
+              profile_intent='frontier'
+              profile_notes='Bounded next-blocker harvest; keep the trusted baseline, add one wider seam family, avoid unrelated bootstrap churn.'
+              ;;
+            broad|full)
+              profile_intent='checkpoint'
+              profile_notes='Explicit checkpoint mode; use sparingly for milestone passes rather than routine iteration.'
+              ;;
+            *)
+              echo "Unknown profile: ${profile}" >&2
+              exit 1
+              ;;
+          esac
 
           case "$lane_set" in
             auto)
-              wrapper_bootstrap='true'
               core_jvm='true'
-              if [[ "$profile" != 'targeted' ]]; then
+              if [[ "$profile" == 'frontier' || "$profile" == 'broad' || "$profile" == 'full' ]]; then
                 android_assemble='true'
               fi
               ;;
@@ -82,15 +105,12 @@ jobs:
               wrapper_bootstrap='true'
               ;;
             core-jvm)
-              wrapper_bootstrap='true'
               core_jvm='true'
               ;;
             android-host)
-              wrapper_bootstrap='true'
               android_assemble='true'
               ;;
             full)
-              wrapper_bootstrap='true'
               core_jvm='true'
               android_assemble='true'
               ;;
@@ -100,10 +120,16 @@ jobs:
               ;;
           esac
 
-          lane_summary="$(printf 'wrapper_bootstrap=%s, core_jvm=%s, android_assemble=%s' \
-            "$wrapper_bootstrap" "$core_jvm" "$android_assemble")"
+          if [[ "$write_wrapper" == 'true' ]]; then
+            wrapper_bootstrap='true'
+          fi
+
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, core_jvm=%s, android_assemble=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$core_jvm" "$android_assemble")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+          echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
+          echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "core_jvm=${core_jvm}" >> "$GITHUB_OUTPUT"
           echo "android_assemble=${android_assemble}" >> "$GITHUB_OUTPUT"
@@ -295,7 +321,10 @@ jobs:
             echo "## validation-lab"
             echo
             echo "- ref: \`${{ needs.metadata.outputs.checkout_ref }}\`"
+            echo "- profile: \`${{ inputs.profile }}\`"
+            echo "- intent: \`${{ needs.metadata.outputs.profile_intent }}\`"
             echo "- lanes: \`${{ needs.metadata.outputs.lane_summary }}\`"
+            echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
             echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
             echo "- core-jvm: \`${{ needs['core-jvm'].result }}\`"
             echo "- android-assemble: \`${{ needs['android-assemble'].result }}\`"
