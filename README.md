@@ -20,18 +20,24 @@ What is implemented and usable today:
 - Pure Kotlin/JVM core modules for math, domain model, simulation, and render-scene assembly.
 - N-body simulation with double-precision state.
 - Massive-body vs tracer-body dynamics.
-- Merge-collision handling with linear momentum conservation.
+- Continuous collision handling with merge and elastic response modes.
 - Barycentric recentering for seeded systems.
 - Epoch-tagged seeded major-planet states with bundle/fallback layering.
+- Catalog-backed timeline semantics for seeded starts, with sandbox-branch behavior once the user edits or materially diverges the system.
+- Granular playback-speed and step-quantum controls.
 - Renderer host that prefers Vulkan and falls back to OpenGL ES when needed.
 - Native Vulkan pipeline with swapchain/render-pass/framebuffer/command recording, scene-packet ingestion, SPIR-V graphics pipelines, and compute-based medium/far tracer compaction.
+- Follow-selected-body camera behavior in both render paths.
+- Engineering-grade body add/edit/remove controls, plus scene placement and drag-to-launch for new bodies.
 
 What is intentionally incomplete:
 
 - No bundled, authoritative DE/Horizons seed file in this repo yet (seed-bundle path exists; fallback catalogue is used when no bundle is present).
+- Moon/small-body catalog loaders and template assets are present, but the repo does not yet ship live packaged catalog TSVs under the runtime filenames the loaders expect.
 - GPU-side tracer integration is not implemented yet (simulation remains authoritative on CPU).
 - Synthetic asteroid/Oort populations are generated approximations, not catalogue-complete object sets.
-- Collision model is merge-only (no fragmentation/elastic models).
+- Backward time travel for sandbox-diverged runs is not implemented yet; reverse stepping is currently reset/catalog-rebuild only.
+- Collision model supports merge and elastic response, but not fragmentation.
 - Android app UX is still minimal and engineering-focused.
 
 ## Project modules
@@ -56,7 +62,8 @@ What is intentionally incomplete:
 - Body categories:
   - Massive bodies mutually interact.
   - Tracer bodies feel massive bodies but do not perturb others.
-- Collision handling: merge, conserve total mass + linear momentum, derive merged radius from combined volume.
+- Collision handling: continuous collision sweep during drift with merge or elastic response modes.
+- Timeline semantics: seeded/catalog-backed starts retain absolute epoch meaning until edits or collisions branch the sandbox.
 
 This model is meant to be physically credible while remaining scalable on mobile hardware.
 
@@ -89,6 +96,7 @@ Seed state loading is layered so simulation/rendering are not coupled to one dat
 1. Optional `CartesianSeedBundle` asset (authoritative when present and valid).
 2. `JplApproximateSeedCatalog` fallback for major planets.
 3. Representative orbital-element fallback for currently unbundled dwarf bodies.
+4. Optional orbiting-body catalog packs for moons and curated small bodies when real TSV assets are supplied.
 
 This keeps the pipeline stable while making it easy to drop in improved ephemeris bundles later.
 
@@ -121,7 +129,7 @@ Important current notes:
 - The first installable preview line uses version `0.1.0-alpha.1`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
 - Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
 
-If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md) and [`docs/release-channels.md`](docs/release-channels.md).
+If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md), [`docs/catalog-ingest-handoff.md`](docs/catalog-ingest-handoff.md), and [`docs/release-channels.md`](docs/release-channels.md).
 
 ## Getting started
 
@@ -133,9 +141,10 @@ If you want broader implementation context, see [`docs/architecture.md`](docs/ar
 ## Near-term milestones
 
 1. Add and validate a first authoritative Horizons/DE-style seed bundle asset.
-2. Complete the next Vulkan compute milestones (including GPU-side tracer integration).
-3. Keep the pure JVM core green as the baseline while expanding Android validation coverage.
-4. Improve interaction UX (camera controls, object targeting/inspection, time controls) without weakening simulation correctness.
+2. Package real moon and curated small-body catalog TSVs behind the existing loader/parser path.
+3. Complete the next Vulkan compute milestones (including GPU-side tracer integration).
+4. Keep the pure JVM core green as the baseline while expanding Android validation coverage.
+5. Improve interaction UX further without weakening simulation correctness, especially around observer modes and sandbox rewind.
 
 ## Non-goals for this phase
 
