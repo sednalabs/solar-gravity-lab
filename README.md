@@ -102,9 +102,9 @@ compute.
 
 For phone testing, use `.github/workflows/prerelease-apk.yml` to build an
 installable `prerelease` APK artifact on GitHub Actions. That path is meant for
-ultra-alpha sideloading only: it uses the application id
-`com.graciousgazelles.solarlab.alpha` and is signed with the default debug key,
-so it is appropriate for device testing but not for a public production
+internal dev preview sideloading only: it uses the application id
+`com.graciousgazelles.solarlab.internal` and is signed with the default debug
+key, so it is appropriate for device testing but not for a public production
 release.
 
 For contributors, the most reliable near-term validation target is the pure JVM core:
@@ -119,9 +119,10 @@ This repo currently relies on a remote-first validation workflow documented in [
 Important current notes:
 
 - `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
-- The first formal preview line uses version `0.1.0-alpha.1`. That is intentionally conservative semver-style prerelease numbering rather than a public “1.0” style launch signal.
+- The first installable preview line uses version `0.1.0-alpha.1`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
+- Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
 
-If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md).
+If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md) and [`docs/release-channels.md`](docs/release-channels.md).
 
 ## Getting started
 

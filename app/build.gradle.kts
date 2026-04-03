@@ -27,9 +27,9 @@ android {
         create("prerelease") {
             initWith(getByName("release"))
             matchingFallbacks += listOf("release")
-            applicationIdSuffix = ".alpha"
+            applicationIdSuffix = ".internal"
             signingConfig = signingConfigs.getByName("debug")
-            resValue("string", "app_name", "Solar Gravity Lab Ultra Alpha")
+            resValue("string", "app_name", "Solar Gravity Lab Dev Preview")
         }
     }
 
