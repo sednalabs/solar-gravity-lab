@@ -40,6 +40,7 @@ class LabSession private constructor(
 
     private var scheduledTask: ScheduledFuture<*>? = null
     private var engine: SimulationEngine = SimulationEngine(defaultScenarioFactory(defaultCatalogEpochJdTdb), config)
+    private var latestCatalogCheckpoint: SimulationSnapshot? = engine.snapshot().takeIf { it.isCatalogBacked }
 
     fun isRunning(): Boolean = running
 
@@ -93,7 +94,25 @@ class LabSession private constructor(
         if (direction == 0) return
         executor.execute {
             val snapshot = engine.snapshot()
-            if (snapshot.isCatalogBacked) {
+            if (direction < 0) {
+                when (val action = resolveBackControlAction(snapshot, latestCatalogCheckpoint)) {
+                    BackControlAction.StepCatalog -> {
+                        val currentJd = snapshot.absoluteJulianDateTdbOrNull() ?: defaultCatalogEpochJdTdb
+                        val targetJd = currentJd + (direction * stepQuantumPreset.seconds / PhysicalConstants.DAY_SECONDS)
+                        engine.reset(defaultScenarioFactory(targetJd))
+                        emitCurrentFrame(emptyList())
+                    }
+
+                    is BackControlAction.RestoreCheckpoint -> {
+                        engine.reset(action.checkpoint)
+                        emitCurrentFrame(emptyList())
+                    }
+
+                    BackControlAction.None -> {
+                        emitCurrentFrame(emptyList())
+                    }
+                }
+            } else if (snapshot.isCatalogBacked) {
                 val currentJd = snapshot.absoluteJulianDateTdbOrNull() ?: defaultCatalogEpochJdTdb
                 val targetJd = currentJd + (direction * stepQuantumPreset.seconds / PhysicalConstants.DAY_SECONDS)
                 engine.reset(defaultScenarioFactory(targetJd))
@@ -202,6 +221,10 @@ class LabSession private constructor(
         diagnostics: com.graciousgazelles.solarlab.core.simulation.SystemDiagnostics,
         collisions: List<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>,
     ) {
+        if (snapshot.isCatalogBacked) {
+            latestCatalogCheckpoint = snapshot
+        }
+        val backControlAction = resolveBackControlAction(snapshot, latestCatalogCheckpoint)
         val frame = LabFrame(
             snapshot = snapshot,
             diagnostics = diagnostics,
@@ -213,7 +236,7 @@ class LabSession private constructor(
                 playbackSpeed = playbackSpeedPreset,
                 stepQuantum = stepQuantumPreset,
                 canJumpAbsolute = snapshot.isCatalogBacked,
-                canStepBackward = snapshot.isCatalogBacked,
+                canStepBackward = backControlAction != BackControlAction.None,
             ),
         )
         mainHandler.post {
@@ -274,6 +297,21 @@ class LabSession private constructor(
             )
         }
     }
+}
+
+internal sealed interface BackControlAction {
+    data object StepCatalog : BackControlAction
+    data class RestoreCheckpoint(val checkpoint: SimulationSnapshot) : BackControlAction
+    data object None : BackControlAction
+}
+
+internal fun resolveBackControlAction(
+    snapshot: SimulationSnapshot,
+    latestCatalogCheckpoint: SimulationSnapshot?,
+): BackControlAction = when {
+    snapshot.isCatalogBacked -> BackControlAction.StepCatalog
+    latestCatalogCheckpoint != null -> BackControlAction.RestoreCheckpoint(latestCatalogCheckpoint)
+    else -> BackControlAction.None
 }
 
 private fun PlaybackSpeedPreset.shifted(direction: Int): PlaybackSpeedPreset {
