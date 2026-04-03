@@ -98,8 +98,16 @@ object ObserverCameraResolver {
     ): Double {
         val baselineRadius = when (focus.kind) {
             RenderBodyKind.STAR -> 4.5 * PhysicalConstants.ASTRONOMICAL_UNIT_M
-            RenderBodyKind.PLANET -> 0.14 * PhysicalConstants.ASTRONOMICAL_UNIT_M
-            RenderBodyKind.DWARF_PLANET -> 0.08 * PhysicalConstants.ASTRONOMICAL_UNIT_M
+            RenderBodyKind.PLANET -> if (companion != null && companion.kind != RenderBodyKind.STAR) {
+                0.012 * PhysicalConstants.ASTRONOMICAL_UNIT_M
+            } else {
+                0.14 * PhysicalConstants.ASTRONOMICAL_UNIT_M
+            }
+            RenderBodyKind.DWARF_PLANET -> if (companion != null && companion.kind != RenderBodyKind.STAR) {
+                0.008 * PhysicalConstants.ASTRONOMICAL_UNIT_M
+            } else {
+                0.08 * PhysicalConstants.ASTRONOMICAL_UNIT_M
+            }
             RenderBodyKind.ASTEROID,
             RenderBodyKind.COMET,
             -> 0.035 * PhysicalConstants.ASTRONOMICAL_UNIT_M
