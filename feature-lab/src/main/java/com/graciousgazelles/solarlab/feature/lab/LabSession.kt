@@ -221,10 +221,12 @@ class LabSession private constructor(
         val simDeltaSeconds = realDeltaSeconds * playbackSpeedPreset.simSecondsPerRealSecond
         if (simDeltaSeconds <= 0.0) return
         val requestFreshDiagnostics = shouldRefreshDiagnosticsForRunningTick()
+        val effectiveMaxSubstepSeconds = effectivePlaybackMaxSubstepSeconds(simDeltaSeconds)
         val advanceStartNs = System.nanoTime()
         val result = advanceBySimulationSeconds(
             totalSeconds = simDeltaSeconds,
             requestFreshDiagnostics = requestFreshDiagnostics,
+            maxSubstepSeconds = effectiveMaxSubstepSeconds,
         )
         val advanceDurationNs = System.nanoTime() - advanceStartNs
         emitFrame(
@@ -240,6 +242,7 @@ class LabSession private constructor(
     private fun advanceBySimulationSeconds(
         totalSeconds: Double,
         requestFreshDiagnostics: Boolean,
+        maxSubstepSeconds: Double = MAX_SIMULATION_SUBSTEP_SECONDS,
     ): com.graciousgazelles.solarlab.core.simulation.SimulationStepResult {
         var remaining = totalSeconds
         var latestResult = com.graciousgazelles.solarlab.core.simulation.SimulationStepResult(
@@ -250,7 +253,7 @@ class LabSession private constructor(
         )
         val allCollisions = mutableListOf<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>()
         while (remaining > 0.0) {
-            val substep = remaining.coerceAtMost(MAX_SIMULATION_SUBSTEP_SECONDS)
+            val substep = remaining.coerceAtMost(maxSubstepSeconds)
             val isFinalSubstep = (remaining - substep) <= SUBSTEP_EPSILON_SECONDS
             val recomputeDiagnostics = requestFreshDiagnostics && isFinalSubstep
             latestResult = engine.step(
@@ -383,6 +386,8 @@ class LabSession private constructor(
         private const val FRAME_PERIOD_MS: Long = 16L
         private const val MAX_REAL_DELTA_SECONDS: Double = 0.25
         private const val MAX_SIMULATION_SUBSTEP_SECONDS: Double = 3600.0
+        private const val PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK: Double = 12.0
+        private const val PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 43_200.0
         private const val RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS: Int = 4
         private const val PERF_LOG_SAMPLE_WINDOW_FRAMES: Int = 120
         private const val SUBSTEP_EPSILON_SECONDS: Double = 1.0e-9
@@ -432,6 +437,14 @@ class LabSession private constructor(
                 },
                 initialConfig = SimulationConfig(),
                 listener = listener,
+            )
+        }
+
+        internal fun effectivePlaybackMaxSubstepSeconds(totalSeconds: Double): Double {
+            val adaptiveSubstep = totalSeconds / PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK
+            return adaptiveSubstep.coerceIn(
+                minimumValue = MAX_SIMULATION_SUBSTEP_SECONDS,
+                maximumValue = PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS,
             )
         }
     }
