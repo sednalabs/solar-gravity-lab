@@ -1,6 +1,9 @@
 name: prerelease-apk
 
 on:
+  push:
+    branches:
+      - release/**
   workflow_dispatch:
     inputs:
       ref:
