@@ -116,7 +116,7 @@ jobs:
             echo "- version: \`${{ steps.meta.outputs.version_name }}\`"
             echo "- versionCode: \`${{ steps.meta.outputs.version_code }}\`"
             echo "- build type: \`prerelease\`"
-            echo "- package id: \`com.graciousgazelles.solarlab.internal\`"
+            echo "- package id: \`com.sednalabs.solarlab.internal\`"
             echo "- signing: debug key for internal sideload testing only"
             echo "- artifact: \`solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-internal-dev-preview.apk\`"
           } >> "$GITHUB_STEP_SUMMARY"

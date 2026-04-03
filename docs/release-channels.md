@@ -9,7 +9,9 @@ to stay honest about what is actually being shipped.
 
 - Version line: `0.1.0-alpha.1`
 - Android build type: `prerelease`
+- Base application id: `com.sednalabs.solarlab`
 - Package id suffix: `.internal`
+- Installed package id: `com.sednalabs.solarlab.internal`
 - Signing: default debug key
 - Intended use: sideloaded device testing and internal review
 

@@ -103,9 +103,8 @@ compute.
 For phone testing, use `.github/workflows/prerelease-apk.yml` to build an
 installable `prerelease` APK artifact on GitHub Actions. That path is meant for
 internal dev preview sideloading only: it uses the application id
-`com.graciousgazelles.solarlab.internal` and is signed with the default debug
-key, so it is appropriate for device testing but not for a public production
-release.
+`com.sednalabs.solarlab.internal` and is signed with the default debug key, so
+it is appropriate for device testing but not for a public production release.
 
 For contributors, the most reliable near-term validation target is the pure JVM core:
 
