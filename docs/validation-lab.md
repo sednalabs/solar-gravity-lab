@@ -16,7 +16,7 @@ Workflow file:
 - `.github/workflows/validation-lab.yml`
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 
-The workflow currently supports four lane families:
+The workflow currently supports five lane families:
 
 1. `wrapper-bootstrap`
    Generates `gradle/wrapper/gradle-wrapper.jar` remotely from the distribution
@@ -32,6 +32,10 @@ The workflow currently supports four lane families:
 4. `android-assemble`
    Installs Android SDK/NDK/CMake packages on a GitHub-hosted Ubuntu runner and
    attempts `:app:assembleDebug`.
+5. `feature-lab-unit`
+   Runs Android-backed JVM unit tests for the `feature-lab` module, including
+   narrow `LabSession` policy seams that are too specific for `core-jvm` and
+   cheaper than a full Android assemble.
 
 ## Profiles
 
@@ -44,9 +48,11 @@ The workflow currently supports four lane families:
   Android assembly lane in parallel so we can harvest the next blocker family
   without widening into a full milestone run.
 - `broad` / `full`
-  Wider checkpoint modes. For the current repository surface they currently use
-  the same lane bundle as `frontier`, but they are intentionally labeled as
-  milestone/checkpoint passes rather than default iteration loops.
+  Wider checkpoint modes. `broad` currently widens the trusted baseline in the
+  same spirit as `frontier`, while `full` is the explicit "run every currently
+  defined lane" option, including `feature-lab-unit`, physics telemetry, and
+  Android assembly. Both are intentionally labeled as milestone/checkpoint
+  passes rather than default iteration loops.
 
 The important operational difference is that `frontier` is now treated as a
 mode with an explicit intent: keep the already-trusted prefix, add one wider
@@ -60,6 +66,8 @@ seam, and avoid rerunning wrapper bootstrap unless you explicitly ask for it.
   Run only wrapper generation.
 - `core-jvm`
   Run only the pure JVM checks.
+- `feature-lab-unit`
+  Run only the `feature-lab` Android-backed JVM unit-test lane.
 - `physics-accuracy`
   Run only the deterministic physics-accuracy telemetry/report path.
 - `android-host`

@@ -37,12 +37,18 @@ class LabSessionPlaybackSubstepPolicyTest {
     }
 
     @Test
-    fun `collision-enabled playback keeps conservative one-hour cap`() {
-        val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
-            totalSeconds = 864_000.0,
-            collisionMode = CollisionMode.MERGE,
-        )
+    fun `all collision-enabled playback modes keep conservative one-hour cap`() {
+        listOf(
+            CollisionMode.MERGE,
+            CollisionMode.ELASTIC,
+            CollisionMode.FRAGMENTATION,
+        ).forEach { collisionMode ->
+            val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
+                totalSeconds = 864_000.0,
+                collisionMode = collisionMode,
+            )
 
-        assertEquals(3_600.0, effective, 0.0)
+            assertEquals(3_600.0, effective, 0.0)
+        }
     }
 }
