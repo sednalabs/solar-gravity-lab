@@ -30,6 +30,8 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
     private var surfaceHeight: Int = 1
 
     private var cameraState: CameraState = CameraState()
+    private var selectedBodyId: String? = null
+    private var followBodyId: String? = null
 
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
     private val maxViewRadiusM: Double = 150_000.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M
@@ -91,10 +93,26 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
     @Synchronized
     fun submitScene(scene: RenderSceneFrame) {
         this.scene = scene
+        applyFollowTargetIfNeeded(scene)
+    }
+
+    @Synchronized
+    fun cameraState(): CameraState = cameraState
+
+    @Synchronized
+    fun setSelectedBodyId(bodyId: String?) {
+        selectedBodyId = bodyId
+    }
+
+    @Synchronized
+    fun setFollowBodyId(bodyId: String?) {
+        followBodyId = bodyId
+        applyFollowTargetIfNeeded(scene)
     }
 
     @Synchronized
     fun panByPixels(distanceX: Float, distanceY: Float) {
+        if (followBodyId != null) return
         val metersPerPixel = currentMetersPerPixel(cameraState.viewRadiusM)
         cameraState = cameraState.copy(
             centerM = Vector3d(
@@ -116,6 +134,13 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
     @Synchronized
     fun resetCamera() {
         cameraState = CameraState()
+    }
+
+    @Synchronized
+    private fun applyFollowTargetIfNeeded(frame: RenderSceneFrame) {
+        val targetId = followBodyId ?: return
+        val target = (frame.authoritativeBodies + frame.tracerBodies).firstOrNull { it.id == targetId } ?: return
+        cameraState = cameraState.copy(centerM = target.positionM)
     }
 
     private fun drawBodies(
@@ -181,15 +206,17 @@ internal class SolarSystemRenderer : GLSurfaceView.Renderer {
         }
         val visualRadiusPx = max(minimumPx, baseRadiusPx * bodyRadiusExaggeration).coerceIn(1.5, 96.0)
         val alpha = if (body.isMassive) 1.0f else tracerAlpha
+        val isSelected = body.id == selectedBodyId
+        val selectedScale = if (isSelected) 1.4 else 1.0
 
         var cursor = cursorStart
         bodyScratch[cursor++] = clip.first
         bodyScratch[cursor++] = clip.second
-        bodyScratch[cursor++] = visualRadiusPx.toFloat()
+        bodyScratch[cursor++] = (visualRadiusPx * selectedScale).toFloat()
         bodyScratch[cursor++] = colorChannel(body.colorArgb, 16)
         bodyScratch[cursor++] = colorChannel(body.colorArgb, 8)
         bodyScratch[cursor++] = colorChannel(body.colorArgb, 0)
-        bodyScratch[cursor++] = alpha
+        bodyScratch[cursor++] = if (isSelected) 1.0f else alpha
         return cursor
     }
 

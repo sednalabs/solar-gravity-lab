@@ -1,0 +1,3 @@
+body_id	name	category	role	host_body_id	mass_kg	radius_m	color_argb	epoch_jd_tdb	a_m	e	i_deg	node_deg	peri_deg	mean_deg	enabled_by_default	notes
+moon	Moon	MOON	MASSIVE	earth	7.342e22	1.7374e6	FFCCCCCC	2451545.0	3.844e8	0.0549	5.145	125.08	318.15	135.27	true	Replace starter row with real imported values if desired.
+io	Io	MOON	MASSIVE	jupiter	8.9319e22	1.8216e6	FFE7C56A	2451545.0	4.217e8	0.0041	0.036	43.98	84.13	200.0	true	Example Jupiter moon row.

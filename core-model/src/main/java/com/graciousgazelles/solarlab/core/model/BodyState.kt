@@ -13,6 +13,7 @@ data class BodyState(
     val positionM: Vector3d,
     val velocityMps: Vector3d,
     val colorArgb: Int,
+    val hostBodyId: String? = null,
 ) {
     init {
         require(massKg >= 0.0) { "massKg must be >= 0" }

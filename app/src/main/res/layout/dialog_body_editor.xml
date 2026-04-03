@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Name" />
+
+        <EditText
+            android:id="@+id/editBodyName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Custom Object"
+            android:inputType="textCapWords" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Category" />
+
+        <Spinner
+            android:id="@+id/spinnerBodyCategory"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Gravitational role" />
+
+        <Spinner
+            android:id="@+id/spinnerBodyRole"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Mass (kg)" />
+
+        <EditText
+            android:id="@+id/editMassKg"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="1.0e18"
+            android:inputType="textNoSuggestions" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Radius (m)" />
+
+        <EditText
+            android:id="@+id/editRadiusM"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="1.0e5"
+            android:inputType="textNoSuggestions" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Position X / Y / Z (m)" />
+
+        <EditText
+            android:id="@+id/editPositionX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="0"
+            android:inputType="textNoSuggestions" />
+
+        <EditText
+            android:id="@+id/editPositionY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="0"
+            android:inputType="textNoSuggestions" />
+
+        <EditText
+            android:id="@+id/editPositionZ"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="0"
+            android:inputType="textNoSuggestions" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Velocity X / Y / Z (m/s)" />
+
+        <EditText
+            android:id="@+id/editVelocityX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="0"
+            android:inputType="textNoSuggestions" />
+
+        <EditText
+            android:id="@+id/editVelocityY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="0"
+            android:inputType="textNoSuggestions" />
+
+        <EditText
+            android:id="@+id/editVelocityZ"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="0"
+            android:inputType="textNoSuggestions" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Color (RRGGBB or AARRGGBB)" />
+
+        <EditText
+            android:id="@+id/editColorHex"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="FFFFA726"
+            android:inputType="textNoSuggestions|textCapCharacters" />
+
+        <CheckBox
+            android:id="@+id/checkPlaceOnScene"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Place on scene after save. Drag on the scene to set launch velocity in X/Y." />
+
+        <TextView
+            android:id="@+id/textBodyEditorError"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="#FFFF8A80"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

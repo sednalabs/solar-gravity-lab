@@ -9,45 +9,138 @@
     android:padding="12dp"
     tools:context=".MainActivity">
 
-    <LinearLayout
+    <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:scrollbars="none">
 
-        <Button
-            android:id="@+id/buttonStartPause"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/action_start" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/buttonStep"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:text="@string/action_step" />
+            <Button
+                android:id="@+id/buttonStartPause"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/action_start" />
 
-        <Button
-            android:id="@+id/buttonReset"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:text="@string/action_reset" />
+            <Button
+                android:id="@+id/buttonStep"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_step" />
 
-        <Button
-            android:id="@+id/buttonBackend"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:text="@string/action_backend_auto" />
-    </LinearLayout>
+            <Button
+                android:id="@+id/buttonTimeBack"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_time_back" />
+
+            <Button
+                android:id="@+id/buttonTimeForward"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_time_forward" />
+
+            <Button
+                android:id="@+id/buttonStepQuantum"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_step_quantum" />
+
+            <Button
+                android:id="@+id/buttonSpeedDown"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_speed_down" />
+
+            <Button
+                android:id="@+id/buttonSpeedUp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_speed_up" />
+
+            <Button
+                android:id="@+id/buttonFollow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:enabled="false"
+                android:text="@string/action_follow_selected" />
+
+            <Button
+                android:id="@+id/buttonReset"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_reset" />
+
+            <Button
+                android:id="@+id/buttonAddBody"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_add_object" />
+
+            <Button
+                android:id="@+id/buttonEditBody"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:enabled="false"
+                android:text="@string/action_edit_selected" />
+
+            <Button
+                android:id="@+id/buttonCollisionMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_collision_merge" />
+
+            <Button
+                android:id="@+id/buttonBackend"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/action_backend_auto" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <TextView
+        android:id="@+id/textTimeline"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:fontFamily="monospace"
+        android:padding="8dp"
+        android:textColor="#FFA5D6A7"
+        android:textSize="12sp"
+        tools:text="Timeline: JD 2451545.0 | Catalog | Speed 6 h/s | Step 6 h" />
+
+    <TextView
+        android:id="@+id/textSelection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:fontFamily="monospace"
+        android:padding="8dp"
+        android:text="@string/selection_none"
+        android:textColor="#FFFFF59D"
+        android:textSize="12sp" />
 
     <TextView
         android:id="@+id/textBackend"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="4dp"
         android:fontFamily="monospace"
         android:padding="8dp"
         android:textColor="#FF90CAF9"

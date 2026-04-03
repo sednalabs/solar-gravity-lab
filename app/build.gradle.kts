@@ -45,6 +45,7 @@ android {
 
 dependencies {
     implementation(project(":feature-lab"))
+    implementation(project(":core-math"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)

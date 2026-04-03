@@ -3,6 +3,10 @@ package com.graciousgazelles.solarlab.core.simulation
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.OrbitalElements
+import com.graciousgazelles.solarlab.core.model.PhysicalConstants
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -43,6 +47,37 @@ object OrbitalMechanics {
         return StateVector(
             positionM = rotateFromPerifocal(positionPerifocal, elements),
             velocityMps = rotateFromPerifocal(velocityPerifocal, elements),
+        )
+    }
+
+    fun stateVectorAroundPrimaryAtEpoch(
+        primaryMassKg: Double,
+        bodyMassKg: Double,
+        orbit: KeplerianOrbitAtEpoch,
+        targetJulianDateTdb: Double,
+        gravitationalConstant: Double,
+    ): StateVector {
+        val mu = gravitationalConstant * (primaryMassKg + bodyMassKg)
+        val meanMotionRadPerSecond = sqrt(mu / (orbit.semiMajorAxisM * orbit.semiMajorAxisM * orbit.semiMajorAxisM))
+        val deltaSeconds = (targetJulianDateTdb - orbit.epochJdTdb) * PhysicalConstants.DAY_SECONDS
+        val meanAnomaly = normalizeRadians(orbit.meanAnomalyAtEpochRad + (meanMotionRadPerSecond * deltaSeconds))
+        val eccentricAnomaly = solveKeplerEquation(meanAnomaly, orbit.eccentricity)
+        val trueAnomaly = 2.0 * atan2(
+            sqrt(1.0 + orbit.eccentricity) * sin(eccentricAnomaly / 2.0),
+            sqrt(1.0 - orbit.eccentricity) * cos(eccentricAnomaly / 2.0),
+        )
+        return stateVectorAroundPrimary(
+            primaryMassKg = primaryMassKg,
+            bodyMassKg = bodyMassKg,
+            elements = OrbitalElements(
+                semiMajorAxisM = orbit.semiMajorAxisM,
+                eccentricity = orbit.eccentricity,
+                inclinationRad = orbit.inclinationRad,
+                longitudeOfAscendingNodeRad = orbit.longitudeOfAscendingNodeRad,
+                argumentOfPeriapsisRad = orbit.argumentOfPeriapsisRad,
+                trueAnomalyRad = normalizeRadians(trueAnomaly),
+            ),
+            gravitationalConstant = gravitationalConstant,
         )
     }
 
@@ -95,5 +130,27 @@ object OrbitalMechanics {
             y = rotation21 * vector.x + rotation22 * vector.y,
             z = rotation31 * vector.x + rotation32 * vector.y,
         )
+    }
+
+    internal fun solveKeplerEquation(
+        meanAnomalyRad: Double,
+        eccentricity: Double,
+    ): Double {
+        var eccentricAnomaly = if (eccentricity < 0.8) meanAnomalyRad else PI
+        repeat(24) {
+            val functionValue = eccentricAnomaly - eccentricity * sin(eccentricAnomaly) - meanAnomalyRad
+            val derivative = 1.0 - eccentricity * cos(eccentricAnomaly)
+            val delta = functionValue / derivative
+            eccentricAnomaly -= delta
+            if (abs(delta) <= 1e-14) {
+                return eccentricAnomaly
+            }
+        }
+        return eccentricAnomaly
+    }
+
+    internal fun normalizeRadians(angle: Double): Double {
+        val wrapped = (angle + PI) % (2.0 * PI)
+        return if (wrapped < 0.0) wrapped + PI else wrapped - PI
     }
 }

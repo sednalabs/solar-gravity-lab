@@ -25,6 +25,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var activeSurfaceView: View? = null
     private var latestScene: RenderSceneFrame? = null
     private var hostResumed: Boolean = false
+    private var interactionListener: RenderInteractionListener? = null
+    private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
+    private var selectedBodyId: String? = null
+    private var followBodyId: String? = null
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
         requested = requestedBackend,
@@ -51,6 +55,32 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     fun resetCamera() {
         activeSurface?.resetCamera()
     }
+
+    fun setInteractionListener(listener: RenderInteractionListener?) {
+        interactionListener = listener
+        activeSurface?.setInteractionListener(listener)
+    }
+
+    fun setInteractionMode(mode: SceneInteractionMode) {
+        interactionMode = mode
+        activeSurface?.setInteractionMode(mode)
+    }
+
+    fun interactionMode(): SceneInteractionMode = interactionMode
+
+    fun setSelectedBodyId(bodyId: String?) {
+        selectedBodyId = bodyId
+        activeSurface?.setSelectedBodyId(bodyId)
+    }
+
+    fun selectedBodyId(): String? = selectedBodyId
+
+    fun setFollowBodyId(bodyId: String?) {
+        followBodyId = bodyId
+        activeSurface?.setFollowBodyId(bodyId)
+    }
+
+    fun followBodyId(): String? = followBodyId
 
     fun cycleBackendPreference() {
         requestedBackend = when (requestedBackend) {
@@ -143,6 +173,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeBackend = backend
         activeSurfaceView = view
         activeSurface = view as SolarRenderSurface
+        activeSurface?.setInteractionListener(interactionListener)
+        activeSurface?.setInteractionMode(interactionMode)
+        activeSurface?.setSelectedBodyId(selectedBodyId)
+        activeSurface?.setFollowBodyId(followBodyId)
         addView(
             view,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),

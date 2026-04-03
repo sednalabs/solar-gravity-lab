@@ -8,4 +8,5 @@ data class LabFrame(
     val snapshot: SimulationSnapshot,
     val diagnostics: SystemDiagnostics,
     val collisions: List<CollisionEvent>,
+    val timeline: TimelineStatus,
 )

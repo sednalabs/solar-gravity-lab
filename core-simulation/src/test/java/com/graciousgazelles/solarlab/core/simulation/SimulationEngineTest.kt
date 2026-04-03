@@ -3,6 +3,8 @@ package com.graciousgazelles.solarlab.core.simulation
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.BodyFactory
+import com.graciousgazelles.solarlab.core.model.BodyState
+import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.DensityPreset
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
@@ -18,7 +20,7 @@ class SimulationEngineTest {
     @Test
     fun `earth-like orbit remains roughly stable for one year`() {
         val snapshot = simpleSunEarthScenario()
-        val engine = SimulationEngine(snapshot, SimulationConfig(collisionMode = com.graciousgazelles.solarlab.core.model.CollisionMode.NONE))
+        val engine = SimulationEngine(snapshot, SimulationConfig(collisionMode = CollisionMode.NONE))
 
         repeat((PhysicalConstants.JULIAN_YEAR_SECONDS / (6.0 * 3600.0)).toInt()) {
             engine.step(6.0 * 3600.0)
@@ -33,7 +35,7 @@ class SimulationEngineTest {
     @Test
     fun `energy drift stays small over one year two body run`() {
         val snapshot = simpleSunEarthScenario()
-        val engine = SimulationEngine(snapshot, SimulationConfig(collisionMode = com.graciousgazelles.solarlab.core.model.CollisionMode.NONE))
+        val engine = SimulationEngine(snapshot, SimulationConfig(collisionMode = CollisionMode.NONE))
 
         val startingEnergy = engine.diagnostics().totalEnergyJ
 
@@ -74,7 +76,7 @@ class SimulationEngineTest {
 
         val engine = SimulationEngine(
             SimulationSnapshot(epochSeconds = 0.0, bodies = listOf(sun, tracer)),
-            SimulationConfig(collisionMode = com.graciousgazelles.solarlab.core.model.CollisionMode.NONE),
+            SimulationConfig(collisionMode = CollisionMode.NONE),
         )
 
         repeat(10) {
@@ -118,6 +120,80 @@ class SimulationEngineTest {
         assertEquals(1, result.snapshot.bodies.size)
         assertEquals(1.2e13, result.snapshot.bodies.first().massKg, 1.0)
         assertEquals(1, result.collisions.size)
+        assertEquals(CollisionMode.MERGE, result.collisions.first().collisionMode)
+    }
+
+    @Test
+    fun `colliding bodies can bounce elastically without tunnelling`() {
+        val radiusM = 10.0
+        val density = BodyFactory.densityFromMassAndRadius(1_000.0, radiusM)
+        val a = BodyState(
+            id = "a",
+            name = "A",
+            category = BodyCategory.TEST_OBJECT,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 1_000.0,
+            radiusM = radiusM,
+            densityKgPerM3 = density,
+            positionM = Vector3d(-100.0, 0.0, 0.0),
+            velocityMps = Vector3d(10.0, 0.0, 0.0),
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+        val b = BodyState(
+            id = "b",
+            name = "B",
+            category = BodyCategory.TEST_OBJECT,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 1_000.0,
+            radiusM = radiusM,
+            densityKgPerM3 = density,
+            positionM = Vector3d(100.0, 0.0, 0.0),
+            velocityMps = Vector3d(-10.0, 0.0, 0.0),
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+
+        val engine = SimulationEngine(
+            initialSnapshot = SimulationSnapshot(epochSeconds = 0.0, bodies = listOf(a, b)),
+            config = SimulationConfig(
+                gravitationalConstant = 0.0,
+                collisionMode = CollisionMode.ELASTIC,
+            ),
+        )
+        val result = engine.step(12.0)
+
+        assertEquals(2, result.snapshot.bodies.size)
+        assertEquals(1, result.collisions.size)
+        assertEquals(CollisionMode.ELASTIC, result.collisions.first().collisionMode)
+        val resultA = result.snapshot.bodies.first { it.id == "a" }
+        val resultB = result.snapshot.bodies.first { it.id == "b" }
+        assertTrue(resultA.velocityMps.x < 0.0)
+        assertTrue(resultB.velocityMps.x > 0.0)
+    }
+
+    @Test
+    fun `bodies can be added updated and removed`() {
+        val engine = SimulationEngine(SimulationSnapshot(epochSeconds = 0.0, bodies = emptyList()))
+        val body = BodyFactory.sphericalBody(
+            id = "custom",
+            name = "Custom",
+            category = BodyCategory.TEST_OBJECT,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 1.0e5,
+            densityKgPerM3 = DensityPreset.ROCKY_KG_PER_M3,
+            positionM = Vector3d(1.0, 2.0, 3.0),
+            velocityMps = Vector3d(4.0, 5.0, 6.0),
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+
+        engine.addBody(body)
+        assertEquals(1, engine.snapshot().bodies.size)
+
+        val updated = body.copy(velocityMps = Vector3d(7.0, 8.0, 9.0))
+        assertTrue(engine.updateBody(updated))
+        assertEquals(9.0, engine.body("custom")?.velocityMps?.z ?: Double.NaN, 0.0)
+
+        assertTrue(engine.removeBody("custom"))
+        assertEquals(0, engine.snapshot().bodies.size)
     }
 
     private fun simpleSunEarthScenario(): SimulationSnapshot {

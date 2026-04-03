@@ -8,6 +8,7 @@ import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
 import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
+import com.graciousgazelles.solarlab.core.model.TimelineMode
 import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -18,22 +19,66 @@ class SimulationEngine(
 ) {
 
     private var epochSeconds: Double = initialSnapshot.epochSeconds
+    private var referenceEpochJdTdb: Double? = initialSnapshot.referenceEpochJdTdb
+    private var timelineMode: TimelineMode = initialSnapshot.timelineMode
+    private var provenanceLabel: String? = initialSnapshot.provenanceLabel
+    private var provenanceSource: String? = initialSnapshot.provenanceSource
     private var bodies: MutableList<MutableBody> = initialSnapshot.bodies.map(MutableBody::fromState).toMutableList()
 
     fun snapshot(): SimulationSnapshot = SimulationSnapshot(
         epochSeconds = epochSeconds,
         bodies = bodies.map { it.toState() },
+        referenceEpochJdTdb = referenceEpochJdTdb,
+        timelineMode = timelineMode,
+        provenanceLabel = provenanceLabel,
+        provenanceSource = provenanceSource,
     )
 
     fun diagnostics(): SystemDiagnostics = computeDiagnostics()
 
     fun reset(snapshot: SimulationSnapshot) {
         epochSeconds = snapshot.epochSeconds
+        referenceEpochJdTdb = snapshot.referenceEpochJdTdb
+        timelineMode = snapshot.timelineMode
+        provenanceLabel = snapshot.provenanceLabel
+        provenanceSource = snapshot.provenanceSource
         bodies = snapshot.bodies.map(MutableBody::fromState).toMutableList()
+    }
+
+    fun body(bodyId: String): BodyState? = bodies.firstOrNull { it.id == bodyId }?.toState()
+
+    fun addBody(body: BodyState) {
+        markSandboxBranch("User-edited sandbox", "local-edit")
+        bodies += MutableBody.fromState(body)
+    }
+
+    fun updateBody(body: BodyState): Boolean {
+        val index = bodies.indexOfFirst { it.id == body.id }
+        if (index < 0) return false
+        markSandboxBranch("User-edited sandbox", "local-edit")
+        bodies[index] = MutableBody.fromState(body)
+        return true
+    }
+
+    fun removeBody(bodyId: String): Boolean {
+        val index = bodies.indexOfFirst { it.id == bodyId }
+        if (index < 0) return false
+        markSandboxBranch("User-edited sandbox", "local-edit")
+        bodies.removeAt(index)
+        return true
     }
 
     fun step(deltaTimeSeconds: Double): SimulationStepResult {
         require(deltaTimeSeconds > 0.0) { "deltaTimeSeconds must be > 0" }
+
+        if (bodies.isEmpty()) {
+            epochSeconds += deltaTimeSeconds
+            return SimulationStepResult(
+                snapshot = snapshot(),
+                diagnostics = computeDiagnostics(),
+                collisions = emptyList(),
+            )
+        }
 
         val firstAccelerations = computeAccelerations()
         val halfDelta = deltaTimeSeconds * 0.5
@@ -43,13 +88,14 @@ class SimulationEngine(
             body.velocityMps = body.velocityMps + (firstAccelerations[index] * halfDelta)
         }
 
-        for (body in bodies) {
-            body.positionM = body.positionM + (body.velocityMps * deltaTimeSeconds)
-        }
-
         val collisions = when (config.collisionMode) {
-            CollisionMode.NONE -> emptyList()
-            CollisionMode.MERGE -> resolveMergeCollisions()
+            CollisionMode.NONE -> {
+                advancePositions(deltaTimeSeconds)
+                emptyList()
+            }
+            CollisionMode.MERGE,
+            CollisionMode.ELASTIC,
+            -> resolveCollisionsDuringDrift(deltaTimeSeconds)
         }
 
         val secondAccelerations = computeAccelerations()
@@ -60,6 +106,9 @@ class SimulationEngine(
         }
 
         epochSeconds += deltaTimeSeconds
+        if (collisions.isNotEmpty()) {
+            markSandboxBranch("Collision-evolved sandbox", "collision")
+        }
 
         return SimulationStepResult(
             snapshot = snapshot(),
@@ -99,43 +148,255 @@ class SimulationEngine(
         return accelerations
     }
 
-    private fun resolveMergeCollisions(): List<CollisionEvent> {
-        val alive = BooleanArray(bodies.size) { true }
+    private fun resolveCollisionsDuringDrift(deltaTimeSeconds: Double): List<CollisionEvent> {
         val collisions = mutableListOf<CollisionEvent>()
+        var remaining = deltaTimeSeconds
+        var iterations = 0
 
-        for (i in bodies.indices) {
-            if (!alive[i]) continue
-            var primary = bodies[i]
+        while (remaining > COLLISION_TIME_EPSILON && bodies.size > 1) {
+            if (++iterations > MAX_COLLISION_ITERATIONS_PER_STEP) {
+                advancePositions(remaining)
+                break
+            }
 
-            for (j in (i + 1) until bodies.size) {
-                if (!alive[j]) continue
-                val secondary = bodies[j]
-                val combinedRadius = primary.radiusM + secondary.radiusM
-                if (combinedRadius <= 0.0) continue
+            if (config.collisionMode == CollisionMode.ELASTIC) {
+                correctPassiveOverlaps()
+            }
 
-                val distanceSquared = primary.positionM.distanceSquaredTo(secondary.positionM)
-                if (distanceSquared > combinedRadius * combinedRadius) continue
+            val candidate = findEarliestCollision(remaining)
+            if (candidate == null) {
+                advancePositions(remaining)
+                break
+            }
 
-                val merged = mergeBodies(primary, secondary)
-                val event = CollisionEvent(
-                    primaryBodyId = primary.id,
-                    secondaryBodyId = secondary.id,
-                    mergedBodyId = merged.id,
-                    mergedBodyName = merged.name,
-                )
+            val drift = candidate.timeSeconds.coerceIn(0.0, remaining)
+            if (drift > 0.0) {
+                advancePositions(drift)
+                remaining -= drift
+            }
 
-                primary = merged
-                bodies[i] = merged
-                alive[j] = false
-                collisions += event
+            val impactOffset = deltaTimeSeconds - remaining
+            val event = when (config.collisionMode) {
+                CollisionMode.MERGE -> resolveMergeCollision(candidate, impactOffset)
+                CollisionMode.ELASTIC -> resolveElasticCollision(candidate, impactOffset)
+                CollisionMode.NONE -> error("Collision resolution called while collision mode is NONE")
+            }
+            collisions += event
+
+            if (drift <= COLLISION_TIME_EPSILON) {
+                remaining = max(0.0, remaining - COLLISION_TIME_EPSILON)
             }
         }
 
-        if (collisions.isNotEmpty()) {
-            bodies = bodies.filterIndexed { index, _ -> alive[index] }.toMutableList()
+        return collisions
+    }
+
+    private fun advancePositions(deltaTimeSeconds: Double) {
+        if (deltaTimeSeconds <= 0.0) return
+        for (body in bodies) {
+            body.positionM = body.positionM + (body.velocityMps * deltaTimeSeconds)
+        }
+    }
+
+    private fun correctPassiveOverlaps() {
+        for (i in 0 until bodies.size) {
+            for (j in (i + 1) until bodies.size) {
+                val a = bodies[i]
+                val b = bodies[j]
+                val combinedRadius = a.radiusM + b.radiusM
+                if (combinedRadius <= 0.0) continue
+
+                val delta = b.positionM - a.positionM
+                val distance = delta.magnitude()
+                if (distance >= combinedRadius) continue
+
+                val relativeVelocity = b.velocityMps - a.velocityMps
+                val approaching = delta.dot(relativeVelocity) < 0.0
+                if (approaching) continue
+
+                val normal = collisionNormal(a, b)
+                separateBodiesToContact(a, b, normal)
+            }
+        }
+    }
+
+    private fun findEarliestCollision(maxTimeSeconds: Double): CollisionCandidate? {
+        var best: CollisionCandidate? = null
+
+        for (i in 0 until bodies.size) {
+            for (j in (i + 1) until bodies.size) {
+                val a = bodies[i]
+                val b = bodies[j]
+                val combinedRadius = a.radiusM + b.radiusM
+                if (combinedRadius <= 0.0) continue
+
+                val relativePosition = b.positionM - a.positionM
+                val relativeVelocity = b.velocityMps - a.velocityMps
+                val collisionTime = collisionTimeSeconds(
+                    relativePosition = relativePosition,
+                    relativeVelocity = relativeVelocity,
+                    combinedRadiusM = combinedRadius,
+                    maxTimeSeconds = maxTimeSeconds,
+                ) ?: continue
+
+                if (best == null || collisionTime < best.timeSeconds - COLLISION_TIME_EPSILON) {
+                    best = CollisionCandidate(i = i, j = j, timeSeconds = collisionTime)
+                }
+            }
         }
 
-        return collisions
+        return best
+    }
+
+    private fun collisionTimeSeconds(
+        relativePosition: Vector3d,
+        relativeVelocity: Vector3d,
+        combinedRadiusM: Double,
+        maxTimeSeconds: Double,
+    ): Double? {
+        val c = relativePosition.magnitudeSquared() - (combinedRadiusM * combinedRadiusM)
+        val b = 2.0 * relativePosition.dot(relativeVelocity)
+        val a = relativeVelocity.magnitudeSquared()
+
+        if (c <= 0.0) {
+            return when (config.collisionMode) {
+                CollisionMode.MERGE -> 0.0
+                CollisionMode.ELASTIC -> if (relativePosition.dot(relativeVelocity) < 0.0) 0.0 else null
+                CollisionMode.NONE -> null
+            }
+        }
+
+        if (a <= COLLISION_TIME_EPSILON) {
+            return null
+        }
+
+        val discriminant = (b * b) - (4.0 * a * c)
+        if (discriminant < 0.0) return null
+
+        val sqrtDiscriminant = sqrt(discriminant)
+        val denominator = 2.0 * a
+        val entryTime = (-b - sqrtDiscriminant) / denominator
+
+        return when {
+            entryTime < -COLLISION_TIME_EPSILON -> null
+            entryTime > maxTimeSeconds + COLLISION_TIME_EPSILON -> null
+            entryTime <= COLLISION_TIME_EPSILON -> 0.0
+            else -> entryTime
+        }
+    }
+
+    private fun resolveMergeCollision(
+        candidate: CollisionCandidate,
+        impactTimeOffsetSeconds: Double,
+    ): CollisionEvent {
+        val primary = bodies[candidate.i]
+        val secondary = bodies[candidate.j]
+        val merged = mergeBodies(primary, secondary)
+
+        bodies[candidate.i] = merged
+        bodies.removeAt(candidate.j)
+
+        return CollisionEvent(
+            collisionMode = CollisionMode.MERGE,
+            primaryBodyId = primary.id,
+            secondaryBodyId = secondary.id,
+            resultBodyIds = listOf(merged.id),
+            resultLabel = merged.name,
+            impactTimeOffsetSeconds = impactTimeOffsetSeconds,
+        )
+    }
+
+    private fun resolveElasticCollision(
+        candidate: CollisionCandidate,
+        impactTimeOffsetSeconds: Double,
+    ): CollisionEvent {
+        val a = bodies[candidate.i]
+        val b = bodies[candidate.j]
+        val normal = collisionNormal(a, b)
+        separateBodiesToContact(a, b, normal)
+
+        val massA = a.massKg
+        val massB = b.massKg
+        val u1 = a.velocityMps.dot(normal)
+        val u2 = b.velocityMps.dot(normal)
+        val tangentA = a.velocityMps - (normal * u1)
+        val tangentB = b.velocityMps - (normal * u2)
+        val relativeNormalSpeed = u1 - u2
+
+        if (relativeNormalSpeed > 0.0) {
+            when {
+                massA > 0.0 && massB > 0.0 -> {
+                    val totalMass = massA + massB
+                    val v1n = (((massA - massB) * u1) + (2.0 * massB * u2)) / totalMass
+                    val v2n = (((massB - massA) * u2) + (2.0 * massA * u1)) / totalMass
+                    a.velocityMps = tangentA + (normal * v1n)
+                    b.velocityMps = tangentB + (normal * v2n)
+                }
+                massA <= 0.0 && massB > 0.0 -> {
+                    a.velocityMps = tangentA + (normal * ((2.0 * u2) - u1))
+                }
+                massB <= 0.0 && massA > 0.0 -> {
+                    b.velocityMps = tangentB + (normal * ((2.0 * u1) - u2))
+                }
+                else -> {
+                    a.velocityMps = tangentA + (normal * u2)
+                    b.velocityMps = tangentB + (normal * u1)
+                }
+            }
+        }
+
+        return CollisionEvent(
+            collisionMode = CollisionMode.ELASTIC,
+            primaryBodyId = a.id,
+            secondaryBodyId = b.id,
+            resultBodyIds = listOf(a.id, b.id),
+            resultLabel = "${a.name} ↔ ${b.name}",
+            impactTimeOffsetSeconds = impactTimeOffsetSeconds,
+        )
+    }
+
+    private fun collisionNormal(a: MutableBody, b: MutableBody): Vector3d {
+        val delta = b.positionM - a.positionM
+        val deltaMagnitude = delta.magnitude()
+        if (deltaMagnitude > COLLISION_DISTANCE_EPSILON) {
+            return delta / deltaMagnitude
+        }
+
+        val relativeVelocity = b.velocityMps - a.velocityMps
+        val velocityMagnitude = relativeVelocity.magnitude()
+        if (velocityMagnitude > COLLISION_DISTANCE_EPSILON) {
+            return relativeVelocity / velocityMagnitude
+        }
+
+        return Vector3d(1.0, 0.0, 0.0)
+    }
+
+    private fun separateBodiesToContact(
+        a: MutableBody,
+        b: MutableBody,
+        normal: Vector3d,
+    ) {
+        val targetDistance = a.radiusM + b.radiusM
+        val currentDistance = a.positionM.distanceTo(b.positionM)
+        if (targetDistance <= 0.0) return
+
+        val penetration = targetDistance - currentDistance
+        if (penetration <= 0.0) return
+
+        val totalMass = a.massKg + b.massKg
+        when {
+            totalMass > 0.0 -> {
+                val moveA = if (b.massKg > 0.0) penetration * (b.massKg / totalMass) else penetration
+                val moveB = if (a.massKg > 0.0) penetration * (a.massKg / totalMass) else penetration
+                a.positionM = a.positionM - (normal * moveA)
+                b.positionM = b.positionM + (normal * moveB)
+            }
+            else -> {
+                val halfPenetration = penetration * 0.5
+                a.positionM = a.positionM - (normal * halfPenetration)
+                b.positionM = b.positionM + (normal * halfPenetration)
+            }
+        }
     }
 
     private fun mergeBodies(
@@ -181,6 +442,7 @@ class SimulationEngine(
             positionM = mergedPosition,
             velocityMps = mergedVelocity,
             colorArgb = blendColors(a.colorArgb, b.colorArgb, a.massKg, b.massKg),
+            hostBodyId = null,
         )
     }
 
@@ -190,6 +452,7 @@ class SimulationEngine(
     ): BodyCategory = when {
         a == BodyCategory.STAR || b == BodyCategory.STAR -> BodyCategory.STAR
         a == BodyCategory.PLANET || b == BodyCategory.PLANET -> BodyCategory.PLANET
+        a == BodyCategory.MOON || b == BodyCategory.MOON -> BodyCategory.MOON
         a == BodyCategory.DWARF_PLANET || b == BodyCategory.DWARF_PLANET -> BodyCategory.DWARF_PLANET
         a == BodyCategory.TEST_OBJECT || b == BodyCategory.TEST_OBJECT -> BodyCategory.TEST_OBJECT
         a == BodyCategory.COMET || b == BodyCategory.COMET -> BodyCategory.COMET
@@ -281,6 +544,20 @@ class SimulationEngine(
         return (mixed(24) shl 24) or (mixed(16) shl 16) or (mixed(8) shl 8) or mixed(0)
     }
 
+    private fun markSandboxBranch(label: String, source: String) {
+        if (timelineMode != TimelineMode.SANDBOX_BRANCH) {
+            timelineMode = TimelineMode.SANDBOX_BRANCH
+        }
+        provenanceLabel = label
+        provenanceSource = source
+    }
+
+    private data class CollisionCandidate(
+        val i: Int,
+        val j: Int,
+        val timeSeconds: Double,
+    )
+
     private data class MutableBody(
         val id: String,
         val name: String,
@@ -292,6 +569,7 @@ class SimulationEngine(
         var positionM: Vector3d,
         var velocityMps: Vector3d,
         val colorArgb: Int,
+        val hostBodyId: String?,
     ) {
         fun toState(): BodyState = BodyState(
             id = id,
@@ -304,6 +582,7 @@ class SimulationEngine(
             positionM = positionM,
             velocityMps = velocityMps,
             colorArgb = colorArgb,
+            hostBodyId = hostBodyId,
         )
 
         companion object {
@@ -318,7 +597,14 @@ class SimulationEngine(
                 positionM = state.positionM,
                 velocityMps = state.velocityMps,
                 colorArgb = state.colorArgb,
+                hostBodyId = state.hostBodyId,
             )
         }
+    }
+
+    private companion object {
+        private const val COLLISION_TIME_EPSILON: Double = 1.0e-9
+        private const val COLLISION_DISTANCE_EPSILON: Double = 1.0e-6
+        private const val MAX_COLLISION_ITERATIONS_PER_STEP: Int = 1024
     }
 }
