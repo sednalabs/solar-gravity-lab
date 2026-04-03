@@ -45,9 +45,9 @@ android {
 
 dependencies {
     implementation(project(":core-math"))
-    implementation(project(":core-model"))
-    implementation(project(":core-simulation"))
-    implementation(project(":render-core"))
+    api(project(":core-model"))
+    api(project(":core-simulation"))
+    api(project(":render-core"))
     implementation(libs.androidx.core.ktx)
 
     testImplementation(libs.junit)
