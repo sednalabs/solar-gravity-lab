@@ -33,6 +33,7 @@ class RenderSceneAssembler(
                 colorArgb = body.colorArgb,
                 kind = body.category.toRenderKind(),
                 isMassive = body.gravitationalRole == GravitationalRole.MASSIVE,
+                hostBodyId = body.hostBodyId,
             )
             if (body.gravitationalRole == GravitationalRole.TRACER) {
                 tracers += renderBody

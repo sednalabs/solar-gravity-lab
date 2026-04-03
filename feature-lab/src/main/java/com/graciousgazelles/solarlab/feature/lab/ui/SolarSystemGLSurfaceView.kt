@@ -10,6 +10,8 @@ import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListener
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.feature.lab.render.SolarRenderSurface
+import com.graciousgazelles.solarlab.render.core.ObserverCameraResolver
+import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.SceneInteractionMath
 import kotlin.math.sqrt
@@ -25,7 +27,7 @@ class SolarSystemGLSurfaceView @JvmOverloads constructor(
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var latestScene: RenderSceneFrame = emptyScene()
     private var selectedBodyId: String? = null
-    private var followBodyId: String? = null
+    private var observerMode: ObserverMode = ObserverMode.FREE
     private var placementStartScreen: Pair<Float, Float>? = null
 
     private val scaleDetector = ScaleGestureDetector(
@@ -69,7 +71,7 @@ class SolarSystemGLSurfaceView @JvmOverloads constructor(
                 distanceY: Float,
             ): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
-                if (followBodyId != null) return false
+                if (ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)) return false
                 solarRenderer.panByPixels(distanceX = distanceX, distanceY = distanceY)
                 requestRender()
                 return true
@@ -117,9 +119,9 @@ class SolarSystemGLSurfaceView @JvmOverloads constructor(
         requestRender()
     }
 
-    override fun setFollowBodyId(bodyId: String?) {
-        followBodyId = bodyId
-        solarRenderer.setFollowBodyId(bodyId)
+    override fun setObserverMode(mode: ObserverMode) {
+        observerMode = mode
+        solarRenderer.setObserverMode(mode)
         requestRender()
     }
 

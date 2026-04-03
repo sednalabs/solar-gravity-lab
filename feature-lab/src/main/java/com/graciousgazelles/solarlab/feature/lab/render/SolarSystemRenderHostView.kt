@@ -6,6 +6,7 @@ import android.view.View
 import android.widget.FrameLayout
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.feature.lab.ui.SolarSystemGLSurfaceView
+import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 import com.graciousgazelles.solarlab.render.core.RenderSceneAssembler
@@ -28,7 +29,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var selectedBodyId: String? = null
-    private var followBodyId: String? = null
+    private var observerMode: ObserverMode = ObserverMode.FREE
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
         requested = requestedBackend,
@@ -75,12 +76,12 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
 
     fun selectedBodyId(): String? = selectedBodyId
 
-    fun setFollowBodyId(bodyId: String?) {
-        followBodyId = bodyId
-        activeSurface?.setFollowBodyId(bodyId)
+    fun setObserverMode(mode: ObserverMode) {
+        observerMode = mode
+        activeSurface?.setObserverMode(mode)
     }
 
-    fun followBodyId(): String? = followBodyId
+    fun observerMode(): ObserverMode = observerMode
 
     fun cycleBackendPreference() {
         requestedBackend = when (requestedBackend) {
@@ -176,7 +177,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setInteractionListener(interactionListener)
         activeSurface?.setInteractionMode(interactionMode)
         activeSurface?.setSelectedBodyId(selectedBodyId)
-        activeSurface?.setFollowBodyId(followBodyId)
+        activeSurface?.setObserverMode(observerMode)
         addView(
             view,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),

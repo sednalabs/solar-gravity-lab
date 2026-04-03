@@ -11,6 +11,8 @@ import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.render.core.CameraState
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
+import com.graciousgazelles.solarlab.render.core.ObserverCameraResolver
+import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
@@ -36,7 +38,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var selectedBodyId: String? = null
-    private var followBodyId: String? = null
+    private var observerMode: ObserverMode = ObserverMode.FREE
     private var placementStartScreen: Pair<Float, Float>? = null
 
     private val scenePacketPolicy = ScenePacketBuildPolicy()
@@ -88,7 +90,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 distanceY: Float,
             ): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
-                if (followBodyId != null) return false
+                if (ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)) return false
                 val metersPerPixel = currentMetersPerPixel(cameraState.viewRadiusM)
                 cameraState = cameraState.copy(
                     centerM = Vector3d(
@@ -157,7 +159,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun submitScene(frame: RenderSceneFrame) {
         latestScene = frame
-        applyFollowTargetIfNeeded(frame)
+        applyObserverTargetIfNeeded(frame)
         packetDirty = true
         renderLatestScene()
     }
@@ -178,11 +180,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun setSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
+        applyObserverTargetIfNeeded(latestScene)
     }
 
-    override fun setFollowBodyId(bodyId: String?) {
-        followBodyId = bodyId
-        applyFollowTargetIfNeeded(latestScene)
+    override fun setObserverMode(mode: ObserverMode) {
+        observerMode = mode
+        applyObserverTargetIfNeeded(latestScene)
         packetDirty = true
         renderLatestScene()
     }
@@ -232,10 +235,13 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
 
-    private fun applyFollowTargetIfNeeded(frame: RenderSceneFrame) {
-        val targetId = followBodyId ?: return
-        val target = (frame.authoritativeBodies + frame.tracerBodies).firstOrNull { it.id == targetId } ?: return
-        cameraState = cameraState.copy(centerM = target.positionM)
+    private fun applyObserverTargetIfNeeded(frame: RenderSceneFrame) {
+        val targetCenterM = ObserverCameraResolver.resolveCameraCenterM(
+            frame = frame,
+            selectedBodyId = selectedBodyId,
+            observerMode = observerMode,
+        ) ?: return
+        cameraState = cameraState.copy(centerM = targetCenterM)
     }
 
     private fun ensureRenderer(): Boolean {
