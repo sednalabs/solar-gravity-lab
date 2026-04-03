@@ -27,7 +27,7 @@ What is implemented and usable today:
 - Granular playback-speed and step-quantum controls.
 - Renderer host that prefers Vulkan and falls back to OpenGL ES when needed.
 - Native Vulkan pipeline with swapchain/render-pass/framebuffer/command recording, scene-packet ingestion, SPIR-V graphics pipelines, and compute-based medium/far tracer compaction.
-- Follow-selected-body camera behavior in both render paths.
+- Explicit observer camera modes in both render paths, including free view, follow-selected, and host-follow.
 - Engineering-grade body add/edit/remove controls, plus scene placement and drag-to-launch for new bodies.
 
 What is intentionally incomplete:
@@ -126,7 +126,7 @@ This repo currently relies on a remote-first validation workflow documented in [
 Important current notes:
 
 - `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
-- The first installable preview line uses version `0.1.0-alpha.1`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
+- The current installable preview line uses version `0.1.0-alpha.2`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
 - Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
 
 If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md), [`docs/catalog-ingest-handoff.md`](docs/catalog-ingest-handoff.md), and [`docs/release-channels.md`](docs/release-channels.md).
