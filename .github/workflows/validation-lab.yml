@@ -25,6 +25,7 @@ on:
           - auto
           - bootstrap
           - core-jvm
+          - feature-lab-unit
           - physics-accuracy
           - android-host
           - full
@@ -55,6 +56,7 @@ jobs:
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       core_jvm: ${{ steps.plan.outputs.core_jvm }}
+      feature_lab_unit: ${{ steps.plan.outputs.feature_lab_unit }}
       android_assemble: ${{ steps.plan.outputs.android_assemble }}
       physics_accuracy_telemetry: ${{ steps.plan.outputs.physics_accuracy_telemetry }}
       lane_summary: ${{ steps.plan.outputs.lane_summary }}
@@ -76,6 +78,7 @@ jobs:
 
           wrapper_bootstrap='false'
           core_jvm='false'
+          feature_lab_unit='false'
           android_assemble='false'
           physics_accuracy_telemetry='false'
           profile_intent='targeted'
@@ -113,6 +116,9 @@ jobs:
             core-jvm)
               core_jvm='true'
               ;;
+            feature-lab-unit)
+              feature_lab_unit='true'
+              ;;
             physics-accuracy)
               physics_accuracy_telemetry='true'
               ;;
@@ -134,14 +140,15 @@ jobs:
             wrapper_bootstrap='true'
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, core_jvm=%s, physics_accuracy_telemetry=%s, android_assemble=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$core_jvm" "$physics_accuracy_telemetry" "$android_assemble")"
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, core_jvm=%s, feature_lab_unit=%s, physics_accuracy_telemetry=%s, android_assemble=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$core_jvm" "$feature_lab_unit" "$physics_accuracy_telemetry" "$android_assemble")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
           echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "core_jvm=${core_jvm}" >> "$GITHUB_OUTPUT"
+          echo "feature_lab_unit=${feature_lab_unit}" >> "$GITHUB_OUTPUT"
           echo "android_assemble=${android_assemble}" >> "$GITHUB_OUTPUT"
           echo "physics_accuracy_telemetry=${physics_accuracy_telemetry}" >> "$GITHUB_OUTPUT"
           echo "lane_summary=${lane_summary}" >> "$GITHUB_OUTPUT"
@@ -274,6 +281,77 @@ jobs:
             **/build/reports/tests/test/**
             **/build/test-results/test/**
 
+  feature-lab-unit:
+    name: Feature-lab unit tests
+    needs: metadata
+    if: ${{ needs.metadata.outputs.feature_lab_unit == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Restore standalone Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/standalone-gradle
+          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Restore Android SDK component cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/licenses
+            /usr/local/lib/android/sdk/platform-tools
+            /usr/local/lib/android/sdk/platforms/android-36
+            /usr/local/lib/android/sdk/build-tools/36.0.0
+            /usr/local/lib/android/sdk/cmake/3.22.1
+            /usr/local/lib/android/sdk/ndk/27.2.12479018
+          key: validation-lab-android-sdk-${{ runner.os }}-api36-bt36.0.0-cmake3.22.1-ndk27.2.12479018
+
+      - name: Accept Android SDK licenses and install build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.2.12479018"
+
+      - name: Setup standalone Gradle
+        shell: bash
+        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
+
+      - name: Run feature-lab unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${STANDALONE_GRADLE}" --no-daemon :feature-lab:testDebugUnitTest
+
+      - name: Upload feature-lab unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-lab-unit-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            feature-lab/build/reports/tests/**
+            feature-lab/build/test-results/**
+
   physics-accuracy-telemetry:
     name: Physics accuracy telemetry
     needs: metadata
@@ -400,6 +478,7 @@ jobs:
       - metadata
       - wrapper-bootstrap
       - core-jvm
+      - feature-lab-unit
       - physics-accuracy-telemetry
       - android-assemble
     if: ${{ always() }}
@@ -418,6 +497,7 @@ jobs:
             echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
             echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
             echo "- core-jvm: \`${{ needs['core-jvm'].result }}\`"
+            echo "- feature-lab-unit: \`${{ needs['feature-lab-unit'].result }}\`"
             echo "- physics-accuracy-telemetry: \`${{ needs['physics-accuracy-telemetry'].result }}\`"
             echo "- android-assemble: \`${{ needs['android-assemble'].result }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
