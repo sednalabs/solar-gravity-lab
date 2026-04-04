@@ -20,11 +20,16 @@ class BridgeBackedRuntimeFacade(
     override suspend fun startSession() {
         bridge.connect().collect { signal ->
             _uiState.value = when (signal) {
-                RuntimeSignal.Connected -> _uiState.value.copy(
-                    statusLine = "Connected to runtime boundary"
+                is RuntimeSignal.Connected -> _uiState.value.copy(
+                    statusLine = "Connected to runtime boundary",
+                    detailLine = "Native session handle=${signal.handle}"
                 )
                 is RuntimeSignal.Status -> _uiState.value.copy(
                     detailLine = signal.message
+                )
+                is RuntimeSignal.Unavailable -> _uiState.value.copy(
+                    statusLine = signal.message,
+                    detailLine = signal.detail
                 )
             }
         }
