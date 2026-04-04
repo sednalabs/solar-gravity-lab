@@ -6,9 +6,11 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -27,28 +29,28 @@ public:
 
     void SubmitScene(
         int64_t sourceRevision,
-        std::vector<double> authoritativePositionsM,
-        std::vector<double> authoritativeSourceMassesKg,
-        std::vector<float> authoritativeRadiiM,
-        std::vector<int32_t> authoritativeColorsArgb,
-        std::vector<int32_t> authoritativeKinds,
-        std::vector<double> tracerNearPositionsM,
-        std::vector<float> tracerNearRadiiM,
-        std::vector<int32_t> tracerNearColorsArgb,
-        std::vector<int32_t> tracerNearKinds,
-        std::vector<double> tracerMediumPositionsM,
-        std::vector<double> tracerMediumVelocitiesMps,
-        std::vector<float> tracerMediumRadiiM,
-        std::vector<int32_t> tracerMediumColorsArgb,
-        std::vector<int32_t> tracerMediumKinds,
-        std::vector<double> tracerFarPositionsM,
-        std::vector<double> tracerFarVelocitiesMps,
-        std::vector<float> tracerFarRadiiM,
-        std::vector<int32_t> tracerFarColorsArgb,
-        std::vector<int32_t> tracerFarKinds,
-        std::vector<double> trailPositionsM,
-        std::vector<int32_t> trailColorsArgb,
-        std::vector<int32_t> trailVertexCounts);
+        std::span<const double> authoritativePositionsM,
+        std::span<const double> authoritativeSourceMassesKg,
+        std::span<const float> authoritativeRadiiM,
+        std::span<const int32_t> authoritativeColorsArgb,
+        std::span<const int32_t> authoritativeKinds,
+        std::span<const double> tracerNearPositionsM,
+        std::span<const float> tracerNearRadiiM,
+        std::span<const int32_t> tracerNearColorsArgb,
+        std::span<const int32_t> tracerNearKinds,
+        std::span<const double> tracerMediumPositionsM,
+        std::span<const double> tracerMediumVelocitiesMps,
+        std::span<const float> tracerMediumRadiiM,
+        std::span<const int32_t> tracerMediumColorsArgb,
+        std::span<const int32_t> tracerMediumKinds,
+        std::span<const double> tracerFarPositionsM,
+        std::span<const double> tracerFarVelocitiesMps,
+        std::span<const float> tracerFarRadiiM,
+        std::span<const int32_t> tracerFarColorsArgb,
+        std::span<const int32_t> tracerFarKinds,
+        std::span<const double> trailPositionsM,
+        std::span<const int32_t> trailColorsArgb,
+        std::span<const int32_t> trailVertexCounts);
 
     void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM);
     bool Render();
@@ -301,6 +303,7 @@ private:
     double cameraCenterY_ = 0.0;
     double cameraCenterZ_ = 0.0;
     double cameraViewRadiusM_ = 0.0;
+    std::chrono::steady_clock::time_point lastAuthoritativeSceneUploadTime_{};
 
     std::string lastError_;
     std::string backendLabelCache_;

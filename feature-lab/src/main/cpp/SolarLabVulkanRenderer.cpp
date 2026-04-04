@@ -24,6 +24,7 @@ constexpr float kMediumTracerPointSizePx = 3.0f;
 constexpr float kFarTracerPointSizePx = 1.60f;
 constexpr float kTrailAlpha = 0.90f;
 constexpr float kDefaultMaxPointSizePx = 64.0f;
+constexpr float kMaxTracerGpuExtrapolationSeconds = 0.35f;
 constexpr uint32_t kComputeLocalSizeX = 64U;
 constexpr uint32_t kFarTileSizePx = 16U;
 constexpr uint32_t kBodyKindStar = 0U;
@@ -59,6 +60,11 @@ void LogError(const std::string& message) {
 template <typename T>
 size_t ByteSize(const std::vector<T>& values) {
     return values.size() * sizeof(T);
+}
+
+template <typename T>
+void AssignSpan(std::vector<T>& destination, std::span<const T> source) {
+    destination.assign(source.begin(), source.end());
 }
 
 uint32_t ApplyAlphaToArgb(uint32_t argb, float alphaScale) {
@@ -247,52 +253,56 @@ void SolarLabVulkanRenderer::DestroySurface() {
 
 void SolarLabVulkanRenderer::SubmitScene(
     int64_t sourceRevision,
-    std::vector<double> authoritativePositionsM,
-    std::vector<double> authoritativeSourceMassesKg,
-    std::vector<float> authoritativeRadiiM,
-    std::vector<int32_t> authoritativeColorsArgb,
-    std::vector<int32_t> authoritativeKinds,
-    std::vector<double> tracerNearPositionsM,
-    std::vector<float> tracerNearRadiiM,
-    std::vector<int32_t> tracerNearColorsArgb,
-    std::vector<int32_t> tracerNearKinds,
-    std::vector<double> tracerMediumPositionsM,
-    std::vector<double> tracerMediumVelocitiesMps,
-    std::vector<float> tracerMediumRadiiM,
-    std::vector<int32_t> tracerMediumColorsArgb,
-    std::vector<int32_t> tracerMediumKinds,
-    std::vector<double> tracerFarPositionsM,
-    std::vector<double> tracerFarVelocitiesMps,
-    std::vector<float> tracerFarRadiiM,
-    std::vector<int32_t> tracerFarColorsArgb,
-    std::vector<int32_t> tracerFarKinds,
-    std::vector<double> trailPositionsM,
-    std::vector<int32_t> trailColorsArgb,
-    std::vector<int32_t> trailVertexCounts) {
+    std::span<const double> authoritativePositionsM,
+    std::span<const double> authoritativeSourceMassesKg,
+    std::span<const float> authoritativeRadiiM,
+    std::span<const int32_t> authoritativeColorsArgb,
+    std::span<const int32_t> authoritativeKinds,
+    std::span<const double> tracerNearPositionsM,
+    std::span<const float> tracerNearRadiiM,
+    std::span<const int32_t> tracerNearColorsArgb,
+    std::span<const int32_t> tracerNearKinds,
+    std::span<const double> tracerMediumPositionsM,
+    std::span<const double> tracerMediumVelocitiesMps,
+    std::span<const float> tracerMediumRadiiM,
+    std::span<const int32_t> tracerMediumColorsArgb,
+    std::span<const int32_t> tracerMediumKinds,
+    std::span<const double> tracerFarPositionsM,
+    std::span<const double> tracerFarVelocitiesMps,
+    std::span<const float> tracerFarRadiiM,
+    std::span<const int32_t> tracerFarColorsArgb,
+    std::span<const int32_t> tracerFarKinds,
+    std::span<const double> trailPositionsM,
+    std::span<const int32_t> trailColorsArgb,
+    std::span<const int32_t> trailVertexCounts) {
     std::scoped_lock lock(stateMutex_);
+    const bool authoritativeRevisionChanged = sceneBuffers_.sourceRevision != sourceRevision;
     sceneBuffers_.sourceRevision = sourceRevision;
-    sceneBuffers_.authoritativePositionsM = std::move(authoritativePositionsM);
-    sceneBuffers_.authoritativeSourceMassesKg = std::move(authoritativeSourceMassesKg);
-    sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
-    sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
-    sceneBuffers_.authoritativeKinds = std::move(authoritativeKinds);
-    sceneBuffers_.tracerNearPositionsM = std::move(tracerNearPositionsM);
-    sceneBuffers_.tracerNearRadiiM = std::move(tracerNearRadiiM);
-    sceneBuffers_.tracerNearColorsArgb = std::move(tracerNearColorsArgb);
-    sceneBuffers_.tracerNearKinds = std::move(tracerNearKinds);
-    sceneBuffers_.tracerMediumPositionsM = std::move(tracerMediumPositionsM);
-    sceneBuffers_.tracerMediumVelocitiesMps = std::move(tracerMediumVelocitiesMps);
-    sceneBuffers_.tracerMediumRadiiM = std::move(tracerMediumRadiiM);
-    sceneBuffers_.tracerMediumColorsArgb = std::move(tracerMediumColorsArgb);
-    sceneBuffers_.tracerMediumKinds = std::move(tracerMediumKinds);
-    sceneBuffers_.tracerFarPositionsM = std::move(tracerFarPositionsM);
-    sceneBuffers_.tracerFarVelocitiesMps = std::move(tracerFarVelocitiesMps);
-    sceneBuffers_.tracerFarRadiiM = std::move(tracerFarRadiiM);
-    sceneBuffers_.tracerFarColorsArgb = std::move(tracerFarColorsArgb);
-    sceneBuffers_.tracerFarKinds = std::move(tracerFarKinds);
-    sceneBuffers_.trailPositionsM = std::move(trailPositionsM);
-    sceneBuffers_.trailColorsArgb = std::move(trailColorsArgb);
-    sceneBuffers_.trailVertexCounts = std::move(trailVertexCounts);
+    AssignSpan(sceneBuffers_.authoritativePositionsM, authoritativePositionsM);
+    AssignSpan(sceneBuffers_.authoritativeSourceMassesKg, authoritativeSourceMassesKg);
+    AssignSpan(sceneBuffers_.authoritativeRadiiM, authoritativeRadiiM);
+    AssignSpan(sceneBuffers_.authoritativeColorsArgb, authoritativeColorsArgb);
+    AssignSpan(sceneBuffers_.authoritativeKinds, authoritativeKinds);
+    AssignSpan(sceneBuffers_.tracerNearPositionsM, tracerNearPositionsM);
+    AssignSpan(sceneBuffers_.tracerNearRadiiM, tracerNearRadiiM);
+    AssignSpan(sceneBuffers_.tracerNearColorsArgb, tracerNearColorsArgb);
+    AssignSpan(sceneBuffers_.tracerNearKinds, tracerNearKinds);
+    AssignSpan(sceneBuffers_.tracerMediumPositionsM, tracerMediumPositionsM);
+    AssignSpan(sceneBuffers_.tracerMediumVelocitiesMps, tracerMediumVelocitiesMps);
+    AssignSpan(sceneBuffers_.tracerMediumRadiiM, tracerMediumRadiiM);
+    AssignSpan(sceneBuffers_.tracerMediumColorsArgb, tracerMediumColorsArgb);
+    AssignSpan(sceneBuffers_.tracerMediumKinds, tracerMediumKinds);
+    AssignSpan(sceneBuffers_.tracerFarPositionsM, tracerFarPositionsM);
+    AssignSpan(sceneBuffers_.tracerFarVelocitiesMps, tracerFarVelocitiesMps);
+    AssignSpan(sceneBuffers_.tracerFarRadiiM, tracerFarRadiiM);
+    AssignSpan(sceneBuffers_.tracerFarColorsArgb, tracerFarColorsArgb);
+    AssignSpan(sceneBuffers_.tracerFarKinds, tracerFarKinds);
+    AssignSpan(sceneBuffers_.trailPositionsM, trailPositionsM);
+    AssignSpan(sceneBuffers_.trailColorsArgb, trailColorsArgb);
+    AssignSpan(sceneBuffers_.trailVertexCounts, trailVertexCounts);
+    if (authoritativeRevisionChanged) {
+        lastAuthoritativeSceneUploadTime_ = std::chrono::steady_clock::now();
+    }
 
     if (sceneGpuStreams_.uploadedRevision != sourceRevision) {
         backendLabelCache_ = "Vulkan SPIR-V graphics pipelines pending scene upload";
@@ -1806,6 +1816,13 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
     const float maxPointSizePx = enabledFeatures_.largePoints
         ? std::max(1.0f, std::min(physicalDeviceProperties_.limits.pointSizeRange[1], kDefaultMaxPointSizePx))
         : 1.0f;
+    float tracerExtrapolationSeconds = 0.0f;
+    if (lastAuthoritativeSceneUploadTime_.time_since_epoch().count() != 0) {
+        tracerExtrapolationSeconds = static_cast<float>(std::clamp(
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - lastAuthoritativeSceneUploadTime_).count(),
+            0.0,
+            static_cast<double>(kMaxTracerGpuExtrapolationSeconds)));
+    }
 
     const SceneUniformData uniformData{
         .centerSpan = {
@@ -1823,7 +1840,7 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
         .viewport = {
             widthPx,
             heightPx,
-            0.0f,
+            tracerExtrapolationSeconds,
             0.0f,
         },
     };

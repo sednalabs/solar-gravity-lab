@@ -3,14 +3,82 @@
 
 #if defined(__aarch64__)
 #include <asm/hwcap.h>
+#include <arm_neon.h>
 #endif
 
+#include <algorithm>
 #include <cmath>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
+
+template <typename JArrayT, typename ElementT>
+class ScopedReadOnlyArray;
+
+template <>
+class ScopedReadOnlyArray<jdoubleArray, jdouble> {
+public:
+    ScopedReadOnlyArray(JNIEnv* env, jdoubleArray array)
+        : env_(env), array_(array), length_(array != nullptr ? env->GetArrayLength(array) : 0) {
+        if (array_ != nullptr && length_ > 0) {
+            data_ = env_->GetDoubleArrayElements(array_, nullptr);
+        }
+    }
+
+    ~ScopedReadOnlyArray() {
+        if (array_ != nullptr && data_ != nullptr) {
+            env_->ReleaseDoubleArrayElements(array_, data_, JNI_ABORT);
+        }
+    }
+
+    std::span<const jdouble> span() const {
+        return data_ != nullptr ? std::span<const jdouble>(data_, static_cast<size_t>(length_)) : std::span<const jdouble>();
+    }
+
+private:
+    JNIEnv* env_;
+    jdoubleArray array_;
+    jsize length_;
+    jdouble* data_ = nullptr;
+};
+
+template <>
+class ScopedReadOnlyArray<jintArray, jint> {
+public:
+    ScopedReadOnlyArray(JNIEnv* env, jintArray array)
+        : env_(env), array_(array), length_(array != nullptr ? env->GetArrayLength(array) : 0) {
+        if (array_ != nullptr && length_ > 0) {
+            data_ = env_->GetIntArrayElements(array_, nullptr);
+        }
+    }
+
+    ~ScopedReadOnlyArray() {
+        if (array_ != nullptr && data_ != nullptr) {
+            env_->ReleaseIntArrayElements(array_, data_, JNI_ABORT);
+        }
+    }
+
+    std::span<const jint> span() const {
+        return data_ != nullptr ? std::span<const jint>(data_, static_cast<size_t>(length_)) : std::span<const jint>();
+    }
+
+private:
+    JNIEnv* env_;
+    jintArray array_;
+    jsize length_;
+    jint* data_ = nullptr;
+};
+
+bool HasArm64Asimd() {
+#if defined(__aarch64__) && defined(HWCAP_ASIMD)
+    return (getauxval(AT_HWCAP) & HWCAP_ASIMD) != 0;
+#else
+    return false;
+#endif
+}
 
 std::string CpuBackendSummary() {
     std::ostringstream summary;
@@ -43,66 +111,58 @@ std::string CpuBackendSummary() {
 #if defined(HWCAP2_SVE2)
     if ((hwcap2 & HWCAP2_SVE2) != 0) summary << "+sve2";
 #endif
+    summary << " active=" << (HasArm64Asimd() ? "neon" : "scalar");
 #endif
 
     return summary.str();
 }
 
-std::vector<jdouble> ComputeAccelerations(
-    JNIEnv* env,
-    jintArray sourceBodyIndices,
-    jdoubleArray sourceMassesKg,
-    jdoubleArray sourcePosX,
-    jdoubleArray sourcePosY,
-    jdoubleArray sourcePosZ,
-    jintArray targetBodyIndices,
-    jdoubleArray targetPosX,
-    jdoubleArray targetPosY,
-    jdoubleArray targetPosZ,
+std::vector<jdouble> ComputeAccelerationsScalar(
+    std::span<const jint> sourceBodyIndices,
+    std::span<const jdouble> sourceMassesKg,
+    std::span<const jdouble> sourcePosX,
+    std::span<const jdouble> sourcePosY,
+    std::span<const jdouble> sourcePosZ,
+    std::span<const jint> targetBodyIndices,
+    std::span<const jdouble> targetPosX,
+    std::span<const jdouble> targetPosY,
+    std::span<const jdouble> targetPosZ,
     const double gravitationalConstant,
     const double softeningSquared,
     const bool skipSelf
 ) {
-    const auto sourceCount = static_cast<jsize>(env->GetArrayLength(sourceBodyIndices));
-    const auto targetCount = static_cast<jsize>(env->GetArrayLength(targetBodyIndices));
+    const auto sourceCount = std::min({
+        sourceBodyIndices.size(),
+        sourceMassesKg.size(),
+        sourcePosX.size(),
+        sourcePosY.size(),
+        sourcePosZ.size(),
+    });
+    const auto targetCount = std::min({
+        targetBodyIndices.size(),
+        targetPosX.size(),
+        targetPosY.size(),
+        targetPosZ.size(),
+    });
 
-    std::vector<jint> sourceIndices(sourceCount);
-    std::vector<jdouble> sourceMasses(sourceCount);
-    std::vector<jdouble> sourceX(sourceCount);
-    std::vector<jdouble> sourceY(sourceCount);
-    std::vector<jdouble> sourceZ(sourceCount);
-    std::vector<jint> targetIndices(targetCount);
-    std::vector<jdouble> targetX(targetCount);
-    std::vector<jdouble> targetY(targetCount);
-    std::vector<jdouble> targetZ(targetCount);
-    env->GetIntArrayRegion(sourceBodyIndices, 0, sourceCount, sourceIndices.data());
-    env->GetDoubleArrayRegion(sourceMassesKg, 0, sourceCount, sourceMasses.data());
-    env->GetDoubleArrayRegion(sourcePosX, 0, sourceCount, sourceX.data());
-    env->GetDoubleArrayRegion(sourcePosY, 0, sourceCount, sourceY.data());
-    env->GetDoubleArrayRegion(sourcePosZ, 0, sourceCount, sourceZ.data());
-    env->GetIntArrayRegion(targetBodyIndices, 0, targetCount, targetIndices.data());
-    env->GetDoubleArrayRegion(targetPosX, 0, targetCount, targetX.data());
-    env->GetDoubleArrayRegion(targetPosY, 0, targetCount, targetY.data());
-    env->GetDoubleArrayRegion(targetPosZ, 0, targetCount, targetZ.data());
-
-    std::vector<jdouble> packed(static_cast<std::size_t>(targetCount) * 3U, 0.0);
-    for (jsize targetIndex = 0; targetIndex < targetCount; ++targetIndex) {
-        const auto bodyIndex = targetIndices[targetIndex];
-        const auto bodyX = targetX[targetIndex];
-        const auto bodyY = targetY[targetIndex];
-        const auto bodyZ = targetZ[targetIndex];
+    std::vector<jdouble> packed(targetCount * 3U, 0.0);
+    for (size_t targetIndex = 0; targetIndex < targetCount; ++targetIndex) {
+        const auto bodyIndex = targetBodyIndices[targetIndex];
+        const auto bodyX = targetPosX[targetIndex];
+        const auto bodyY = targetPosY[targetIndex];
+        const auto bodyZ = targetPosZ[targetIndex];
         double accelerationX = 0.0;
         double accelerationY = 0.0;
         double accelerationZ = 0.0;
 
-        for (jsize sourceIndex = 0; sourceIndex < sourceCount; ++sourceIndex) {
-            if (skipSelf && sourceIndices[sourceIndex] == bodyIndex) {
+        for (size_t sourceIndex = 0; sourceIndex < sourceCount; ++sourceIndex) {
+            if (skipSelf && sourceBodyIndices[sourceIndex] == bodyIndex) {
                 continue;
             }
 
-            const auto dx = sourceX[sourceIndex] - bodyX;
-            const auto dy = sourceY[sourceIndex] - bodyY;
-            const auto dz = sourceZ[sourceIndex] - bodyZ;
+            const auto dx = sourcePosX[sourceIndex] - bodyX;
+            const auto dy = sourcePosY[sourceIndex] - bodyY;
+            const auto dz = sourcePosZ[sourceIndex] - bodyZ;
             const auto distanceSquared = (dx * dx) + (dy * dy) + (dz * dz) + softeningSquared;
             if (distanceSquared == 0.0) {
                 continue;
@@ -110,7 +170,7 @@ std::vector<jdouble> ComputeAccelerations(
 
             const auto invDistance = 1.0 / std::sqrt(distanceSquared);
             const auto invDistanceCubed = invDistance * invDistance * invDistance;
-            const auto scale = gravitationalConstant * sourceMasses[sourceIndex] * invDistanceCubed;
+            const auto scale = gravitationalConstant * sourceMassesKg[sourceIndex] * invDistanceCubed;
 
             accelerationX += dx * scale;
             accelerationY += dy * scale;
@@ -124,6 +184,158 @@ std::vector<jdouble> ComputeAccelerations(
     }
 
     return packed;
+}
+
+#if defined(__aarch64__)
+std::vector<jdouble> ComputeAccelerationsNeon(
+    std::span<const jint> sourceBodyIndices,
+    std::span<const jdouble> sourceMassesKg,
+    std::span<const jdouble> sourcePosX,
+    std::span<const jdouble> sourcePosY,
+    std::span<const jdouble> sourcePosZ,
+    std::span<const jint> targetBodyIndices,
+    std::span<const jdouble> targetPosX,
+    std::span<const jdouble> targetPosY,
+    std::span<const jdouble> targetPosZ,
+    const double gravitationalConstant,
+    const double softeningSquared,
+    const bool skipSelf
+) {
+    const auto sourceCount = std::min({
+        sourceBodyIndices.size(),
+        sourceMassesKg.size(),
+        sourcePosX.size(),
+        sourcePosY.size(),
+        sourcePosZ.size(),
+    });
+    const auto targetCount = std::min({
+        targetBodyIndices.size(),
+        targetPosX.size(),
+        targetPosY.size(),
+        targetPosZ.size(),
+    });
+
+    std::vector<jdouble> packed(targetCount * 3U, 0.0);
+    const float64x2_t softening = vdupq_n_f64(softeningSquared);
+    const float64x2_t gravitational = vdupq_n_f64(gravitationalConstant);
+
+    for (size_t targetIndex = 0; targetIndex < targetCount; ++targetIndex) {
+        const auto bodyIndex = targetBodyIndices[targetIndex];
+        const float64x2_t targetX = vdupq_n_f64(targetPosX[targetIndex]);
+        const float64x2_t targetY = vdupq_n_f64(targetPosY[targetIndex]);
+        const float64x2_t targetZ = vdupq_n_f64(targetPosZ[targetIndex]);
+        float64x2_t accumulatedX = vdupq_n_f64(0.0);
+        float64x2_t accumulatedY = vdupq_n_f64(0.0);
+        float64x2_t accumulatedZ = vdupq_n_f64(0.0);
+
+        size_t sourceIndex = 0;
+        for (; sourceIndex + 1 < sourceCount; sourceIndex += 2) {
+            const float64x2_t dx = vsubq_f64(vld1q_f64(sourcePosX.data() + sourceIndex), targetX);
+            const float64x2_t dy = vsubq_f64(vld1q_f64(sourcePosY.data() + sourceIndex), targetY);
+            const float64x2_t dz = vsubq_f64(vld1q_f64(sourcePosZ.data() + sourceIndex), targetZ);
+
+            float64x2_t distanceSquared = softening;
+            distanceSquared = vaddq_f64(distanceSquared, vmulq_f64(dx, dx));
+            distanceSquared = vaddq_f64(distanceSquared, vmulq_f64(dy, dy));
+            distanceSquared = vaddq_f64(distanceSquared, vmulq_f64(dz, dz));
+
+            double scaleValues[2] = {0.0, 0.0};
+            for (size_t lane = 0; lane < 2; ++lane) {
+                const size_t laneIndex = sourceIndex + lane;
+                const double laneDistanceSquared = vgetq_lane_f64(distanceSquared, static_cast<int>(lane));
+                if (laneDistanceSquared == 0.0) {
+                    continue;
+                }
+                if (skipSelf && sourceBodyIndices[laneIndex] == bodyIndex) {
+                    continue;
+                }
+                const double invDistance = 1.0 / std::sqrt(laneDistanceSquared);
+                scaleValues[lane] = sourceMassesKg[laneIndex] * invDistance * invDistance * invDistance;
+            }
+
+            const float64x2_t scale = vmulq_f64(gravitational, vld1q_f64(scaleValues));
+            accumulatedX = vaddq_f64(accumulatedX, vmulq_f64(dx, scale));
+            accumulatedY = vaddq_f64(accumulatedY, vmulq_f64(dy, scale));
+            accumulatedZ = vaddq_f64(accumulatedZ, vmulq_f64(dz, scale));
+        }
+
+        double accelerationX = vgetq_lane_f64(accumulatedX, 0) + vgetq_lane_f64(accumulatedX, 1);
+        double accelerationY = vgetq_lane_f64(accumulatedY, 0) + vgetq_lane_f64(accumulatedY, 1);
+        double accelerationZ = vgetq_lane_f64(accumulatedZ, 0) + vgetq_lane_f64(accumulatedZ, 1);
+
+        for (; sourceIndex < sourceCount; ++sourceIndex) {
+            if (skipSelf && sourceBodyIndices[sourceIndex] == bodyIndex) {
+                continue;
+            }
+            const auto dx = sourcePosX[sourceIndex] - targetPosX[targetIndex];
+            const auto dy = sourcePosY[sourceIndex] - targetPosY[targetIndex];
+            const auto dz = sourcePosZ[sourceIndex] - targetPosZ[targetIndex];
+            const auto distanceSquared = (dx * dx) + (dy * dy) + (dz * dz) + softeningSquared;
+            if (distanceSquared == 0.0) {
+                continue;
+            }
+            const auto invDistance = 1.0 / std::sqrt(distanceSquared);
+            const auto invDistanceCubed = invDistance * invDistance * invDistance;
+            const auto scale = gravitationalConstant * sourceMassesKg[sourceIndex] * invDistanceCubed;
+            accelerationX += dx * scale;
+            accelerationY += dy * scale;
+            accelerationZ += dz * scale;
+        }
+
+        const auto outputOffset = targetIndex * 3U;
+        packed[outputOffset] = accelerationX;
+        packed[outputOffset + 1] = accelerationY;
+        packed[outputOffset + 2] = accelerationZ;
+    }
+
+    return packed;
+}
+#endif
+
+std::vector<jdouble> ComputeAccelerations(
+    std::span<const jint> sourceBodyIndices,
+    std::span<const jdouble> sourceMassesKg,
+    std::span<const jdouble> sourcePosX,
+    std::span<const jdouble> sourcePosY,
+    std::span<const jdouble> sourcePosZ,
+    std::span<const jint> targetBodyIndices,
+    std::span<const jdouble> targetPosX,
+    std::span<const jdouble> targetPosY,
+    std::span<const jdouble> targetPosZ,
+    const double gravitationalConstant,
+    const double softeningSquared,
+    const bool skipSelf
+) {
+#if defined(__aarch64__)
+    if (HasArm64Asimd()) {
+        return ComputeAccelerationsNeon(
+            sourceBodyIndices,
+            sourceMassesKg,
+            sourcePosX,
+            sourcePosY,
+            sourcePosZ,
+            targetBodyIndices,
+            targetPosX,
+            targetPosY,
+            targetPosZ,
+            gravitationalConstant,
+            softeningSquared,
+            skipSelf);
+    }
+#endif
+    return ComputeAccelerationsScalar(
+        sourceBodyIndices,
+        sourceMassesKg,
+        sourcePosX,
+        sourcePosY,
+        sourcePosZ,
+        targetBodyIndices,
+        targetPosX,
+        targetPosY,
+        targetPosZ,
+        gravitationalConstant,
+        softeningSquared,
+        skipSelf);
 }
 
 jdoubleArray ToJDoubleArray(JNIEnv* env, const std::vector<jdouble>& values) {
@@ -162,17 +374,25 @@ Java_com_sednalabs_solarlab_physics_nativeandroid_NativePhysicsBridge_nativeComp
     jdouble gravitationalConstant,
     jdouble softeningSquared
 ) {
+    ScopedReadOnlyArray<jintArray, jint> sourceIndices(env, sourceBodyIndices);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceMasses(env, sourceMassesKg);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceX(env, sourcePosX);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceY(env, sourcePosY);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceZ(env, sourcePosZ);
+    ScopedReadOnlyArray<jintArray, jint> targetIndices(env, targetBodyIndices);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> targetX(env, targetPosX);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> targetY(env, targetPosY);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> targetZ(env, targetPosZ);
     const auto packed = ComputeAccelerations(
-        env,
-        sourceBodyIndices,
-        sourceMassesKg,
-        sourcePosX,
-        sourcePosY,
-        sourcePosZ,
-        targetBodyIndices,
-        targetPosX,
-        targetPosY,
-        targetPosZ,
+        sourceIndices.span(),
+        sourceMasses.span(),
+        sourceX.span(),
+        sourceY.span(),
+        sourceZ.span(),
+        targetIndices.span(),
+        targetX.span(),
+        targetY.span(),
+        targetZ.span(),
         gravitationalConstant,
         softeningSquared,
         true
@@ -196,17 +416,25 @@ Java_com_sednalabs_solarlab_physics_nativeandroid_NativePhysicsBridge_nativeComp
     jdouble gravitationalConstant,
     jdouble softeningSquared
 ) {
+    ScopedReadOnlyArray<jintArray, jint> sourceIndices(env, sourceBodyIndices);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceMasses(env, sourceMassesKg);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceX(env, sourcePosX);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceY(env, sourcePosY);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> sourceZ(env, sourcePosZ);
+    ScopedReadOnlyArray<jintArray, jint> targetIndices(env, targetBodyIndices);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> targetX(env, targetPosX);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> targetY(env, targetPosY);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> targetZ(env, targetPosZ);
     const auto packed = ComputeAccelerations(
-        env,
-        sourceBodyIndices,
-        sourceMassesKg,
-        sourcePosX,
-        sourcePosY,
-        sourcePosZ,
-        targetBodyIndices,
-        targetPosX,
-        targetPosY,
-        targetPosZ,
+        sourceIndices.span(),
+        sourceMasses.span(),
+        sourceX.span(),
+        sourceY.span(),
+        sourceZ.span(),
+        targetIndices.span(),
+        targetX.span(),
+        targetY.span(),
+        targetZ.span(),
         gravitationalConstant,
         softeningSquared,
         false

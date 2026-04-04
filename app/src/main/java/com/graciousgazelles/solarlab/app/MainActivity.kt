@@ -398,6 +398,12 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
                 append(accelerationBackendSummary)
                 append('\n')
             }
+            if (frame.timeline.simulationBacklogSeconds > 1.0) {
+                append("Scheduler: render-safe backlog ")
+                append("%.1f".format(frame.timeline.simulationBacklogSeconds))
+                append(" s")
+                append('\n')
+            }
             if (!frame.diagnosticsFresh) {
                 append(getString(R.string.diagnostics_cached_notice))
                 append('\n')

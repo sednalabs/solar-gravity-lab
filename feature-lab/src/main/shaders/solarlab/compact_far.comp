@@ -73,6 +73,7 @@ void main() {
     }
 
     FarTracerState candidate = uSource.src[index];
+    candidate.positionM += candidate.velocityMps * max(uScene.viewport.z, 0.0);
     if (!isInsideExtendedView(candidate.positionM)) {
         return;
     }

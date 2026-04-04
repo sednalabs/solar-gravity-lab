@@ -41,6 +41,7 @@ class LabSession private constructor(
     private var playbackSpeedPreset: PlaybackSpeedPreset = DEFAULT_PLAYBACK_SPEED
     private var stepQuantumPreset: StepQuantumPreset = DEFAULT_STEP_QUANTUM
     private var lastTickNanoTime: Long = 0L
+    private var pendingSimulationSeconds: Double = 0.0
     private var runningTickCount: Int = 0
     private val perfSamples = PerfSampleAccumulator()
 
@@ -60,6 +61,7 @@ class LabSession private constructor(
         if (running) return
         running = true
         lastTickNanoTime = 0L
+        pendingSimulationSeconds = 0.0
         runningTickCount = 0
         scheduledTask = executor.scheduleAtFixedRate(
             { tick() },
@@ -72,6 +74,7 @@ class LabSession private constructor(
     fun pause() {
         running = false
         lastTickNanoTime = 0L
+        pendingSimulationSeconds = 0.0
         runningTickCount = 0
         scheduledTask?.cancel(false)
         scheduledTask = null
@@ -105,6 +108,7 @@ class LabSession private constructor(
                 diagnosticsFresh = result.diagnosticsFresh,
                 collisions = result.collisions,
                 simulationAdvanceDurationNs = advanceDurationNs,
+                simulationBacklogSeconds = 0.0,
                 recordPerformanceSample = false,
             )
         }
@@ -150,6 +154,7 @@ class LabSession private constructor(
                     diagnosticsFresh = result.diagnosticsFresh,
                     collisions = result.collisions,
                     simulationAdvanceDurationNs = advanceDurationNs,
+                    simulationBacklogSeconds = 0.0,
                     recordPerformanceSample = false,
                 )
             } else {
@@ -161,6 +166,7 @@ class LabSession private constructor(
     fun cyclePlaybackSpeed(direction: Int) {
         executor.execute {
             playbackSpeedPreset = playbackSpeedPreset.shifted(direction)
+            pendingSimulationSeconds = 0.0
             emitCurrentFrame(emptyList())
         }
     }
@@ -203,6 +209,7 @@ class LabSession private constructor(
             }
             config = config.copy(collisionMode = collisionMode)
             engine = engineFactory(engine.snapshot(), config)
+            pendingSimulationSeconds = 0.0
             emitCurrentFrame(emptyList())
         }
     }
@@ -223,25 +230,37 @@ class LabSession private constructor(
         lastTickNanoTime = now
         val simDeltaSeconds = realDeltaSeconds * playbackSpeedPreset.simSecondsPerRealSecond
         if (simDeltaSeconds <= 0.0) return
+        pendingSimulationSeconds = simulationAdvanceBudget(
+            totalPendingSeconds = pendingSimulationSeconds + simDeltaSeconds,
+            collisionMode = config.collisionMode,
+            playbackSpeedPreset = playbackSpeedPreset,
+        ).cappedPendingSeconds
+        if (pendingSimulationSeconds <= SUBSTEP_EPSILON_SECONDS) return
         val requestFreshDiagnostics = shouldRefreshDiagnosticsForRunningTick()
-        val playbackPlan = playbackSubstepPlan(
-            totalSeconds = simDeltaSeconds,
+        val advanceBudget = simulationAdvanceBudget(
+            totalPendingSeconds = pendingSimulationSeconds,
             collisionMode = config.collisionMode,
             playbackSpeedPreset = playbackSpeedPreset,
         )
+        if (advanceBudget.secondsToAdvance <= SUBSTEP_EPSILON_SECONDS) {
+            emitCurrentFrame(emptyList(), pendingSimulationSeconds)
+            return
+        }
         val advanceStartNs = System.nanoTime()
         val result = advanceBySimulationSeconds(
-            totalSeconds = simDeltaSeconds,
+            totalSeconds = advanceBudget.secondsToAdvance,
             requestFreshDiagnostics = requestFreshDiagnostics,
-            maxSubstepSeconds = playbackPlan.maxSubstepSeconds,
+            maxSubstepSeconds = advanceBudget.maxSubstepSeconds,
         )
         val advanceDurationNs = System.nanoTime() - advanceStartNs
+        pendingSimulationSeconds = advanceBudget.deferredSeconds
         emitFrame(
             snapshot = result.snapshot,
             diagnostics = result.diagnostics,
             diagnosticsFresh = result.diagnosticsFresh,
             collisions = result.collisions,
             simulationAdvanceDurationNs = advanceDurationNs,
+            simulationBacklogSeconds = pendingSimulationSeconds,
             recordPerformanceSample = true,
         )
     }
@@ -279,13 +298,17 @@ class LabSession private constructor(
         return latestResult.copy(collisions = allCollisions)
     }
 
-    private fun emitCurrentFrame(collisions: List<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>) {
+    private fun emitCurrentFrame(
+        collisions: List<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>,
+        simulationBacklogSeconds: Double = 0.0,
+    ) {
         emitFrame(
             snapshot = engine.snapshot(),
             diagnostics = engine.diagnostics(),
             diagnosticsFresh = true,
             collisions = collisions,
             simulationAdvanceDurationNs = 0L,
+            simulationBacklogSeconds = simulationBacklogSeconds,
             recordPerformanceSample = false,
         )
     }
@@ -296,6 +319,7 @@ class LabSession private constructor(
         diagnosticsFresh: Boolean,
         collisions: List<com.graciousgazelles.solarlab.core.simulation.CollisionEvent>,
         simulationAdvanceDurationNs: Long,
+        simulationBacklogSeconds: Double,
         recordPerformanceSample: Boolean,
     ) {
         val frameBuildStartNs = System.nanoTime()
@@ -315,6 +339,7 @@ class LabSession private constructor(
                 absoluteJulianDateTdb = snapshot.absoluteJulianDateTdbOrNull(),
                 playbackSpeed = playbackSpeedPreset,
                 stepQuantum = stepQuantumPreset,
+                simulationBacklogSeconds = simulationBacklogSeconds,
                 canJumpAbsolute = snapshot.isCatalogBacked,
                 canStepBackward = backControlAction != BackControlAction.None,
             ),
@@ -328,6 +353,7 @@ class LabSession private constructor(
                     simulationAdvanceDurationNs = simulationAdvanceDurationNs,
                     frameBuildDurationNs = frameBuildDurationNs,
                     handoffLatencyNs = handoffLatencyNs,
+                    simulationBacklogSeconds = simulationBacklogSeconds,
                 )
                 if (perfSummary != null) {
                     Log.i(TAG, perfSummary)
@@ -350,11 +376,14 @@ class LabSession private constructor(
         private var simulationAdvanceMaxNs: Long = 0L
         private var frameBuildMaxNs: Long = 0L
         private var handoffLatencyMaxNs: Long = 0L
+        private var simulationBacklogTotalSeconds: Double = 0.0
+        private var simulationBacklogMaxSeconds: Double = 0.0
 
         fun record(
             simulationAdvanceDurationNs: Long,
             frameBuildDurationNs: Long,
             handoffLatencyNs: Long,
+            simulationBacklogSeconds: Double,
         ): String? {
             sampleCount += 1
             simulationAdvanceTotalNs += simulationAdvanceDurationNs
@@ -363,13 +392,16 @@ class LabSession private constructor(
             simulationAdvanceMaxNs = maxOf(simulationAdvanceMaxNs, simulationAdvanceDurationNs)
             frameBuildMaxNs = maxOf(frameBuildMaxNs, frameBuildDurationNs)
             handoffLatencyMaxNs = maxOf(handoffLatencyMaxNs, handoffLatencyNs)
+            simulationBacklogTotalSeconds += simulationBacklogSeconds
+            simulationBacklogMaxSeconds = maxOf(simulationBacklogMaxSeconds, simulationBacklogSeconds)
             if (sampleCount < PERF_LOG_SAMPLE_WINDOW_FRAMES) {
                 return null
             }
             val summary = "PerfStats window=$sampleCount " +
                 "simAvgMs=${toMillis(simulationAdvanceTotalNs, sampleCount)} simMaxMs=${toMillis(simulationAdvanceMaxNs)} " +
                 "buildAvgMs=${toMillis(frameBuildTotalNs, sampleCount)} buildMaxMs=${toMillis(frameBuildMaxNs)} " +
-                "handoffAvgMs=${toMillis(handoffLatencyTotalNs, sampleCount)} handoffMaxMs=${toMillis(handoffLatencyMaxNs)}"
+                "handoffAvgMs=${toMillis(handoffLatencyTotalNs, sampleCount)} handoffMaxMs=${toMillis(handoffLatencyMaxNs)} " +
+                "backlogAvgS=${toSeconds(simulationBacklogTotalSeconds, sampleCount)} backlogMaxS=${toSeconds(simulationBacklogMaxSeconds)}"
             reset()
             return summary
         }
@@ -382,11 +414,17 @@ class LabSession private constructor(
             simulationAdvanceMaxNs = 0L
             frameBuildMaxNs = 0L
             handoffLatencyMaxNs = 0L
+            simulationBacklogTotalSeconds = 0.0
+            simulationBacklogMaxSeconds = 0.0
         }
 
         private fun toMillis(nanoseconds: Long): String = "%.3f".format(nanoseconds / 1_000_000.0)
 
         private fun toMillis(totalNanoseconds: Long, count: Int): String = "%.3f".format((totalNanoseconds / count.toDouble()) / 1_000_000.0)
+
+        private fun toSeconds(seconds: Double): String = "%.3f".format(seconds)
+
+        private fun toSeconds(totalSeconds: Double, count: Int): String = "%.3f".format(totalSeconds / count.toDouble())
     }
 
     companion object {
@@ -402,6 +440,9 @@ class LabSession private constructor(
         private const val HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 21_600.0
         private const val HIGH_SPEED_PLAYBACK_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: Double =
             7.0 * PhysicalConstants.DAY_SECONDS
+        private const val PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK: Double = 3.0
+        private const val COLLISION_MAX_SUBSTEPS_PER_RENDER_TICK: Double = 2.0
+        private const val MAX_RENDER_TICK_BACKLOG_WINDOWS: Double = 4.0
         private const val RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS: Int = 4
         private const val PERF_LOG_SAMPLE_WINDOW_FRAMES: Int = 120
         private const val SUBSTEP_EPSILON_SECONDS: Double = 1.0e-9
@@ -479,6 +520,13 @@ class LabSession private constructor(
             val maxSubstepSeconds: Double,
         )
 
+        internal data class SimulationAdvanceBudget(
+            val cappedPendingSeconds: Double,
+            val secondsToAdvance: Double,
+            val deferredSeconds: Double,
+            val maxSubstepSeconds: Double,
+        )
+
         internal fun effectivePlaybackMaxSubstepSeconds(
             totalSeconds: Double,
             collisionMode: CollisionMode,
@@ -510,6 +558,41 @@ class LabSession private constructor(
                 maximumValue = HOST_RELATIVE_SHORT_WINDOW_MAX_EFFECTIVE_SUBSTEP_SECONDS,
             )
             return minOf(presetBasedCap, hostRelativeCap)
+        }
+
+        internal fun simulationAdvanceBudget(
+            totalPendingSeconds: Double,
+            collisionMode: CollisionMode,
+            playbackSpeedPreset: PlaybackSpeedPreset = DEFAULT_PLAYBACK_SPEED,
+        ): SimulationAdvanceBudget {
+            val nonNegativePending = totalPendingSeconds.coerceAtLeast(0.0)
+            if (nonNegativePending <= SUBSTEP_EPSILON_SECONDS) {
+                return SimulationAdvanceBudget(
+                    cappedPendingSeconds = 0.0,
+                    secondsToAdvance = 0.0,
+                    deferredSeconds = 0.0,
+                    maxSubstepSeconds = MAX_SIMULATION_SUBSTEP_SECONDS,
+                )
+            }
+            val playbackPlan = playbackSubstepPlan(
+                totalSeconds = nonNegativePending,
+                collisionMode = collisionMode,
+                playbackSpeedPreset = playbackSpeedPreset,
+            )
+            val maxSubstepsPerTick = if (collisionMode == CollisionMode.NONE) {
+                PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK
+            } else {
+                COLLISION_MAX_SUBSTEPS_PER_RENDER_TICK
+            }
+            val maxSecondsPerTick = playbackPlan.maxSubstepSeconds * maxSubstepsPerTick
+            val cappedPendingSeconds = nonNegativePending.coerceAtMost(maxSecondsPerTick * MAX_RENDER_TICK_BACKLOG_WINDOWS)
+            val secondsToAdvance = cappedPendingSeconds.coerceAtMost(maxSecondsPerTick)
+            return SimulationAdvanceBudget(
+                cappedPendingSeconds = cappedPendingSeconds,
+                secondsToAdvance = secondsToAdvance,
+                deferredSeconds = (cappedPendingSeconds - secondsToAdvance).coerceAtLeast(0.0),
+                maxSubstepSeconds = playbackPlan.maxSubstepSeconds,
+            )
         }
 
         private fun shouldApplyHostRelativeShortWindowCap(

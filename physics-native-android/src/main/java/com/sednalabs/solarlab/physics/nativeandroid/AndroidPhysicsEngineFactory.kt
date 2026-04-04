@@ -23,7 +23,7 @@ object AndroidPhysicsEngineFactory {
             )
         }
 
-        val backendSummary = "native-scalar/${NativePhysicsBridge.backendSummary()}"
+        val backendSummary = "native-authoritative/${NativePhysicsBridge.backendSummary()}"
         return Selection(
             engineFactory = { snapshot, config ->
                 SimulationEngine(

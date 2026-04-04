@@ -8,6 +8,7 @@ data class TimelineStatus(
     val absoluteJulianDateTdb: Double?,
     val playbackSpeed: PlaybackSpeedPreset,
     val stepQuantum: StepQuantumPreset,
+    val simulationBacklogSeconds: Double,
     val canJumpAbsolute: Boolean,
     // True when Back has a valid action (catalog step or sandbox checkpoint restore).
     val canStepBackward: Boolean,

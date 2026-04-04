@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -17,6 +18,90 @@ namespace {
 SolarLabVulkanRenderer* FromHandle(jlong handle) {
     return reinterpret_cast<SolarLabVulkanRenderer*>(handle);
 }
+
+template <typename JArrayT, typename ElementT>
+class ScopedReadOnlyArray;
+
+template <>
+class ScopedReadOnlyArray<jdoubleArray, jdouble> {
+public:
+    ScopedReadOnlyArray(JNIEnv* env, jdoubleArray array)
+        : env_(env), array_(array), length_(array != nullptr ? env->GetArrayLength(array) : 0) {
+        if (array_ != nullptr && length_ > 0) {
+            data_ = env_->GetDoubleArrayElements(array_, nullptr);
+        }
+    }
+
+    ~ScopedReadOnlyArray() {
+        if (array_ != nullptr && data_ != nullptr) {
+            env_->ReleaseDoubleArrayElements(array_, data_, JNI_ABORT);
+        }
+    }
+
+    std::span<const double> asDoubleSpan() const {
+        return data_ != nullptr ? std::span<const double>(data_, static_cast<size_t>(length_)) : std::span<const double>();
+    }
+
+private:
+    JNIEnv* env_;
+    jdoubleArray array_;
+    jsize length_;
+    jdouble* data_ = nullptr;
+};
+
+template <>
+class ScopedReadOnlyArray<jfloatArray, jfloat> {
+public:
+    ScopedReadOnlyArray(JNIEnv* env, jfloatArray array)
+        : env_(env), array_(array), length_(array != nullptr ? env->GetArrayLength(array) : 0) {
+        if (array_ != nullptr && length_ > 0) {
+            data_ = env_->GetFloatArrayElements(array_, nullptr);
+        }
+    }
+
+    ~ScopedReadOnlyArray() {
+        if (array_ != nullptr && data_ != nullptr) {
+            env_->ReleaseFloatArrayElements(array_, data_, JNI_ABORT);
+        }
+    }
+
+    std::span<const float> asFloatSpan() const {
+        return data_ != nullptr ? std::span<const float>(data_, static_cast<size_t>(length_)) : std::span<const float>();
+    }
+
+private:
+    JNIEnv* env_;
+    jfloatArray array_;
+    jsize length_;
+    jfloat* data_ = nullptr;
+};
+
+template <>
+class ScopedReadOnlyArray<jintArray, jint> {
+public:
+    ScopedReadOnlyArray(JNIEnv* env, jintArray array)
+        : env_(env), array_(array), length_(array != nullptr ? env->GetArrayLength(array) : 0) {
+        if (array_ != nullptr && length_ > 0) {
+            data_ = env_->GetIntArrayElements(array_, nullptr);
+        }
+    }
+
+    ~ScopedReadOnlyArray() {
+        if (array_ != nullptr && data_ != nullptr) {
+            env_->ReleaseIntArrayElements(array_, data_, JNI_ABORT);
+        }
+    }
+
+    std::span<const int32_t> asIntSpan() const {
+        return data_ != nullptr ? std::span<const int32_t>(reinterpret_cast<const int32_t*>(data_), static_cast<size_t>(length_)) : std::span<const int32_t>();
+    }
+
+private:
+    JNIEnv* env_;
+    jintArray array_;
+    jsize length_;
+    jint* data_ = nullptr;
+};
 
 std::string GetCpuCapabilitySummary() {
 #if defined(__aarch64__)
@@ -63,47 +148,6 @@ std::string GetCpuCapabilitySummary() {
 #endif
 }
 
-std::vector<double> CopyDoubles(JNIEnv* env, jdoubleArray array) {
-    if (array == nullptr) {
-        return {};
-    }
-    const jsize length = env->GetArrayLength(array);
-    std::vector<double> out(static_cast<size_t>(length));
-    jdouble* raw = env->GetDoubleArrayElements(array, nullptr);
-    if (raw != nullptr) {
-        std::copy(raw, raw + length, out.begin());
-        env->ReleaseDoubleArrayElements(array, raw, JNI_ABORT);
-    }
-    return out;
-}
-
-std::vector<float> CopyFloats(JNIEnv* env, jfloatArray array) {
-    if (array == nullptr) {
-        return {};
-    }
-    const jsize length = env->GetArrayLength(array);
-    std::vector<float> out(static_cast<size_t>(length));
-    jfloat* raw = env->GetFloatArrayElements(array, nullptr);
-    if (raw != nullptr) {
-        std::copy(raw, raw + length, out.begin());
-        env->ReleaseFloatArrayElements(array, raw, JNI_ABORT);
-    }
-    return out;
-}
-
-std::vector<int32_t> CopyInts(JNIEnv* env, jintArray array) {
-    if (array == nullptr) {
-        return {};
-    }
-    const jsize length = env->GetArrayLength(array);
-    std::vector<int32_t> out(static_cast<size_t>(length));
-    jint* raw = env->GetIntArrayElements(array, nullptr);
-    if (raw != nullptr) {
-        std::copy(raw, raw + length, out.begin());
-        env->ReleaseIntArrayElements(array, raw, JNI_ABORT);
-    }
-    return out;
-}
 }  // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -189,30 +233,53 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
         return;
     }
 
+    ScopedReadOnlyArray<jdoubleArray, jdouble> authoritativePositions(env, authoritativePositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> authoritativeSourceMasses(env, authoritativeSourceMassesKg);
+    ScopedReadOnlyArray<jfloatArray, jfloat> authoritativeRadii(env, authoritativeRadiiM);
+    ScopedReadOnlyArray<jintArray, jint> authoritativeColors(env, authoritativeColorsArgb);
+    ScopedReadOnlyArray<jintArray, jint> authoritativeKindsView(env, authoritativeKinds);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerNearPositions(env, tracerNearPositionsM);
+    ScopedReadOnlyArray<jfloatArray, jfloat> tracerNearRadii(env, tracerNearRadiiM);
+    ScopedReadOnlyArray<jintArray, jint> tracerNearColors(env, tracerNearColorsArgb);
+    ScopedReadOnlyArray<jintArray, jint> tracerNearKindsView(env, tracerNearKinds);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumPositions(env, tracerMediumPositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumVelocities(env, tracerMediumVelocitiesMps);
+    ScopedReadOnlyArray<jfloatArray, jfloat> tracerMediumRadii(env, tracerMediumRadiiM);
+    ScopedReadOnlyArray<jintArray, jint> tracerMediumColors(env, tracerMediumColorsArgb);
+    ScopedReadOnlyArray<jintArray, jint> tracerMediumKindsView(env, tracerMediumKinds);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarPositions(env, tracerFarPositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarVelocities(env, tracerFarVelocitiesMps);
+    ScopedReadOnlyArray<jfloatArray, jfloat> tracerFarRadii(env, tracerFarRadiiM);
+    ScopedReadOnlyArray<jintArray, jint> tracerFarColors(env, tracerFarColorsArgb);
+    ScopedReadOnlyArray<jintArray, jint> tracerFarKindsView(env, tracerFarKinds);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> trailPositions(env, trailPositionsM);
+    ScopedReadOnlyArray<jintArray, jint> trailColors(env, trailColorsArgb);
+    ScopedReadOnlyArray<jintArray, jint> trailVertexCountsView(env, trailVertexCounts);
+
     renderer->SubmitScene(
         static_cast<int64_t>(sourceRevision),
-        CopyDoubles(env, authoritativePositionsM),
-        CopyDoubles(env, authoritativeSourceMassesKg),
-        CopyFloats(env, authoritativeRadiiM),
-        CopyInts(env, authoritativeColorsArgb),
-        CopyInts(env, authoritativeKinds),
-        CopyDoubles(env, tracerNearPositionsM),
-        CopyFloats(env, tracerNearRadiiM),
-        CopyInts(env, tracerNearColorsArgb),
-        CopyInts(env, tracerNearKinds),
-        CopyDoubles(env, tracerMediumPositionsM),
-        CopyDoubles(env, tracerMediumVelocitiesMps),
-        CopyFloats(env, tracerMediumRadiiM),
-        CopyInts(env, tracerMediumColorsArgb),
-        CopyInts(env, tracerMediumKinds),
-        CopyDoubles(env, tracerFarPositionsM),
-        CopyDoubles(env, tracerFarVelocitiesMps),
-        CopyFloats(env, tracerFarRadiiM),
-        CopyInts(env, tracerFarColorsArgb),
-        CopyInts(env, tracerFarKinds),
-        CopyDoubles(env, trailPositionsM),
-        CopyInts(env, trailColorsArgb),
-        CopyInts(env, trailVertexCounts));
+        authoritativePositions.asDoubleSpan(),
+        authoritativeSourceMasses.asDoubleSpan(),
+        authoritativeRadii.asFloatSpan(),
+        authoritativeColors.asIntSpan(),
+        authoritativeKindsView.asIntSpan(),
+        tracerNearPositions.asDoubleSpan(),
+        tracerNearRadii.asFloatSpan(),
+        tracerNearColors.asIntSpan(),
+        tracerNearKindsView.asIntSpan(),
+        tracerMediumPositions.asDoubleSpan(),
+        tracerMediumVelocities.asDoubleSpan(),
+        tracerMediumRadii.asFloatSpan(),
+        tracerMediumColors.asIntSpan(),
+        tracerMediumKindsView.asIntSpan(),
+        tracerFarPositions.asDoubleSpan(),
+        tracerFarVelocities.asDoubleSpan(),
+        tracerFarRadii.asFloatSpan(),
+        tracerFarColors.asIntSpan(),
+        tracerFarKindsView.asIntSpan(),
+        trailPositions.asDoubleSpan(),
+        trailColors.asIntSpan(),
+        trailVertexCountsView.asIntSpan());
 }
 
 extern "C" JNIEXPORT void JNICALL

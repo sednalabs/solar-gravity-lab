@@ -95,6 +95,35 @@ class LabSessionPlaybackSubstepPolicyTest {
     }
 
     @Test
+    fun `simulation advance budget caps high-speed tick work and defers the remainder`() {
+        val simulatedTickSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.05
+        val budget = LabSession.simulationAdvanceBudget(
+            totalPendingSeconds = simulatedTickSeconds,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+        )
+
+        assertEquals(21_600.0, budget.maxSubstepSeconds, 0.0)
+        assertEquals(64_800.0, budget.secondsToAdvance, 0.0)
+        assertEquals(simulatedTickSeconds - 64_800.0, budget.deferredSeconds, 1.0e-6)
+        assertEquals(simulatedTickSeconds, budget.cappedPendingSeconds, 1.0e-6)
+    }
+
+    @Test
+    fun `simulation advance budget bounds runaway backlog to a few render windows`() {
+        val hugePendingSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 2.0
+        val budget = LabSession.simulationAdvanceBudget(
+            totalPendingSeconds = hugePendingSeconds,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+        )
+
+        assertEquals(259_200.0, budget.cappedPendingSeconds, 0.0)
+        assertEquals(64_800.0, budget.secondsToAdvance, 0.0)
+        assertEquals(194_400.0, budget.deferredSeconds, 0.0)
+    }
+
+    @Test
     fun `all collision-enabled playback modes keep conservative one-hour cap`() {
         listOf(
             CollisionMode.MERGE,
