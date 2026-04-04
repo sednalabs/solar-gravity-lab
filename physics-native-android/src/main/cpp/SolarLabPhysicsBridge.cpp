@@ -61,7 +61,7 @@ std::vector<jdouble> ComputeAccelerations(
     jdoubleArray targetPosZ,
     const double gravitationalConstant,
     const double softeningSquared,
-    const bool skipSelf,
+    const bool skipSelf
 ) {
     const auto sourceCount = static_cast<jsize>(env->GetArrayLength(sourceBodyIndices));
     const auto targetCount = static_cast<jsize>(env->GetArrayLength(targetBodyIndices));
