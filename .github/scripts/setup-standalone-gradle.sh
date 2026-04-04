@@ -18,7 +18,21 @@ if [[ -f "$wrapper_props" ]]; then
 fi
 
 archive_name="${dist_url##*/}"
-install_root="${STANDALONE_GRADLE_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/standalone-gradle}"
+cache_root="${STANDALONE_GRADLE_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/standalone-gradle}"
+case "$cache_root" in
+  "~"|"~/")
+    cache_root="$HOME"
+    ;;
+  "~/*")
+    cache_root="$HOME/${cache_root#\~/}"
+    ;;
+esac
+archive_dir="${archive_name%.zip}"
+if [[ "$archive_dir" == "$archive_name" ]]; then
+  archive_dir="${archive_name%.tar.gz}"
+fi
+
+install_root="${cache_root}/${archive_dir}"
 archive_path="${install_root}/${archive_name}"
 extract_root="${install_root}/extract"
 

@@ -176,7 +176,7 @@ jobs:
       - name: Restore standalone Gradle cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/standalone-gradle
+          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Setup standalone Gradle
@@ -255,7 +255,7 @@ jobs:
       - name: Restore standalone Gradle cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/standalone-gradle
+          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Setup standalone Gradle
@@ -302,7 +302,7 @@ jobs:
       - name: Restore standalone Gradle cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/standalone-gradle
+          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - uses: android-actions/setup-android@v3
@@ -373,7 +373,7 @@ jobs:
       - name: Restore standalone Gradle cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/standalone-gradle
+          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Setup standalone Gradle
@@ -419,7 +419,7 @@ jobs:
       - name: Restore standalone Gradle cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/standalone-gradle
+          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
       - uses: android-actions/setup-android@v3
