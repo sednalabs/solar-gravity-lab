@@ -15,6 +15,7 @@ data class ScenePacketBuildPolicy(
     val farTracerBudget: Int = 24_576,
     val trailSimplificationTolerancePx: Double = 2.0,
     val maxTrailVerticesPerTrail: Int = 256,
+    val selectedTrailAlphaBoost: Double = 1.25,
 ) {
     init {
         require(nearTracerExtentFactor > 0.0) { "nearTracerExtentFactor must be positive." }
@@ -31,6 +32,9 @@ data class ScenePacketBuildPolicy(
             "trailSimplificationTolerancePx must be non-negative."
         }
         require(maxTrailVerticesPerTrail >= 2) { "maxTrailVerticesPerTrail must be at least 2." }
+        require(selectedTrailAlphaBoost >= 1.0) {
+            "selectedTrailAlphaBoost must be at least 1.0."
+        }
     }
 }
 

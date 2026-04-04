@@ -268,11 +268,20 @@ data class NativeScenePacket(
             val trailVertexCounts = IntArray(trails.size)
             var trailOffset = 0
             trails.forEachIndexed { trailIndex, trail ->
-                val trailColor = if (trail.bodyId == selectedBodyId) {
+                val emphasizedColor = if (trail.bodyId == selectedBodyId) {
                     brightenArgb(trail.colorArgb)
                 } else {
                     trail.colorArgb
                 }
+                val alphaBoost = if (trail.bodyId == selectedBodyId) {
+                    policy.selectedTrailAlphaBoost
+                } else {
+                    1.0
+                }
+                val trailColor = withAlphaMultiplier(
+                    emphasizedColor,
+                    trail.alpha.toDouble() * alphaBoost,
+                )
                 trailVertexCounts[trailIndex] = trail.pointsM.size
                 trail.pointsM.forEach { point ->
                     trailPositions[trailOffset * 3] = point.x
@@ -309,6 +318,13 @@ data class NativeScenePacket(
                 (boostedRed.coerceIn(0, 255) shl 16) or
                 (boostedGreen.coerceIn(0, 255) shl 8) or
                 boostedBlue.coerceIn(0, 255)
+        }
+
+        private fun withAlphaMultiplier(argb: Int, alphaMultiplier: Double): Int {
+            val baseAlpha = ((argb ushr 24) and 0xFF) / 255.0
+            val effectiveAlpha = (baseAlpha * alphaMultiplier).coerceIn(0.0, 1.0)
+            val alpha = (effectiveAlpha * 255.0).toInt().coerceIn(0, 255)
+            return (argb and 0x00FF_FFFF) or (alpha shl 24)
         }
     }
 }
