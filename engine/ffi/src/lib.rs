@@ -512,6 +512,319 @@ fn empty_snapshot_summary() -> SlSessionSnapshotSummary {
     }
 }
 
+#[cfg(target_os = "android")]
+mod android_jni {
+    use super::{
+        sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_runtime_info,
+        sl_v2_session_snapshot_summary, status, SlResult, SlRuntimeHandle, SlSessionCreateParams,
+        SlSessionCreateResult, SlSessionSnapshotSummaryResult, SlStatusCode, SL_V2_ID_CAPACITY,
+    };
+    use jni::objects::{JByteArray, JObject, JValue};
+    use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject};
+    use jni::JNIEnv;
+
+    const CLASS_NATIVE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeResult";
+    const CLASS_NATIVE_CREATE_SESSION_RESULT: &str =
+        "com/sednalabs/solarlab/runtime/NativeCreateSessionResult";
+    const CLASS_NATIVE_RUNTIME_INFO_RESULT: &str =
+        "com/sednalabs/solarlab/runtime/NativeRuntimeInfoResult";
+    const CLASS_NATIVE_SNAPSHOT_SUMMARY_RESULT: &str =
+        "com/sednalabs/solarlab/runtime/NativeSnapshotSummaryResult";
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeCreateSession(
+        mut env: JNIEnv,
+        _this: JObject,
+        scenario_id_utf8: jbyteArray,
+        root_branch_id_utf8: jbyteArray,
+        created_at_unix_ms: jlong,
+        timeline_semantics: jint,
+        live_updates_enabled: jboolean,
+        cpu_backend: jint,
+        gpu_backend: jint,
+    ) -> jobject {
+        let create_result = build_session_create_result(
+            &env,
+            scenario_id_utf8,
+            root_branch_id_utf8,
+            created_at_unix_ms,
+            timeline_semantics,
+            live_updates_enabled,
+            cpu_backend,
+            gpu_backend,
+        );
+
+        match create_native_create_session_result(&mut env, &create_result) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeDestroySession(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+    ) -> jobject {
+        let native_result = if let Ok(handle_value) = u64::try_from(handle) {
+            sl_v2_session_destroy(SlRuntimeHandle { raw: handle_value })
+        } else {
+            status(SlStatusCode::InvalidArgument)
+        };
+
+        match create_native_result(&mut env, native_result) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeRuntimeInfo(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+    ) -> jobject {
+        let runtime_info = if let Ok(handle_value) = u64::try_from(handle) {
+            sl_v2_session_runtime_info(SlRuntimeHandle { raw: handle_value })
+        } else {
+            super::SlRuntimeInfoResult {
+                result: status(SlStatusCode::InvalidArgument),
+                info: super::empty_runtime_info(),
+            }
+        };
+
+        match create_native_runtime_info_result(&mut env, runtime_info) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeSnapshotSummary(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+    ) -> jobject {
+        let snapshot_summary = if let Ok(handle_value) = u64::try_from(handle) {
+            sl_v2_session_snapshot_summary(SlRuntimeHandle { raw: handle_value })
+        } else {
+            SlSessionSnapshotSummaryResult {
+                result: status(SlStatusCode::InvalidArgument),
+                summary: super::empty_snapshot_summary(),
+            }
+        };
+
+        match create_native_snapshot_summary_result(&mut env, snapshot_summary) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    fn build_session_create_result(
+        env: &JNIEnv,
+        scenario_id_utf8: jbyteArray,
+        root_branch_id_utf8: jbyteArray,
+        created_at_unix_ms: jlong,
+        timeline_semantics: jint,
+        live_updates_enabled: jboolean,
+        cpu_backend: jint,
+        gpu_backend: jint,
+    ) -> SlSessionCreateResult {
+        let (scenario_id, scenario_id_len) = match decode_java_id_bytes(env, scenario_id_utf8) {
+            Ok(value) => value,
+            Err(result) => return create_error_session(result),
+        };
+
+        let (root_branch_id, root_branch_id_len) =
+            match decode_java_id_bytes(env, root_branch_id_utf8) {
+                Ok(value) => value,
+                Err(result) => return create_error_session(result),
+            };
+
+        let created_at_unix_ms = match created_at_unix_ms.try_into() {
+            Ok(value) => value,
+            Err(_) => return create_error_session(status(SlStatusCode::InvalidArgument)),
+        };
+
+        let timeline_semantics = match timeline_semantics.try_into() {
+            Ok(value) => value,
+            Err(_) => return create_error_session(status(SlStatusCode::InvalidArgument)),
+        };
+
+        let cpu_backend = match cpu_backend.try_into() {
+            Ok(value) => value,
+            Err(_) => return create_error_session(status(SlStatusCode::InvalidArgument)),
+        };
+
+        let gpu_backend = match gpu_backend.try_into() {
+            Ok(value) => value,
+            Err(_) => return create_error_session(status(SlStatusCode::InvalidArgument)),
+        };
+
+        sl_v2_session_create(SlSessionCreateParams {
+            scenario_id,
+            scenario_id_len,
+            root_branch_id,
+            root_branch_id_len,
+            created_at_unix_ms,
+            timeline_semantics,
+            live_updates_enabled: u8::from(live_updates_enabled != 0),
+            cpu_backend,
+            gpu_backend,
+        })
+    }
+
+    fn decode_java_id_bytes(
+        env: &JNIEnv,
+        value: jbyteArray,
+    ) -> Result<([u8; SL_V2_ID_CAPACITY], u32), SlResult> {
+        let array = unsafe { JByteArray::from_raw(value) };
+        let bytes = env
+            .convert_byte_array(&array)
+            .map_err(|_| status(SlStatusCode::InvalidArgument))?;
+
+        if bytes.is_empty() || bytes.len() > SL_V2_ID_CAPACITY {
+            return Err(status(SlStatusCode::InvalidArgument));
+        }
+
+        let mut output = [0_u8; SL_V2_ID_CAPACITY];
+        output[..bytes.len()].copy_from_slice(&bytes);
+        let length = u32::try_from(bytes.len()).expect("validated Java ID length must fit u32");
+        Ok((output, length))
+    }
+
+    fn create_error_session(result: SlResult) -> SlSessionCreateResult {
+        SlSessionCreateResult {
+            result,
+            handle: SlRuntimeHandle::default(),
+            runtime_info: super::empty_runtime_info(),
+            snapshot_summary: super::empty_snapshot_summary(),
+        }
+    }
+
+    fn create_native_result(env: &mut JNIEnv, result: SlResult) -> jni::errors::Result<JObject> {
+        let context = env.new_string(status_label(result.code))?;
+        let context_obj = JObject::from(context);
+        env.new_object(
+            CLASS_NATIVE_RESULT,
+            "(ILjava/lang/String;)V",
+            &[
+                JValue::Int(status_code_as_i32(result.code)),
+                JValue::Object(&context_obj),
+            ],
+        )
+    }
+
+    fn create_native_create_session_result(
+        env: &mut JNIEnv,
+        result: &SlSessionCreateResult,
+    ) -> jni::errors::Result<JObject> {
+        let native_result = create_native_result(env, result.result)?;
+        env.new_object(
+            CLASS_NATIVE_CREATE_SESSION_RESULT,
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;JIII)V",
+            &[
+                JValue::Object(&native_result),
+                JValue::Long(i64::try_from(result.handle.raw).unwrap_or(i64::MAX)),
+                JValue::Int(i32::try_from(result.runtime_info.abi_version).unwrap_or(i32::MAX)),
+                JValue::Int(result.runtime_info.cpu_backend as i32),
+                JValue::Int(result.runtime_info.gpu_backend as i32),
+            ],
+        )
+    }
+
+    fn create_native_runtime_info_result(
+        env: &mut JNIEnv,
+        result: super::SlRuntimeInfoResult,
+    ) -> jni::errors::Result<JObject> {
+        let native_result = create_native_result(env, result.result)?;
+        env.new_object(
+            CLASS_NATIVE_RUNTIME_INFO_RESULT,
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;III)V",
+            &[
+                JValue::Object(&native_result),
+                JValue::Int(i32::try_from(result.info.abi_version).unwrap_or(i32::MAX)),
+                JValue::Int(result.info.cpu_backend as i32),
+                JValue::Int(result.info.gpu_backend as i32),
+            ],
+        )
+    }
+
+    fn create_native_snapshot_summary_result(
+        env: &mut JNIEnv,
+        result: SlSessionSnapshotSummaryResult,
+    ) -> jni::errors::Result<JObject> {
+        let native_result = create_native_result(env, result.result)?;
+        let scenario_id = env.new_string(id_from_summary(
+            &result.summary.scenario_id,
+            result.summary.scenario_id_len,
+        ))?;
+        let active_branch_id = env.new_string(id_from_summary(
+            &result.summary.active_branch_id,
+            result.summary.active_branch_id_len,
+        ))?;
+        let scenario_id_obj = JObject::from(scenario_id);
+        let active_branch_id_obj = JObject::from(active_branch_id);
+
+        env.new_object(
+            CLASS_NATIVE_SNAPSHOT_SUMMARY_RESULT,
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Ljava/lang/String;Ljava/lang/String;I)V",
+            &[
+                JValue::Object(&native_result),
+                JValue::Object(&scenario_id_obj),
+                JValue::Object(&active_branch_id_obj),
+                JValue::Int(i32::try_from(result.summary.body_count).unwrap_or(i32::MAX)),
+            ],
+        )
+    }
+
+    fn id_from_summary(bytes: &[u8; SL_V2_ID_CAPACITY], length: u32) -> String {
+        super::decode_identifier(bytes, length).unwrap_or_default()
+    }
+
+    fn status_label(code: SlStatusCode) -> &'static str {
+        match code {
+            SlStatusCode::Ok => "ok",
+            SlStatusCode::InvalidArgument => "invalid argument",
+            SlStatusCode::NotReady => "not ready",
+            SlStatusCode::InternalError => "internal error",
+        }
+    }
+
+    fn status_code_as_i32(code: SlStatusCode) -> i32 {
+        match code {
+            SlStatusCode::Ok => 0,
+            SlStatusCode::InvalidArgument => 1,
+            SlStatusCode::NotReady => 2,
+            SlStatusCode::InternalError => 3,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::id_from_summary;
+        use crate::SL_V2_ID_CAPACITY;
+
+        #[test]
+        fn id_from_summary_returns_utf8_when_valid() {
+            let mut bytes = [0_u8; SL_V2_ID_CAPACITY];
+            bytes[..4].copy_from_slice(b"main");
+            assert_eq!(id_from_summary(&bytes, 4), "main");
+        }
+
+        #[test]
+        fn id_from_summary_falls_back_to_empty_when_invalid() {
+            let mut bytes = [0_u8; SL_V2_ID_CAPACITY];
+            bytes[0] = 0xFF;
+            assert_eq!(id_from_summary(&bytes, 1), "");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

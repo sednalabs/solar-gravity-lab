@@ -6,11 +6,18 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[lib]
+name = "solarlab_v2"
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 solarlab-domain = { path = "../domain" }
 solarlab-hardware = { path = "../hardware" }
 solarlab-physics = { path = "../physics" }
 solarlab-runtime = { path = "../runtime" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
 
 [lints]
 workspace = true
