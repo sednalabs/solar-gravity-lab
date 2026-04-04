@@ -6,7 +6,7 @@ The architecture is split on purpose:
 
 - CPU simulation is the source of truth for physics.
 - A backend-neutral render packet is built from simulation snapshots.
-- Rendering is Vulkan-first, with an OpenGL ES fallback so the app still runs on devices without stable Vulkan support.
+- Rendering is Vulkan-only.
 
 The public name is **Solar Gravity Lab**. Some internal package/module names still use `solarlab` for historical reasons.
 
@@ -28,9 +28,9 @@ What is implemented and usable today:
 - Catalog-backed timeline semantics for seeded starts, with sandbox-branch behavior once the user edits or materially diverges the system.
 - Deterministic physics-accuracy telemetry artifacts through the remote validation lane.
 - Granular playback-speed and step-quantum controls.
-- Renderer host that prefers Vulkan and falls back to OpenGL ES when needed.
+- Vulkan renderer host and status reporting.
 - Native Vulkan pipeline with swapchain/render-pass/framebuffer/command recording, scene-packet ingestion, SPIR-V graphics pipelines, and compute-based medium/far tracer compaction.
-- Explicit observer camera modes in both render paths, including free view, follow-selected, and host-follow.
+- Explicit observer camera modes, including free view, follow-selected, and host-follow.
 - Engineering-grade body add/edit/remove controls, plus scene placement and drag-to-launch for new bodies.
 
 What is intentionally incomplete:
@@ -54,7 +54,7 @@ What is intentionally incomplete:
 - `render-core`
   Backend-neutral render scene assembly and `NativeScenePacket` packing (pure Kotlin/JVM).
 - `feature-lab`
-  Android render host, Vulkan bridge/native renderer path, OpenGL ES fallback path, and session orchestration.
+  Android render host, Vulkan bridge/native renderer path, and session orchestration.
 
 ## Physics model at a glance
 
@@ -74,8 +74,8 @@ Current architecture:
 
 1. `core-simulation` generates authoritative simulation snapshots.
 2. `render-core` converts snapshots into backend-neutral scene data and a JNI-friendly packet.
-3. `feature-lab` host selects Vulkan or OpenGL ES.
-4. Native Vulkan and OpenGL backends consume the same logical scene contract.
+3. `feature-lab` host runs the Vulkan renderer and surfaces backend status.
+4. The native Vulkan backend consumes the same logical scene contract.
 
 Current Vulkan reality:
 

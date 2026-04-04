@@ -56,12 +56,11 @@ The renderer is now split into four layers:
 2. **Backend-neutral render assembly** (`render-core`)  
    Converts `SimulationSnapshot` into a `RenderSceneFrame` plus a primitive-array `NativeScenePacket` suitable for JNI.
 
-3. **Backend host + selection** (`feature-lab`)  
-   `SolarSystemRenderHostView` owns backend choice, lifecycle forwarding, and Vulkan-to-OpenGL fallback.
+3. **Backend host** (`feature-lab`)
+   `SolarSystemRenderHostView` owns Vulkan backend lifecycle forwarding and status updates.
 
 4. **Backend implementation** (`feature-lab`)  
-   - `SolarSystemVulkanSurfaceView` + native bridge for the Vulkan-first path
-   - `SolarSystemGLSurfaceView` + `SolarSystemRenderer` for the OpenGL ES fallback
+   - `SolarSystemVulkanSurfaceView` + native bridge for the Vulkan renderer path
 
 ## Vulkan-first migration shape
 
@@ -88,9 +87,9 @@ What is intentionally left for the next pass:
 - compute-driven tracer integration
 - GPU-side camera-relative precision strategy for very large scenes
 
-## Why keep OpenGL ES around
+## Vulkan-only backend
 
-The OpenGL path is now deliberately a compatibility and bring-up path rather than the long-horizon renderer. It shares the same render-scene assembly layer, which means backend work is no longer tangled up with snapshot interpretation or trail bookkeeping.
+The app now runs a Vulkan-only renderer path. Backend status reporting remains in place so the UI can surface unavailable-runtime and native-renderer failures without implying a fallback backend exists.
 
 ## Collision model
 
