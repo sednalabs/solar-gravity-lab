@@ -156,6 +156,13 @@ private:
         float alpha = 1.0f;
     };
 
+    struct AuthoritativeInfluenceBody {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        float sourceMassKg = 0.0f;
+    };
+
     struct alignas(16) SceneUniformData {
         std::array<float, 4> centerRelativeAndMetrics{};
         std::array<float, 4> rightAndSpan{};
@@ -217,6 +224,8 @@ private:
     struct SceneGpuStreams {
         int64_t uploadedRevision = -1;
         size_t totalBytes = 0;
+        GpuBuffer authoritativeInfluenceBuffer;
+        uint32_t authoritativeInfluenceCount = 0;
         DrawStreamBuffers authoritative;
         DrawStreamBuffers tracerNear;
         DrawStreamBuffers tracerMedium;
