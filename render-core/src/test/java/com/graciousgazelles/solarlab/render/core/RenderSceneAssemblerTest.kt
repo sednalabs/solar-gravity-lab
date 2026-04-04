@@ -37,6 +37,23 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    fun assemblePreservesTracerMassForGpuInfluencePaths() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 4)
+        val tracerMassKg = 7.5e18
+        val snapshot = SimulationSnapshot(
+            epochSeconds = 1.0,
+            bodies = listOf(
+                body("sun", GravitationalRole.MASSIVE, BodyCategory.STAR),
+                body("probe", GravitationalRole.TRACER, BodyCategory.PROBE).copy(massKg = tracerMassKg),
+            ),
+        )
+
+        val frame = assembler.assemble(snapshot)
+
+        assertEquals(tracerMassKg, frame.tracerBodies.single().sourceMassKg, 0.0)
+    }
+
+    @Test
     fun nativePacketPacksSceneDataAndTracerTiers() {
         val frame = RenderSceneFrame(
             epochSeconds = 0.0,
@@ -63,6 +80,7 @@ class RenderSceneAssemblerTest {
                     colorArgb = 0xFF00FF00.toInt(),
                     kind = RenderBodyKind.ASTEROID,
                     isMassive = false,
+                    sourceMassKg = 1.0e12,
                 ),
                 RenderBody(
                     id = "asteroid-medium",
@@ -73,6 +91,7 @@ class RenderSceneAssemblerTest {
                     colorArgb = 0xFF0088FF.toInt(),
                     kind = RenderBodyKind.ASTEROID,
                     isMassive = false,
+                    sourceMassKg = 2.0e12,
                 ),
                 RenderBody(
                     id = "asteroid-far",
@@ -83,6 +102,7 @@ class RenderSceneAssemblerTest {
                     colorArgb = 0xFF00AA00.toInt(),
                     kind = RenderBodyKind.ASTEROID,
                     isMassive = false,
+                    sourceMassKg = 3.0e12,
                 ),
             ),
             trails = listOf(
@@ -122,9 +142,9 @@ class RenderSceneAssemblerTest {
         assertEquals(1, packet.tracerNearCount)
         assertEquals(1, packet.tracerMediumCount)
         assertEquals(1, packet.tracerFarCount)
-        assertEquals(0.0, packet.tracerNearSourceMassesKg[0], 0.0)
-        assertEquals(0.0, packet.tracerMediumSourceMassesKg[0], 0.0)
-        assertEquals(0.0, packet.tracerFarSourceMassesKg[0], 0.0)
+        assertEquals(1.0e12, packet.tracerNearSourceMassesKg[0], 0.0)
+        assertEquals(2.0e12, packet.tracerMediumSourceMassesKg[0], 0.0)
+        assertEquals(3.0e12, packet.tracerFarSourceMassesKg[0], 0.0)
         assertEquals(listOf(30.0, 40.0, 0.0), packet.tracerMediumVelocitiesMps.toList())
         assertEquals(listOf(50.0, 60.0, 0.0), packet.tracerFarVelocitiesMps.toList())
         assertTrue(packet.trailVertexCounts.first() <= 8)

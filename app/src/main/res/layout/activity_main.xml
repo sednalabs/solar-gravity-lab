@@ -275,6 +275,14 @@
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
                         android:text="@string/action_processing_default" />
+
+                    <Button
+                        android:id="@+id/buttonOrientationLock"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_orientation_free" />
                 </LinearLayout>
             </HorizontalScrollView>
         </LinearLayout>
