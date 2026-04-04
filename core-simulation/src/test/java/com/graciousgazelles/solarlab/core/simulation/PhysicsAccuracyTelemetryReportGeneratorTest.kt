@@ -40,6 +40,8 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(json.contains("\"scenarioId\": \"major-bodies-with-starter-moons\""))
         assertTrue(json.contains("\"metrics\": ["))
         assertTrue(json.contains("\"relative_energy_drift\""))
+        assertTrue(json.contains("\"relative_angular_momentum_drift\""))
+        assertTrue(json.contains("\"barycenter_drift_m\""))
         assertTrue(json.contains("\"moon_earth_distance_au\""))
         assertTrue(json.contains("\"moon_earth_distance_fine_baseline_error_au\""))
     }
@@ -67,6 +69,20 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(metrics["moon_earth_distance_au"]!!.value > 0.0)
         assertTrue(metrics["moon_earth_distance_fine_baseline_error_au"]!!.value >= 0.0)
         assertTrue(metrics["moon_earth_distance_fine_baseline_error_ratio"]!!.value >= 0.0)
+        assertTrue(metrics.containsKey("relative_angular_momentum_drift"))
+        assertTrue(metrics.containsKey("absolute_angular_momentum_drift_kg_m2_per_s"))
+        assertTrue(metrics.containsKey("barycenter_drift_m"))
+        assertTrue(metrics.containsKey("barycenter_velocity_drift_mps"))
+        assertTrue(metrics.containsKey("angular_momentum_fine_baseline_error_ratio"))
+        assertTrue(metrics.containsKey("barycenter_fine_baseline_distance_error_m"))
+        assertTrue(metrics.containsKey("barycenter_fine_baseline_velocity_error_mps"))
+        assertTrue(metrics["relative_angular_momentum_drift"]!!.value >= 0.0)
+        assertTrue(metrics["absolute_angular_momentum_drift_kg_m2_per_s"]!!.value >= 0.0)
+        assertTrue(metrics["barycenter_drift_m"]!!.value >= 0.0)
+        assertTrue(metrics["barycenter_velocity_drift_mps"]!!.value >= 0.0)
+        assertTrue(metrics["angular_momentum_fine_baseline_error_ratio"]!!.value >= 0.0)
+        assertTrue(metrics["barycenter_fine_baseline_distance_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["barycenter_fine_baseline_velocity_error_mps"]!!.value >= 0.0)
     }
 
     @Test
