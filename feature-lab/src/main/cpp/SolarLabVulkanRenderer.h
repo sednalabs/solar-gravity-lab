@@ -28,6 +28,7 @@ public:
     void SubmitScene(
         int64_t sourceRevision,
         std::vector<double> authoritativePositionsM,
+        std::vector<double> authoritativeSourceMassesKg,
         std::vector<float> authoritativeRadiiM,
         std::vector<int32_t> authoritativeColorsArgb,
         std::vector<int32_t> authoritativeKinds,
@@ -36,10 +37,12 @@ public:
         std::vector<int32_t> tracerNearColorsArgb,
         std::vector<int32_t> tracerNearKinds,
         std::vector<double> tracerMediumPositionsM,
+        std::vector<double> tracerMediumVelocitiesMps,
         std::vector<float> tracerMediumRadiiM,
         std::vector<int32_t> tracerMediumColorsArgb,
         std::vector<int32_t> tracerMediumKinds,
         std::vector<double> tracerFarPositionsM,
+        std::vector<double> tracerFarVelocitiesMps,
         std::vector<float> tracerFarRadiiM,
         std::vector<int32_t> tracerFarColorsArgb,
         std::vector<int32_t> tracerFarKinds,
@@ -59,6 +62,7 @@ private:
     struct SceneBuffers {
         int64_t sourceRevision = 0;
         std::vector<double> authoritativePositionsM;
+        std::vector<double> authoritativeSourceMassesKg;
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
         std::vector<int32_t> authoritativeKinds;
@@ -67,10 +71,12 @@ private:
         std::vector<int32_t> tracerNearColorsArgb;
         std::vector<int32_t> tracerNearKinds;
         std::vector<double> tracerMediumPositionsM;
+        std::vector<double> tracerMediumVelocitiesMps;
         std::vector<float> tracerMediumRadiiM;
         std::vector<int32_t> tracerMediumColorsArgb;
         std::vector<int32_t> tracerMediumKinds;
         std::vector<double> tracerFarPositionsM;
+        std::vector<double> tracerFarVelocitiesMps;
         std::vector<float> tracerFarRadiiM;
         std::vector<int32_t> tracerFarColorsArgb;
         std::vector<int32_t> tracerFarKinds;
