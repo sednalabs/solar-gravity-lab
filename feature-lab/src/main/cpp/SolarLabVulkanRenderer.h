@@ -215,7 +215,18 @@ private:
     void DestroyGraphicsPipelines();
     void DestroyComputePipelines();
     void DestroyDescriptorResources();
+    bool EnsureBufferWithMemoryProperties(
+        VkDeviceSize sizeBytes,
+        VkBufferUsageFlags usage,
+        VkMemoryPropertyFlags memoryProperties,
+        const char* label,
+        bool reportErrors,
+        GpuBuffer& buffer);
     bool EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& buffer);
+    bool EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, bool reportErrors, GpuBuffer& buffer);
+    bool CopyBufferBytes(const GpuBuffer& source, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors);
+    bool TryUploadDeviceLocalWithStaging(const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target);
+    bool UploadBytesInternal(const void* data, size_t sizeBytes, const GpuBuffer& buffer, bool reportErrors);
     bool UploadBytes(const void* data, size_t sizeBytes, GpuBuffer& buffer);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     std::string BuildSceneSummaryLocked() const;
