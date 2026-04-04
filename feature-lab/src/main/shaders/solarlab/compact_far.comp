@@ -29,6 +29,10 @@ layout(set = 0, binding = 3, std430) buffer DrawCommandBuffer {
     uint firstInstance;
 } uDraw;
 
+layout(set = 0, binding = 4, std430) buffer TileCounterBuffer {
+    uint counts[];
+} uTiles;
+
 layout(push_constant) uniform PushConstants {
     uint sourceCount;
     uint reserved0;
@@ -42,22 +46,15 @@ bool isInsideExtendedView(vec2 positionM) {
     return all(lessThanEqual(delta, span));
 }
 
-uint hash32(uvec3 v) {
-    uint h = v.x * 1664525u + 1013904223u;
-    h ^= v.y * 2246822519u;
-    h ^= v.z * 3266489917u;
-    h ^= h >> 15;
-    h *= 2246822519u;
-    h ^= h >> 13;
-    h *= 3266489917u;
-    h ^= h >> 16;
-    return h;
-}
-
 uint farStrideForZoom(uint densityWeight) {
     float zoom = max(uScene.metrics.x / 5.0e8, 1.0);
     uint zoomStride = 1u + uint(clamp(floor(log2(zoom)), 0.0, 6.0));
     return max(max(densityWeight, 1u), zoomStride);
+}
+
+uint farTileCapacity(uint stride) {
+    uint clampedStride = clamp(stride, 1u, 8u);
+    return max(1u, 8u / clampedStride);
 }
 
 void main() {
@@ -79,16 +76,13 @@ void main() {
     vec2 clampedUv = clamp(uv, vec2(0.0), vec2(0.999999));
     uvec2 pixel = uvec2(floor(clampedUv * vec2(viewportPx)));
 
-    // Coarse tile-aware phase keeps thinning spatially coherent without adding bin buffers.
     const uint tileShift = 4u; // 16x16 pixel tiles.
     uvec2 tileCoord = pixel >> tileShift;
-    uvec2 strideCell = pixel / stride;
-    uint tilePhase = hash32(uvec3(tileCoord, stride)) % stride;
-
-    // Keep a tiny index bucket so duplicate points in one cell do not all vote identically.
-    uint deCollisionBucket = index & 3u;
-    uint keepHash = hash32(uvec3(strideCell, stride ^ deCollisionBucket));
-    if (stride > 1u && ((keepHash + tilePhase) % stride) != 0u) {
+    uvec2 tileGrid = (viewportPx + ((1u << tileShift) - 1u)) >> tileShift;
+    uint tileIndex = tileCoord.x + (tileCoord.y * max(tileGrid.x, 1u));
+    uint tileCapacity = farTileCapacity(stride);
+    uint slot = atomicAdd(uTiles.counts[tileIndex], 1u);
+    if (slot >= tileCapacity) {
         return;
     }
 

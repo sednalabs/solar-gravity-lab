@@ -155,8 +155,10 @@ private:
         GpuBuffer outputVertexBuffer;
         GpuBuffer indirectCommandBuffer;
         GpuBuffer indirectReadbackBuffer;
+        GpuBuffer tileCounterBuffer;
         uint32_t sourceVertexCount = 0;
         uint32_t dispatchGroupCountX = 0;
+        uint32_t tileCounterCount = 0;
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;
         const char* label = nullptr;
