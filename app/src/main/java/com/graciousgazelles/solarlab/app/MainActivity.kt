@@ -16,6 +16,7 @@ import com.graciousgazelles.solarlab.feature.lab.LabFrameListener
 import com.graciousgazelles.solarlab.feature.lab.LabSession
 import com.graciousgazelles.solarlab.feature.lab.TimelineStatus
 import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListener
+import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
@@ -33,6 +34,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var resumeSimulationOnForeground: Boolean = false
     private var resumeSimulationAfterModalInteraction: Boolean = false
     private var infoPanelVisible: Boolean = false
+    private var renderProcessingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,12 +142,22 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             updateInfoPanelVisibility()
         }
 
+        binding.buttonProcessingMode.setOnClickListener {
+            renderProcessingMode = when (renderProcessingMode) {
+                RenderProcessingMode.DEFAULT -> RenderProcessingMode.LOW
+                RenderProcessingMode.LOW -> RenderProcessingMode.DEFAULT
+            }
+            binding.renderHost.setProcessingMode(renderProcessingMode)
+            updateProcessingModeButtonText()
+        }
+
         updateCollisionButtonText()
         updateTimelineControls(null)
         updateAddButtonText()
         updateSelectedBodySummary()
         updateObserverButtonText()
         updateInfoPanelVisibility()
+        updateProcessingModeButtonText()
 
         session.dispatchCurrentFrame()
         session.start()
@@ -506,6 +518,13 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             getString(R.string.action_info_hide)
         } else {
             getString(R.string.action_info_show)
+        }
+    }
+
+    private fun updateProcessingModeButtonText() {
+        binding.buttonProcessingMode.text = when (renderProcessingMode) {
+            RenderProcessingMode.DEFAULT -> getString(R.string.action_processing_default)
+            RenderProcessingMode.LOW -> getString(R.string.action_processing_low)
         }
     }
 

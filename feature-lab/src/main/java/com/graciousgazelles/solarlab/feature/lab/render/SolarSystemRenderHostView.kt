@@ -26,6 +26,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var hostResumed: Boolean = false
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
+    private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
@@ -66,6 +67,13 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     }
 
     fun interactionMode(): SceneInteractionMode = interactionMode
+
+    fun setProcessingMode(mode: RenderProcessingMode) {
+        processingMode = mode
+        activeSurface?.setProcessingMode(mode)
+    }
+
+    fun processingMode(): RenderProcessingMode = processingMode
 
     fun setSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
@@ -152,6 +160,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface = view as SolarRenderSurface
         activeSurface?.setInteractionListener(interactionListener)
         activeSurface?.setInteractionMode(interactionMode)
+        activeSurface?.setProcessingMode(processingMode)
         activeSurface?.setSelectedBodyId(selectedBodyId)
         activeSurface?.setObserverMode(observerMode)
         addView(

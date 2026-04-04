@@ -19,6 +19,8 @@
     <string name="action_collision_merge">Collisions: Merge</string>
     <string name="action_collision_fragmentation">Collisions: Fragmentation</string>
     <string name="action_collision_elastic">Collisions: Elastic</string>
+    <string name="action_processing_default">Rendering: Standard</string>
+    <string name="action_processing_low">Rendering: Simplified</string>
     <string name="action_backend_vulkan">Backend: Vulkan</string>
     <string name="action_info_show">Info</string>
     <string name="action_info_hide">Hide info</string>
