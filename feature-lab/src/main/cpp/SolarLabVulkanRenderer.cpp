@@ -1501,26 +1501,31 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         LogInfo(std::string("Falling back to host-visible upload for ") + (label != nullptr ? label : "unnamed tracer stream") + ".");
         return uploadStream(data, sizeBytes, usage, label, target);
     };
+    auto disableComputeStream = [this](ComputeDrawStreamBuffers& stream, const char* label, const char* reason) {
+        if (stream.enabled) {
+            LogInfo(std::string("Disabling compute-compaction path for ") + (stream.label != nullptr ? stream.label : label) + " because " + reason + "; using direct draw fallback.");
+        }
+        stream.enabled = false;
+        stream.sourceVertexCount = 0U;
+        stream.dispatchGroupCountX = 0U;
+        stream.visibleVertexCount = 0U;
+        stream.visibleVertexCountValid = false;
+        DestroyGpuBuffer(stream.outputVertexBuffer);
+        DestroyGpuBuffer(stream.indirectCommandBuffer);
+        DestroyGpuBuffer(stream.indirectReadbackBuffer);
+    };
     auto ensureDeviceLocalComputeBuffer = [this](VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
         if (sizeBytes == 0) {
             DestroyGpuBuffer(target);
             return true;
         }
-        if (EnsureDeviceLocalBuffer(sizeBytes, usage, label, false, target)) {
-            return true;
-        }
-        LogInfo(std::string("Falling back to host-visible allocation for ") + (label != nullptr ? label : "unnamed compute stream") + ".");
-        return EnsureHostVisibleBuffer(sizeBytes, usage, label, target);
+        return EnsureDeviceLocalBuffer(sizeBytes, usage, label, false, target);
     };
     auto initializeComputeIndirectBuffer = [this](const VkDrawIndirectCommand& command, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
         if (TryUploadDeviceLocalWithStaging(&command, sizeof(command), usage, label, target)) {
             return true;
         }
-        LogInfo(std::string("Falling back to host-visible upload for ") + (label != nullptr ? label : "unnamed compute indirect stream") + ".");
-        if (!EnsureHostVisibleBuffer(sizeof(command), usage, label, target)) {
-            return false;
-        }
-        return UploadBytes(&command, sizeof(command), target);
+        return false;
     };
 
     if (!uploadStream(authoritativeVertices.data(), ByteSize(authoritativeVertices), sceneGpuStreams_.authoritative.plannedUsage, sceneGpuStreams_.authoritative.label, sceneGpuStreams_.authoritative.vertexBuffer)) {
@@ -1580,25 +1585,23 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 sceneGpuStreams_.tracerMediumCompute.label,
                 sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer)) {
-            return false;
-        }
-        const auto initCommand = MakeInitialIndirectCommand();
-        if (!initializeComputeIndirectBuffer(
-                initCommand,
+            disableComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute", "device-local compute output allocation failed");
+        } else if (!initializeComputeIndirectBuffer(
+                MakeInitialIndirectCommand(),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-medium-indirect",
                 sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer)) {
-            return false;
-        }
-        if (!EnsureHostVisibleBuffer(
+            disableComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute", "compute indirect buffer upload could not be initialized");
+        } else if (!EnsureHostVisibleBuffer(
                 sizeof(VkDrawIndirectCommand),
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-medium-indirect-readback",
                 sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer)) {
-            return false;
+            disableComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute", "indirect readback buffer allocation failed");
+        } else {
+            sceneGpuStreams_.tracerMediumCompute.visibleVertexCount = 0;
+            sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid = false;
         }
-        sceneGpuStreams_.tracerMediumCompute.visibleVertexCount = 0;
-        sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid = false;
     } else {
         DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer);
         sceneGpuStreams_.tracerMediumCompute.visibleVertexCount = 0;
@@ -1611,25 +1614,23 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 sceneGpuStreams_.tracerFarCompute.label,
                 sceneGpuStreams_.tracerFarCompute.outputVertexBuffer)) {
-            return false;
-        }
-        const auto initCommand = MakeInitialIndirectCommand();
-        if (!initializeComputeIndirectBuffer(
-                initCommand,
+            disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "device-local compute output allocation failed");
+        } else if (!initializeComputeIndirectBuffer(
+                MakeInitialIndirectCommand(),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-far-indirect",
                 sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer)) {
-            return false;
-        }
-        if (!EnsureHostVisibleBuffer(
+            disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "compute indirect buffer upload could not be initialized");
+        } else if (!EnsureHostVisibleBuffer(
                 sizeof(VkDrawIndirectCommand),
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-far-indirect-readback",
                 sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer)) {
-            return false;
+            disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "indirect readback buffer allocation failed");
+        } else {
+            sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
+            sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
         }
-        sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
-        sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
     } else {
         DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
         sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
