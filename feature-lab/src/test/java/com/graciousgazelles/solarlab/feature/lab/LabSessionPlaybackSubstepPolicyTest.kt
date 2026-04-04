@@ -138,7 +138,7 @@ class LabSessionPlaybackSubstepPolicyTest {
 
             assertTrue(
                 "Expected scheduler to cap sustained backlog, backlog=$pendingSeconds",
-                pendingSeconds <= budget.maxSubstepSeconds * 3.0,
+                pendingSeconds <= budget.secondsToAdvance * 3.0,
             )
             assertTrue(
                 "Expected scheduler to keep advancing work each render tick",
