@@ -836,6 +836,29 @@ fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
             body.velocity_mps.z
         );
     }
+    if let Some(mounted_manifest) = &snapshot.mounted_manifest {
+        use std::fmt::Write as _;
+        let _ = write!(
+            &mut revision,
+            "|manifest={}|manifest_digest={}",
+            mounted_manifest.manifest_id,
+            mounted_manifest
+                .manifest_digest
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), format_manifest_digest)
+        );
+        for package in &mounted_manifest.mounted_packages {
+            let _ = write!(
+                &mut revision,
+                "|package={}|digest={}:{}",
+                package.package_id,
+                package.digest.algorithm,
+                package.digest.hex_value()
+            );
+        }
+    } else {
+        revision.push_str("|manifest=none");
+    }
 
     revision
 }
@@ -1950,6 +1973,42 @@ mod tests {
             .expect("set digest should be present for multiple mounted packages");
         assert_eq!(package_digest.algorithm, "mounted-set/v1".to_owned());
         assert!(!package_digest.value.is_empty());
+    }
+
+    #[test]
+    fn scene_revision_changes_when_manifest_provenance_changes() {
+        let mut runtime = new_runtime();
+        let initial_revision = runtime.render_scene().scene_revision;
+        let package_digest = digest(0x61);
+        let package_id = package_id_for(&PackageKind::Scenario, &package_digest);
+        let mut manifest = manifest(
+            "manifest-delta",
+            vec![package_locator(
+                PackageKind::Scenario,
+                semver(1, 0, 0),
+                package_digest.clone(),
+                true,
+            )],
+        );
+        manifest.manifest_digest = Some(digest(0x62));
+
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest,
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    PackageKind::Scenario,
+                    semver(1, 0, 0),
+                    package_digest,
+                    "cache://pkg-scenario-delta-v100",
+                )]),
+            })
+            .expect("manifest apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand { package_id })
+            .expect("mount should succeed");
+
+        assert_ne!(runtime.render_scene().scene_revision, initial_revision);
     }
 
     fn checkpoint_id_from_events(events: &[RuntimeEvent]) -> CheckpointId {
