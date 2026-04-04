@@ -304,6 +304,7 @@ bool SolarLabVulkanRenderer::Render() {
         SetError("vkWaitForFences failed.");
         return false;
     }
+    RefreshCompactionVisibleCountsFromReadbackLocked();
     vkResetFences(device_, 1, &inFlightFence_);
 
     if (!EnsureSceneGpuStreamsLocked()) {
@@ -1584,11 +1585,24 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         const auto initCommand = MakeInitialIndirectCommand();
         if (!initializeComputeIndirectBuffer(
                 initCommand,
-                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-medium-indirect",
                 sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer)) {
             return false;
         }
+        if (!EnsureHostVisibleBuffer(
+                sizeof(VkDrawIndirectCommand),
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                "tracer-medium-indirect-readback",
+                sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer)) {
+            return false;
+        }
+        sceneGpuStreams_.tracerMediumCompute.visibleVertexCount = 0;
+        sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid = false;
+    } else {
+        DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer);
+        sceneGpuStreams_.tracerMediumCompute.visibleVertexCount = 0;
+        sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid = false;
     }
 
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
@@ -1602,11 +1616,24 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         const auto initCommand = MakeInitialIndirectCommand();
         if (!initializeComputeIndirectBuffer(
                 initCommand,
-                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-far-indirect",
                 sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer)) {
             return false;
         }
+        if (!EnsureHostVisibleBuffer(
+                sizeof(VkDrawIndirectCommand),
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                "tracer-far-indirect-readback",
+                sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer)) {
+            return false;
+        }
+        sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
+        sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
+    } else {
+        DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
+        sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
+        sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
     }
 
     if (canCompute && !UpdateComputeDescriptorSetsLocked()) {
@@ -1622,8 +1649,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.trails.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.sizeBytes +
-        sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes;
+        sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.sizeBytes;
 
     uploadStats_.sourceRevision = sceneBuffers_.sourceRevision;
     uploadStats_.bytesUploaded = sceneGpuStreams_.totalBytes;
@@ -1922,6 +1951,110 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         0,
         nullptr);
 
+    std::vector<VkBufferMemoryBarrier> computeToTransferBarriers;
+    if (runMedium && sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.buffer != VK_NULL_HANDLE) {
+        computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.buffer,
+            .offset = 0,
+            .size = sizeof(VkDrawIndirectCommand),
+        });
+    }
+    if (runFar && sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.buffer != VK_NULL_HANDLE) {
+        computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.buffer,
+            .offset = 0,
+            .size = sizeof(VkDrawIndirectCommand),
+        });
+    }
+    if (!computeToTransferBarriers.empty()) {
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0,
+            0,
+            nullptr,
+            static_cast<uint32_t>(computeToTransferBarriers.size()),
+            computeToTransferBarriers.data(),
+            0,
+            nullptr);
+    }
+
+    std::vector<VkBufferMemoryBarrier> transferToHostBarriers;
+    if (runMedium && sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.buffer != VK_NULL_HANDLE) {
+        const VkBufferCopy copyRegion{
+            .srcOffset = 0,
+            .dstOffset = 0,
+            .size = sizeof(VkDrawIndirectCommand),
+        };
+        vkCmdCopyBuffer(
+            commandBuffer,
+            sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.buffer,
+            sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.buffer,
+            1,
+            &copyRegion);
+        transferToHostBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.buffer,
+            .offset = 0,
+            .size = sizeof(VkDrawIndirectCommand),
+        });
+    }
+    if (runFar && sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.buffer != VK_NULL_HANDLE) {
+        const VkBufferCopy copyRegion{
+            .srcOffset = 0,
+            .dstOffset = 0,
+            .size = sizeof(VkDrawIndirectCommand),
+        };
+        vkCmdCopyBuffer(
+            commandBuffer,
+            sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.buffer,
+            sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.buffer,
+            1,
+            &copyRegion);
+        transferToHostBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.buffer,
+            .offset = 0,
+            .size = sizeof(VkDrawIndirectCommand),
+        });
+    }
+    if (!transferToHostBarriers.empty()) {
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_HOST_BIT,
+            0,
+            0,
+            nullptr,
+            static_cast<uint32_t>(transferToHostBarriers.size()),
+            transferToHostBarriers.data(),
+            0,
+            nullptr);
+    }
+
     return true;
 }
 
@@ -2027,10 +2160,39 @@ void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.trails.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.outputVertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
     sceneGpuStreams_ = SceneGpuStreams{};
     commandBuffersRevision_ = -1;
+}
+
+void SolarLabVulkanRenderer::RefreshCompactionVisibleCountsFromReadbackLocked() {
+    auto refreshStream = [this](ComputeDrawStreamBuffers& stream) {
+        stream.visibleVertexCount = 0;
+        stream.visibleVertexCountValid = false;
+        if (!stream.enabled || stream.indirectReadbackBuffer.memory == VK_NULL_HANDLE || device_ == VK_NULL_HANDLE) {
+            return;
+        }
+        if (stream.indirectReadbackBuffer.sizeBytes < sizeof(VkDrawIndirectCommand)) {
+            return;
+        }
+
+        void* mapped = nullptr;
+        if (vkMapMemory(device_, stream.indirectReadbackBuffer.memory, 0, sizeof(VkDrawIndirectCommand), 0, &mapped) != VK_SUCCESS || mapped == nullptr) {
+            return;
+        }
+        const auto command = *static_cast<const VkDrawIndirectCommand*>(mapped);
+        vkUnmapMemory(device_, stream.indirectReadbackBuffer.memory);
+
+        stream.visibleVertexCount = command.vertexCount;
+        stream.visibleVertexCountValid = true;
+    };
+
+    refreshStream(sceneGpuStreams_.tracerMediumCompute);
+    refreshStream(sceneGpuStreams_.tracerFarCompute);
+    sceneSummaryCache_ = BuildSceneSummaryLocked();
 }
 
 void SolarLabVulkanRenderer::DestroyGraphicsPipelines() {
@@ -2419,9 +2581,15 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << DrawPathName(sceneGpuStreams_.trails.path) << ']'
         << " compute=["
         << (sceneGpuStreams_.tracerMediumCompute.enabled ? "TM:" : "TM:-")
-        << sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX << ','
+        << sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX
+        << "/vis="
+        << (sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid ? std::to_string(sceneGpuStreams_.tracerMediumCompute.visibleVertexCount) : std::string("-"))
+        << ','
         << (sceneGpuStreams_.tracerFarCompute.enabled ? "TF:" : "TF:-")
-        << sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX << ']'
+        << sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX
+        << "/vis="
+        << (sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.visibleVertexCount) : std::string("-"))
+        << ']'
         << " gp=["
         << (billboardPipeline_ != VK_NULL_HANDLE ? "bb" : "--") << ','
         << (mediumPointPipeline_ != VK_NULL_HANDLE ? "mp" : "--") << ','
