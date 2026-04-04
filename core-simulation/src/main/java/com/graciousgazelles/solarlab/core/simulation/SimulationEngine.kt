@@ -12,6 +12,7 @@ import com.graciousgazelles.solarlab.core.model.TimelineMode
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 class SimulationEngine(
@@ -231,7 +232,17 @@ class SimulationEngine(
             val impactOffset = deltaTimeSeconds - remaining
             val event = when (config.collisionMode) {
                 CollisionMode.MERGE -> resolveMergeCollision(candidate, impactOffset)
-                CollisionMode.ELASTIC -> resolveElasticCollision(candidate, impactOffset)
+                CollisionMode.ELASTIC -> {
+                    val primary = bodies[candidate.i]
+                    val secondary = bodies[candidate.j]
+                    val normal = collisionNormal(primary, secondary)
+                    val relativeNormalSpeed = abs((secondary.velocityMps - primary.velocityMps).dot(normal))
+                    if (shouldAccreteOnImpact(primary, secondary, relativeNormalSpeed)) {
+                        resolveMergeCollision(candidate, impactOffset)
+                    } else {
+                        resolveElasticCollision(candidate, impactOffset)
+                    }
+                }
                 CollisionMode.FRAGMENTATION -> resolveFragmentationCollision(candidate, impactOffset)
                 CollisionMode.NONE -> error("Collision resolution called while collision mode is NONE")
             }
@@ -523,6 +534,30 @@ class SimulationEngine(
         )
     }
 
+    private fun shouldAccreteOnImpact(
+        primary: MutableBody,
+        secondary: MutableBody,
+        relativeNormalSpeedMps: Double,
+    ): Boolean {
+        val totalMass = primary.massKg + secondary.massKg
+        if (totalMass <= 0.0) return false
+
+        val heavierMass = max(primary.massKg, secondary.massKg)
+        val lighterMass = min(primary.massKg, secondary.massKg)
+        val massRatio = if (lighterMass <= COLLISION_MASS_EPSILON) Double.POSITIVE_INFINITY else heavierMass / lighterMass
+        if (massRatio < COLLISION_ACCRETION_MASS_RATIO_THRESHOLD) return false
+
+        if (config.gravitationalConstant <= 0.0) {
+            return true
+        }
+
+        val combinedRadius = primary.radiusM + secondary.radiusM
+        if (combinedRadius <= 0.0) return true
+
+        val escapeVelocityMps = sqrt(max(0.0, (2.0 * config.gravitationalConstant * totalMass) / combinedRadius))
+        return relativeNormalSpeedMps <= escapeVelocityMps
+    }
+
     private fun collisionNormal(a: MutableBody, b: MutableBody): Vector3d {
         val delta = b.positionM - a.positionM
         val deltaMagnitude = delta.magnitude()
@@ -777,6 +812,8 @@ class SimulationEngine(
     private companion object {
         private const val COLLISION_TIME_EPSILON: Double = 1.0e-9
         private const val COLLISION_DISTANCE_EPSILON: Double = 1.0e-6
+        private const val COLLISION_MASS_EPSILON: Double = 1.0e-12
+        private const val COLLISION_ACCRETION_MASS_RATIO_THRESHOLD: Double = 8.0
         private const val MAX_COLLISION_ITERATIONS_PER_STEP: Int = 1024
         private const val FRAGMENTATION_PRIMARY_MASS_FRACTION: Double = 0.5
         private const val FRAGMENTATION_VELOCITY_FRACTION: Double = 0.5
