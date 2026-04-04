@@ -38,10 +38,6 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var renderProcessingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
     private var orientationLocked: Boolean = false
 
-    companion object {
-        private const val STATE_ORIENTATION_LOCKED = "orientation_locked"
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -580,6 +576,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     }
 
     private companion object {
+        private const val STATE_ORIENTATION_LOCKED = "orientation_locked"
         private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
         private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
     }
