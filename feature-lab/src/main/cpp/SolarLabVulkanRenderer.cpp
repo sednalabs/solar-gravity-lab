@@ -1597,57 +1597,6 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
-    std::vector<TracerInfluenceBody> tracerNearInfluences;
-    const uint32_t tracerNearInfluenceCount = SafeCount3(
-        frameBuffers_.tracerNearPositionsM.size(),
-        frameBuffers_.tracerNearSourceMassesKg.size(),
-        frameBuffers_.tracerNearRadiiM.size());
-    tracerNearInfluences.reserve(tracerNearInfluenceCount);
-    for (uint32_t index = 0; index < tracerNearInfluenceCount; ++index) {
-        const size_t base = static_cast<size_t>(index) * 3U;
-        tracerNearInfluences.push_back(TracerInfluenceBody{
-            .x = static_cast<float>(frameBuffers_.tracerNearPositionsM[base]),
-            .y = static_cast<float>(frameBuffers_.tracerNearPositionsM[base + 1U]),
-            .sourceMassKg = static_cast<float>(frameBuffers_.tracerNearSourceMassesKg[index]),
-        });
-    }
-
-    std::vector<TracerInfluenceBody> tracerMediumInfluences;
-    const uint32_t tracerMediumInfluenceCount = SafeCount3(
-        frameBuffers_.tracerMediumPositionsM.size(),
-        frameBuffers_.tracerMediumSourceMassesKg.size(),
-        frameBuffers_.tracerMediumHandles.size());
-    tracerMediumInfluences.reserve(tracerMediumInfluenceCount);
-    for (uint32_t index = 0; index < tracerMediumInfluenceCount; ++index) {
-        const size_t base = static_cast<size_t>(index) * 3U;
-        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerMediumHandles[index]);
-        tracerMediumInfluences.push_back(TracerInfluenceBody{
-            .x = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base]),
-            .y = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base + 1U]),
-            .sourceMassKg = static_cast<float>(frameBuffers_.tracerMediumSourceMassesKg[index]),
-            .handleLo = handleLo,
-            .handleHi = handleHi,
-        });
-    }
-
-    std::vector<TracerInfluenceBody> tracerFarInfluences;
-    const uint32_t tracerFarInfluenceCount = SafeCount3(
-        frameBuffers_.tracerFarPositionsM.size(),
-        frameBuffers_.tracerFarSourceMassesKg.size(),
-        frameBuffers_.tracerFarHandles.size());
-    tracerFarInfluences.reserve(tracerFarInfluenceCount);
-    for (uint32_t index = 0; index < tracerFarInfluenceCount; ++index) {
-        const size_t base = static_cast<size_t>(index) * 3U;
-        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerFarHandles[index]);
-        tracerFarInfluences.push_back(TracerInfluenceBody{
-            .x = static_cast<float>(frameBuffers_.tracerFarPositionsM[base]),
-            .y = static_cast<float>(frameBuffers_.tracerFarPositionsM[base + 1U]),
-            .sourceMassKg = static_cast<float>(frameBuffers_.tracerFarSourceMassesKg[index]),
-            .handleLo = handleLo,
-            .handleHi = handleHi,
-        });
-    }
-
     std::vector<CheapPointVertex> tracerMediumVertices;
     const uint32_t tracerMediumCount = SafeCount3(
         seedBuffers_.tracerMediumPositionsM.size(),
@@ -2130,6 +2079,57 @@ bool SolarLabVulkanRenderer::UploadFrameGpuStreamsLocked() {
             .kind = static_cast<uint32_t>(frameBuffers_.tracerNearKinds[index]),
             .alpha = kNearTracerAlpha,
             .reserved = 0.0f,
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerNearInfluences;
+    const uint32_t tracerNearInfluenceCount = SafeCount3(
+        frameBuffers_.tracerNearPositionsM.size(),
+        frameBuffers_.tracerNearSourceMassesKg.size(),
+        frameBuffers_.tracerNearRadiiM.size());
+    tracerNearInfluences.reserve(tracerNearInfluenceCount);
+    for (uint32_t index = 0; index < tracerNearInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        tracerNearInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerNearPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerNearPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerNearSourceMassesKg[index]),
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerMediumInfluences;
+    const uint32_t tracerMediumInfluenceCount = SafeCount3(
+        frameBuffers_.tracerMediumPositionsM.size(),
+        frameBuffers_.tracerMediumSourceMassesKg.size(),
+        frameBuffers_.tracerMediumHandles.size());
+    tracerMediumInfluences.reserve(tracerMediumInfluenceCount);
+    for (uint32_t index = 0; index < tracerMediumInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerMediumHandles[index]);
+        tracerMediumInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerMediumSourceMassesKg[index]),
+            .handleLo = handleLo,
+            .handleHi = handleHi,
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerFarInfluences;
+    const uint32_t tracerFarInfluenceCount = SafeCount3(
+        frameBuffers_.tracerFarPositionsM.size(),
+        frameBuffers_.tracerFarSourceMassesKg.size(),
+        frameBuffers_.tracerFarHandles.size());
+    tracerFarInfluences.reserve(tracerFarInfluenceCount);
+    for (uint32_t index = 0; index < tracerFarInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerFarHandles[index]);
+        tracerFarInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerFarPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerFarPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerFarSourceMassesKg[index]),
+            .handleLo = handleLo,
+            .handleHi = handleHi,
         });
     }
 
