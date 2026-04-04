@@ -20,6 +20,7 @@ class LabSessionPlaybackSubstepPolicyTest {
         val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
             totalSeconds = 3_600.0,
             collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.HOUR_PER_SECOND,
         )
 
         assertEquals(3_600.0, effective, 0.0)
@@ -30,34 +31,48 @@ class LabSessionPlaybackSubstepPolicyTest {
         val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
             totalSeconds = 86_400.0,
             collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.DAY_PER_SECOND,
         )
 
         assertEquals(7_200.0, effective, 0.0)
     }
 
     @Test
-    fun `very large playback intervals clamp at bounded upper cap`() {
+    fun `very large non-high-speed intervals clamp at bounded upper cap`() {
         val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
             totalSeconds = 864_000.0,
             collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.DAY_PER_SECOND,
         )
 
         assertEquals(32_400.0, effective, 0.0)
     }
 
     @Test
-    fun `highest playback preset keeps worst-case tick fanout bounded`() {
+    fun `high-speed playback presets clamp with tighter cap`() {
+        val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
+            totalSeconds = 864_000.0,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+        )
+
+        assertEquals(21_600.0, effective, 0.0)
+    }
+
+    @Test
+    fun `highest playback preset keeps worst-case tick fanout bounded with high-speed cap`() {
         val worstCaseTickSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.25
         val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
             totalSeconds = worstCaseTickSeconds,
             collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
         )
         val substepCount = ceil(worstCaseTickSeconds / effective).toInt()
 
-        assertEquals(32_400.0, effective, 0.0)
+        assertEquals(21_600.0, effective, 0.0)
         assertTrue(
-            "Expected worst-case month playback fanout to stay within 20 substeps, count=$substepCount",
-            substepCount <= 20,
+            "Expected worst-case month playback fanout to stay within 30 substeps, count=$substepCount",
+            substepCount <= 30,
         )
     }
 
@@ -71,6 +86,7 @@ class LabSessionPlaybackSubstepPolicyTest {
             val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
                 totalSeconds = 864_000.0,
                 collisionMode = collisionMode,
+                playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
             )
 
             assertEquals(3_600.0, effective, 0.0)
@@ -85,6 +101,7 @@ class LabSessionPlaybackSubstepPolicyTest {
         val policyMaxSubstepSeconds = LabSession.effectivePlaybackMaxSubstepSeconds(
             totalSeconds = playbackTickSeconds,
             collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
         )
         val coarseLegacyMaxSubstepSeconds = 43_200.0
 
@@ -123,7 +140,7 @@ class LabSessionPlaybackSubstepPolicyTest {
         val coarseLegacyDriftMeters = (coarseLegacyMoonFromEarth - baselineMoonFromEarth).magnitude()
         val policyDriftMeters = (policyMoonFromEarth - baselineMoonFromEarth).magnitude()
 
-        assertEquals(32_400.0, policyMaxSubstepSeconds, 0.0)
+        assertEquals(21_600.0, policyMaxSubstepSeconds, 0.0)
         assertTrue(
             "Expected policy drift ($policyDriftMeters m) to stay below coarse legacy drift ($coarseLegacyDriftMeters m)",
             policyDriftMeters < coarseLegacyDriftMeters,
@@ -140,6 +157,7 @@ class LabSessionPlaybackSubstepPolicyTest {
         val policyMaxSubstepSeconds = LabSession.effectivePlaybackMaxSubstepSeconds(
             totalSeconds = playbackTickSeconds,
             collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
         )
 
         val start = SolarSystemScenarios.defaultLabScenario(
