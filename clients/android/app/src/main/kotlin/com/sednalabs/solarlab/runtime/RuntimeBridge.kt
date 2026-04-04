@@ -45,6 +45,9 @@ class JniRuntimeBridge(
         }
 
         if (!createResult.result.isOk()) {
+            if (createResult.handle != 0L) {
+                transport.destroySession(createResult.handle)
+            }
             trySend(
                 RuntimeSignal.Unavailable(
                     message = "Native runtime session create failed",
@@ -67,14 +70,19 @@ class JniRuntimeBridge(
             return@callbackFlow
         }
 
-        trySend(RuntimeSignal.Connected(handle = handle))
         if (createResult.abiVersion != ABI_VERSION) {
             trySend(
                 RuntimeSignal.Status(
                     "Runtime ABI mismatch: expected=$ABI_VERSION, native=${createResult.abiVersion}"
                 )
             )
+            awaitClose {
+                transport.destroySession(handle)
+            }
+            return@callbackFlow
         }
+
+        trySend(RuntimeSignal.Connected(handle = handle))
 
         val runtimeInfoResult = runCatching {
             transport.runtimeInfo(handle)
