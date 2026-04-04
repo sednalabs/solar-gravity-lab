@@ -390,7 +390,7 @@ class LabSession private constructor(
         private const val MAX_REAL_DELTA_SECONDS: Double = 0.25
         private const val MAX_SIMULATION_SUBSTEP_SECONDS: Double = 3600.0
         private const val PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK: Double = 12.0
-        private const val PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 21_600.0
+        private const val PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 32_400.0
         private const val RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS: Int = 4
         private const val PERF_LOG_SAMPLE_WINDOW_FRAMES: Int = 120
         private const val SUBSTEP_EPSILON_SECONDS: Double = 1.0e-9

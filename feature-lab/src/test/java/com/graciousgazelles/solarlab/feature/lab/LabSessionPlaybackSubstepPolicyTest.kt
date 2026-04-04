@@ -8,6 +8,7 @@ import com.graciousgazelles.solarlab.core.simulation.SolarSystemScenarios
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.ceil
 
 class LabSessionPlaybackSubstepPolicyTest {
 
@@ -38,7 +39,23 @@ class LabSessionPlaybackSubstepPolicyTest {
             collisionMode = CollisionMode.NONE,
         )
 
-        assertEquals(21_600.0, effective, 0.0)
+        assertEquals(32_400.0, effective, 0.0)
+    }
+
+    @Test
+    fun `highest playback preset keeps worst-case tick fanout bounded`() {
+        val worstCaseTickSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.25
+        val effective = LabSession.effectivePlaybackMaxSubstepSeconds(
+            totalSeconds = worstCaseTickSeconds,
+            collisionMode = CollisionMode.NONE,
+        )
+        val substepCount = ceil(worstCaseTickSeconds / effective).toInt()
+
+        assertEquals(32_400.0, effective, 0.0)
+        assertTrue(
+            "Expected worst-case month playback fanout to stay within 20 substeps, count=$substepCount",
+            substepCount <= 20,
+        )
     }
 
     @Test
@@ -103,7 +120,7 @@ class LabSessionPlaybackSubstepPolicyTest {
         val coarseLegacyDriftMeters = (coarseLegacyMoonFromEarth - baselineMoonFromEarth).magnitude()
         val policyDriftMeters = (policyMoonFromEarth - baselineMoonFromEarth).magnitude()
 
-        assertEquals(21_600.0, policyMaxSubstepSeconds, 0.0)
+        assertEquals(32_400.0, policyMaxSubstepSeconds, 0.0)
         assertTrue(
             "Expected policy drift ($policyDriftMeters m) to stay below coarse legacy drift ($coarseLegacyDriftMeters m)",
             policyDriftMeters < coarseLegacyDriftMeters,
