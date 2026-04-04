@@ -167,6 +167,13 @@ private:
         float alpha = 1.0f;
     };
 
+    struct TrailHistoryMeta {
+        uint32_t sampleCount = 0;
+        uint32_t capacity = 0;
+        uint32_t reserved0 = 0;
+        uint32_t reserved1 = 0;
+    };
+
     struct AuthoritativeInfluenceBody {
         float x = 0.0f;
         float y = 0.0f;
@@ -209,7 +216,7 @@ private:
         DrawPath path = DrawPath::None;
         GpuBuffer sourceStateBuffer;
         GpuBuffer trailVertexBuffer;
-        GpuBuffer trailVertexCountBuffer;
+        GpuBuffer trailMetaBuffer;
         GpuBuffer outputVertexBuffer;
         GpuBuffer indirectCommandBuffer;
         GpuBuffer indirectReadbackBuffer;
@@ -220,6 +227,8 @@ private:
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;
         uint32_t trailVertexCount = 0;
+        uint32_t trailStripCount = 0;
+        uint32_t trailVerticesPerSource = 0;
         const char* label = nullptr;
     };
 

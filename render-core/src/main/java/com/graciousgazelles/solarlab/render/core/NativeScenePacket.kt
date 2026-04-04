@@ -133,7 +133,16 @@ data class NativeScenePacket(
                     simplifyTrail(trail, view, policy)
                 }
             }
-            val trailPack = packTrails(simplifiedTrails, selectedBodyId, policy)
+            val gpuOwnedTrailBodyIds = buildSet {
+                tracerSelection.medium.forEach { add(it.id) }
+                tracerSelection.far.forEach { add(it.id) }
+            }
+            val cpuAuthoredTrails = if (gpuOwnedTrailBodyIds.isEmpty()) {
+                simplifiedTrails
+            } else {
+                simplifiedTrails.filterNot { it.bodyId in gpuOwnedTrailBodyIds }
+            }
+            val trailPack = packTrails(cpuAuthoredTrails, selectedBodyId, policy)
 
             return NativeScenePacket(
                 sourceRevision = frame.sourceRevision,

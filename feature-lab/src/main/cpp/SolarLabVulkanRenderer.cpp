@@ -26,6 +26,8 @@ constexpr float kTrailAlpha = 0.90f;
 constexpr float kDefaultMaxPointSizePx = 64.0f;
 constexpr float kMaxTracerGpuExtrapolationSeconds = 0.35f;
 constexpr uint32_t kComputeLocalSizeX = 64U;
+constexpr uint32_t kMediumTrailHistoryVertexCount = 16U;
+constexpr uint32_t kFarTrailHistoryVertexCount = 12U;
 constexpr uint32_t kFarTileSizePx = 16U;
 constexpr uint32_t kBodyKindStar = 0U;
 constexpr uint32_t kBodyKindPlanet = 1U;
@@ -925,7 +927,7 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     }
 
     if (computeDescriptorSetLayout_ == VK_NULL_HANDLE) {
-        const std::array<VkDescriptorSetLayoutBinding, 6> bindings = {{
+        const std::array<VkDescriptorSetLayoutBinding, 8> bindings = {{
             {
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -968,6 +970,20 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
                 .pImmutableSamplers = nullptr,
             },
+            {
+                .binding = 6,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
+            {
+                .binding = 7,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
         }};
         const VkDescriptorSetLayoutCreateInfo layoutCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -990,7 +1006,7 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
             },
             {
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .descriptorCount = 10,
+                .descriptorCount = 14,
             },
         }};
         const VkDescriptorPoolCreateInfo poolCreateInfo{
@@ -1571,6 +1587,22 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
+    std::vector<TrailVertex> tracerMediumTrailVertices;
+    tracerMediumTrailVertices.resize(static_cast<size_t>(tracerMediumCount) * kMediumTrailHistoryVertexCount);
+    std::vector<TrailHistoryMeta> tracerMediumTrailMeta(tracerMediumCount);
+    for (auto& meta : tracerMediumTrailMeta) {
+        meta.sampleCount = 0U;
+        meta.capacity = kMediumTrailHistoryVertexCount;
+    }
+
+    std::vector<TrailVertex> tracerFarTrailVertices;
+    tracerFarTrailVertices.resize(static_cast<size_t>(tracerFarCount) * kFarTrailHistoryVertexCount);
+    std::vector<TrailHistoryMeta> tracerFarTrailMeta(tracerFarCount);
+    for (auto& meta : tracerFarTrailMeta) {
+        meta.sampleCount = 0U;
+        meta.capacity = kFarTrailHistoryVertexCount;
+    }
+
     sceneGpuStreams_.authoritative.path = DrawPath::BillboardSprite;
     sceneGpuStreams_.authoritative.label = "authoritative";
     sceneGpuStreams_.authoritative.strideBytes = sizeof(BillboardVertex);
@@ -1634,7 +1666,12 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         stream.tileCounterCount = 0U;
         stream.visibleVertexCount = 0U;
         stream.visibleVertexCountValid = false;
+        stream.trailVertexCount = 0U;
+        stream.trailStripCount = 0U;
+        stream.trailVerticesPerSource = 0U;
         DestroyGpuBuffer(stream.sourceStateBuffer);
+        DestroyGpuBuffer(stream.trailVertexBuffer);
+        DestroyGpuBuffer(stream.trailMetaBuffer);
         DestroyGpuBuffer(stream.outputVertexBuffer);
         DestroyGpuBuffer(stream.indirectCommandBuffer);
         DestroyGpuBuffer(stream.indirectReadbackBuffer);
@@ -1705,12 +1742,18 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.tracerMediumCompute.label = "tracer-medium-compute";
     sceneGpuStreams_.tracerMediumCompute.sourceVertexCount = tracerMediumCount;
     sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX = RoundUpWorkgroups(tracerMediumCount, kComputeLocalSizeX);
+    sceneGpuStreams_.tracerMediumCompute.trailVerticesPerSource = kMediumTrailHistoryVertexCount;
+    sceneGpuStreams_.tracerMediumCompute.trailStripCount = tracerMediumCount;
+    sceneGpuStreams_.tracerMediumCompute.trailVertexCount = tracerMediumCount * kMediumTrailHistoryVertexCount;
 
     sceneGpuStreams_.tracerFarCompute.enabled = canCompute && tracerFarCount > 0U;
     sceneGpuStreams_.tracerFarCompute.path = DrawPath::DensityPoint;
     sceneGpuStreams_.tracerFarCompute.label = "tracer-far-compute";
     sceneGpuStreams_.tracerFarCompute.sourceVertexCount = tracerFarCount;
     sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX = RoundUpWorkgroups(tracerFarCount, kComputeLocalSizeX);
+    sceneGpuStreams_.tracerFarCompute.trailVerticesPerSource = kFarTrailHistoryVertexCount;
+    sceneGpuStreams_.tracerFarCompute.trailStripCount = tracerFarCount;
+    sceneGpuStreams_.tracerFarCompute.trailVertexCount = tracerFarCount * kFarTrailHistoryVertexCount;
 
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
         if (!TryUploadDeviceLocalWithStaging(
@@ -1720,6 +1763,20 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
                 "tracer-medium-state",
                 sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer)) {
             disableComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute", "compute source state upload failed");
+        } else if (!TryUploadDeviceLocalWithStaging(
+                tracerMediumTrailVertices.data(),
+                ByteSize(tracerMediumTrailVertices),
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                "tracer-medium-trails",
+                sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer)) {
+            disableComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute", "trail vertex buffer upload failed");
+        } else if (!TryUploadDeviceLocalWithStaging(
+                tracerMediumTrailMeta.data(),
+                ByteSize(tracerMediumTrailMeta),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                "tracer-medium-trail-meta",
+                sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer)) {
+            disableComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute", "trail metadata upload failed");
         } else if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerMediumVertices), sizeof(CheapPointVertex))),
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -1756,6 +1813,20 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
                 "tracer-far-state",
                 sceneGpuStreams_.tracerFarCompute.sourceStateBuffer)) {
             disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "compute source state upload failed");
+        } else if (!TryUploadDeviceLocalWithStaging(
+                tracerFarTrailVertices.data(),
+                ByteSize(tracerFarTrailVertices),
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                "tracer-far-trails",
+                sceneGpuStreams_.tracerFarCompute.trailVertexBuffer)) {
+            disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "trail vertex buffer upload failed");
+        } else if (!TryUploadDeviceLocalWithStaging(
+                tracerFarTrailMeta.data(),
+                ByteSize(tracerFarTrailMeta),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                "tracer-far-trail-meta",
+                sceneGpuStreams_.tracerFarCompute.trailMetaBuffer)) {
+            disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "trail metadata upload failed");
         } else if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerFarVertices), sizeof(DensityPointVertex))),
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -1814,10 +1885,14 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.tracerFar.vertexBuffer.sizeBytes +
         sceneGpuStreams_.trails.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.trailVertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.trailMetaBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.sizeBytes +
@@ -1977,10 +2052,14 @@ bool SolarLabVulkanRenderer::UploadFrameGpuStreamsLocked() {
         sceneGpuStreams_.authoritative.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerNear.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.trailVertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.trailMetaBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.sizeBytes +
@@ -2042,7 +2121,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         return true;
     }
 
-    auto updateSet = [this](VkDescriptorSet set, const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect, const GpuBuffer& influence, const GpuBuffer& aux) {
+    auto updateSet = [this](VkDescriptorSet set, const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect, const GpuBuffer& influence, const GpuBuffer& aux, const GpuBuffer& trails, const GpuBuffer& trailMeta) {
         const VkDescriptorBufferInfo uniformInfo{
             .buffer = sceneUniformBuffer_.buffer,
             .offset = 0,
@@ -2073,7 +2152,17 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             .offset = 0,
             .range = influence.sizeBytes,
         };
-        const std::array<VkWriteDescriptorSet, 6> writes = {{
+        const VkDescriptorBufferInfo trailInfo{
+            .buffer = trails.buffer,
+            .offset = 0,
+            .range = trails.sizeBytes,
+        };
+        const VkDescriptorBufferInfo trailMetaInfo{
+            .buffer = trailMeta.buffer,
+            .offset = 0,
+            .range = trailMeta.sizeBytes,
+        };
+        const std::array<VkWriteDescriptorSet, 8> writes = {{
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .pNext = nullptr,
@@ -2146,6 +2235,30 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
                 .pBufferInfo = &auxInfo,
                 .pTexelBufferView = nullptr,
             },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 6,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &trailInfo,
+                .pTexelBufferView = nullptr,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 7,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &trailMetaInfo,
+                .pTexelBufferView = nullptr,
+            },
         }};
         vkUpdateDescriptorSets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     };
@@ -2153,6 +2266,8 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
         if (tracerMediumComputeDescriptorSet_ == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.authoritativeInfluenceBuffer.buffer == VK_NULL_HANDLE) {
@@ -2165,12 +2280,16 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer,
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer,
             sceneGpuStreams_.authoritativeInfluenceBuffer,
-            sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
+            sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer,
+            sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer,
+            sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer);
     }
 
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
         if (tracerFarComputeDescriptorSet_ == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerFarCompute.trailVertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerFarCompute.trailMetaBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.authoritativeInfluenceBuffer.buffer == VK_NULL_HANDLE ||
@@ -2184,7 +2303,9 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             sceneGpuStreams_.tracerFarCompute.outputVertexBuffer,
             sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer,
             sceneGpuStreams_.authoritativeInfluenceBuffer,
-            sceneGpuStreams_.tracerFarCompute.tileCounterBuffer);
+            sceneGpuStreams_.tracerFarCompute.tileCounterBuffer,
+            sceneGpuStreams_.tracerFarCompute.trailVertexBuffer,
+            sceneGpuStreams_.tracerFarCompute.trailMetaBuffer);
     }
 
     return true;
@@ -2494,6 +2615,21 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, &buffer, &offset);
         vkCmdDrawIndirect(commandBuffer, stream.indirectCommandBuffer.buffer, 0, 1, sizeof(VkDrawIndirectCommand));
     };
+    auto bindAndDrawTrailStrips = [this, commandBuffer](const GpuBuffer& buffer, uint32_t stripCount, uint32_t stripVertexCount) {
+        if (trailPipeline_ == VK_NULL_HANDLE || buffer.buffer == VK_NULL_HANDLE || stripCount == 0U || stripVertexCount < 2U) {
+            return;
+        }
+        const VkBuffer trailBuffer = buffer.buffer;
+        const VkDeviceSize trailOffset = 0;
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trailPipeline_);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineLayout_, 0, 1, &sceneDescriptorSet_, 0, nullptr);
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &trailBuffer, &trailOffset);
+        uint32_t firstVertex = 0U;
+        for (uint32_t stripIndex = 0; stripIndex < stripCount; ++stripIndex) {
+            vkCmdDraw(commandBuffer, stripVertexCount, 1, firstVertex, 0);
+            firstVertex += stripVertexCount;
+        }
+    };
 
     bindAndDraw(billboardPipeline_, sceneGpuStreams_.authoritative);
     bindAndDraw(billboardPipeline_, sceneGpuStreams_.tracerNear);
@@ -2522,6 +2658,18 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
             }
         }
     }
+    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
+        bindAndDrawTrailStrips(
+            sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer,
+            sceneGpuStreams_.tracerMediumCompute.trailStripCount,
+            sceneGpuStreams_.tracerMediumCompute.trailVerticesPerSource);
+    }
+    if (sceneGpuStreams_.tracerFarCompute.enabled) {
+        bindAndDrawTrailStrips(
+            sceneGpuStreams_.tracerFarCompute.trailVertexBuffer,
+            sceneGpuStreams_.tracerFarCompute.trailStripCount,
+            sceneGpuStreams_.tracerFarCompute.trailVerticesPerSource);
+    }
 
     return true;
 }
@@ -2548,10 +2696,14 @@ void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.tracerFar.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.trails.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.sourceStateBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.trailVertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.trailMetaBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.outputVertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
@@ -2965,6 +3117,14 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << " TF=" << uploadStats_.tracerFarCount
         << " TL=" << uploadStats_.trailVertexCount
         << '/' << uploadStats_.trailStripCount
+        << " GTL="
+        << sceneGpuStreams_.tracerMediumCompute.trailVertexCount
+        << '/'
+        << sceneGpuStreams_.tracerMediumCompute.trailStripCount
+        << '+'
+        << sceneGpuStreams_.tracerFarCompute.trailVertexCount
+        << '/'
+        << sceneGpuStreams_.tracerFarCompute.trailStripCount
         << " bytes=" << uploadStats_.bytesUploaded
         << " paths=["
         << DrawPathName(sceneGpuStreams_.authoritative.path) << ','
@@ -2979,6 +3139,8 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << (sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.buffer != VK_NULL_HANDLE ? "state" : "none")
         << "/vis="
         << (sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid ? std::to_string(sceneGpuStreams_.tracerMediumCompute.visibleVertexCount) : std::string("-"))
+        << "/trail="
+        << sceneGpuStreams_.tracerMediumCompute.trailVertexCount
         << ','
         << (sceneGpuStreams_.tracerFarCompute.enabled ? "TF:" : "TF:-")
         << sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX
@@ -2988,6 +3150,8 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << sceneGpuStreams_.tracerFarCompute.tileCounterCount
         << "/vis="
         << (sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.visibleVertexCount) : std::string("-"))
+        << "/trail="
+        << sceneGpuStreams_.tracerFarCompute.trailVertexCount
         << ']'
         << " gp=["
         << (billboardPipeline_ != VK_NULL_HANDLE ? "bb" : "--") << ','

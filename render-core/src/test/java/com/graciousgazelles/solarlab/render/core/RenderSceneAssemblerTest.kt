@@ -128,6 +128,91 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    fun nativePacketLeavesMediumAndFarTrailHistoryToGpuOwnership() {
+        val frame = RenderSceneFrame(
+            epochSeconds = 0.0,
+            authoritativeBodies = emptyList(),
+            tracerBodies = listOf(
+                RenderBody(
+                    id = "probe-near",
+                    name = "Probe Near",
+                    positionM = Vector3d(0.2 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    radiusM = 10.0,
+                    colorArgb = 0xFFFFFFFF.toInt(),
+                    kind = RenderBodyKind.PROBE,
+                    isMassive = false,
+                ),
+                RenderBody(
+                    id = "probe-medium",
+                    name = "Probe Medium",
+                    positionM = Vector3d(4.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    radiusM = 10.0,
+                    colorArgb = 0xFF44AAFF.toInt(),
+                    kind = RenderBodyKind.PROBE,
+                    isMassive = false,
+                ),
+                RenderBody(
+                    id = "probe-far",
+                    name = "Probe Far",
+                    positionM = Vector3d(12.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    radiusM = 10.0,
+                    colorArgb = 0xFFFF8844.toInt(),
+                    kind = RenderBodyKind.PROBE,
+                    isMassive = false,
+                ),
+            ),
+            trails = listOf(
+                RenderTrail(
+                    bodyId = "probe-near",
+                    colorArgb = 0xFFFFFFFF.toInt(),
+                    alpha = 0.5f,
+                    pointsM = listOf(
+                        Vector3d(0.1 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                        Vector3d(0.2 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    ),
+                ),
+                RenderTrail(
+                    bodyId = "probe-medium",
+                    colorArgb = 0xFF44AAFF.toInt(),
+                    alpha = 0.5f,
+                    pointsM = listOf(
+                        Vector3d(3.8 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                        Vector3d(4.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    ),
+                ),
+                RenderTrail(
+                    bodyId = "probe-far",
+                    colorArgb = 0xFFFF8844.toInt(),
+                    alpha = 0.5f,
+                    pointsM = listOf(
+                        Vector3d(11.8 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                        Vector3d(12.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    ),
+                ),
+            ),
+            sourceRevision = 19L,
+        )
+
+        val packet = NativeScenePacket.fromScene(
+            frame = frame,
+            cameraState = CameraState(viewRadiusM = PhysicalConstants.ASTRONOMICAL_UNIT_M),
+            viewportWidthPx = 1920,
+            viewportHeightPx = 1080,
+            policy = ScenePacketBuildPolicy(
+                nearTracerBudget = 4,
+                mediumTracerBudget = 4,
+                farTracerBudget = 4,
+            ),
+        )
+
+        assertEquals(1, packet.tracerNearCount)
+        assertEquals(1, packet.tracerMediumCount)
+        assertEquals(1, packet.tracerFarCount)
+        assertEquals(1, packet.trailCount)
+        assertEquals(2, packet.trailVertexCounts.single())
+    }
+
+    @Test
     fun nativePacketDownsamplesTracerTiersDeterministically() {
         val tracers = (0 until 100).map { index ->
             RenderBody(

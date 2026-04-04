@@ -24,6 +24,19 @@ struct DensityPointVertex {
     uint densityWeight;
 };
 
+struct TrailVertex {
+    vec2 positionM;
+    uint colorArgb;
+    float alpha;
+};
+
+struct TrailHistoryMeta {
+    uint sampleCount;
+    uint capacity;
+    uint reserved0;
+    uint reserved1;
+};
+
 struct AuthoritativeInfluenceBody {
     vec4 positionMass;
 };
@@ -50,6 +63,14 @@ layout(set = 0, binding = 4, std430) readonly buffer InfluenceBodies {
 layout(set = 0, binding = 5, std430) buffer TileCounterBuffer {
     uint counts[];
 } uTiles;
+
+layout(set = 0, binding = 6, std430) buffer TrailVertices {
+    TrailVertex vertices[];
+} uTrails;
+
+layout(set = 0, binding = 7, std430) buffer TrailMetaBuffer {
+    TrailHistoryMeta entries[];
+} uTrailMeta;
 
 layout(push_constant) uniform PushConstants {
     uint sourceCount;
@@ -91,6 +112,36 @@ vec2 accelerationAt(vec2 positionM) {
     return acceleration;
 }
 
+void appendTrailSample(uint index, vec2 positionM, uint colorArgb, float alpha) {
+    TrailHistoryMeta meta = uTrailMeta.entries[index];
+    uint capacity = max(meta.capacity, 1u);
+    uint sampleCount = min(meta.sampleCount, capacity);
+    uint base = index * capacity;
+
+    if (sampleCount < capacity) {
+        sampleCount += 1u;
+    }
+    if (sampleCount > 1u) {
+        for (uint trailIndex = 0u; trailIndex + 1u < sampleCount; ++trailIndex) {
+            uTrails.vertices[base + trailIndex] = uTrails.vertices[base + trailIndex + 1u];
+        }
+    }
+
+    uTrails.vertices[base + sampleCount - 1u] = TrailVertex(positionM, colorArgb, alpha);
+
+    for (uint trailIndex = sampleCount; trailIndex < capacity; ++trailIndex) {
+        uTrails.vertices[base + trailIndex] = TrailVertex(positionM, colorArgb, 0.0);
+    }
+    for (uint trailIndex = 0u; trailIndex < sampleCount; ++trailIndex) {
+        float fade = sampleCount <= 1u ? alpha : alpha * float(trailIndex + 1u) / float(sampleCount);
+        uTrails.vertices[base + trailIndex].colorArgb = colorArgb;
+        uTrails.vertices[base + trailIndex].alpha = fade;
+    }
+
+    meta.sampleCount = sampleCount;
+    uTrailMeta.entries[index] = meta;
+}
+
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= uPush.sourceCount) {
@@ -106,6 +157,7 @@ void main() {
         vec2 acceleration1 = accelerationAt(positionNext);
         candidate.positionM = positionNext;
         candidate.velocityMps = velocityHalf + (acceleration1 * (0.5 * stepSeconds));
+        appendTrailSample(index, candidate.positionM, candidate.colorArgb, candidate.trailAlpha);
     }
     if (!isInsideExtendedView(candidate.positionM)) {
         uState.src[index] = candidate;
