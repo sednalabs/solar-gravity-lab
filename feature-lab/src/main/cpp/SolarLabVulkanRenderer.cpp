@@ -20,7 +20,7 @@ constexpr const char* kLogTag = "SolarLabVulkan";
 constexpr float kNearTracerAlpha = 0.58f;
 constexpr float kMediumTracerAlpha = 0.42f;
 constexpr float kFarTracerAlpha = 0.26f;
-constexpr float kMediumTracerPointSizePx = 2.60f;
+constexpr float kMediumTracerPointSizePx = 3.0f;
 constexpr float kFarTracerPointSizePx = 1.60f;
 constexpr float kTrailAlpha = 0.90f;
 constexpr float kDefaultMaxPointSizePx = 64.0f;
@@ -77,16 +77,16 @@ uint32_t SafeCount3(size_t positionsCount, size_t peerCountA, size_t peerCountB)
 float KindMinimumBillboardDiameterPx(uint32_t kind) {
     switch (kind) {
         case kBodyKindStar:
-            return 8.0f;
+            return 9.0f;
         case kBodyKindPlanet:
-            return 5.6f;
+            return 6.4f;
         case kBodyKindDwarfPlanet:
-            return 4.6f;
+            return 5.2f;
         case kBodyKindProbe:
         case kBodyKindTestObject:
-            return 3.2f;
+            return 4.0f;
         default:
-            return 3.4f;
+            return 3.8f;
     }
 }
 
