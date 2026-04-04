@@ -150,6 +150,7 @@ class RenderSceneAssemblerTest {
     fun nativePacketBrightensAndEnlargesSelectedBodyAndTrail() {
         val selectedColor = 0xFF336699.toInt()
         val unselectedColor = 0xFF445566.toInt()
+        val trailAlpha = 0.4f
         val frame = RenderSceneFrame(
             epochSeconds = 0.0,
             authoritativeBodies = listOf(
@@ -177,8 +178,14 @@ class RenderSceneAssemblerTest {
                 RenderTrail(
                     bodyId = "selected",
                     colorArgb = selectedColor,
-                    alpha = 0.5f,
+                    alpha = trailAlpha,
                     pointsM = listOf(Vector3d.ZERO, Vector3d(10.0, 0.0, 0.0)),
+                ),
+                RenderTrail(
+                    bodyId = "other",
+                    colorArgb = unselectedColor,
+                    alpha = trailAlpha,
+                    pointsM = listOf(Vector3d(1_000.0, 0.0, 0.0), Vector3d(1_010.0, 0.0, 0.0)),
                 ),
             ),
             sourceRevision = 9L,
@@ -186,13 +193,19 @@ class RenderSceneAssemblerTest {
 
         val packet = NativeScenePacket.fromScene(
             frame = frame,
+            policy = ScenePacketBuildPolicy(selectedTrailAlphaBoost = 1.5),
             selectedBodyId = "selected",
         )
 
         assertTrue(packet.authoritativeRadiiM[0] > packet.authoritativeRadiiM[1])
         assertTrue(packet.authoritativeColorsArgb[0] != selectedColor)
         assertEquals(unselectedColor, packet.authoritativeColorsArgb[1])
-        assertTrue(packet.trailColorsArgb.all { it != selectedColor })
+        assertEquals(4, packet.trailColorsArgb.size)
+        val selectedTrailColor = packet.trailColorsArgb[0]
+        val unselectedTrailColor = packet.trailColorsArgb.last()
+        assertTrue(selectedTrailColor != selectedColor)
+        assertEquals((trailAlpha * 255.0f).toInt(), alphaChannel(unselectedTrailColor))
+        assertTrue(alphaChannel(selectedTrailColor) > alphaChannel(unselectedTrailColor))
     }
 
     @Test
@@ -269,4 +282,6 @@ class RenderSceneAssemblerTest {
         velocityMps = Vector3d.ZERO,
         colorArgb = 0xFFFFFFFF.toInt(),
     )
+
+    private fun alphaChannel(argb: Int): Int = (argb ushr 24) and 0xFF
 }
