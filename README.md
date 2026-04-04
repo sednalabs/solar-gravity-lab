@@ -115,6 +115,8 @@ installable `prerelease` APK artifact on GitHub Actions. That path is meant for
 internal dev preview sideloading only: it uses the application id
 `com.sednalabs.solarlab.internal` and is signed with the default debug key, so
 it is appropriate for device testing but not for a public production release.
+The current internal dev preview also includes a screen-orientation lock toggle
+in the bottom control rail so you can freeze the UI while testing on-device.
 
 For contributors, the most reliable near-term validation target is the pure JVM core:
 
