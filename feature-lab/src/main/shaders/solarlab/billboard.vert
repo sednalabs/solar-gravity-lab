@@ -31,18 +31,18 @@ vec4 unpackArgb(uint argb) {
 
 float minimumDiameterForKind(uint kind) {
     if (kind == KIND_STAR) {
-        return 8.0;
+        return 9.0;
     }
     if (kind == KIND_PLANET) {
-        return 5.6;
+        return 6.4;
     }
     if (kind == KIND_DWARF_PLANET) {
-        return 4.6;
+        return 5.2;
     }
     if (kind == KIND_PROBE || kind == KIND_TEST_OBJECT) {
-        return 3.2;
+        return 4.0;
     }
-    return 3.4;
+    return 3.8;
 }
 
 vec2 worldToClip(vec2 worldPositionM) {
