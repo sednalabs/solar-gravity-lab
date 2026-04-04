@@ -5,9 +5,7 @@ import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import com.graciousgazelles.solarlab.app.databinding.ActivityMainBinding
 import com.graciousgazelles.solarlab.core.math.Vector3d
-import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.CollisionMode
-import com.graciousgazelles.solarlab.core.model.GravitationalRole
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.TimelineMode
 import com.graciousgazelles.solarlab.feature.lab.LabFrame
@@ -495,22 +493,6 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         } else {
             getString(R.string.action_info_show)
         }
-    }
-
-    private fun prettyCategoryLabel(category: BodyCategory): String = when (category) {
-        BodyCategory.STAR -> getString(R.string.category_star)
-        BodyCategory.PLANET -> getString(R.string.category_planet)
-        BodyCategory.MOON -> getString(R.string.category_moon)
-        BodyCategory.DWARF_PLANET -> getString(R.string.category_dwarf_planet)
-        BodyCategory.ASTEROID -> getString(R.string.category_asteroid)
-        BodyCategory.COMET -> getString(R.string.category_comet)
-        BodyCategory.TEST_OBJECT -> getString(R.string.category_test_object)
-        BodyCategory.PROBE -> getString(R.string.category_probe)
-    }
-
-    private fun prettyRoleLabel(role: GravitationalRole): String = when (role) {
-        GravitationalRole.MASSIVE -> getString(R.string.role_massive_body)
-        GravitationalRole.TRACER -> getString(R.string.role_tracer)
     }
 
     private fun formatSpeed(speedMps: Double): String = when {

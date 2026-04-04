@@ -1,5 +1,6 @@
 package com.graciousgazelles.solarlab.app
 
+import android.content.Context
 import androidx.appcompat.app.AlertDialog
 import android.graphics.Color
 import android.view.LayoutInflater
@@ -27,12 +28,12 @@ internal object BodyEditorDialogs {
         binding.spinnerBodyCategory.adapter = ArrayAdapter(
             activity,
             android.R.layout.simple_spinner_dropdown_item,
-            categories.map(::prettyCategoryLabel),
+            categories.map(activity::prettyCategoryLabel),
         )
         binding.spinnerBodyRole.adapter = ArrayAdapter(
             activity,
             android.R.layout.simple_spinner_dropdown_item,
-            roles.map(::prettyRoleLabel),
+            roles.map { activity.prettyRoleLabel(it, includeRoleHints = true) },
         )
 
         binding.editBodyName.setText(draft.name)
@@ -98,27 +99,51 @@ internal object BodyEditorDialogs {
         val name = binding.editBodyName.text?.toString()?.trim().orEmpty()
         if (name.isBlank()) return fail("Name is required.")
 
-        val massKg = binding.editMassKg.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Mass must be a valid number.")
-        if (massKg < 0.0) return fail("Mass must be zero or positive.")
+        val massKg = parseValidatedDouble(
+            rawValue = binding.editMassKg.text?.toString(),
+            fieldLabel = "Mass",
+            allowNegative = false,
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
 
-        val radiusM = binding.editRadiusM.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Radius must be a valid number.")
-        if (radiusM < 0.0) return fail("Radius must be zero or positive.")
+        val radiusM = parseValidatedDouble(
+            rawValue = binding.editRadiusM.text?.toString(),
+            fieldLabel = "Radius",
+            allowNegative = false,
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
 
-        val positionX = binding.editPositionX.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Position X must be a valid number.")
-        val positionY = binding.editPositionY.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Position Y must be a valid number.")
-        val positionZ = binding.editPositionZ.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Position Z must be a valid number.")
+        val positionX = parseValidatedDouble(
+            rawValue = binding.editPositionX.text?.toString(),
+            fieldLabel = "Position X",
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
+        val positionY = parseValidatedDouble(
+            rawValue = binding.editPositionY.text?.toString(),
+            fieldLabel = "Position Y",
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
+        val positionZ = parseValidatedDouble(
+            rawValue = binding.editPositionZ.text?.toString(),
+            fieldLabel = "Position Z",
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
 
-        val velocityX = binding.editVelocityX.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Velocity X must be a valid number.")
-        val velocityY = binding.editVelocityY.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Velocity Y must be a valid number.")
-        val velocityZ = binding.editVelocityZ.text?.toString()?.trim().orEmpty().toDoubleOrNull()
-            ?: return fail("Velocity Z must be a valid number.")
+        val velocityX = parseValidatedDouble(
+            rawValue = binding.editVelocityX.text?.toString(),
+            fieldLabel = "Velocity X",
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
+        val velocityY = parseValidatedDouble(
+            rawValue = binding.editVelocityY.text?.toString(),
+            fieldLabel = "Velocity Y",
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
+        val velocityZ = parseValidatedDouble(
+            rawValue = binding.editVelocityZ.text?.toString(),
+            fieldLabel = "Velocity Z",
+            onError = { binding.textBodyEditorError.text = it },
+        ) ?: return null
 
         val colorArgb = parseColorArgb(binding.editColorHex.text?.toString().orEmpty())
             ?: return fail("Color must be 6 or 8 hex digits.")
@@ -152,19 +177,45 @@ internal object BodyEditorDialogs {
         return runCatching { Color.parseColor(normalized) }.getOrNull()
     }
 
-    private fun prettyCategoryLabel(category: BodyCategory): String = when (category) {
-        BodyCategory.STAR -> "Star"
-        BodyCategory.PLANET -> "Planet"
-        BodyCategory.MOON -> "Moon"
-        BodyCategory.DWARF_PLANET -> "Dwarf planet"
-        BodyCategory.ASTEROID -> "Asteroid"
-        BodyCategory.COMET -> "Comet"
-        BodyCategory.TEST_OBJECT -> "Test object"
-        BodyCategory.PROBE -> "Probe"
+    private fun parseValidatedDouble(
+        rawValue: String?,
+        fieldLabel: String,
+        allowNegative: Boolean = true,
+        onError: (String) -> Unit,
+    ): Double? {
+        val parsed = rawValue?.trim().orEmpty().toDoubleOrNull()
+            ?: run {
+                onError("$fieldLabel must be a valid number.")
+                return null
+            }
+        if (!allowNegative && parsed < 0.0) {
+            onError("$fieldLabel must be zero or positive.")
+            return null
+        }
+        return parsed
     }
+}
 
-    private fun prettyRoleLabel(role: GravitationalRole): String = when (role) {
-        GravitationalRole.MASSIVE -> "Massive (mutual gravity)"
-        GravitationalRole.TRACER -> "Tracer (passive)"
+internal fun Context.prettyCategoryLabel(category: BodyCategory): String = when (category) {
+    BodyCategory.STAR -> getString(R.string.category_star)
+    BodyCategory.PLANET -> getString(R.string.category_planet)
+    BodyCategory.MOON -> getString(R.string.category_moon)
+    BodyCategory.DWARF_PLANET -> getString(R.string.category_dwarf_planet)
+    BodyCategory.ASTEROID -> getString(R.string.category_asteroid)
+    BodyCategory.COMET -> getString(R.string.category_comet)
+    BodyCategory.TEST_OBJECT -> getString(R.string.category_test_object)
+    BodyCategory.PROBE -> getString(R.string.category_probe)
+}
+
+internal fun Context.prettyRoleLabel(role: GravitationalRole, includeRoleHints: Boolean = false): String = when (role) {
+    GravitationalRole.MASSIVE -> if (includeRoleHints) {
+        "Massive (mutual gravity)"
+    } else {
+        getString(R.string.role_massive_body)
+    }
+    GravitationalRole.TRACER -> if (includeRoleHints) {
+        "Tracer (passive)"
+    } else {
+        getString(R.string.role_tracer)
     }
 }
