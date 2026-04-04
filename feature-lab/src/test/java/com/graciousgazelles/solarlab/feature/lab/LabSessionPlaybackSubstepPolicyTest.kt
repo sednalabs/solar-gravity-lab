@@ -38,7 +38,7 @@ class LabSessionPlaybackSubstepPolicyTest {
             collisionMode = CollisionMode.NONE,
         )
 
-        assertEquals(43_200.0, effective, 0.0)
+        assertEquals(21_600.0, effective, 0.0)
     }
 
     @Test
@@ -58,14 +58,15 @@ class LabSessionPlaybackSubstepPolicyTest {
     }
 
     @Test
-    fun `coarse playback substeps drift moon host-relative state versus one-hour baseline`() {
+    fun `playback policy drift is lower than coarse legacy cap versus one-hour baseline`() {
         val playbackTickSeconds = 864_000.0
         val playbackTicks = 3
         val baselineMaxSubstepSeconds = 3_600.0
-        val playbackMaxSubstepSeconds = LabSession.effectivePlaybackMaxSubstepSeconds(
+        val policyMaxSubstepSeconds = LabSession.effectivePlaybackMaxSubstepSeconds(
             totalSeconds = playbackTickSeconds,
             collisionMode = CollisionMode.NONE,
         )
+        val coarseLegacyMaxSubstepSeconds = 43_200.0
 
         val start = SolarSystemScenarios.defaultLabScenario(
             includeSyntheticAsteroidBelt = false,
@@ -77,25 +78,35 @@ class LabSessionPlaybackSubstepPolicyTest {
             tickSeconds = playbackTickSeconds,
             maxSubstepSeconds = baselineMaxSubstepSeconds,
         )
-        val playback = advanceSnapshot(
+        val coarseLegacy = advanceSnapshot(
             start = start,
             ticks = playbackTicks,
             tickSeconds = playbackTickSeconds,
-            maxSubstepSeconds = playbackMaxSubstepSeconds,
+            maxSubstepSeconds = coarseLegacyMaxSubstepSeconds,
+        )
+        val policy = advanceSnapshot(
+            start = start,
+            ticks = playbackTicks,
+            tickSeconds = playbackTickSeconds,
+            maxSubstepSeconds = policyMaxSubstepSeconds,
         )
 
         val baselineMoon = baseline.bodies.first { it.id == "moon" }
         val baselineEarth = baseline.bodies.first { it.id == "earth" }
-        val playbackMoon = playback.bodies.first { it.id == "moon" }
-        val playbackEarth = playback.bodies.first { it.id == "earth" }
+        val coarseLegacyMoon = coarseLegacy.bodies.first { it.id == "moon" }
+        val coarseLegacyEarth = coarseLegacy.bodies.first { it.id == "earth" }
+        val policyMoon = policy.bodies.first { it.id == "moon" }
+        val policyEarth = policy.bodies.first { it.id == "earth" }
         val baselineMoonFromEarth = baselineMoon.positionM - baselineEarth.positionM
-        val playbackMoonFromEarth = playbackMoon.positionM - playbackEarth.positionM
-        val hostRelativeDriftMeters = (playbackMoonFromEarth - baselineMoonFromEarth).magnitude()
+        val coarseLegacyMoonFromEarth = coarseLegacyMoon.positionM - coarseLegacyEarth.positionM
+        val policyMoonFromEarth = policyMoon.positionM - policyEarth.positionM
+        val coarseLegacyDriftMeters = (coarseLegacyMoonFromEarth - baselineMoonFromEarth).magnitude()
+        val policyDriftMeters = (policyMoonFromEarth - baselineMoonFromEarth).magnitude()
 
-        assertEquals(43_200.0, playbackMaxSubstepSeconds, 0.0)
+        assertEquals(21_600.0, policyMaxSubstepSeconds, 0.0)
         assertTrue(
-            "Expected measurable moon/earth drift from playback coarse substeps, drift=$hostRelativeDriftMeters m",
-            hostRelativeDriftMeters > 100_000.0,
+            "Expected policy drift ($policyDriftMeters m) to stay below coarse legacy drift ($coarseLegacyDriftMeters m)",
+            policyDriftMeters < coarseLegacyDriftMeters,
         )
     }
 
