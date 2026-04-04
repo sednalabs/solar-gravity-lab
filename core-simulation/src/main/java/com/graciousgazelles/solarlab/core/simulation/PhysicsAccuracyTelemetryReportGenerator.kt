@@ -14,16 +14,21 @@ import kotlin.math.abs
 
 class PhysicsAccuracyTelemetryReportGenerator(
     private val scenarioFactory: () -> com.graciousgazelles.solarlab.core.model.SimulationSnapshot = {
-        SolarSystemScenarios.majorBodiesWithDwarfs(
+        SolarSystemScenarios.defaultLabScenario(
+            asteroidCount = 0,
+            oortCount = 0,
             config = SimulationConfig(collisionMode = CollisionMode.NONE),
+            includeCuratedSmallBodies = false,
+            includeSyntheticAsteroidBelt = false,
+            includeSyntheticOortCloud = false,
         )
     },
 ) {
 
     data class GenerationConfig(
         val runLabel: String = "validation-lab-physics-accuracy",
-        val scenarioId: String = "major-bodies-with-dwarfs",
-        val scenarioLabel: String = "Solar major bodies + dwarfs baseline",
+        val scenarioId: String = "major-bodies-with-starter-moons",
+        val scenarioLabel: String = "Solar major bodies + starter moons baseline",
         val stepSeconds: Double = DEFAULT_STEP_SECONDS,
         val steps: Int = DEFAULT_STEPS,
     )
@@ -45,15 +50,59 @@ class PhysicsAccuracyTelemetryReportGenerator(
 
         val finalSnapshot = engine.snapshot()
         val finalDiagnostics = engine.diagnostics()
+        val sunStart = snapshot.bodies.firstOrNull { it.id == "sun" }
+            ?: error("Scenario '${config.scenarioId}' did not include sun body")
+        val earthStart = snapshot.bodies.firstOrNull { it.id == "earth" }
+            ?: error("Scenario '${config.scenarioId}' did not include earth body")
+        val sun = finalSnapshot.bodies.firstOrNull { it.id == "sun" }
+            ?: error("Scenario '${config.scenarioId}' did not include sun body")
         val earth = finalSnapshot.bodies.firstOrNull { it.id == "earth" }
             ?: error("Scenario '${config.scenarioId}' did not include earth body")
 
-        val earthDistanceAu = earth.positionM.magnitude() / PhysicalConstants.ASTRONOMICAL_UNIT_M
+        val earthDistanceAu = (earth.positionM - sun.positionM).magnitude() / PhysicalConstants.ASTRONOMICAL_UNIT_M
+        val earthStartDistanceAu = (earthStart.positionM - sunStart.positionM).magnitude() / PhysicalConstants.ASTRONOMICAL_UNIT_M
         val energyDeltaJ = finalDiagnostics.totalEnergyJ - startingDiagnostics.totalEnergyJ
         val relativeEnergyDrift = if (startingDiagnostics.totalEnergyJ == 0.0) {
             0.0
         } else {
             energyDeltaJ / startingDiagnostics.totalEnergyJ
+        }
+        val moonStart = snapshot.bodies.firstOrNull { it.id == "moon" && it.hostBodyId == "earth" }
+        val moonFinal = finalSnapshot.bodies.firstOrNull { it.id == "moon" && it.hostBodyId == "earth" }
+        val moonToEarthMetrics = if (moonStart != null && moonFinal != null) {
+            val moonEarthStartDistanceAu = (moonStart.positionM - earthStart.positionM).magnitude() /
+                PhysicalConstants.ASTRONOMICAL_UNIT_M
+            val moonEarthFinalDistanceAu = (moonFinal.positionM - earth.positionM).magnitude() /
+                PhysicalConstants.ASTRONOMICAL_UNIT_M
+            val moonEarthDistanceDriftAu = moonEarthFinalDistanceAu - moonEarthStartDistanceAu
+            val moonEarthRelativeDrift = if (moonEarthStartDistanceAu == 0.0) {
+                0.0
+            } else {
+                moonEarthDistanceDriftAu / moonEarthStartDistanceAu
+            }
+
+            listOf(
+                PhysicsAccuracyTelemetryMetric(
+                    name = "moon_earth_distance_au",
+                    value = moonEarthFinalDistanceAu,
+                    unit = "au",
+                    description = "Earth-Moon distance at final step, measured in astronomical units",
+                ),
+                PhysicsAccuracyTelemetryMetric(
+                    name = "moon_earth_distance_change_au",
+                    value = moonEarthDistanceDriftAu,
+                    unit = "au",
+                    description = "Final Earth-Moon distance minus initial Earth-Moon distance",
+                ),
+                PhysicsAccuracyTelemetryMetric(
+                    name = "moon_earth_distance_change_ratio",
+                    value = moonEarthRelativeDrift,
+                    unit = "ratio",
+                    description = "Earth-Moon distance change normalized by initial Earth-Moon distance",
+                ),
+            )
+        } else {
+            emptyList()
         }
 
         return PhysicsAccuracyTelemetryReport(
@@ -70,44 +119,57 @@ class PhysicsAccuracyTelemetryReportGenerator(
                 datasetLabel = snapshot.provenanceLabel,
                 datasetSource = snapshot.provenanceSource,
             ),
-            metrics = listOf(
-                PhysicsAccuracyTelemetryMetric(
-                    name = "relative_energy_drift",
-                    value = relativeEnergyDrift,
-                    unit = "ratio",
-                    description = "Final total energy drift ratio against initial total energy",
-                ),
-                PhysicsAccuracyTelemetryMetric(
-                    name = "absolute_energy_drift_joules",
-                    value = energyDeltaJ,
-                    unit = "joules",
-                    description = "Final total energy minus initial total energy",
-                ),
-                PhysicsAccuracyTelemetryMetric(
-                    name = "earth_distance_au",
-                    value = earthDistanceAu,
-                    unit = "au",
-                    description = "Earth heliocentric distance in astronomical units at final step",
-                ),
-                PhysicsAccuracyTelemetryMetric(
-                    name = "earth_distance_error_from_1au",
-                    value = abs(earthDistanceAu - 1.0),
-                    unit = "au",
-                    description = "Absolute deviation from 1 astronomical unit at final step",
-                ),
-                PhysicsAccuracyTelemetryMetric(
-                    name = "massive_body_count",
-                    value = finalDiagnostics.massiveBodyCount.toDouble(),
-                    unit = "count",
-                    description = "Massive body count in the simulated snapshot",
-                ),
-                PhysicsAccuracyTelemetryMetric(
-                    name = "tracer_body_count",
-                    value = finalDiagnostics.tracerBodyCount.toDouble(),
-                    unit = "count",
-                    description = "Tracer body count in the simulated snapshot",
-                ),
-            ),
+            metrics = buildList {
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "relative_energy_drift",
+                        value = relativeEnergyDrift,
+                        unit = "ratio",
+                        description = "Final total energy drift ratio against initial total energy",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "absolute_energy_drift_joules",
+                        value = energyDeltaJ,
+                        unit = "joules",
+                        description = "Final total energy minus initial total energy",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "earth_distance_au",
+                        value = earthDistanceAu,
+                        unit = "au",
+                        description = "Sun-Earth distance in astronomical units at final step",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "earth_distance_change_from_initial_au",
+                        value = abs(earthDistanceAu - earthStartDistanceAu),
+                        unit = "au",
+                        description = "Absolute change in Sun-Earth distance from the initial step",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "massive_body_count",
+                        value = finalDiagnostics.massiveBodyCount.toDouble(),
+                        unit = "count",
+                        description = "Massive body count in the simulated snapshot",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "tracer_body_count",
+                        value = finalDiagnostics.tracerBodyCount.toDouble(),
+                        unit = "count",
+                        description = "Tracer body count in the simulated snapshot",
+                    ),
+                )
+                addAll(moonToEarthMetrics)
+            },
         )
     }
 

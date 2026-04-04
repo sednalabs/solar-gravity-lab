@@ -37,9 +37,31 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
 
         val json = generator.toJson(report)
         assertTrue(json.contains("\"schemaVersion\": \"physics-accuracy-telemetry.v1\""))
-        assertTrue(json.contains("\"scenarioId\": \"major-bodies-with-dwarfs\""))
+        assertTrue(json.contains("\"scenarioId\": \"major-bodies-with-starter-moons\""))
         assertTrue(json.contains("\"metrics\": ["))
         assertTrue(json.contains("\"relative_energy_drift\""))
+        assertTrue(json.contains("\"moon_earth_distance_au\""))
+    }
+
+    @Test
+    fun `moon-host metrics are emitted for default telemetry scenario`() {
+        val generator = PhysicsAccuracyTelemetryReportGenerator()
+        val config = PhysicsAccuracyTelemetryReportGenerator.GenerationConfig(
+            runLabel = "moon-host-metrics",
+            stepSeconds = 3600.0,
+            steps = 6,
+        )
+
+        val first = generator.generate(config)
+        val second = generator.generate(config)
+        assertEquals(first, second)
+        assertEquals(generator.toJson(first), generator.toJson(second))
+
+        val metrics = first.metrics.associateBy { it.name }
+        assertTrue(metrics.containsKey("moon_earth_distance_au"))
+        assertTrue(metrics.containsKey("moon_earth_distance_change_au"))
+        assertTrue(metrics.containsKey("moon_earth_distance_change_ratio"))
+        assertTrue(metrics["moon_earth_distance_au"]!!.value > 0.0)
     }
 
     @Test
