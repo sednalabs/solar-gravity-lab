@@ -3,12 +3,15 @@ package com.graciousgazelles.solarlab.feature.lab
 import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
+import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.simulation.SimulationEngine
 import com.graciousgazelles.solarlab.core.simulation.SolarSystemScenarios
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.acos
 import kotlin.math.ceil
+import kotlin.math.abs
 
 class LabSessionPlaybackSubstepPolicyTest {
 
@@ -127,6 +130,58 @@ class LabSessionPlaybackSubstepPolicyTest {
         )
     }
 
+    @Test
+    fun `playback policy keeps short-window moon-earth turning-angle jitter below coarse legacy baseline`() {
+        // This is a host-relative playback proxy, not a full screen-space render-jank assertion.
+        val playbackTickSeconds = 86_400.0
+        val playbackWindowTicks = 6
+        val fineMaxSubstepSeconds = 120.0
+        val coarseLegacyMaxSubstepSeconds = 43_200.0
+        val policyMaxSubstepSeconds = LabSession.effectivePlaybackMaxSubstepSeconds(
+            totalSeconds = playbackTickSeconds,
+            collisionMode = CollisionMode.NONE,
+        )
+
+        val start = SolarSystemScenarios.defaultLabScenario(
+            includeSyntheticAsteroidBelt = false,
+            includeSyntheticOortCloud = false,
+        )
+        val baseline = hostRelativeTurningAngles(
+            start = start,
+            ticks = playbackWindowTicks,
+            tickSeconds = playbackTickSeconds,
+            maxSubstepSeconds = fineMaxSubstepSeconds,
+        )
+        val policy = hostRelativeTurningAngles(
+            start = start,
+            ticks = playbackWindowTicks,
+            tickSeconds = playbackTickSeconds,
+            maxSubstepSeconds = policyMaxSubstepSeconds,
+        )
+        val coarseLegacy = hostRelativeTurningAngles(
+            start = start,
+            ticks = playbackWindowTicks,
+            tickSeconds = playbackTickSeconds,
+            maxSubstepSeconds = coarseLegacyMaxSubstepSeconds,
+        )
+
+        assertEquals(7_200.0, policyMaxSubstepSeconds, 0.0)
+        assertEquals(playbackWindowTicks, baseline.size)
+        assertEquals(playbackWindowTicks, policy.size)
+        assertEquals(playbackWindowTicks, coarseLegacy.size)
+
+        val policyMaxTurningError = maxTurningAngleError(policy, baseline)
+        val coarseLegacyMaxTurningError = maxTurningAngleError(coarseLegacy, baseline)
+        val improvement = coarseLegacyMaxTurningError - policyMaxTurningError
+
+        assertTrue(
+            "Expected policy turning-angle max-jitter (" +
+                "$policyMaxTurningError rad) to be below coarse-legacy jitter (" +
+                "$coarseLegacyMaxTurningError rad) with improvement $improvement rad",
+            policyMaxTurningError < coarseLegacyMaxTurningError,
+        )
+    }
+
     private fun advanceSnapshot(
         start: SimulationSnapshot,
         ticks: Int,
@@ -143,5 +198,52 @@ class LabSessionPlaybackSubstepPolicyTest {
             }
         }
         return engine.snapshot()
+    }
+
+    private fun hostRelativeTurningAngles(
+        start: SimulationSnapshot,
+        ticks: Int,
+        tickSeconds: Double,
+        maxSubstepSeconds: Double,
+    ): List<Double> {
+        val engine = SimulationEngine(start, SimulationConfig(collisionMode = CollisionMode.NONE))
+        val hostRelativeVectors = ArrayList<Vector3d>(ticks + 1).apply {
+            add(hostRelativeMoonFromEarth(engine.snapshot()))
+        }
+
+        repeat(ticks) {
+            var remaining = tickSeconds
+            while (remaining > 0.0) {
+                val substep = remaining.coerceAtMost(maxSubstepSeconds)
+                engine.step(substep)
+                remaining -= substep
+            }
+            hostRelativeVectors.add(hostRelativeMoonFromEarth(engine.snapshot()))
+        }
+
+        return hostRelativeVectors.zipWithNext { previous, current ->
+            turningAngle(previous, current)
+        }
+    }
+
+    private fun maxTurningAngleError(
+        actual: List<Double>,
+        expected: List<Double>,
+    ): Double = actual.zip(expected) { a, b -> abs(a - b) }.maxOrNull() ?: 0.0
+
+    private fun turningAngle(
+        previous: Vector3d,
+        current: Vector3d,
+    ): Double {
+        val denominator = previous.magnitude() * current.magnitude()
+        if (denominator == 0.0) return 0.0
+        val cosine = (previous.dot(current) / denominator).coerceIn(-1.0, 1.0)
+        return acos(cosine)
+    }
+
+    private fun hostRelativeMoonFromEarth(snapshot: SimulationSnapshot): Vector3d {
+        val moon = snapshot.bodies.first { it.id == "moon" }
+        val earth = snapshot.bodies.first { it.id == "earth" }
+        return moon.positionM - earth.positionM
     }
 }
