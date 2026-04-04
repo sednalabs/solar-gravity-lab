@@ -14,12 +14,15 @@
         android:layout_height="match_parent" />
 
     <LinearLayout
+        android:id="@+id/topOverlayContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
         android:clipToPadding="false"
         android:orientation="vertical"
-        android:padding="12dp">
+        android:paddingStart="12dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="12dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -29,9 +32,8 @@
             android:orientation="horizontal">
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:background="@drawable/bg_overlay_panel"
                 android:elevation="8dp"
                 android:orientation="vertical"
@@ -71,14 +73,6 @@
                     android:textSize="12sp"
                     tools:text="Tracer • host Jupiter&#10;Speed 13.7 km/s • 670,900 km from center" />
             </LinearLayout>
-
-            <Button
-                android:id="@+id/buttonInfoToggle"
-                style="@style/Widget.SolarLab.OverlayButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:text="@string/action_info_show" />
         </LinearLayout>
 
         <LinearLayout
@@ -123,12 +117,15 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/bottomOverlayContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
         android:clipToPadding="false"
         android:orientation="vertical"
-        android:padding="12dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="12dp">
 
         <LinearLayout
             android:id="@+id/bottomControlRail"
@@ -139,152 +136,178 @@
             android:orientation="vertical"
             android:padding="10dp">
 
-            <HorizontalScrollView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:scrollbars="none">
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <LinearLayout
-                    android:layout_width="wrap_content"
+                <Button
+                    android:id="@+id/buttonStartPause"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:layout_weight="1"
+                    android:text="@string/action_start" />
 
-                    <Button
-                        android:id="@+id/buttonStartPause"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/action_start" />
+                <Button
+                    android:id="@+id/buttonStep"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_step" />
 
-                    <Button
-                        android:id="@+id/buttonStep"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_step" />
+                <Button
+                    android:id="@+id/buttonTimeBack"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_time_back" />
 
-                    <Button
-                        android:id="@+id/buttonTimeBack"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_time_back" />
+                <Button
+                    android:id="@+id/buttonTimeForward"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_time_forward" />
+            </LinearLayout>
 
-                    <Button
-                        android:id="@+id/buttonTimeForward"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_time_forward" />
-
-                    <Button
-                        android:id="@+id/buttonStepQuantum"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_step_quantum" />
-
-                    <Button
-                        android:id="@+id/buttonSpeedDown"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_speed_down" />
-
-                    <Button
-                        android:id="@+id/buttonSpeedUp"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_speed_up" />
-                </LinearLayout>
-            </HorizontalScrollView>
-
-            <HorizontalScrollView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:scrollbars="none">
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <LinearLayout
-                    android:layout_width="wrap_content"
+                <Button
+                    android:id="@+id/buttonSpeedDown"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:layout_weight="1"
+                    android:text="@string/action_speed_down" />
 
-                    <Button
-                        android:id="@+id/buttonFollow"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:enabled="false"
-                        android:text="@string/action_observer_free" />
+                <Button
+                    android:id="@+id/buttonSpeedUp"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_speed_up" />
 
-                    <Button
-                        android:id="@+id/buttonReset"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_reset" />
+                <Button
+                    android:id="@+id/buttonStepQuantum"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_step_quantum" />
 
-                    <Button
-                        android:id="@+id/buttonAddBody"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_add_object" />
+                <Button
+                    android:id="@+id/buttonReset"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_reset" />
+            </LinearLayout>
 
-                    <Button
-                        android:id="@+id/buttonEditBody"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:enabled="false"
-                        android:text="@string/action_edit_selected" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                    <Button
-                        android:id="@+id/buttonFindBody"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_find_object" />
+                <Button
+                    android:id="@+id/buttonFollow"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:enabled="false"
+                    android:text="@string/action_observer_free" />
 
-                    <Button
-                        android:id="@+id/buttonCollisionMode"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_collision_merge" />
+                <Button
+                    android:id="@+id/buttonFindBody"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_find_object" />
 
-                    <Button
-                        android:id="@+id/buttonProcessingMode"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_processing_default" />
+                <Button
+                    android:id="@+id/buttonAddBody"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_add_object" />
 
-                    <Button
-                        android:id="@+id/buttonOrientationLock"
-                        style="@style/Widget.SolarLab.ControlButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/action_orientation_free" />
-                </LinearLayout>
-            </HorizontalScrollView>
+                <Button
+                    android:id="@+id/buttonEditBody"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:enabled="false"
+                    android:text="@string/action_edit_selected" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/buttonCollisionMode"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/action_collision_merge" />
+
+                <Button
+                    android:id="@+id/buttonProcessingMode"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_processing_default" />
+
+                <Button
+                    android:id="@+id/buttonOrientationLock"
+                    style="@style/Widget.SolarLab.ControlButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_orientation_free" />
+
+                <Button
+                    android:id="@+id/buttonInfoToggle"
+                    style="@style/Widget.SolarLab.OverlayButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/action_info_show" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

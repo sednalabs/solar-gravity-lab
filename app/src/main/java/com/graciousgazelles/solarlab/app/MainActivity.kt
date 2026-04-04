@@ -47,16 +47,33 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         orientationLocked = savedInstanceState?.getBoolean(STATE_ORIENTATION_LOCKED) ?: false
         updateOrientationLock()
 
-        val controlRail = binding.bottomControlRail
-        val baseControlRailPaddingBottom = controlRail.paddingBottom
-        ViewCompat.setOnApplyWindowInsetsListener(controlRail) { view, insets ->
-            val bottomInsets = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.systemGestures(),
+        val topOverlay = binding.topOverlayContainer
+        val bottomOverlay = binding.bottomOverlayContainer
+        val topBasePaddingLeft = topOverlay.paddingLeft
+        val topBasePaddingTop = topOverlay.paddingTop
+        val topBasePaddingRight = topOverlay.paddingRight
+        val bottomBasePaddingLeft = bottomOverlay.paddingLeft
+        val bottomBasePaddingRight = bottomOverlay.paddingRight
+        val bottomBasePaddingBottom = bottomOverlay.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(binding.rootLayout) { _, insets ->
+            val overlayInsets = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout() or
+                    WindowInsetsCompat.Type.systemGestures(),
             )
-            view.updatePadding(bottom = baseControlRailPaddingBottom + bottomInsets.bottom)
+            topOverlay.updatePadding(
+                left = topBasePaddingLeft + overlayInsets.left,
+                top = topBasePaddingTop + overlayInsets.top,
+                right = topBasePaddingRight + overlayInsets.right,
+            )
+            bottomOverlay.updatePadding(
+                left = bottomBasePaddingLeft + overlayInsets.left,
+                right = bottomBasePaddingRight + overlayInsets.right,
+                bottom = bottomBasePaddingBottom + overlayInsets.bottom,
+            )
             insets
         }
-        ViewCompat.requestApplyInsets(controlRail)
+        ViewCompat.requestApplyInsets(binding.rootLayout)
 
         session = LabSession.createDefault(context = this, listener = this)
         currentCollisionMode = session.collisionMode()
