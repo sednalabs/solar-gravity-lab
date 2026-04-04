@@ -1395,10 +1395,13 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     std::vector<BillboardVertex> authoritativeVertices;
     const uint32_t authoritativeCount = SafeCount3(
         sceneBuffers_.authoritativePositionsM.size(),
+        sceneBuffers_.authoritativeSourceMassesKg.size(),
         sceneBuffers_.authoritativeRadiiM.size(),
         sceneBuffers_.authoritativeColorsArgb.size(),
         sceneBuffers_.authoritativeKinds.size());
+    std::vector<AuthoritativeInfluenceBody> authoritativeInfluences;
     authoritativeVertices.reserve(authoritativeCount);
+    authoritativeInfluences.reserve(authoritativeCount);
     for (uint32_t index = 0; index < authoritativeCount; ++index) {
         const size_t base = static_cast<size_t>(index) * 3U;
         authoritativeVertices.push_back(BillboardVertex{
@@ -1410,6 +1413,12 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .kind = static_cast<uint32_t>(sceneBuffers_.authoritativeKinds[index]),
             .alpha = 1.0f,
             .reserved = 0.0f,
+        });
+        authoritativeInfluences.push_back(AuthoritativeInfluenceBody{
+            .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 2U]),
+            .sourceMassKg = static_cast<float>(sceneBuffers_.authoritativeSourceMassesKg[index]),
         });
     }
 
@@ -1600,6 +1609,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     if (!uploadStream(authoritativeVertices.data(), ByteSize(authoritativeVertices), sceneGpuStreams_.authoritative.plannedUsage, sceneGpuStreams_.authoritative.label, sceneGpuStreams_.authoritative.vertexBuffer)) {
         return false;
     }
+    if (!uploadTracerStream(authoritativeInfluences.data(), ByteSize(authoritativeInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "authoritative-influence", sceneGpuStreams_.authoritativeInfluenceBuffer)) {
+        return false;
+    }
     if (!uploadStream(tracerNearVertices.data(), ByteSize(tracerNearVertices), sceneGpuStreams_.tracerNear.plannedUsage, sceneGpuStreams_.tracerNear.label, sceneGpuStreams_.tracerNear.vertexBuffer)) {
         return false;
     }
@@ -1740,7 +1752,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     }
 
     sceneGpuStreams_.uploadedRevision = sceneBuffers_.sourceRevision;
+    sceneGpuStreams_.authoritativeInfluenceCount = authoritativeCount;
     sceneGpuStreams_.totalBytes =
+        sceneGpuStreams_.authoritativeInfluenceBuffer.sizeBytes +
         sceneGpuStreams_.authoritative.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerNear.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMedium.vertexBuffer.sizeBytes +
@@ -2296,6 +2310,7 @@ void SolarLabVulkanRenderer::DestroyGpuBuffer(GpuBuffer& buffer) {
 }
 
 void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
+    DestroyGpuBuffer(sceneGpuStreams_.authoritativeInfluenceBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.authoritative.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerNear.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMedium.vertexBuffer);
@@ -2713,6 +2728,7 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
     std::ostringstream out;
     out << "rev=" << uploadStats_.sourceRevision
         << " A=" << uploadStats_.authoritativeCount
+        << "/AI=" << sceneGpuStreams_.authoritativeInfluenceCount
         << " TN=" << uploadStats_.tracerNearCount
         << " TM=" << uploadStats_.tracerMediumCount
         << " TF=" << uploadStats_.tracerFarCount
