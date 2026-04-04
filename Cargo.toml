@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "engine/data",
     "engine/domain",
     "engine/physics",
     "engine/history",
