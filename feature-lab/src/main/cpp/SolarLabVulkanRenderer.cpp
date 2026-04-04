@@ -71,6 +71,10 @@ uint32_t SafeCount3(size_t positionsCount, size_t peerCountA, size_t peerCountB,
     return static_cast<uint32_t>(std::min({positionsCount / 3U, peerCountA, peerCountB, peerCountC}));
 }
 
+uint32_t SafeCount3(size_t positionsCount, size_t peerCountA, size_t peerCountB, size_t peerCountC, size_t peerCountD) {
+    return static_cast<uint32_t>(std::min({positionsCount / 3U, peerCountA, peerCountB, peerCountC, peerCountD}));
+}
+
 uint32_t SafeCount3(size_t positionsCount, size_t peerCountA, size_t peerCountB) {
     return static_cast<uint32_t>(std::min({positionsCount / 3U, peerCountA, peerCountB}));
 }
