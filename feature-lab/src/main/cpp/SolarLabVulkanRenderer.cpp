@@ -395,6 +395,26 @@ std::string SolarLabVulkanRenderer::SceneSummary() const {
     return sceneSummaryCache_;
 }
 
+std::string SolarLabVulkanRenderer::HardwareSummary() const {
+    std::scoped_lock lock(stateMutex_);
+
+    if (physicalDevice_ == VK_NULL_HANDLE) {
+        return "gpu=vulkan-device-unavailable";
+    }
+
+    const uint32_t apiVersion = physicalDeviceProperties_.apiVersion;
+    std::ostringstream out;
+    out << "gpu=" << physicalDeviceProperties_.deviceName
+        << " vk="
+        << VK_API_VERSION_MAJOR(apiVersion) << '.'
+        << VK_API_VERSION_MINOR(apiVersion) << '.'
+        << VK_API_VERSION_PATCH(apiVersion)
+        << " largePoints=" << (supportedFeatures_.largePoints ? "yes" : "no")
+        << " queueCompute=" << (graphicsQueueSupportsCompute_ ? "yes" : "no")
+        << " compaction=" << (computeCompactionEnabled_ ? "on" : "off");
+    return out.str();
+}
+
 bool SolarLabVulkanRenderer::CreateInstance() {
     const std::array<const char*, 2> instanceExtensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,

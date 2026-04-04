@@ -29,8 +29,13 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback2, SolarRenderSurface {
 
     private val capabilities = RenderDeviceCapabilities.query(context)
+    private val hardwareSummaryPrefix = listOf(
+        capabilities.hardwareSummary(),
+        SolarLabVulkanBridge.cpuCapabilitySummary(),
+    ).joinToString(separator = " | ")
     private var rendererHandle: Long = 0L
     private var surfaceReady: Boolean = false
+    private var rendererHardwareSummary: String = "gpu=vulkan-pending"
     private var latestScene: RenderSceneFrame = emptyScene()
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
@@ -134,6 +139,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
             return
         }
+        refreshRendererHardwareSummary()
         reportStatus("${SolarLabVulkanBridge.backendLabel(rendererHandle)} active.")
         renderLatestScene()
     }
@@ -145,12 +151,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
             return
         }
+        refreshRendererHardwareSummary()
         packetDirty = true
         renderLatestScene()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         surfaceReady = false
+        rendererHardwareSummary = "gpu=vulkan-surface-destroyed"
         SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
     }
 
@@ -205,6 +213,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         surfaceReady = false
         latestPacket = null
         packetDirty = true
+        rendererHardwareSummary = "gpu=vulkan-renderer-released"
         SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
         SolarLabVulkanBridge.destroyRenderer(rendererHandle)
         rendererHandle = 0L
@@ -276,6 +285,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             fatalInitCallback("Failed to create native Vulkan renderer.")
             return false
         }
+        rendererHardwareSummary = "gpu=vulkan-created-awaiting-surface"
         return true
     }
 
@@ -346,8 +356,20 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 active = RenderBackend.VULKAN,
                 isHardwareAccelerated = true,
                 message = message,
+                hardwareSummary = listOf(
+                    hardwareSummaryPrefix,
+                    rendererHardwareSummary,
+                ).joinToString(separator = " | "),
             ),
         )
+    }
+
+    private fun refreshRendererHardwareSummary() {
+        rendererHardwareSummary = if (rendererHandle != 0L && surfaceReady) {
+            SolarLabVulkanBridge.hardwareSummary(rendererHandle)
+        } else {
+            "gpu=vulkan-pending"
+        }
     }
 
     private fun emptyScene(): RenderSceneFrame = RenderSceneFrame(
