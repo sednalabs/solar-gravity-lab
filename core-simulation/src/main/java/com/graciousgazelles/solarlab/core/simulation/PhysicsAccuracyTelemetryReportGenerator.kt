@@ -49,11 +49,13 @@ class PhysicsAccuracyTelemetryReportGenerator(
             initialSnapshot = snapshot,
             config = SimulationConfig(collisionMode = CollisionMode.NONE),
         )
-        val baselineFinalSnapshot = runSimulationUntilDuration(
+        val baselineRun = runSimulationUntilDuration(
             initialSnapshot = snapshot,
             stepSeconds = effectiveBaselineStepSeconds,
             totalDurationSeconds = simulatedDurationSeconds,
         )
+        val baselineFinalSnapshot = baselineRun.snapshot
+        val baselineFinalDiagnostics = baselineRun.diagnostics
 
         val startingDiagnostics = engine.diagnostics()
         repeat(config.steps) {
@@ -78,6 +80,28 @@ class PhysicsAccuracyTelemetryReportGenerator(
             0.0
         } else {
             energyDeltaJ / startingDiagnostics.totalEnergyJ
+        }
+        val angularMomentumStartMagnitude = startingDiagnostics.angularMomentumKgM2PerS.magnitude()
+        val angularMomentumDeltaMagnitude =
+            (finalDiagnostics.angularMomentumKgM2PerS - startingDiagnostics.angularMomentumKgM2PerS).magnitude()
+        val relativeAngularMomentumDrift = if (angularMomentumStartMagnitude == 0.0) {
+            0.0
+        } else {
+            angularMomentumDeltaMagnitude / angularMomentumStartMagnitude
+        }
+        val barycenterDriftMeters = finalDiagnostics.barycenterM.distanceTo(startingDiagnostics.barycenterM)
+        val barycenterVelocityDriftMps =
+            finalDiagnostics.barycenterVelocityMps.distanceTo(startingDiagnostics.barycenterVelocityMps)
+        val barycenterFineBaselineDistanceErrorM =
+            finalDiagnostics.barycenterM.distanceTo(baselineFinalDiagnostics.barycenterM)
+        val barycenterFineBaselineVelocityErrorMps =
+            finalDiagnostics.barycenterVelocityMps.distanceTo(baselineFinalDiagnostics.barycenterVelocityMps)
+        val baselineAngularMomentumMagnitude = baselineFinalDiagnostics.angularMomentumKgM2PerS.magnitude()
+        val angularMomentumFineBaselineErrorRatio = if (baselineAngularMomentumMagnitude == 0.0) {
+            0.0
+        } else {
+            abs(finalDiagnostics.angularMomentumKgM2PerS.magnitude() - baselineAngularMomentumMagnitude) /
+                baselineAngularMomentumMagnitude
         }
         val moonStart = snapshot.bodies.firstOrNull { it.id == "moon" && it.hostBodyId == "earth" }
         val moonFinal = finalSnapshot.bodies.firstOrNull { it.id == "moon" && it.hostBodyId == "earth" }
@@ -179,6 +203,62 @@ class PhysicsAccuracyTelemetryReportGenerator(
                 )
                 add(
                     PhysicsAccuracyTelemetryMetric(
+                        name = "relative_angular_momentum_drift",
+                        value = relativeAngularMomentumDrift,
+                        unit = "ratio",
+                        description = "Angular momentum vector drift magnitude normalized by initial magnitude",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "absolute_angular_momentum_drift_kg_m2_per_s",
+                        value = angularMomentumDeltaMagnitude,
+                        unit = "kg_m2_per_s",
+                        description = "Absolute drift magnitude of total angular momentum vector",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "barycenter_drift_m",
+                        value = barycenterDriftMeters,
+                        unit = "meters",
+                        description = "Distance between final and initial system barycenter positions",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "barycenter_velocity_drift_mps",
+                        value = barycenterVelocityDriftMps,
+                        unit = "mps",
+                        description = "Distance between final and initial barycenter velocity vectors",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "angular_momentum_fine_baseline_error_ratio",
+                        value = angularMomentumFineBaselineErrorRatio,
+                        unit = "ratio",
+                        description = "Relative error of angular momentum magnitude versus finer baseline",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "barycenter_fine_baseline_distance_error_m",
+                        value = barycenterFineBaselineDistanceErrorM,
+                        unit = "meters",
+                        description = "Distance error of final barycenter position versus finer baseline",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "barycenter_fine_baseline_velocity_error_mps",
+                        value = barycenterFineBaselineVelocityErrorMps,
+                        unit = "mps",
+                        description = "Velocity-vector error of final barycenter velocity versus finer baseline",
+                    ),
+                )
+                add(
+                    PhysicsAccuracyTelemetryMetric(
                         name = "earth_distance_au",
                         value = earthDistanceAu,
                         unit = "au",
@@ -218,7 +298,7 @@ class PhysicsAccuracyTelemetryReportGenerator(
         initialSnapshot: com.graciousgazelles.solarlab.core.model.SimulationSnapshot,
         stepSeconds: Double,
         totalDurationSeconds: Double,
-    ): com.graciousgazelles.solarlab.core.model.SimulationSnapshot {
+    ): SimulationRunResult {
         require(stepSeconds.isFinite()) { "stepSeconds must be finite" }
         require(stepSeconds > 0.0) { "stepSeconds must be > 0" }
         require(totalDurationSeconds.isFinite()) { "totalDurationSeconds must be finite" }
@@ -235,8 +315,16 @@ class PhysicsAccuracyTelemetryReportGenerator(
             engine.step(nextStep)
             remainingDurationSeconds -= nextStep
         }
-        return engine.snapshot()
+        return SimulationRunResult(
+            snapshot = engine.snapshot(),
+            diagnostics = engine.diagnostics(),
+        )
     }
+
+    private data class SimulationRunResult(
+        val snapshot: com.graciousgazelles.solarlab.core.model.SimulationSnapshot,
+        val diagnostics: SystemDiagnostics,
+    )
 
     fun toJson(report: PhysicsAccuracyTelemetryReport): String = buildString {
         appendLine("{")
