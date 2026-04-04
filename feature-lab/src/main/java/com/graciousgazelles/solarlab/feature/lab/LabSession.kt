@@ -391,6 +391,9 @@ class LabSession private constructor(
         private const val MAX_REAL_DELTA_SECONDS: Double = 0.25
         private const val MAX_SIMULATION_SUBSTEP_SECONDS: Double = 3600.0
         private const val PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK: Double = 12.0
+        private const val HOST_RELATIVE_PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK: Double = 24.0
+        private const val HOST_RELATIVE_SHORT_WINDOW_MAX_SECONDS: Double = PhysicalConstants.DAY_SECONDS
+        private const val HOST_RELATIVE_SHORT_WINDOW_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 10_800.0
         private const val PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 32_400.0
         private const val HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 21_600.0
         private const val HIGH_SPEED_PLAYBACK_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: Double =
@@ -475,19 +478,37 @@ class LabSession private constructor(
             if (collisionMode != CollisionMode.NONE) {
                 return MAX_SIMULATION_SUBSTEP_SECONDS
             }
-            val maxEffectiveSubstepSeconds = if (
-                playbackSpeedPreset.simSecondsPerRealSecond >=
+            val isHighSpeedPlayback = playbackSpeedPreset.simSecondsPerRealSecond >=
                 HIGH_SPEED_PLAYBACK_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND
+            val maxEffectiveSubstepSeconds = if (
+                isHighSpeedPlayback
             ) {
                 HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS
             } else {
                 PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS
             }
             val adaptiveSubstep = totalSeconds / PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK
-            return adaptiveSubstep.coerceIn(
+            val presetBasedCap = adaptiveSubstep.coerceIn(
                 minimumValue = MAX_SIMULATION_SUBSTEP_SECONDS,
                 maximumValue = maxEffectiveSubstepSeconds,
             )
+            if (!shouldApplyHostRelativeShortWindowCap(totalSeconds, playbackSpeedPreset)) {
+                return presetBasedCap
+            }
+            val hostRelativeAdaptiveSubstep = totalSeconds / HOST_RELATIVE_PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK
+            val hostRelativeCap = hostRelativeAdaptiveSubstep.coerceIn(
+                minimumValue = MAX_SIMULATION_SUBSTEP_SECONDS,
+                maximumValue = HOST_RELATIVE_SHORT_WINDOW_MAX_EFFECTIVE_SUBSTEP_SECONDS,
+            )
+            return minOf(presetBasedCap, hostRelativeCap)
+        }
+
+        private fun shouldApplyHostRelativeShortWindowCap(
+            totalSeconds: Double,
+            playbackSpeedPreset: PlaybackSpeedPreset,
+        ): Boolean {
+            if (playbackSpeedPreset != PlaybackSpeedPreset.MONTH_PER_SECOND) return false
+            return totalSeconds <= HOST_RELATIVE_SHORT_WINDOW_MAX_SECONDS
         }
     }
 }

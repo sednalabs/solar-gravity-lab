@@ -201,7 +201,7 @@ class LabSessionPlaybackSubstepPolicyTest {
             maxSubstepSeconds = coarseLegacyMaxSubstepSeconds,
         )
 
-        assertEquals(7_200.0, policyMaxSubstepSeconds, 0.0)
+        assertEquals(3_600.0, policyMaxSubstepSeconds, 0.0)
         assertEquals(playbackWindowTicks, baseline.size)
         assertEquals(playbackWindowTicks, policy.size)
         assertEquals(playbackWindowTicks, coarseLegacy.size)
@@ -215,6 +215,64 @@ class LabSessionPlaybackSubstepPolicyTest {
                 "$policyMaxTurningError rad) to be below coarse-legacy jitter (" +
                 "$coarseLegacyMaxTurningError rad) with improvement $improvement rad",
             policyMaxTurningError < coarseLegacyMaxTurningError,
+        )
+    }
+
+    @Test
+    fun `host-relative short-window cap tightens legacy high-speed path and does not regress turning-angle jitter`() {
+        val playbackTickSeconds = 86_400.0
+        val playbackWindowTicks = 6
+        val fineMaxSubstepSeconds = 120.0
+        val legacyPolicyCap = legacyHighSpeedPolicyCap(playbackTickSeconds)
+        val policyPlan = LabSession.playbackSubstepPlan(
+            totalSeconds = playbackTickSeconds,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+        )
+        val policyCap = policyPlan.maxSubstepSeconds
+        val twoDayPlan = LabSession.playbackSubstepPlan(
+            totalSeconds = 2.0 * playbackTickSeconds,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+        )
+        val start = SolarSystemScenarios.defaultLabScenario(
+            includeSyntheticAsteroidBelt = false,
+            includeSyntheticOortCloud = false,
+        )
+        val baseline = hostRelativeTurningAngles(
+            start = start,
+            ticks = playbackWindowTicks,
+            tickSeconds = playbackTickSeconds,
+            maxSubstepSeconds = fineMaxSubstepSeconds,
+        )
+        val legacyPolicy = hostRelativeTurningAngles(
+            start = start,
+            ticks = playbackWindowTicks,
+            tickSeconds = playbackTickSeconds,
+            maxSubstepSeconds = legacyPolicyCap,
+        )
+        val currentPolicy = hostRelativeTurningAngles(
+            start = start,
+            ticks = playbackWindowTicks,
+            tickSeconds = playbackTickSeconds,
+            maxSubstepSeconds = policyCap,
+        )
+        val legacyPolicyMaxTurningError = maxTurningAngleError(legacyPolicy, baseline)
+        val currentPolicyMaxTurningError = maxTurningAngleError(currentPolicy, baseline)
+
+        assertEquals(7_200.0, legacyPolicyCap, 0.0)
+        assertEquals(playbackTickSeconds, policyPlan.totalSeconds, 0.0)
+        assertEquals(3_600.0, policyCap, 0.0)
+        assertEquals(14_400.0, twoDayPlan.maxSubstepSeconds, 0.0)
+        assertTrue(
+            "Expected host-relative cap to tighten legacy high-speed day-window path (policy=$policyCap legacy=$legacyPolicyCap)",
+            policyCap < legacyPolicyCap,
+        )
+        assertTrue(
+            "Expected tightened host-relative policy jitter (" +
+                "$currentPolicyMaxTurningError rad) to not exceed legacy jitter (" +
+                "$legacyPolicyMaxTurningError rad)",
+            currentPolicyMaxTurningError <= legacyPolicyMaxTurningError,
         )
     }
 
@@ -266,6 +324,11 @@ class LabSessionPlaybackSubstepPolicyTest {
         actual: List<Double>,
         expected: List<Double>,
     ): Double = actual.zip(expected) { a, b -> abs(a - b) }.maxOrNull() ?: 0.0
+
+    private fun legacyHighSpeedPolicyCap(totalSeconds: Double): Double {
+        val adaptiveSubstep = totalSeconds / 12.0
+        return adaptiveSubstep.coerceIn(3_600.0, 21_600.0)
+    }
 
     private fun turningAngle(
         previous: Vector3d,
