@@ -224,6 +224,7 @@ class LabSession private constructor(
         val effectiveMaxSubstepSeconds = effectivePlaybackMaxSubstepSeconds(
             totalSeconds = simDeltaSeconds,
             collisionMode = config.collisionMode,
+            playbackSpeedPreset = playbackSpeedPreset,
         )
         val advanceStartNs = System.nanoTime()
         val result = advanceBySimulationSeconds(
@@ -391,6 +392,9 @@ class LabSession private constructor(
         private const val MAX_SIMULATION_SUBSTEP_SECONDS: Double = 3600.0
         private const val PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK: Double = 12.0
         private const val PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 32_400.0
+        private const val HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 21_600.0
+        private const val HIGH_SPEED_PLAYBACK_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: Double =
+            7.0 * PhysicalConstants.DAY_SECONDS
         private const val RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS: Int = 4
         private const val PERF_LOG_SAMPLE_WINDOW_FRAMES: Int = 120
         private const val SUBSTEP_EPSILON_SECONDS: Double = 1.0e-9
@@ -446,14 +450,23 @@ class LabSession private constructor(
         internal fun effectivePlaybackMaxSubstepSeconds(
             totalSeconds: Double,
             collisionMode: CollisionMode,
+            playbackSpeedPreset: PlaybackSpeedPreset = DEFAULT_PLAYBACK_SPEED,
         ): Double {
             if (collisionMode != CollisionMode.NONE) {
                 return MAX_SIMULATION_SUBSTEP_SECONDS
             }
+            val maxEffectiveSubstepSeconds = if (
+                playbackSpeedPreset.simSecondsPerRealSecond >=
+                HIGH_SPEED_PLAYBACK_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND
+            ) {
+                HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS
+            } else {
+                PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS
+            }
             val adaptiveSubstep = totalSeconds / PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK
             return adaptiveSubstep.coerceIn(
                 minimumValue = MAX_SIMULATION_SUBSTEP_SECONDS,
-                maximumValue = PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS,
+                maximumValue = maxEffectiveSubstepSeconds,
             )
         }
     }
