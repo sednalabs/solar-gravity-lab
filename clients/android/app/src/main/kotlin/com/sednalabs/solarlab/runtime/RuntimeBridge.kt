@@ -385,15 +385,4 @@ internal data class NativeVulkanScenePacket(
     val trailSpans: ByteBuffer?,
     val trailVertices: ByteBuffer?,
     val directionalLights: ByteBuffer?,
-) {
-    fun summaryLine(): String {
-        val uploadBytes = listOf(
-            bodyInstances?.capacity() ?: 0,
-            tracerInstances?.capacity() ?: 0,
-            trailSpans?.capacity() ?: 0,
-            trailVertices?.capacity() ?: 0,
-            directionalLights?.capacity() ?: 0,
-        ).sum()
-        return "Packet handle=$packetHandle, bodies=$bodyCount, tracers=$tracerCount, trails=$trailSpanCount/$trailVertexCount, lights=$directionalLightCount, uploadBytes=$uploadBytes"
-    }
-}
+)
