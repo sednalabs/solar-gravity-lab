@@ -1,5 +1,6 @@
 package com.graciousgazelles.solarlab.app
 
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
@@ -35,12 +36,20 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var resumeSimulationAfterModalInteraction: Boolean = false
     private var infoPanelVisible: Boolean = false
     private var renderProcessingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
+    private var orientationLocked: Boolean = false
+
+    companion object {
+        private const val STATE_ORIENTATION_LOCKED = "orientation_locked"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        orientationLocked = savedInstanceState?.getBoolean(STATE_ORIENTATION_LOCKED) ?: false
+        updateOrientationLock()
 
         val controlRail = binding.bottomControlRail
         val baseControlRailPaddingBottom = controlRail.paddingBottom
@@ -151,6 +160,11 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             updateProcessingModeButtonText()
         }
 
+        binding.buttonOrientationLock.setOnClickListener {
+            orientationLocked = !orientationLocked
+            updateOrientationLock()
+        }
+
         updateCollisionButtonText()
         updateTimelineControls(null)
         updateAddButtonText()
@@ -158,6 +172,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         updateObserverButtonText()
         updateInfoPanelVisibility()
         updateProcessingModeButtonText()
+        updateOrientationLock()
 
         session.dispatchCurrentFrame()
         session.start()
@@ -211,6 +226,11 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             binding.renderHost.release()
         }
         super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_ORIENTATION_LOCKED, orientationLocked)
+        super.onSaveInstanceState(outState)
     }
 
     private fun onBackendStatusChanged(status: RenderBackendStatus) {
@@ -466,6 +486,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonSpeedDown.isEnabled = pendingAddDraft == null
         binding.buttonSpeedUp.isEnabled = pendingAddDraft == null
         binding.buttonFollow.isEnabled = pendingAddDraft == null && (selectedBodyId != null || observerMode != ObserverMode.FREE)
+        binding.buttonOrientationLock.isEnabled = true
         binding.buttonStartPause.text = if (session.isRunning()) {
             getString(R.string.action_pause)
         } else {
@@ -518,6 +539,19 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             getString(R.string.action_info_hide)
         } else {
             getString(R.string.action_info_show)
+        }
+    }
+
+    private fun updateOrientationLock() {
+        requestedOrientation = if (orientationLocked) {
+            ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        binding.buttonOrientationLock.text = if (orientationLocked) {
+            getString(R.string.action_orientation_locked)
+        } else {
+            getString(R.string.action_orientation_free)
         }
     }
 
