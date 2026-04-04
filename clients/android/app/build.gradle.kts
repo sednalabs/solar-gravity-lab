@@ -12,6 +12,7 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.math.max
 import javax.inject.Inject
 
 abstract class BuildSolarlabNativeTask : DefaultTask() {
@@ -124,7 +125,7 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
 
         return ndkRoot.listFiles()
             ?.filter(File::isDirectory)
-            ?.maxByOrNull(File::getName)
+            ?.maxWithOrNull(::compareNdkDirectories)
     }
 
     private fun ensureCommandWorks(command: List<String>, failureHint: String) {
@@ -160,6 +161,39 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
             .filter(String::isNotEmpty)
             .toSet()
     }
+
+    private fun compareNdkDirectories(left: File, right: File): Int {
+        return compareVersionNames(left.name, right.name)
+    }
+
+    private fun compareVersionNames(left: String, right: String): Int {
+        val leftParts = left.split(Regex("[^A-Za-z0-9]+")).filter(String::isNotEmpty)
+        val rightParts = right.split(Regex("[^A-Za-z0-9]+")).filter(String::isNotEmpty)
+        val maxParts = max(leftParts.size, rightParts.size)
+
+        for (index in 0 until maxParts) {
+            val leftPart = leftParts.getOrNull(index) ?: return -1
+            val rightPart = rightParts.getOrNull(index) ?: return 1
+
+            val order = compareVersionPart(leftPart, rightPart)
+            if (order != 0) {
+                return order
+            }
+        }
+
+        return left.compareTo(right)
+    }
+
+    private fun compareVersionPart(left: String, right: String): Int {
+        val leftNumeric = left.toLongOrNull()
+        val rightNumeric = right.toLongOrNull()
+
+        return when {
+            leftNumeric != null && rightNumeric != null -> leftNumeric.compareTo(rightNumeric)
+            leftNumeric != null || rightNumeric != null -> left.compareTo(right)
+            else -> left.compareTo(right)
+        }
+    }
 }
 
 plugins {
@@ -186,6 +220,7 @@ val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
             include("engine/ffi/include/**/*.h")
         }
     )
+    outputs.upToDateWhen { false }
 }
 
 android {
