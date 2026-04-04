@@ -27,8 +27,24 @@ public:
     bool Resize(JNIEnv* env, jobject surface, int width, int height);
     void DestroySurface();
 
-    void SubmitScene(
+    void SubmitSceneSeed(
+        std::span<const double> tracerMediumPositionsM,
+        std::span<const int64_t> tracerMediumHandles,
+        std::span<const double> tracerMediumVelocitiesMps,
+        std::span<const float> tracerMediumRadiiM,
+        std::span<const int32_t> tracerMediumColorsArgb,
+        std::span<const int32_t> tracerMediumKinds,
+        std::span<const double> tracerFarPositionsM,
+        std::span<const int64_t> tracerFarHandles,
+        std::span<const double> tracerFarVelocitiesMps,
+        std::span<const float> tracerFarRadiiM,
+        std::span<const int32_t> tracerFarColorsArgb,
+        std::span<const int32_t> tracerFarKinds,
+        int64_t seedRevision);
+    void SetFrameState(
         int64_t sourceRevision,
+        double epochSeconds,
+        double simulationAdvanceSeconds,
         std::span<const double> authoritativePositionsM,
         std::span<const double> authoritativeSourceMassesKg,
         std::span<const float> authoritativeRadiiM,
@@ -38,16 +54,6 @@ public:
         std::span<const float> tracerNearRadiiM,
         std::span<const int32_t> tracerNearColorsArgb,
         std::span<const int32_t> tracerNearKinds,
-        std::span<const double> tracerMediumPositionsM,
-        std::span<const double> tracerMediumVelocitiesMps,
-        std::span<const float> tracerMediumRadiiM,
-        std::span<const int32_t> tracerMediumColorsArgb,
-        std::span<const int32_t> tracerMediumKinds,
-        std::span<const double> tracerFarPositionsM,
-        std::span<const double> tracerFarVelocitiesMps,
-        std::span<const float> tracerFarRadiiM,
-        std::span<const int32_t> tracerFarColorsArgb,
-        std::span<const int32_t> tracerFarKinds,
         std::span<const double> trailPositionsM,
         std::span<const int32_t> trailColorsArgb,
         std::span<const int32_t> trailVertexCounts);
@@ -61,8 +67,26 @@ public:
     std::string HardwareSummary() const;
 
 private:
-    struct SceneBuffers {
+    struct SeedBuffers {
         int64_t sourceRevision = 0;
+        std::vector<int64_t> tracerMediumHandles;
+        std::vector<double> tracerMediumPositionsM;
+        std::vector<double> tracerMediumVelocitiesMps;
+        std::vector<float> tracerMediumRadiiM;
+        std::vector<int32_t> tracerMediumColorsArgb;
+        std::vector<int32_t> tracerMediumKinds;
+        std::vector<int64_t> tracerFarHandles;
+        std::vector<double> tracerFarPositionsM;
+        std::vector<double> tracerFarVelocitiesMps;
+        std::vector<float> tracerFarRadiiM;
+        std::vector<int32_t> tracerFarColorsArgb;
+        std::vector<int32_t> tracerFarKinds;
+    };
+
+    struct FrameBuffers {
+        int64_t sourceRevision = 0;
+        double epochSeconds = 0.0;
+        double simulationAdvanceSeconds = 0.0;
         std::vector<double> authoritativePositionsM;
         std::vector<double> authoritativeSourceMassesKg;
         std::vector<float> authoritativeRadiiM;
@@ -72,16 +96,6 @@ private:
         std::vector<float> tracerNearRadiiM;
         std::vector<int32_t> tracerNearColorsArgb;
         std::vector<int32_t> tracerNearKinds;
-        std::vector<double> tracerMediumPositionsM;
-        std::vector<double> tracerMediumVelocitiesMps;
-        std::vector<float> tracerMediumRadiiM;
-        std::vector<int32_t> tracerMediumColorsArgb;
-        std::vector<int32_t> tracerMediumKinds;
-        std::vector<double> tracerFarPositionsM;
-        std::vector<double> tracerFarVelocitiesMps;
-        std::vector<float> tracerFarRadiiM;
-        std::vector<int32_t> tracerFarColorsArgb;
-        std::vector<int32_t> tracerFarKinds;
         std::vector<double> trailPositionsM;
         std::vector<int32_t> trailColorsArgb;
         std::vector<int32_t> trailVertexCounts;
@@ -114,14 +128,16 @@ private:
     };
 
     struct MediumTracerState {
+        uint32_t handleLo = 0;
+        uint32_t handleHi = 0;
         float x = 0.0f;
         float y = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
         uint32_t colorArgb = 0;
         float sizePx = 1.0f;
-        float reserved0 = 0.0f;
-        float reserved1 = 0.0f;
+        float trailAlpha = 0.0f;
+        float trailReserved = 0.0f;
     };
 
     struct DensityPointVertex {
@@ -132,14 +148,16 @@ private:
     };
 
     struct FarTracerState {
+        uint32_t handleLo = 0;
+        uint32_t handleHi = 0;
         float x = 0.0f;
         float y = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
         uint32_t colorArgb = 0;
         uint32_t densityWeight = 1;
-        float reserved0 = 0.0f;
-        float reserved1 = 0.0f;
+        float trailAlpha = 0.0f;
+        float trailReserved = 0.0f;
     };
 
     struct TrailVertex {
@@ -190,6 +208,8 @@ private:
         bool enabled = false;
         DrawPath path = DrawPath::None;
         GpuBuffer sourceStateBuffer;
+        GpuBuffer trailVertexBuffer;
+        GpuBuffer trailVertexCountBuffer;
         GpuBuffer outputVertexBuffer;
         GpuBuffer indirectCommandBuffer;
         GpuBuffer indirectReadbackBuffer;
@@ -199,11 +219,13 @@ private:
         uint32_t tileCounterCount = 0;
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;
+        uint32_t trailVertexCount = 0;
         const char* label = nullptr;
     };
 
     struct SceneGpuStreams {
-        int64_t uploadedRevision = -1;
+        int64_t uploadedSeedRevision = -1;
+        int64_t uploadedFrameRevision = -1;
         size_t totalBytes = 0;
         GpuBuffer authoritativeInfluenceBuffer;
         uint32_t authoritativeInfluenceCount = 0;
@@ -251,6 +273,7 @@ private:
 
     bool EnsureSceneGpuStreamsLocked();
     bool UploadSceneGpuStreamsLocked();
+    bool UploadFrameGpuStreamsLocked();
     bool UpdateSceneUniformBufferLocked();
     bool UpdateComputeDescriptorSetsLocked();
     bool RecordComputePassLocked(VkCommandBuffer commandBuffer);
@@ -295,7 +318,8 @@ private:
         VkPipeline& pipeline);
 
     mutable std::mutex stateMutex_;
-    SceneBuffers sceneBuffers_;
+    SeedBuffers seedBuffers_;
+    FrameBuffers frameBuffers_;
     SceneGpuStreams sceneGpuStreams_;
     StreamUploadStats uploadStats_;
 
@@ -303,8 +327,6 @@ private:
     double cameraCenterY_ = 0.0;
     double cameraCenterZ_ = 0.0;
     double cameraViewRadiusM_ = 0.0;
-    std::chrono::steady_clock::time_point lastAuthoritativeSceneUploadTime_{};
-
     std::string lastError_;
     std::string backendLabelCache_;
     std::string sceneSummaryCache_;

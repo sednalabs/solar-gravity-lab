@@ -9,12 +9,13 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
 } uScene;
 
 struct MediumTracerState {
+    uvec2 handleWords;
     vec2 positionM;
     vec2 velocityMps;
     uint colorArgb;
     float sizePx;
-    float reserved0;
-    float reserved1;
+    float trailAlpha;
+    float trailReserved;
 };
 
 struct CheapPointVertex {
@@ -23,9 +24,13 @@ struct CheapPointVertex {
     float sizePx;
 };
 
-layout(set = 0, binding = 1, std430) readonly buffer SourceVertices {
+struct AuthoritativeInfluenceBody {
+    vec4 positionMass;
+};
+
+layout(set = 0, binding = 1, std430) buffer SourceVertices {
     MediumTracerState src[];
-} uSource;
+} uState;
 
 layout(set = 0, binding = 2, std430) writeonly buffer OutputVertices {
     CheapPointVertex dst[];
@@ -37,6 +42,10 @@ layout(set = 0, binding = 3, std430) buffer DrawCommandBuffer {
     uint firstVertex;
     uint firstInstance;
 } uDraw;
+
+layout(set = 0, binding = 4, std430) readonly buffer InfluenceBodies {
+    AuthoritativeInfluenceBody bodies[];
+} uInfluence;
 
 layout(push_constant) uniform PushConstants {
     uint sourceCount;
@@ -56,24 +65,51 @@ uint mediumStrideForZoom() {
     return 1u + uint(clamp(floor(log2(zoom)), 0.0, 4.0));
 }
 
+vec2 accelerationAt(vec2 positionM) {
+    const float gravitationalConstant = 6.67430e-11;
+    const float softeningSquared = 1.0;
+    vec2 acceleration = vec2(0.0);
+    uint influenceCount = uint(max(uScene.viewport.w, 0.0));
+    for (uint influenceIndex = 0u; influenceIndex < influenceCount; ++influenceIndex) {
+        AuthoritativeInfluenceBody influence = uInfluence.bodies[influenceIndex];
+        vec2 delta = influence.positionMass.xy - positionM;
+        float distanceSquared = max(dot(delta, delta) + softeningSquared, 1.0);
+        float inverseDistance = inversesqrt(distanceSquared);
+        float inverseDistanceCubed = inverseDistance * inverseDistance * inverseDistance;
+        acceleration += delta * (gravitationalConstant * influence.positionMass.w * inverseDistanceCubed);
+    }
+    return acceleration;
+}
+
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= uPush.sourceCount) {
         return;
     }
 
-    MediumTracerState candidate = uSource.src[index];
-    candidate.positionM += candidate.velocityMps * max(uScene.viewport.z, 0.0);
+    MediumTracerState candidate = uState.src[index];
+    float stepSeconds = max(uScene.viewport.z, 0.0);
+    if (stepSeconds > 0.0) {
+        vec2 acceleration0 = accelerationAt(candidate.positionM);
+        vec2 velocityHalf = candidate.velocityMps + (acceleration0 * (0.5 * stepSeconds));
+        vec2 positionNext = candidate.positionM + (velocityHalf * stepSeconds);
+        vec2 acceleration1 = accelerationAt(positionNext);
+        candidate.positionM = positionNext;
+        candidate.velocityMps = velocityHalf + (acceleration1 * (0.5 * stepSeconds));
+    }
     if (!isInsideExtendedView(candidate.positionM)) {
+        uState.src[index] = candidate;
         return;
     }
 
     uint stride = mediumStrideForZoom();
     if (stride > 1u && (index % stride) != 0u) {
+        uState.src[index] = candidate;
         return;
     }
 
     candidate.sizePx = min(candidate.sizePx + float(stride - 1u) * 0.15, max(uScene.metrics.z, 1.0));
+    uState.src[index] = candidate;
 
     uint outputIndex = atomicAdd(uDraw.vertexCount, 1u);
     uOutput.dst[outputIndex] = CheapPointVertex(

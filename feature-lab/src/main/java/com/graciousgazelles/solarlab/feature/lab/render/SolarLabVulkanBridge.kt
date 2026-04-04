@@ -2,7 +2,9 @@ package com.graciousgazelles.solarlab.feature.lab.render
 
 import android.content.res.AssetManager
 import android.view.Surface
+import com.graciousgazelles.solarlab.render.core.NativeFrameState
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
+import com.graciousgazelles.solarlab.render.core.NativeSceneSeedPacket
 
 internal object SolarLabVulkanBridge {
     private const val LIBRARY_NAME = "solarlab_vulkan"
@@ -13,7 +15,7 @@ internal object SolarLabVulkanBridge {
         }.isSuccess
     }
     private var lastSubmittedHandle: Long = 0L
-    private var lastSubmittedPacket: NativeScenePacket? = null
+    private var lastSubmittedSeed: NativeSceneSeedPacket? = null
 
     fun isRuntimeAvailable(): Boolean = isLibraryLoaded && nativeIsVulkanRuntimeAvailable()
 
@@ -56,37 +58,49 @@ internal object SolarLabVulkanBridge {
 
     fun submitScene(handle: Long, packet: NativeScenePacket) {
         if (!isLibraryLoaded || handle == 0L) return
-        if (handle == lastSubmittedHandle && packet.contentMatches(lastSubmittedPacket)) {
-            return
+        val seedPacket = packet.toSceneSeedPacket()
+        if (handle != lastSubmittedHandle || !seedPacket.seedContentMatches(lastSubmittedSeed)) {
+            nativeSubmitSceneSeed(
+                handle = handle,
+                sourceRevision = seedPacket.sourceRevision,
+                tracerMediumHandles = seedPacket.tracerMediumHandles,
+                tracerMediumPositionsM = seedPacket.tracerMediumPositionsM,
+                tracerMediumVelocitiesMps = seedPacket.tracerMediumVelocitiesMps,
+                tracerMediumRadiiM = seedPacket.tracerMediumRadiiM,
+                tracerMediumColorsArgb = seedPacket.tracerMediumColorsArgb,
+                tracerMediumKinds = seedPacket.tracerMediumKinds,
+                tracerFarHandles = seedPacket.tracerFarHandles,
+                tracerFarPositionsM = seedPacket.tracerFarPositionsM,
+                tracerFarVelocitiesMps = seedPacket.tracerFarVelocitiesMps,
+                tracerFarRadiiM = seedPacket.tracerFarRadiiM,
+                tracerFarColorsArgb = seedPacket.tracerFarColorsArgb,
+                tracerFarKinds = seedPacket.tracerFarKinds,
+            )
+            lastSubmittedHandle = handle
+            lastSubmittedSeed = seedPacket
         }
-        nativeSubmitScene(
+    }
+
+    fun setFrameState(handle: Long, frameState: NativeFrameState) {
+        if (!isLibraryLoaded || handle == 0L) return
+        nativeSetFrameState(
             handle = handle,
-            sourceRevision = packet.sourceRevision,
-            authoritativePositionsM = packet.authoritativePositionsM,
-            authoritativeSourceMassesKg = packet.authoritativeSourceMassesKg,
-            authoritativeRadiiM = packet.authoritativeRadiiM,
-            authoritativeColorsArgb = packet.authoritativeColorsArgb,
-            authoritativeKinds = packet.authoritativeKinds,
-            tracerNearPositionsM = packet.tracerNearPositionsM,
-            tracerNearRadiiM = packet.tracerNearRadiiM,
-            tracerNearColorsArgb = packet.tracerNearColorsArgb,
-            tracerNearKinds = packet.tracerNearKinds,
-            tracerMediumPositionsM = packet.tracerMediumPositionsM,
-            tracerMediumVelocitiesMps = packet.tracerMediumVelocitiesMps,
-            tracerMediumRadiiM = packet.tracerMediumRadiiM,
-            tracerMediumColorsArgb = packet.tracerMediumColorsArgb,
-            tracerMediumKinds = packet.tracerMediumKinds,
-            tracerFarPositionsM = packet.tracerFarPositionsM,
-            tracerFarVelocitiesMps = packet.tracerFarVelocitiesMps,
-            tracerFarRadiiM = packet.tracerFarRadiiM,
-            tracerFarColorsArgb = packet.tracerFarColorsArgb,
-            tracerFarKinds = packet.tracerFarKinds,
-            trailPositionsM = packet.trailPositionsM,
-            trailColorsArgb = packet.trailColorsArgb,
-            trailVertexCounts = packet.trailVertexCounts,
+            sourceRevision = frameState.sourceRevision,
+            epochSeconds = frameState.epochSeconds,
+            simulationAdvanceSeconds = frameState.simulationAdvanceSeconds,
+            authoritativePositionsM = frameState.authoritativePositionsM,
+            authoritativeSourceMassesKg = frameState.authoritativeSourceMassesKg,
+            authoritativeRadiiM = frameState.authoritativeRadiiM,
+            authoritativeColorsArgb = frameState.authoritativeColorsArgb,
+            authoritativeKinds = frameState.authoritativeKinds,
+            tracerNearPositionsM = frameState.tracerNearPositionsM,
+            tracerNearRadiiM = frameState.tracerNearRadiiM,
+            tracerNearColorsArgb = frameState.tracerNearColorsArgb,
+            tracerNearKinds = frameState.tracerNearKinds,
+            trailPositionsM = frameState.trailPositionsM,
+            trailColorsArgb = frameState.trailColorsArgb,
+            trailVertexCounts = frameState.trailVertexCounts,
         )
-        lastSubmittedHandle = handle
-        lastSubmittedPacket = packet
     }
 
     fun setCamera(handle: Long, centerX: Double, centerY: Double, centerZ: Double, viewRadiusM: Double) {
@@ -112,36 +126,23 @@ internal object SolarLabVulkanBridge {
     private fun clearSubmissionCache(handle: Long) {
         if (lastSubmittedHandle != handle) return
         lastSubmittedHandle = 0L
-        lastSubmittedPacket = null
+        lastSubmittedSeed = null
     }
 
-    private fun NativeScenePacket.contentMatches(other: NativeScenePacket?): Boolean {
+    private fun NativeSceneSeedPacket.seedContentMatches(other: NativeSceneSeedPacket?): Boolean {
         if (other == null) return false
         if (this === other) return true
-        // `sourceRevision` changes on every assembled snapshot, so dedupe must
-        // compare the rendered packet content rather than the revision counter.
-        return authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
-            authoritativeSourceMassesKg.contentEquals(other.authoritativeSourceMassesKg) &&
-            authoritativeRadiiM.contentEquals(other.authoritativeRadiiM) &&
-            authoritativeColorsArgb.contentEquals(other.authoritativeColorsArgb) &&
-            authoritativeKinds.contentEquals(other.authoritativeKinds) &&
-            tracerNearPositionsM.contentEquals(other.tracerNearPositionsM) &&
-            tracerNearRadiiM.contentEquals(other.tracerNearRadiiM) &&
-            tracerNearColorsArgb.contentEquals(other.tracerNearColorsArgb) &&
-            tracerNearKinds.contentEquals(other.tracerNearKinds) &&
-            tracerMediumPositionsM.contentEquals(other.tracerMediumPositionsM) &&
-            tracerMediumVelocitiesMps.contentEquals(other.tracerMediumVelocitiesMps) &&
+        if (sourceRevision < other.sourceRevision) {
+            return false
+        }
+        return tracerMediumHandles.contentEquals(other.tracerMediumHandles) &&
             tracerMediumRadiiM.contentEquals(other.tracerMediumRadiiM) &&
             tracerMediumColorsArgb.contentEquals(other.tracerMediumColorsArgb) &&
             tracerMediumKinds.contentEquals(other.tracerMediumKinds) &&
-            tracerFarPositionsM.contentEquals(other.tracerFarPositionsM) &&
-            tracerFarVelocitiesMps.contentEquals(other.tracerFarVelocitiesMps) &&
+            tracerFarHandles.contentEquals(other.tracerFarHandles) &&
             tracerFarRadiiM.contentEquals(other.tracerFarRadiiM) &&
             tracerFarColorsArgb.contentEquals(other.tracerFarColorsArgb) &&
-            tracerFarKinds.contentEquals(other.tracerFarKinds) &&
-            trailPositionsM.contentEquals(other.trailPositionsM) &&
-            trailColorsArgb.contentEquals(other.trailColorsArgb) &&
-            trailVertexCounts.contentEquals(other.trailVertexCounts)
+            tracerFarKinds.contentEquals(other.tracerFarKinds)
     }
 
     private external fun nativeIsVulkanRuntimeAvailable(): Boolean
@@ -151,9 +152,27 @@ internal object SolarLabVulkanBridge {
     private external fun nativeOnSurfaceCreated(handle: Long, surface: Surface, width: Int, height: Int): Boolean
     private external fun nativeOnSurfaceChanged(handle: Long, surface: Surface, width: Int, height: Int): Boolean
     private external fun nativeOnSurfaceDestroyed(handle: Long)
-    private external fun nativeSubmitScene(
+    private external fun nativeSubmitSceneSeed(
         handle: Long,
         sourceRevision: Long,
+        tracerMediumHandles: LongArray,
+        tracerMediumPositionsM: DoubleArray,
+        tracerMediumVelocitiesMps: DoubleArray,
+        tracerMediumRadiiM: FloatArray,
+        tracerMediumColorsArgb: IntArray,
+        tracerMediumKinds: IntArray,
+        tracerFarHandles: LongArray,
+        tracerFarPositionsM: DoubleArray,
+        tracerFarVelocitiesMps: DoubleArray,
+        tracerFarRadiiM: FloatArray,
+        tracerFarColorsArgb: IntArray,
+        tracerFarKinds: IntArray,
+    )
+    private external fun nativeSetFrameState(
+        handle: Long,
+        sourceRevision: Long,
+        epochSeconds: Double,
+        simulationAdvanceSeconds: Double,
         authoritativePositionsM: DoubleArray,
         authoritativeSourceMassesKg: DoubleArray,
         authoritativeRadiiM: FloatArray,
@@ -163,16 +182,6 @@ internal object SolarLabVulkanBridge {
         tracerNearRadiiM: FloatArray,
         tracerNearColorsArgb: IntArray,
         tracerNearKinds: IntArray,
-        tracerMediumPositionsM: DoubleArray,
-        tracerMediumVelocitiesMps: DoubleArray,
-        tracerMediumRadiiM: FloatArray,
-        tracerMediumColorsArgb: IntArray,
-        tracerMediumKinds: IntArray,
-        tracerFarPositionsM: DoubleArray,
-        tracerFarVelocitiesMps: DoubleArray,
-        tracerFarRadiiM: FloatArray,
-        tracerFarColorsArgb: IntArray,
-        tracerFarKinds: IntArray,
         trailPositionsM: DoubleArray,
         trailColorsArgb: IntArray,
         trailVertexCounts: IntArray,

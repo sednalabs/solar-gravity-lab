@@ -39,6 +39,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var latestScene: RenderSceneFrame = emptyScene()
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
+    private var lastSubmittedFrameRevision: Long = Long.MIN_VALUE
+    private var lastSubmittedEpochSeconds: Double = 0.0
     private var cameraState: CameraState = CameraState()
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
@@ -139,6 +141,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
             return
         }
+        resetSubmissionState()
         refreshRendererHardwareSummary()
         reportStatus("${SolarLabVulkanBridge.backendLabel(rendererHandle)} active.")
         renderLatestScene()
@@ -152,12 +155,13 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             return
         }
         refreshRendererHardwareSummary()
-        packetDirty = true
+        resetSubmissionState()
         renderLatestScene()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         surfaceReady = false
+        resetSubmissionState()
         rendererHardwareSummary = "gpu=vulkan-surface-destroyed"
         SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
     }
@@ -211,8 +215,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun release() {
         surfaceReady = false
-        latestPacket = null
-        packetDirty = true
+        resetSubmissionState()
         rendererHardwareSummary = "gpu=vulkan-renderer-released"
         SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
         SolarLabVulkanBridge.destroyRenderer(rendererHandle)
@@ -322,7 +325,25 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             )
             packetDirty = false
         }
-        latestPacket?.let { SolarLabVulkanBridge.submitScene(rendererHandle, it) }
+        latestPacket?.let { packet ->
+            SolarLabVulkanBridge.submitScene(rendererHandle, packet)
+            val simulationAdvanceSeconds = when {
+                packet.sourceRevision == lastSubmittedFrameRevision -> 0.0
+                lastSubmittedFrameRevision == Long.MIN_VALUE -> 0.0
+                packet.sourceRevision < lastSubmittedFrameRevision -> 0.0
+                latestScene.epochSeconds < lastSubmittedEpochSeconds -> 0.0
+                else -> (latestScene.epochSeconds - lastSubmittedEpochSeconds).coerceAtLeast(0.0)
+            }
+            SolarLabVulkanBridge.setFrameState(
+                handle = rendererHandle,
+                frameState = packet.toFrameState(
+                    epochSeconds = latestScene.epochSeconds,
+                    simulationAdvanceSeconds = simulationAdvanceSeconds,
+                ),
+            )
+            lastSubmittedFrameRevision = packet.sourceRevision
+            lastSubmittedEpochSeconds = latestScene.epochSeconds
+        }
         if (!SolarLabVulkanBridge.render(rendererHandle)) {
             fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
             return
@@ -370,6 +391,13 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         } else {
             "gpu=vulkan-pending"
         }
+    }
+
+    private fun resetSubmissionState() {
+        latestPacket = null
+        packetDirty = true
+        lastSubmittedFrameRevision = Long.MIN_VALUE
+        lastSubmittedEpochSeconds = 0.0
     }
 
     private fun emptyScene(): RenderSceneFrame = RenderSceneFrame(

@@ -103,6 +103,33 @@ private:
     jint* data_ = nullptr;
 };
 
+template <>
+class ScopedReadOnlyArray<jlongArray, jlong> {
+public:
+    ScopedReadOnlyArray(JNIEnv* env, jlongArray array)
+        : env_(env), array_(array), length_(array != nullptr ? env->GetArrayLength(array) : 0) {
+        if (array_ != nullptr && length_ > 0) {
+            data_ = env_->GetLongArrayElements(array_, nullptr);
+        }
+    }
+
+    ~ScopedReadOnlyArray() {
+        if (array_ != nullptr && data_ != nullptr) {
+            env_->ReleaseLongArrayElements(array_, data_, JNI_ABORT);
+        }
+    }
+
+    std::span<const int64_t> asLongSpan() const {
+        return data_ != nullptr ? std::span<const int64_t>(reinterpret_cast<const int64_t*>(data_), static_cast<size_t>(length_)) : std::span<const int64_t>();
+    }
+
+private:
+    JNIEnv* env_;
+    jlongArray array_;
+    jsize length_;
+    jlong* data_ = nullptr;
+};
+
 std::string GetCpuCapabilitySummary() {
 #if defined(__aarch64__)
     const unsigned long hwcap = getauxval(AT_HWCAP);
@@ -201,11 +228,65 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSubmitScene(
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSubmitSceneSeed(
     JNIEnv* env,
     jclass,
     jlong handle,
     jlong sourceRevision,
+    jlongArray tracerMediumHandles,
+    jdoubleArray tracerMediumPositionsM,
+    jdoubleArray tracerMediumVelocitiesMps,
+    jfloatArray tracerMediumRadiiM,
+    jintArray tracerMediumColorsArgb,
+    jintArray tracerMediumKinds,
+    jlongArray tracerFarHandles,
+    jdoubleArray tracerFarPositionsM,
+    jdoubleArray tracerFarVelocitiesMps,
+    jfloatArray tracerFarRadiiM,
+    jintArray tracerFarColorsArgb,
+    jintArray tracerFarKinds) {
+    auto* renderer = FromHandle(handle);
+    if (renderer == nullptr) {
+        return;
+    }
+
+    ScopedReadOnlyArray<jlongArray, jlong> tracerMediumHandlesView(env, tracerMediumHandles);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumPositions(env, tracerMediumPositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumVelocities(env, tracerMediumVelocitiesMps);
+    ScopedReadOnlyArray<jfloatArray, jfloat> tracerMediumRadii(env, tracerMediumRadiiM);
+    ScopedReadOnlyArray<jintArray, jint> tracerMediumColors(env, tracerMediumColorsArgb);
+    ScopedReadOnlyArray<jintArray, jint> tracerMediumKindsView(env, tracerMediumKinds);
+    ScopedReadOnlyArray<jlongArray, jlong> tracerFarHandlesView(env, tracerFarHandles);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarPositions(env, tracerFarPositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarVelocities(env, tracerFarVelocitiesMps);
+    ScopedReadOnlyArray<jfloatArray, jfloat> tracerFarRadii(env, tracerFarRadiiM);
+    ScopedReadOnlyArray<jintArray, jint> tracerFarColors(env, tracerFarColorsArgb);
+    ScopedReadOnlyArray<jintArray, jint> tracerFarKindsView(env, tracerFarKinds);
+
+    renderer->SubmitSceneSeed(
+        tracerMediumPositions.asDoubleSpan(),
+        tracerMediumHandlesView.asLongSpan(),
+        tracerMediumVelocities.asDoubleSpan(),
+        tracerMediumRadii.asFloatSpan(),
+        tracerMediumColors.asIntSpan(),
+        tracerMediumKindsView.asIntSpan(),
+        tracerFarPositions.asDoubleSpan(),
+        tracerFarHandlesView.asLongSpan(),
+        tracerFarVelocities.asDoubleSpan(),
+        tracerFarRadii.asFloatSpan(),
+        tracerFarColors.asIntSpan(),
+        tracerFarKindsView.asIntSpan(),
+        static_cast<int64_t>(sourceRevision));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetFrameState(
+    JNIEnv* env,
+    jclass,
+    jlong handle,
+    jlong sourceRevision,
+    jdouble epochSeconds,
+    jdouble simulationAdvanceSeconds,
     jdoubleArray authoritativePositionsM,
     jdoubleArray authoritativeSourceMassesKg,
     jfloatArray authoritativeRadiiM,
@@ -215,16 +296,6 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     jfloatArray tracerNearRadiiM,
     jintArray tracerNearColorsArgb,
     jintArray tracerNearKinds,
-    jdoubleArray tracerMediumPositionsM,
-    jdoubleArray tracerMediumVelocitiesMps,
-    jfloatArray tracerMediumRadiiM,
-    jintArray tracerMediumColorsArgb,
-    jintArray tracerMediumKinds,
-    jdoubleArray tracerFarPositionsM,
-    jdoubleArray tracerFarVelocitiesMps,
-    jfloatArray tracerFarRadiiM,
-    jintArray tracerFarColorsArgb,
-    jintArray tracerFarKinds,
     jdoubleArray trailPositionsM,
     jintArray trailColorsArgb,
     jintArray trailVertexCounts) {
@@ -242,22 +313,14 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     ScopedReadOnlyArray<jfloatArray, jfloat> tracerNearRadii(env, tracerNearRadiiM);
     ScopedReadOnlyArray<jintArray, jint> tracerNearColors(env, tracerNearColorsArgb);
     ScopedReadOnlyArray<jintArray, jint> tracerNearKindsView(env, tracerNearKinds);
-    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumPositions(env, tracerMediumPositionsM);
-    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumVelocities(env, tracerMediumVelocitiesMps);
-    ScopedReadOnlyArray<jfloatArray, jfloat> tracerMediumRadii(env, tracerMediumRadiiM);
-    ScopedReadOnlyArray<jintArray, jint> tracerMediumColors(env, tracerMediumColorsArgb);
-    ScopedReadOnlyArray<jintArray, jint> tracerMediumKindsView(env, tracerMediumKinds);
-    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarPositions(env, tracerFarPositionsM);
-    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarVelocities(env, tracerFarVelocitiesMps);
-    ScopedReadOnlyArray<jfloatArray, jfloat> tracerFarRadii(env, tracerFarRadiiM);
-    ScopedReadOnlyArray<jintArray, jint> tracerFarColors(env, tracerFarColorsArgb);
-    ScopedReadOnlyArray<jintArray, jint> tracerFarKindsView(env, tracerFarKinds);
     ScopedReadOnlyArray<jdoubleArray, jdouble> trailPositions(env, trailPositionsM);
     ScopedReadOnlyArray<jintArray, jint> trailColors(env, trailColorsArgb);
     ScopedReadOnlyArray<jintArray, jint> trailVertexCountsView(env, trailVertexCounts);
 
-    renderer->SubmitScene(
+    renderer->SetFrameState(
         static_cast<int64_t>(sourceRevision),
+        static_cast<double>(epochSeconds),
+        static_cast<double>(simulationAdvanceSeconds),
         authoritativePositions.asDoubleSpan(),
         authoritativeSourceMasses.asDoubleSpan(),
         authoritativeRadii.asFloatSpan(),
@@ -267,16 +330,6 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
         tracerNearRadii.asFloatSpan(),
         tracerNearColors.asIntSpan(),
         tracerNearKindsView.asIntSpan(),
-        tracerMediumPositions.asDoubleSpan(),
-        tracerMediumVelocities.asDoubleSpan(),
-        tracerMediumRadii.asFloatSpan(),
-        tracerMediumColors.asIntSpan(),
-        tracerMediumKindsView.asIntSpan(),
-        tracerFarPositions.asDoubleSpan(),
-        tracerFarVelocities.asDoubleSpan(),
-        tracerFarRadii.asFloatSpan(),
-        tracerFarColors.asIntSpan(),
-        tracerFarKindsView.asIntSpan(),
         trailPositions.asDoubleSpan(),
         trailColors.asIntSpan(),
         trailVertexCountsView.asIntSpan());
