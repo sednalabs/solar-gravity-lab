@@ -1500,6 +1500,27 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         LogInfo(std::string("Falling back to host-visible upload for ") + (label != nullptr ? label : "unnamed tracer stream") + ".");
         return uploadStream(data, sizeBytes, usage, label, target);
     };
+    auto ensureDeviceLocalComputeBuffer = [this](VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
+        if (sizeBytes == 0) {
+            DestroyGpuBuffer(target);
+            return true;
+        }
+        if (EnsureDeviceLocalBuffer(sizeBytes, usage, label, false, target)) {
+            return true;
+        }
+        LogInfo(std::string("Falling back to host-visible allocation for ") + (label != nullptr ? label : "unnamed compute stream") + ".");
+        return EnsureHostVisibleBuffer(sizeBytes, usage, label, target);
+    };
+    auto initializeComputeIndirectBuffer = [this](const VkDrawIndirectCommand& command, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
+        if (TryUploadDeviceLocalWithStaging(&command, sizeof(command), usage, label, target)) {
+            return true;
+        }
+        LogInfo(std::string("Falling back to host-visible upload for ") + (label != nullptr ? label : "unnamed compute indirect stream") + ".");
+        if (!EnsureHostVisibleBuffer(sizeof(command), usage, label, target)) {
+            return false;
+        }
+        return UploadBytes(&command, sizeof(command), target);
+    };
 
     if (!uploadStream(authoritativeVertices.data(), ByteSize(authoritativeVertices), sceneGpuStreams_.authoritative.plannedUsage, sceneGpuStreams_.authoritative.label, sceneGpuStreams_.authoritative.vertexBuffer)) {
         return false;
@@ -1553,43 +1574,37 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX = RoundUpWorkgroups(tracerFarCount, kComputeLocalSizeX);
 
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
-        if (!EnsureHostVisibleBuffer(
+        if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerMediumVertices), sizeof(CheapPointVertex))),
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 sceneGpuStreams_.tracerMediumCompute.label,
                 sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer)) {
             return false;
         }
-        if (!EnsureHostVisibleBuffer(
-                sizeof(VkDrawIndirectCommand),
+        const auto initCommand = MakeInitialIndirectCommand();
+        if (!initializeComputeIndirectBuffer(
+                initCommand,
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-medium-indirect",
                 sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer)) {
             return false;
         }
-        const auto initCommand = MakeInitialIndirectCommand();
-        if (!UploadBytes(&initCommand, sizeof(initCommand), sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer)) {
-            return false;
-        }
     }
 
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
-        if (!EnsureHostVisibleBuffer(
+        if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerFarVertices), sizeof(DensityPointVertex))),
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 sceneGpuStreams_.tracerFarCompute.label,
                 sceneGpuStreams_.tracerFarCompute.outputVertexBuffer)) {
             return false;
         }
-        if (!EnsureHostVisibleBuffer(
-                sizeof(VkDrawIndirectCommand),
+        const auto initCommand = MakeInitialIndirectCommand();
+        if (!initializeComputeIndirectBuffer(
+                initCommand,
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 "tracer-far-indirect",
                 sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer)) {
-            return false;
-        }
-        const auto initCommand = MakeInitialIndirectCommand();
-        if (!UploadBytes(&initCommand, sizeof(initCommand), sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer)) {
             return false;
         }
     }
