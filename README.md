@@ -20,12 +20,13 @@ What is implemented and usable today:
 - Pure Kotlin/JVM core modules for math, domain model, simulation, and render-scene assembly.
 - N-body simulation with double-precision state.
 - Massive-body vs tracer-body dynamics.
-- Continuous collision handling with merge and elastic response modes.
+- Continuous collision handling with merge, elastic, and simple fragmentation response modes.
 - Barycentric recentering for seeded systems.
 - Epoch-tagged seeded major-planet states with bundle/fallback layering.
 - Bundled authoritative Horizons seed data for the seeded major-body baseline.
 - Shipped runtime catalog packs for planetary moons and curated small bodies.
 - Catalog-backed timeline semantics for seeded starts, with sandbox-branch behavior once the user edits or materially diverges the system.
+- Latest-checkpoint restore for sandbox-diverged runs through the Back control.
 - Deterministic physics-accuracy telemetry artifacts through the remote validation lane.
 - Granular playback-speed and step-quantum controls.
 - Vulkan renderer host and status reporting.
@@ -38,7 +39,7 @@ What is intentionally incomplete:
 - GPU-side tracer integration is not implemented yet (simulation remains authoritative on CPU).
 - Synthetic asteroid/Oort populations are generated approximations, not catalogue-complete object sets.
 - Backward time travel for sandbox-diverged runs restores the latest catalog-backed checkpoint; arbitrary multi-step sandbox history is still not implemented.
-- Collision model supports merge and elastic response, but not fragmentation.
+- Collision fragmentation is intentionally simple and still needs richer breakup/dust modeling.
 - Android app UX is still minimal and engineering-focused.
 
 ## Project modules
@@ -63,7 +64,7 @@ What is intentionally incomplete:
 - Body categories:
   - Massive bodies mutually interact.
   - Tracer bodies feel massive bodies but do not perturb others.
-- Collision handling: continuous collision sweep during drift with merge or elastic response modes.
+- Collision handling: continuous collision sweep during drift with merge, elastic, or simple fragmentation response modes.
 - Timeline semantics: seeded/catalog-backed starts retain absolute epoch meaning until edits or collisions branch the sandbox.
 
 This model is meant to be physically credible while remaining scalable on mobile hardware.
@@ -127,7 +128,7 @@ This repo currently relies on a remote-first validation workflow documented in [
 Important current notes:
 
 - `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
-- The current installable preview line uses version `0.1.0-alpha.3`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
+- The current installable preview line uses version `0.1.0-alpha.4`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
 - Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
 
 If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md), [`docs/catalog-ingest-handoff.md`](docs/catalog-ingest-handoff.md), and [`docs/release-channels.md`](docs/release-channels.md).
@@ -141,11 +142,11 @@ If you want broader implementation context, see [`docs/architecture.md`](docs/ar
 
 ## Near-term milestones
 
-1. Promote sandbox rewind/checkpoint support onto `main` so seeded vs diverged timeline control is more usable on-device.
-2. Add collision fragmentation semantics beyond merge and elastic response.
-3. Complete the next Vulkan compute milestones (including GPU-side tracer integration).
-4. Expand the physics-accuracy telemetry scenarios and tighten its acceptance thresholds as mechanics evolve.
-5. Improve interaction UX further without weakening simulation correctness, especially around observer modes and sandbox rewind.
+1. Extend sandbox rewind beyond latest-checkpoint restore to richer multi-step history for diverged runs.
+2. Complete the next Vulkan compute milestones (including GPU-side tracer integration).
+3. Expand the physics-accuracy telemetry scenarios and tighten its acceptance thresholds as mechanics evolve.
+4. Improve interaction UX further without weakening simulation correctness, especially around observer modes and sandbox rewind.
+5. Refine fragmentation into a richer breakup model with better collision diagnostics.
 
 ## Non-goals for this phase
 
