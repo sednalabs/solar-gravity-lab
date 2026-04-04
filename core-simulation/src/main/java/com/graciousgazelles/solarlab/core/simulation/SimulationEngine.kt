@@ -18,6 +18,8 @@ class SimulationEngine(
     initialSnapshot: SimulationSnapshot,
     private val config: SimulationConfig = SimulationConfig(),
 ) {
+    private val massiveAccelerationKernel: MassiveAccelerationKernel = DirectMassiveAccelerationKernel
+    private val tracerAccelerationKernel: TracerAccelerationKernel = DirectTracerAccelerationKernel
 
     private var epochSeconds: Double = initialSnapshot.epochSeconds
     private var referenceEpochJdTdb: Double? = initialSnapshot.referenceEpochJdTdb
@@ -144,62 +146,55 @@ class SimulationEngine(
         if (bodies.isEmpty()) return emptyList()
 
         val bodyCount = bodies.size
+        val accelerations = MutableList(bodyCount) { Vector3d.ZERO }
+        val solverBodies = bodies.mapIndexed { index, body ->
+            SolverBodyState(
+                bodyIndex = index,
+                gravitationalRole = body.gravitationalRole,
+                massKg = body.massKg,
+                positionX = body.positionM.x,
+                positionY = body.positionM.y,
+                positionZ = body.positionM.z,
+            )
+        }
+        val sources = AccelerationKernelBufferFactory.buildMassiveSourceBuffers(solverBodies)
+        if (sources.count == 0) return accelerations
+
         val gravitationalConstant = config.gravitationalConstant
         val softeningSquared = config.softeningLengthM * config.softeningLengthM
-        val accelerations = MutableList(bodyCount) { Vector3d.ZERO }
-        val massiveCount = bodies.count { it.gravitationalRole == GravitationalRole.MASSIVE }
-        if (massiveCount == 0) return accelerations
-
-        val sourceIndices = IntArray(massiveCount)
-        val sourceMasses = DoubleArray(massiveCount)
-        val sourcePosX = DoubleArray(massiveCount)
-        val sourcePosY = DoubleArray(massiveCount)
-        val sourcePosZ = DoubleArray(massiveCount)
-        var sourceCursor = 0
-        for (bodyIndex in 0 until bodyCount) {
-            val sourceBody = bodies[bodyIndex]
-            if (sourceBody.gravitationalRole != GravitationalRole.MASSIVE) continue
-
-            sourceIndices[sourceCursor] = bodyIndex
-            sourceMasses[sourceCursor] = sourceBody.massKg
-            sourcePosX[sourceCursor] = sourceBody.positionM.x
-            sourcePosY[sourceCursor] = sourceBody.positionM.y
-            sourcePosZ[sourceCursor] = sourceBody.positionM.z
-            sourceCursor += 1
-        }
-
-        for (i in 0 until bodyCount) {
-            val body = bodies[i]
-            val bodyPosition = body.positionM
-            val bodyX = bodyPosition.x
-            val bodyY = bodyPosition.y
-            val bodyZ = bodyPosition.z
-            var accelerationX = 0.0
-            var accelerationY = 0.0
-            var accelerationZ = 0.0
-
-            for (sourceIndex in 0 until massiveCount) {
-                if (sourceIndices[sourceIndex] == i) continue
-
-                val dx = sourcePosX[sourceIndex] - bodyX
-                val dy = sourcePosY[sourceIndex] - bodyY
-                val dz = sourcePosZ[sourceIndex] - bodyZ
-                val distanceSquared = (dx * dx) + (dy * dy) + (dz * dz) + softeningSquared
-                if (distanceSquared == 0.0) continue
-
-                val invDistance = 1.0 / sqrt(distanceSquared)
-                val invDistanceCubed = invDistance * invDistance * invDistance
-                val scale = gravitationalConstant * sourceMasses[sourceIndex] * invDistanceCubed
-
-                accelerationX += dx * scale
-                accelerationY += dy * scale
-                accelerationZ += dz * scale
-            }
-
-            accelerations[i] = Vector3d(accelerationX, accelerationY, accelerationZ)
-        }
+        applyAccelerationOutput(
+            accelerations = accelerations,
+            output = massiveAccelerationKernel.compute(
+                sources = sources,
+                targets = AccelerationKernelBufferFactory.buildTargetBuffers(solverBodies, GravitationalRole.MASSIVE),
+                gravitationalConstant = gravitationalConstant,
+                softeningSquared = softeningSquared,
+            ),
+        )
+        applyAccelerationOutput(
+            accelerations = accelerations,
+            output = tracerAccelerationKernel.compute(
+                sources = sources,
+                targets = AccelerationKernelBufferFactory.buildTargetBuffers(solverBodies, GravitationalRole.TRACER),
+                gravitationalConstant = gravitationalConstant,
+                softeningSquared = softeningSquared,
+            ),
+        )
 
         return accelerations
+    }
+
+    private fun applyAccelerationOutput(
+        accelerations: MutableList<Vector3d>,
+        output: AccelerationVectorBuffers,
+    ) {
+        for (index in output.bodyIndices.indices) {
+            accelerations[output.bodyIndices[index]] = Vector3d(
+                output.accelerationX[index],
+                output.accelerationY[index],
+                output.accelerationZ[index],
+            )
+        }
     }
 
     private fun resolveCollisionsDuringDrift(deltaTimeSeconds: Double): List<CollisionEvent> {
