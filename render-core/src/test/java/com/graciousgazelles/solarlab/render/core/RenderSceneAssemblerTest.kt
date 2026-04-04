@@ -94,6 +94,8 @@ class RenderSceneAssemblerTest {
                 nearTracerBudget = 10,
                 mediumTracerBudget = 10,
                 farTracerBudget = 10,
+                minBodyScreenRadiusPx = 0.0,
+                minSelectedBodyScreenRadiusPx = 0.0,
                 maxTrailVerticesPerTrail = 8,
                 trailSimplificationTolerancePx = 5.0,
             ),
@@ -138,6 +140,8 @@ class RenderSceneAssemblerTest {
                 nearTracerBudget = 12,
                 mediumTracerBudget = 0,
                 farTracerBudget = 0,
+                minBodyScreenRadiusPx = 0.0,
+                minSelectedBodyScreenRadiusPx = 0.0,
             ),
         )
 
