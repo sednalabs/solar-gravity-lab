@@ -11,6 +11,7 @@ import java.nio.file.Path
 import java.util.Locale
 import kotlin.io.path.writeText
 import kotlin.math.abs
+import kotlin.math.min
 
 class PhysicsAccuracyTelemetryReportGenerator(
     private val scenarioFactory: () -> com.graciousgazelles.solarlab.core.model.SimulationSnapshot = {
@@ -31,16 +32,27 @@ class PhysicsAccuracyTelemetryReportGenerator(
         val scenarioLabel: String = "Solar major bodies + starter moons baseline",
         val stepSeconds: Double = DEFAULT_STEP_SECONDS,
         val steps: Int = DEFAULT_STEPS,
+        val baselineStepSeconds: Double = 3600.0,
     )
 
     fun generate(config: GenerationConfig = GenerationConfig()): PhysicsAccuracyTelemetryReport {
+        require(config.stepSeconds.isFinite()) { "stepSeconds must be finite" }
         require(config.stepSeconds > 0.0) { "stepSeconds must be > 0" }
         require(config.steps > 0) { "steps must be > 0" }
+        require(config.baselineStepSeconds.isFinite()) { "baselineStepSeconds must be finite" }
+        require(config.baselineStepSeconds > 0.0) { "baselineStepSeconds must be > 0" }
 
         val snapshot = scenarioFactory()
+        val simulatedDurationSeconds = config.stepSeconds * config.steps
+        val effectiveBaselineStepSeconds = min(config.baselineStepSeconds, config.stepSeconds / 2.0)
         val engine = SimulationEngine(
             initialSnapshot = snapshot,
             config = SimulationConfig(collisionMode = CollisionMode.NONE),
+        )
+        val baselineFinalSnapshot = runSimulationUntilDuration(
+            initialSnapshot = snapshot,
+            stepSeconds = effectiveBaselineStepSeconds,
+            totalDurationSeconds = simulatedDurationSeconds,
         )
 
         val startingDiagnostics = engine.diagnostics()
@@ -69,19 +81,32 @@ class PhysicsAccuracyTelemetryReportGenerator(
         }
         val moonStart = snapshot.bodies.firstOrNull { it.id == "moon" && it.hostBodyId == "earth" }
         val moonFinal = finalSnapshot.bodies.firstOrNull { it.id == "moon" && it.hostBodyId == "earth" }
+        val moonBaseline = baselineFinalSnapshot.bodies.firstOrNull { it.id == "moon" && it.hostBodyId == "earth" }
+        val earthBaseline = baselineFinalSnapshot.bodies.firstOrNull { it.id == "earth" }
         val moonToEarthMetrics = if (moonStart != null && moonFinal != null) {
             val moonEarthStartDistanceAu = (moonStart.positionM - earthStart.positionM).magnitude() /
                 PhysicalConstants.ASTRONOMICAL_UNIT_M
             val moonEarthFinalDistanceAu = (moonFinal.positionM - earth.positionM).magnitude() /
                 PhysicalConstants.ASTRONOMICAL_UNIT_M
+            val moonEarthBaselineDistanceAu = if (moonBaseline != null && earthBaseline != null) {
+                (moonBaseline.positionM - earthBaseline.positionM).magnitude() / PhysicalConstants.ASTRONOMICAL_UNIT_M
+            } else {
+                null
+            }
             val moonEarthDistanceDriftAu = moonEarthFinalDistanceAu - moonEarthStartDistanceAu
             val moonEarthRelativeDrift = if (moonEarthStartDistanceAu == 0.0) {
                 0.0
             } else {
                 moonEarthDistanceDriftAu / moonEarthStartDistanceAu
             }
+            val moonEarthBaselineErrorAu = moonEarthBaselineDistanceAu?.let { abs(moonEarthFinalDistanceAu - it) }
+            val moonEarthBaselineErrorRatio = if (moonEarthBaselineDistanceAu == null || moonEarthBaselineDistanceAu == 0.0) {
+                null
+            } else {
+                moonEarthBaselineErrorAu!! / moonEarthBaselineDistanceAu
+            }
 
-            listOf(
+            listOfNotNull(
                 PhysicsAccuracyTelemetryMetric(
                     name = "moon_earth_distance_au",
                     value = moonEarthFinalDistanceAu,
@@ -100,6 +125,22 @@ class PhysicsAccuracyTelemetryReportGenerator(
                     unit = "ratio",
                     description = "Earth-Moon distance change normalized by initial Earth-Moon distance",
                 ),
+                moonEarthBaselineErrorAu?.let {
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "moon_earth_distance_fine_baseline_error_au",
+                        value = it,
+                        unit = "au",
+                        description = "Absolute error of final Earth-Moon distance versus finer baseline",
+                    )
+                },
+                moonEarthBaselineErrorRatio?.let {
+                    PhysicsAccuracyTelemetryMetric(
+                        name = "moon_earth_distance_fine_baseline_error_ratio",
+                        value = it,
+                        unit = "ratio",
+                        description = "Relative error of final Earth-Moon distance versus finer baseline",
+                    )
+                },
             )
         } else {
             emptyList()
@@ -171,6 +212,30 @@ class PhysicsAccuracyTelemetryReportGenerator(
                 addAll(moonToEarthMetrics)
             },
         )
+    }
+
+    private fun runSimulationUntilDuration(
+        initialSnapshot: com.graciousgazelles.solarlab.core.model.SimulationSnapshot,
+        stepSeconds: Double,
+        totalDurationSeconds: Double,
+    ): com.graciousgazelles.solarlab.core.model.SimulationSnapshot {
+        require(stepSeconds.isFinite()) { "stepSeconds must be finite" }
+        require(stepSeconds > 0.0) { "stepSeconds must be > 0" }
+        require(totalDurationSeconds.isFinite()) { "totalDurationSeconds must be finite" }
+        require(totalDurationSeconds >= 0.0) { "totalDurationSeconds must be >= 0" }
+
+        val engine = SimulationEngine(
+            initialSnapshot = initialSnapshot,
+            config = SimulationConfig(collisionMode = CollisionMode.NONE),
+        )
+
+        var remainingDurationSeconds = totalDurationSeconds
+        while (remainingDurationSeconds > 0.0) {
+            val nextStep = min(stepSeconds, remainingDurationSeconds)
+            engine.step(nextStep)
+            remainingDurationSeconds -= nextStep
+        }
+        return engine.snapshot()
     }
 
     fun toJson(report: PhysicsAccuracyTelemetryReport): String = buildString {

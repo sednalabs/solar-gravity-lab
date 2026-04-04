@@ -41,6 +41,7 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(json.contains("\"metrics\": ["))
         assertTrue(json.contains("\"relative_energy_drift\""))
         assertTrue(json.contains("\"moon_earth_distance_au\""))
+        assertTrue(json.contains("\"moon_earth_distance_fine_baseline_error_au\""))
     }
 
     @Test
@@ -61,7 +62,27 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(metrics.containsKey("moon_earth_distance_au"))
         assertTrue(metrics.containsKey("moon_earth_distance_change_au"))
         assertTrue(metrics.containsKey("moon_earth_distance_change_ratio"))
+        assertTrue(metrics.containsKey("moon_earth_distance_fine_baseline_error_au"))
+        assertTrue(metrics.containsKey("moon_earth_distance_fine_baseline_error_ratio"))
         assertTrue(metrics["moon_earth_distance_au"]!!.value > 0.0)
+        assertTrue(metrics["moon_earth_distance_fine_baseline_error_au"]!!.value >= 0.0)
+        assertTrue(metrics["moon_earth_distance_fine_baseline_error_ratio"]!!.value >= 0.0)
+    }
+
+    @Test
+    fun `fine baseline metrics still emit for sub-hour coarse steps`() {
+        val generator = PhysicsAccuracyTelemetryReportGenerator()
+        val report = generator.generate(
+            PhysicsAccuracyTelemetryReportGenerator.GenerationConfig(
+                runLabel = "sub-hour-baseline",
+                stepSeconds = 900.0,
+                steps = 8,
+            ),
+        )
+
+        val metrics = report.metrics.associateBy { it.name }
+        assertTrue(metrics.containsKey("moon_earth_distance_fine_baseline_error_au"))
+        assertTrue(metrics.containsKey("moon_earth_distance_fine_baseline_error_ratio"))
     }
 
     @Test
