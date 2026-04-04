@@ -13,6 +13,10 @@ import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.core.model.TimelineMode
 import kotlin.math.acos
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 object SolarSystemScenarios {
@@ -152,6 +156,7 @@ object SolarSystemScenarios {
             bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "ceres",
             name = "Ceres",
             category = BodyCategory.DWARF_PLANET,
@@ -171,6 +176,7 @@ object SolarSystemScenarios {
             bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "pluto",
             name = "Pluto",
             category = BodyCategory.DWARF_PLANET,
@@ -190,6 +196,7 @@ object SolarSystemScenarios {
             bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "haumea",
             name = "Haumea",
             category = BodyCategory.DWARF_PLANET,
@@ -209,6 +216,7 @@ object SolarSystemScenarios {
             bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "makemake",
             name = "Makemake",
             category = BodyCategory.DWARF_PLANET,
@@ -228,6 +236,7 @@ object SolarSystemScenarios {
             bundle = authoritativeBundle,
             primary = sun,
             config = config,
+            julianDateTdb = julianDateTdb,
             id = "eris",
             name = "Eris",
             category = BodyCategory.DWARF_PLANET,
@@ -369,7 +378,7 @@ object SolarSystemScenarios {
             importedSmallBodies = importedSmallBodies,
         )
 
-        if (includeStarterPlanetaryMoons || importedMoons.isNotEmpty() || importedSmallBodies.isNotEmpty()) {
+        if (includeStarterPlanetaryMoons || includeCuratedSmallBodies || importedMoons.isNotEmpty() || importedSmallBodies.isNotEmpty()) {
             val selectedCatalog = mergedCatalog.filter { definition ->
                 when (definition.category) {
                     BodyCategory.MOON -> includeStarterPlanetaryMoons || importedMoons.any { it.id == definition.id }
@@ -503,6 +512,7 @@ object SolarSystemScenarios {
         bundle: CartesianSeedBundle?,
         primary: BodyState,
         config: SimulationConfig,
+        julianDateTdb: Double,
         id: String,
         name: String,
         category: BodyCategory,
@@ -526,41 +536,50 @@ object SolarSystemScenarios {
         }
         if (bundled != null) return bundled
 
-        return seededAroundPrimary(
-            primary = primary,
-            config = config,
+        val fallbackOrbitAtEpoch = fallbackElements.toOrbitAtEpoch()
+        val stateVector = OrbitalMechanics.stateVectorAroundPrimaryAtEpoch(
+            primaryMassKg = primary.massKg,
+            bodyMassKg = massKg,
+            orbit = fallbackOrbitAtEpoch,
+            targetJulianDateTdb = julianDateTdb,
+            gravitationalConstant = config.gravitationalConstant,
+        )
+
+        return realBody(
             id = id,
             name = name,
             category = category,
+            gravitationalRole = GravitationalRole.MASSIVE,
             massKg = massKg,
             radiusM = radiusM,
             colorArgb = colorArgb,
-            elements = fallbackElements,
+            hostBodyId = primary.id,
+            positionM = primary.positionM + stateVector.positionM,
+            velocityMps = primary.velocityMps + stateVector.velocityMps,
         )
     }
 
-    private fun bodyFromCartesianRecordOrDefault(
-        record: CartesianSeedRecord?,
-        id: String,
-        name: String,
-        category: BodyCategory,
-        gravitationalRole: GravitationalRole,
-        massKg: Double,
-        radiusM: Double,
-        colorArgb: Int,
-        hostBodyId: String? = null,
-    ): BodyState = realBody(
-        id = id,
-        name = name,
-        category = category,
-        gravitationalRole = gravitationalRole,
-        massKg = massKg,
-        radiusM = radiusM,
-        colorArgb = colorArgb,
-        hostBodyId = hostBodyId,
-        positionM = record?.positionM ?: Vector3d.ZERO,
-        velocityMps = record?.velocityMps ?: Vector3d.ZERO,
-    )
+    private fun OrbitalElements.toOrbitAtEpoch(
+        epochJdTdb: Double = JplApproximateSeedCatalog.DEFAULT_SEED_JULIAN_DATE_TDB,
+    ): KeplerianOrbitAtEpoch {
+        val eccentricAnomaly = 2.0 * atan2(
+            sqrt(1.0 - eccentricity) * sin(trueAnomalyRad / 2.0),
+            sqrt(1.0 + eccentricity) * cos(trueAnomalyRad / 2.0),
+        )
+        val meanAnomalyAtEpoch = OrbitalMechanics.normalizeRadians(
+            eccentricAnomaly - (eccentricity * sin(eccentricAnomaly)),
+        )
+
+        return KeplerianOrbitAtEpoch(
+            epochJdTdb = epochJdTdb,
+            semiMajorAxisM = semiMajorAxisM,
+            eccentricity = eccentricity,
+            inclinationRad = inclinationRad,
+            longitudeOfAscendingNodeRad = longitudeOfAscendingNodeRad,
+            argumentOfPeriapsisRad = argumentOfPeriapsisRad,
+            meanAnomalyAtEpochRad = meanAnomalyAtEpoch,
+        )
+    }
 
     private fun seededAroundPrimary(
         primary: BodyState,
@@ -593,6 +612,29 @@ object SolarSystemScenarios {
             velocityMps = primary.velocityMps + stateVector.velocityMps,
         )
     }
+
+    private fun bodyFromCartesianRecordOrDefault(
+        record: CartesianSeedRecord?,
+        id: String,
+        name: String,
+        category: BodyCategory,
+        gravitationalRole: GravitationalRole,
+        massKg: Double,
+        radiusM: Double,
+        colorArgb: Int,
+        hostBodyId: String? = null,
+    ): BodyState = realBody(
+        id = id,
+        name = name,
+        category = category,
+        gravitationalRole = gravitationalRole,
+        massKg = massKg,
+        radiusM = radiusM,
+        colorArgb = colorArgb,
+        hostBodyId = hostBodyId,
+        positionM = record?.positionM ?: Vector3d.ZERO,
+        velocityMps = record?.velocityMps ?: Vector3d.ZERO,
+    )
 
     private fun tracerAroundPrimary(
         primary: BodyState,
