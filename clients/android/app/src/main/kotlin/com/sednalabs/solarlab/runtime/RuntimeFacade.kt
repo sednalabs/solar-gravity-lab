@@ -10,5 +10,7 @@ interface RuntimeFacade {
 
 data class ShellUiState(
     val statusLine: String,
-    val detailLine: String? = null
+    val detailLine: String? = null,
+    val sessionHandle: Long? = null,
+    val renderPacketSummary: String? = null
 )

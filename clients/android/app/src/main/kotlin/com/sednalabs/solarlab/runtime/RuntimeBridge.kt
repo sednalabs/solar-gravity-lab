@@ -3,6 +3,7 @@ package com.sednalabs.solarlab.runtime
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
 /**
@@ -130,7 +131,31 @@ class JniRuntimeBridge(
             trySend(RuntimeSignal.Status("Snapshot summary unavailable: ${snapshotResult.result.describe()}"))
         }
 
+        var packetHandle = 0L
+        val packetResult = runCatching {
+            transport.exportVulkanScene(handle)
+        }.getOrElse { error ->
+            trySend(
+                RuntimeSignal.Status(
+                    "Render export unavailable: ${error.message ?: error::class.java.simpleName}"
+                )
+            )
+            awaitClose {
+                transport.destroySession(handle)
+            }
+            return@callbackFlow
+        }
+        if (packetResult.result.isOk() && packetResult.packet != null) {
+            packetHandle = packetResult.packet.packetHandle
+            trySend(RuntimeSignal.RenderPacketReady(packetResult.packet))
+        } else {
+            trySend(RuntimeSignal.Status("Render export unavailable: ${packetResult.result.describe()}"))
+        }
+
         awaitClose {
+            if (packetHandle != 0L) {
+                transport.releaseVulkanScene(packetHandle)
+            }
             transport.destroySession(handle)
         }
     }
@@ -145,6 +170,7 @@ class JniRuntimeBridge(
 sealed interface RuntimeSignal {
     data class Connected(val handle: Long) : RuntimeSignal
     data class Status(val message: String) : RuntimeSignal
+    data class RenderPacketReady(val packet: NativeVulkanScenePacket) : RuntimeSignal
     data class Unavailable(val message: String, val detail: String? = null) : RuntimeSignal
 }
 
@@ -159,6 +185,10 @@ internal interface NativeRuntimeTransport {
     fun runtimeInfo(handle: Long): NativeRuntimeInfoResult
 
     fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult
+
+    fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult
+
+    fun releaseVulkanScene(packetHandle: Long)
 
     fun destroySession(handle: Long)
 }
@@ -214,6 +244,16 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
 
     override fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult = nativeSnapshotSummary(handle)
 
+    override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult =
+        nativeExportVulkanScene(handle)
+
+    override fun releaseVulkanScene(packetHandle: Long) {
+        if (packetHandle == 0L) return
+        runCatching {
+            nativeReleaseVulkanScene(packetHandle)
+        }
+    }
+
     override fun destroySession(handle: Long) {
         if (handle == 0L) return
         runCatching {
@@ -236,6 +276,10 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private external fun nativeRuntimeInfo(handle: Long): NativeRuntimeInfoResult
 
     private external fun nativeSnapshotSummary(handle: Long): NativeSnapshotSummaryResult
+
+    private external fun nativeExportVulkanScene(handle: Long): NativeVulkanScenePacketResult
+
+    private external fun nativeReleaseVulkanScene(packetHandle: Long): NativeResult
 
     private const val NATIVE_TIMELINE_SEMANTICS_BRANCHED_SANDBOX = 1
     private const val NATIVE_CPU_BACKEND_SIMD_ARM64 = 1
@@ -300,3 +344,68 @@ internal data class NativeSnapshotSummaryResult(
     val activeBranchId: String,
     val bodyCount: Int,
 )
+
+internal data class NativeVulkanScenePacketResult(
+    val result: NativeResult,
+    val packet: NativeVulkanScenePacket? = null,
+)
+
+internal data class NativeVulkanCameraPacket(
+    val frameOriginX: Double,
+    val frameOriginY: Double,
+    val frameOriginZ: Double,
+    val positionFromOriginX: Float,
+    val positionFromOriginY: Float,
+    val positionFromOriginZ: Float,
+    val targetFromOriginX: Float,
+    val targetFromOriginY: Float,
+    val targetFromOriginZ: Float,
+    val upX: Float,
+    val upY: Float,
+    val upZ: Float,
+    val verticalFovDegrees: Float,
+    val exposure: Float,
+)
+
+internal data class NativeRenderDiagnostics(
+    val frameNumber: Long,
+    val cpuExtractMs: Float,
+    val gpuUploadMs: Float,
+    val droppedFrames: Int,
+)
+
+internal data class NativeVulkanScenePacket(
+    val packetHandle: Long,
+    val sceneRevision: String,
+    val epochSeconds: Double,
+    val observerMode: Int,
+    val timelineSemantics: Int,
+    val camera: NativeVulkanCameraPacket,
+    val bodyCount: Int,
+    val tracerCount: Int,
+    val trailSpanCount: Int,
+    val trailVertexCount: Int,
+    val directionalLightCount: Int,
+    val diagnostics: NativeRenderDiagnostics,
+    val provenanceSource: String?,
+    val provenanceVersion: String?,
+    val provenanceManifestId: String?,
+    val provenanceManifestDigest: String?,
+    val provenancePackageDigest: String?,
+    val bodyInstances: ByteBuffer?,
+    val tracerInstances: ByteBuffer?,
+    val trailSpans: ByteBuffer?,
+    val trailVertices: ByteBuffer?,
+    val directionalLights: ByteBuffer?,
+) {
+    fun summaryLine(): String {
+        val uploadBytes = listOf(
+            bodyInstances?.capacity() ?: 0,
+            tracerInstances?.capacity() ?: 0,
+            trailSpans?.capacity() ?: 0,
+            trailVertices?.capacity() ?: 0,
+            directionalLights?.capacity() ?: 0,
+        ).sum()
+        return "Packet handle=$packetHandle, bodies=$bodyCount, tracers=$tracerCount, trails=$trailSpanCount/$trailVertexCount, lights=$directionalLightCount, uploadBytes=$uploadBytes"
+    }
+}

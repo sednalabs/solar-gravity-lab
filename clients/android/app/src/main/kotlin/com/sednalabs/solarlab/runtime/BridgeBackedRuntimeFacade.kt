@@ -22,10 +22,16 @@ class BridgeBackedRuntimeFacade(
             _uiState.value = when (signal) {
                 is RuntimeSignal.Connected -> _uiState.value.copy(
                     statusLine = "Connected to runtime boundary",
-                    detailLine = "Native session handle=${signal.handle}"
+                    detailLine = "Native session handle=${signal.handle}",
+                    sessionHandle = signal.handle
                 )
                 is RuntimeSignal.Status -> _uiState.value.copy(
                     detailLine = signal.message
+                )
+                is RuntimeSignal.RenderPacketReady -> _uiState.value.copy(
+                    statusLine = "Vulkan render packet exported",
+                    detailLine = "Scene revision=${signal.packet.sceneRevision}",
+                    renderPacketSummary = signal.packet.summaryLine()
                 )
                 is RuntimeSignal.Unavailable -> _uiState.value.copy(
                     statusLine = signal.message,

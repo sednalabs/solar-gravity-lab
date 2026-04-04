@@ -1,6 +1,8 @@
 #![allow(unsafe_code)]
 
 use std::collections::HashMap;
+use std::ffi::c_void;
+use std::mem::size_of;
 use std::str;
 use std::sync::{Mutex, OnceLock};
 
@@ -8,6 +10,10 @@ use solarlab_domain::{BranchId, ObserverMode, ScenarioId, TimelineSemantics};
 use solarlab_hardware::{CpuBackend, GpuBackend, HardwareProfile};
 use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
 use solarlab_runtime::{RuntimeConfig, WorldRuntime};
+use solarlab_vulkan_adapter::{
+    adapt_render_scene, PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight,
+    VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
+};
 
 pub const SOLARLAB_V2_ABI_VERSION: u32 = 1;
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -15,6 +21,12 @@ pub const SL_V2_ID_CAPACITY: usize = 96;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct SlRuntimeHandle {
+    pub raw: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct SlRenderPacketHandle {
     pub raw: u64,
 }
 
@@ -32,6 +44,22 @@ pub enum SlStatusCode {
 pub struct SlResult {
     pub code: SlStatusCode,
     pub detail_length: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlBytesView {
+    pub data: *const u8,
+    pub length: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlBufferView {
+    pub data: *const c_void,
+    pub stride_bytes: u32,
+    pub element_count: u32,
+    pub size_bytes: u32,
 }
 
 #[repr(C)]
@@ -69,10 +97,130 @@ pub enum SlObserverMode {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlVulkanSceneBufferKind {
+    BodyInstances = 0,
+    TracerInstances = 1,
+    TrailSpans = 2,
+    TrailVertices = 3,
+    DirectionalLights = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlRuntimeInfo {
     pub abi_version: u32,
     pub cpu_backend: SlCpuBackend,
     pub gpu_backend: SlGpuBackend,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlVector3d {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlPackedVec3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlPackedColor {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlRenderDiagnostics {
+    pub frame_number: u64,
+    pub cpu_extract_ms: f32,
+    pub gpu_upload_ms: f32,
+    pub dropped_frames: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlVulkanCameraPacket {
+    pub frame_origin_m: SlVector3d,
+    pub position_from_origin_m: SlPackedVec3,
+    pub target_from_origin_m: SlPackedVec3,
+    pub up: SlPackedVec3,
+    pub vertical_fov_degrees: f32,
+    pub exposure: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlVulkanBodyInstance {
+    pub position_from_origin_m: SlPackedVec3,
+    pub radius_m: f32,
+    pub albedo: SlPackedColor,
+    pub emissive_luminance: f32,
+    pub selected: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlVulkanTracerInstance {
+    pub position_from_origin_m: SlPackedVec3,
+    pub color: SlPackedColor,
+    pub size_px: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlVulkanTrailVertex {
+    pub trail_index: u32,
+    pub sample_index: u32,
+    pub position_from_origin_m: SlPackedVec3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlVulkanTrailSpan {
+    pub vertex_offset: u32,
+    pub vertex_count: u32,
+    pub color: SlPackedColor,
+    pub max_samples: u32,
+    pub head_highlighted: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlVulkanDirectionalLight {
+    pub direction_ws: SlPackedVec3,
+    pub illuminance_lux: f32,
+    pub color: SlPackedColor,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlVulkanScenePacketInfo {
+    pub scene_revision: SlBytesView,
+    pub epoch_seconds: f64,
+    pub observer_mode: SlObserverMode,
+    pub timeline_semantics: SlTimelineSemantics,
+    pub camera: SlVulkanCameraPacket,
+    pub body_instance_count: u32,
+    pub tracer_instance_count: u32,
+    pub trail_span_count: u32,
+    pub trail_vertex_count: u32,
+    pub directional_light_count: u32,
+    pub diagnostics: SlRenderDiagnostics,
+    pub provenance_source: SlBytesView,
+    pub provenance_version: SlBytesView,
+    pub provenance_manifest_id: SlBytesView,
+    pub provenance_manifest_digest: SlBytesView,
+    pub provenance_package_digest: SlBytesView,
 }
 
 #[repr(C)]
@@ -128,6 +276,21 @@ pub struct SlSessionSnapshotSummaryResult {
     pub summary: SlSessionSnapshotSummary,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlVulkanScenePacketResult {
+    pub result: SlResult,
+    pub handle: SlRenderPacketHandle,
+    pub info: SlVulkanScenePacketInfo,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlBufferViewResult {
+    pub result: SlResult,
+    pub view: SlBufferView,
+}
+
 #[derive(Debug)]
 struct RuntimeSession {
     runtime: WorldRuntime,
@@ -167,6 +330,175 @@ impl SessionRegistry {
 fn registry() -> &'static Mutex<SessionRegistry> {
     static REGISTRY: OnceLock<Mutex<SessionRegistry>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(SessionRegistry::default()))
+}
+
+#[derive(Debug)]
+struct ExportedVulkanScenePacket {
+    scene_revision: Vec<u8>,
+    epoch_seconds: f64,
+    observer_mode: SlObserverMode,
+    timeline_semantics: SlTimelineSemantics,
+    camera: SlVulkanCameraPacket,
+    diagnostics: SlRenderDiagnostics,
+    provenance_source: Vec<u8>,
+    provenance_version: Vec<u8>,
+    provenance_manifest_id: Vec<u8>,
+    provenance_manifest_digest: Vec<u8>,
+    provenance_package_digest: Vec<u8>,
+    body_instances: Vec<SlVulkanBodyInstance>,
+    tracer_instances: Vec<SlVulkanTracerInstance>,
+    trail_spans: Vec<SlVulkanTrailSpan>,
+    trail_vertices: Vec<SlVulkanTrailVertex>,
+    directional_lights: Vec<SlVulkanDirectionalLight>,
+}
+
+impl ExportedVulkanScenePacket {
+    fn from_scene_packet(packet: VulkanScenePacket) -> Self {
+        let provenance_source = packet
+            .provenance
+            .as_ref()
+            .map_or_else(Vec::new, |value| value.source.as_bytes().to_vec());
+        let provenance_version = packet
+            .provenance
+            .as_ref()
+            .map_or_else(Vec::new, |value| value.version.as_bytes().to_vec());
+        let provenance_manifest_id = packet
+            .provenance
+            .as_ref()
+            .map_or_else(Vec::new, |value| value.manifest_id.as_bytes().to_vec());
+        let provenance_manifest_digest = packet
+            .provenance
+            .as_ref()
+            .and_then(|value| value.manifest_digest.as_ref())
+            .map_or_else(Vec::new, |value| value.as_bytes().to_vec());
+        let provenance_package_digest = packet
+            .provenance
+            .as_ref()
+            .and_then(|value| value.package_digest.as_ref())
+            .map_or_else(Vec::new, |digest| {
+                format!("{}:{}", digest.algorithm, digest.hex_value()).into_bytes()
+            });
+
+        Self {
+            scene_revision: packet.scene_revision.into_bytes(),
+            epoch_seconds: packet.epoch_seconds,
+            observer_mode: encode_observer_mode(&packet.observer_mode),
+            timeline_semantics: encode_timeline_semantics(&packet.timeline_semantics),
+            camera: SlVulkanCameraPacket {
+                frame_origin_m: encode_vector3d(packet.camera.frame_origin_m),
+                position_from_origin_m: encode_packed_vec3(packet.camera.position_from_origin_m),
+                target_from_origin_m: encode_packed_vec3(packet.camera.target_from_origin_m),
+                up: encode_packed_vec3(packet.camera.up),
+                vertical_fov_degrees: packet.camera.vertical_fov_degrees,
+                exposure: packet.camera.exposure,
+            },
+            diagnostics: SlRenderDiagnostics {
+                frame_number: packet.diagnostics.frame_number,
+                cpu_extract_ms: packet.diagnostics.cpu_extract_ms,
+                gpu_upload_ms: packet.diagnostics.gpu_upload_ms,
+                dropped_frames: packet.diagnostics.dropped_frames,
+            },
+            provenance_source,
+            provenance_version,
+            provenance_manifest_id,
+            provenance_manifest_digest,
+            provenance_package_digest,
+            body_instances: packet
+                .body_instances
+                .into_iter()
+                .map(encode_body_instance)
+                .collect(),
+            tracer_instances: packet
+                .tracer_instances
+                .into_iter()
+                .map(encode_tracer_instance)
+                .collect(),
+            trail_spans: packet
+                .trail_spans
+                .into_iter()
+                .map(encode_trail_span)
+                .collect(),
+            trail_vertices: packet
+                .trail_vertices
+                .into_iter()
+                .map(encode_trail_vertex)
+                .collect(),
+            directional_lights: packet
+                .directional_lights
+                .into_iter()
+                .map(encode_directional_light)
+                .collect(),
+        }
+    }
+
+    fn info(&self) -> SlVulkanScenePacketInfo {
+        SlVulkanScenePacketInfo {
+            scene_revision: bytes_view(&self.scene_revision),
+            epoch_seconds: self.epoch_seconds,
+            observer_mode: self.observer_mode,
+            timeline_semantics: self.timeline_semantics,
+            camera: self.camera,
+            body_instance_count: usize_to_u32(self.body_instances.len()),
+            tracer_instance_count: usize_to_u32(self.tracer_instances.len()),
+            trail_span_count: usize_to_u32(self.trail_spans.len()),
+            trail_vertex_count: usize_to_u32(self.trail_vertices.len()),
+            directional_light_count: usize_to_u32(self.directional_lights.len()),
+            diagnostics: self.diagnostics,
+            provenance_source: bytes_view(&self.provenance_source),
+            provenance_version: bytes_view(&self.provenance_version),
+            provenance_manifest_id: bytes_view(&self.provenance_manifest_id),
+            provenance_manifest_digest: bytes_view(&self.provenance_manifest_digest),
+            provenance_package_digest: bytes_view(&self.provenance_package_digest),
+        }
+    }
+
+    fn buffer_view(&self, kind: SlVulkanSceneBufferKind) -> SlBufferView {
+        match kind {
+            SlVulkanSceneBufferKind::BodyInstances => typed_buffer_view(&self.body_instances),
+            SlVulkanSceneBufferKind::TracerInstances => typed_buffer_view(&self.tracer_instances),
+            SlVulkanSceneBufferKind::TrailSpans => typed_buffer_view(&self.trail_spans),
+            SlVulkanSceneBufferKind::TrailVertices => typed_buffer_view(&self.trail_vertices),
+            SlVulkanSceneBufferKind::DirectionalLights => {
+                typed_buffer_view(&self.directional_lights)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct RenderPacketRegistry {
+    next_handle: u64,
+    packets: HashMap<u64, ExportedVulkanScenePacket>,
+}
+
+impl RenderPacketRegistry {
+    fn insert(&mut self, packet: ExportedVulkanScenePacket) -> SlRenderPacketHandle {
+        if self.next_handle == 0 {
+            self.next_handle = 1;
+        }
+
+        loop {
+            let candidate = self.next_handle;
+            self.next_handle = self.next_handle.wrapping_add(1);
+            if candidate != 0 && !self.packets.contains_key(&candidate) {
+                self.packets.insert(candidate, packet);
+                return SlRenderPacketHandle { raw: candidate };
+            }
+        }
+    }
+
+    fn remove(&mut self, handle: SlRenderPacketHandle) -> bool {
+        self.packets.remove(&handle.raw).is_some()
+    }
+
+    fn get(&self, handle: SlRenderPacketHandle) -> Option<&ExportedVulkanScenePacket> {
+        self.packets.get(&handle.raw)
+    }
+}
+
+fn render_packet_registry() -> &'static Mutex<RenderPacketRegistry> {
+    static REGISTRY: OnceLock<Mutex<RenderPacketRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(RenderPacketRegistry::default()))
 }
 
 #[must_use]
@@ -324,6 +656,119 @@ pub extern "C" fn sl_v2_session_snapshot_summary(
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_export_vulkan_scene(
+    handle: SlRuntimeHandle,
+) -> SlVulkanScenePacketResult {
+    if handle.raw == 0 {
+        return SlVulkanScenePacketResult {
+            result: status(SlStatusCode::InvalidArgument),
+            handle: SlRenderPacketHandle::default(),
+            info: empty_vulkan_scene_packet_info(),
+        };
+    }
+
+    let scene_packet = {
+        let registry = match registry().lock() {
+            Ok(lock) => lock,
+            Err(_) => {
+                return SlVulkanScenePacketResult {
+                    result: status(SlStatusCode::InternalError),
+                    handle: SlRenderPacketHandle::default(),
+                    info: empty_vulkan_scene_packet_info(),
+                };
+            }
+        };
+
+        let Some(session) = registry.get(handle) else {
+            return SlVulkanScenePacketResult {
+                result: status(SlStatusCode::NotReady),
+                handle: SlRenderPacketHandle::default(),
+                info: empty_vulkan_scene_packet_info(),
+            };
+        };
+
+        adapt_render_scene(&session.runtime.render_scene())
+    };
+
+    let packet = ExportedVulkanScenePacket::from_scene_packet(scene_packet);
+    let mut packet_registry = match render_packet_registry().lock() {
+        Ok(lock) => lock,
+        Err(_) => {
+            return SlVulkanScenePacketResult {
+                result: status(SlStatusCode::InternalError),
+                handle: SlRenderPacketHandle::default(),
+                info: empty_vulkan_scene_packet_info(),
+            };
+        }
+    };
+
+    let handle = packet_registry.insert(packet);
+    let info = packet_registry
+        .get(handle)
+        .map(ExportedVulkanScenePacket::info)
+        .unwrap_or_else(empty_vulkan_scene_packet_info);
+
+    SlVulkanScenePacketResult {
+        result: status(SlStatusCode::Ok),
+        handle,
+        info,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_vulkan_scene_packet_buffer(
+    handle: SlRenderPacketHandle,
+    buffer_kind: SlVulkanSceneBufferKind,
+) -> SlBufferViewResult {
+    if handle.raw == 0 {
+        return SlBufferViewResult {
+            result: status(SlStatusCode::InvalidArgument),
+            view: empty_buffer_view(),
+        };
+    }
+
+    let packet_registry = match render_packet_registry().lock() {
+        Ok(lock) => lock,
+        Err(_) => {
+            return SlBufferViewResult {
+                result: status(SlStatusCode::InternalError),
+                view: empty_buffer_view(),
+            };
+        }
+    };
+
+    let Some(packet) = packet_registry.get(handle) else {
+        return SlBufferViewResult {
+            result: status(SlStatusCode::NotReady),
+            view: empty_buffer_view(),
+        };
+    };
+
+    SlBufferViewResult {
+        result: status(SlStatusCode::Ok),
+        view: packet.buffer_view(buffer_kind),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_vulkan_scene_packet_release(handle: SlRenderPacketHandle) -> SlResult {
+    if handle.raw == 0 {
+        return status(SlStatusCode::InvalidArgument);
+    }
+
+    let mut packet_registry = match render_packet_registry().lock() {
+        Ok(lock) => lock,
+        Err(_) => return status(SlStatusCode::InternalError),
+    };
+
+    if packet_registry.remove(handle) {
+        status(SlStatusCode::Ok)
+    } else {
+        status(SlStatusCode::NotReady)
+    }
+}
+
 fn build_session(
     params: SlSessionCreateParams,
 ) -> Result<(WorldRuntime, SlRuntimeInfo, SlSessionSnapshotSummary), SlResult> {
@@ -382,6 +827,104 @@ fn snapshot_summary(runtime: &WorldRuntime) -> Result<SlSessionSnapshotSummary, 
         timeline_semantics: encode_timeline_semantics(&snapshot.timeline_semantics),
         observer_mode: encode_observer_mode(&snapshot.observer.mode),
     })
+}
+
+fn encode_vector3d(value: solarlab_domain::Vector3d) -> SlVector3d {
+    SlVector3d {
+        x: value.x,
+        y: value.y,
+        z: value.z,
+    }
+}
+
+fn encode_packed_vec3(value: PackedVec3) -> SlPackedVec3 {
+    SlPackedVec3 {
+        x: value.x,
+        y: value.y,
+        z: value.z,
+    }
+}
+
+fn encode_packed_color(value: PackedColor) -> SlPackedColor {
+    SlPackedColor {
+        r: value.r,
+        g: value.g,
+        b: value.b,
+        a: value.a,
+    }
+}
+
+fn encode_body_instance(value: VulkanBodyInstance) -> SlVulkanBodyInstance {
+    SlVulkanBodyInstance {
+        position_from_origin_m: encode_packed_vec3(value.position_from_origin_m),
+        radius_m: value.radius_m,
+        albedo: encode_packed_color(value.albedo),
+        emissive_luminance: value.emissive_luminance,
+        selected: u32::from(value.selected),
+    }
+}
+
+fn encode_tracer_instance(value: VulkanTracerInstance) -> SlVulkanTracerInstance {
+    SlVulkanTracerInstance {
+        position_from_origin_m: encode_packed_vec3(value.position_from_origin_m),
+        color: encode_packed_color(value.color),
+        size_px: value.size_px,
+    }
+}
+
+fn encode_trail_span(value: VulkanTrailSpan) -> SlVulkanTrailSpan {
+    SlVulkanTrailSpan {
+        vertex_offset: value.vertex_offset,
+        vertex_count: value.vertex_count,
+        color: encode_packed_color(value.color),
+        max_samples: value.max_samples,
+        head_highlighted: u32::from(value.head_highlighted),
+    }
+}
+
+fn encode_trail_vertex(value: VulkanTrailVertex) -> SlVulkanTrailVertex {
+    SlVulkanTrailVertex {
+        trail_index: value.trail_index,
+        sample_index: value.sample_index,
+        position_from_origin_m: encode_packed_vec3(value.position_from_origin_m),
+    }
+}
+
+fn encode_directional_light(value: VulkanDirectionalLight) -> SlVulkanDirectionalLight {
+    SlVulkanDirectionalLight {
+        direction_ws: encode_packed_vec3(value.direction_ws),
+        illuminance_lux: value.illuminance_lux,
+        color: encode_packed_color(value.color),
+    }
+}
+
+fn bytes_view(bytes: &[u8]) -> SlBytesView {
+    if bytes.is_empty() {
+        SlBytesView {
+            data: std::ptr::null(),
+            length: 0,
+        }
+    } else {
+        SlBytesView {
+            data: bytes.as_ptr(),
+            length: usize_to_u32(bytes.len()),
+        }
+    }
+}
+
+fn typed_buffer_view<T>(values: &[T]) -> SlBufferView {
+    if values.is_empty() {
+        return empty_buffer_view();
+    }
+
+    let stride_bytes = usize_to_u32(size_of::<T>());
+    let element_count = usize_to_u32(values.len());
+    SlBufferView {
+        data: values.as_ptr().cast::<c_void>(),
+        stride_bytes,
+        element_count,
+        size_bytes: stride_bytes.saturating_mul(element_count),
+    }
 }
 
 fn decode_identifier(bytes: &[u8; SL_V2_ID_CAPACITY], length: u32) -> Result<String, SlResult> {
@@ -512,12 +1055,45 @@ fn empty_snapshot_summary() -> SlSessionSnapshotSummary {
     }
 }
 
+fn empty_buffer_view() -> SlBufferView {
+    SlBufferView {
+        data: std::ptr::null(),
+        stride_bytes: 0,
+        element_count: 0,
+        size_bytes: 0,
+    }
+}
+
+fn empty_vulkan_scene_packet_info() -> SlVulkanScenePacketInfo {
+    SlVulkanScenePacketInfo {
+        scene_revision: bytes_view(&[]),
+        epoch_seconds: 0.0,
+        observer_mode: SlObserverMode::Free,
+        timeline_semantics: SlTimelineSemantics::AbsoluteEpoch,
+        camera: SlVulkanCameraPacket::default(),
+        body_instance_count: 0,
+        tracer_instance_count: 0,
+        trail_span_count: 0,
+        trail_vertex_count: 0,
+        directional_light_count: 0,
+        diagnostics: SlRenderDiagnostics::default(),
+        provenance_source: bytes_view(&[]),
+        provenance_version: bytes_view(&[]),
+        provenance_manifest_id: bytes_view(&[]),
+        provenance_manifest_digest: bytes_view(&[]),
+        provenance_package_digest: bytes_view(&[]),
+    }
+}
+
 #[cfg(target_os = "android")]
 mod android_jni {
     use super::{
-        sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_runtime_info,
-        sl_v2_session_snapshot_summary, status, SlResult, SlRuntimeHandle, SlSessionCreateParams,
-        SlSessionCreateResult, SlSessionSnapshotSummaryResult, SlStatusCode, SL_V2_ID_CAPACITY,
+        sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_export_vulkan_scene,
+        sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
+        sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, status, SlBufferView,
+        SlBufferViewResult, SlRenderPacketHandle, SlResult, SlRuntimeHandle, SlSessionCreateParams,
+        SlSessionCreateResult, SlSessionSnapshotSummaryResult, SlStatusCode,
+        SlVulkanSceneBufferKind, SlVulkanScenePacketResult, SL_V2_ID_CAPACITY,
     };
     use jni::objects::{JByteArray, JObject, JValue};
     use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject};
@@ -530,6 +1106,14 @@ mod android_jni {
         "com/sednalabs/solarlab/runtime/NativeRuntimeInfoResult";
     const CLASS_NATIVE_SNAPSHOT_SUMMARY_RESULT: &str =
         "com/sednalabs/solarlab/runtime/NativeSnapshotSummaryResult";
+    const CLASS_NATIVE_VULKAN_SCENE_PACKET_RESULT: &str =
+        "com/sednalabs/solarlab/runtime/NativeVulkanScenePacketResult";
+    const CLASS_NATIVE_VULKAN_SCENE_PACKET: &str =
+        "com/sednalabs/solarlab/runtime/NativeVulkanScenePacket";
+    const CLASS_NATIVE_VULKAN_CAMERA_PACKET: &str =
+        "com/sednalabs/solarlab/runtime/NativeVulkanCameraPacket";
+    const CLASS_NATIVE_RENDER_DIAGNOSTICS: &str =
+        "com/sednalabs/solarlab/runtime/NativeRenderDiagnostics";
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
@@ -619,6 +1203,48 @@ mod android_jni {
         };
 
         match create_native_snapshot_summary_result(&mut env, snapshot_summary) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeExportVulkanScene(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+    ) -> jobject {
+        let packet_result = if let Ok(handle_value) = u64::try_from(handle) {
+            sl_v2_session_export_vulkan_scene(SlRuntimeHandle { raw: handle_value })
+        } else {
+            SlVulkanScenePacketResult {
+                result: status(SlStatusCode::InvalidArgument),
+                handle: SlRenderPacketHandle::default(),
+                info: super::empty_vulkan_scene_packet_info(),
+            }
+        };
+
+        match create_native_vulkan_scene_packet_result(&mut env, packet_result) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeReleaseVulkanScene(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+    ) -> jobject {
+        let native_result = if let Ok(handle_value) = u64::try_from(handle) {
+            sl_v2_vulkan_scene_packet_release(SlRenderPacketHandle { raw: handle_value })
+        } else {
+            status(SlStatusCode::InvalidArgument)
+        };
+
+        match create_native_result(&mut env, native_result) {
             Ok(value) => value.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
@@ -782,6 +1408,179 @@ mod android_jni {
         )
     }
 
+    fn create_native_vulkan_scene_packet_result(
+        env: &mut JNIEnv,
+        result: SlVulkanScenePacketResult,
+    ) -> jni::errors::Result<JObject> {
+        let native_result = create_native_result(env, result.result)?;
+        let packet_object = if result.result.code == SlStatusCode::Ok && result.handle.raw != 0 {
+            create_native_vulkan_scene_packet(env, result)?
+        } else {
+            JObject::null()
+        };
+
+        env.new_object(
+            CLASS_NATIVE_VULKAN_SCENE_PACKET_RESULT,
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Lcom/sednalabs/solarlab/runtime/NativeVulkanScenePacket;)V",
+            &[
+                JValue::Object(&native_result),
+                JValue::Object(&packet_object),
+            ],
+        )
+    }
+
+    fn create_native_vulkan_scene_packet(
+        env: &mut JNIEnv,
+        result: SlVulkanScenePacketResult,
+    ) -> jni::errors::Result<JObject> {
+        let camera = create_native_vulkan_camera_packet(env, result.info.camera)?;
+        let diagnostics = create_native_render_diagnostics(env, result.info.diagnostics)?;
+        let scene_revision = env.new_string(bytes_view_to_string(result.info.scene_revision))?;
+        let scene_revision_obj = JObject::from(scene_revision);
+        let provenance_source = new_nullable_java_string(env, result.info.provenance_source)?;
+        let provenance_version = new_nullable_java_string(env, result.info.provenance_version)?;
+        let provenance_manifest_id =
+            new_nullable_java_string(env, result.info.provenance_manifest_id)?;
+        let provenance_manifest_digest =
+            new_nullable_java_string(env, result.info.provenance_manifest_digest)?;
+        let provenance_package_digest =
+            new_nullable_java_string(env, result.info.provenance_package_digest)?;
+        let body_instances =
+            create_buffer_object(env, result.handle, SlVulkanSceneBufferKind::BodyInstances)?;
+        let tracer_instances =
+            create_buffer_object(env, result.handle, SlVulkanSceneBufferKind::TracerInstances)?;
+        let trail_spans =
+            create_buffer_object(env, result.handle, SlVulkanSceneBufferKind::TrailSpans)?;
+        let trail_vertices =
+            create_buffer_object(env, result.handle, SlVulkanSceneBufferKind::TrailVertices)?;
+        let directional_lights = create_buffer_object(
+            env,
+            result.handle,
+            SlVulkanSceneBufferKind::DirectionalLights,
+        )?;
+
+        env.new_object(
+            CLASS_NATIVE_VULKAN_SCENE_PACKET,
+            "(JLjava/lang/String;DIILcom/sednalabs/solarlab/runtime/NativeVulkanCameraPacket;IIIIILcom/sednalabs/solarlab/runtime/NativeRenderDiagnostics;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)V",
+            &[
+                JValue::Long(i64::try_from(result.handle.raw).unwrap_or(i64::MAX)),
+                JValue::Object(&scene_revision_obj),
+                JValue::Double(result.info.epoch_seconds),
+                JValue::Int(result.info.observer_mode as i32),
+                JValue::Int(result.info.timeline_semantics as i32),
+                JValue::Object(&camera),
+                JValue::Int(i32::try_from(result.info.body_instance_count).unwrap_or(i32::MAX)),
+                JValue::Int(
+                    i32::try_from(result.info.tracer_instance_count).unwrap_or(i32::MAX),
+                ),
+                JValue::Int(i32::try_from(result.info.trail_span_count).unwrap_or(i32::MAX)),
+                JValue::Int(i32::try_from(result.info.trail_vertex_count).unwrap_or(i32::MAX)),
+                JValue::Int(
+                    i32::try_from(result.info.directional_light_count).unwrap_or(i32::MAX),
+                ),
+                JValue::Object(&diagnostics),
+                JValue::Object(&provenance_source),
+                JValue::Object(&provenance_version),
+                JValue::Object(&provenance_manifest_id),
+                JValue::Object(&provenance_manifest_digest),
+                JValue::Object(&provenance_package_digest),
+                JValue::Object(&body_instances),
+                JValue::Object(&tracer_instances),
+                JValue::Object(&trail_spans),
+                JValue::Object(&trail_vertices),
+                JValue::Object(&directional_lights),
+            ],
+        )
+    }
+
+    fn create_native_vulkan_camera_packet(
+        env: &mut JNIEnv,
+        camera: super::SlVulkanCameraPacket,
+    ) -> jni::errors::Result<JObject> {
+        env.new_object(
+            CLASS_NATIVE_VULKAN_CAMERA_PACKET,
+            "(DDDFFFFFFFF)V",
+            &[
+                JValue::Double(camera.frame_origin_m.x),
+                JValue::Double(camera.frame_origin_m.y),
+                JValue::Double(camera.frame_origin_m.z),
+                JValue::Float(camera.position_from_origin_m.x),
+                JValue::Float(camera.position_from_origin_m.y),
+                JValue::Float(camera.position_from_origin_m.z),
+                JValue::Float(camera.target_from_origin_m.x),
+                JValue::Float(camera.target_from_origin_m.y),
+                JValue::Float(camera.target_from_origin_m.z),
+                JValue::Float(camera.up.x),
+                JValue::Float(camera.up.y),
+                JValue::Float(camera.up.z),
+                JValue::Float(camera.vertical_fov_degrees),
+                JValue::Float(camera.exposure),
+            ],
+        )
+    }
+
+    fn create_native_render_diagnostics(
+        env: &mut JNIEnv,
+        diagnostics: super::SlRenderDiagnostics,
+    ) -> jni::errors::Result<JObject> {
+        env.new_object(
+            CLASS_NATIVE_RENDER_DIAGNOSTICS,
+            "(JFFI)V",
+            &[
+                JValue::Long(i64::try_from(diagnostics.frame_number).unwrap_or(i64::MAX)),
+                JValue::Float(diagnostics.cpu_extract_ms),
+                JValue::Float(diagnostics.gpu_upload_ms),
+                JValue::Int(i32::try_from(diagnostics.dropped_frames).unwrap_or(i32::MAX)),
+            ],
+        )
+    }
+
+    fn create_buffer_object(
+        env: &mut JNIEnv,
+        handle: SlRenderPacketHandle,
+        kind: SlVulkanSceneBufferKind,
+    ) -> jni::errors::Result<JObject> {
+        let view_result = sl_v2_vulkan_scene_packet_buffer(handle, kind);
+        if view_result.result.code != SlStatusCode::Ok || view_result.view.data.is_null() {
+            return Ok(JObject::null());
+        }
+
+        new_direct_buffer(env, view_result.view)
+    }
+
+    fn new_direct_buffer(env: &mut JNIEnv, view: SlBufferView) -> jni::errors::Result<JObject> {
+        let capacity = usize::try_from(view.size_bytes).unwrap_or(usize::MAX);
+        let buffer = unsafe { env.new_direct_byte_buffer(view.data.cast_mut().cast(), capacity)? };
+        Ok(JObject::from(buffer))
+    }
+
+    fn new_nullable_java_string(
+        env: &mut JNIEnv,
+        view: super::SlBytesView,
+    ) -> jni::errors::Result<JObject> {
+        if view.data.is_null() || view.length == 0 {
+            return Ok(JObject::null());
+        }
+
+        let value = bytes_view_to_string(view);
+        let string = env.new_string(value)?;
+        Ok(JObject::from(string))
+    }
+
+    fn bytes_view_to_string(view: super::SlBytesView) -> String {
+        if view.data.is_null() || view.length == 0 {
+            return String::new();
+        }
+
+        let length = usize::try_from(view.length).unwrap_or(0);
+        if length == 0 {
+            return String::new();
+        }
+
+        let bytes = unsafe { std::slice::from_raw_parts(view.data, length) };
+        String::from_utf8(bytes.to_vec()).unwrap_or_default()
+    }
+
     fn id_from_summary(bytes: &[u8; SL_V2_ID_CAPACITY], length: u32) -> String {
         super::decode_identifier(bytes, length).unwrap_or_default()
     }
@@ -827,10 +1626,19 @@ mod android_jni {
 
 #[cfg(test)]
 mod tests {
+    use std::mem::size_of;
+
+    use solarlab_domain::{BodyClass, BodyId, Vector3d};
+    use solarlab_runtime::{BodyState, WorldCommand};
+    use solarlab_vulkan_adapter::adapt_render_scene;
+
     use super::{
-        sl_v2_abi_version, sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_runtime_info,
-        sl_v2_session_snapshot_summary, SlCpuBackend, SlGpuBackend, SlSessionCreateParams,
-        SlStatusCode, SlTimelineSemantics, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
+        registry, sl_v2_abi_version, sl_v2_session_create, sl_v2_session_destroy,
+        sl_v2_session_export_vulkan_scene, sl_v2_session_runtime_info,
+        sl_v2_session_snapshot_summary, sl_v2_vulkan_scene_packet_buffer,
+        sl_v2_vulkan_scene_packet_release, SlCpuBackend, SlGpuBackend, SlSessionCreateParams,
+        SlStatusCode, SlTimelineSemantics, SlVulkanBodyInstance, SlVulkanSceneBufferKind,
+        SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
 
     #[test]
@@ -892,6 +1700,151 @@ mod tests {
     fn rejects_destroy_for_unknown_handle() {
         let destroy = sl_v2_session_destroy(super::SlRuntimeHandle { raw: 999_999 });
         assert_eq!(destroy.code, SlStatusCode::NotReady);
+    }
+
+    #[test]
+    fn exports_vulkan_packet_buffers_and_releases_them() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        seed_runtime_with_body(create.handle, "earth", 10.0);
+
+        let packet = sl_v2_session_export_vulkan_scene(create.handle);
+        assert_eq!(packet.result.code, SlStatusCode::Ok);
+        assert_ne!(packet.handle.raw, 0);
+        assert_eq!(packet.info.body_instance_count, 1);
+        assert!(packet.info.scene_revision.length > 0);
+
+        let body_view =
+            sl_v2_vulkan_scene_packet_buffer(packet.handle, SlVulkanSceneBufferKind::BodyInstances);
+        assert_eq!(body_view.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            body_view.view.stride_bytes,
+            u32::try_from(size_of::<SlVulkanBodyInstance>()).expect("stride fits")
+        );
+        assert_eq!(body_view.view.element_count, 1);
+        assert_eq!(body_view.view.size_bytes, body_view.view.stride_bytes);
+
+        let release = sl_v2_vulkan_scene_packet_release(packet.handle);
+        assert_eq!(release.code, SlStatusCode::Ok);
+
+        let stale_view =
+            sl_v2_vulkan_scene_packet_buffer(packet.handle, SlVulkanSceneBufferKind::BodyInstances);
+        assert_eq!(stale_view.result.code, SlStatusCode::NotReady);
+
+        let stale_release = sl_v2_vulkan_scene_packet_release(packet.handle);
+        assert_eq!(stale_release.code, SlStatusCode::NotReady);
+
+        let destroy = sl_v2_session_destroy(create.handle);
+        assert_eq!(destroy.code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn exported_vulkan_packet_matches_direct_adapter_output() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        seed_runtime_with_body(create.handle, "earth", 10.0);
+        seed_runtime_with_body(create.handle, "moon", 12.0);
+        focus_body(create.handle, "moon");
+
+        let direct_packet = {
+            let registry = registry().lock().expect("session registry lock");
+            let session = registry.get(create.handle).expect("session exists");
+            adapt_render_scene(&session.runtime.render_scene())
+        };
+
+        let exported = sl_v2_session_export_vulkan_scene(create.handle);
+        assert_eq!(exported.result.code, SlStatusCode::Ok);
+        assert_eq!(exported.info.epoch_seconds, direct_packet.epoch_seconds);
+        assert_eq!(
+            exported.info.body_instance_count as usize,
+            direct_packet.body_instances.len()
+        );
+        assert_eq!(
+            exported.info.directional_light_count as usize,
+            direct_packet.directional_lights.len()
+        );
+        assert_eq!(
+            exported.info.camera.frame_origin_m.x,
+            direct_packet.camera.frame_origin_m.x
+        );
+        assert_eq!(
+            exported.info.camera.target_from_origin_m.z,
+            direct_packet.camera.target_from_origin_m.z
+        );
+
+        let body_view = sl_v2_vulkan_scene_packet_buffer(
+            exported.handle,
+            SlVulkanSceneBufferKind::BodyInstances,
+        );
+        assert_eq!(body_view.result.code, SlStatusCode::Ok);
+        let exported_bodies = unsafe {
+            std::slice::from_raw_parts(
+                body_view.view.data.cast::<SlVulkanBodyInstance>(),
+                usize::try_from(body_view.view.element_count).expect("element count fits"),
+            )
+        };
+        assert_eq!(exported_bodies.len(), direct_packet.body_instances.len());
+        assert_eq!(
+            exported_bodies[1].position_from_origin_m.z,
+            direct_packet.body_instances[1].position_from_origin_m.z
+        );
+        assert_eq!(exported_bodies[1].selected, 1);
+
+        assert_eq!(
+            sl_v2_vulkan_scene_packet_release(exported.handle).code,
+            SlStatusCode::Ok
+        );
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn rejects_export_for_unknown_session_handle() {
+        let packet = sl_v2_session_export_vulkan_scene(super::SlRuntimeHandle { raw: 777_777 });
+        assert_eq!(packet.result.code, SlStatusCode::NotReady);
+        assert_eq!(packet.handle.raw, 0);
+    }
+
+    fn seed_runtime_with_body(handle: super::SlRuntimeHandle, body_id: &str, position_x: f64) {
+        let mut registry = registry().lock().expect("session registry lock");
+        let body = BodyState {
+            body_id: BodyId(body_id.to_owned()),
+            body_class: BodyClass::Planet,
+            mass_kg: 1.0,
+            radius_m: 1.0,
+            position_m: Vector3d {
+                x: position_x,
+                y: 0.0,
+                z: 0.0,
+            },
+            velocity_mps: Vector3d::default(),
+        };
+        let session = registry
+            .sessions
+            .get_mut(&handle.raw)
+            .expect("session exists");
+        let events = session
+            .runtime
+            .apply_command(WorldCommand::SpawnBody { body }, 123)
+            .expect("spawn body");
+        assert!(!events.is_empty());
+    }
+
+    fn focus_body(handle: super::SlRuntimeHandle, body_id: &str) {
+        let mut registry = registry().lock().expect("session registry lock");
+        let session = registry
+            .sessions
+            .get_mut(&handle.raw)
+            .expect("session exists");
+        let events = session
+            .runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(BodyId(body_id.to_owned())),
+                },
+                124,
+            )
+            .expect("focus body");
+        assert!(!events.is_empty());
     }
 
     fn new_params(scenario: &str, branch: &str) -> SlSessionCreateParams {

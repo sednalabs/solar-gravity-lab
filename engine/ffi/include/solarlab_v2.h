@@ -14,6 +14,10 @@ typedef struct SlRuntimeHandle {
   uint64_t raw;
 } SlRuntimeHandle;
 
+typedef struct SlRenderPacketHandle {
+  uint64_t raw;
+} SlRenderPacketHandle;
+
 typedef enum SlStatusCode {
   SL_STATUS_OK = 0,
   SL_STATUS_INVALID_ARGUMENT = 1,
@@ -25,6 +29,18 @@ typedef struct SlResult {
   SlStatusCode code;
   uint32_t detail_length;
 } SlResult;
+
+typedef struct SlBytesView {
+  const uint8_t* data;
+  uint32_t length;
+} SlBytesView;
+
+typedef struct SlBufferView {
+  const void* data;
+  uint32_t stride_bytes;
+  uint32_t element_count;
+  uint32_t size_bytes;
+} SlBufferView;
 
 typedef enum SlCpuBackend {
   SL_CPU_BACKEND_REFERENCE_SCALAR = 0,
@@ -51,11 +67,107 @@ typedef enum SlObserverMode {
   SL_OBSERVER_SYSTEM_FRAME = 3
 } SlObserverMode;
 
+typedef enum SlVulkanSceneBufferKind {
+  SL_VULKAN_SCENE_BODY_INSTANCES = 0,
+  SL_VULKAN_SCENE_TRACER_INSTANCES = 1,
+  SL_VULKAN_SCENE_TRAIL_SPANS = 2,
+  SL_VULKAN_SCENE_TRAIL_VERTICES = 3,
+  SL_VULKAN_SCENE_DIRECTIONAL_LIGHTS = 4
+} SlVulkanSceneBufferKind;
+
 typedef struct SlRuntimeInfo {
   uint32_t abi_version;
   SlCpuBackend cpu_backend;
   SlGpuBackend gpu_backend;
 } SlRuntimeInfo;
+
+typedef struct SlVector3d {
+  double x;
+  double y;
+  double z;
+} SlVector3d;
+
+typedef struct SlPackedVec3 {
+  float x;
+  float y;
+  float z;
+} SlPackedVec3;
+
+typedef struct SlPackedColor {
+  float r;
+  float g;
+  float b;
+  float a;
+} SlPackedColor;
+
+typedef struct SlRenderDiagnostics {
+  uint64_t frame_number;
+  float cpu_extract_ms;
+  float gpu_upload_ms;
+  uint32_t dropped_frames;
+} SlRenderDiagnostics;
+
+typedef struct SlVulkanCameraPacket {
+  SlVector3d frame_origin_m;
+  SlPackedVec3 position_from_origin_m;
+  SlPackedVec3 target_from_origin_m;
+  SlPackedVec3 up;
+  float vertical_fov_degrees;
+  float exposure;
+} SlVulkanCameraPacket;
+
+typedef struct SlVulkanBodyInstance {
+  SlPackedVec3 position_from_origin_m;
+  float radius_m;
+  SlPackedColor albedo;
+  float emissive_luminance;
+  uint32_t selected;
+} SlVulkanBodyInstance;
+
+typedef struct SlVulkanTracerInstance {
+  SlPackedVec3 position_from_origin_m;
+  SlPackedColor color;
+  float size_px;
+} SlVulkanTracerInstance;
+
+typedef struct SlVulkanTrailVertex {
+  uint32_t trail_index;
+  uint32_t sample_index;
+  SlPackedVec3 position_from_origin_m;
+} SlVulkanTrailVertex;
+
+typedef struct SlVulkanTrailSpan {
+  uint32_t vertex_offset;
+  uint32_t vertex_count;
+  SlPackedColor color;
+  uint32_t max_samples;
+  uint32_t head_highlighted;
+} SlVulkanTrailSpan;
+
+typedef struct SlVulkanDirectionalLight {
+  SlPackedVec3 direction_ws;
+  float illuminance_lux;
+  SlPackedColor color;
+} SlVulkanDirectionalLight;
+
+typedef struct SlVulkanScenePacketInfo {
+  SlBytesView scene_revision;
+  double epoch_seconds;
+  SlObserverMode observer_mode;
+  SlTimelineSemantics timeline_semantics;
+  SlVulkanCameraPacket camera;
+  uint32_t body_instance_count;
+  uint32_t tracer_instance_count;
+  uint32_t trail_span_count;
+  uint32_t trail_vertex_count;
+  uint32_t directional_light_count;
+  SlRenderDiagnostics diagnostics;
+  SlBytesView provenance_source;
+  SlBytesView provenance_version;
+  SlBytesView provenance_manifest_id;
+  SlBytesView provenance_manifest_digest;
+  SlBytesView provenance_package_digest;
+} SlVulkanScenePacketInfo;
 
 typedef struct SlSessionCreateParams {
   uint8_t scenario_id[SL_V2_ID_CAPACITY];
@@ -100,11 +212,27 @@ typedef struct SlSessionSnapshotSummaryResult {
   SlSessionSnapshotSummary summary;
 } SlSessionSnapshotSummaryResult;
 
+typedef struct SlVulkanScenePacketResult {
+  SlResult result;
+  SlRenderPacketHandle handle;
+  SlVulkanScenePacketInfo info;
+} SlVulkanScenePacketResult;
+
+typedef struct SlBufferViewResult {
+  SlResult result;
+  SlBufferView view;
+} SlBufferViewResult;
+
 uint32_t sl_v2_abi_version(void);
 SlSessionCreateResult sl_v2_session_create(SlSessionCreateParams params);
 SlResult sl_v2_session_destroy(SlRuntimeHandle handle);
 SlRuntimeInfoResult sl_v2_session_runtime_info(SlRuntimeHandle handle);
 SlSessionSnapshotSummaryResult sl_v2_session_snapshot_summary(SlRuntimeHandle handle);
+SlVulkanScenePacketResult sl_v2_session_export_vulkan_scene(SlRuntimeHandle handle);
+SlBufferViewResult sl_v2_vulkan_scene_packet_buffer(
+    SlRenderPacketHandle handle,
+    SlVulkanSceneBufferKind buffer_kind);
+SlResult sl_v2_vulkan_scene_packet_release(SlRenderPacketHandle handle);
 
 #ifdef __cplusplus
 }  // extern "C"

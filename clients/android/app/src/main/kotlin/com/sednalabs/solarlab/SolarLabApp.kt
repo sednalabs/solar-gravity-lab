@@ -45,6 +45,18 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
+                uiState.sessionHandle?.let { handle ->
+                    Text(
+                        text = "Session handle: $handle",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                uiState.renderPacketSummary?.let { summary ->
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         }
     }
