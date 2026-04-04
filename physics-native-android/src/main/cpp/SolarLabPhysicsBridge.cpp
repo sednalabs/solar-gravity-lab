@@ -239,10 +239,12 @@ std::vector<jdouble> ComputeAccelerationsNeon(
             distanceSquared = vaddq_f64(distanceSquared, vmulq_f64(dy, dy));
             distanceSquared = vaddq_f64(distanceSquared, vmulq_f64(dz, dz));
 
+            double distanceSquaredValues[2];
+            vst1q_f64(distanceSquaredValues, distanceSquared);
             double scaleValues[2] = {0.0, 0.0};
             for (size_t lane = 0; lane < 2; ++lane) {
                 const size_t laneIndex = sourceIndex + lane;
-                const double laneDistanceSquared = vgetq_lane_f64(distanceSquared, static_cast<int>(lane));
+                const double laneDistanceSquared = distanceSquaredValues[lane];
                 if (laneDistanceSquared == 0.0) {
                     continue;
                 }

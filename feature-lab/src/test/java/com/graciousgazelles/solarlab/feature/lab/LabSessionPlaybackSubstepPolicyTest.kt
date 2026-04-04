@@ -103,9 +103,9 @@ class LabSessionPlaybackSubstepPolicyTest {
             playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
         )
 
-        assertEquals(21_600.0, budget.maxSubstepSeconds, 0.0)
-        assertEquals(64_800.0, budget.secondsToAdvance, 0.0)
-        assertEquals(simulatedTickSeconds - 64_800.0, budget.deferredSeconds, 1.0e-6)
+        assertEquals(10_800.0, budget.maxSubstepSeconds, 0.0)
+        assertEquals(32_400.0, budget.secondsToAdvance, 0.0)
+        assertEquals(simulatedTickSeconds - 32_400.0, budget.deferredSeconds, 1.0e-6)
         assertEquals(simulatedTickSeconds, budget.cappedPendingSeconds, 1.0e-6)
     }
 
@@ -121,6 +121,30 @@ class LabSessionPlaybackSubstepPolicyTest {
         assertEquals(259_200.0, budget.cappedPendingSeconds, 0.0)
         assertEquals(64_800.0, budget.secondsToAdvance, 0.0)
         assertEquals(194_400.0, budget.deferredSeconds, 0.0)
+    }
+
+    @Test
+    fun `repeated high-speed tick planning bounds backlog over sustained playback`() {
+        val simSecondsPerTick = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.05
+        var pendingSeconds = 0.0
+
+        repeat(240) {
+            val budget = LabSession.simulationAdvanceBudget(
+                totalPendingSeconds = pendingSeconds + simSecondsPerTick,
+                collisionMode = CollisionMode.NONE,
+                playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+            )
+            pendingSeconds = budget.deferredSeconds
+
+            assertTrue(
+                "Expected scheduler to cap sustained backlog, backlog=$pendingSeconds",
+                pendingSeconds <= budget.maxSubstepSeconds * 3.0,
+            )
+            assertTrue(
+                "Expected scheduler to keep advancing work each render tick",
+                budget.secondsToAdvance > 0.0,
+            )
+        }
     }
 
     @Test

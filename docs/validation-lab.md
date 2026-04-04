@@ -16,7 +16,7 @@ Workflow file:
 - `.github/workflows/validation-lab.yml`
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 
-The workflow currently supports six lane families:
+The workflow currently supports seven lane families:
 
 1. `wrapper-bootstrap`
    Generates `gradle/wrapper/gradle-wrapper.jar` remotely from the distribution
@@ -40,6 +40,10 @@ The workflow currently supports six lane families:
    Runs the current native-physics proof bundle: `core-jvm`,
    `feature-lab-unit`, deterministic `physics-accuracy-telemetry`, and
    `android-assemble`.
+7. `field-reliability`
+   Runs the same remote proof bundle as `physics-native`, but is named for the
+   product question it answers: are scheduler, physics, and Android-host seams
+   still holding together well enough for sustained field testing?
 
 ## Profiles
 
@@ -77,6 +81,9 @@ seam, and avoid rerunning wrapper bootstrap unless you explicitly ask for it.
 - `physics-native`
   Run the current native-physics bundle without having to ask for a full
   milestone checkpoint.
+- `field-reliability`
+  Run the current field-reliability proxy bundle for sustained playback and
+  Android-host confidence without widening to a broader checkpoint profile.
 - `android-host`
   Run only Android assembly.
 - `full`

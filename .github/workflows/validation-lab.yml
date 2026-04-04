@@ -28,6 +28,7 @@ on:
           - feature-lab-unit
           - physics-accuracy
           - physics-native
+          - field-reliability
           - android-host
           - full
         default: auto
@@ -131,6 +132,12 @@ jobs:
                 physics_accuracy_telemetry='true'
                 ;;
               physics-native)
+                core_jvm='true'
+                feature_lab_unit='true'
+                physics_accuracy_telemetry='true'
+                android_assemble='true'
+                ;;
+              field-reliability)
                 core_jvm='true'
                 feature_lab_unit='true'
                 physics_accuracy_telemetry='true'
