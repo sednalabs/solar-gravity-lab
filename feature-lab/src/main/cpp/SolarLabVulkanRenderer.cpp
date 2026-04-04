@@ -317,6 +317,7 @@ void SolarLabVulkanRenderer::SubmitScene(
     double sceneOriginY,
     double sceneOriginZ,
     std::vector<double> authoritativePositionsM,
+    std::vector<double> authoritativeSourceMassesKg,
     std::vector<float> authoritativeRadiiM,
     std::vector<int32_t> authoritativeColorsArgb,
     std::vector<int32_t> authoritativeKinds,
@@ -325,10 +326,12 @@ void SolarLabVulkanRenderer::SubmitScene(
     std::vector<int32_t> tracerNearColorsArgb,
     std::vector<int32_t> tracerNearKinds,
     std::vector<double> tracerMediumPositionsM,
+    std::vector<double> tracerMediumVelocitiesMps,
     std::vector<float> tracerMediumRadiiM,
     std::vector<int32_t> tracerMediumColorsArgb,
     std::vector<int32_t> tracerMediumKinds,
     std::vector<double> tracerFarPositionsM,
+    std::vector<double> tracerFarVelocitiesMps,
     std::vector<float> tracerFarRadiiM,
     std::vector<int32_t> tracerFarColorsArgb,
     std::vector<int32_t> tracerFarKinds,
@@ -341,6 +344,7 @@ void SolarLabVulkanRenderer::SubmitScene(
     sceneBuffers_.sceneOriginY = sceneOriginY;
     sceneBuffers_.sceneOriginZ = sceneOriginZ;
     sceneBuffers_.authoritativePositionsM = std::move(authoritativePositionsM);
+    sceneBuffers_.authoritativeSourceMassesKg = std::move(authoritativeSourceMassesKg);
     sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
     sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
     sceneBuffers_.authoritativeKinds = std::move(authoritativeKinds);
@@ -349,10 +353,12 @@ void SolarLabVulkanRenderer::SubmitScene(
     sceneBuffers_.tracerNearColorsArgb = std::move(tracerNearColorsArgb);
     sceneBuffers_.tracerNearKinds = std::move(tracerNearKinds);
     sceneBuffers_.tracerMediumPositionsM = std::move(tracerMediumPositionsM);
+    sceneBuffers_.tracerMediumVelocitiesMps = std::move(tracerMediumVelocitiesMps);
     sceneBuffers_.tracerMediumRadiiM = std::move(tracerMediumRadiiM);
     sceneBuffers_.tracerMediumColorsArgb = std::move(tracerMediumColorsArgb);
     sceneBuffers_.tracerMediumKinds = std::move(tracerMediumKinds);
     sceneBuffers_.tracerFarPositionsM = std::move(tracerFarPositionsM);
+    sceneBuffers_.tracerFarVelocitiesMps = std::move(tracerFarVelocitiesMps);
     sceneBuffers_.tracerFarRadiiM = std::move(tracerFarRadiiM);
     sceneBuffers_.tracerFarColorsArgb = std::move(tracerFarColorsArgb);
     sceneBuffers_.tracerFarKinds = std::move(tracerFarKinds);

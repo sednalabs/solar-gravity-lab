@@ -20,6 +20,7 @@ data class NativeScenePacket(
     val sceneOriginYM: Double,
     val sceneOriginZM: Double,
     val authoritativePositionsM: DoubleArray,
+    val authoritativeSourceMassesKg: DoubleArray,
     val authoritativeRadiiM: FloatArray,
     val authoritativeColorsArgb: IntArray,
     val authoritativeKinds: IntArray,
@@ -28,10 +29,12 @@ data class NativeScenePacket(
     val tracerNearColorsArgb: IntArray,
     val tracerNearKinds: IntArray,
     val tracerMediumPositionsM: DoubleArray,
+    val tracerMediumVelocitiesMps: DoubleArray,
     val tracerMediumRadiiM: FloatArray,
     val tracerMediumColorsArgb: IntArray,
     val tracerMediumKinds: IntArray,
     val tracerFarPositionsM: DoubleArray,
+    val tracerFarVelocitiesMps: DoubleArray,
     val tracerFarRadiiM: FloatArray,
     val tracerFarColorsArgb: IntArray,
     val tracerFarKinds: IntArray,
@@ -106,6 +109,7 @@ data class NativeScenePacket(
                 sceneOriginYM = sceneOriginM.y,
                 sceneOriginZM = sceneOriginM.z,
                 authoritativePositionsM = authoritativePack.positionsM,
+                authoritativeSourceMassesKg = authoritativePack.sourceMassesKg,
                 authoritativeRadiiM = authoritativePack.radiiM,
                 authoritativeColorsArgb = authoritativePack.colorsArgb,
                 authoritativeKinds = authoritativePack.kinds,
@@ -114,10 +118,12 @@ data class NativeScenePacket(
                 tracerNearColorsArgb = nearPack.colorsArgb,
                 tracerNearKinds = nearPack.kinds,
                 tracerMediumPositionsM = mediumPack.positionsM,
+                tracerMediumVelocitiesMps = mediumPack.velocitiesMps,
                 tracerMediumRadiiM = mediumPack.radiiM,
                 tracerMediumColorsArgb = mediumPack.colorsArgb,
                 tracerMediumKinds = mediumPack.kinds,
                 tracerFarPositionsM = farPack.positionsM,
+                tracerFarVelocitiesMps = farPack.velocitiesMps,
                 tracerFarRadiiM = farPack.radiiM,
                 tracerFarColorsArgb = farPack.colorsArgb,
                 tracerFarKinds = farPack.kinds,
@@ -256,20 +262,33 @@ data class NativeScenePacket(
             sceneOriginM: Vector3d,
         ): PackedBodies {
             val positions = DoubleArray(bodies.size * 3)
+            val velocities = DoubleArray(bodies.size * 3)
+            val sourceMassesKg = DoubleArray(bodies.size)
             val radii = FloatArray(bodies.size)
             val colors = IntArray(bodies.size)
             val kinds = IntArray(bodies.size)
             bodies.forEachIndexed { index, body ->
                 val offset = index * 3
-                positions[offset] = body.positionM.x - sceneOriginM.x
-                positions[offset + 1] = body.positionM.y - sceneOriginM.y
-                positions[offset + 2] = body.positionM.z - sceneOriginM.z
+                positions[offset] = body.positionM.x
+                positions[offset + 1] = body.positionM.y
+                positions[offset + 2] = body.positionM.z
+                velocities[offset] = body.velocityMps.x
+                velocities[offset + 1] = body.velocityMps.y
+                velocities[offset + 2] = body.velocityMps.z
+                sourceMassesKg[index] = body.sourceMassKg
                 val isSelected = body.id == selectedBodyId
                 radii[index] = (body.radiusM * if (isSelected) selectedRadiusBoost(body.kind) else 1.0).toFloat()
                 colors[index] = if (isSelected) brightenArgb(body.colorArgb) else body.colorArgb
                 kinds[index] = body.kind.ordinal
             }
-            return PackedBodies(positions, radii, colors, kinds)
+            return PackedBodies(
+                positionsM = positions,
+                velocitiesMps = velocities,
+                sourceMassesKg = sourceMassesKg,
+                radiiM = radii,
+                colorsArgb = colors,
+                kinds = kinds,
+            )
         }
 
         private fun packTrails(
@@ -347,6 +366,8 @@ data class NativeScenePacket(
 
 private data class PackedBodies(
     val positionsM: DoubleArray,
+    val velocitiesMps: DoubleArray,
+    val sourceMassesKg: DoubleArray,
     val radiiM: FloatArray,
     val colorsArgb: IntArray,
     val kinds: IntArray,
