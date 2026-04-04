@@ -141,6 +141,8 @@ class JniRuntimeBridge(
         }
 
         awaitClose {
+            // Packet-backed ByteBuffer views are only valid while the native packet handle is alive.
+            // Release packet leases before tearing down the owning runtime session.
             renderHostAdapter.releasePacket()
             transport.destroySession(handle)
         }

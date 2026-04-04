@@ -14,11 +14,25 @@ internal interface RenderHostAdapter {
     fun releasePacket()
 }
 
-internal data class PacketLease(
-    val packetHandle: Long,
-    val sceneRevision: String,
-    val summaryLine: String,
-)
+internal class PacketLease internal constructor(
+    val packet: NativeVulkanScenePacket,
+    private val releaseAction: (Long) -> Unit,
+) : AutoCloseable {
+    val packetHandle: Long get() = packet.packetHandle
+    val sceneRevision: String get() = packet.sceneRevision
+    val summaryLine: String get() = packet.summaryLine()
+
+    @Volatile
+    private var released: Boolean = false
+
+    val isReleased: Boolean get() = released
+
+    override fun close() {
+        if (released) return
+        releaseAction(packet.packetHandle)
+        released = true
+    }
+}
 
 internal data class RenderPacketRefreshResult(
     val lease: PacketLease? = null,
@@ -29,7 +43,7 @@ internal class NativeRenderHostAdapter(
     private val transport: NativeRuntimeTransport
 ) : RenderHostAdapter {
     private var sessionHandle: Long = 0L
-    private var activePacketHandle: Long = 0L
+    private var activeLease: PacketLease? = null
 
     override fun bindSession(sessionHandle: Long) {
         if (this.sessionHandle != sessionHandle) {
@@ -60,19 +74,16 @@ internal class NativeRenderHostAdapter(
             )
         }
 
-        activePacketHandle = packet.packetHandle
+        val lease = PacketLease(packet = packet, releaseAction = transport::releaseVulkanScene)
+        activeLease = lease
         return RenderPacketRefreshResult(
-            lease = PacketLease(
-                packetHandle = packet.packetHandle,
-                sceneRevision = packet.sceneRevision,
-                summaryLine = packet.summaryLine(),
-            )
+            lease = lease
         )
     }
 
     override fun releasePacket() {
-        if (activePacketHandle == 0L) return
-        transport.releaseVulkanScene(activePacketHandle)
-        activePacketHandle = 0L
+        val lease = activeLease ?: return
+        lease.close()
+        activeLease = null
     }
 }
