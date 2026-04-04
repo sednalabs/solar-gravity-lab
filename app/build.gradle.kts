@@ -11,8 +11,8 @@ android {
         applicationId = "com.sednalabs.solarlab"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 4
-        versionName = "0.1.0-alpha.3"
+        versionCode = 5
+        versionName = "0.1.0-alpha.4"
     }
 
     buildTypes {
