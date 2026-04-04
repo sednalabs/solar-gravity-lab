@@ -30,10 +30,12 @@ class RenderSceneAssembler(
                 id = body.id,
                 name = body.name,
                 positionM = body.positionM,
+                velocityMps = body.velocityMps,
                 radiusM = body.radiusM,
                 colorArgb = body.colorArgb,
                 kind = body.category.toRenderKind(),
                 isMassive = body.gravitationalRole == GravitationalRole.MASSIVE,
+                sourceMassKg = body.sourceMassKg,
                 hostBodyId = body.hostBodyId,
             )
             if (body.gravitationalRole == GravitationalRole.TRACER) {
