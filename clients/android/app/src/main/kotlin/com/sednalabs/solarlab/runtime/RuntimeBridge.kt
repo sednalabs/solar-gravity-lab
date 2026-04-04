@@ -71,14 +71,14 @@ class JniRuntimeBridge(
         }
 
         if (createResult.abiVersion != ABI_VERSION) {
+            transport.destroySession(handle)
             trySend(
-                RuntimeSignal.Status(
-                    "Runtime ABI mismatch: expected=$ABI_VERSION, native=${createResult.abiVersion}"
+                RuntimeSignal.Unavailable(
+                    message = "Native runtime ABI mismatch",
+                    detail = "expected=$ABI_VERSION, native=${createResult.abiVersion}"
                 )
             )
-            awaitClose {
-                transport.destroySession(handle)
-            }
+            close()
             return@callbackFlow
         }
 
