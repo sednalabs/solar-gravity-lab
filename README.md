@@ -128,7 +128,7 @@ This repo currently relies on a remote-first validation workflow documented in [
 Important current notes:
 
 - `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
-- The current installable preview line uses version `0.1.0-alpha.4`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
+- The current installable preview line uses version `0.1.0-alpha.5`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
 - Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
 
 If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md), [`docs/catalog-ingest-handoff.md`](docs/catalog-ingest-handoff.md), and [`docs/release-channels.md`](docs/release-channels.md).
