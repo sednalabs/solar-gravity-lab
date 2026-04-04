@@ -840,8 +840,10 @@ fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
         use std::fmt::Write as _;
         let _ = write!(
             &mut revision,
-            "|manifest={}|manifest_digest={}",
+            "|manifest={}|channel={}|version={}|manifest_digest={}",
             mounted_manifest.manifest_id,
+            mounted_manifest.channel,
+            semver_to_string(&mounted_manifest.manifest_version),
             mounted_manifest
                 .manifest_digest
                 .as_ref()
@@ -2007,6 +2009,73 @@ mod tests {
         runtime
             .mount_package(MountPackageCommand { package_id })
             .expect("mount should succeed");
+
+        assert_ne!(runtime.render_scene().scene_revision, initial_revision);
+    }
+
+    #[test]
+    fn scene_revision_changes_when_manifest_channel_or_version_changes() {
+        let mut runtime = new_runtime();
+        let package_digest = digest(0x71);
+        let package_id = package_id_for(&PackageKind::Scenario, &package_digest);
+
+        let mut manifest_alpha = manifest(
+            "manifest-shared",
+            vec![package_locator(
+                PackageKind::Scenario,
+                semver(1, 0, 0),
+                package_digest.clone(),
+                true,
+            )],
+        );
+        manifest_alpha.channel = "stable".to_owned();
+
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest_alpha,
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    PackageKind::Scenario,
+                    semver(1, 0, 0),
+                    package_digest.clone(),
+                    "cache://pkg-scenario-shared-v100",
+                )]),
+            })
+            .expect("first manifest apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: package_id.clone(),
+            })
+            .expect("mount should succeed");
+        let initial_revision = runtime.render_scene().scene_revision;
+
+        let mut manifest_beta = manifest(
+            "manifest-shared",
+            vec![package_locator(
+                PackageKind::Scenario,
+                semver(1, 0, 1),
+                package_digest.clone(),
+                true,
+            )],
+        );
+        manifest_beta.channel = "beta".to_owned();
+        manifest_beta.manifest_version = semver(1, 0, 1);
+
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest_beta,
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    PackageKind::Scenario,
+                    semver(1, 0, 1),
+                    package_digest,
+                    "cache://pkg-scenario-shared-v100",
+                )]),
+            })
+            .expect("second manifest apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand { package_id })
+            .expect("remount should succeed");
 
         assert_ne!(runtime.render_scene().scene_revision, initial_revision);
     }
