@@ -147,6 +147,84 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    fun conservativePacketPolicyPreservesAuthoritativePayloadWhileReducingPresentationPayload() {
+        val tracers = (0 until 5_000).map { index ->
+            RenderBody(
+                id = "dense-$index",
+                name = "Dense $index",
+                positionM = Vector3d(
+                    0.25 * PhysicalConstants.ASTRONOMICAL_UNIT_M,
+                    index.toDouble() * 25_000.0,
+                    0.0,
+                ),
+                radiusM = 1.0,
+                colorArgb = 0xFFFFFFFF.toInt(),
+                kind = RenderBodyKind.ASTEROID,
+                isMassive = false,
+            )
+        }
+        val frame = RenderSceneFrame(
+            epochSeconds = 0.0,
+            authoritativeBodies = listOf(
+                RenderBody(
+                    id = "sun",
+                    name = "Sun",
+                    positionM = Vector3d(0.0, 0.0, 0.0),
+                    radiusM = 6.0,
+                    colorArgb = 0xFFFFCC33.toInt(),
+                    kind = RenderBodyKind.STAR,
+                    isMassive = true,
+                ),
+            ),
+            tracerBodies = tracers,
+            trails = listOf(
+                RenderTrail(
+                    bodyId = "dense-0",
+                    colorArgb = 0xFFFFFFFF.toInt(),
+                    alpha = 0.5f,
+                    pointsM = List(400) { index ->
+                        Vector3d(
+                            -0.3 * PhysicalConstants.ASTRONOMICAL_UNIT_M + index * 2.0e9,
+                            if (index % 2 == 0) 5.0e9 else -5.0e9,
+                            0.0,
+                        )
+                    },
+                ),
+            ),
+            sourceRevision = 11L,
+        )
+
+        val camera = CameraState(viewRadiusM = PhysicalConstants.ASTRONOMICAL_UNIT_M)
+        val defaultPacket = NativeScenePacket.fromScene(
+            frame = frame,
+            cameraState = camera,
+            viewportWidthPx = 1920,
+            viewportHeightPx = 1080,
+            policy = ScenePacketBuildPolicy(),
+        )
+        val conservativePacket = NativeScenePacket.fromScene(
+            frame = frame,
+            cameraState = camera,
+            viewportWidthPx = 1920,
+            viewportHeightPx = 1080,
+            policy = ScenePacketBuildPolicy(
+                nearTracerBudget = 2_048,
+                mediumTracerBudget = 4_096,
+                farTracerBudget = 6_144,
+                trailSimplificationTolerancePx = 6.0,
+                maxTrailVerticesPerTrail = 96,
+            ),
+        )
+
+        assertEquals(defaultPacket.sourceRevision, conservativePacket.sourceRevision)
+        assertEquals(defaultPacket.authoritativePositionsM.toList(), conservativePacket.authoritativePositionsM.toList())
+        assertEquals(defaultPacket.authoritativeRadiiM.toList(), conservativePacket.authoritativeRadiiM.toList())
+        assertEquals(defaultPacket.authoritativeColorsArgb.toList(), conservativePacket.authoritativeColorsArgb.toList())
+        assertTrue(conservativePacket.tracerNearCount <= defaultPacket.tracerNearCount)
+        assertTrue(conservativePacket.trailVertexCounts.sum() <= defaultPacket.trailVertexCounts.sum())
+    }
+
+    @Test
     fun nativePacketBrightensAndEnlargesSelectedBodyAndTrail() {
         val selectedColor = 0xFF336699.toInt()
         val unselectedColor = 0xFF445566.toInt()

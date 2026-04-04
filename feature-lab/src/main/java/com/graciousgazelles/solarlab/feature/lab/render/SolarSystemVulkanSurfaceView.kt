@@ -37,11 +37,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var cameraState: CameraState = CameraState()
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
+    private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var placementStartScreen: Pair<Float, Float>? = null
 
-    private val scenePacketPolicy = ScenePacketBuildPolicy()
+    private var scenePacketPolicy = defaultScenePacketPolicy()
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
     private val maxViewRadiusM: Double = 150_000.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M
 
@@ -167,6 +168,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     override fun resetCamera() {
         cameraState = CameraState()
         onCameraChanged()
+    }
+
+    override fun setProcessingMode(mode: RenderProcessingMode) {
+        if (processingMode == mode) return
+        processingMode = mode
+        scenePacketPolicy = packetPolicyForMode(mode)
+        packetDirty = true
+        renderLatestScene()
     }
 
     override fun setInteractionListener(listener: RenderInteractionListener?) {
@@ -347,4 +356,17 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         tracerBodies = emptyList(),
         trails = emptyList(),
     )
+
+    private fun defaultScenePacketPolicy(): ScenePacketBuildPolicy = ScenePacketBuildPolicy()
+
+    private fun packetPolicyForMode(mode: RenderProcessingMode): ScenePacketBuildPolicy = when (mode) {
+        RenderProcessingMode.DEFAULT -> defaultScenePacketPolicy()
+        RenderProcessingMode.LOW -> ScenePacketBuildPolicy(
+            nearTracerBudget = 2_048,
+            mediumTracerBudget = 4_096,
+            farTracerBudget = 6_144,
+            trailSimplificationTolerancePx = 6.0,
+            maxTrailVerticesPerTrail = 96,
+        )
+    }
 }
