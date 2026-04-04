@@ -16,7 +16,7 @@ Workflow file:
 - `.github/workflows/validation-lab.yml`
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 
-The workflow currently supports five lane families:
+The workflow currently supports six lane families:
 
 1. `wrapper-bootstrap`
    Generates `gradle/wrapper/gradle-wrapper.jar` remotely from the distribution
@@ -36,6 +36,10 @@ The workflow currently supports five lane families:
    Runs Android-backed JVM unit tests for the `feature-lab` module, including
    narrow `LabSession` policy seams that are too specific for `core-jvm` and
    cheaper than a full Android assemble.
+6. `physics-native`
+   Runs the current native-physics proof bundle: `core-jvm`,
+   `feature-lab-unit`, deterministic `physics-accuracy-telemetry`, and
+   `android-assemble`.
 
 ## Profiles
 
@@ -70,10 +74,19 @@ seam, and avoid rerunning wrapper bootstrap unless you explicitly ask for it.
   Run only the `feature-lab` Android-backed JVM unit-test lane.
 - `physics-accuracy`
   Run only the deterministic physics-accuracy telemetry/report path.
+- `physics-native`
+  Run the current native-physics bundle without having to ask for a full
+  milestone checkpoint.
 - `android-host`
   Run only Android assembly.
 - `full`
   Run all currently-defined lanes.
+
+You can also provide an additive `lane_list` input with a comma-separated set of
+lane names when you want one dispatch to cover a narrow custom mix, for example:
+
+- `lane_set=android-host`
+- `lane_list=feature-lab-unit,physics-accuracy`
 
 ## Physics telemetry dispatch
 

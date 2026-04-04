@@ -27,9 +27,14 @@ on:
           - core-jvm
           - feature-lab-unit
           - physics-accuracy
+          - physics-native
           - android-host
           - full
         default: auto
+      lane_list:
+        description: Optional additive comma-separated lane list for targeted mixes
+        required: false
+        type: string
       write_wrapper:
         description: Commit generated wrapper files back to the branch
         required: true
@@ -60,6 +65,7 @@ jobs:
       android_assemble: ${{ steps.plan.outputs.android_assemble }}
       physics_accuracy_telemetry: ${{ steps.plan.outputs.physics_accuracy_telemetry }}
       lane_summary: ${{ steps.plan.outputs.lane_summary }}
+      lane_request: ${{ steps.plan.outputs.lane_request }}
     steps:
       - name: Compute active lanes
         id: plan
@@ -74,6 +80,7 @@ jobs:
 
           profile='${{ inputs.profile }}'
           lane_set='${{ inputs.lane_set }}'
+          lane_list='${{ inputs.lane_list }}'
           write_wrapper='${{ inputs.write_wrapper }}'
 
           wrapper_bootstrap='false'
@@ -103,46 +110,67 @@ jobs:
               ;;
           esac
 
-          case "$lane_set" in
-            auto)
-              core_jvm='true'
-              if [[ "$profile" == 'frontier' || "$profile" == 'broad' || "$profile" == 'full' ]]; then
+          enable_lane() {
+            case "$1" in
+              auto)
+                core_jvm='true'
+                if [[ "$profile" == 'frontier' || "$profile" == 'broad' || "$profile" == 'full' ]]; then
+                  android_assemble='true'
+                fi
+                ;;
+              bootstrap)
+                wrapper_bootstrap='true'
+                ;;
+              core-jvm)
+                core_jvm='true'
+                ;;
+              feature-lab-unit)
+                feature_lab_unit='true'
+                ;;
+              physics-accuracy)
+                physics_accuracy_telemetry='true'
+                ;;
+              physics-native)
+                core_jvm='true'
+                feature_lab_unit='true'
+                physics_accuracy_telemetry='true'
                 android_assemble='true'
-              fi
-              ;;
-            bootstrap)
-              wrapper_bootstrap='true'
-              ;;
-            core-jvm)
-              core_jvm='true'
-              ;;
-            feature-lab-unit)
-              feature_lab_unit='true'
-              ;;
-            physics-accuracy)
-              physics_accuracy_telemetry='true'
-              ;;
-            android-host)
-              android_assemble='true'
-              ;;
-            full)
-              core_jvm='true'
-              feature_lab_unit='true'
-              physics_accuracy_telemetry='true'
-              android_assemble='true'
-              ;;
-            *)
-              echo "Unknown lane_set: ${lane_set}" >&2
-              exit 1
-              ;;
-          esac
+                ;;
+              android-host)
+                android_assemble='true'
+                ;;
+              full)
+                core_jvm='true'
+                feature_lab_unit='true'
+                physics_accuracy_telemetry='true'
+                android_assemble='true'
+                ;;
+              '')
+                ;;
+              *)
+                echo "Unknown lane selector: $1" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          enable_lane "$lane_set"
+
+          lane_request="$lane_set"
+          if [[ -n "$lane_list" ]]; then
+            lane_request="${lane_request},${lane_list}"
+            normalized_lane_list="${lane_list//,/ }"
+            for lane in $normalized_lane_list; do
+              enable_lane "$lane"
+            done
+          fi
 
           if [[ "$write_wrapper" == 'true' ]]; then
             wrapper_bootstrap='true'
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, core_jvm=%s, feature_lab_unit=%s, physics_accuracy_telemetry=%s, android_assemble=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$core_jvm" "$feature_lab_unit" "$physics_accuracy_telemetry" "$android_assemble")"
+          lane_summary="$(printf 'intent=%s, lane_request=%s, wrapper_bootstrap=%s, core_jvm=%s, feature_lab_unit=%s, physics_accuracy_telemetry=%s, android_assemble=%s' \
+            "$profile_intent" "$lane_request" "$wrapper_bootstrap" "$core_jvm" "$feature_lab_unit" "$physics_accuracy_telemetry" "$android_assemble")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
@@ -153,6 +181,7 @@ jobs:
           echo "android_assemble=${android_assemble}" >> "$GITHUB_OUTPUT"
           echo "physics_accuracy_telemetry=${physics_accuracy_telemetry}" >> "$GITHUB_OUTPUT"
           echo "lane_summary=${lane_summary}" >> "$GITHUB_OUTPUT"
+          echo "lane_request=${lane_request}" >> "$GITHUB_OUTPUT"
 
   wrapper-bootstrap:
     name: Wrapper bootstrap
@@ -494,6 +523,7 @@ jobs:
             echo "- ref: \`${{ needs.metadata.outputs.checkout_ref }}\`"
             echo "- profile: \`${{ inputs.profile }}\`"
             echo "- intent: \`${{ needs.metadata.outputs.profile_intent }}\`"
+            echo "- lane-request: \`${{ needs.metadata.outputs.lane_request }}\`"
             echo "- lanes: \`${{ needs.metadata.outputs.lane_summary }}\`"
             echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
             echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
