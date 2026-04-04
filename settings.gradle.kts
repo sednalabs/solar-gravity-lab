@@ -22,5 +22,6 @@ include(
     ":core-model",
     ":core-simulation",
     ":feature-lab",
+    ":physics-native-android",
     ":render-core",
 )

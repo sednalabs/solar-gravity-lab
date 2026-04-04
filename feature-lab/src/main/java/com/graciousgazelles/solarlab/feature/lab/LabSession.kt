@@ -15,6 +15,7 @@ import com.graciousgazelles.solarlab.core.simulation.SimulationEngine
 import com.graciousgazelles.solarlab.core.simulation.SolarSystemScenarios
 import com.graciousgazelles.solarlab.feature.lab.data.CartesianSeedBundleAssetLoader
 import com.graciousgazelles.solarlab.feature.lab.data.OrbitingBodyCatalogAssetLoader
+import com.sednalabs.solarlab.physics.nativeandroid.AndroidPhysicsEngineFactory
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -23,6 +24,8 @@ class LabSession private constructor(
     private val defaultCatalogEpochJdTdb: Double,
     private val defaultScenarioFactory: (Double) -> SimulationSnapshot,
     initialConfig: SimulationConfig,
+    private val engineFactory: (SimulationSnapshot, SimulationConfig) -> SimulationEngine,
+    private val accelerationBackendSummary: String?,
     private val listener: LabFrameListener,
 ) {
 
@@ -42,7 +45,7 @@ class LabSession private constructor(
     private val perfSamples = PerfSampleAccumulator()
 
     private var scheduledTask: ScheduledFuture<*>? = null
-    private var engine: SimulationEngine = SimulationEngine(defaultScenarioFactory(defaultCatalogEpochJdTdb), config)
+    private var engine: SimulationEngine = engineFactory(defaultScenarioFactory(defaultCatalogEpochJdTdb), config)
     private var latestCatalogCheckpoint: SimulationSnapshot? = engine.snapshot().takeIf { it.isCatalogBacked }
 
     fun isRunning(): Boolean = running
@@ -199,7 +202,7 @@ class LabSession private constructor(
                 return@execute
             }
             config = config.copy(collisionMode = collisionMode)
-            engine = SimulationEngine(engine.snapshot(), config)
+            engine = engineFactory(engine.snapshot(), config)
             emitCurrentFrame(emptyList())
         }
     }
@@ -305,6 +308,7 @@ class LabSession private constructor(
             diagnostics = diagnostics,
             diagnosticsFresh = diagnosticsFresh,
             collisions = collisions,
+            accelerationBackendSummary = accelerationBackendSummary,
             timeline = TimelineStatus(
                 mode = snapshot.timelineMode,
                 referenceEpochJdTdb = snapshot.referenceEpochJdTdb,
@@ -414,6 +418,8 @@ class LabSession private constructor(
                     SolarSystemScenarios.defaultLabScenario(julianDateTdb = targetJd)
                 },
                 initialConfig = SimulationConfig(),
+                engineFactory = { snapshot, config -> SimulationEngine(snapshot, config) },
+                accelerationBackendSummary = "kotlin-reference",
                 listener = listener,
             )
         }
@@ -436,6 +442,7 @@ class LabSession private constructor(
                 addAll(importedSmallBodies)
             }
             val defaultEpoch = SolarSystemScenarios.defaultSeedJulianDateTdb(seedBundle)
+            val physicsSelection = AndroidPhysicsEngineFactory.selection()
             return LabSession(
                 defaultCatalogEpochJdTdb = defaultEpoch,
                 defaultScenarioFactory = { targetJd ->
@@ -446,6 +453,8 @@ class LabSession private constructor(
                     )
                 },
                 initialConfig = SimulationConfig(),
+                engineFactory = physicsSelection.engineFactory,
+                accelerationBackendSummary = physicsSelection.accelerationBackendSummary,
                 listener = listener,
             )
         }

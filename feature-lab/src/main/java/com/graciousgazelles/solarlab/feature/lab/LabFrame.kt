@@ -9,5 +9,6 @@ data class LabFrame(
     val diagnostics: SystemDiagnostics,
     val diagnosticsFresh: Boolean,
     val collisions: List<CollisionEvent>,
+    val accelerationBackendSummary: String?,
     val timeline: TimelineStatus,
 )

@@ -17,9 +17,13 @@ import kotlin.math.sqrt
 class SimulationEngine(
     initialSnapshot: SimulationSnapshot,
     private val config: SimulationConfig = SimulationConfig(),
+    massiveAccelerationKernel: MassiveAccelerationKernel? = null,
+    tracerAccelerationKernel: TracerAccelerationKernel? = null,
 ) {
-    private val massiveAccelerationKernel: MassiveAccelerationKernel = DirectMassiveAccelerationKernel
-    private val tracerAccelerationKernel: TracerAccelerationKernel = DirectTracerAccelerationKernel
+    private val massiveAccelerationKernel: MassiveAccelerationKernel =
+        massiveAccelerationKernel ?: DirectMassiveAccelerationKernel
+    private val tracerAccelerationKernel: TracerAccelerationKernel =
+        tracerAccelerationKernel ?: DirectTracerAccelerationKernel
 
     private var epochSeconds: Double = initialSnapshot.epochSeconds
     private var referenceEpochJdTdb: Double? = initialSnapshot.referenceEpochJdTdb
