@@ -3,6 +3,9 @@ package com.graciousgazelles.solarlab.app
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import com.graciousgazelles.solarlab.app.databinding.ActivityMainBinding
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.CollisionMode
@@ -36,6 +39,17 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        val controlRail = binding.bottomControlRail
+        val baseControlRailPaddingBottom = controlRail.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(controlRail) { view, insets ->
+            val bottomInsets = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.systemGestures(),
+            )
+            view.updatePadding(bottom = baseControlRailPaddingBottom + bottomInsets.bottom)
+            insets
+        }
+        ViewCompat.requestApplyInsets(controlRail)
 
         session = LabSession.createDefault(context = this, listener = this)
         currentCollisionMode = session.collisionMode()
