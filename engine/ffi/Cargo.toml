@@ -1,0 +1,13 @@
+[package]
+name = "solarlab-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+solarlab-hardware = { path = "../hardware" }
+
+[lints]
+workspace = true

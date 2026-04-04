@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package solarlab.v2;
+
+import "solarlab/v2/common.proto";
+
+message RenderScene {
+  ObserverMode observer_mode = 1;
+  uint32 body_count = 2;
+  uint32 tracer_count = 3;
+  uint32 trail_count = 4;
+}
+
+message RenderSceneDelta {
+  string scene_revision = 1;
+  uint32 updated_body_count = 2;
+  uint32 updated_tracer_count = 3;
+}

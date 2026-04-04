@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package solarlab.v2;
+
+message ProvenanceRef {
+  string source = 1;
+  string version = 2;
+  string manifest_digest = 3;
+}
+
+message Vector3d {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+enum ObserverMode {
+  OBSERVER_MODE_UNSPECIFIED = 0;
+  OBSERVER_MODE_FREE = 1;
+  OBSERVER_MODE_FOLLOW_SELECTED = 2;
+  OBSERVER_MODE_FOLLOW_HOST = 3;
+  OBSERVER_MODE_SYSTEM_FRAME = 4;
+}
+
+enum TimelineSemantics {
+  TIMELINE_SEMANTICS_UNSPECIFIED = 0;
+  TIMELINE_SEMANTICS_ABSOLUTE_EPOCH = 1;
+  TIMELINE_SEMANTICS_BRANCHED_SANDBOX = 2;
+}

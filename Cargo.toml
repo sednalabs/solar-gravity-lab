@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "engine/domain",
+    "engine/physics",
+    "engine/history",
+    "engine/scene",
+    "engine/hardware",
+    "engine/runtime",
+    "engine/ffi",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "Apache-2.0 OR MIT"
+authors = ["Sedna Labs"]
+repository = "https://github.com/sednalabs/solar-gravity-lab"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

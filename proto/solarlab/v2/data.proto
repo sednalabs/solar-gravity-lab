@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package solarlab.v2;
+
+import "solarlab/v2/common.proto";
+
+message EphemerisBundle {
+  string bundle_id = 1;
+  string schema_version = 2;
+  ProvenanceRef provenance = 3;
+  double reference_epoch_jd_tdb = 4;
+}
+
+message CatalogPack {
+  string pack_id = 1;
+  string schema_version = 2;
+  ProvenanceRef provenance = 3;
+  repeated string body_ids = 4;
+}
+
+message UpdateManifest {
+  string manifest_id = 1;
+  string published_at = 2;
+  repeated string compatible_schema_versions = 3;
+  repeated string package_ids = 4;
+}

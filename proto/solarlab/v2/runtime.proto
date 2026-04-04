@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package solarlab.v2;
+
+import "solarlab/v2/common.proto";
+
+message WorldCheckpoint {
+  string checkpoint_id = 1;
+  string branch_id = 2;
+  string scenario_id = 3;
+  double epoch_seconds = 4;
+  TimelineSemantics timeline_semantics = 5;
+}
+
+message WorldCommandEnvelope {
+  string command_id = 1;
+  string branch_id = 2;
+  uint64 sequence = 3;
+  string command_kind = 4;
+  bytes command_payload = 5;
+}
+
+message WorldSnapshot {
+  string scenario_id = 1;
+  string branch_id = 2;
+  double epoch_seconds = 3;
+  TimelineSemantics timeline_semantics = 4;
+  uint32 body_count = 5;
+}

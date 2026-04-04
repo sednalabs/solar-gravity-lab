@@ -1,157 +1,73 @@
-# Solar Gravity Lab
+# Solar Gravity Lab v2
 
-Solar Gravity Lab is an Android/Kotlin project for a physically grounded solar-system sandbox.
+This branch is the clean-room `v2` architecture reset for Solar Gravity Lab.
 
-The architecture is split on purpose:
+The long-term product shape is:
 
-- CPU simulation is the source of truth for physics.
-- A backend-neutral render packet is built from simulation snapshots.
-- Rendering is Vulkan-only.
+- a Rust-owned authoritative simulation/runtime core
+- native client shells over that core
+- offline-first scientific data with signed live updates
+- a renderer-independent scene contract with backend adapters
+- optional hardware fast paths behind open, portable interfaces
 
-The public name is **Solar Gravity Lab**. Some internal package/module names still use `solarlab` for historical reasons.
+The existing Kotlin/Android/Vulkan code remains in this branch only as legacy
+reference material while the v2 platform is built out.
 
-## Current status (snapshot: April 4, 2026)
+## Status
 
-This repository is an active engineering scaffold, not a finished app release.
+What is real on this branch today:
 
-What is implemented and usable today:
+- an ADR-backed v2 architecture record in [`docs/adr`](docs/adr)
+- a versioned protobuf schema surface in [`proto/solarlab/v2`](proto/solarlab/v2)
+- a Rust workspace in [`engine`](engine) with the canonical long-lived module
+  boundaries
+- an explicit FFI contract starting point for native client shells
+- placeholder directories for future Android, data, service, and lab surfaces
 
-- Multi-module Android Studio project structure.
-- Pure Kotlin/JVM core modules for math, domain model, simulation, and render-scene assembly.
-- N-body simulation with double-precision state.
-- Massive-body vs tracer-body dynamics.
-- Continuous collision handling with merge, elastic, and simple fragmentation response modes.
-- Barycentric recentering for seeded systems.
-- Epoch-tagged seeded major-planet states with bundle/fallback layering.
-- Bundled authoritative Horizons seed data for the seeded major-body baseline.
-- Shipped runtime catalog packs for planetary moons and curated small bodies.
-- Catalog-backed timeline semantics for seeded starts, with sandbox-branch behavior once the user edits or materially diverges the system.
-- Latest-checkpoint restore for sandbox-diverged runs through the Back control.
-- Deterministic physics-accuracy telemetry artifacts through the remote validation lane.
-- Granular playback-speed and step-quantum controls.
-- Vulkan renderer host and status reporting.
-- Native Vulkan pipeline with swapchain/render-pass/framebuffer/command recording, scene-packet ingestion, SPIR-V graphics pipelines, and compute-based medium/far tracer compaction.
-- Explicit observer camera modes, including free view, follow-selected, and host-follow.
-- Engineering-grade body add/edit/remove controls, plus scene placement and drag-to-launch for new bodies.
+What is intentionally still transitional:
 
-What is intentionally incomplete:
+- the existing `app`, `core-*`, `feature-lab`, and `render-core` modules are
+  still present as v1 reference code
+- the new Android shell under `clients/android` is not implemented yet
+- the new render backend adapter stack is designed but not implemented yet
+- the offline update services are designed but not implemented yet
 
-- GPU-side tracer integration is not implemented yet (simulation remains authoritative on CPU).
-- Synthetic asteroid/Oort populations are generated approximations, not catalogue-complete object sets.
-- Backward time travel for sandbox-diverged runs restores the latest catalog-backed checkpoint; arbitrary multi-step sandbox history is still not implemented.
-- Collision fragmentation is intentionally simple and still needs richer breakup/dust modeling.
-- Android app UX is still minimal and engineering-focused.
+## Repository layout
 
-## Project modules
+- [`engine/`](engine)
+  Rust workspace for the new core platform.
+- [`proto/`](proto)
+  Versioned cross-language schemas for packages, runtime, diagnostics, and
+  render-scene contracts.
+- [`clients/android/`](clients/android)
+  The future Android Compose shell over the Rust core.
+- [`data/`](data)
+  Data-pack, manifest, validation, and provenance model documentation.
+- [`services/`](services)
+  Optional update and content-distribution services.
+- [`labs/`](labs)
+  Conformance, data, render, hardware, and client validation harnesses.
+- [`legacy/`](legacy)
+  Documentation for the retained v1 code still present in this branch.
 
-- `app`
-  Android entry point and activity wiring.
-- `core-math`
-  Vector math and low-level numerics (pure Kotlin/JVM).
-- `core-model`
-  Domain entities, constants, configuration, snapshot contracts (pure Kotlin/JVM).
-- `core-simulation`
-  Integrator, scenarios, diagnostics, seed catalogue layering, collision logic (pure Kotlin/JVM).
-- `render-core`
-  Backend-neutral render scene assembly and `NativeScenePacket` packing (pure Kotlin/JVM).
-- `feature-lab`
-  Android render host, Vulkan bridge/native renderer path, and session orchestration.
+## Architecture reading order
 
-## Physics model at a glance
+1. [`docs/adr/0001-rust-owned-core.md`](docs/adr/0001-rust-owned-core.md)
+2. [`docs/adr/0002-versioned-protobuf-contracts.md`](docs/adr/0002-versioned-protobuf-contracts.md)
+3. [`docs/adr/0003-c-abi-and-opaque-handles.md`](docs/adr/0003-c-abi-and-opaque-handles.md)
+4. [`docs/adr/0004-offline-first-data-and-updates.md`](docs/adr/0004-offline-first-data-and-updates.md)
+5. [`docs/adr/0005-render-scene-and-backend-adapters.md`](docs/adr/0005-render-scene-and-backend-adapters.md)
+6. [`docs/v2/architecture.md`](docs/v2/architecture.md)
+7. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
 
-- Integrator: kick-drift-kick (leapfrog/velocity-Verlet style).
-- Units: SI (`m`, `kg`, `s`).
-- Body categories:
-  - Massive bodies mutually interact.
-  - Tracer bodies feel massive bodies but do not perturb others.
-- Collision handling: continuous collision sweep during drift with merge, elastic, or simple fragmentation response modes.
-- Timeline semantics: seeded/catalog-backed starts retain absolute epoch meaning until edits or collisions branch the sandbox.
+## Validation
 
-This model is meant to be physically credible while remaining scalable on mobile hardware.
+The v2 foundational validation target is currently the Rust workspace:
 
-## Rendering architecture (real vs planned)
+```bash
+cargo test --workspace
+```
 
-Current architecture:
-
-1. `core-simulation` generates authoritative simulation snapshots.
-2. `render-core` converts snapshots into backend-neutral scene data and a JNI-friendly packet.
-3. `feature-lab` host runs the Vulkan renderer and surfaces backend status.
-4. The native Vulkan backend consumes the same logical scene contract.
-
-Current Vulkan reality:
-
-- Real initialization path (instance/device/surface/swapchain/render pass/framebuffers/command buffers/sync).
-- Real SPIR-V shader pipeline creation from bundled shader assets.
-- Real scene stream upload with revision-based caching.
-- Real compute pass for medium/far tracer compaction into indirect draw buffers.
-
-Still planned for Vulkan:
-
-- GPU-side tracer integration.
-- Further GPU-local/staged buffer strategy refinements for heavier scenes.
-- Additional precision/performance work for very large camera spans.
-
-## Seed data strategy
-
-Seed state loading is layered so simulation/rendering are not coupled to one data source:
-
-1. Optional `CartesianSeedBundle` asset (authoritative when present and valid).
-2. `JplApproximateSeedCatalog` fallback for major planets.
-3. Representative orbital-element fallback for currently unbundled dwarf bodies.
-4. Optional orbiting-body catalog packs for moons and curated small bodies when real TSV assets are supplied.
-
-This keeps the pipeline stable while making it easy to drop in improved ephemeris bundles later.
-
-## Validation and build expectations
-
-Remote-first validation is now intended to happen through the dispatch-only
-GitHub Actions workflow documented in `docs/validation-lab.md`, so Orchard
-branches can offload bootstrap work, targeted JVM slices, frontier-style next
-blocker harvests, and broader Android checkpoints without burning local host
-compute.
-
-For phone testing, use `.github/workflows/prerelease-apk.yml` to build an
-installable `prerelease` APK artifact on GitHub Actions. That path is meant for
-internal dev preview sideloading only: it uses the application id
-`com.sednalabs.solarlab.internal` and is signed with the default debug key, so
-it is appropriate for device testing but not for a public production release.
-
-For contributors, the most reliable near-term validation target is the pure JVM core:
-
-- `core-math`
-- `core-model`
-- `core-simulation`
-- `render-core`
-
-This repo currently relies on a remote-first validation workflow documented in [`docs/validation-lab.md`](docs/validation-lab.md).
-
-Important current notes:
-
-- `gradle/wrapper/gradle-wrapper.jar` is now tracked on `main`, and the validation workflow can regenerate it remotely whenever the wrapper version needs to change.
-- The current installable preview line uses version `0.1.0-alpha.4`. That is intentionally conservative semver-style prerelease numbering wrapped in an internal dev preview channel rather than a public “1.0” style launch signal.
-- Documentation-only changes now have a cheap automatic path through `.github/workflows/docs-sanity.yml`, so routine README/docs updates do not need to spend the full remote validation budget.
-
-If you want broader implementation context, see [`docs/architecture.md`](docs/architecture.md), [`docs/catalog-ingest-handoff.md`](docs/catalog-ingest-handoff.md), and [`docs/release-channels.md`](docs/release-channels.md).
-
-## Getting started
-
-1. Clone the repository.
-2. Open the project root in Android Studio.
-3. Let Gradle sync resolve the multi-module structure.
-4. Use the validation workflow lanes (see `docs/validation-lab.md`) for heavier/remote checks.
-
-## Near-term milestones
-
-1. Extend sandbox rewind beyond latest-checkpoint restore to richer multi-step history for diverged runs.
-2. Complete the next Vulkan compute milestones (including GPU-side tracer integration).
-3. Expand the physics-accuracy telemetry scenarios and tighten its acceptance thresholds as mechanics evolve.
-4. Improve interaction UX further without weakening simulation correctness, especially around observer modes and sandbox rewind.
-5. Refine fragmentation into a richer breakup model with better collision diagnostics.
-
-## Non-goals for this phase
-
-- Shipping a polished consumer app UI.
-- Claiming full-ephemeris scientific completeness for every small body.
-- Replacing CPU-authoritative simulation with an all-GPU simulation model.
-
-The focus right now is a robust, testable physics/rendering foundation that can be extended safely.
+This branch is intentionally not yet using the old Android validation surface as
+its primary proof mechanism. Android, render, and data/update validation labs
+will be rebuilt around the v2 boundaries as those subsystems land.

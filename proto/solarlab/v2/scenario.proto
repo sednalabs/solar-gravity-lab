@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package solarlab.v2;
+
+import "solarlab/v2/common.proto";
+
+message ScenarioPackage {
+  string scenario_id = 1;
+  string title = 2;
+  TimelineSemantics timeline_semantics = 3;
+  double reference_epoch_jd_tdb = 4;
+  ProvenanceRef provenance = 5;
+}

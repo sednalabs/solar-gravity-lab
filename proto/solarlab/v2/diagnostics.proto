@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package solarlab.v2;
+
+import "solarlab/v2/common.proto";
+
+message HardwareProfile {
+  string cpu_backend = 1;
+  string gpu_backend = 2;
+  repeated string cpu_features = 3;
+  repeated string gpu_features = 4;
+  repeated string acceleration_modes = 5;
+}
+
+message DiagnosticsFrame {
+  string scenario_id = 1;
+  string branch_id = 2;
+  ProvenanceRef provenance = 3;
+  HardwareProfile hardware_profile = 4;
+  double relative_energy_drift = 5;
+  double barycenter_drift_m = 6;
+}

@@ -1,0 +1,17 @@
+[package]
+name = "solarlab-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+solarlab-domain = { path = "../domain" }
+solarlab-history = { path = "../history" }
+solarlab-hardware = { path = "../hardware" }
+solarlab-physics = { path = "../physics" }
+solarlab-scene = { path = "../scene" }
+
+[lints]
+workspace = true
