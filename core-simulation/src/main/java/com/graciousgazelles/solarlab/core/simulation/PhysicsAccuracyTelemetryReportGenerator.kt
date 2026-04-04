@@ -1,6 +1,7 @@
 package com.graciousgazelles.solarlab.core.simulation
 
 import com.graciousgazelles.solarlab.core.model.CollisionMode
+import com.graciousgazelles.solarlab.core.model.HardwareAccelerationProfile
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.PhysicsAccuracyTelemetryMetric
 import com.graciousgazelles.solarlab.core.model.PhysicsAccuracyTelemetryProvenance
@@ -183,6 +184,11 @@ class PhysicsAccuracyTelemetryReportGenerator(
                 seedEpochJulianDateTdb = snapshot.referenceEpochJdTdb,
                 datasetLabel = snapshot.provenanceLabel,
                 datasetSource = snapshot.provenanceSource,
+                hardwareAccelerationProfile = HardwareAccelerationProfile(
+                    target = "host-jvm",
+                    authoritativeSolverBackend = "kotlin-reference",
+                    tracerIntegrationBackend = "cpu-direct",
+                ),
             ),
             metrics = buildList {
                 add(
@@ -339,7 +345,10 @@ class PhysicsAccuracyTelemetryReportGenerator(
         appendLine("    \"timelineMode\": \"${report.provenance.timelineMode.name}\",")
         appendLine("    \"seedEpochJulianDateTdb\": ${formatNullableDouble(report.provenance.seedEpochJulianDateTdb)},")
         appendLine("    \"datasetLabel\": ${formatNullableString(report.provenance.datasetLabel)},")
-        appendLine("    \"datasetSource\": ${formatNullableString(report.provenance.datasetSource)}")
+        appendLine("    \"datasetSource\": ${formatNullableString(report.provenance.datasetSource)},")
+        appendLine(
+            "    \"hardwareAccelerationProfile\": ${formatHardwareAccelerationProfile(report.provenance.hardwareAccelerationProfile)}",
+        )
         appendLine("  },")
         appendLine("  \"metrics\": [")
         report.metrics.forEachIndexed { index, metric ->
@@ -371,6 +380,14 @@ class PhysicsAccuracyTelemetryReportGenerator(
         appendLine("- seed_epoch_jd_tdb: `${formatNullableDouble(report.provenance.seedEpochJulianDateTdb)}`")
         appendLine("- dataset_label: `${report.provenance.datasetLabel ?: "null"}`")
         appendLine("- dataset_source: `${report.provenance.datasetSource ?: "null"}`")
+        report.provenance.hardwareAccelerationProfile?.let { profile ->
+            appendLine("- acceleration_target: `${profile.target}`")
+            appendLine("- authoritative_solver_backend: `${profile.authoritativeSolverBackend}`")
+            appendLine("- simd_path: `${profile.simdPath ?: "null"}`")
+            appendLine("- tracer_integration_backend: `${profile.tracerIntegrationBackend}`")
+            appendLine("- vulkan_compaction_backend: `${profile.vulkanCompactionBackend ?: "null"}`")
+            appendLine("- qnn_backend: `${profile.qnnBackend ?: "null"}`")
+        }
         appendLine()
         appendLine("| Metric | Value | Unit | Description |")
         appendLine("| --- | ---: | --- | --- |")
@@ -394,6 +411,20 @@ class PhysicsAccuracyTelemetryReportGenerator(
 
     private fun formatNullableString(value: String?): String = value?.let { "\"${escapeJson(it)}\"" } ?: "null"
 
+    private fun formatHardwareAccelerationProfile(profile: HardwareAccelerationProfile?): String {
+        if (profile == null) return "null"
+        return buildString {
+            append("{")
+            append("\"target\": \"${escapeJson(profile.target)}\", ")
+            append("\"authoritativeSolverBackend\": \"${escapeJson(profile.authoritativeSolverBackend)}\", ")
+            append("\"simdPath\": ${formatNullableString(profile.simdPath)}, ")
+            append("\"tracerIntegrationBackend\": \"${escapeJson(profile.tracerIntegrationBackend)}\", ")
+            append("\"vulkanCompactionBackend\": ${formatNullableString(profile.vulkanCompactionBackend)}, ")
+            append("\"qnnBackend\": ${formatNullableString(profile.qnnBackend)}")
+            append("}")
+        }
+    }
+
     private fun escapeJson(value: String): String = buildString {
         value.forEach { ch ->
             when (ch) {
@@ -408,7 +439,7 @@ class PhysicsAccuracyTelemetryReportGenerator(
     }
 
     companion object {
-        const val SCHEMA_VERSION: String = "physics-accuracy-telemetry.v1"
+        const val SCHEMA_VERSION: String = "physics-accuracy-telemetry.v2"
         const val DEFAULT_STEP_SECONDS: Double = 6.0 * 3600.0
         const val DEFAULT_STEPS: Int = (PhysicalConstants.JULIAN_YEAR_SECONDS / DEFAULT_STEP_SECONDS).toInt()
     }
