@@ -16,6 +16,7 @@ use solarlab_history::{
     HistoryEvent,
 };
 use solarlab_physics::{PhysicsInvariants, PhysicsPolicy};
+use solarlab_scene::{CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyState {
@@ -557,6 +558,11 @@ impl WorldRuntime {
         }
     }
 
+    #[must_use]
+    pub fn render_scene(&self) -> RenderScene {
+        extract_render_scene(&self.snapshot())
+    }
+
     fn new_command_header(
         &self,
         command: &WorldCommand,
@@ -691,6 +697,140 @@ impl WorldRuntime {
     }
 }
 
+#[must_use]
+pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
+    let selected_body = snapshot.observer.focus_body_id.as_ref();
+    let bodies = snapshot
+        .bodies
+        .iter()
+        .map(|body| SceneBody {
+            body_id: body.body_id.clone(),
+            display_name: body.body_id.0.clone(),
+            position_m: body.position_m,
+            radius_m: body.radius_m,
+            albedo: ColorRgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
+            emissive_luminance: 0.0,
+            selected: selected_body
+                .map(|focused| focused == &body.body_id)
+                .unwrap_or(false),
+        })
+        .collect();
+
+    RenderScene {
+        observer_mode: snapshot.observer.mode.clone(),
+        body_count: 0,
+        tracer_count: 0,
+        trail_count: 0,
+        scene_revision: scene_revision_from_snapshot(snapshot),
+        epoch_seconds: snapshot.epoch_seconds,
+        timeline_semantics: snapshot.timeline_semantics.clone(),
+        camera: camera_pose_from_snapshot(snapshot),
+        bodies,
+        tracers: Vec::new(),
+        trails: Vec::new(),
+        lights: Vec::new(),
+        provenance: scene_provenance(snapshot),
+        diagnostics: RenderDiagnostics::default(),
+    }
+    .with_derived_counts()
+}
+
+fn camera_pose_from_snapshot(snapshot: &WorldSnapshot) -> CameraPose {
+    let focused_body = snapshot
+        .observer
+        .focus_body_id
+        .as_ref()
+        .and_then(|focused_id| {
+            snapshot
+                .bodies
+                .iter()
+                .find(|body| &body.body_id == focused_id)
+        });
+    let target_m = focused_body
+        .map(|body| body.position_m)
+        .or_else(|| snapshot.bodies.first().map(|body| body.position_m))
+        .unwrap_or_default();
+
+    let camera_distance = focused_body
+        .map(|body| (body.radius_m * 6.0).max(1.0))
+        .unwrap_or(1_000.0);
+
+    CameraPose {
+        position_m: Vector3d {
+            x: target_m.x,
+            y: target_m.y,
+            z: target_m.z + camera_distance,
+        },
+        target_m,
+        up: Vector3d {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        },
+        vertical_fov_degrees: 60.0,
+        exposure: 1.0,
+    }
+}
+
+fn scene_provenance(snapshot: &WorldSnapshot) -> Option<solarlab_domain::ProvenanceRef> {
+    let mounted_manifest = snapshot.mounted_manifest.as_ref()?;
+    Some(solarlab_domain::ProvenanceRef {
+        source: mounted_manifest.manifest_id.clone(),
+        version: semver_to_string(&mounted_manifest.manifest_version),
+        manifest_digest: None,
+    })
+}
+
+fn semver_to_string(version: &SemVer) -> String {
+    let mut rendered = format!("{}.{}.{}", version.major, version.minor, version.patch);
+    if let Some(prerelease) = &version.prerelease {
+        rendered.push('-');
+        rendered.push_str(prerelease);
+    }
+    if let Some(build_metadata) = &version.build_metadata {
+        rendered.push('+');
+        rendered.push_str(build_metadata);
+    }
+    rendered
+}
+
+fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
+    let mut revision = format!(
+        "scenario={}|branch={}|epoch={:.6}|observer={:?}|focus={}",
+        snapshot.scenario_id.0,
+        snapshot.branch_id.0,
+        snapshot.epoch_seconds,
+        snapshot.observer.mode,
+        snapshot
+            .observer
+            .focus_body_id
+            .as_ref()
+            .map_or("none", |body_id| body_id.0.as_str())
+    );
+    for body in &snapshot.bodies {
+        use std::fmt::Write as _;
+        let _ = write!(
+            &mut revision,
+            "|{}|r={:.6}|p=({:.6},{:.6},{:.6})|v=({:.6},{:.6},{:.6})",
+            body.body_id.0,
+            body.radius_m,
+            body.position_m.x,
+            body.position_m.y,
+            body.position_m.z,
+            body.velocity_mps.x,
+            body.velocity_mps.y,
+            body.velocity_mps.z
+        );
+    }
+
+    revision
+}
+
 fn mounted_manifest_from_state(
     local_data_state: &LocalDataState,
     mounted_package_ids: &BTreeSet<String>,
@@ -749,8 +889,8 @@ mod tests {
     use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
 
     use super::{
-        ApplyUpdateManifestCommand, BodyState, MountPackageCommand, RuntimeConfig, RuntimeError,
-        RuntimeEvent, WorldCommand, WorldRuntime,
+        extract_render_scene, ApplyUpdateManifestCommand, BodyState, MountPackageCommand,
+        RuntimeConfig, RuntimeError, RuntimeEvent, WorldCommand, WorldRuntime,
     };
 
     #[test]
@@ -827,6 +967,91 @@ mod tests {
 
         assert!(runtime.snapshot().bodies.is_empty());
         assert_eq!(runtime.snapshot().observer.focus_body_id, None);
+    }
+
+    #[test]
+    fn render_scene_extracts_selected_body_counts_and_camera_from_runtime() {
+        let mut runtime = new_runtime();
+        let earth = BodyId("earth".into());
+        let moon = BodyId("moon".into());
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: earth.clone(),
+                        body_class: BodyClass::Planet,
+                        mass_kg: 5.972e24,
+                        radius_m: 6_371_000.0,
+                        position_m: Vector3d {
+                            x: 100.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("spawn earth should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: moon.clone(),
+                        body_class: BodyClass::Moon,
+                        mass_kg: 7.35e22,
+                        radius_m: 1_737_000.0,
+                        position_m: Vector3d {
+                            x: 384_400_000.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                2,
+            )
+            .expect("spawn moon should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::SetObserverMode {
+                    mode: ObserverMode::FollowSelected,
+                },
+                3,
+            )
+            .expect("setting observer mode should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(moon.clone()),
+                },
+                4,
+            )
+            .expect("focus body should succeed");
+
+        let scene = runtime.render_scene();
+        assert_eq!(scene.body_count, 2);
+        assert_eq!(scene.tracer_count, 0);
+        assert_eq!(scene.trail_count, 0);
+        assert_eq!(scene.observer_mode, ObserverMode::FollowSelected);
+        assert_eq!(scene.bodies.len(), 2);
+        assert_eq!(scene.tracers.len(), 0);
+        assert_eq!(scene.trails.len(), 0);
+        assert_eq!(scene.lights.len(), 0);
+        assert!(scene.scene_revision.contains("branch=main"));
+        assert!(
+            scene
+                .bodies
+                .iter()
+                .find(|body| body.body_id == moon)
+                .expect("moon should be present")
+                .selected
+        );
+        assert_eq!(scene.camera.target_m.x, 384_400_000.0);
+        assert!(scene.camera.position_m.z > scene.camera.target_m.z);
     }
 
     #[test]
@@ -1403,6 +1628,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![initial_package_id.as_str()]
         );
+    }
+
+    #[test]
+    fn extract_render_scene_uses_manifest_metadata_as_provenance_when_available() {
+        let mut runtime = new_runtime();
+        let package_kind = PackageKind::Scenario;
+        let package_digest = digest(0x22);
+        let package_id = package_id_for(&package_kind, &package_digest);
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest(
+                    "manifest-alpha",
+                    vec![package_locator(
+                        package_kind.clone(),
+                        semver(1, 2, 3),
+                        package_digest.clone(),
+                        true,
+                    )],
+                ),
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    package_kind,
+                    semver(1, 2, 3),
+                    package_digest,
+                    "cache://pkg-scenario-alpha-v123",
+                )]),
+            })
+            .expect("manifest apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: package_id.clone(),
+            })
+            .expect("mount should succeed");
+
+        let scene = extract_render_scene(&runtime.snapshot());
+        let provenance = scene.provenance.expect("provenance should be present");
+
+        assert_eq!(provenance.source, "manifest-alpha".to_owned());
+        assert_eq!(provenance.version, "1.0.0".to_owned());
+        assert_eq!(provenance.manifest_digest, None);
     }
 
     fn checkpoint_id_from_events(events: &[RuntimeEvent]) -> CheckpointId {
