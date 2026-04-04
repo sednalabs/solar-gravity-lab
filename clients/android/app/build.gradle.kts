@@ -1,7 +1,174 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
+import java.io.ByteArrayOutputStream
+import java.io.File
+import javax.inject.Inject
+
+abstract class BuildSolarlabNativeTask : DefaultTask() {
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @get:Input
+    abstract val workspaceRootPath: Property<String>
+
+    @get:Input
+    abstract val ffiCrateRelativePath: Property<String>
+
+    @get:OutputDirectory
+    abstract val generatedJniLibsDir: DirectoryProperty
+
+    @TaskAction
+    fun buildNativeLibraries() {
+        val workspaceRoot = File(workspaceRootPath.get())
+        val ffiCrateDir = workspaceRoot.resolve(ffiCrateRelativePath.get())
+        requireDirectoryExists(workspaceRoot, "Workspace root")
+        requireDirectoryExists(ffiCrateDir, "FFI crate")
+
+        val ndkDir = resolveNdkDirectory()
+            ?: throw GradleException(
+                "Android NDK not found. Set ANDROID_NDK_HOME/ANDROID_NDK_ROOT/NDK_HOME " +
+                    "or install an NDK under ANDROID_SDK_ROOT/ANDROID_HOME."
+            )
+
+        ensureCommandWorks(
+            command = listOf("cargo", "ndk", "--version"),
+            failureHint = "Install cargo-ndk with `cargo install cargo-ndk`."
+        )
+
+        val requiredRustTargets = listOf("aarch64-linux-android", "x86_64-linux-android")
+        val installedRustTargets = queryInstalledRustTargets()
+        val missingTargets = requiredRustTargets.filterNot(installedRustTargets::contains)
+        if (missingTargets.isNotEmpty()) {
+            throw GradleException(
+                "Missing Rust Android targets: ${missingTargets.joinToString(", ")}. " +
+                    "Install with `rustup target add ${missingTargets.joinToString(" ")}`."
+            )
+        }
+
+        val outputDir = generatedJniLibsDir.get().asFile
+        project.delete(outputDir)
+        outputDir.mkdirs()
+
+        execOps.exec {
+            workingDir = workspaceRoot
+            environment("ANDROID_NDK_HOME", ndkDir.absolutePath)
+            environment("ANDROID_NDK_ROOT", ndkDir.absolutePath)
+            commandLine(
+                "cargo",
+                "ndk",
+                "-t",
+                "arm64-v8a",
+                "-t",
+                "x86_64",
+                "-o",
+                outputDir.absolutePath,
+                "build",
+                "-p",
+                "solarlab-ffi",
+                "--release",
+            )
+        }
+
+        val expectedLibraries = listOf(
+            outputDir.resolve("arm64-v8a/libsolarlab_v2.so"),
+            outputDir.resolve("x86_64/libsolarlab_v2.so"),
+        )
+        val missingLibraries = expectedLibraries.filterNot(File::isFile)
+        if (missingLibraries.isNotEmpty()) {
+            throw GradleException(
+                "Native build completed but expected libraries are missing: " +
+                    missingLibraries.joinToString { it.absolutePath }
+            )
+        }
+    }
+
+    private fun requireDirectoryExists(path: File, label: String) {
+        if (!path.isDirectory) {
+            throw GradleException("$label directory does not exist: ${path.absolutePath}")
+        }
+    }
+
+    private fun resolveNdkDirectory(): File? {
+        val directEnvPaths = listOf("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "NDK_HOME")
+            .mapNotNull { System.getenv(it) }
+            .map(::File)
+            .firstOrNull(File::isDirectory)
+        if (directEnvPaths != null) {
+            return directEnvPaths
+        }
+
+        val sdkRoot = listOf("ANDROID_SDK_ROOT", "ANDROID_HOME")
+            .mapNotNull { System.getenv(it) }
+            .map(::File)
+            .firstOrNull(File::isDirectory)
+            ?: return null
+
+        val ndkRoot = sdkRoot.resolve("ndk")
+        if (!ndkRoot.isDirectory) {
+            return null
+        }
+
+        return ndkRoot.listFiles()
+            ?.filter(File::isDirectory)
+            ?.maxByOrNull(File::getName)
+    }
+
+    private fun ensureCommandWorks(command: List<String>, failureHint: String) {
+        val stderr = ByteArrayOutputStream()
+        val result = execOps.exec {
+            commandLine(command)
+            isIgnoreExitValue = true
+            errorOutput = stderr
+        }
+        if (result.exitValue != 0) {
+            val detail = stderr.toString().trim().ifBlank { "command failed: ${command.joinToString(" ")}" }
+            throw GradleException("$detail\n$failureHint")
+        }
+    }
+
+    private fun queryInstalledRustTargets(): Set<String> {
+        val stdout = ByteArrayOutputStream()
+        val stderr = ByteArrayOutputStream()
+        val result = execOps.exec {
+            commandLine("rustup", "target", "list", "--installed")
+            isIgnoreExitValue = true
+            standardOutput = stdout
+            errorOutput = stderr
+        }
+        if (result.exitValue != 0) {
+            val detail = stderr.toString().trim().ifBlank { "rustup target list --installed failed" }
+            throw GradleException("$detail\nInstall rustup from https://rustup.rs/ and retry.")
+        }
+
+        return stdout.toString()
+            .lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .toSet()
+    }
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val workspaceRootDir = rootProject.projectDir.resolve("../..").canonicalFile
+val solarlabGeneratedJniLibsDir = layout.buildDirectory.dir("generated/jniLibs/solarlab_v2")
+
+val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
+    group = "build"
+    description = "Builds and stages libsolarlab_v2.so for Android ABIs under build/generated."
+    workspaceRootPath.set(workspaceRootDir.absolutePath)
+    ffiCrateRelativePath.set("engine/ffi")
+    generatedJniLibsDir.set(solarlabGeneratedJniLibsDir)
 }
 
 android {
@@ -14,6 +181,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -38,6 +209,16 @@ android {
     buildFeatures {
         compose = true
     }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir(solarlabGeneratedJniLibsDir)
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(buildSolarlabNative)
 }
 
 dependencies {
