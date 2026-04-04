@@ -2,7 +2,9 @@ syntax = "proto3";
 
 package solarlab.v2;
 
+import "google/protobuf/timestamp.proto";
 import "solarlab/v2/common.proto";
+import "solarlab/v2/data.proto";
 
 message HardwareProfile {
   string cpu_backend = 1;
@@ -10,6 +12,35 @@ message HardwareProfile {
   repeated string cpu_features = 3;
   repeated string gpu_features = 4;
   repeated string acceleration_modes = 5;
+  string cpu_model = 6;
+  string gpu_model = 7;
+  uint64 system_memory_bytes = 8;
+  uint64 vram_bytes = 9;
+  string os_name = 10;
+}
+
+message RuntimeMetrics {
+  double sim_seconds_per_wall_second = 1;
+  double frame_time_ms_p50 = 2;
+  double frame_time_ms_p95 = 3;
+  double command_apply_ms_p95 = 4;
+  uint64 command_backlog_depth = 5;
+}
+
+message DriftMetric {
+  string metric_id = 1;
+  double value = 2;
+  double warning_threshold = 3;
+  double critical_threshold = 4;
+}
+
+message PackageVerification {
+  PackageKind package_kind = 1;
+  string package_id = 2;
+  Digest digest = 3;
+  bool digest_match = 4;
+  bool signature_valid = 5;
+  string signer_key_id = 6;
 }
 
 message DiagnosticsFrame {
@@ -19,4 +50,11 @@ message DiagnosticsFrame {
   HardwareProfile hardware_profile = 4;
   double relative_energy_drift = 5;
   double barycenter_drift_m = 6;
+  google.protobuf.Timestamp captured_at_utc = 7;
+  RuntimeMetrics runtime_metrics = 8;
+  repeated DriftMetric drift_metrics = 9;
+  repeated PackageVerification package_verifications = 10;
+  repeated string active_warnings = 11;
+  Digest world_state_digest = 12;
+  uint64 event_sequence = 13;
 }

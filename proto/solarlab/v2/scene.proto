@@ -4,15 +4,94 @@ package solarlab.v2;
 
 import "solarlab/v2/common.proto";
 
+message ColorRgba {
+  float r = 1;
+  float g = 2;
+  float b = 3;
+  float a = 4;
+}
+
+message CameraPose {
+  Vector3d position_m = 1;
+  Vector3d target_m = 2;
+  Vector3d up = 3;
+  double vertical_fov_degrees = 4;
+  double exposure = 5;
+}
+
+message SceneBody {
+  string body_id = 1;
+  string display_name = 2;
+  Vector3d position_m = 3;
+  double radius_m = 4;
+  ColorRgba albedo = 5;
+  double emissive_luminance = 6;
+  bool selected = 7;
+}
+
+message SceneTracer {
+  string tracer_id = 1;
+  string source_body_id = 2;
+  Vector3d position_m = 3;
+  ColorRgba color = 4;
+  float size_px = 5;
+}
+
+message SceneTrail {
+  string trail_id = 1;
+  string source_body_id = 2;
+  repeated Vector3d samples_m = 3;
+  ColorRgba color = 4;
+  uint32 max_samples = 5;
+  bool head_highlighted = 6;
+}
+
+message LightSource {
+  string light_id = 1;
+  Vector3d direction_ws = 2;
+  double illuminance_lux = 3;
+  ColorRgba color = 4;
+}
+
+message RenderDiagnostics {
+  uint64 frame_number = 1;
+  float cpu_extract_ms = 2;
+  float gpu_upload_ms = 3;
+  uint32 dropped_frames = 4;
+}
+
 message RenderScene {
   ObserverMode observer_mode = 1;
   uint32 body_count = 2;
   uint32 tracer_count = 3;
   uint32 trail_count = 4;
+  string scene_revision = 5;
+  double epoch_seconds = 6;
+  TimelineSemantics timeline_semantics = 7;
+  CameraPose camera = 8;
+  repeated SceneBody bodies = 9;
+  repeated SceneTracer tracers = 10;
+  repeated SceneTrail trails = 11;
+  repeated LightSource lights = 12;
+  ProvenanceRef provenance = 13;
+  RenderDiagnostics diagnostics = 14;
 }
 
 message RenderSceneDelta {
   string scene_revision = 1;
   uint32 updated_body_count = 2;
   uint32 updated_tracer_count = 3;
+  uint64 base_revision = 4;
+  uint64 target_revision = 5;
+  repeated SceneBody body_upserts = 6;
+  repeated string removed_body_ids = 7;
+  repeated SceneTracer tracer_upserts = 8;
+  repeated string removed_tracer_ids = 9;
+  repeated SceneTrail trail_upserts = 10;
+  repeated string removed_trail_ids = 11;
+  CameraPose camera_override = 12;
+  RenderDiagnostics diagnostics_override = 13;
+  uint32 updated_light_count = 14;
+  repeated LightSource light_upserts = 15;
+  repeated string removed_light_ids = 16;
 }

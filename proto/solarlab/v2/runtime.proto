@@ -2,7 +2,9 @@ syntax = "proto3";
 
 package solarlab.v2;
 
+import "google/protobuf/timestamp.proto";
 import "solarlab/v2/common.proto";
+import "solarlab/v2/data.proto";
 
 message WorldCheckpoint {
   string checkpoint_id = 1;
@@ -10,14 +12,111 @@ message WorldCheckpoint {
   string scenario_id = 3;
   double epoch_seconds = 4;
   TimelineSemantics timeline_semantics = 5;
+  uint64 event_sequence = 6;
+  string parent_checkpoint_id = 7;
+  repeated ProvenanceRef active_provenance = 8;
+  Digest state_digest = 9;
+  google.protobuf.Timestamp created_at_utc = 10;
+  string integrator_name = 11;
+  double fixed_timestep_seconds = 12;
+  repeated string mounted_package_ids = 13;
+}
+
+message AdvanceTimelineCommand {
+  double delta_seconds = 1;
+  uint32 max_substeps = 2;
+  bool pause_after_apply = 3;
+}
+
+message SeekEpochCommand {
+  double epoch_seconds = 1;
+  TimelineSemantics timeline_semantics = 2;
+}
+
+message SetObserverModeCommand {
+  ObserverMode observer_mode = 1;
+  string focus_body_id = 2;
+}
+
+message SelectBodyCommand {
+  string body_id = 1;
+  bool as_primary_selection = 2;
+}
+
+message MountPackageCommand {
+  PackageKind package_kind = 1;
+  string package_id = 2;
+  Digest expected_digest = 3;
+  bool activate_immediately = 4;
+}
+
+message ApplyUpdateManifestCommand {
+  string manifest_id = 1;
+  Digest expected_digest = 2;
+  bool allow_downgrade = 3;
+  bool require_signatures = 4;
+}
+
+message CreateCheckpointCommand {
+  string reason = 1;
+  bool include_diagnostics = 2;
+}
+
+message RestoreCheckpointCommand {
+  string checkpoint_id = 1;
+  bool create_branch_if_needed = 2;
+  string new_branch_id = 3;
 }
 
 message WorldCommandEnvelope {
   string command_id = 1;
   string branch_id = 2;
   uint64 sequence = 3;
-  string command_kind = 4;
-  bytes command_payload = 5;
+  reserved 4, 5;
+  reserved "command_kind", "command_payload";
+  google.protobuf.Timestamp issued_at_utc = 6;
+  string issued_by = 7;
+  bool requires_deterministic_apply = 8;
+  string trace_id = 9;
+
+  oneof typed_command {
+    AdvanceTimelineCommand advance_timeline = 20;
+    SeekEpochCommand seek_epoch = 21;
+    SetObserverModeCommand set_observer_mode = 22;
+    SelectBodyCommand select_body = 23;
+    MountPackageCommand mount_package = 24;
+    ApplyUpdateManifestCommand apply_update_manifest = 25;
+    CreateCheckpointCommand create_checkpoint = 26;
+    RestoreCheckpointCommand restore_checkpoint = 27;
+  }
+}
+
+message BodyKinematicState {
+  string body_id = 1;
+  Vector3d position_m = 2;
+  Vector3d velocity_mps = 3;
+  Vector3d acceleration_mps2 = 4;
+  double mass_kg = 5;
+}
+
+message MountedPackage {
+  PackageKind package_kind = 1;
+  string package_id = 2;
+  Digest digest = 3;
+  ProvenanceRef provenance = 4;
+}
+
+enum RuntimeWarningSeverity {
+  RUNTIME_WARNING_SEVERITY_UNSPECIFIED = 0;
+  RUNTIME_WARNING_SEVERITY_INFO = 1;
+  RUNTIME_WARNING_SEVERITY_WARN = 2;
+  RUNTIME_WARNING_SEVERITY_ERROR = 3;
+}
+
+message RuntimeWarning {
+  string code = 1;
+  string message = 2;
+  RuntimeWarningSeverity severity = 3;
 }
 
 message WorldSnapshot {
@@ -26,4 +125,11 @@ message WorldSnapshot {
   double epoch_seconds = 3;
   TimelineSemantics timeline_semantics = 4;
   uint32 body_count = 5;
+  uint64 event_sequence = 6;
+  repeated BodyKinematicState body_states = 7;
+  repeated MountedPackage mounted_packages = 8;
+  string active_checkpoint_id = 9;
+  Digest state_digest = 10;
+  repeated RuntimeWarning warnings = 11;
+  double simulated_seconds_per_wall_second = 12;
 }

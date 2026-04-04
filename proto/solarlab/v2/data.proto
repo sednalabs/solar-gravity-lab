@@ -2,13 +2,73 @@ syntax = "proto3";
 
 package solarlab.v2;
 
+import "google/protobuf/timestamp.proto";
 import "solarlab/v2/common.proto";
+
+enum PackageKind {
+  PACKAGE_KIND_UNSPECIFIED = 0;
+  PACKAGE_KIND_SCENARIO = 1;
+  PACKAGE_KIND_EPHEMERIS_BUNDLE = 2;
+  PACKAGE_KIND_CATALOG_PACK = 3;
+}
+
+message PackageChunk {
+  uint32 index = 1;
+  uint64 offset_bytes = 2;
+  uint64 size_bytes = 3;
+  Digest digest = 4;
+}
+
+message PackageCompatibility {
+  SemVer runtime_contract_min = 1;
+  SemVer runtime_contract_max = 2;
+  repeated string required_capabilities = 3;
+  repeated string supported_platforms = 4;
+}
+
+message PackageLocator {
+  string package_id = 1;
+  PackageKind kind = 2;
+  string version = 3;
+  Digest digest = 4;
+  string relative_uri = 5;
+  uint64 uncompressed_size_bytes = 6;
+  bool required = 7;
+  PackageCompatibility compatibility = 8;
+}
+
+message EphemerisSource {
+  string body_id = 1;
+  string frame = 2;
+  string timescale = 3;
+  double sample_step_seconds = 4;
+  uint32 sample_count = 5;
+  string interpolation_method = 6;
+}
 
 message EphemerisBundle {
   string bundle_id = 1;
   string schema_version = 2;
   ProvenanceRef provenance = 3;
   double reference_epoch_jd_tdb = 4;
+  SemVer contract_version = 5;
+  repeated EphemerisSource sources = 6;
+  Digest payload_digest = 7;
+  repeated PackageChunk chunks = 8;
+  uint64 uncompressed_size_bytes = 9;
+  google.protobuf.Timestamp built_at_utc = 10;
+  repeated Signature signatures = 11;
+  PackageCompatibility compatibility = 12;
+}
+
+message CatalogBodyEntry {
+  string body_id = 1;
+  string display_name = 2;
+  string classification = 3;
+  string parent_body_id = 4;
+  double gravitational_parameter_m3_per_s2 = 5;
+  double mean_radius_m = 6;
+  double sidereal_rotation_period_s = 7;
 }
 
 message CatalogPack {
@@ -16,11 +76,28 @@ message CatalogPack {
   string schema_version = 2;
   ProvenanceRef provenance = 3;
   repeated string body_ids = 4;
+  SemVer contract_version = 5;
+  repeated CatalogBodyEntry bodies = 6;
+  Digest payload_digest = 7;
+  repeated PackageChunk chunks = 8;
+  uint64 uncompressed_size_bytes = 9;
+  google.protobuf.Timestamp built_at_utc = 10;
+  repeated Signature signatures = 11;
+  PackageCompatibility compatibility = 12;
 }
 
 message UpdateManifest {
   string manifest_id = 1;
-  string published_at = 2;
-  repeated string compatible_schema_versions = 3;
-  repeated string package_ids = 4;
+  reserved 2, 3, 4;
+  reserved "published_at", "compatible_schema_versions", "package_ids";
+  google.protobuf.Timestamp published_at_utc = 5;
+  SemVer manifest_version = 6;
+  repeated PackageLocator packages = 7;
+  string channel = 8;
+  repeated Signature signatures = 9;
+  Digest manifest_digest = 10;
+  bool full_snapshot = 11;
+  repeated string supersedes_manifest_ids = 12;
+  google.protobuf.Timestamp expires_at_utc = 13;
+  repeated string release_notes = 14;
 }

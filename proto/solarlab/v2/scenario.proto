@@ -3,6 +3,21 @@ syntax = "proto3";
 package solarlab.v2;
 
 import "solarlab/v2/common.proto";
+import "solarlab/v2/data.proto";
+
+message PackageRequirement {
+  PackageKind package_kind = 1;
+  string package_id = 2;
+  bool optional = 3;
+}
+
+message RuntimePreset {
+  string preset_id = 1;
+  double fixed_timestep_seconds = 2;
+  uint32 max_substeps = 3;
+  ObserverMode default_observer_mode = 4;
+  string default_focus_body_id = 5;
+}
 
 message ScenarioPackage {
   string scenario_id = 1;
@@ -10,4 +25,9 @@ message ScenarioPackage {
   TimelineSemantics timeline_semantics = 3;
   double reference_epoch_jd_tdb = 4;
   ProvenanceRef provenance = 5;
+  string description = 6;
+  repeated PackageRequirement required_packages = 7;
+  repeated RuntimePreset runtime_presets = 8;
+  repeated string tags = 9;
+  string initial_branch_id = 10;
 }
