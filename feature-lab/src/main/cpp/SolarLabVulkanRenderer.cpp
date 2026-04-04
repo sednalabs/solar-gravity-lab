@@ -1489,16 +1489,28 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         return UploadBytes(data, sizeBytes, target);
     };
 
+    auto uploadTracerStream = [this, &uploadStream](const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
+        if (sizeBytes == 0) {
+            DestroyGpuBuffer(target);
+            return true;
+        }
+        if (TryUploadDeviceLocalWithStaging(data, sizeBytes, usage, label, target)) {
+            return true;
+        }
+        LogInfo(std::string("Falling back to host-visible upload for ") + (label != nullptr ? label : "unnamed tracer stream") + ".");
+        return uploadStream(data, sizeBytes, usage, label, target);
+    };
+
     if (!uploadStream(authoritativeVertices.data(), ByteSize(authoritativeVertices), sceneGpuStreams_.authoritative.plannedUsage, sceneGpuStreams_.authoritative.label, sceneGpuStreams_.authoritative.vertexBuffer)) {
         return false;
     }
     if (!uploadStream(tracerNearVertices.data(), ByteSize(tracerNearVertices), sceneGpuStreams_.tracerNear.plannedUsage, sceneGpuStreams_.tracerNear.label, sceneGpuStreams_.tracerNear.vertexBuffer)) {
         return false;
     }
-    if (!uploadStream(tracerMediumVertices.data(), ByteSize(tracerMediumVertices), sceneGpuStreams_.tracerMedium.plannedUsage, sceneGpuStreams_.tracerMedium.label, sceneGpuStreams_.tracerMedium.vertexBuffer)) {
+    if (!uploadTracerStream(tracerMediumVertices.data(), ByteSize(tracerMediumVertices), sceneGpuStreams_.tracerMedium.plannedUsage, sceneGpuStreams_.tracerMedium.label, sceneGpuStreams_.tracerMedium.vertexBuffer)) {
         return false;
     }
-    if (!uploadStream(tracerFarVertices.data(), ByteSize(tracerFarVertices), sceneGpuStreams_.tracerFar.plannedUsage, sceneGpuStreams_.tracerFar.label, sceneGpuStreams_.tracerFar.vertexBuffer)) {
+    if (!uploadTracerStream(tracerFarVertices.data(), ByteSize(tracerFarVertices), sceneGpuStreams_.tracerFar.plannedUsage, sceneGpuStreams_.tracerFar.label, sceneGpuStreams_.tracerFar.vertexBuffer)) {
         return false;
     }
     if (!uploadStream(trailVertices.data(), ByteSize(trailVertices), sceneGpuStreams_.trails.plannedUsage, sceneGpuStreams_.trails.label, sceneGpuStreams_.trails.vertexBuffer)) {
@@ -2097,7 +2109,13 @@ void SolarLabVulkanRenderer::DestroyDescriptorResources() {
     sceneDescriptorSet_ = VK_NULL_HANDLE;
 }
 
-bool SolarLabVulkanRenderer::EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& buffer) {
+bool SolarLabVulkanRenderer::EnsureBufferWithMemoryProperties(
+    VkDeviceSize sizeBytes,
+    VkBufferUsageFlags usage,
+    VkMemoryPropertyFlags memoryProperties,
+    const char* label,
+    bool reportErrors,
+    GpuBuffer& buffer) {
     if (buffer.buffer != VK_NULL_HANDLE && buffer.sizeBytes >= sizeBytes && buffer.usage == usage) {
         return true;
     }
@@ -2115,18 +2133,20 @@ bool SolarLabVulkanRenderer::EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkB
         .pQueueFamilyIndices = nullptr,
     };
     if (vkCreateBuffer(device_, &bufferCreateInfo, nullptr, &buffer.buffer) != VK_SUCCESS) {
-        SetError(std::string("vkCreateBuffer failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        if (reportErrors) {
+            SetError(std::string("vkCreateBuffer failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        }
         return false;
     }
 
     VkMemoryRequirements memoryRequirements{};
     vkGetBufferMemoryRequirements(device_, buffer.buffer, &memoryRequirements);
 
-    const uint32_t memoryTypeIndex = FindMemoryType(
-        memoryRequirements.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const uint32_t memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, memoryProperties);
     if (memoryTypeIndex == UINT32_MAX) {
-        SetError(std::string("No host-visible Vulkan memory type found for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        if (reportErrors) {
+            SetError(std::string("No Vulkan memory type with required properties found for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        }
         DestroyGpuBuffer(buffer);
         return false;
     }
@@ -2138,13 +2158,17 @@ bool SolarLabVulkanRenderer::EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkB
         .memoryTypeIndex = memoryTypeIndex,
     };
     if (vkAllocateMemory(device_, &allocateInfo, nullptr, &buffer.memory) != VK_SUCCESS) {
-        SetError(std::string("vkAllocateMemory failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        if (reportErrors) {
+            SetError(std::string("vkAllocateMemory failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        }
         DestroyGpuBuffer(buffer);
         return false;
     }
 
     if (vkBindBufferMemory(device_, buffer.buffer, buffer.memory, 0) != VK_SUCCESS) {
-        SetError(std::string("vkBindBufferMemory failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        if (reportErrors) {
+            SetError(std::string("vkBindBufferMemory failed for ") + (label != nullptr ? label : "unnamed stream") + ".");
+        }
         DestroyGpuBuffer(buffer);
         return false;
     }
@@ -2155,23 +2179,198 @@ bool SolarLabVulkanRenderer::EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkB
     return true;
 }
 
-bool SolarLabVulkanRenderer::UploadBytes(const void* data, size_t sizeBytes, GpuBuffer& buffer) {
+bool SolarLabVulkanRenderer::EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& buffer) {
+    return EnsureBufferWithMemoryProperties(
+        sizeBytes,
+        usage,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        label,
+        true,
+        buffer);
+}
+
+bool SolarLabVulkanRenderer::EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, bool reportErrors, GpuBuffer& buffer) {
+    return EnsureBufferWithMemoryProperties(
+        sizeBytes,
+        usage,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        label,
+        reportErrors,
+        buffer);
+}
+
+bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors) {
+    if (sizeBytes == 0) {
+        return true;
+    }
+    if (commandPool_ == VK_NULL_HANDLE || graphicsQueue_ == VK_NULL_HANDLE || source.buffer == VK_NULL_HANDLE || target.buffer == VK_NULL_HANDLE) {
+        return false;
+    }
+
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    const VkCommandBufferAllocateInfo allocateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .commandPool = commandPool_,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    if (vkAllocateCommandBuffers(device_, &allocateInfo, &commandBuffer) != VK_SUCCESS || commandBuffer == VK_NULL_HANDLE) {
+        if (reportErrors) {
+            SetError("vkAllocateCommandBuffers failed for staged tracer upload copy.");
+        }
+        return false;
+    }
+
+    const VkCommandBufferBeginInfo beginInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = nullptr,
+    };
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+        if (reportErrors) {
+            SetError("vkBeginCommandBuffer failed for staged tracer upload copy.");
+        }
+        return false;
+    }
+
+    const VkBufferCopy copyRegion{
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = sizeBytes,
+    };
+    vkCmdCopyBuffer(commandBuffer, source.buffer, target.buffer, 1, &copyRegion);
+
+    const VkBufferMemoryBarrier transferBarrier{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = target.buffer,
+        .offset = 0,
+        .size = sizeBytes,
+    };
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        0,
+        nullptr,
+        1,
+        &transferBarrier,
+        0,
+        nullptr);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+        if (reportErrors) {
+            SetError("vkEndCommandBuffer failed for staged tracer upload copy.");
+        }
+        return false;
+    }
+
+    const VkSubmitInfo submitInfo{
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = nullptr,
+        .pWaitDstStageMask = nullptr,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &commandBuffer,
+        .signalSemaphoreCount = 0,
+        .pSignalSemaphores = nullptr,
+    };
+    const VkResult submitResult = vkQueueSubmit(graphicsQueue_, 1, &submitInfo, VK_NULL_HANDLE);
+    if (submitResult == VK_SUCCESS) {
+        const VkResult waitResult = vkQueueWaitIdle(graphicsQueue_);
+        if (waitResult != VK_SUCCESS && reportErrors) {
+            SetError("vkQueueWaitIdle failed for staged tracer upload copy.");
+        }
+        if (waitResult != VK_SUCCESS) {
+            vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+            return false;
+        }
+    } else {
+        if (reportErrors) {
+            SetError("vkQueueSubmit failed for staged tracer upload copy.");
+        }
+        vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+        return false;
+    }
+
+    vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+    return true;
+}
+
+bool SolarLabVulkanRenderer::TryUploadDeviceLocalWithStaging(const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) {
+    if (sizeBytes == 0) {
+        DestroyGpuBuffer(target);
+        return true;
+    }
+    if (commandPool_ == VK_NULL_HANDLE || graphicsQueue_ == VK_NULL_HANDLE) {
+        return false;
+    }
+
+    if (!EnsureDeviceLocalBuffer(
+            static_cast<VkDeviceSize>(sizeBytes),
+            usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            label,
+            false,
+            target)) {
+        return false;
+    }
+
+    GpuBuffer stagingBuffer;
+    if (!EnsureBufferWithMemoryProperties(
+            static_cast<VkDeviceSize>(sizeBytes),
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            label,
+            false,
+            stagingBuffer)) {
+        DestroyGpuBuffer(target);
+        return false;
+    }
+
+    const bool uploaded = UploadBytesInternal(data, sizeBytes, stagingBuffer, false);
+    const bool copied = uploaded && CopyBufferBytes(stagingBuffer, target, static_cast<VkDeviceSize>(sizeBytes), false);
+    DestroyGpuBuffer(stagingBuffer);
+    if (!copied) {
+        DestroyGpuBuffer(target);
+    }
+    return copied;
+}
+
+bool SolarLabVulkanRenderer::UploadBytesInternal(const void* data, size_t sizeBytes, const GpuBuffer& buffer, bool reportErrors) {
     if (sizeBytes == 0) {
         return true;
     }
     if (buffer.memory == VK_NULL_HANDLE || buffer.sizeBytes < sizeBytes) {
-        SetError("Upload requested for an invalid or undersized Vulkan buffer.");
+        if (reportErrors) {
+            SetError("Upload requested for an invalid or undersized Vulkan buffer.");
+        }
         return false;
     }
 
     void* mapped = nullptr;
     if (vkMapMemory(device_, buffer.memory, 0, static_cast<VkDeviceSize>(sizeBytes), 0, &mapped) != VK_SUCCESS || mapped == nullptr) {
-        SetError(std::string("vkMapMemory failed for ") + (buffer.debugLabel != nullptr ? buffer.debugLabel : "unnamed stream") + ".");
+        if (reportErrors) {
+            SetError(std::string("vkMapMemory failed for ") + (buffer.debugLabel != nullptr ? buffer.debugLabel : "unnamed stream") + ".");
+        }
         return false;
     }
     std::memcpy(mapped, data, sizeBytes);
     vkUnmapMemory(device_, buffer.memory);
     return true;
+}
+
+bool SolarLabVulkanRenderer::UploadBytes(const void* data, size_t sizeBytes, GpuBuffer& buffer) {
+    return UploadBytesInternal(data, sizeBytes, buffer, true);
 }
 
 uint32_t SolarLabVulkanRenderer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const {
