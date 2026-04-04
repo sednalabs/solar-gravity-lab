@@ -35,6 +35,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         active = requestedBackend,
         isHardwareAccelerated = true,
         message = "Preparing renderer.",
+        hardwareSummary = baseHardwareSummary(),
     )
 
     init {
@@ -125,6 +126,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
                     active = RenderBackend.VULKAN,
                     isHardwareAccelerated = false,
                     message = "$reason Vulkan renderer unavailable on this device/build.",
+                    hardwareSummary = baseHardwareSummary(),
                 ),
             )
             return
@@ -140,6 +142,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
                         active = RenderBackend.VULKAN,
                         isHardwareAccelerated = false,
                         message = "Vulkan failed: $message",
+                        hardwareSummary = baseHardwareSummary(),
                     ),
                 )
             },
@@ -151,6 +154,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
                 active = RenderBackend.VULKAN,
                 isHardwareAccelerated = true,
                 message = "$reason Vulkan backend selected.",
+                hardwareSummary = baseHardwareSummary(),
             ),
         )
     }
@@ -177,4 +181,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         currentStatus = status
         backendStatusListener?.invoke(status)
     }
+
+    private fun baseHardwareSummary(): String =
+        listOf(
+            capabilities.hardwareSummary(),
+            SolarLabVulkanBridge.cpuCapabilitySummary(),
+        ).joinToString(separator = " | ")
 }
