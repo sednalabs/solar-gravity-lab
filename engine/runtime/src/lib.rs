@@ -786,10 +786,6 @@ fn format_manifest_digest(digest: &Digest) -> String {
 
 fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
     let mounted_manifest = snapshot.mounted_manifest.as_ref()?;
-    let package_digest = match mounted_manifest.mounted_packages.as_slice() {
-        [only_package] => Some(only_package.digest.clone()),
-        _ => None,
-    };
     Some(SceneProvenanceRef {
         source: mounted_manifest.channel.clone(),
         version: semver_to_string(&mounted_manifest.manifest_version),
@@ -798,7 +794,7 @@ fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
             .manifest_digest
             .as_ref()
             .map(format_manifest_digest),
-        package_digest,
+        package_digest: package_provenance_digest(&mounted_manifest.mounted_packages),
     })
 }
 
@@ -818,8 +814,11 @@ fn semver_to_string(version: &SemVer) -> String {
 fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
     let selected_body_id = snapshot.observer.focus_body_id.as_ref();
     let mut revision = format!(
-        "scenario={}|branch={}|epoch={:.6}",
-        snapshot.scenario_id.0, snapshot.branch_id.0, snapshot.epoch_seconds
+        "scenario={}|branch={}|epoch={:.6}|observer={:?}",
+        snapshot.scenario_id.0,
+        snapshot.branch_id.0,
+        snapshot.epoch_seconds,
+        snapshot.observer.mode
     );
     for body in &snapshot.bodies {
         let selected = selected_body_id == Some(&body.body_id);
@@ -839,6 +838,28 @@ fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
     }
 
     revision
+}
+
+fn package_provenance_digest(mounted_packages: &[MountedPackageState]) -> Option<Digest> {
+    match mounted_packages {
+        [] => None,
+        [only_package] => Some(only_package.digest.clone()),
+        multiple_packages => {
+            let mut value = Vec::new();
+            for package in multiple_packages {
+                value.extend_from_slice(package.package_id.as_bytes());
+                value.push(0);
+                value.extend_from_slice(package.digest.algorithm.as_bytes());
+                value.push(0);
+                value.extend_from_slice(package.digest.hex_value().as_bytes());
+                value.push(b'\n');
+            }
+            Some(Digest {
+                algorithm: "mounted-set/v1".to_owned(),
+                value,
+            })
+        }
+    }
 }
 
 fn mounted_manifest_from_state(
@@ -1731,7 +1752,7 @@ mod tests {
     }
 
     #[test]
-    fn scene_revision_ignores_observer_mode_when_selected_bodies_do_not_change() {
+    fn scene_revision_changes_when_observer_mode_changes() {
         let mut runtime = new_runtime();
         let earth = BodyId("earth".into());
         let moon = BodyId("moon".into());
@@ -1798,7 +1819,7 @@ mod tests {
             )
             .expect("observer mode change should succeed");
 
-        assert_eq!(runtime.render_scene().scene_revision, initial_revision);
+        assert_ne!(runtime.render_scene().scene_revision, initial_revision);
     }
 
     #[test]
@@ -1862,6 +1883,73 @@ mod tests {
             .expect("focus body change should succeed");
 
         assert_ne!(runtime.render_scene().scene_revision, moon_revision);
+    }
+
+    #[test]
+    fn extract_render_scene_uses_deterministic_set_digest_for_multi_package_manifests() {
+        let mut runtime = new_runtime();
+        let scenario_digest = digest(0x51);
+        let catalog_digest = digest(0x52);
+        let scenario_id = package_id_for(&PackageKind::Scenario, &scenario_digest);
+        let catalog_id = package_id_for(&PackageKind::CatalogPack, &catalog_digest);
+
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest(
+                    "manifest-gamma",
+                    vec![
+                        package_locator(
+                            PackageKind::Scenario,
+                            semver(1, 0, 0),
+                            scenario_digest.clone(),
+                            true,
+                        ),
+                        package_locator(
+                            PackageKind::CatalogPack,
+                            semver(1, 0, 0),
+                            catalog_digest.clone(),
+                            true,
+                        ),
+                    ],
+                ),
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![
+                    stored_package(
+                        PackageKind::Scenario,
+                        semver(1, 0, 0),
+                        scenario_digest,
+                        "cache://pkg-scenario-gamma-v100",
+                    ),
+                    stored_package(
+                        PackageKind::CatalogPack,
+                        semver(1, 0, 0),
+                        catalog_digest,
+                        "cache://pkg-catalog-gamma-v100",
+                    ),
+                ]),
+            })
+            .expect("manifest apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: scenario_id,
+            })
+            .expect("scenario mount should succeed");
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: catalog_id,
+            })
+            .expect("catalog mount should succeed");
+
+        let provenance = runtime
+            .render_scene()
+            .provenance
+            .expect("provenance should be present");
+
+        let package_digest = provenance
+            .package_digest
+            .expect("set digest should be present for multiple mounted packages");
+        assert_eq!(package_digest.algorithm, "mounted-set/v1".to_owned());
+        assert!(!package_digest.value.is_empty());
     }
 
     fn checkpoint_id_from_events(events: &[RuntimeEvent]) -> CheckpointId {
