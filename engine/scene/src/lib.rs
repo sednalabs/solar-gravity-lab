@@ -1,4 +1,5 @@
-use solarlab_domain::{BodyId, ObserverMode, ProvenanceRef, TimelineSemantics, Vector3d};
+use solarlab_data::Digest;
+use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ColorRgba {
@@ -63,6 +64,15 @@ pub struct RenderDiagnostics {
     pub dropped_frames: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneProvenanceRef {
+    pub source: String,
+    pub version: String,
+    pub manifest_id: String,
+    pub manifest_digest: Option<String>,
+    pub package_digest: Option<Digest>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderScene {
     pub observer_mode: ObserverMode,
@@ -77,7 +87,7 @@ pub struct RenderScene {
     pub tracers: Vec<SceneTracer>,
     pub trails: Vec<SceneTrail>,
     pub lights: Vec<LightSource>,
-    pub provenance: Option<ProvenanceRef>,
+    pub provenance: Option<SceneProvenanceRef>,
     pub diagnostics: RenderDiagnostics,
 }
 

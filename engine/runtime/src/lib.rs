@@ -16,7 +16,9 @@ use solarlab_history::{
     HistoryEvent,
 };
 use solarlab_physics::{PhysicsInvariants, PhysicsPolicy};
-use solarlab_scene::{CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody};
+use solarlab_scene::{
+    CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneProvenanceRef,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyState {
@@ -782,15 +784,21 @@ fn format_manifest_digest(digest: &Digest) -> String {
     format!("{}:{}", digest.algorithm, digest.hex_value())
 }
 
-fn scene_provenance(snapshot: &WorldSnapshot) -> Option<solarlab_domain::ProvenanceRef> {
+fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
     let mounted_manifest = snapshot.mounted_manifest.as_ref()?;
-    Some(solarlab_domain::ProvenanceRef {
-        source: mounted_manifest.manifest_id.clone(),
+    let package_digest = match mounted_manifest.mounted_packages.as_slice() {
+        [only_package] => Some(only_package.digest.clone()),
+        _ => None,
+    };
+    Some(SceneProvenanceRef {
+        source: mounted_manifest.channel.clone(),
         version: semver_to_string(&mounted_manifest.manifest_version),
+        manifest_id: mounted_manifest.manifest_id.clone(),
         manifest_digest: mounted_manifest
             .manifest_digest
             .as_ref()
             .map(format_manifest_digest),
+        package_digest,
     })
 }
 
@@ -808,15 +816,17 @@ fn semver_to_string(version: &SemVer) -> String {
 }
 
 fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
+    let selected_body_id = snapshot.observer.focus_body_id.as_ref();
     let mut revision = format!(
         "scenario={}|branch={}|epoch={:.6}",
         snapshot.scenario_id.0, snapshot.branch_id.0, snapshot.epoch_seconds
     );
     for body in &snapshot.bodies {
+        let selected = selected_body_id == Some(&body.body_id);
         use std::fmt::Write as _;
         let _ = write!(
             &mut revision,
-            "|{}|r={:.6}|p=({:.6},{:.6},{:.6})|v=({:.6},{:.6},{:.6})",
+            "|{}|selected={selected}|r={:.6}|p=({:.6},{:.6},{:.6})|v=({:.6},{:.6},{:.6})",
             body.body_id.0,
             body.radius_m,
             body.position_m.x,
@@ -1666,9 +1676,11 @@ mod tests {
         let scene = extract_render_scene(&runtime.snapshot());
         let provenance = scene.provenance.expect("provenance should be present");
 
-        assert_eq!(provenance.source, "manifest-alpha".to_owned());
+        assert_eq!(provenance.source, "stable".to_owned());
         assert_eq!(provenance.version, "1.0.0".to_owned());
+        assert_eq!(provenance.manifest_id, "manifest-alpha".to_owned());
         assert_eq!(provenance.manifest_digest, None);
+        assert_eq!(provenance.package_digest, Some(digest(0x22)));
     }
 
     #[test]
@@ -1710,10 +1722,146 @@ mod tests {
         let scene = extract_render_scene(&runtime.snapshot());
         let provenance = scene.provenance.expect("provenance should be present");
 
+        assert_eq!(provenance.manifest_id, "manifest-beta".to_owned());
         assert_eq!(
             provenance.manifest_digest,
             Some(super::format_manifest_digest(&manifest_digest))
         );
+        assert_eq!(provenance.package_digest, Some(digest(0x23)));
+    }
+
+    #[test]
+    fn scene_revision_ignores_observer_mode_when_selected_bodies_do_not_change() {
+        let mut runtime = new_runtime();
+        let earth = BodyId("earth".into());
+        let moon = BodyId("moon".into());
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: earth,
+                        body_class: BodyClass::Planet,
+                        mass_kg: 5.972e24,
+                        radius_m: 6_371_000.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("spawn earth should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: moon.clone(),
+                        body_class: BodyClass::Moon,
+                        mass_kg: 7.35e22,
+                        radius_m: 1_737_000.0,
+                        position_m: Vector3d {
+                            x: 384_400_000.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                2,
+            )
+            .expect("spawn moon should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(moon),
+                },
+                3,
+            )
+            .expect("focus body should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SetObserverMode {
+                    mode: ObserverMode::FollowSelected,
+                },
+                4,
+            )
+            .expect("observer mode should succeed");
+
+        let initial_revision = runtime.render_scene().scene_revision;
+
+        runtime
+            .apply_command(
+                WorldCommand::SetObserverMode {
+                    mode: ObserverMode::FollowHost,
+                },
+                5,
+            )
+            .expect("observer mode change should succeed");
+
+        assert_eq!(runtime.render_scene().scene_revision, initial_revision);
+    }
+
+    #[test]
+    fn scene_revision_changes_when_selected_body_changes() {
+        let mut runtime = new_runtime();
+        let earth = BodyId("earth".into());
+        let moon = BodyId("moon".into());
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: earth.clone(),
+                        body_class: BodyClass::Planet,
+                        mass_kg: 5.972e24,
+                        radius_m: 6_371_000.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("spawn earth should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: moon.clone(),
+                        body_class: BodyClass::Moon,
+                        mass_kg: 7.35e22,
+                        radius_m: 1_737_000.0,
+                        position_m: Vector3d {
+                            x: 384_400_000.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                2,
+            )
+            .expect("spawn moon should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(moon),
+                },
+                3,
+            )
+            .expect("focus body should succeed");
+
+        let moon_revision = runtime.render_scene().scene_revision;
+
+        runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(earth),
+                },
+                4,
+            )
+            .expect("focus body change should succeed");
+
+        assert_ne!(runtime.render_scene().scene_revision, moon_revision);
     }
 
     fn checkpoint_id_from_events(events: &[RuntimeEvent]) -> CheckpointId {
