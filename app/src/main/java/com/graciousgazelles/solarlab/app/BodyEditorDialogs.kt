@@ -3,7 +3,9 @@ package com.graciousgazelles.solarlab.app
 import android.content.Context
 import androidx.appcompat.app.AlertDialog
 import android.graphics.Color
+import android.view.View
 import android.view.LayoutInflater
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.core.view.isVisible
 import com.graciousgazelles.solarlab.app.databinding.DialogBodyEditorBinding
@@ -24,6 +26,7 @@ internal object BodyEditorDialogs {
         val binding = DialogBodyEditorBinding.inflate(LayoutInflater.from(activity))
         val categories = BodyCategory.entries.toList()
         val roles = GravitationalRole.entries.toList()
+        val presets = BodyPresets.options()
 
         binding.spinnerBodyCategory.adapter = ArrayAdapter(
             activity,
@@ -35,22 +38,32 @@ internal object BodyEditorDialogs {
             android.R.layout.simple_spinner_dropdown_item,
             roles.map { activity.prettyRoleLabel(it, includeRoleHints = true) },
         )
+        binding.spinnerBodyPreset.adapter = ArrayAdapter(
+            activity,
+            android.R.layout.simple_spinner_dropdown_item,
+            presets.map { preset -> preset.label },
+        )
 
-        binding.editBodyName.setText(draft.name)
-        binding.spinnerBodyCategory.setSelection(categories.indexOf(draft.category).coerceAtLeast(0))
-        binding.spinnerBodyRole.setSelection(roles.indexOf(draft.gravitationalRole).coerceAtLeast(0))
-        binding.editMassKg.setText(draft.massKg.toEditorString())
-        binding.editRadiusM.setText(draft.radiusM.toEditorString())
-        binding.editPositionX.setText(draft.positionM.x.toEditorString())
-        binding.editPositionY.setText(draft.positionM.y.toEditorString())
-        binding.editPositionZ.setText(draft.positionM.z.toEditorString())
-        binding.editVelocityX.setText(draft.velocityMps.x.toEditorString())
-        binding.editVelocityY.setText(draft.velocityMps.y.toEditorString())
-        binding.editVelocityZ.setText(draft.velocityMps.z.toEditorString())
-        binding.editColorHex.setText(draft.colorArgb.toUInt().toString(16).uppercase().padStart(8, '0'))
+        populateDraftFields(binding, draft, categories, roles)
         binding.checkPlaceOnScene.isVisible = isNewBody
         binding.checkPlaceOnScene.isChecked = draft.placeOnSceneAfterSave
         binding.textBodyEditorError.text = ""
+        binding.textBodyPresetLabel.visibility = if (isNewBody) View.VISIBLE else View.GONE
+        binding.spinnerBodyPreset.visibility = if (isNewBody) View.VISIBLE else View.GONE
+
+        if (isNewBody) {
+            binding.spinnerBodyPreset.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    val preset = presets.getOrNull(position) ?: return
+                    populateDraftFields(binding, preset.createDraft(), categories, roles)
+                    binding.checkPlaceOnScene.isChecked = true
+                    binding.textBodyEditorError.text = ""
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+            binding.spinnerBodyPreset.setSelection(0)
+        }
 
         val dialog = AlertDialog.Builder(activity)
             .setTitle(if (isNewBody) "Add object" else "Edit ${draft.name}")
@@ -193,6 +206,26 @@ internal object BodyEditorDialogs {
             return null
         }
         return parsed
+    }
+
+    private fun populateDraftFields(
+        binding: DialogBodyEditorBinding,
+        draft: EditableBodyDraft,
+        categories: List<BodyCategory>,
+        roles: List<GravitationalRole>,
+    ) {
+        binding.editBodyName.setText(draft.name)
+        binding.spinnerBodyCategory.setSelection(categories.indexOf(draft.category).coerceAtLeast(0))
+        binding.spinnerBodyRole.setSelection(roles.indexOf(draft.gravitationalRole).coerceAtLeast(0))
+        binding.editMassKg.setText(draft.massKg.toEditorString())
+        binding.editRadiusM.setText(draft.radiusM.toEditorString())
+        binding.editPositionX.setText(draft.positionM.x.toEditorString())
+        binding.editPositionY.setText(draft.positionM.y.toEditorString())
+        binding.editPositionZ.setText(draft.positionM.z.toEditorString())
+        binding.editVelocityX.setText(draft.velocityMps.x.toEditorString())
+        binding.editVelocityY.setText(draft.velocityMps.y.toEditorString())
+        binding.editVelocityZ.setText(draft.velocityMps.z.toEditorString())
+        binding.editColorHex.setText(draft.colorArgb.toUInt().toString(16).uppercase().padStart(8, '0'))
     }
 }
 

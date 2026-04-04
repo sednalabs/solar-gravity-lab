@@ -66,7 +66,7 @@ data class NativeScenePacket(
                     view.classify(body.positionM) != null
                 }
             }
-            val authoritativePack = packBodies(authoritativeBodies, selectedBodyId)
+            val authoritativePack = packBodies(authoritativeBodies, selectedBodyId, view, policy)
 
             val tracerSelection = if (view == null) {
                 TracerSelection(
@@ -78,9 +78,9 @@ data class NativeScenePacket(
                 selectTracerTiers(frame.tracerBodies, view, policy)
             }
 
-            val nearPack = packBodies(tracerSelection.near, selectedBodyId)
-            val mediumPack = packBodies(tracerSelection.medium, selectedBodyId)
-            val farPack = packBodies(tracerSelection.far, selectedBodyId)
+            val nearPack = packBodies(tracerSelection.near, selectedBodyId, view, policy)
+            val mediumPack = packBodies(tracerSelection.medium, selectedBodyId, view, policy)
+            val farPack = packBodies(tracerSelection.far, selectedBodyId, view, policy)
 
             val simplifiedTrails = if (view == null) {
                 frame.trails.map { trail ->
@@ -240,18 +240,28 @@ data class NativeScenePacket(
         private fun packBodies(
             bodies: List<RenderBody>,
             selectedBodyId: String?,
+            view: SceneView?,
+            policy: ScenePacketBuildPolicy,
         ): PackedBodies {
             val positions = DoubleArray(bodies.size * 3)
             val radii = FloatArray(bodies.size)
             val colors = IntArray(bodies.size)
             val kinds = IntArray(bodies.size)
+            val minimumVisibleRadiusM = view?.metersPerPixel?.times(policy.minBodyScreenRadiusPx) ?: 0.0
+            val minimumSelectedRadiusM = view?.metersPerPixel?.times(policy.minSelectedBodyScreenRadiusPx) ?: 0.0
             bodies.forEachIndexed { index, body ->
                 val offset = index * 3
                 positions[offset] = body.positionM.x
                 positions[offset + 1] = body.positionM.y
                 positions[offset + 2] = body.positionM.z
                 val isSelected = body.id == selectedBodyId
-                radii[index] = (body.radiusM * if (isSelected) selectedRadiusBoost(body.kind) else 1.0).toFloat()
+                val boostedRadiusM = body.radiusM * if (isSelected) selectedRadiusBoost(body.kind) else 1.0
+                val visibleRadiusM = if (isSelected) {
+                    max(boostedRadiusM, minimumSelectedRadiusM)
+                } else {
+                    max(boostedRadiusM, minimumVisibleRadiusM)
+                }
+                radii[index] = visibleRadiusM.toFloat()
                 colors[index] = if (isSelected) brightenArgb(body.colorArgb) else body.colorArgb
                 kinds[index] = body.kind.ordinal
             }
@@ -281,7 +291,7 @@ data class NativeScenePacket(
                 }
                 val trailColor = withAlphaMultiplier(
                     emphasizedColor,
-                    trail.alpha.toDouble() * alphaBoost,
+                    trail.alpha.toDouble() * policy.trailAlphaMultiplier * alphaBoost,
                 )
                 trailVertexCounts[trailIndex] = trail.pointsM.size
                 trail.pointsM.forEach { point ->

@@ -253,6 +253,14 @@
                         android:text="@string/action_edit_selected" />
 
                     <Button
+                        android:id="@+id/buttonFindBody"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_find_object" />
+
+                    <Button
                         android:id="@+id/buttonCollisionMode"
                         style="@style/Widget.SolarLab.ControlButton"
                         android:layout_width="wrap_content"

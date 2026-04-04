@@ -361,12 +361,26 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private fun packetPolicyForMode(mode: RenderProcessingMode): ScenePacketBuildPolicy = when (mode) {
         RenderProcessingMode.DEFAULT -> defaultScenePacketPolicy()
+        RenderProcessingMode.VISIBILITY -> ScenePacketBuildPolicy(
+            nearTracerBudget = 12_288,
+            mediumTracerBudget = 24_576,
+            farTracerBudget = 36_864,
+            minBodyScreenRadiusPx = 1.75,
+            minSelectedBodyScreenRadiusPx = 3.25,
+            trailSimplificationTolerancePx = 0.75,
+            maxTrailVerticesPerTrail = 384,
+            trailAlphaMultiplier = 1.55,
+            selectedTrailAlphaBoost = 2.0,
+        )
         RenderProcessingMode.LOW -> ScenePacketBuildPolicy(
             nearTracerBudget = 2_048,
             mediumTracerBudget = 4_096,
             farTracerBudget = 6_144,
+            minBodyScreenRadiusPx = 1.35,
+            minSelectedBodyScreenRadiusPx = 2.5,
             trailSimplificationTolerancePx = 6.0,
             maxTrailVerticesPerTrail = 96,
+            trailAlphaMultiplier = 0.9,
         )
     }
 }

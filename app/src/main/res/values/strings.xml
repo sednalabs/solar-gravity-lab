@@ -7,6 +7,7 @@
     <string name="action_add_object">Add object</string>
     <string name="action_cancel_add">Cancel add</string>
     <string name="action_edit_selected">Edit selected</string>
+    <string name="action_find_object">Find object</string>
     <string name="action_observer_free">Observer: Free</string>
     <string name="action_observer_selected">Observer: Follow selected</string>
     <string name="action_observer_selected_host">Observer: Follow selected host</string>
@@ -20,13 +21,14 @@
     <string name="action_collision_fragmentation">Collisions: Fragmentation</string>
     <string name="action_collision_elastic">Collisions: Elastic</string>
     <string name="action_processing_default">Rendering: Standard</string>
+    <string name="action_processing_visibility">Rendering: Visibility + Paths</string>
     <string name="action_processing_low">Rendering: Simplified</string>
     <string name="action_orientation_free">Orientation: Free</string>
     <string name="action_orientation_locked">Orientation: Locked</string>
     <string name="action_backend_vulkan">Backend: Vulkan</string>
     <string name="action_info_show">Info</string>
     <string name="action_info_hide">Hide info</string>
-    <string name="controls_hint">Pinch to zoom. Drag to pan. Tap a body to select it. Follow mode locks the camera to the selected body or its host, the orientation lock keeps the screen fixed, and the time-step controls move catalog time by the chosen step.</string>
+    <string name="controls_hint">Pinch to zoom. Drag to pan. Tap a body to select it. Find object jumps the camera to a chosen body, Visibility + Paths makes distant objects and orbits easier to read, and Follow locks the camera to the selected body or its host.</string>
     <string name="diagnostics_cached_notice">Diagnostics shown from recent running tick</string>
     <string name="selection_none_title">No body selected</string>
     <string name="selection_none">Tap a moving body to select it, then use Follow to keep it in view.</string>
@@ -50,6 +52,10 @@
     <string name="category_probe">Probe</string>
     <string name="role_massive_body">Massive body</string>
     <string name="role_tracer">Tracer</string>
+    <string name="search_hint">Search by name, id, category, or role</string>
+    <string name="search_summary_none">No objects available yet.</string>
+    <string name="search_summary_all">Showing all %1$d objects.</string>
+    <string name="search_summary_filtered">Showing %1$d of %2$d objects.</string>
     <string name="format_speed_kmps">%.1f km/s</string>
     <string name="format_speed_mps">%.0f m/s</string>
     <string name="format_distance_au">%.2f AU</string>

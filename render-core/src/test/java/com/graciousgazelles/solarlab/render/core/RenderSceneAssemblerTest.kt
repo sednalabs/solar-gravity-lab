@@ -287,6 +287,50 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    fun nativePacketAppliesMinimumVisibleRadiusAndTrailOverlayBoost() {
+        val frame = RenderSceneFrame(
+            epochSeconds = 0.0,
+            authoritativeBodies = listOf(
+                RenderBody(
+                    id = "tiny",
+                    name = "Tiny",
+                    positionM = Vector3d(10.0, 0.0, 0.0),
+                    radiusM = 0.01,
+                    colorArgb = 0xFF88AAFF.toInt(),
+                    kind = RenderBodyKind.PROBE,
+                    isMassive = false,
+                ),
+            ),
+            tracerBodies = emptyList(),
+            trails = listOf(
+                RenderTrail(
+                    bodyId = "tiny",
+                    colorArgb = 0xFF88AAFF.toInt(),
+                    alpha = 0.4f,
+                    pointsM = listOf(Vector3d.ZERO, Vector3d(50.0, 0.0, 0.0)),
+                ),
+            ),
+            sourceRevision = 13L,
+        )
+
+        val packet = NativeScenePacket.fromScene(
+            frame = frame,
+            cameraState = CameraState(viewRadiusM = 1_000.0),
+            viewportWidthPx = 1_000,
+            viewportHeightPx = 1_000,
+            policy = ScenePacketBuildPolicy(
+                minBodyScreenRadiusPx = 2.0,
+                minSelectedBodyScreenRadiusPx = 4.0,
+                trailAlphaMultiplier = 1.5,
+            ),
+            selectedBodyId = "tiny",
+        )
+
+        assertEquals(8.0f, packet.authoritativeRadiiM[0], 1e-6f)
+        assertTrue(alphaChannel(packet.trailColorsArgb[0]) > (0.4f * 255.0f).toInt())
+    }
+
+    @Test
     fun clearRemovesTrailHistorySoFirstFrameAfterResetHasNoTrail() {
         val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
         val firstSnapshot = SimulationSnapshot(

@@ -13,8 +13,11 @@ data class ScenePacketBuildPolicy(
     val nearTracerBudget: Int = 8_192,
     val mediumTracerBudget: Int = 16_384,
     val farTracerBudget: Int = 24_576,
+    val minBodyScreenRadiusPx: Double = 1.15,
+    val minSelectedBodyScreenRadiusPx: Double = 2.25,
     val trailSimplificationTolerancePx: Double = 2.0,
     val maxTrailVerticesPerTrail: Int = 256,
+    val trailAlphaMultiplier: Double = 1.0,
     val selectedTrailAlphaBoost: Double = 1.25,
 ) {
     init {
@@ -28,10 +31,15 @@ data class ScenePacketBuildPolicy(
         require(nearTracerBudget >= 0) { "nearTracerBudget must be non-negative." }
         require(mediumTracerBudget >= 0) { "mediumTracerBudget must be non-negative." }
         require(farTracerBudget >= 0) { "farTracerBudget must be non-negative." }
+        require(minBodyScreenRadiusPx >= 0.0) { "minBodyScreenRadiusPx must be non-negative." }
+        require(minSelectedBodyScreenRadiusPx >= minBodyScreenRadiusPx) {
+            "minSelectedBodyScreenRadiusPx must be >= minBodyScreenRadiusPx."
+        }
         require(trailSimplificationTolerancePx >= 0.0) {
             "trailSimplificationTolerancePx must be non-negative."
         }
         require(maxTrailVerticesPerTrail >= 2) { "maxTrailVerticesPerTrail must be at least 2." }
+        require(trailAlphaMultiplier > 0.0) { "trailAlphaMultiplier must be > 0." }
         require(selectedTrailAlphaBoost >= 1.0) {
             "selectedTrailAlphaBoost must be at least 1.0."
         }

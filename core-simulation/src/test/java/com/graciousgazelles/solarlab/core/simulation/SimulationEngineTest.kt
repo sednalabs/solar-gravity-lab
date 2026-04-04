@@ -212,6 +212,80 @@ class SimulationEngineTest {
     }
 
     @Test
+    fun `supermassive low speed impacts accrete on the escape velocity path`() {
+        val supermassive = BodyFactory.sphericalBody(
+            id = "supermassive",
+            name = "Supermassive",
+            category = BodyCategory.STAR,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 1.0e24,
+            densityKgPerM3 = DensityPreset.GAS_GIANT_KG_PER_M3,
+            positionM = Vector3d.ZERO,
+            velocityMps = Vector3d.ZERO,
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+        val impactor = BodyFactory.sphericalBody(
+            id = "impactor",
+            name = "Impactor",
+            category = BodyCategory.TEST_OBJECT,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 1.0e16,
+            densityKgPerM3 = DensityPreset.ROCKY_KG_PER_M3,
+            positionM = Vector3d(supermassive.radiusM + 250.0, 0.0, 0.0),
+            velocityMps = Vector3d(-50.0, 0.0, 0.0),
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+
+        val engine = SimulationEngine(
+            initialSnapshot = SimulationSnapshot(epochSeconds = 0.0, bodies = listOf(supermassive, impactor)),
+            config = SimulationConfig(collisionMode = CollisionMode.ELASTIC),
+        )
+
+        val result = engine.step(10.0)
+
+        assertEquals(1, result.snapshot.bodies.size)
+        assertEquals(1, result.collisions.size)
+        assertEquals(CollisionMode.MERGE, result.collisions.first().collisionMode)
+    }
+
+    @Test
+    fun `supermassive fast impacts remain elastic in elastic mode`() {
+        val supermassive = BodyFactory.sphericalBody(
+            id = "supermassive",
+            name = "Supermassive",
+            category = BodyCategory.STAR,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 1.0e24,
+            densityKgPerM3 = DensityPreset.GAS_GIANT_KG_PER_M3,
+            positionM = Vector3d.ZERO,
+            velocityMps = Vector3d.ZERO,
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+        val impactor = BodyFactory.sphericalBody(
+            id = "impactor",
+            name = "Impactor",
+            category = BodyCategory.TEST_OBJECT,
+            gravitationalRole = GravitationalRole.MASSIVE,
+            massKg = 1.0e16,
+            densityKgPerM3 = DensityPreset.ROCKY_KG_PER_M3,
+            positionM = Vector3d(supermassive.radiusM + 500.0, 0.0, 0.0),
+            velocityMps = Vector3d(-20_000.0, 0.0, 0.0),
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+
+        val engine = SimulationEngine(
+            initialSnapshot = SimulationSnapshot(epochSeconds = 0.0, bodies = listOf(supermassive, impactor)),
+            config = SimulationConfig(collisionMode = CollisionMode.ELASTIC),
+        )
+
+        val result = engine.step(1.0)
+
+        assertEquals(2, result.snapshot.bodies.size)
+        assertEquals(1, result.collisions.size)
+        assertEquals(CollisionMode.ELASTIC, result.collisions.first().collisionMode)
+    }
+
+    @Test
     fun `colliding bodies fragment with conserved mass and momentum`() {
         val a = BodyState(
             id = "a",

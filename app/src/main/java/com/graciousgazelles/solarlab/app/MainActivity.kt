@@ -131,6 +131,10 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             showEditSelectedBodyDialog()
         }
 
+        binding.buttonFindBody.setOnClickListener {
+            showFindBodyDialog()
+        }
+
         binding.buttonCollisionMode.setOnClickListener {
             currentCollisionMode = when (currentCollisionMode) {
                 CollisionMode.NONE -> CollisionMode.MERGE
@@ -149,7 +153,8 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
         binding.buttonProcessingMode.setOnClickListener {
             renderProcessingMode = when (renderProcessingMode) {
-                RenderProcessingMode.DEFAULT -> RenderProcessingMode.LOW
+                RenderProcessingMode.DEFAULT -> RenderProcessingMode.VISIBILITY
+                RenderProcessingMode.VISIBILITY -> RenderProcessingMode.LOW
                 RenderProcessingMode.LOW -> RenderProcessingMode.DEFAULT
             }
             binding.renderHost.setProcessingMode(renderProcessingMode)
@@ -278,6 +283,27 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             onDelete = {
                 session.removeBody(body.id)
                 updateSelectedBodyId(null)
+            },
+            onDismiss = {
+                maybeResumeAfterModalInteraction()
+            },
+        )
+    }
+
+    private fun showFindBodyDialog() {
+        val bodies = latestFrame?.snapshot?.bodies
+            ?.sortedBy { it.name.lowercase() }
+            .orEmpty()
+        if (bodies.isEmpty()) {
+            return
+        }
+        prepareForModalInteraction()
+        BodySearchDialogs.show(
+            activity = this,
+            bodies = bodies,
+            onPick = { body ->
+                updateSelectedBodyId(body.id)
+                setObserverMode(ObserverMode.FOLLOW_SELECTED)
             },
             onDismiss = {
                 maybeResumeAfterModalInteraction()
@@ -482,6 +508,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonSpeedDown.isEnabled = pendingAddDraft == null
         binding.buttonSpeedUp.isEnabled = pendingAddDraft == null
         binding.buttonFollow.isEnabled = pendingAddDraft == null && (selectedBodyId != null || observerMode != ObserverMode.FREE)
+        binding.buttonFindBody.isEnabled = pendingAddDraft == null && !latestFrame?.snapshot?.bodies.isNullOrEmpty()
         binding.buttonOrientationLock.isEnabled = true
         binding.buttonStartPause.text = if (session.isRunning()) {
             getString(R.string.action_pause)
@@ -497,6 +524,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             getString(R.string.action_cancel_add)
         }
         binding.buttonEditBody.isEnabled = selectedBodyId != null && pendingAddDraft == null
+        binding.buttonFindBody.isEnabled = pendingAddDraft == null && !latestFrame?.snapshot?.bodies.isNullOrEmpty()
         updateSimulationButtons()
     }
 
@@ -554,6 +582,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private fun updateProcessingModeButtonText() {
         binding.buttonProcessingMode.text = when (renderProcessingMode) {
             RenderProcessingMode.DEFAULT -> getString(R.string.action_processing_default)
+            RenderProcessingMode.VISIBILITY -> getString(R.string.action_processing_visibility)
             RenderProcessingMode.LOW -> getString(R.string.action_processing_low)
         }
     }
