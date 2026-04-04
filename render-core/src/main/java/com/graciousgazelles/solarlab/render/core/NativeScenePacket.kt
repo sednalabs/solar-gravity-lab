@@ -91,7 +91,7 @@ data class NativeScenePacket(
                     simplifyTrail(trail, view, policy)
                 }
             }
-            val trailPack = packTrails(simplifiedTrails, selectedBodyId)
+            val trailPack = packTrails(simplifiedTrails, selectedBodyId, policy)
 
             return NativeScenePacket(
                 sourceRevision = frame.sourceRevision,
@@ -261,6 +261,7 @@ data class NativeScenePacket(
         private fun packTrails(
             trails: List<RenderTrail>,
             selectedBodyId: String?,
+            policy: ScenePacketBuildPolicy,
         ): PackedTrails {
             val trailVertexCount = trails.sumOf { it.pointsM.size }
             val trailPositions = DoubleArray(trailVertexCount * 3)
