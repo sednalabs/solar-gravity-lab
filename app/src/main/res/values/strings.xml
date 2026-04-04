@@ -19,6 +19,8 @@
     <string name="action_collision_merge">Collisions: Merge</string>
     <string name="action_collision_fragmentation">Collisions: Fragmentation</string>
     <string name="action_collision_elastic">Collisions: Elastic</string>
+    <string name="action_tracer_gravity_on">Tracer gravity: On</string>
+    <string name="action_tracer_gravity_off">Tracer gravity: Off</string>
     <string name="action_processing_default">Rendering: Standard</string>
     <string name="action_processing_low">Rendering: Simplified</string>
     <string name="action_backend_vulkan">Backend: Vulkan</string>

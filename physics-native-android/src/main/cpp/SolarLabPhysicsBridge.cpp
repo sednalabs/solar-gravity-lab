@@ -439,7 +439,7 @@ Java_com_sednalabs_solarlab_physics_nativeandroid_NativePhysicsBridge_nativeComp
         targetZ.span(),
         gravitationalConstant,
         softeningSquared,
-        false
+        true
     );
     return ToJDoubleArray(env, packed);
 }

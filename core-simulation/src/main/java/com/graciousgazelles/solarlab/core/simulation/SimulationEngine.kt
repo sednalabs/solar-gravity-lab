@@ -162,7 +162,10 @@ class SimulationEngine(
                 positionZ = body.positionM.z,
             )
         }
-        val sources = AccelerationKernelBufferFactory.buildMassiveSourceBuffers(solverBodies)
+        val sources = AccelerationKernelBufferFactory.buildGravitySourceBuffers(
+            bodies = solverBodies,
+            includeTracerSources = config.includeTracerMutualGravity,
+        )
         if (sources.count == 0) return accelerations
 
         val gravitationalConstant = config.gravitationalConstant

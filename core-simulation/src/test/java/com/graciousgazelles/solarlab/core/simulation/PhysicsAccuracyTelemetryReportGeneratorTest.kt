@@ -20,6 +20,10 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         private const val BARYCENTER_DRIFT_M_MAX = 50.0
         private const val BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX = 10.0
         private const val MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX = 1e-3
+        private const val GPU_TRACER_MEDIUM_SHORT_HORIZON_XY_RMS_ERROR_M_MAX = 1.0e6
+        private const val GPU_TRACER_MEDIUM_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX = 1.0e8
+        private const val GPU_TRACER_FAR_SHORT_HORIZON_XY_RMS_ERROR_M_MAX = 5.0e6
+        private const val GPU_TRACER_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX = 5.0e8
     }
 
     @Test
@@ -62,6 +66,8 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(json.contains("\"barycenter_drift_m\""))
         assertTrue(json.contains("\"moon_earth_distance_au\""))
         assertTrue(json.contains("\"moon_earth_distance_fine_baseline_error_au\""))
+        assertTrue(json.contains("\"gpu_tracer_medium_short_horizon_xy_rms_error_m\""))
+        assertTrue(json.contains("\"gpu_tracer_far_medium_horizon_xy_max_error_m\""))
     }
 
     @Test
@@ -97,6 +103,12 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(metrics.containsKey("angular_momentum_fine_baseline_error_ratio"))
         assertTrue(metrics.containsKey("barycenter_fine_baseline_distance_error_m"))
         assertTrue(metrics.containsKey("barycenter_fine_baseline_velocity_error_mps"))
+        assertTrue(metrics.containsKey("gpu_tracer_medium_cohort_count"))
+        assertTrue(metrics.containsKey("gpu_tracer_medium_short_horizon_xy_rms_error_m"))
+        assertTrue(metrics.containsKey("gpu_tracer_medium_medium_horizon_xy_max_error_m"))
+        assertTrue(metrics.containsKey("gpu_tracer_far_cohort_count"))
+        assertTrue(metrics.containsKey("gpu_tracer_far_short_horizon_xy_rms_error_m"))
+        assertTrue(metrics.containsKey("gpu_tracer_far_medium_horizon_xy_max_error_m"))
         assertTrue(metrics["relative_angular_momentum_drift"]!!.value >= 0.0)
         assertTrue(metrics["absolute_angular_momentum_drift_kg_m2_per_s"]!!.value >= 0.0)
         assertTrue(metrics["barycenter_drift_m"]!!.value >= 0.0)
@@ -104,6 +116,12 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(metrics["angular_momentum_fine_baseline_error_ratio"]!!.value >= 0.0)
         assertTrue(metrics["barycenter_fine_baseline_distance_error_m"]!!.value >= 0.0)
         assertTrue(metrics["barycenter_fine_baseline_velocity_error_mps"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_medium_cohort_count"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_medium_short_horizon_xy_rms_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_medium_medium_horizon_xy_max_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_far_cohort_count"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_far_short_horizon_xy_rms_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_far_medium_horizon_xy_max_error_m"]!!.value >= 0.0)
     }
 
     @Test
@@ -124,6 +142,14 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
             requiredMetricValue(metrics, "barycenter_fine_baseline_distance_error_m")
         val moonEarthFineBaselineErrorRatio =
             requiredMetricValue(metrics, "moon_earth_distance_fine_baseline_error_ratio")
+        val gpuTracerMediumShortHorizonXyRmsErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_medium_short_horizon_xy_rms_error_m")
+        val gpuTracerMediumMediumHorizonXyMaxErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_medium_medium_horizon_xy_max_error_m")
+        val gpuTracerFarShortHorizonXyRmsErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_far_short_horizon_xy_rms_error_m")
+        val gpuTracerFarMediumHorizonXyMaxErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_far_medium_horizon_xy_max_error_m")
 
         assertTrue(
             "relative_angular_momentum_drift=$relativeAngularMomentumDrift exceeded max $RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX",
@@ -140,6 +166,22 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(
             "moon_earth_distance_fine_baseline_error_ratio=$moonEarthFineBaselineErrorRatio exceeded max $MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX",
             moonEarthFineBaselineErrorRatio <= MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_medium_short_horizon_xy_rms_error_m=$gpuTracerMediumShortHorizonXyRmsErrorM exceeded max $GPU_TRACER_MEDIUM_SHORT_HORIZON_XY_RMS_ERROR_M_MAX",
+            gpuTracerMediumShortHorizonXyRmsErrorM <= GPU_TRACER_MEDIUM_SHORT_HORIZON_XY_RMS_ERROR_M_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_medium_medium_horizon_xy_max_error_m=$gpuTracerMediumMediumHorizonXyMaxErrorM exceeded max $GPU_TRACER_MEDIUM_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX",
+            gpuTracerMediumMediumHorizonXyMaxErrorM <= GPU_TRACER_MEDIUM_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_far_short_horizon_xy_rms_error_m=$gpuTracerFarShortHorizonXyRmsErrorM exceeded max $GPU_TRACER_FAR_SHORT_HORIZON_XY_RMS_ERROR_M_MAX",
+            gpuTracerFarShortHorizonXyRmsErrorM <= GPU_TRACER_FAR_SHORT_HORIZON_XY_RMS_ERROR_M_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_far_medium_horizon_xy_max_error_m=$gpuTracerFarMediumHorizonXyMaxErrorM exceeded max $GPU_TRACER_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX",
+            gpuTracerFarMediumHorizonXyMaxErrorM <= GPU_TRACER_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX,
         )
     }
 

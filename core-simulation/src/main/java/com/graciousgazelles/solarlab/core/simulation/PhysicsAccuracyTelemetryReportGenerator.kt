@@ -6,16 +6,19 @@ import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.PhysicsAccuracyTelemetryMetric
 import com.graciousgazelles.solarlab.core.model.PhysicsAccuracyTelemetryProvenance
 import com.graciousgazelles.solarlab.core.model.PhysicsAccuracyTelemetryReport
+import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
 import kotlin.io.path.writeText
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.sqrt
 
 class PhysicsAccuracyTelemetryReportGenerator(
-    private val scenarioFactory: () -> com.graciousgazelles.solarlab.core.model.SimulationSnapshot = {
+    private val scenarioFactory: () -> SimulationSnapshot = {
         SolarSystemScenarios.defaultLabScenario(
             asteroidCount = 0,
             oortCount = 0,
@@ -59,11 +62,14 @@ class PhysicsAccuracyTelemetryReportGenerator(
         val baselineFinalDiagnostics = baselineRun.diagnostics
 
         val startingDiagnostics = engine.diagnostics()
+        val coarseTimeline = ArrayList<SimulationSnapshot>(config.steps + 1)
+        coarseTimeline += snapshot
         repeat(config.steps) {
             engine.step(config.stepSeconds)
+            coarseTimeline += engine.snapshot()
         }
 
-        val finalSnapshot = engine.snapshot()
+        val finalSnapshot = coarseTimeline.last()
         val finalDiagnostics = engine.diagnostics()
         val sunStart = snapshot.bodies.firstOrNull { it.id == "sun" }
             ?: error("Scenario '${config.scenarioId}' did not include sun body")
@@ -170,6 +176,11 @@ class PhysicsAccuracyTelemetryReportGenerator(
         } else {
             emptyList()
         }
+        val tracerParityMetrics = buildGpuTracerParityMetrics(
+            initialSnapshot = snapshot,
+            coarseTimeline = coarseTimeline,
+            stepSeconds = config.stepSeconds,
+        )
 
         return PhysicsAccuracyTelemetryReport(
             schemaVersion = SCHEMA_VERSION,
@@ -296,12 +307,13 @@ class PhysicsAccuracyTelemetryReportGenerator(
                     ),
                 )
                 addAll(moonToEarthMetrics)
+                addAll(tracerParityMetrics)
             },
         )
     }
 
     private fun runSimulationUntilDuration(
-        initialSnapshot: com.graciousgazelles.solarlab.core.model.SimulationSnapshot,
+        initialSnapshot: SimulationSnapshot,
         stepSeconds: Double,
         totalDurationSeconds: Double,
     ): SimulationRunResult {
@@ -328,8 +340,233 @@ class PhysicsAccuracyTelemetryReportGenerator(
     }
 
     private data class SimulationRunResult(
-        val snapshot: com.graciousgazelles.solarlab.core.model.SimulationSnapshot,
+        val snapshot: SimulationSnapshot,
         val diagnostics: SystemDiagnostics,
+    )
+
+    private fun buildGpuTracerParityMetrics(
+        initialSnapshot: SimulationSnapshot,
+        coarseTimeline: List<SimulationSnapshot>,
+        stepSeconds: Double,
+    ): List<PhysicsAccuracyTelemetryMetric> {
+        if (coarseTimeline.size < 2) return emptyList()
+
+        val sun = initialSnapshot.bodies.firstOrNull { it.id == "sun" } ?: return emptyList()
+        val mediumIds = mutableListOf<String>()
+        val farIds = mutableListOf<String>()
+        for (body in initialSnapshot.bodies) {
+            if (body.gravitationalRole != com.graciousgazelles.solarlab.core.model.GravitationalRole.TRACER) continue
+            val heliocentricDistanceAu =
+                body.positionM.distanceTo(sun.positionM) / PhysicalConstants.ASTRONOMICAL_UNIT_M
+            when {
+                heliocentricDistanceAu <= GPU_TRACER_MEDIUM_MAX_HELIOCENTRIC_DISTANCE_AU -> mediumIds += body.id
+                else -> farIds += body.id
+            }
+        }
+
+        val shortHorizonSteps = min(GPU_TRACER_SHORT_HORIZON_STEPS, coarseTimeline.lastIndex)
+        val mediumHorizonSteps = min(GPU_TRACER_MEDIUM_HORIZON_MAX_STEPS, coarseTimeline.lastIndex)
+        val emulatedStates = emulateGpuTracerTimeline(
+            initialSnapshot = initialSnapshot,
+            coarseTimeline = coarseTimeline,
+            stepSeconds = stepSeconds,
+            maxSteps = mediumHorizonSteps,
+        )
+
+        return buildList {
+            addAll(
+                buildTracerCohortMetrics(
+                    cohortName = "medium",
+                    tracerIds = mediumIds,
+                    emulatedStates = emulatedStates,
+                    coarseTimeline = coarseTimeline,
+                    shortHorizonSteps = shortHorizonSteps,
+                    mediumHorizonSteps = mediumHorizonSteps,
+                ),
+            )
+            addAll(
+                buildTracerCohortMetrics(
+                    cohortName = "far",
+                    tracerIds = farIds,
+                    emulatedStates = emulatedStates,
+                    coarseTimeline = coarseTimeline,
+                    shortHorizonSteps = shortHorizonSteps,
+                    mediumHorizonSteps = mediumHorizonSteps,
+                ),
+            )
+        }
+    }
+
+    private fun emulateGpuTracerTimeline(
+        initialSnapshot: SimulationSnapshot,
+        coarseTimeline: List<SimulationSnapshot>,
+        stepSeconds: Double,
+        maxSteps: Int,
+    ): Map<String, List<TracerXyState>> {
+        val stateById = linkedMapOf<String, TracerXyState>()
+        val timelineById = linkedMapOf<String, MutableList<TracerXyState>>()
+        initialSnapshot.bodies
+            .filter { it.gravitationalRole == com.graciousgazelles.solarlab.core.model.GravitationalRole.TRACER }
+            .forEach { body ->
+                val state = TracerXyState(
+                    x = body.positionM.x,
+                    y = body.positionM.y,
+                    vx = body.velocityMps.x,
+                    vy = body.velocityMps.y,
+                )
+                stateById[body.id] = state
+                timelineById.getOrPut(body.id) { mutableListOf() }.add(state)
+            }
+
+        repeat(maxSteps) { stepIndex ->
+            val influenceSnapshot = coarseTimeline[stepIndex]
+            val influences = influenceSnapshot.bodies
+                .filter { it.gravitationalRole == com.graciousgazelles.solarlab.core.model.GravitationalRole.MASSIVE }
+                .map { InfluenceBodyXy(x = it.positionM.x, y = it.positionM.y, massKg = it.massKg) }
+            stateById.forEach { (bodyId, state) ->
+                val nextState = integrateGpuStyleTracerStep(
+                    state = state,
+                    influences = influences,
+                    stepSeconds = stepSeconds,
+                )
+                stateById[bodyId] = nextState
+                timelineById.getValue(bodyId).add(nextState)
+            }
+        }
+
+        return timelineById
+    }
+
+    private fun buildTracerCohortMetrics(
+        cohortName: String,
+        tracerIds: List<String>,
+        emulatedStates: Map<String, List<TracerXyState>>,
+        coarseTimeline: List<SimulationSnapshot>,
+        shortHorizonSteps: Int,
+        mediumHorizonSteps: Int,
+    ): List<PhysicsAccuracyTelemetryMetric> {
+        val shortErrors = tracerIds.mapNotNull { bodyId ->
+            tracerXyErrorAtStep(bodyId, shortHorizonSteps, emulatedStates, coarseTimeline)
+        }
+        val mediumErrors = tracerIds.mapNotNull { bodyId ->
+            tracerXyErrorAtStep(bodyId, mediumHorizonSteps, emulatedStates, coarseTimeline)
+        }
+        return listOf(
+            PhysicsAccuracyTelemetryMetric(
+                name = "gpu_tracer_${cohortName}_cohort_count",
+                value = tracerIds.size.toDouble(),
+                unit = "count",
+                description = "Tracer cohort size for GPU parity checks using ${cohortName} heliocentric-distance selection",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "gpu_tracer_${cohortName}_short_horizon_steps",
+                value = shortHorizonSteps.toDouble(),
+                unit = "steps",
+                description = "Short-horizon coarse-step count used for GPU tracer parity checks",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "gpu_tracer_${cohortName}_short_horizon_xy_rms_error_m",
+                value = rms(shortErrors),
+                unit = "meters",
+                description = "RMS XY position error versus CPU coarse reference at the short horizon for the ${cohortName} tracer cohort",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "gpu_tracer_${cohortName}_short_horizon_xy_max_error_m",
+                value = maxOrZero(shortErrors),
+                unit = "meters",
+                description = "Maximum XY position error versus CPU coarse reference at the short horizon for the ${cohortName} tracer cohort",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "gpu_tracer_${cohortName}_medium_horizon_steps",
+                value = mediumHorizonSteps.toDouble(),
+                unit = "steps",
+                description = "Medium-horizon coarse-step count used for GPU tracer parity checks",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "gpu_tracer_${cohortName}_medium_horizon_xy_rms_error_m",
+                value = rms(mediumErrors),
+                unit = "meters",
+                description = "RMS XY position error versus CPU coarse reference at the medium horizon for the ${cohortName} tracer cohort",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "gpu_tracer_${cohortName}_medium_horizon_xy_max_error_m",
+                value = maxOrZero(mediumErrors),
+                unit = "meters",
+                description = "Maximum XY position error versus CPU coarse reference at the medium horizon for the ${cohortName} tracer cohort",
+            ),
+        )
+    }
+
+    private fun tracerXyErrorAtStep(
+        bodyId: String,
+        stepIndex: Int,
+        emulatedStates: Map<String, List<TracerXyState>>,
+        coarseTimeline: List<SimulationSnapshot>,
+    ): Double? {
+        if (stepIndex <= 0 || stepIndex >= coarseTimeline.size) return null
+        val state = emulatedStates[bodyId]?.getOrNull(stepIndex) ?: return null
+        val cpuBody = coarseTimeline[stepIndex].bodies.firstOrNull { it.id == bodyId } ?: return null
+        return hypot(cpuBody.positionM.x - state.x, cpuBody.positionM.y - state.y)
+    }
+
+    private fun integrateGpuStyleTracerStep(
+        state: TracerXyState,
+        influences: List<InfluenceBodyXy>,
+        stepSeconds: Double,
+    ): TracerXyState {
+        val acceleration0 = accelerationAt(state.x, state.y, influences)
+        val velocityHalfX = state.vx + (acceleration0.first * (0.5 * stepSeconds))
+        val velocityHalfY = state.vy + (acceleration0.second * (0.5 * stepSeconds))
+        val positionNextX = state.x + (velocityHalfX * stepSeconds)
+        val positionNextY = state.y + (velocityHalfY * stepSeconds)
+        val acceleration1 = accelerationAt(positionNextX, positionNextY, influences)
+        return TracerXyState(
+            x = positionNextX,
+            y = positionNextY,
+            vx = velocityHalfX + (acceleration1.first * (0.5 * stepSeconds)),
+            vy = velocityHalfY + (acceleration1.second * (0.5 * stepSeconds)),
+        )
+    }
+
+    private fun accelerationAt(
+        x: Double,
+        y: Double,
+        influences: List<InfluenceBodyXy>,
+    ): Pair<Double, Double> {
+        var ax = 0.0
+        var ay = 0.0
+        for (influence in influences) {
+            val dx = influence.x - x
+            val dy = influence.y - y
+            val distanceSquared = maxOf((dx * dx) + (dy * dy) + GPU_TRACER_SOFTENING_SQUARED_M2, 1.0)
+            val inverseDistance = 1.0 / sqrt(distanceSquared)
+            val inverseDistanceCubed = inverseDistance * inverseDistance * inverseDistance
+            val scale =
+                PhysicalConstants.GRAVITATIONAL_CONSTANT_M3_PER_KG_S2 * influence.massKg * inverseDistanceCubed
+            ax += dx * scale
+            ay += dy * scale
+        }
+        return ax to ay
+    }
+
+    private fun rms(values: List<Double>): Double {
+        if (values.isEmpty()) return 0.0
+        return sqrt(values.sumOf { it * it } / values.size.toDouble())
+    }
+
+    private fun maxOrZero(values: List<Double>): Double = values.maxOrNull() ?: 0.0
+
+    private data class TracerXyState(
+        val x: Double,
+        val y: Double,
+        val vx: Double,
+        val vy: Double,
+    )
+
+    private data class InfluenceBodyXy(
+        val x: Double,
+        val y: Double,
+        val massKg: Double,
     )
 
     fun toJson(report: PhysicsAccuracyTelemetryReport): String = buildString {
@@ -442,6 +679,10 @@ class PhysicsAccuracyTelemetryReportGenerator(
         const val SCHEMA_VERSION: String = "physics-accuracy-telemetry.v2"
         const val DEFAULT_STEP_SECONDS: Double = 6.0 * 3600.0
         const val DEFAULT_STEPS: Int = (PhysicalConstants.JULIAN_YEAR_SECONDS / DEFAULT_STEP_SECONDS).toInt()
+        private const val GPU_TRACER_SHORT_HORIZON_STEPS: Int = 1
+        private const val GPU_TRACER_MEDIUM_HORIZON_MAX_STEPS: Int = 24
+        private const val GPU_TRACER_MEDIUM_MAX_HELIOCENTRIC_DISTANCE_AU: Double = 10.0
+        private const val GPU_TRACER_SOFTENING_SQUARED_M2: Double = 1.0
     }
 }
 

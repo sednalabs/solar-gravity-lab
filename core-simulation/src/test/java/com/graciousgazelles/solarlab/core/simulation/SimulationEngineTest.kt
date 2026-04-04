@@ -90,6 +90,89 @@ class SimulationEngineTest {
     }
 
     @Test
+    fun `tracer bodies ignore each other by default`() {
+        val tracerA = BodyFactory.sphericalBody(
+            id = "tracer-a",
+            name = "Tracer A",
+            category = BodyCategory.PROBE,
+            gravitationalRole = GravitationalRole.TRACER,
+            massKg = 1.0e18,
+            densityKgPerM3 = DensityPreset.METALLIC_KG_PER_M3,
+            positionM = Vector3d(-500.0, 0.0, 0.0),
+            velocityMps = Vector3d.ZERO,
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+        val tracerB = BodyFactory.sphericalBody(
+            id = "tracer-b",
+            name = "Tracer B",
+            category = BodyCategory.PROBE,
+            gravitationalRole = GravitationalRole.TRACER,
+            massKg = 1.0e18,
+            densityKgPerM3 = DensityPreset.METALLIC_KG_PER_M3,
+            positionM = Vector3d(500.0, 0.0, 0.0),
+            velocityMps = Vector3d.ZERO,
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+
+        val engine = SimulationEngine(
+            initialSnapshot = SimulationSnapshot(epochSeconds = 0.0, bodies = listOf(tracerA, tracerB)),
+            config = SimulationConfig(collisionMode = CollisionMode.NONE),
+        )
+
+        val result = engine.step(60.0)
+        val resultA = result.snapshot.bodies.first { it.id == "tracer-a" }
+        val resultB = result.snapshot.bodies.first { it.id == "tracer-b" }
+
+        assertEquals(-500.0, resultA.positionM.x, 1e-9)
+        assertEquals(500.0, resultB.positionM.x, 1e-9)
+        assertEquals(0.0, resultA.velocityMps.x, 1e-12)
+        assertEquals(0.0, resultB.velocityMps.x, 1e-12)
+    }
+
+    @Test
+    fun `tracer bodies can attract each other when tracer mutual gravity is enabled`() {
+        val tracerA = BodyFactory.sphericalBody(
+            id = "tracer-a",
+            name = "Tracer A",
+            category = BodyCategory.PROBE,
+            gravitationalRole = GravitationalRole.TRACER,
+            massKg = 1.0e20,
+            densityKgPerM3 = DensityPreset.METALLIC_KG_PER_M3,
+            positionM = Vector3d(-500.0, 0.0, 0.0),
+            velocityMps = Vector3d.ZERO,
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+        val tracerB = BodyFactory.sphericalBody(
+            id = "tracer-b",
+            name = "Tracer B",
+            category = BodyCategory.PROBE,
+            gravitationalRole = GravitationalRole.TRACER,
+            massKg = 1.0e20,
+            densityKgPerM3 = DensityPreset.METALLIC_KG_PER_M3,
+            positionM = Vector3d(500.0, 0.0, 0.0),
+            velocityMps = Vector3d.ZERO,
+            colorArgb = 0xFFFFFFFF.toInt(),
+        )
+
+        val engine = SimulationEngine(
+            initialSnapshot = SimulationSnapshot(epochSeconds = 0.0, bodies = listOf(tracerA, tracerB)),
+            config = SimulationConfig(
+                collisionMode = CollisionMode.NONE,
+                includeTracerMutualGravity = true,
+            ),
+        )
+
+        val result = engine.step(60.0)
+        val resultA = result.snapshot.bodies.first { it.id == "tracer-a" }
+        val resultB = result.snapshot.bodies.first { it.id == "tracer-b" }
+
+        assertTrue(resultA.positionM.x > -500.0)
+        assertTrue(resultB.positionM.x < 500.0)
+        assertTrue(resultA.velocityMps.x > 0.0)
+        assertTrue(resultB.velocityMps.x < 0.0)
+    }
+
+    @Test
     fun `colliding bodies merge with conserved mass`() {
         val a = BodyFactory.sphericalBody(
             id = "a",

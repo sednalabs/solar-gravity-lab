@@ -75,8 +75,14 @@ internal object AccelerationKernelBufferFactory {
         )
     }
 
-    fun buildMassiveSourceBuffers(bodies: List<SolverBodyState>): MassiveSourceBuffers {
-        val sources = bodies.filter { it.gravitationalRole == GravitationalRole.MASSIVE }
+    fun buildGravitySourceBuffers(
+        bodies: List<SolverBodyState>,
+        includeTracerSources: Boolean,
+    ): MassiveSourceBuffers {
+        val sources = bodies.filter { body ->
+            body.gravitationalRole == GravitationalRole.MASSIVE ||
+                (includeTracerSources && body.gravitationalRole == GravitationalRole.TRACER)
+        }
         val count = sources.size
         val bodyIndices = IntArray(count)
         val massesKg = DoubleArray(count)
@@ -194,6 +200,7 @@ internal object DirectTracerAccelerationKernel : TracerAccelerationKernel {
         val accelerationZ = DoubleArray(targets.count)
 
         for (targetIndex in targets.bodyIndices.indices) {
+            val bodyIndex = targets.bodyIndices[targetIndex]
             val bodyX = targets.positionX[targetIndex]
             val bodyY = targets.positionY[targetIndex]
             val bodyZ = targets.positionZ[targetIndex]
@@ -202,6 +209,8 @@ internal object DirectTracerAccelerationKernel : TracerAccelerationKernel {
             var az = 0.0
 
             for (sourceIndex in sources.bodyIndices.indices) {
+                if (sources.bodyIndices[sourceIndex] == bodyIndex) continue
+
                 val dx = sources.positionX[sourceIndex] - bodyX
                 val dy = sources.positionY[sourceIndex] - bodyY
                 val dz = sources.positionZ[sourceIndex] - bodyZ

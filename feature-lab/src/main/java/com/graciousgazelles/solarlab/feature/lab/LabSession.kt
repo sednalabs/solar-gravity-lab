@@ -53,6 +53,8 @@ class LabSession private constructor(
 
     fun collisionMode(): CollisionMode = config.collisionMode
 
+    fun tracerMutualGravityEnabled(): Boolean = config.includeTracerMutualGravity
+
     fun playbackSpeedPreset(): PlaybackSpeedPreset = playbackSpeedPreset
 
     fun stepQuantumPreset(): StepQuantumPreset = stepQuantumPreset
@@ -208,6 +210,19 @@ class LabSession private constructor(
                 return@execute
             }
             config = config.copy(collisionMode = collisionMode)
+            engine = engineFactory(engine.snapshot(), config)
+            pendingSimulationSeconds = 0.0
+            emitCurrentFrame(emptyList())
+        }
+    }
+
+    fun setTracerMutualGravityEnabled(enabled: Boolean) {
+        executor.execute {
+            if (config.includeTracerMutualGravity == enabled) {
+                emitCurrentFrame(emptyList())
+                return@execute
+            }
+            config = config.copy(includeTracerMutualGravity = enabled)
             engine = engineFactory(engine.snapshot(), config)
             pendingSimulationSeconds = 0.0
             emitCurrentFrame(emptyList())

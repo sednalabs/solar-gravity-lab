@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var pendingAddDraft: EditableBodyDraft? = null
     private var currentCollisionMode: CollisionMode = CollisionMode.MERGE
+    private var currentTracerMutualGravity: Boolean = false
     private var resumeSimulationOnForeground: Boolean = false
     private var resumeSimulationAfterModalInteraction: Boolean = false
     private var infoPanelVisible: Boolean = false
@@ -56,6 +57,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
         session = LabSession.createDefault(context = this, listener = this)
         currentCollisionMode = session.collisionMode()
+        currentTracerMutualGravity = session.tracerMutualGravityEnabled()
 
         binding.renderHost.setOnBackendStatusChangedListener(::onBackendStatusChanged)
         binding.renderHost.setInteractionListener(object : RenderInteractionListener {
@@ -138,6 +140,12 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             updateCollisionButtonText()
         }
 
+        binding.buttonTracerGravity.setOnClickListener {
+            currentTracerMutualGravity = !currentTracerMutualGravity
+            session.setTracerMutualGravityEnabled(currentTracerMutualGravity)
+            updateTracerGravityButtonText()
+        }
+
         binding.buttonInfoToggle.setOnClickListener {
             infoPanelVisible = !infoPanelVisible
             updateInfoPanelVisibility()
@@ -153,6 +161,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         }
 
         updateCollisionButtonText()
+        updateTracerGravityButtonText()
         updateTimelineControls(null)
         updateAddButtonText()
         updateSelectedBodySummary()
@@ -398,6 +407,9 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
                 append(accelerationBackendSummary)
                 append('\n')
             }
+            append("Tracer mutual gravity: ")
+            append(if (currentTracerMutualGravity) "enabled" else "disabled")
+            append('\n')
             if (frame.timeline.simulationBacklogSeconds > 1.0) {
                 append("Scheduler: render-safe backlog ")
                 append("%.1f".format(frame.timeline.simulationBacklogSeconds))
@@ -478,6 +490,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         val timeline = latestFrame?.timeline
         binding.buttonStartPause.isEnabled = pendingAddDraft == null
         binding.buttonCollisionMode.isEnabled = pendingAddDraft == null
+        binding.buttonTracerGravity.isEnabled = pendingAddDraft == null
         binding.buttonStep.isEnabled = !session.isRunning() && pendingAddDraft == null
         binding.buttonTimeBack.isEnabled = !session.isRunning() && pendingAddDraft == null && (timeline?.canStepBackward == true)
         binding.buttonTimeForward.isEnabled = !session.isRunning() && pendingAddDraft == null
@@ -520,6 +533,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonSpeedDown.text = getString(R.string.action_speed_down)
         binding.buttonSpeedUp.text = getString(R.string.action_speed_up)
         updateObserverButtonText()
+        updateTracerGravityButtonText()
         updateSimulationButtons()
     }
 
@@ -544,6 +558,14 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonProcessingMode.text = when (renderProcessingMode) {
             RenderProcessingMode.DEFAULT -> getString(R.string.action_processing_default)
             RenderProcessingMode.LOW -> getString(R.string.action_processing_low)
+        }
+    }
+
+    private fun updateTracerGravityButtonText() {
+        binding.buttonTracerGravity.text = if (currentTracerMutualGravity) {
+            getString(R.string.action_tracer_gravity_on)
+        } else {
+            getString(R.string.action_tracer_gravity_off)
         }
     }
 

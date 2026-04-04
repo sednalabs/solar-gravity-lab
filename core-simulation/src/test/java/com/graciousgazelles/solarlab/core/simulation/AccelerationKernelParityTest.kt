@@ -20,7 +20,10 @@ class AccelerationKernelParityTest {
         val config = SimulationConfig()
         val bodies = mixedGravityScenario()
         val solverBodies = AccelerationKernelBufferFactory.fromBodyStates(bodies)
-        val sources = AccelerationKernelBufferFactory.buildMassiveSourceBuffers(solverBodies)
+        val sources = AccelerationKernelBufferFactory.buildGravitySourceBuffers(
+            bodies = solverBodies,
+            includeTracerSources = false,
+        )
 
         val splitAccelerations = MutableList(bodies.size) { Vector3d.ZERO }
         applyOutput(
@@ -79,7 +82,10 @@ class AccelerationKernelParityTest {
         )
 
         val solverBodies = AccelerationKernelBufferFactory.fromBodyStates(tracerBodies)
-        val sources = AccelerationKernelBufferFactory.buildMassiveSourceBuffers(solverBodies)
+        val sources = AccelerationKernelBufferFactory.buildGravitySourceBuffers(
+            bodies = solverBodies,
+            includeTracerSources = false,
+        )
         val tracerTargets = AccelerationKernelBufferFactory.buildTargetBuffers(solverBodies, GravitationalRole.TRACER)
         val accelerations = DirectTracerAccelerationKernel.compute(
             sources = sources,
@@ -94,6 +100,19 @@ class AccelerationKernelParityTest {
             assertEquals(0.0, vector.y, 0.0)
             assertEquals(0.0, vector.z, 0.0)
         }
+    }
+
+    @Test
+    fun `gravity source buffers can include tracers when tracer mutual gravity is enabled`() {
+        val bodies = mixedGravityScenario()
+        val solverBodies = AccelerationKernelBufferFactory.fromBodyStates(bodies)
+
+        val sources = AccelerationKernelBufferFactory.buildGravitySourceBuffers(
+            bodies = solverBodies,
+            includeTracerSources = true,
+        )
+
+        assertEquals(bodies.size, sources.count)
     }
 
     private fun applyOutput(

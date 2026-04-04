@@ -261,6 +261,14 @@
                         android:text="@string/action_collision_merge" />
 
                     <Button
+                        android:id="@+id/buttonTracerGravity"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_tracer_gravity_off" />
+
+                    <Button
                         android:id="@+id/buttonProcessingMode"
                         style="@style/Widget.SolarLab.ControlButton"
                         android:layout_width="wrap_content"
