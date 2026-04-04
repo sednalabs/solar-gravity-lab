@@ -303,6 +303,108 @@ pub struct RequiredPackageFailure {
     pub reason: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredPackage {
+    pub package_id: String,
+    pub kind: PackageKind,
+    pub digest: Digest,
+    pub package_version: SemVer,
+    pub schema_version: String,
+    pub uncompressed_size_bytes: u64,
+    pub local_store_uri: String,
+}
+
+impl StoredPackage {
+    #[must_use]
+    pub fn matches_locator(&self, locator: &PackageLocator) -> bool {
+        self.package_id == locator.package_id
+            && self.kind == locator.kind
+            && self.digest == locator.digest
+            && self.package_version == locator.package_version
+            && self.schema_version == locator.schema_version
+            && self.uncompressed_size_bytes == locator.uncompressed_size_bytes
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageStoreState {
+    pub packages_by_id: BTreeMap<String, StoredPackage>,
+}
+
+impl PackageStoreState {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            packages_by_id: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledManifestState {
+    pub manifest_id: String,
+    pub manifest_version: SemVer,
+    pub channel: String,
+    pub installed_package_ids: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalDataState {
+    pub package_store: PackageStoreState,
+    pub installed_manifest: Option<InstalledManifestState>,
+}
+
+impl LocalDataState {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            package_store: PackageStoreState::empty(),
+            installed_manifest: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdatePlanStoreAction {
+    FetchPackage {
+        package_id: String,
+        package_kind: PackageKind,
+        package_version: SemVer,
+        source_relative_uri: String,
+        digest: Digest,
+        uncompressed_size_bytes: u64,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdatePlanActivationAction {
+    InstallPackage { package_id: String },
+    RemovePackage { package_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdatePlan {
+    pub manifest_id: String,
+    pub manifest_version: SemVer,
+    pub channel: String,
+    pub selected_package_ids: Vec<String>,
+    pub store_actions: Vec<UpdatePlanStoreAction>,
+    pub activation_actions: Vec<UpdatePlanActivationAction>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdatePlanError {
+    InvalidManifest(ValidationReport),
+    IncompatibleSelection(SelectionError),
+    MissingBaselineForDelta {
+        manifest_id: String,
+    },
+    DeltaDoesNotSupersedeInstalled {
+        manifest_id: String,
+        installed_manifest_id: String,
+    },
+}
+
 pub fn select_compatible_packages<'a>(
     manifest: &'a UpdateManifest,
     target: &CompatibilityTarget,
@@ -345,6 +447,100 @@ pub fn select_compatible_packages<'a>(
     selected.extend(best_optional_by_kind.into_values());
     selected.sort_by(|left, right| left.package_id.cmp(&right.package_id));
     Ok(selected)
+}
+
+pub fn plan_manifest_update(
+    manifest: &UpdateManifest,
+    target: &CompatibilityTarget,
+    local: &LocalDataState,
+) -> Result<UpdatePlan, UpdatePlanError> {
+    let report = validate_manifest(manifest);
+    if !report.is_valid() {
+        return Err(UpdatePlanError::InvalidManifest(report));
+    }
+
+    if !manifest.full_snapshot {
+        let installed_manifest = local.installed_manifest.as_ref().ok_or_else(|| {
+            UpdatePlanError::MissingBaselineForDelta {
+                manifest_id: manifest.manifest_id.clone(),
+            }
+        })?;
+        if installed_manifest.manifest_id != manifest.manifest_id
+            && !manifest
+                .supersedes_manifest_ids
+                .contains(&installed_manifest.manifest_id)
+        {
+            return Err(UpdatePlanError::DeltaDoesNotSupersedeInstalled {
+                manifest_id: manifest.manifest_id.clone(),
+                installed_manifest_id: installed_manifest.manifest_id.clone(),
+            });
+        }
+    }
+
+    let selected = select_compatible_packages(manifest, target)
+        .map_err(UpdatePlanError::IncompatibleSelection)?;
+
+    let selected_package_ids: Vec<String> = selected
+        .iter()
+        .map(|package| package.package_id.clone())
+        .collect();
+    let selected_package_id_set: BTreeSet<String> = selected_package_ids.iter().cloned().collect();
+
+    let mut store_actions = Vec::new();
+    for package in &selected {
+        let should_fetch = local
+            .package_store
+            .packages_by_id
+            .get(&package.package_id)
+            .is_none_or(|stored| !stored.matches_locator(package));
+        if should_fetch {
+            store_actions.push(UpdatePlanStoreAction::FetchPackage {
+                package_id: package.package_id.clone(),
+                package_kind: package.kind.clone(),
+                package_version: package.package_version.clone(),
+                source_relative_uri: package.relative_uri.clone(),
+                digest: package.digest.clone(),
+                uncompressed_size_bytes: package.uncompressed_size_bytes,
+            });
+        }
+    }
+    store_actions.sort_by(|left, right| {
+        let left_id = match left {
+            UpdatePlanStoreAction::FetchPackage { package_id, .. } => package_id,
+        };
+        let right_id = match right {
+            UpdatePlanStoreAction::FetchPackage { package_id, .. } => package_id,
+        };
+        left_id.cmp(right_id)
+    });
+
+    let installed_ids = local
+        .installed_manifest
+        .as_ref()
+        .map_or_else(BTreeSet::new, |installed| {
+            installed.installed_package_ids.clone()
+        });
+
+    let mut activation_actions = Vec::new();
+    for package_id in selected_package_id_set.difference(&installed_ids) {
+        activation_actions.push(UpdatePlanActivationAction::InstallPackage {
+            package_id: package_id.clone(),
+        });
+    }
+    for package_id in installed_ids.difference(&selected_package_id_set) {
+        activation_actions.push(UpdatePlanActivationAction::RemovePackage {
+            package_id: package_id.clone(),
+        });
+    }
+
+    Ok(UpdatePlan {
+        manifest_id: manifest.manifest_id.clone(),
+        manifest_version: manifest.manifest_version.clone(),
+        channel: manifest.channel.clone(),
+        selected_package_ids,
+        store_actions,
+        activation_actions,
+    })
 }
 
 fn package_is_compatible(package: &PackageLocator, target: &CompatibilityTarget) -> bool {
@@ -625,6 +821,29 @@ mod tests {
         }
     }
 
+    fn target() -> CompatibilityTarget {
+        CompatibilityTarget {
+            runtime_contract: semver(2, 1, 0),
+            schema_version: "v2.schema.1".to_string(),
+            capabilities: ["fft".to_string(), "simd".to_string()]
+                .into_iter()
+                .collect(),
+            platform: "desktop-linux".to_string(),
+        }
+    }
+
+    fn local_store_entry(package: &PackageLocator) -> StoredPackage {
+        StoredPackage {
+            package_id: package.package_id.clone(),
+            kind: package.kind.clone(),
+            digest: package.digest.clone(),
+            package_version: package.package_version.clone(),
+            schema_version: package.schema_version.clone(),
+            uncompressed_size_bytes: package.uncompressed_size_bytes,
+            local_store_uri: format!("cas/{}", package.package_id),
+        }
+    }
+
     #[test]
     fn validate_manifest_accepts_valid_content_addressed_manifest() {
         let package = package(
@@ -870,5 +1089,249 @@ mod tests {
         let selected = select_compatible_packages(&wrong_platform_manifest, &wrong_platform)
             .expect("optional incompatible package should just be skipped");
         assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn plan_manifest_update_snapshot_fetches_missing_and_installs_selected_packages() {
+        let required = package(
+            PackageKind::Scenario,
+            semver(2, 0, 0),
+            "v2.schema.1",
+            digest(8),
+            true,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["fft"],
+                &["desktop-linux"],
+            ),
+        );
+        let optional = package(
+            PackageKind::CatalogPack,
+            semver(1, 1, 0),
+            "v2.schema.1",
+            digest(9),
+            false,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["simd"],
+                &["desktop-linux"],
+            ),
+        );
+
+        let update_plan = plan_manifest_update(
+            &manifest(vec![required.clone(), optional.clone()]),
+            &target(),
+            &LocalDataState::empty(),
+        )
+        .expect("snapshot planning should succeed");
+
+        assert_eq!(
+            update_plan.selected_package_ids,
+            vec![optional.package_id.clone(), required.package_id.clone()]
+        );
+        assert_eq!(update_plan.store_actions.len(), 2);
+        assert!(update_plan
+            .store_actions
+            .contains(&UpdatePlanStoreAction::FetchPackage {
+                package_id: required.package_id.clone(),
+                package_kind: required.kind.clone(),
+                package_version: required.package_version.clone(),
+                source_relative_uri: required.relative_uri.clone(),
+                digest: required.digest.clone(),
+                uncompressed_size_bytes: required.uncompressed_size_bytes,
+            }));
+        assert!(update_plan
+            .store_actions
+            .contains(&UpdatePlanStoreAction::FetchPackage {
+                package_id: optional.package_id.clone(),
+                package_kind: optional.kind.clone(),
+                package_version: optional.package_version.clone(),
+                source_relative_uri: optional.relative_uri.clone(),
+                digest: optional.digest.clone(),
+                uncompressed_size_bytes: optional.uncompressed_size_bytes,
+            }));
+        assert_eq!(
+            update_plan.activation_actions,
+            vec![
+                UpdatePlanActivationAction::InstallPackage {
+                    package_id: optional.package_id,
+                },
+                UpdatePlanActivationAction::InstallPackage {
+                    package_id: required.package_id,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_manifest_update_reuses_existing_store_entries_and_plans_removals() {
+        let required = package(
+            PackageKind::Scenario,
+            semver(2, 0, 0),
+            "v2.schema.1",
+            digest(10),
+            true,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["fft"],
+                &["desktop-linux"],
+            ),
+        );
+        let old_installed = package(
+            PackageKind::CatalogPack,
+            semver(1, 0, 0),
+            "v2.schema.1",
+            digest(11),
+            false,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["simd"],
+                &["desktop-linux"],
+            ),
+        );
+        let mut store = BTreeMap::new();
+        store.insert(required.package_id.clone(), local_store_entry(&required));
+        store.insert(
+            old_installed.package_id.clone(),
+            local_store_entry(&old_installed),
+        );
+
+        let local = LocalDataState {
+            package_store: PackageStoreState {
+                packages_by_id: store,
+            },
+            installed_manifest: Some(InstalledManifestState {
+                manifest_id: "manifest/v2/old".to_string(),
+                manifest_version: semver(1, 9, 0),
+                channel: "stable".to_string(),
+                installed_package_ids: [
+                    required.package_id.clone(),
+                    old_installed.package_id.clone(),
+                ]
+                .into_iter()
+                .collect(),
+            }),
+        };
+
+        let update_plan =
+            plan_manifest_update(&manifest(vec![required.clone()]), &target(), &local)
+                .expect("planning should succeed");
+
+        assert!(update_plan.store_actions.is_empty());
+        assert_eq!(
+            update_plan.activation_actions,
+            vec![UpdatePlanActivationAction::RemovePackage {
+                package_id: old_installed.package_id
+            }]
+        );
+    }
+
+    #[test]
+    fn plan_manifest_update_delta_requires_baseline_and_supersede_match() {
+        let required = package(
+            PackageKind::Scenario,
+            semver(2, 0, 0),
+            "v2.schema.1",
+            digest(12),
+            true,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["fft"],
+                &["desktop-linux"],
+            ),
+        );
+
+        let mut delta_manifest = manifest(vec![required]);
+        delta_manifest.full_snapshot = false;
+        delta_manifest.supersedes_manifest_ids = vec!["manifest/v2/old".to_string()];
+
+        let missing_baseline =
+            plan_manifest_update(&delta_manifest, &target(), &LocalDataState::empty())
+                .expect_err("delta planning requires an installed baseline");
+        assert_eq!(
+            missing_baseline,
+            UpdatePlanError::MissingBaselineForDelta {
+                manifest_id: delta_manifest.manifest_id.clone(),
+            }
+        );
+
+        let local = LocalDataState {
+            package_store: PackageStoreState::empty(),
+            installed_manifest: Some(InstalledManifestState {
+                manifest_id: "manifest/v2/unrelated".to_string(),
+                manifest_version: semver(1, 0, 0),
+                channel: "stable".to_string(),
+                installed_package_ids: BTreeSet::new(),
+            }),
+        };
+        let supersede_error = plan_manifest_update(&delta_manifest, &target(), &local)
+            .expect_err("delta planning should reject unrelated baseline");
+        assert_eq!(
+            supersede_error,
+            UpdatePlanError::DeltaDoesNotSupersedeInstalled {
+                manifest_id: delta_manifest.manifest_id,
+                installed_manifest_id: "manifest/v2/unrelated".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn plan_manifest_update_is_deterministic_for_unsorted_manifest_entries() {
+        let third = package(
+            PackageKind::CatalogPack,
+            semver(1, 3, 0),
+            "v2.schema.1",
+            digest(13),
+            true,
+            compat(semver(2, 0, 0), semver(2, 5, 0), &[], &["desktop-linux"]),
+        );
+        let first = package(
+            PackageKind::Scenario,
+            semver(1, 1, 0),
+            "v2.schema.1",
+            digest(14),
+            true,
+            compat(semver(2, 0, 0), semver(2, 5, 0), &[], &["desktop-linux"]),
+        );
+        let second = package(
+            PackageKind::EphemerisBundle,
+            semver(1, 2, 0),
+            "v2.schema.1",
+            digest(15),
+            true,
+            compat(semver(2, 0, 0), semver(2, 5, 0), &[], &["desktop-linux"]),
+        );
+
+        let update_plan = plan_manifest_update(
+            &manifest(vec![third.clone(), first.clone(), second.clone()]),
+            &target(),
+            &LocalDataState::empty(),
+        )
+        .expect("planning should succeed");
+
+        assert_eq!(
+            update_plan.selected_package_ids,
+            vec![
+                third.package_id.clone(),
+                second.package_id.clone(),
+                first.package_id.clone()
+            ]
+        );
+        let fetch_ids: Vec<String> = update_plan
+            .store_actions
+            .iter()
+            .map(|action| match action {
+                UpdatePlanStoreAction::FetchPackage { package_id, .. } => package_id.clone(),
+            })
+            .collect();
+        assert_eq!(
+            fetch_ids,
+            vec![third.package_id, second.package_id, first.package_id]
+        );
     }
 }
