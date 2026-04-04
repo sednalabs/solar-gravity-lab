@@ -3,17 +3,13 @@
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, std140) uniform SceneUniforms {
-    vec4 centerRelativeAndMetrics;
-    vec4 rightAndSpan;
-    vec4 upAndSpan;
-    vec4 forwardAndDepth;
+    vec4 centerSpan;
+    vec4 metrics;
     vec4 viewport;
 } uScene;
 
 struct DensityPointVertex {
-    float x;
-    float y;
-    float z;
+    vec2 positionM;
     uint colorArgb;
     uint densityWeight;
 };
@@ -33,6 +29,10 @@ layout(set = 0, binding = 3, std430) buffer DrawCommandBuffer {
     uint firstInstance;
 } uDraw;
 
+layout(set = 0, binding = 4, std430) buffer TileCounterBuffer {
+    uint counts[];
+} uTiles;
+
 layout(push_constant) uniform PushConstants {
     uint sourceCount;
     uint reserved0;
@@ -40,47 +40,21 @@ layout(push_constant) uniform PushConstants {
     uint reserved2;
 } uPush;
 
-vec3 cameraRelative(DensityPointVertex vertex) {
-    return vec3(vertex.x, vertex.y, vertex.z) - uScene.centerRelativeAndMetrics.xyz;
+bool isInsideExtendedView(vec2 positionM) {
+    vec2 delta = abs(positionM - uScene.centerSpan.xy);
+    vec2 span = max(uScene.centerSpan.zw, vec2(1e-6)) * 1.08;
+    return all(lessThanEqual(delta, span));
 }
 
-float clipX(vec3 relativeM) {
-    return dot(relativeM, uScene.rightAndSpan.xyz) / max(uScene.rightAndSpan.w, 1e-6);
-}
-
-float clipY(vec3 relativeM) {
-    return dot(relativeM, uScene.upAndSpan.xyz) / max(uScene.upAndSpan.w, 1e-6);
-}
-
-float clipDepth(vec3 relativeM) {
-    return dot(relativeM, uScene.forwardAndDepth.xyz) / max(uScene.forwardAndDepth.w, 1e-6);
-}
-
-bool isInsideExtendedView(vec3 relativeM) {
-    float x = clipX(relativeM);
-    float y = clipY(relativeM);
-    float z = clipDepth(relativeM);
-    return abs(x) <= 1.12 && abs(y) <= 1.12 && abs(z) <= 1.18;
-}
-
-uint hash32(uvec3 v) {
-    uint h = v.x * 1664525u + 1013904223u;
-    h ^= v.y * 2246822519u;
-    h ^= v.z * 3266489917u;
-    h ^= h >> 15;
-    h *= 2246822519u;
-    h ^= h >> 13;
-    h *= 3266489917u;
-    h ^= h >> 16;
-    return h;
-}
-
-uint farStrideForZoom(uint densityWeight, float depthAbs) {
-    float zoom = max(uScene.centerRelativeAndMetrics.w / 5.0e8, 1.0);
+uint farStrideForZoom(uint densityWeight) {
+    float zoom = max(uScene.metrics.x / 5.0e8, 1.0);
     uint zoomStride = 1u + uint(clamp(floor(log2(zoom)), 0.0, 6.0));
-    uint depthStride = 1u + uint(clamp(floor(depthAbs * 3.0), 0.0, 4.0));
-    uint requested = max(max(densityWeight, 1u), zoomStride);
-    return min(max(requested, depthStride), 12u);
+    return max(max(densityWeight, 1u), zoomStride);
+}
+
+uint farTileCapacity(uint stride) {
+    uint clampedStride = clamp(stride, 1u, 8u);
+    return max(1u, 8u / clampedStride);
 }
 
 void main() {
@@ -90,28 +64,25 @@ void main() {
     }
 
     DensityPointVertex candidate = uSource.src[index];
-    vec3 relative = cameraRelative(candidate);
-    if (!isInsideExtendedView(relative)) {
+    if (!isInsideExtendedView(candidate.positionM)) {
         return;
     }
 
-    float x = clipX(relative);
-    float y = clipY(relative);
-    float z = clipDepth(relative);
-    uint stride = farStrideForZoom(candidate.densityWeight, abs(z));
-
-    vec2 uv = vec2(x, -y) * 0.5 + 0.5;
+    uint stride = farStrideForZoom(candidate.densityWeight);
+    vec2 relative = candidate.positionM - uScene.centerSpan.xy;
+    vec2 span = max(uScene.centerSpan.zw, vec2(1e-6));
+    vec2 uv = relative / span * 0.5 + 0.5;
+    uvec2 viewportPx = max(uvec2(uScene.viewport.xy), uvec2(1u));
     vec2 clampedUv = clamp(uv, vec2(0.0), vec2(0.999999));
-    uvec2 viewportPx = uvec2(max(uScene.viewport.xy, vec2(1.0)));
     uvec2 pixel = uvec2(floor(clampedUv * vec2(viewportPx)));
 
-    const uint tileShift = 4u; // 16x16 pixel tiles keep thinning spatially coherent.
+    const uint tileShift = 4u; // 16x16 pixel tiles.
     uvec2 tileCoord = pixel >> tileShift;
-    uvec2 strideCell = pixel / stride;
-    uint depthSlice = uint(clamp(floor((z * 0.5 + 0.5) * 24.0), 0.0, 23.0));
-    uint tilePhase = hash32(uvec3(tileCoord, stride ^ depthSlice)) % stride;
-    uint keepHash = hash32(uvec3(strideCell, depthSlice ^ (index & 7u)));
-    if (stride > 1u && ((keepHash + tilePhase) % stride) != 0u) {
+    uvec2 tileGrid = (viewportPx + ((1u << tileShift) - 1u)) >> tileShift;
+    uint tileIndex = tileCoord.x + (tileCoord.y * max(tileGrid.x, 1u));
+    uint tileCapacity = farTileCapacity(stride);
+    uint slot = atomicAdd(uTiles.counts[tileIndex], 1u);
+    if (slot >= tileCapacity) {
         return;
     }
 
