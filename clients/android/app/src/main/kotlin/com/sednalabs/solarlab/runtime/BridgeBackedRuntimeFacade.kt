@@ -30,8 +30,8 @@ class BridgeBackedRuntimeFacade(
                 )
                 is RuntimeSignal.RenderPacketReady -> _uiState.value.copy(
                     statusLine = "Vulkan render packet exported",
-                    detailLine = "Scene revision=${signal.packet.sceneRevision}",
-                    renderPacketSummary = signal.packet.summaryLine()
+                    detailLine = "Scene revision=${signal.lease.sceneRevision}",
+                    renderPacketSummary = signal.lease.summaryLine
                 )
                 is RuntimeSignal.Unavailable -> _uiState.value.copy(
                     statusLine = signal.message,

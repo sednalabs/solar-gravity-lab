@@ -17,7 +17,8 @@ interface RuntimeBridge {
 }
 
 class JniRuntimeBridge(
-    private val transport: NativeRuntimeTransport = JniNativeRuntimeTransport
+    private val transport: NativeRuntimeTransport = JniNativeRuntimeTransport,
+    private val renderHostAdapter: RenderHostAdapter = NativeRenderHostAdapter(transport),
 ) : RuntimeBridge {
     override fun connect(): Flow<RuntimeSignal> = callbackFlow {
         val loadOutcome = transport.ensureLibraryLoaded()
@@ -131,31 +132,16 @@ class JniRuntimeBridge(
             trySend(RuntimeSignal.Status("Snapshot summary unavailable: ${snapshotResult.result.describe()}"))
         }
 
-        var packetHandle = 0L
-        val packetResult = runCatching {
-            transport.exportVulkanScene(handle)
-        }.getOrElse { error ->
-            trySend(
-                RuntimeSignal.Status(
-                    "Render export unavailable: ${error.message ?: error::class.java.simpleName}"
-                )
-            )
-            awaitClose {
-                transport.destroySession(handle)
-            }
-            return@callbackFlow
-        }
-        if (packetResult.result.isOk() && packetResult.packet != null) {
-            packetHandle = packetResult.packet.packetHandle
-            trySend(RuntimeSignal.RenderPacketReady(packetResult.packet))
+        renderHostAdapter.bindSession(handle)
+        val refreshResult = renderHostAdapter.refreshPacket()
+        if (refreshResult.lease != null) {
+            trySend(RuntimeSignal.RenderPacketReady(refreshResult.lease))
         } else {
-            trySend(RuntimeSignal.Status("Render export unavailable: ${packetResult.result.describe()}"))
+            trySend(RuntimeSignal.Status(refreshResult.unavailableReason ?: "Render export unavailable"))
         }
 
         awaitClose {
-            if (packetHandle != 0L) {
-                transport.releaseVulkanScene(packetHandle)
-            }
+            renderHostAdapter.releasePacket()
             transport.destroySession(handle)
         }
     }
@@ -170,7 +156,7 @@ class JniRuntimeBridge(
 sealed interface RuntimeSignal {
     data class Connected(val handle: Long) : RuntimeSignal
     data class Status(val message: String) : RuntimeSignal
-    data class RenderPacketReady(val packet: NativeVulkanScenePacket) : RuntimeSignal
+    data class RenderPacketReady(val lease: PacketLease) : RuntimeSignal
     data class Unavailable(val message: String, val detail: String? = null) : RuntimeSignal
 }
 
