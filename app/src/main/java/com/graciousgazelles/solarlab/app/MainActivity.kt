@@ -393,6 +393,11 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
                 append(hardwareSummary)
                 append('\n')
             }
+            frame.accelerationBackendSummary?.let { accelerationBackendSummary ->
+                append("Physics: ")
+                append(accelerationBackendSummary)
+                append('\n')
+            }
             if (!frame.diagnosticsFresh) {
                 append(getString(R.string.diagnostics_cached_notice))
                 append('\n')

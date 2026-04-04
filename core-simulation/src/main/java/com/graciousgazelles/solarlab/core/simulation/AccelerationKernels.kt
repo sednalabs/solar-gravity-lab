@@ -14,7 +14,7 @@ internal data class SolverBodyState(
     val positionZ: Double,
 )
 
-internal data class MassiveSourceBuffers(
+data class MassiveSourceBuffers(
     val bodyIndices: IntArray,
     val massesKg: DoubleArray,
     val positionX: DoubleArray,
@@ -25,7 +25,7 @@ internal data class MassiveSourceBuffers(
         get() = bodyIndices.size
 }
 
-internal data class TargetBodyBuffers(
+data class TargetBodyBuffers(
     val bodyIndices: IntArray,
     val positionX: DoubleArray,
     val positionY: DoubleArray,
@@ -35,7 +35,7 @@ internal data class TargetBodyBuffers(
         get() = bodyIndices.size
 }
 
-internal data class AccelerationVectorBuffers(
+data class AccelerationVectorBuffers(
     val bodyIndices: IntArray,
     val accelerationX: DoubleArray,
     val accelerationY: DoubleArray,
@@ -45,7 +45,7 @@ internal data class AccelerationVectorBuffers(
         get() = bodyIndices.size
 }
 
-internal interface MassiveAccelerationKernel {
+interface MassiveAccelerationKernel {
     fun compute(
         sources: MassiveSourceBuffers,
         targets: TargetBodyBuffers,
@@ -54,7 +54,7 @@ internal interface MassiveAccelerationKernel {
     ): AccelerationVectorBuffers
 }
 
-internal interface TracerAccelerationKernel {
+interface TracerAccelerationKernel {
     fun compute(
         sources: MassiveSourceBuffers,
         targets: TargetBodyBuffers,

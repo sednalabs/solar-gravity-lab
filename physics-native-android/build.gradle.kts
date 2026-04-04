@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.graciousgazelles.solarlab.feature.lab"
+    namespace = "com.sednalabs.solarlab.physics.nativeandroid"
     compileSdk = libs.versions.compileSdk.get().toInt()
     ndkVersion = "27.2.12479018"
 
@@ -15,9 +15,6 @@ android {
             cmake {
                 cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-fexceptions", "-frtti")
             }
-        }
-        shaders {
-            glslcArgs += listOf("-c")
         }
     }
 
@@ -44,12 +41,5 @@ android {
 }
 
 dependencies {
-    implementation(project(":core-math"))
-    api(project(":core-model"))
-    api(project(":core-simulation"))
-    implementation(project(":physics-native-android"))
-    api(project(":render-core"))
-    implementation(libs.androidx.core.ktx)
-
-    testImplementation(libs.junit)
+    implementation(project(":core-simulation"))
 }
