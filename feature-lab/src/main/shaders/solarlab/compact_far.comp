@@ -75,9 +75,20 @@ void main() {
     vec2 relative = candidate.positionM - uScene.centerSpan.xy;
     vec2 span = max(uScene.centerSpan.zw, vec2(1e-6));
     vec2 uv = relative / span * 0.5 + 0.5;
-    uvec2 pixelCell = uvec2(floor(uv * max(uScene.viewport.xy, vec2(1.0)) / float(stride)));
-    uint keepHash = hash32(uvec3(pixelCell, index));
-    if (stride > 1u && (keepHash % stride) != 0u) {
+    uvec2 viewportPx = max(uvec2(uScene.viewport.xy), uvec2(1u));
+    vec2 clampedUv = clamp(uv, vec2(0.0), vec2(0.999999));
+    uvec2 pixel = uvec2(floor(clampedUv * vec2(viewportPx)));
+
+    // Coarse tile-aware phase keeps thinning spatially coherent without adding bin buffers.
+    const uint tileShift = 4u; // 16x16 pixel tiles.
+    uvec2 tileCoord = pixel >> tileShift;
+    uvec2 strideCell = pixel / stride;
+    uint tilePhase = hash32(uvec3(tileCoord, stride)) % stride;
+
+    // Keep a tiny index bucket so duplicate points in one cell do not all vote identically.
+    uint deCollisionBucket = index & 3u;
+    uint keepHash = hash32(uvec3(strideCell, stride ^ deCollisionBucket));
+    if (stride > 1u && ((keepHash + tilePhase) % stride) != 0u) {
         return;
     }
 

@@ -18,7 +18,7 @@ What is now implemented:
 Current behavior:
 
 - Medium tracers are viewport culled and lightly downsampled as zoom increases.
-- Far tracers are viewport culled and more aggressively downsampled using density-weight-aware hashing.
+- Far tracers are viewport culled and more aggressively downsampled using density-weight-aware hash thinning with a coarse tile-biased phase (not full tile/bin compaction or true tile-local coordination).
 - Authoritative bodies, near tracers, and trails remain on the direct graphics path.
 
 Next strong passes:
