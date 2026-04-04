@@ -446,10 +446,16 @@ pub enum ApplyUpdateError {
     DuplicateSelectedPackageId {
         package_id: String,
     },
+    DuplicateFetchAction {
+        package_id: String,
+    },
     DuplicateInstallAction {
         package_id: String,
     },
     DuplicateRemoveAction {
+        package_id: String,
+    },
+    StoreActionReferencesUnselectedPackage {
         package_id: String,
     },
     MissingFetchedPackage {
@@ -463,6 +469,15 @@ pub enum ApplyUpdateError {
         package_id: String,
     },
     ActivationReferencesUnknownPackage {
+        package_id: String,
+    },
+    ConflictingActivationAction {
+        package_id: String,
+    },
+    InstallActionAlreadyInstalled {
+        package_id: String,
+    },
+    RemoveActionNotInstalled {
         package_id: String,
     },
     InstalledSetDoesNotMatchSelection {
@@ -625,6 +640,24 @@ pub fn apply_update_plan(
 
     let mut seen_install_actions = BTreeSet::new();
     let mut seen_remove_actions = BTreeSet::new();
+    let mut seen_fetch_actions = BTreeSet::new();
+    for action in &plan.store_actions {
+        match action {
+            UpdatePlanStoreAction::FetchPackage { package_id, .. } => {
+                if !selected_set.contains(package_id) {
+                    return Err(ApplyUpdateError::StoreActionReferencesUnselectedPackage {
+                        package_id: package_id.clone(),
+                    });
+                }
+                if !seen_fetch_actions.insert(package_id.clone()) {
+                    return Err(ApplyUpdateError::DuplicateFetchAction {
+                        package_id: package_id.clone(),
+                    });
+                }
+            }
+        }
+    }
+
     for action in &plan.activation_actions {
         match action {
             UpdatePlanActivationAction::InstallPackage { package_id } => {
@@ -642,6 +675,13 @@ pub fn apply_update_plan(
                 }
             }
         }
+    }
+    if let Some(package_id) = seen_install_actions
+        .intersection(&seen_remove_actions)
+        .next()
+        .cloned()
+    {
+        return Err(ApplyUpdateError::ConflictingActivationAction { package_id });
     }
 
     let mut next_store = local.package_store.packages_by_id.clone();
@@ -730,6 +770,7 @@ pub fn apply_update_plan(
         .map_or_else(BTreeSet::new, |installed| {
             installed.installed_package_ids.clone()
         });
+    let preexisting_installed_package_ids = installed_package_ids.clone();
     let mut newly_installed_package_ids = BTreeSet::new();
     let mut removed_package_ids = BTreeSet::new();
 
@@ -741,10 +782,20 @@ pub fn apply_update_plan(
                         package_id: package_id.clone(),
                     });
                 }
+                if preexisting_installed_package_ids.contains(package_id) {
+                    return Err(ApplyUpdateError::InstallActionAlreadyInstalled {
+                        package_id: package_id.clone(),
+                    });
+                }
                 installed_package_ids.insert(package_id.clone());
                 newly_installed_package_ids.insert(package_id.clone());
             }
             UpdatePlanActivationAction::RemovePackage { package_id } => {
+                if !preexisting_installed_package_ids.contains(package_id) {
+                    return Err(ApplyUpdateError::RemoveActionNotInstalled {
+                        package_id: package_id.clone(),
+                    });
+                }
                 installed_package_ids.remove(package_id);
                 removed_package_ids.insert(package_id.clone());
             }
@@ -1829,6 +1880,150 @@ mod tests {
             ApplyUpdateError::InstalledSetDoesNotMatchSelection {
                 expected_selected: planned.selected_package_ids.clone(),
                 actual_installed: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn apply_update_plan_rejects_store_action_for_unselected_package() {
+        let required = package(
+            PackageKind::Scenario,
+            semver(2, 0, 0),
+            "v2.schema.1",
+            digest(22),
+            true,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["fft"],
+                &["desktop-linux"],
+            ),
+        );
+        let stray = package(
+            PackageKind::CatalogPack,
+            semver(1, 0, 0),
+            "v2.schema.1",
+            digest(23),
+            false,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["simd"],
+                &["desktop-linux"],
+            ),
+        );
+
+        let local = LocalDataState::empty();
+        let planned = plan_manifest_update(&manifest(vec![required.clone()]), &target(), &local)
+            .expect("planning should succeed");
+        let mut plan = planned.clone();
+        plan.store_actions.push(UpdatePlanStoreAction::FetchPackage {
+            package_id: stray.package_id.clone(),
+            package_kind: stray.kind.clone(),
+            package_version: stray.package_version.clone(),
+            source_relative_uri: stray.relative_uri.clone(),
+            digest: stray.digest.clone(),
+            uncompressed_size_bytes: stray.uncompressed_size_bytes,
+        });
+
+        let err = apply_update_plan(&plan, &local, &ApplyPackageInputs::empty())
+            .expect_err("apply should reject stray fetch actions");
+
+        assert_eq!(
+            err,
+            ApplyUpdateError::StoreActionReferencesUnselectedPackage {
+                package_id: stray.package_id,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_update_plan_rejects_conflicting_activation_actions() {
+        let required = package(
+            PackageKind::Scenario,
+            semver(2, 0, 0),
+            "v2.schema.1",
+            digest(24),
+            true,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["fft"],
+                &["desktop-linux"],
+            ),
+        );
+
+        let local = LocalDataState {
+            package_store: PackageStoreState::empty(),
+            installed_manifest: Some(InstalledManifestState {
+                manifest_id: "manifest/v2/current".to_string(),
+                manifest_version: semver(2, 0, 0),
+                channel: "stable".to_string(),
+                installed_package_ids: [required.package_id.clone()].into_iter().collect(),
+            }),
+        };
+        let plan = UpdatePlan {
+            manifest_id: "manifest/v2/current".to_string(),
+            manifest_version: semver(2, 0, 1),
+            channel: "stable".to_string(),
+            selected_package_ids: [required.package_id.clone()].into_iter().collect(),
+            store_actions: Vec::new(),
+            activation_actions: vec![
+                UpdatePlanActivationAction::InstallPackage {
+                    package_id: required.package_id.clone(),
+                },
+                UpdatePlanActivationAction::RemovePackage {
+                    package_id: required.package_id.clone(),
+                },
+            ],
+        };
+
+        let err = apply_update_plan(&plan, &local, &ApplyPackageInputs::empty())
+            .expect_err("apply should reject conflicting install/remove actions");
+
+        assert_eq!(
+            err,
+            ApplyUpdateError::ConflictingActivationAction {
+                package_id: required.package_id,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_update_plan_rejects_remove_action_for_uninstalled_package() {
+        let required = package(
+            PackageKind::Scenario,
+            semver(2, 0, 0),
+            "v2.schema.1",
+            digest(25),
+            true,
+            compat(
+                semver(2, 0, 0),
+                semver(2, 5, 0),
+                &["fft"],
+                &["desktop-linux"],
+            ),
+        );
+
+        let local = LocalDataState::empty();
+        let plan = UpdatePlan {
+            manifest_id: "manifest/v2/current".to_string(),
+            manifest_version: semver(2, 0, 1),
+            channel: "stable".to_string(),
+            selected_package_ids: Vec::new(),
+            store_actions: Vec::new(),
+            activation_actions: vec![UpdatePlanActivationAction::RemovePackage {
+                package_id: required.package_id.clone(),
+            }],
+        };
+
+        let err = apply_update_plan(&plan, &local, &ApplyPackageInputs::empty())
+            .expect_err("apply should reject removing an uninstalled package");
+
+        assert_eq!(
+            err,
+            ApplyUpdateError::RemoveActionNotInstalled {
+                package_id: required.package_id,
             }
         );
     }
