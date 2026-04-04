@@ -153,8 +153,11 @@ private:
         DrawPath path = DrawPath::None;
         GpuBuffer outputVertexBuffer;
         GpuBuffer indirectCommandBuffer;
+        GpuBuffer indirectReadbackBuffer;
         uint32_t sourceVertexCount = 0;
         uint32_t dispatchGroupCountX = 0;
+        uint32_t visibleVertexCount = 0;
+        bool visibleVertexCountValid = false;
         const char* label = nullptr;
     };
 
@@ -209,6 +212,7 @@ private:
     bool UpdateComputeDescriptorSetsLocked();
     bool RecordComputePassLocked(VkCommandBuffer commandBuffer);
     bool RecordSceneBindingsLocked(VkCommandBuffer commandBuffer);
+    void RefreshCompactionVisibleCountsFromReadbackLocked();
 
     void DestroyGpuBuffer(GpuBuffer& buffer);
     void DestroySceneGpuStreams();
