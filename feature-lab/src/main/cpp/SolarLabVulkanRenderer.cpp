@@ -1744,9 +1744,12 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     std::vector<CheapPointVertex> tracerMediumVertices;
     const uint32_t tracerMediumCount = SafeCount3(
         sceneBuffers_.tracerMediumPositionsM.size(),
+        sceneBuffers_.tracerMediumVelocitiesMps.size() / 3U,
         sceneBuffers_.tracerMediumRadiiM.size(),
         sceneBuffers_.tracerMediumColorsArgb.size());
+    std::vector<MediumTracerState> tracerMediumStates;
     tracerMediumVertices.reserve(tracerMediumCount);
+    tracerMediumStates.reserve(tracerMediumCount);
     for (uint32_t index = 0; index < tracerMediumCount; ++index) {
         const size_t base = static_cast<size_t>(index) * 3U;
         const float radiusM = sceneBuffers_.tracerMediumRadiiM[index];
@@ -1760,14 +1763,27 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerMediumColorsArgb[index]), kMediumTracerAlpha),
             .sizePx = sizePx,
         });
+        tracerMediumStates.push_back(MediumTracerState{
+            .x = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 1U]),
+            .vx = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base]),
+            .vy = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base + 1U]),
+            .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerMediumColorsArgb[index]), kMediumTracerAlpha),
+            .sizePx = sizePx,
+            .reserved0 = 0.0f,
+            .reserved1 = 0.0f,
+        });
     }
 
     std::vector<DensityPointVertex> tracerFarVertices;
     const uint32_t tracerFarCount = SafeCount3(
         sceneBuffers_.tracerFarPositionsM.size(),
+        sceneBuffers_.tracerFarVelocitiesMps.size() / 3U,
         sceneBuffers_.tracerFarRadiiM.size(),
         sceneBuffers_.tracerFarColorsArgb.size());
+    std::vector<FarTracerState> tracerFarStates;
     tracerFarVertices.reserve(tracerFarCount);
+    tracerFarStates.reserve(tracerFarCount);
     for (uint32_t index = 0; index < tracerFarCount; ++index) {
         const size_t base = static_cast<size_t>(index) * 3U;
         const float radiusM = sceneBuffers_.tracerFarRadiiM[index];
@@ -1778,6 +1794,16 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .z = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 2U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerFarColorsArgb[index]), kFarTracerAlpha),
             .densityWeight = densityWeight,
+        });
+        tracerFarStates.push_back(FarTracerState{
+            .x = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base]),
+            .y = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 1U]),
+            .vx = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base]),
+            .vy = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base + 1U]),
+            .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerFarColorsArgb[index]), kFarTracerAlpha),
+            .densityWeight = densityWeight,
+            .reserved0 = 0.0f,
+            .reserved1 = 0.0f,
         });
     }
 
@@ -1861,6 +1887,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         stream.tileCounterCount = 0U;
         stream.visibleVertexCount = 0U;
         stream.visibleVertexCountValid = false;
+        DestroyGpuBuffer(stream.sourceStateBuffer);
         DestroyGpuBuffer(stream.outputVertexBuffer);
         DestroyGpuBuffer(stream.indirectCommandBuffer);
         DestroyGpuBuffer(stream.indirectReadbackBuffer);
@@ -1932,7 +1959,14 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX = RoundUpWorkgroups(tracerFarCount, kComputeLocalSizeX);
 
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
-        if (!ensureDeviceLocalComputeBuffer(
+        if (!TryUploadDeviceLocalWithStaging(
+                tracerMediumStates.data(),
+                ByteSize(tracerMediumStates),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                "tracer-medium-state",
+                sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer)) {
+            disableComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute", "compute source state upload failed");
+        } else if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerMediumVertices), sizeof(CheapPointVertex))),
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 sceneGpuStreams_.tracerMediumCompute.label,
@@ -1961,7 +1995,14 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     }
 
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
-        if (!ensureDeviceLocalComputeBuffer(
+        if (!TryUploadDeviceLocalWithStaging(
+                tracerFarStates.data(),
+                ByteSize(tracerFarStates),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                "tracer-far-state",
+                sceneGpuStreams_.tracerFarCompute.sourceStateBuffer)) {
+            disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "compute source state upload failed");
+        } else if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<size_t>(ByteSize(tracerFarVertices), sizeof(DensityPointVertex))),
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 sceneGpuStreams_.tracerFarCompute.label,
@@ -2015,9 +2056,11 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.tracerMedium.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerFar.vertexBuffer.sizeBytes +
         sceneGpuStreams_.trails.vertexBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.sizeBytes +
@@ -2210,7 +2253,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
 
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
         if (tracerMediumComputeDescriptorSet_ == VK_NULL_HANDLE ||
-            sceneGpuStreams_.tracerMedium.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer.buffer == VK_NULL_HANDLE) {
             SetError("Medium tracer compute descriptors could not be updated because one or more buffers were missing.");
@@ -2218,7 +2261,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         }
         updateSet(
             tracerMediumComputeDescriptorSet_,
-            sceneGpuStreams_.tracerMedium.vertexBuffer,
+            sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer,
             sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer,
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer,
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
@@ -2226,7 +2269,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
 
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
         if (tracerFarComputeDescriptorSet_ == VK_NULL_HANDLE ||
-            sceneGpuStreams_.tracerFar.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.buffer == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.buffer == VK_NULL_HANDLE) {
@@ -2235,7 +2278,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         }
         updateSet(
             tracerFarComputeDescriptorSet_,
-            sceneGpuStreams_.tracerFar.vertexBuffer,
+            sceneGpuStreams_.tracerFarCompute.sourceStateBuffer,
             sceneGpuStreams_.tracerFarCompute.outputVertexBuffer,
             sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer,
             sceneGpuStreams_.tracerFarCompute.tileCounterBuffer);
@@ -2624,9 +2667,11 @@ void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.tracerMedium.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFar.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.trails.vertexBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.sourceStateBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.outputVertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
@@ -3049,11 +3094,15 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << " compute=["
         << (sceneGpuStreams_.tracerMediumCompute.enabled ? "TM:" : "TM:-")
         << sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX
+        << "/src="
+        << (sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.buffer != VK_NULL_HANDLE ? "state" : "none")
         << "/vis="
         << (sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid ? std::to_string(sceneGpuStreams_.tracerMediumCompute.visibleVertexCount) : std::string("-"))
         << ','
         << (sceneGpuStreams_.tracerFarCompute.enabled ? "TF:" : "TF:-")
         << sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX
+        << "/src="
+        << (sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.buffer != VK_NULL_HANDLE ? "state" : "none")
         << "/tiles="
         << sceneGpuStreams_.tracerFarCompute.tileCounterCount
         << "/vis="

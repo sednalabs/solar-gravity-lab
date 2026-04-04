@@ -8,6 +8,15 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 viewport;
 } uScene;
 
+struct FarTracerState {
+    vec2 positionM;
+    vec2 velocityMps;
+    uint colorArgb;
+    uint densityWeight;
+    float reserved0;
+    float reserved1;
+};
+
 struct DensityPointVertex {
     vec2 positionM;
     uint colorArgb;
@@ -15,7 +24,7 @@ struct DensityPointVertex {
 };
 
 layout(set = 0, binding = 1, std430) readonly buffer SourceVertices {
-    DensityPointVertex src[];
+    FarTracerState src[];
 } uSource;
 
 layout(set = 0, binding = 2, std430) writeonly buffer OutputVertices {
@@ -63,7 +72,7 @@ void main() {
         return;
     }
 
-    DensityPointVertex candidate = uSource.src[index];
+    FarTracerState candidate = uSource.src[index];
     if (!isInsideExtendedView(candidate.positionM)) {
         return;
     }
@@ -89,5 +98,9 @@ void main() {
     candidate.densityWeight = max(candidate.densityWeight, stride);
 
     uint outputIndex = atomicAdd(uDraw.vertexCount, 1u);
-    uOutput.dst[outputIndex] = candidate;
+    uOutput.dst[outputIndex] = DensityPointVertex(
+        candidate.positionM,
+        candidate.colorArgb,
+        candidate.densityWeight
+    );
 }

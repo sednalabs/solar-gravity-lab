@@ -118,12 +118,34 @@ private:
         float sizePx = 1.0f;
     };
 
+    struct MediumTracerState {
+        float x = 0.0f;
+        float y = 0.0f;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        uint32_t colorArgb = 0;
+        float sizePx = 1.0f;
+        float reserved0 = 0.0f;
+        float reserved1 = 0.0f;
+    };
+
     struct DensityPointVertex {
         float x = 0.0f;
         float y = 0.0f;
         float z = 0.0f;
         uint32_t colorArgb = 0;
         uint32_t densityWeight = 1;
+    };
+
+    struct FarTracerState {
+        float x = 0.0f;
+        float y = 0.0f;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        uint32_t colorArgb = 0;
+        uint32_t densityWeight = 1;
+        float reserved0 = 0.0f;
+        float reserved1 = 0.0f;
     };
 
     struct TrailVertex {
@@ -179,6 +201,7 @@ private:
     struct ComputeDrawStreamBuffers {
         bool enabled = false;
         DrawPath path = DrawPath::None;
+        GpuBuffer sourceStateBuffer;
         GpuBuffer outputVertexBuffer;
         GpuBuffer indirectCommandBuffer;
         GpuBuffer indirectReadbackBuffer;
