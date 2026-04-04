@@ -510,6 +510,9 @@ fn validate_digest(digest: &Digest, path: &str, errors: &mut Vec<ValidationError
     }
 }
 
+const MAX_NUMERIC_SEMVER_IDENTIFIER: &str = "18446744073709551615";
+const MAX_NUMERIC_SEMVER_IDENTIFIER_DIGITS: usize = MAX_NUMERIC_SEMVER_IDENTIFIER.len();
+
 fn validate_semver(version: &SemVer, path: &str, errors: &mut Vec<ValidationError>) {
     for (label, value) in [
         ("prerelease", version.prerelease.as_deref()),
@@ -518,10 +521,19 @@ fn validate_semver(version: &SemVer, path: &str, errors: &mut Vec<ValidationErro
         if let Some(identifier) = value {
             let invalid = !identifier.is_ascii()
                 || identifier.split('.').any(|part| {
+                    let is_numeric = part.chars().all(|character| character.is_ascii_digit());
+                    let invalid_numeric = matches!(label, "prerelease")
+                        && is_numeric
+                        && ((part.len() > 1 && part.starts_with('0'))
+                            || part.len() > MAX_NUMERIC_SEMVER_IDENTIFIER_DIGITS
+                            || (part.len() == MAX_NUMERIC_SEMVER_IDENTIFIER_DIGITS
+                                && part > MAX_NUMERIC_SEMVER_IDENTIFIER));
+
                     part.is_empty()
                         || !part
                             .chars()
                             .all(|character| character.is_ascii_alphanumeric() || character == '-')
+                        || invalid_numeric
                 });
             if invalid {
                 errors.push(err(
@@ -692,6 +704,32 @@ mod tests {
                 ValidationCode::ZeroPackageSize,
             ]
         );
+    }
+
+    #[test]
+    fn validate_semver_rejects_prerelease_numeric_with_leading_zero() {
+        let mut version = semver(1, 2, 3);
+        version.prerelease = Some("alpha.01".to_string());
+
+        let mut errors = Vec::new();
+        validate_semver(&version, "version", &mut errors);
+
+        assert!(errors
+            .iter()
+            .any(|error| error.code == ValidationCode::InvalidSemVerIdentifier));
+    }
+
+    #[test]
+    fn validate_semver_rejects_overlarge_numeric_prerelease_identifier() {
+        let mut version = semver(1, 2, 3);
+        version.prerelease = Some("18446744073709551616".to_string());
+
+        let mut errors = Vec::new();
+        validate_semver(&version, "version", &mut errors);
+
+        assert!(errors
+            .iter()
+            .any(|error| error.code == ValidationCode::InvalidSemVerIdentifier));
     }
 
     #[test]
