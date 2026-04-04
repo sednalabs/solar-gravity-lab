@@ -8,6 +8,7 @@ members = [
     "engine/hardware",
     "engine/runtime",
     "engine/ffi",
+    "render/vulkan-adapter",
 ]
 resolver = "2"
 
