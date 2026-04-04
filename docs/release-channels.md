@@ -7,7 +7,7 @@ to stay honest about what is actually being shipped.
 
 ### Internal dev preview
 
-- Version line: `0.1.0-alpha.4`
+- Version line: `0.1.0-alpha.7`
 - Android build type: `prerelease`
 - Base application id: `com.sednalabs.solarlab`
 - Package id suffix: `.internal`
