@@ -6,6 +6,7 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 centerSpan;
     vec4 metrics;
     vec4 viewport;
+    vec4 tracerCounts;
 } uScene;
 
 struct MediumTracerState {
@@ -41,6 +42,12 @@ struct AuthoritativeInfluenceBody {
     vec4 positionMass;
 };
 
+struct TracerInfluenceBody {
+    vec4 positionMass;
+    uvec2 handleWords;
+    uvec2 reservedWords;
+};
+
 layout(set = 0, binding = 1, std430) buffer SourceVertices {
     MediumTracerState src[];
 } uState;
@@ -68,6 +75,18 @@ layout(set = 0, binding = 7, std430) buffer TrailMetaBuffer {
     TrailHistoryMeta entries[];
 } uTrailMeta;
 
+layout(set = 0, binding = 8, std430) readonly buffer NearInfluenceBodies {
+    TracerInfluenceBody bodies[];
+} uNearInfluence;
+
+layout(set = 0, binding = 9, std430) readonly buffer MediumInfluenceBodies {
+    TracerInfluenceBody bodies[];
+} uMediumInfluence;
+
+layout(set = 0, binding = 10, std430) readonly buffer FarInfluenceBodies {
+    TracerInfluenceBody bodies[];
+} uFarInfluence;
+
 layout(push_constant) uniform PushConstants {
     uint sourceCount;
     uint reserved0;
@@ -86,7 +105,15 @@ uint mediumStrideForZoom() {
     return 1u + uint(clamp(floor(log2(zoom)), 0.0, 4.0));
 }
 
-vec2 accelerationAt(vec2 positionM) {
+bool tracerMutualGravityEnabled() {
+    return uScene.tracerCounts.w > 0.5;
+}
+
+bool sameHandle(uvec2 a, uvec2 b) {
+    return all(equal(a, b));
+}
+
+vec2 accelerationAt(vec2 positionM, uvec2 selfHandle) {
     const float gravitationalConstant = 6.67430e-11;
     const float softeningSquared = 1.0;
     vec2 acceleration = vec2(0.0);
@@ -98,6 +125,42 @@ vec2 accelerationAt(vec2 positionM) {
         float inverseDistance = inversesqrt(distanceSquared);
         float inverseDistanceCubed = inverseDistance * inverseDistance * inverseDistance;
         acceleration += delta * (gravitationalConstant * influence.positionMass.w * inverseDistanceCubed);
+    }
+    if (!tracerMutualGravityEnabled()) {
+        return acceleration;
+    }
+    uint nearCount = uint(max(uScene.tracerCounts.x, 0.0));
+    for (uint influenceIndex = 0u; influenceIndex < nearCount; ++influenceIndex) {
+        TracerInfluenceBody influence = uNearInfluence.bodies[influenceIndex];
+        vec2 delta = influence.positionMass.xy - positionM;
+        float distanceSquared = max(dot(delta, delta) + softeningSquared, 1.0);
+        float inverseDistance = inversesqrt(distanceSquared);
+        float inverseDistanceCubed = inverseDistance * inverseDistance * inverseDistance;
+        acceleration += delta * (gravitationalConstant * influence.positionMass.z * inverseDistanceCubed);
+    }
+    uint mediumCount = uint(max(uScene.tracerCounts.y, 0.0));
+    for (uint influenceIndex = 0u; influenceIndex < mediumCount; ++influenceIndex) {
+        TracerInfluenceBody influence = uMediumInfluence.bodies[influenceIndex];
+        if (sameHandle(influence.handleWords, selfHandle)) {
+            continue;
+        }
+        vec2 delta = influence.positionMass.xy - positionM;
+        float distanceSquared = max(dot(delta, delta) + softeningSquared, 1.0);
+        float inverseDistance = inversesqrt(distanceSquared);
+        float inverseDistanceCubed = inverseDistance * inverseDistance * inverseDistance;
+        acceleration += delta * (gravitationalConstant * influence.positionMass.z * inverseDistanceCubed);
+    }
+    uint farCount = uint(max(uScene.tracerCounts.z, 0.0));
+    for (uint influenceIndex = 0u; influenceIndex < farCount; ++influenceIndex) {
+        TracerInfluenceBody influence = uFarInfluence.bodies[influenceIndex];
+        if (sameHandle(influence.handleWords, selfHandle)) {
+            continue;
+        }
+        vec2 delta = influence.positionMass.xy - positionM;
+        float distanceSquared = max(dot(delta, delta) + softeningSquared, 1.0);
+        float inverseDistance = inversesqrt(distanceSquared);
+        float inverseDistanceCubed = inverseDistance * inverseDistance * inverseDistance;
+        acceleration += delta * (gravitationalConstant * influence.positionMass.z * inverseDistanceCubed);
     }
     return acceleration;
 }
@@ -141,10 +204,10 @@ void main() {
     MediumTracerState candidate = uState.src[index];
     float stepSeconds = max(uScene.viewport.z, 0.0);
     if (stepSeconds > 0.0) {
-        vec2 acceleration0 = accelerationAt(candidate.positionM);
+        vec2 acceleration0 = accelerationAt(candidate.positionM, candidate.handleWords);
         vec2 velocityHalf = candidate.velocityMps + (acceleration0 * (0.5 * stepSeconds));
         vec2 positionNext = candidate.positionM + (velocityHalf * stepSeconds);
-        vec2 acceleration1 = accelerationAt(positionNext);
+        vec2 acceleration1 = accelerationAt(positionNext, candidate.handleWords);
         candidate.positionM = positionNext;
         candidate.velocityMps = velocityHalf + (acceleration1 * (0.5 * stepSeconds));
         appendTrailSample(index, candidate.positionM, candidate.colorArgb, candidate.trailAlpha);

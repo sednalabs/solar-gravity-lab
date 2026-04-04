@@ -6,6 +6,7 @@ import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 internal interface SolarRenderSurface {
     fun submitScene(frame: RenderSceneFrame)
     fun resetCamera()
+    fun setTracerMutualGravityEnabled(enabled: Boolean) {}
     fun setProcessingMode(mode: RenderProcessingMode) {}
     fun setInteractionListener(listener: RenderInteractionListener?) {}
     fun setInteractionMode(mode: SceneInteractionMode) {}

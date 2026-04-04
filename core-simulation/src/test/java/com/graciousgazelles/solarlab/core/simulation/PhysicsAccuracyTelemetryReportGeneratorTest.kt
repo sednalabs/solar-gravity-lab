@@ -24,6 +24,10 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         private const val GPU_TRACER_MEDIUM_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX = 1.0e8
         private const val GPU_TRACER_FAR_SHORT_HORIZON_XY_RMS_ERROR_M_MAX = 5.0e6
         private const val GPU_TRACER_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX = 5.0e8
+        private const val GPU_TRACER_MUTUAL_GRAVITY_MEDIUM_SHORT_HORIZON_XY_RMS_ERROR_M_MAX = 2.0e6
+        private const val GPU_TRACER_MUTUAL_GRAVITY_MEDIUM_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX = 2.0e8
+        private const val GPU_TRACER_MUTUAL_GRAVITY_FAR_SHORT_HORIZON_XY_RMS_ERROR_M_MAX = 1.0e7
+        private const val GPU_TRACER_MUTUAL_GRAVITY_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX = 1.0e9
     }
 
     @Test
@@ -68,6 +72,8 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(json.contains("\"moon_earth_distance_fine_baseline_error_au\""))
         assertTrue(json.contains("\"gpu_tracer_medium_short_horizon_xy_rms_error_m\""))
         assertTrue(json.contains("\"gpu_tracer_far_medium_horizon_xy_max_error_m\""))
+        assertTrue(json.contains("\"gpu_tracer_mutual_gravity_medium_short_horizon_xy_rms_error_m\""))
+        assertTrue(json.contains("\"gpu_tracer_mutual_gravity_far_medium_horizon_xy_max_error_m\""))
     }
 
     @Test
@@ -109,6 +115,12 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(metrics.containsKey("gpu_tracer_far_cohort_count"))
         assertTrue(metrics.containsKey("gpu_tracer_far_short_horizon_xy_rms_error_m"))
         assertTrue(metrics.containsKey("gpu_tracer_far_medium_horizon_xy_max_error_m"))
+        assertTrue(metrics.containsKey("gpu_tracer_mutual_gravity_medium_cohort_count"))
+        assertTrue(metrics.containsKey("gpu_tracer_mutual_gravity_medium_short_horizon_xy_rms_error_m"))
+        assertTrue(metrics.containsKey("gpu_tracer_mutual_gravity_medium_medium_horizon_xy_max_error_m"))
+        assertTrue(metrics.containsKey("gpu_tracer_mutual_gravity_far_cohort_count"))
+        assertTrue(metrics.containsKey("gpu_tracer_mutual_gravity_far_short_horizon_xy_rms_error_m"))
+        assertTrue(metrics.containsKey("gpu_tracer_mutual_gravity_far_medium_horizon_xy_max_error_m"))
         assertTrue(metrics["relative_angular_momentum_drift"]!!.value >= 0.0)
         assertTrue(metrics["absolute_angular_momentum_drift_kg_m2_per_s"]!!.value >= 0.0)
         assertTrue(metrics["barycenter_drift_m"]!!.value >= 0.0)
@@ -122,6 +134,12 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(metrics["gpu_tracer_far_cohort_count"]!!.value >= 0.0)
         assertTrue(metrics["gpu_tracer_far_short_horizon_xy_rms_error_m"]!!.value >= 0.0)
         assertTrue(metrics["gpu_tracer_far_medium_horizon_xy_max_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_mutual_gravity_medium_cohort_count"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_mutual_gravity_medium_short_horizon_xy_rms_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_mutual_gravity_medium_medium_horizon_xy_max_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_mutual_gravity_far_cohort_count"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_mutual_gravity_far_short_horizon_xy_rms_error_m"]!!.value >= 0.0)
+        assertTrue(metrics["gpu_tracer_mutual_gravity_far_medium_horizon_xy_max_error_m"]!!.value >= 0.0)
     }
 
     @Test
@@ -150,6 +168,14 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
             requiredMetricValue(metrics, "gpu_tracer_far_short_horizon_xy_rms_error_m")
         val gpuTracerFarMediumHorizonXyMaxErrorM =
             requiredMetricValue(metrics, "gpu_tracer_far_medium_horizon_xy_max_error_m")
+        val gpuTracerMutualGravityMediumShortHorizonXyRmsErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_mutual_gravity_medium_short_horizon_xy_rms_error_m")
+        val gpuTracerMutualGravityMediumMediumHorizonXyMaxErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_mutual_gravity_medium_medium_horizon_xy_max_error_m")
+        val gpuTracerMutualGravityFarShortHorizonXyRmsErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_mutual_gravity_far_short_horizon_xy_rms_error_m")
+        val gpuTracerMutualGravityFarMediumHorizonXyMaxErrorM =
+            requiredMetricValue(metrics, "gpu_tracer_mutual_gravity_far_medium_horizon_xy_max_error_m")
 
         assertTrue(
             "relative_angular_momentum_drift=$relativeAngularMomentumDrift exceeded max $RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX",
@@ -182,6 +208,22 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(
             "gpu_tracer_far_medium_horizon_xy_max_error_m=$gpuTracerFarMediumHorizonXyMaxErrorM exceeded max $GPU_TRACER_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX",
             gpuTracerFarMediumHorizonXyMaxErrorM <= GPU_TRACER_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_mutual_gravity_medium_short_horizon_xy_rms_error_m=$gpuTracerMutualGravityMediumShortHorizonXyRmsErrorM exceeded max $GPU_TRACER_MUTUAL_GRAVITY_MEDIUM_SHORT_HORIZON_XY_RMS_ERROR_M_MAX",
+            gpuTracerMutualGravityMediumShortHorizonXyRmsErrorM <= GPU_TRACER_MUTUAL_GRAVITY_MEDIUM_SHORT_HORIZON_XY_RMS_ERROR_M_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_mutual_gravity_medium_medium_horizon_xy_max_error_m=$gpuTracerMutualGravityMediumMediumHorizonXyMaxErrorM exceeded max $GPU_TRACER_MUTUAL_GRAVITY_MEDIUM_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX",
+            gpuTracerMutualGravityMediumMediumHorizonXyMaxErrorM <= GPU_TRACER_MUTUAL_GRAVITY_MEDIUM_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_mutual_gravity_far_short_horizon_xy_rms_error_m=$gpuTracerMutualGravityFarShortHorizonXyRmsErrorM exceeded max $GPU_TRACER_MUTUAL_GRAVITY_FAR_SHORT_HORIZON_XY_RMS_ERROR_M_MAX",
+            gpuTracerMutualGravityFarShortHorizonXyRmsErrorM <= GPU_TRACER_MUTUAL_GRAVITY_FAR_SHORT_HORIZON_XY_RMS_ERROR_M_MAX,
+        )
+        assertTrue(
+            "gpu_tracer_mutual_gravity_far_medium_horizon_xy_max_error_m=$gpuTracerMutualGravityFarMediumHorizonXyMaxErrorM exceeded max $GPU_TRACER_MUTUAL_GRAVITY_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX",
+            gpuTracerMutualGravityFarMediumHorizonXyMaxErrorM <= GPU_TRACER_MUTUAL_GRAVITY_FAR_MEDIUM_HORIZON_XY_MAX_ERROR_M_MAX,
         )
     }
 

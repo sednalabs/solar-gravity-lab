@@ -143,6 +143,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         binding.buttonTracerGravity.setOnClickListener {
             currentTracerMutualGravity = !currentTracerMutualGravity
             session.setTracerMutualGravityEnabled(currentTracerMutualGravity)
+            binding.renderHost.setTracerMutualGravityEnabled(currentTracerMutualGravity)
             updateTracerGravityButtonText()
         }
 
@@ -168,6 +169,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         updateObserverButtonText()
         updateInfoPanelVisibility()
         updateProcessingModeButtonText()
+        binding.renderHost.setTracerMutualGravityEnabled(currentTracerMutualGravity)
 
         session.dispatchCurrentFrame()
         session.start()

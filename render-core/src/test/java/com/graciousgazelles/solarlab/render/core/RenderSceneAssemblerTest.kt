@@ -122,9 +122,95 @@ class RenderSceneAssemblerTest {
         assertEquals(1, packet.tracerNearCount)
         assertEquals(1, packet.tracerMediumCount)
         assertEquals(1, packet.tracerFarCount)
+        assertEquals(0.0, packet.tracerNearSourceMassesKg[0], 0.0)
+        assertEquals(0.0, packet.tracerMediumSourceMassesKg[0], 0.0)
+        assertEquals(0.0, packet.tracerFarSourceMassesKg[0], 0.0)
         assertEquals(listOf(30.0, 40.0, 0.0), packet.tracerMediumVelocitiesMps.toList())
         assertEquals(listOf(50.0, 60.0, 0.0), packet.tracerFarVelocitiesMps.toList())
         assertTrue(packet.trailVertexCounts.first() <= 8)
+    }
+
+    @Test
+    fun nativeFrameStateCarriesTracerInfluencePayloadAndToggle() {
+        val frame = RenderSceneFrame(
+            epochSeconds = 12.0,
+            authoritativeBodies = listOf(
+                RenderBody(
+                    id = "sun",
+                    name = "Sun",
+                    positionM = Vector3d.ZERO,
+                    velocityMps = Vector3d.ZERO,
+                    radiusM = 5.0,
+                    colorArgb = 0xFFFFFFFF.toInt(),
+                    kind = RenderBodyKind.STAR,
+                    isMassive = true,
+                    sourceMassKg = 1.989e30,
+                ),
+            ),
+            tracerBodies = listOf(
+                RenderBody(
+                    id = "near",
+                    name = "Near",
+                    positionM = Vector3d(0.1 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    velocityMps = Vector3d(0.0, 1.0, 0.0),
+                    radiusM = 3.0,
+                    colorArgb = 0xFF00FF00.toInt(),
+                    kind = RenderBodyKind.PROBE,
+                    isMassive = false,
+                    sourceMassKg = 4.0e8,
+                ),
+                RenderBody(
+                    id = "medium",
+                    name = "Medium",
+                    positionM = Vector3d(3.5 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    velocityMps = Vector3d(0.0, 2.0, 0.0),
+                    radiusM = 2.0,
+                    colorArgb = 0xFF44AAFF.toInt(),
+                    kind = RenderBodyKind.PROBE,
+                    isMassive = false,
+                    sourceMassKg = 5.0e8,
+                ),
+                RenderBody(
+                    id = "far",
+                    name = "Far",
+                    positionM = Vector3d(12.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    velocityMps = Vector3d(0.0, 3.0, 0.0),
+                    radiusM = 1.0,
+                    colorArgb = 0xFFFF8844.toInt(),
+                    kind = RenderBodyKind.PROBE,
+                    isMassive = false,
+                    sourceMassKg = 6.0e8,
+                ),
+            ),
+            trails = emptyList(),
+            sourceRevision = 22L,
+        )
+
+        val packet = NativeScenePacket.fromScene(
+            frame = frame,
+            cameraState = CameraState(viewRadiusM = PhysicalConstants.ASTRONOMICAL_UNIT_M),
+            viewportWidthPx = 1920,
+            viewportHeightPx = 1080,
+            policy = ScenePacketBuildPolicy(
+                nearTracerBudget = 4,
+                mediumTracerBudget = 4,
+                farTracerBudget = 4,
+            ),
+        )
+
+        val frameState = packet.toFrameState(
+            epochSeconds = frame.epochSeconds,
+            simulationAdvanceSeconds = 0.25,
+            includeTracerMutualGravity = true,
+        )
+
+        assertTrue(frameState.includeTracerMutualGravity)
+        assertEquals(1, frameState.tracerNearSourceMassesKg.size)
+        assertEquals(4.0e8, frameState.tracerNearSourceMassesKg[0], 0.0)
+        assertEquals(1, frameState.tracerMediumHandles.size)
+        assertEquals(5.0e8, frameState.tracerMediumSourceMassesKg[0], 0.0)
+        assertEquals(1, frameState.tracerFarHandles.size)
+        assertEquals(6.0e8, frameState.tracerFarSourceMassesKg[0], 0.0)
     }
 
     @Test

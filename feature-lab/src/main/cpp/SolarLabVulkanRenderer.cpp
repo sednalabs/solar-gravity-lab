@@ -51,6 +51,14 @@ uint32_t RoundUpWorkgroups(uint32_t itemCount, uint32_t localSize) {
     return (itemCount + localSize - 1U) / localSize;
 }
 
+std::pair<uint32_t, uint32_t> SplitHandleWords(int64_t handle) {
+    const auto unsignedHandle = static_cast<uint64_t>(handle);
+    return {
+        static_cast<uint32_t>(unsignedHandle & 0xFFFFFFFFULL),
+        static_cast<uint32_t>((unsignedHandle >> 32U) & 0xFFFFFFFFULL),
+    };
+}
+
 void LogInfo(const std::string& message) {
     __android_log_print(ANDROID_LOG_INFO, kLogTag, "%s", message.c_str());
 }
@@ -294,15 +302,23 @@ void SolarLabVulkanRenderer::SetFrameState(
     int64_t sourceRevision,
     double epochSeconds,
     double simulationAdvanceSeconds,
+    bool includeTracerMutualGravity,
     std::span<const double> authoritativePositionsM,
     std::span<const double> authoritativeSourceMassesKg,
     std::span<const float> authoritativeRadiiM,
     std::span<const int32_t> authoritativeColorsArgb,
     std::span<const int32_t> authoritativeKinds,
     std::span<const double> tracerNearPositionsM,
+    std::span<const double> tracerNearSourceMassesKg,
     std::span<const float> tracerNearRadiiM,
     std::span<const int32_t> tracerNearColorsArgb,
     std::span<const int32_t> tracerNearKinds,
+    std::span<const int64_t> tracerMediumHandles,
+    std::span<const double> tracerMediumPositionsM,
+    std::span<const double> tracerMediumSourceMassesKg,
+    std::span<const int64_t> tracerFarHandles,
+    std::span<const double> tracerFarPositionsM,
+    std::span<const double> tracerFarSourceMassesKg,
     std::span<const double> trailPositionsM,
     std::span<const int32_t> trailColorsArgb,
     std::span<const int32_t> trailVertexCounts) {
@@ -310,15 +326,23 @@ void SolarLabVulkanRenderer::SetFrameState(
     frameBuffers_.sourceRevision = sourceRevision;
     frameBuffers_.epochSeconds = epochSeconds;
     frameBuffers_.simulationAdvanceSeconds = simulationAdvanceSeconds;
+    frameBuffers_.includeTracerMutualGravity = includeTracerMutualGravity;
     AssignSpan(frameBuffers_.authoritativePositionsM, authoritativePositionsM);
     AssignSpan(frameBuffers_.authoritativeSourceMassesKg, authoritativeSourceMassesKg);
     AssignSpan(frameBuffers_.authoritativeRadiiM, authoritativeRadiiM);
     AssignSpan(frameBuffers_.authoritativeColorsArgb, authoritativeColorsArgb);
     AssignSpan(frameBuffers_.authoritativeKinds, authoritativeKinds);
     AssignSpan(frameBuffers_.tracerNearPositionsM, tracerNearPositionsM);
+    AssignSpan(frameBuffers_.tracerNearSourceMassesKg, tracerNearSourceMassesKg);
     AssignSpan(frameBuffers_.tracerNearRadiiM, tracerNearRadiiM);
     AssignSpan(frameBuffers_.tracerNearColorsArgb, tracerNearColorsArgb);
     AssignSpan(frameBuffers_.tracerNearKinds, tracerNearKinds);
+    AssignSpan(frameBuffers_.tracerMediumHandles, tracerMediumHandles);
+    AssignSpan(frameBuffers_.tracerMediumPositionsM, tracerMediumPositionsM);
+    AssignSpan(frameBuffers_.tracerMediumSourceMassesKg, tracerMediumSourceMassesKg);
+    AssignSpan(frameBuffers_.tracerFarHandles, tracerFarHandles);
+    AssignSpan(frameBuffers_.tracerFarPositionsM, tracerFarPositionsM);
+    AssignSpan(frameBuffers_.tracerFarSourceMassesKg, tracerFarSourceMassesKg);
     AssignSpan(frameBuffers_.trailPositionsM, trailPositionsM);
     AssignSpan(frameBuffers_.trailColorsArgb, trailColorsArgb);
     AssignSpan(frameBuffers_.trailVertexCounts, trailVertexCounts);
@@ -927,7 +951,7 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     }
 
     if (computeDescriptorSetLayout_ == VK_NULL_HANDLE) {
-        const std::array<VkDescriptorSetLayoutBinding, 8> bindings = {{
+        const std::array<VkDescriptorSetLayoutBinding, 11> bindings = {{
             {
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -984,6 +1008,27 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
                 .pImmutableSamplers = nullptr,
             },
+            {
+                .binding = 8,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
+            {
+                .binding = 9,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
+            {
+                .binding = 10,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .pImmutableSamplers = nullptr,
+            },
         }};
         const VkDescriptorSetLayoutCreateInfo layoutCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -1006,7 +1051,7 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
             },
             {
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .descriptorCount = 14,
+                .descriptorCount = 20,
             },
         }};
         const VkDescriptorPoolCreateInfo poolCreateInfo{
@@ -1501,6 +1546,108 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
+    std::vector<TracerInfluenceBody> tracerNearInfluences;
+    const uint32_t tracerNearInfluenceCount = SafeCount3(
+        frameBuffers_.tracerNearPositionsM.size(),
+        frameBuffers_.tracerNearSourceMassesKg.size(),
+        frameBuffers_.tracerNearRadiiM.size());
+    tracerNearInfluences.reserve(tracerNearInfluenceCount);
+    for (uint32_t index = 0; index < tracerNearInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        tracerNearInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerNearPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerNearPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerNearSourceMassesKg[index]),
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerMediumInfluences;
+    const uint32_t tracerMediumInfluenceCount = SafeCount3(
+        frameBuffers_.tracerMediumPositionsM.size(),
+        frameBuffers_.tracerMediumSourceMassesKg.size(),
+        frameBuffers_.tracerMediumHandles.size());
+    tracerMediumInfluences.reserve(tracerMediumInfluenceCount);
+    for (uint32_t index = 0; index < tracerMediumInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerMediumHandles[index]);
+        tracerMediumInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerMediumSourceMassesKg[index]),
+            .handleLo = handleLo,
+            .handleHi = handleHi,
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerFarInfluences;
+    const uint32_t tracerFarInfluenceCount = SafeCount3(
+        frameBuffers_.tracerFarPositionsM.size(),
+        frameBuffers_.tracerFarSourceMassesKg.size(),
+        frameBuffers_.tracerFarHandles.size());
+    tracerFarInfluences.reserve(tracerFarInfluenceCount);
+    for (uint32_t index = 0; index < tracerFarInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerFarHandles[index]);
+        tracerFarInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerFarPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerFarPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerFarSourceMassesKg[index]),
+            .handleLo = handleLo,
+            .handleHi = handleHi,
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerNearInfluences;
+    const uint32_t tracerNearInfluenceCount = SafeCount3(
+        frameBuffers_.tracerNearPositionsM.size(),
+        frameBuffers_.tracerNearSourceMassesKg.size(),
+        frameBuffers_.tracerNearRadiiM.size());
+    tracerNearInfluences.reserve(tracerNearInfluenceCount);
+    for (uint32_t index = 0; index < tracerNearInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        tracerNearInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerNearPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerNearPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerNearSourceMassesKg[index]),
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerMediumInfluences;
+    const uint32_t tracerMediumInfluenceCount = SafeCount3(
+        frameBuffers_.tracerMediumPositionsM.size(),
+        frameBuffers_.tracerMediumSourceMassesKg.size(),
+        frameBuffers_.tracerMediumHandles.size());
+    tracerMediumInfluences.reserve(tracerMediumInfluenceCount);
+    for (uint32_t index = 0; index < tracerMediumInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerMediumHandles[index]);
+        tracerMediumInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerMediumPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerMediumSourceMassesKg[index]),
+            .handleLo = handleLo,
+            .handleHi = handleHi,
+        });
+    }
+
+    std::vector<TracerInfluenceBody> tracerFarInfluences;
+    const uint32_t tracerFarInfluenceCount = SafeCount3(
+        frameBuffers_.tracerFarPositionsM.size(),
+        frameBuffers_.tracerFarSourceMassesKg.size(),
+        frameBuffers_.tracerFarHandles.size());
+    tracerFarInfluences.reserve(tracerFarInfluenceCount);
+    for (uint32_t index = 0; index < tracerFarInfluenceCount; ++index) {
+        const size_t base = static_cast<size_t>(index) * 3U;
+        const auto [handleLo, handleHi] = SplitHandleWords(frameBuffers_.tracerFarHandles[index]);
+        tracerFarInfluences.push_back(TracerInfluenceBody{
+            .x = static_cast<float>(frameBuffers_.tracerFarPositionsM[base]),
+            .y = static_cast<float>(frameBuffers_.tracerFarPositionsM[base + 1U]),
+            .sourceMassKg = static_cast<float>(frameBuffers_.tracerFarSourceMassesKg[index]),
+            .handleLo = handleLo,
+            .handleHi = handleHi,
+        });
+    }
+
     std::vector<CheapPointVertex> tracerMediumVertices;
     const uint32_t tracerMediumCount = SafeCount3(
         seedBuffers_.tracerMediumPositionsM.size(),
@@ -1697,6 +1844,15 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     if (!uploadTracerStream(authoritativeInfluences.data(), ByteSize(authoritativeInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "authoritative-influence", sceneGpuStreams_.authoritativeInfluenceBuffer)) {
         return false;
     }
+    if (!uploadTracerStream(tracerNearInfluences.data(), ByteSize(tracerNearInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "tracer-near-influence", sceneGpuStreams_.tracerNearInfluenceBuffer)) {
+        return false;
+    }
+    if (!uploadTracerStream(tracerMediumInfluences.data(), ByteSize(tracerMediumInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "tracer-medium-influence", sceneGpuStreams_.tracerMediumInfluenceBuffer)) {
+        return false;
+    }
+    if (!uploadTracerStream(tracerFarInfluences.data(), ByteSize(tracerFarInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "tracer-far-influence", sceneGpuStreams_.tracerFarInfluenceBuffer)) {
+        return false;
+    }
     if (!uploadStream(tracerNearVertices.data(), ByteSize(tracerNearVertices), sceneGpuStreams_.tracerNear.plannedUsage, sceneGpuStreams_.tracerNear.label, sceneGpuStreams_.tracerNear.vertexBuffer)) {
         return false;
     }
@@ -1877,8 +2033,14 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.uploadedSeedRevision = seedBuffers_.sourceRevision;
     sceneGpuStreams_.uploadedFrameRevision = frameBuffers_.sourceRevision;
     sceneGpuStreams_.authoritativeInfluenceCount = authoritativeCount;
+    sceneGpuStreams_.tracerNearInfluenceCount = tracerNearInfluenceCount;
+    sceneGpuStreams_.tracerMediumInfluenceCount = tracerMediumInfluenceCount;
+    sceneGpuStreams_.tracerFarInfluenceCount = tracerFarInfluenceCount;
     sceneGpuStreams_.totalBytes =
         sceneGpuStreams_.authoritativeInfluenceBuffer.sizeBytes +
+        sceneGpuStreams_.tracerNearInfluenceBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumInfluenceBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarInfluenceBuffer.sizeBytes +
         sceneGpuStreams_.authoritative.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerNear.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMedium.vertexBuffer.sizeBytes +
@@ -2015,6 +2177,15 @@ bool SolarLabVulkanRenderer::UploadFrameGpuStreamsLocked() {
     if (!uploadTracerStream(authoritativeInfluences.data(), ByteSize(authoritativeInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "authoritative-influence", sceneGpuStreams_.authoritativeInfluenceBuffer)) {
         return false;
     }
+    if (!uploadTracerStream(tracerNearInfluences.data(), ByteSize(tracerNearInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "tracer-near-influence", sceneGpuStreams_.tracerNearInfluenceBuffer)) {
+        return false;
+    }
+    if (!uploadTracerStream(tracerMediumInfluences.data(), ByteSize(tracerMediumInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "tracer-medium-influence", sceneGpuStreams_.tracerMediumInfluenceBuffer)) {
+        return false;
+    }
+    if (!uploadTracerStream(tracerFarInfluences.data(), ByteSize(tracerFarInfluences), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "tracer-far-influence", sceneGpuStreams_.tracerFarInfluenceBuffer)) {
+        return false;
+    }
     if (!uploadStream(tracerNearVertices.data(), ByteSize(tracerNearVertices), sceneGpuStreams_.tracerNear.plannedUsage, sceneGpuStreams_.tracerNear.label, sceneGpuStreams_.tracerNear.vertexBuffer)) {
         return false;
     }
@@ -2039,6 +2210,9 @@ bool SolarLabVulkanRenderer::UploadFrameGpuStreamsLocked() {
 
     sceneGpuStreams_.authoritative.vertexCount = authoritativeCount;
     sceneGpuStreams_.authoritativeInfluenceCount = authoritativeCount;
+    sceneGpuStreams_.tracerNearInfluenceCount = tracerNearInfluenceCount;
+    sceneGpuStreams_.tracerMediumInfluenceCount = tracerMediumInfluenceCount;
+    sceneGpuStreams_.tracerFarInfluenceCount = tracerFarInfluenceCount;
     sceneGpuStreams_.tracerNear.vertexCount = tracerNearCount;
     sceneGpuStreams_.trails.vertexCount = trailPointCount;
     sceneGpuStreams_.uploadedFrameRevision = frameBuffers_.sourceRevision;
@@ -2049,6 +2223,9 @@ bool SolarLabVulkanRenderer::UploadFrameGpuStreamsLocked() {
     uploadStats_.trailStripCount = static_cast<uint32_t>(sceneGpuStreams_.trailStripVertexCounts.size());
     uploadStats_.bytesUploaded =
         sceneGpuStreams_.authoritativeInfluenceBuffer.sizeBytes +
+        sceneGpuStreams_.tracerNearInfluenceBuffer.sizeBytes +
+        sceneGpuStreams_.tracerMediumInfluenceBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarInfluenceBuffer.sizeBytes +
         sceneGpuStreams_.authoritative.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerNear.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.sizeBytes +
@@ -2103,13 +2280,19 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
             std::max(metersPerPixel, 1.0e-6f),
             minDimensionPx,
             maxPointSizePx,
-            enabledFeatures_.largePoints ? 1.0f : 0.0f,
+            frameBuffers_.includeTracerMutualGravity ? 1.0f : 0.0f,
         },
         .viewport = {
             widthPx,
             heightPx,
             tracerExtrapolationSeconds,
             static_cast<float>(sceneGpuStreams_.authoritativeInfluenceCount),
+        },
+        .tracerCounts = {
+            static_cast<float>(sceneGpuStreams_.tracerNearInfluenceCount),
+            static_cast<float>(sceneGpuStreams_.tracerMediumInfluenceCount),
+            static_cast<float>(sceneGpuStreams_.tracerFarInfluenceCount),
+            frameBuffers_.includeTracerMutualGravity ? 1.0f : 0.0f,
         },
     };
 
@@ -2121,7 +2304,18 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         return true;
     }
 
-    auto updateSet = [this](VkDescriptorSet set, const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect, const GpuBuffer& influence, const GpuBuffer& aux, const GpuBuffer& trails, const GpuBuffer& trailMeta) {
+    auto updateSet = [this](
+                         VkDescriptorSet set,
+                         const GpuBuffer& source,
+                         const GpuBuffer& output,
+                         const GpuBuffer& indirect,
+                         const GpuBuffer& influence,
+                         const GpuBuffer& aux,
+                         const GpuBuffer& trails,
+                         const GpuBuffer& trailMeta,
+                         const GpuBuffer& tracerNearInfluence,
+                         const GpuBuffer& tracerMediumInfluence,
+                         const GpuBuffer& tracerFarInfluence) {
         const VkDescriptorBufferInfo uniformInfo{
             .buffer = sceneUniformBuffer_.buffer,
             .offset = 0,
@@ -2162,7 +2356,22 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             .offset = 0,
             .range = trailMeta.sizeBytes,
         };
-        const std::array<VkWriteDescriptorSet, 8> writes = {{
+        const VkDescriptorBufferInfo tracerNearInfluenceInfo{
+            .buffer = tracerNearInfluence.buffer,
+            .offset = 0,
+            .range = tracerNearInfluence.sizeBytes,
+        };
+        const VkDescriptorBufferInfo tracerMediumInfluenceInfo{
+            .buffer = tracerMediumInfluence.buffer,
+            .offset = 0,
+            .range = tracerMediumInfluence.sizeBytes,
+        };
+        const VkDescriptorBufferInfo tracerFarInfluenceInfo{
+            .buffer = tracerFarInfluence.buffer,
+            .offset = 0,
+            .range = tracerFarInfluence.sizeBytes,
+        };
+        const std::array<VkWriteDescriptorSet, 11> writes = {{
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .pNext = nullptr,
@@ -2259,9 +2468,58 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
                 .pBufferInfo = &trailMetaInfo,
                 .pTexelBufferView = nullptr,
             },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 8,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &tracerNearInfluenceInfo,
+                .pTexelBufferView = nullptr,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 9,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &tracerMediumInfluenceInfo,
+                .pTexelBufferView = nullptr,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = set,
+                .dstBinding = 10,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &tracerFarInfluenceInfo,
+                .pTexelBufferView = nullptr,
+            },
         }};
         vkUpdateDescriptorSets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     };
+
+    const GpuBuffer& tracerNearInfluenceBinding =
+        sceneGpuStreams_.tracerNearInfluenceBuffer.buffer != VK_NULL_HANDLE
+            ? sceneGpuStreams_.tracerNearInfluenceBuffer
+            : sceneGpuStreams_.authoritativeInfluenceBuffer;
+    const GpuBuffer& tracerMediumInfluenceBinding =
+        sceneGpuStreams_.tracerMediumInfluenceBuffer.buffer != VK_NULL_HANDLE
+            ? sceneGpuStreams_.tracerMediumInfluenceBuffer
+            : sceneGpuStreams_.authoritativeInfluenceBuffer;
+    const GpuBuffer& tracerFarInfluenceBinding =
+        sceneGpuStreams_.tracerFarInfluenceBuffer.buffer != VK_NULL_HANDLE
+            ? sceneGpuStreams_.tracerFarInfluenceBuffer
+            : sceneGpuStreams_.authoritativeInfluenceBuffer;
 
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
         if (tracerMediumComputeDescriptorSet_ == VK_NULL_HANDLE ||
@@ -2282,7 +2540,10 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             sceneGpuStreams_.authoritativeInfluenceBuffer,
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer,
             sceneGpuStreams_.tracerMediumCompute.trailVertexBuffer,
-            sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer);
+            sceneGpuStreams_.tracerMediumCompute.trailMetaBuffer,
+            tracerNearInfluenceBinding,
+            tracerMediumInfluenceBinding,
+            tracerFarInfluenceBinding);
     }
 
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
@@ -2305,7 +2566,10 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             sceneGpuStreams_.authoritativeInfluenceBuffer,
             sceneGpuStreams_.tracerFarCompute.tileCounterBuffer,
             sceneGpuStreams_.tracerFarCompute.trailVertexBuffer,
-            sceneGpuStreams_.tracerFarCompute.trailMetaBuffer);
+            sceneGpuStreams_.tracerFarCompute.trailMetaBuffer,
+            tracerNearInfluenceBinding,
+            tracerMediumInfluenceBinding,
+            tracerFarInfluenceBinding);
     }
 
     return true;
@@ -2690,6 +2954,9 @@ void SolarLabVulkanRenderer::DestroyGpuBuffer(GpuBuffer& buffer) {
 
 void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.authoritativeInfluenceBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerNearInfluenceBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerMediumInfluenceBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarInfluenceBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.authoritative.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerNear.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMedium.vertexBuffer);
@@ -3113,10 +3380,14 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << " A=" << uploadStats_.authoritativeCount
         << "/AI=" << sceneGpuStreams_.authoritativeInfluenceCount
         << " TN=" << uploadStats_.tracerNearCount
+        << "/NI=" << sceneGpuStreams_.tracerNearInfluenceCount
         << " TM=" << uploadStats_.tracerMediumCount
+        << "/MI=" << sceneGpuStreams_.tracerMediumInfluenceCount
         << " TF=" << uploadStats_.tracerFarCount
+        << "/FI=" << sceneGpuStreams_.tracerFarInfluenceCount
         << " TL=" << uploadStats_.trailVertexCount
         << '/' << uploadStats_.trailStripCount
+        << " TMG=" << (frameBuffers_.includeTracerMutualGravity ? "on" : "off")
         << " GTL="
         << sceneGpuStreams_.tracerMediumCompute.trailVertexCount
         << '/'

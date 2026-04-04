@@ -287,15 +287,23 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     jlong sourceRevision,
     jdouble epochSeconds,
     jdouble simulationAdvanceSeconds,
+    jboolean includeTracerMutualGravity,
     jdoubleArray authoritativePositionsM,
     jdoubleArray authoritativeSourceMassesKg,
     jfloatArray authoritativeRadiiM,
     jintArray authoritativeColorsArgb,
     jintArray authoritativeKinds,
     jdoubleArray tracerNearPositionsM,
+    jdoubleArray tracerNearSourceMassesKg,
     jfloatArray tracerNearRadiiM,
     jintArray tracerNearColorsArgb,
     jintArray tracerNearKinds,
+    jlongArray tracerMediumHandles,
+    jdoubleArray tracerMediumPositionsM,
+    jdoubleArray tracerMediumSourceMassesKg,
+    jlongArray tracerFarHandles,
+    jdoubleArray tracerFarPositionsM,
+    jdoubleArray tracerFarSourceMassesKg,
     jdoubleArray trailPositionsM,
     jintArray trailColorsArgb,
     jintArray trailVertexCounts) {
@@ -310,9 +318,16 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     ScopedReadOnlyArray<jintArray, jint> authoritativeColors(env, authoritativeColorsArgb);
     ScopedReadOnlyArray<jintArray, jint> authoritativeKindsView(env, authoritativeKinds);
     ScopedReadOnlyArray<jdoubleArray, jdouble> tracerNearPositions(env, tracerNearPositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerNearSourceMasses(env, tracerNearSourceMassesKg);
     ScopedReadOnlyArray<jfloatArray, jfloat> tracerNearRadii(env, tracerNearRadiiM);
     ScopedReadOnlyArray<jintArray, jint> tracerNearColors(env, tracerNearColorsArgb);
     ScopedReadOnlyArray<jintArray, jint> tracerNearKindsView(env, tracerNearKinds);
+    ScopedReadOnlyArray<jlongArray, jlong> tracerMediumHandlesView(env, tracerMediumHandles);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumPositions(env, tracerMediumPositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerMediumSourceMasses(env, tracerMediumSourceMassesKg);
+    ScopedReadOnlyArray<jlongArray, jlong> tracerFarHandlesView(env, tracerFarHandles);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarPositions(env, tracerFarPositionsM);
+    ScopedReadOnlyArray<jdoubleArray, jdouble> tracerFarSourceMasses(env, tracerFarSourceMassesKg);
     ScopedReadOnlyArray<jdoubleArray, jdouble> trailPositions(env, trailPositionsM);
     ScopedReadOnlyArray<jintArray, jint> trailColors(env, trailColorsArgb);
     ScopedReadOnlyArray<jintArray, jint> trailVertexCountsView(env, trailVertexCounts);
@@ -321,15 +336,23 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
         static_cast<int64_t>(sourceRevision),
         static_cast<double>(epochSeconds),
         static_cast<double>(simulationAdvanceSeconds),
+        includeTracerMutualGravity == JNI_TRUE,
         authoritativePositions.asDoubleSpan(),
         authoritativeSourceMasses.asDoubleSpan(),
         authoritativeRadii.asFloatSpan(),
         authoritativeColors.asIntSpan(),
         authoritativeKindsView.asIntSpan(),
         tracerNearPositions.asDoubleSpan(),
+        tracerNearSourceMasses.asDoubleSpan(),
         tracerNearRadii.asFloatSpan(),
         tracerNearColors.asIntSpan(),
         tracerNearKindsView.asIntSpan(),
+        tracerMediumHandlesView.asLongSpan(),
+        tracerMediumPositions.asDoubleSpan(),
+        tracerMediumSourceMasses.asDoubleSpan(),
+        tracerFarHandlesView.asLongSpan(),
+        tracerFarPositions.asDoubleSpan(),
+        tracerFarSourceMasses.asDoubleSpan(),
         trailPositions.asDoubleSpan(),
         trailColors.asIntSpan(),
         trailVertexCountsView.asIntSpan());

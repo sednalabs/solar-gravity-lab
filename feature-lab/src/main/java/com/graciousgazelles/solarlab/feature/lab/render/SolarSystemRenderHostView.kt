@@ -27,6 +27,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
+    private var tracerMutualGravityEnabled: Boolean = false
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
@@ -75,6 +76,11 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     }
 
     fun processingMode(): RenderProcessingMode = processingMode
+
+    fun setTracerMutualGravityEnabled(enabled: Boolean) {
+        tracerMutualGravityEnabled = enabled
+        activeSurface?.setTracerMutualGravityEnabled(enabled)
+    }
 
     fun setSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
@@ -165,6 +171,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setInteractionListener(interactionListener)
         activeSurface?.setInteractionMode(interactionMode)
         activeSurface?.setProcessingMode(processingMode)
+        activeSurface?.setTracerMutualGravityEnabled(tracerMutualGravityEnabled)
         activeSurface?.setSelectedBodyId(selectedBodyId)
         activeSurface?.setObserverMode(observerMode)
         addView(

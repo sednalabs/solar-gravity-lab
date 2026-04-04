@@ -45,6 +45,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
+    private var tracerMutualGravityEnabled: Boolean = false
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var placementStartScreen: Pair<Float, Float>? = null
@@ -174,6 +175,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         latestScene = frame
         applyObserverTargetIfNeeded(frame)
         packetDirty = true
+        renderLatestScene()
+    }
+
+    override fun setTracerMutualGravityEnabled(enabled: Boolean) {
+        tracerMutualGravityEnabled = enabled
         renderLatestScene()
     }
 
@@ -339,6 +345,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 frameState = packet.toFrameState(
                     epochSeconds = latestScene.epochSeconds,
                     simulationAdvanceSeconds = simulationAdvanceSeconds,
+                    includeTracerMutualGravity = tracerMutualGravityEnabled,
                 ),
             )
             lastSubmittedFrameRevision = packet.sourceRevision

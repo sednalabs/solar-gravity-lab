@@ -4,6 +4,7 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 centerSpan;
     vec4 metrics;
     vec4 viewport;
+    vec4 tracerCounts;
 } uScene;
 
 layout(location = 0) in vec2 inPositionM;

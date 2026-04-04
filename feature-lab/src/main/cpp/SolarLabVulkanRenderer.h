@@ -45,15 +45,23 @@ public:
         int64_t sourceRevision,
         double epochSeconds,
         double simulationAdvanceSeconds,
+        bool includeTracerMutualGravity,
         std::span<const double> authoritativePositionsM,
         std::span<const double> authoritativeSourceMassesKg,
         std::span<const float> authoritativeRadiiM,
         std::span<const int32_t> authoritativeColorsArgb,
         std::span<const int32_t> authoritativeKinds,
         std::span<const double> tracerNearPositionsM,
+        std::span<const double> tracerNearSourceMassesKg,
         std::span<const float> tracerNearRadiiM,
         std::span<const int32_t> tracerNearColorsArgb,
         std::span<const int32_t> tracerNearKinds,
+        std::span<const int64_t> tracerMediumHandles,
+        std::span<const double> tracerMediumPositionsM,
+        std::span<const double> tracerMediumSourceMassesKg,
+        std::span<const int64_t> tracerFarHandles,
+        std::span<const double> tracerFarPositionsM,
+        std::span<const double> tracerFarSourceMassesKg,
         std::span<const double> trailPositionsM,
         std::span<const int32_t> trailColorsArgb,
         std::span<const int32_t> trailVertexCounts);
@@ -87,15 +95,23 @@ private:
         int64_t sourceRevision = 0;
         double epochSeconds = 0.0;
         double simulationAdvanceSeconds = 0.0;
+        bool includeTracerMutualGravity = false;
         std::vector<double> authoritativePositionsM;
         std::vector<double> authoritativeSourceMassesKg;
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
         std::vector<int32_t> authoritativeKinds;
         std::vector<double> tracerNearPositionsM;
+        std::vector<double> tracerNearSourceMassesKg;
         std::vector<float> tracerNearRadiiM;
         std::vector<int32_t> tracerNearColorsArgb;
         std::vector<int32_t> tracerNearKinds;
+        std::vector<int64_t> tracerMediumHandles;
+        std::vector<double> tracerMediumPositionsM;
+        std::vector<double> tracerMediumSourceMassesKg;
+        std::vector<int64_t> tracerFarHandles;
+        std::vector<double> tracerFarPositionsM;
+        std::vector<double> tracerFarSourceMassesKg;
         std::vector<double> trailPositionsM;
         std::vector<int32_t> trailColorsArgb;
         std::vector<int32_t> trailVertexCounts;
@@ -181,10 +197,22 @@ private:
         float sourceMassKg = 0.0f;
     };
 
+    struct alignas(16) TracerInfluenceBody {
+        float x = 0.0f;
+        float y = 0.0f;
+        float sourceMassKg = 0.0f;
+        float reserved0 = 0.0f;
+        uint32_t handleLo = 0;
+        uint32_t handleHi = 0;
+        uint32_t reserved1 = 0;
+        uint32_t reserved2 = 0;
+    };
+
     struct alignas(16) SceneUniformData {
         std::array<float, 4> centerSpan{};
         std::array<float, 4> metrics{};
         std::array<float, 4> viewport{};
+        std::array<float, 4> tracerCounts{};
     };
 
     struct ComputePushConstants {
@@ -238,6 +266,12 @@ private:
         size_t totalBytes = 0;
         GpuBuffer authoritativeInfluenceBuffer;
         uint32_t authoritativeInfluenceCount = 0;
+        GpuBuffer tracerNearInfluenceBuffer;
+        uint32_t tracerNearInfluenceCount = 0;
+        GpuBuffer tracerMediumInfluenceBuffer;
+        uint32_t tracerMediumInfluenceCount = 0;
+        GpuBuffer tracerFarInfluenceBuffer;
+        uint32_t tracerFarInfluenceCount = 0;
         DrawStreamBuffers authoritative;
         DrawStreamBuffers tracerNear;
         DrawStreamBuffers tracerMedium;
