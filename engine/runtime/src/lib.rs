@@ -62,6 +62,7 @@ pub struct MountedManifestState {
     pub manifest_id: String,
     pub manifest_version: SemVer,
     pub channel: String,
+    pub manifest_digest: Option<Digest>,
     pub mounted_packages: Vec<MountedPackageState>,
 }
 
@@ -777,12 +778,19 @@ fn camera_pose_from_snapshot(snapshot: &WorldSnapshot) -> CameraPose {
     }
 }
 
+fn format_manifest_digest(digest: &Digest) -> String {
+    format!("{}:{}", digest.algorithm, digest.hex_value())
+}
+
 fn scene_provenance(snapshot: &WorldSnapshot) -> Option<solarlab_domain::ProvenanceRef> {
     let mounted_manifest = snapshot.mounted_manifest.as_ref()?;
     Some(solarlab_domain::ProvenanceRef {
         source: mounted_manifest.manifest_id.clone(),
         version: semver_to_string(&mounted_manifest.manifest_version),
-        manifest_digest: None,
+        manifest_digest: mounted_manifest
+            .manifest_digest
+            .as_ref()
+            .map(format_manifest_digest),
     })
 }
 
@@ -801,16 +809,8 @@ fn semver_to_string(version: &SemVer) -> String {
 
 fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
     let mut revision = format!(
-        "scenario={}|branch={}|epoch={:.6}|observer={:?}|focus={}",
-        snapshot.scenario_id.0,
-        snapshot.branch_id.0,
-        snapshot.epoch_seconds,
-        snapshot.observer.mode,
-        snapshot
-            .observer
-            .focus_body_id
-            .as_ref()
-            .map_or("none", |body_id| body_id.0.as_str())
+        "scenario={}|branch={}|epoch={:.6}",
+        snapshot.scenario_id.0, snapshot.branch_id.0, snapshot.epoch_seconds
     );
     for body in &snapshot.bodies {
         use std::fmt::Write as _;
@@ -868,6 +868,7 @@ fn mounted_manifest_from_state(
         manifest_id: installed_manifest.manifest_id.clone(),
         manifest_version: installed_manifest.manifest_version.clone(),
         channel: installed_manifest.channel.clone(),
+        manifest_digest: installed_manifest.manifest_digest.clone(),
         mounted_packages,
     }))
 }
@@ -1668,6 +1669,51 @@ mod tests {
         assert_eq!(provenance.source, "manifest-alpha".to_owned());
         assert_eq!(provenance.version, "1.0.0".to_owned());
         assert_eq!(provenance.manifest_digest, None);
+    }
+
+    #[test]
+    fn extract_render_scene_includes_manifest_digest_when_available() {
+        let mut runtime = new_runtime();
+        let package_kind = PackageKind::Scenario;
+        let package_digest = digest(0x23);
+        let package_id = package_id_for(&package_kind, &package_digest);
+        let manifest_digest = digest(0x44);
+        let mut manifest = manifest(
+            "manifest-beta",
+            vec![package_locator(
+                package_kind.clone(),
+                semver(1, 2, 3),
+                package_digest.clone(),
+                true,
+            )],
+        );
+        manifest.manifest_digest = Some(manifest_digest.clone());
+
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest,
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    package_kind,
+                    semver(1, 2, 3),
+                    package_digest,
+                    "cache://pkg-scenario-beta-v123",
+                )]),
+            })
+            .expect("manifest apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: package_id.clone(),
+            })
+            .expect("mount should succeed");
+
+        let scene = extract_render_scene(&runtime.snapshot());
+        let provenance = scene.provenance.expect("provenance should be present");
+
+        assert_eq!(
+            provenance.manifest_digest,
+            Some(super::format_manifest_digest(&manifest_digest))
+        );
     }
 
     fn checkpoint_id_from_events(events: &[RuntimeEvent]) -> CheckpointId {

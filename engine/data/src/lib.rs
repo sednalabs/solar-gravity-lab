@@ -345,6 +345,7 @@ pub struct InstalledManifestState {
     pub manifest_id: String,
     pub manifest_version: SemVer,
     pub channel: String,
+    pub manifest_digest: Option<Digest>,
     pub installed_package_ids: BTreeSet<String>,
 }
 
@@ -387,6 +388,7 @@ pub struct UpdatePlan {
     pub manifest_id: String,
     pub manifest_version: SemVer,
     pub channel: String,
+    pub manifest_digest: Option<Digest>,
     pub selected_package_ids: Vec<String>,
     pub store_actions: Vec<UpdatePlanStoreAction>,
     pub activation_actions: Vec<UpdatePlanActivationAction>,
@@ -618,6 +620,7 @@ pub fn plan_manifest_update(
         manifest_id: manifest.manifest_id.clone(),
         manifest_version: manifest.manifest_version.clone(),
         channel: manifest.channel.clone(),
+        manifest_digest: manifest.manifest_digest.clone(),
         selected_package_ids,
         store_actions,
         activation_actions,
@@ -832,6 +835,7 @@ pub fn apply_update_plan(
                 manifest_id: plan.manifest_id.clone(),
                 manifest_version: plan.manifest_version.clone(),
                 channel: plan.channel.clone(),
+                manifest_digest: plan.manifest_digest.clone(),
                 installed_package_ids,
             }),
         },
@@ -1509,6 +1513,7 @@ mod tests {
                 manifest_id: "manifest/v2/old".to_string(),
                 manifest_version: semver(1, 9, 0),
                 channel: "stable".to_string(),
+                manifest_digest: None,
                 installed_package_ids: [
                     required.package_id.clone(),
                     old_installed.package_id.clone(),
@@ -1567,6 +1572,7 @@ mod tests {
                 manifest_id: "manifest/v2/unrelated".to_string(),
                 manifest_version: semver(1, 0, 0),
                 channel: "stable".to_string(),
+                manifest_digest: None,
                 installed_package_ids: BTreeSet::new(),
             }),
         };
@@ -1689,6 +1695,7 @@ mod tests {
                 manifest_id: "manifest/v2/old".to_string(),
                 manifest_version: semver(1, 9, 0),
                 channel: "stable".to_string(),
+                manifest_digest: None,
                 installed_package_ids: [required.package_id.clone(), legacy.package_id.clone()]
                     .into_iter()
                     .collect(),
@@ -1855,6 +1862,7 @@ mod tests {
             manifest_id: planned.manifest_id.clone(),
             manifest_version: planned.manifest_version.clone(),
             channel: planned.channel.clone(),
+            manifest_digest: planned.manifest_digest.clone(),
             selected_package_ids: planned.selected_package_ids.clone(),
             store_actions: planned.store_actions.clone(),
             activation_actions: Vec::new(),
@@ -1917,14 +1925,15 @@ mod tests {
         let planned = plan_manifest_update(&manifest(vec![required.clone()]), &target(), &local)
             .expect("planning should succeed");
         let mut plan = planned.clone();
-        plan.store_actions.push(UpdatePlanStoreAction::FetchPackage {
-            package_id: stray.package_id.clone(),
-            package_kind: stray.kind.clone(),
-            package_version: stray.package_version.clone(),
-            source_relative_uri: stray.relative_uri.clone(),
-            digest: stray.digest.clone(),
-            uncompressed_size_bytes: stray.uncompressed_size_bytes,
-        });
+        plan.store_actions
+            .push(UpdatePlanStoreAction::FetchPackage {
+                package_id: stray.package_id.clone(),
+                package_kind: stray.kind.clone(),
+                package_version: stray.package_version.clone(),
+                source_relative_uri: stray.relative_uri.clone(),
+                digest: stray.digest.clone(),
+                uncompressed_size_bytes: stray.uncompressed_size_bytes,
+            });
 
         let err = apply_update_plan(&plan, &local, &ApplyPackageInputs::empty())
             .expect_err("apply should reject stray fetch actions");
@@ -1959,6 +1968,7 @@ mod tests {
                 manifest_id: "manifest/v2/current".to_string(),
                 manifest_version: semver(2, 0, 0),
                 channel: "stable".to_string(),
+                manifest_digest: None,
                 installed_package_ids: [required.package_id.clone()].into_iter().collect(),
             }),
         };
@@ -1966,6 +1976,7 @@ mod tests {
             manifest_id: "manifest/v2/current".to_string(),
             manifest_version: semver(2, 0, 1),
             channel: "stable".to_string(),
+            manifest_digest: None,
             selected_package_ids: [required.package_id.clone()].into_iter().collect(),
             store_actions: Vec::new(),
             activation_actions: vec![
@@ -2010,6 +2021,7 @@ mod tests {
             manifest_id: "manifest/v2/current".to_string(),
             manifest_version: semver(2, 0, 1),
             channel: "stable".to_string(),
+            manifest_digest: None,
             selected_package_ids: Vec::new(),
             store_actions: Vec::new(),
             activation_actions: vec![UpdatePlanActivationAction::RemovePackage {
