@@ -77,6 +77,24 @@ class LabSessionPlaybackSubstepPolicyTest {
     }
 
     @Test
+    fun `runtime tick planning uses high-speed substep cap for worst-case month-per-second delta`() {
+        val simulatedTickSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.25
+        val plan = LabSession.playbackSubstepPlan(
+            totalSeconds = simulatedTickSeconds,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+        )
+
+        val substepCount = ceil(plan.totalSeconds / plan.maxSubstepSeconds).toInt()
+
+        assertEquals(21_600.0, plan.maxSubstepSeconds, 0.0)
+        assertTrue(
+            "Expected runtime planning to cap worst-case high-speed fanout within 30 substeps, count=$substepCount",
+            substepCount <= 30,
+        )
+    }
+
+    @Test
     fun `all collision-enabled playback modes keep conservative one-hour cap`() {
         listOf(
             CollisionMode.MERGE,
