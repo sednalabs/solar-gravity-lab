@@ -1,4 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use solarlab_data::{
+    apply_update_plan, plan_manifest_update, ApplyPackageInputs, ApplyProvenance, ApplyUpdateError,
+    CompatibilityTarget, Digest, LocalDataState, PackageKind, SemVer, StoredPackage,
+    UpdateManifest, UpdatePlan, UpdatePlanError,
+};
 
 use solarlab_domain::{
     BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics,
@@ -40,6 +46,24 @@ pub struct RuntimeConfig {
     pub live_updates_enabled: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MountedPackageState {
+    pub package_id: String,
+    pub kind: PackageKind,
+    pub package_version: SemVer,
+    pub schema_version: String,
+    pub digest: Digest,
+    pub local_store_uri: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MountedManifestState {
+    pub manifest_id: String,
+    pub manifest_version: SemVer,
+    pub channel: String,
+    pub mounted_packages: Vec<MountedPackageState>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorldSnapshot {
     pub scenario_id: ScenarioId,
@@ -52,6 +76,7 @@ pub struct WorldSnapshot {
     pub invariants: PhysicsInvariants,
     pub observer: ObserverState,
     pub playback: PlaybackState,
+    pub mounted_manifest: Option<MountedManifestState>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +131,30 @@ pub enum RuntimeError {
     UnknownCheckpoint(CheckpointId),
     DuplicateCheckpoint(CheckpointId),
     DuplicateBranch(BranchId),
+    PackagePlanFailed(UpdatePlanError),
+    PackageApplyFailed(ApplyUpdateError),
+    NoInstalledManifestAvailable,
+    PackageNotInstalled(String),
+    MountedPackageMissingFromStore(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplyUpdateManifestCommand {
+    pub manifest: UpdateManifest,
+    pub target: CompatibilityTarget,
+    pub fetched_packages_by_id: BTreeMap<String, StoredPackage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MountPackageCommand {
+    pub package_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplyUpdateManifestResult {
+    pub plan: UpdatePlan,
+    pub provenance: ApplyProvenance,
+    pub mounted_manifest: Option<MountedManifestState>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,6 +164,8 @@ struct BranchWorldState {
     observer: ObserverState,
     playback: PlaybackState,
     invariants: PhysicsInvariants,
+    local_data_state: LocalDataState,
+    mounted_package_ids: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -174,6 +225,8 @@ impl WorldRuntime {
                     sim_seconds_per_real_second: 1.0,
                 },
                 invariants: PhysicsInvariants::default(),
+                local_data_state: LocalDataState::empty(),
+                mounted_package_ids: BTreeSet::new(),
             },
             command_log: Vec::new(),
             checkpoints: Vec::new(),
@@ -202,6 +255,90 @@ impl WorldRuntime {
     #[must_use]
     pub fn active_branch_id(&self) -> &BranchId {
         &self.active_branch_id
+    }
+
+    pub fn apply_update_manifest(
+        &mut self,
+        command: ApplyUpdateManifestCommand,
+    ) -> Result<ApplyUpdateManifestResult, RuntimeError> {
+        let branch = self.active_branch_mut();
+
+        let plan = plan_manifest_update(
+            &command.manifest,
+            &command.target,
+            &branch.world.local_data_state,
+        )
+        .map_err(RuntimeError::PackagePlanFailed)?;
+
+        let applied_update = apply_update_plan(
+            &plan,
+            &branch.world.local_data_state,
+            &ApplyPackageInputs {
+                fetched_packages_by_id: command.fetched_packages_by_id,
+            },
+        )
+        .map_err(RuntimeError::PackageApplyFailed)?;
+
+        branch.world.local_data_state = applied_update.committed_state;
+        if let Some(installed_manifest) = &branch.world.local_data_state.installed_manifest {
+            branch.world.mounted_package_ids.retain(|package_id| {
+                installed_manifest
+                    .installed_package_ids
+                    .contains(package_id)
+            });
+        } else {
+            branch.world.mounted_package_ids.clear();
+        }
+
+        let mounted_manifest = mounted_manifest_from_state(
+            &branch.world.local_data_state,
+            &branch.world.mounted_package_ids,
+        )?;
+
+        Ok(ApplyUpdateManifestResult {
+            plan,
+            provenance: applied_update.provenance,
+            mounted_manifest,
+        })
+    }
+
+    pub fn mount_package(
+        &mut self,
+        command: MountPackageCommand,
+    ) -> Result<MountedManifestState, RuntimeError> {
+        let branch = self.active_branch_mut();
+        let Some(installed_manifest) = &branch.world.local_data_state.installed_manifest else {
+            return Err(RuntimeError::NoInstalledManifestAvailable);
+        };
+
+        if !installed_manifest
+            .installed_package_ids
+            .contains(&command.package_id)
+        {
+            return Err(RuntimeError::PackageNotInstalled(command.package_id));
+        }
+        if !branch
+            .world
+            .local_data_state
+            .package_store
+            .packages_by_id
+            .contains_key(&command.package_id)
+        {
+            return Err(RuntimeError::MountedPackageMissingFromStore(
+                command.package_id,
+            ));
+        }
+
+        branch.world.mounted_package_ids.insert(command.package_id);
+        let Some(mounted_manifest) = mounted_manifest_from_state(
+            &branch.world.local_data_state,
+            &branch.world.mounted_package_ids,
+        )?
+        else {
+            return Err(RuntimeError::NoInstalledManifestAvailable);
+        };
+
+        Ok(mounted_manifest)
     }
 
     pub fn apply_command(
@@ -399,6 +536,11 @@ impl WorldRuntime {
     pub fn snapshot(&self) -> WorldSnapshot {
         let active = self.active_branch();
         let checkpoint = active.last_checkpoint.clone();
+        let mounted_manifest = mounted_manifest_from_state(
+            &active.world.local_data_state,
+            &active.world.mounted_package_ids,
+        )
+        .expect("runtime mounted package state must be internally consistent");
 
         WorldSnapshot {
             scenario_id: self.scenario_id.clone(),
@@ -411,6 +553,7 @@ impl WorldRuntime {
             invariants: active.world.invariants,
             observer: active.world.observer.clone(),
             playback: active.world.playback.clone(),
+            mounted_manifest,
         }
     }
 
@@ -548,8 +691,55 @@ impl WorldRuntime {
     }
 }
 
+fn mounted_manifest_from_state(
+    local_data_state: &LocalDataState,
+    mounted_package_ids: &BTreeSet<String>,
+) -> Result<Option<MountedManifestState>, RuntimeError> {
+    let Some(installed_manifest) = &local_data_state.installed_manifest else {
+        return Ok(None);
+    };
+
+    let mut mounted_packages = Vec::with_capacity(mounted_package_ids.len());
+    for package_id in mounted_package_ids {
+        if !installed_manifest
+            .installed_package_ids
+            .contains(package_id)
+        {
+            return Err(RuntimeError::PackageNotInstalled(package_id.clone()));
+        }
+
+        let stored = local_data_state
+            .package_store
+            .packages_by_id
+            .get(package_id)
+            .ok_or_else(|| RuntimeError::MountedPackageMissingFromStore(package_id.clone()))?;
+
+        mounted_packages.push(MountedPackageState {
+            package_id: stored.package_id.clone(),
+            kind: stored.kind.clone(),
+            package_version: stored.package_version.clone(),
+            schema_version: stored.schema_version.clone(),
+            digest: stored.digest.clone(),
+            local_store_uri: stored.local_store_uri.clone(),
+        });
+    }
+
+    Ok(Some(MountedManifestState {
+        manifest_id: installed_manifest.manifest_id.clone(),
+        manifest_version: installed_manifest.manifest_version.clone(),
+        channel: installed_manifest.channel.clone(),
+        mounted_packages,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use solarlab_data::{
+        CompatibilityTarget, Digest, PackageCompatibility, PackageKind, PackageLocator, SemVer,
+        StoredPackage, UpdateManifest,
+    };
     use solarlab_domain::{
         BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics,
         Vector3d,
@@ -558,7 +748,10 @@ mod tests {
     use solarlab_history::HistoryEvent;
     use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
 
-    use super::{BodyState, RuntimeConfig, RuntimeError, RuntimeEvent, WorldCommand, WorldRuntime};
+    use super::{
+        ApplyUpdateManifestCommand, BodyState, MountPackageCommand, RuntimeConfig, RuntimeError,
+        RuntimeEvent, WorldCommand, WorldRuntime,
+    };
 
     #[test]
     fn applies_body_commands_and_publishes_snapshot() {
@@ -1011,6 +1204,207 @@ mod tests {
         assert!(matches!(events[2], RuntimeEvent::SnapshotPublished(_)));
     }
 
+    #[test]
+    fn apply_update_manifest_commits_installed_state_but_keeps_mount_explicit() {
+        let mut runtime = new_runtime();
+        let package_kind = PackageKind::Scenario;
+        let package_digest = digest(0x11);
+        let package_id = package_id_for(&package_kind, &package_digest);
+        let manifest = manifest(
+            "manifest-alpha",
+            vec![package_locator(
+                package_kind.clone(),
+                semver(1, 0, 0),
+                package_digest.clone(),
+                true,
+            )],
+        );
+        let fetched = vec![stored_package(
+            package_kind,
+            semver(1, 0, 0),
+            package_digest,
+            "cache://pkg-scenario-alpha-v1",
+        )];
+
+        let apply_result = runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest,
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(fetched),
+            })
+            .expect("manifest apply should succeed");
+
+        assert_eq!(apply_result.plan.selected_package_ids, vec![package_id]);
+        assert_eq!(
+            apply_result
+                .mounted_manifest
+                .expect("installed manifest should exist")
+                .mounted_packages
+                .len(),
+            0
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .mounted_manifest
+                .expect("snapshot should include installed manifest metadata")
+                .mounted_packages
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn mount_package_updates_runtime_snapshot_and_rejects_uninstalled_package() {
+        let mut runtime = new_runtime();
+        let package_kind = PackageKind::Scenario;
+        let package_digest = digest(0x12);
+        let package_id = package_id_for(&package_kind, &package_digest);
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest(
+                    "manifest-alpha",
+                    vec![package_locator(
+                        package_kind.clone(),
+                        semver(1, 0, 0),
+                        package_digest.clone(),
+                        true,
+                    )],
+                ),
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    package_kind,
+                    semver(1, 0, 0),
+                    package_digest,
+                    "cache://pkg-scenario-alpha-v1",
+                )]),
+            })
+            .expect("manifest apply should seed local data state");
+
+        let err = runtime
+            .mount_package(MountPackageCommand {
+                package_id: "pkg-missing".to_owned(),
+            })
+            .expect_err("mounting unknown package should fail");
+        assert_eq!(
+            err,
+            RuntimeError::PackageNotInstalled("pkg-missing".to_owned())
+        );
+
+        let mounted = runtime
+            .mount_package(MountPackageCommand {
+                package_id: package_id.clone(),
+            })
+            .expect("mount should succeed for installed package");
+
+        assert_eq!(mounted.mounted_packages.len(), 1);
+        assert_eq!(mounted.mounted_packages[0].package_id, package_id);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .mounted_manifest
+                .expect("snapshot should include mounted package")
+                .mounted_packages
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn mounted_packages_are_checkpoint_and_branch_state() {
+        let mut runtime = new_runtime();
+        let initial_kind = PackageKind::Scenario;
+        let initial_digest = digest(0x31);
+        let initial_package_id = package_id_for(&initial_kind, &initial_digest);
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest(
+                    "manifest-alpha",
+                    vec![package_locator(
+                        initial_kind.clone(),
+                        semver(1, 0, 0),
+                        initial_digest.clone(),
+                        true,
+                    )],
+                ),
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    initial_kind,
+                    semver(1, 0, 0),
+                    initial_digest,
+                    "cache://pkg-scenario-alpha-v1",
+                )]),
+            })
+            .expect("initial apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: initial_package_id.clone(),
+            })
+            .expect("initial mount should succeed");
+
+        let checkpoint_events = runtime
+            .apply_command(
+                WorldCommand::CreateCheckpoint {
+                    checkpoint_id: Some(CheckpointId("pkg-cp".into())),
+                    label: Some("pkg-mounted".into()),
+                },
+                1,
+            )
+            .expect("checkpoint creation should succeed");
+        let checkpoint_id = checkpoint_id_from_events(&checkpoint_events);
+
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest(
+                    "manifest-beta",
+                    vec![package_locator(
+                        PackageKind::CatalogPack,
+                        semver(2, 0, 0),
+                        digest(0x32),
+                        true,
+                    )],
+                ),
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    PackageKind::CatalogPack,
+                    semver(2, 0, 0),
+                    digest(0x32),
+                    "cache://pkg-catalog-beta-v2",
+                )]),
+            })
+            .expect("second apply should supersede installed state");
+        let second_package_id = package_id_for(&PackageKind::CatalogPack, &digest(0x32));
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: second_package_id,
+            })
+            .expect("second mount should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::CreateBranchFromCheckpoint {
+                    checkpoint_id,
+                    new_branch_id: Some(BranchId("pkg-restored".into())),
+                },
+                2,
+            )
+            .expect("branch from checkpoint should succeed");
+
+        let snapshot = runtime.snapshot();
+        let mounted_manifest = snapshot
+            .mounted_manifest
+            .expect("mounted manifest should be restored from checkpoint");
+        assert_eq!(mounted_manifest.manifest_id, "manifest-alpha".to_owned());
+        assert_eq!(
+            mounted_manifest
+                .mounted_packages
+                .iter()
+                .map(|pkg| pkg.package_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![initial_package_id.as_str()]
+        );
+    }
+
     fn checkpoint_id_from_events(events: &[RuntimeEvent]) -> CheckpointId {
         events
             .iter()
@@ -1052,5 +1446,91 @@ mod tests {
             HardwareProfile::offline_reference(),
             0,
         )
+    }
+
+    fn semver(major: u32, minor: u32, patch: u32) -> SemVer {
+        SemVer::new(major, minor, patch)
+    }
+
+    fn digest(fill: u8) -> Digest {
+        Digest {
+            algorithm: "sha256".to_owned(),
+            value: vec![fill; 32],
+        }
+    }
+
+    fn compatibility_target() -> CompatibilityTarget {
+        CompatibilityTarget {
+            runtime_contract: semver(1, 0, 0),
+            schema_version: "schema.v1".to_owned(),
+            capabilities: BTreeSet::from(["render.3d".to_owned(), "gravity.nbody".to_owned()]),
+            platform: "android-arm64".to_owned(),
+        }
+    }
+
+    fn package_locator(
+        kind: PackageKind,
+        package_version: SemVer,
+        digest: Digest,
+        required: bool,
+    ) -> PackageLocator {
+        let package_id = package_id_for(&kind, &digest);
+        PackageLocator {
+            package_id: package_id.clone(),
+            kind,
+            package_version,
+            schema_version: "schema.v1".to_owned(),
+            digest,
+            relative_uri: format!("packages/{package_id}.zip"),
+            uncompressed_size_bytes: 1_024,
+            required,
+            compatibility: PackageCompatibility {
+                runtime_contract_min: semver(1, 0, 0),
+                runtime_contract_max: semver(1, 2, 0),
+                required_capabilities: BTreeSet::from(["gravity.nbody".to_owned()]),
+                supported_platforms: BTreeSet::from(["android-arm64".to_owned()]),
+            },
+        }
+    }
+
+    fn stored_package(
+        kind: PackageKind,
+        package_version: SemVer,
+        digest: Digest,
+        local_store_uri: &str,
+    ) -> StoredPackage {
+        let package_id = package_id_for(&kind, &digest);
+        StoredPackage {
+            package_id,
+            kind,
+            digest,
+            package_version,
+            schema_version: "schema.v1".to_owned(),
+            uncompressed_size_bytes: 1_024,
+            local_store_uri: local_store_uri.to_owned(),
+        }
+    }
+
+    fn manifest(manifest_id: &str, packages: Vec<PackageLocator>) -> UpdateManifest {
+        UpdateManifest {
+            manifest_id: manifest_id.to_owned(),
+            manifest_version: semver(1, 0, 0),
+            channel: "stable".to_owned(),
+            packages,
+            manifest_digest: None,
+            full_snapshot: true,
+            supersedes_manifest_ids: Vec::new(),
+        }
+    }
+
+    fn fetched_map(packages: Vec<StoredPackage>) -> BTreeMap<String, StoredPackage> {
+        packages
+            .into_iter()
+            .map(|package| (package.package_id.clone(), package))
+            .collect()
+    }
+
+    fn package_id_for(kind: &PackageKind, digest: &Digest) -> String {
+        digest.content_id(kind)
     }
 }
