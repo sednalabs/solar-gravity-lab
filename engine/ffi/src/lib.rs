@@ -18,10 +18,10 @@ use std::mem::size_of;
 use std::str;
 use std::sync::{Mutex, OnceLock};
 
-use solarlab_domain::{BodyId, BranchId, ObserverMode, ScenarioId, TimelineSemantics};
+use solarlab_domain::{BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics, Vector3d};
 use solarlab_hardware::{CpuBackend, GpuBackend, HardwareProfile};
 use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
-use solarlab_runtime::{RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
+use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_vulkan_adapter::{
     adapt_render_scene, PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight,
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
@@ -131,6 +131,24 @@ pub enum SlCommandKind {
     SetPlaybackRate = 3,
     SetObserverMode = 4,
     FocusBody = 5,
+    SpawnBody = 6,
+    RemoveBody = 7,
+    SetBodyKinematics = 8,
+    CreateCheckpoint = 9,
+    CreateBranchFromCheckpoint = 10,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlBodyClass {
+    Star = 0,
+    Planet = 1,
+    DwarfPlanet = 2,
+    Moon = 3,
+    SmallBody = 4,
+    Tracer = 5,
+    Spacecraft = 6,
+    Custom = 7,
 }
 
 #[repr(C)]
@@ -287,6 +305,17 @@ pub struct SlSessionCommand {
     pub kind: SlCommandKind,
     pub body_id: [u8; SL_V2_ID_CAPACITY],
     pub body_id_len: u32,
+    pub body_class: SlBodyClass,
+    pub body_position: SlPackedVec3,
+    pub body_velocity: SlPackedVec3,
+    pub body_mass_kg: f64,
+    pub body_radius_m: f64,
+    pub checkpoint_id: [u8; SL_V2_ID_CAPACITY],
+    pub checkpoint_id_len: u32,
+    pub checkpoint_label: [u8; SL_V2_ID_CAPACITY],
+    pub checkpoint_label_len: u32,
+    pub new_branch_id: [u8; SL_V2_ID_CAPACITY],
+    pub new_branch_id_len: u32,
     pub observer_mode: SlObserverMode,
     pub delta_seconds: f64,
     pub sim_seconds_per_real_second: f64,
@@ -1157,6 +1186,58 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
                 body_id: body_id.map(BodyId),
             })
         }
+        SlCommandKind::SpawnBody => {
+            let body_id = decode_identifier(&command.body_id, command.body_id_len)?;
+            let body_class = decode_body_class(command.body_class)?;
+            Ok(WorldCommand::SpawnBody {
+                body: BodyState {
+                    body_id: BodyId(body_id),
+                    body_class,
+                    mass_kg: command.body_mass_kg,
+                    radius_m: command.body_radius_m,
+                    position_m: decode_packed_vec3(command.body_position),
+                    velocity_mps: decode_packed_vec3(command.body_velocity),
+                },
+            })
+        }
+        SlCommandKind::RemoveBody => Ok(WorldCommand::RemoveBody {
+            body_id: BodyId(decode_identifier(&command.body_id, command.body_id_len)?),
+        }),
+        SlCommandKind::SetBodyKinematics => {
+            let body_id = decode_identifier(&command.body_id, command.body_id_len)?;
+            Ok(WorldCommand::SetBodyKinematics {
+                body_id: BodyId(body_id),
+                position_m: decode_packed_vec3(command.body_position),
+                velocity_mps: decode_packed_vec3(command.body_velocity),
+            })
+        }
+        SlCommandKind::CreateCheckpoint => {
+            let checkpoint_id = decode_optional_identifier(
+                &command.checkpoint_id,
+                command.checkpoint_id_len,
+            )?
+            .map(CheckpointId);
+            let label = decode_optional_identifier(
+                &command.checkpoint_label,
+                command.checkpoint_label_len,
+            )?;
+            Ok(WorldCommand::CreateCheckpoint {
+                checkpoint_id,
+                label,
+            })
+        }
+        SlCommandKind::CreateBranchFromCheckpoint => {
+            let checkpoint_id = CheckpointId(decode_identifier(
+                &command.checkpoint_id,
+                command.checkpoint_id_len,
+            )?);
+            let new_branch_id = decode_optional_identifier(&command.new_branch_id, command.new_branch_id_len)?
+                .map(BranchId);
+            Ok(WorldCommand::CreateBranchFromCheckpoint {
+                checkpoint_id,
+                new_branch_id,
+            })
+        }
     }
 }
 
@@ -1169,6 +1250,27 @@ fn decode_optional_identifier(
     }
 
     decode_identifier(bytes, length).map(Some)
+}
+
+fn decode_body_class(value: SlBodyClass) -> Result<BodyClass, SlResult> {
+    match value {
+        SlBodyClass::Star => Ok(BodyClass::Star),
+        SlBodyClass::Planet => Ok(BodyClass::Planet),
+        SlBodyClass::DwarfPlanet => Ok(BodyClass::DwarfPlanet),
+        SlBodyClass::Moon => Ok(BodyClass::Moon),
+        SlBodyClass::SmallBody => Ok(BodyClass::SmallBody),
+        SlBodyClass::Tracer => Ok(BodyClass::Tracer),
+        SlBodyClass::Spacecraft => Ok(BodyClass::Spacecraft),
+        SlBodyClass::Custom => Ok(BodyClass::Custom),
+    }
+}
+
+fn decode_packed_vec3(value: SlPackedVec3) -> Vector3d {
+    Vector3d {
+        x: f64::from(value.x),
+        y: f64::from(value.y),
+        z: f64::from(value.z),
+    }
 }
 
 fn runtime_error_to_status(error: RuntimeError) -> SlResult {
@@ -1314,7 +1416,7 @@ mod android_jni {
         SlVulkanSceneBufferKind, SlVulkanScenePacketResult, SL_V2_ID_CAPACITY,
     };
     use jni::objects::{JByteArray, JObject, JValue};
-    use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject};
+    use jni::sys::{jboolean, jbyteArray, jdouble, jint, jlong, jobject};
     use jni::JNIEnv;
 
     const CLASS_NATIVE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeResult";
@@ -1462,6 +1564,18 @@ mod android_jni {
         handle: jlong,
         kind: jint,
         body_id_utf8: jbyteArray,
+        body_class: jint,
+        body_position_x: jdouble,
+        body_position_y: jdouble,
+        body_position_z: jdouble,
+        body_velocity_x: jdouble,
+        body_velocity_y: jdouble,
+        body_velocity_z: jdouble,
+        body_mass_kg: jdouble,
+        body_radius_m: jdouble,
+        checkpoint_id_utf8: jbyteArray,
+        checkpoint_label_utf8: jbyteArray,
+        new_branch_id_utf8: jbyteArray,
         observer_mode: jint,
         delta_seconds: f64,
         sim_seconds_per_real_second: f64,
@@ -1472,6 +1586,18 @@ mod android_jni {
             handle,
             kind,
             body_id_utf8,
+            body_class,
+            body_position_x,
+            body_position_y,
+            body_position_z,
+            body_velocity_x,
+            body_velocity_y,
+            body_velocity_z,
+            body_mass_kg,
+            body_radius_m,
+            checkpoint_id_utf8,
+            checkpoint_label_utf8,
+            new_branch_id_utf8,
             observer_mode,
             delta_seconds,
             sim_seconds_per_real_second,
@@ -1589,6 +1715,18 @@ mod android_jni {
         handle: jlong,
         kind: jint,
         body_id_utf8: jbyteArray,
+        body_class: jint,
+        body_position_x: jdouble,
+        body_position_y: jdouble,
+        body_position_z: jdouble,
+        body_velocity_x: jdouble,
+        body_velocity_y: jdouble,
+        body_velocity_z: jdouble,
+        body_mass_kg: jdouble,
+        body_radius_m: jdouble,
+        checkpoint_id_utf8: jbyteArray,
+        checkpoint_label_utf8: jbyteArray,
+        new_branch_id_utf8: jbyteArray,
         observer_mode: jint,
         delta_seconds: f64,
         sim_seconds_per_real_second: f64,
@@ -1619,6 +1757,46 @@ mod android_jni {
             Err(result) => return create_error_snapshot_summary(result),
         };
 
+        let body_class = match decode_body_class_value(body_class) {
+            Ok(value) => value,
+            Err(result) => return create_error_snapshot_summary(result),
+        };
+
+        let body_position = SlPackedVec3 {
+            x: body_position_x as f32,
+            y: body_position_y as f32,
+            z: body_position_z as f32,
+        };
+        let body_velocity = SlPackedVec3 {
+            x: body_velocity_x as f32,
+            y: body_velocity_y as f32,
+            z: body_velocity_z as f32,
+        };
+
+        let (checkpoint_id, checkpoint_id_len) = match decode_optional_java_id_bytes(
+            env,
+            checkpoint_id_utf8,
+        ) {
+            Ok(value) => value,
+            Err(result) => return create_error_snapshot_summary(result),
+        };
+
+        let (checkpoint_label, checkpoint_label_len) = match decode_optional_java_id_bytes(
+            env,
+            checkpoint_label_utf8,
+        ) {
+            Ok(value) => value,
+            Err(result) => return create_error_snapshot_summary(result),
+        };
+
+        let (new_branch_id, new_branch_id_len) = match decode_optional_java_id_bytes(
+            env,
+            new_branch_id_utf8,
+        ) {
+            Ok(value) => value,
+            Err(result) => return create_error_snapshot_summary(result),
+        };
+
         let recorded_at_unix_ms = match i64::try_from(recorded_at_unix_ms) {
             Ok(value) => value,
             Err(_) => return create_error_snapshot_summary(status(SlStatusCode::InvalidArgument)),
@@ -1630,6 +1808,17 @@ mod android_jni {
                 kind,
                 body_id,
                 body_id_len,
+                body_class,
+                body_position,
+                body_velocity,
+                body_mass_kg,
+                body_radius_m,
+                checkpoint_id,
+                checkpoint_id_len,
+                checkpoint_label,
+                checkpoint_label_len,
+                new_branch_id,
+                new_branch_id_len,
                 observer_mode,
                 delta_seconds,
                 sim_seconds_per_real_second,
@@ -1676,6 +1865,25 @@ mod android_jni {
             3 => Ok(SlCommandKind::SetPlaybackRate),
             4 => Ok(SlCommandKind::SetObserverMode),
             5 => Ok(SlCommandKind::FocusBody),
+            6 => Ok(SlCommandKind::SpawnBody),
+            7 => Ok(SlCommandKind::RemoveBody),
+            8 => Ok(SlCommandKind::SetBodyKinematics),
+            9 => Ok(SlCommandKind::CreateCheckpoint),
+            10 => Ok(SlCommandKind::CreateBranchFromCheckpoint),
+            _ => Err(status(SlStatusCode::InvalidArgument)),
+        }
+    }
+
+    fn decode_body_class_value(value: jint) -> Result<SlBodyClass, SlResult> {
+        match value {
+            0 => Ok(SlBodyClass::Star),
+            1 => Ok(SlBodyClass::Planet),
+            2 => Ok(SlBodyClass::DwarfPlanet),
+            3 => Ok(SlBodyClass::Moon),
+            4 => Ok(SlBodyClass::SmallBody),
+            5 => Ok(SlBodyClass::Tracer),
+            6 => Ok(SlBodyClass::Spacecraft),
+            7 => Ok(SlBodyClass::Custom),
             _ => Err(status(SlStatusCode::InvalidArgument)),
         }
     }
@@ -2197,15 +2405,9 @@ mod tests {
 
         let command_result = sl_v2_session_apply_command(
             create.handle,
-            SlSessionCommand {
-                kind: SlCommandKind::AdvanceEpoch,
-                body_id: [0_u8; SL_V2_ID_CAPACITY],
-                body_id_len: 0,
-                observer_mode: SlObserverMode::Free,
-                delta_seconds: 12.5,
-                sim_seconds_per_real_second: 0.0,
-                recorded_at_unix_ms: 222,
-            },
+            test_session_command(SlCommandKind::AdvanceEpoch, |command| {
+                command.delta_seconds = 12.5;
+            }),
         );
         assert_eq!(command_result.result.code, SlStatusCode::Ok);
         assert_eq!(command_result.summary.epoch_seconds, 12.5);
@@ -2226,17 +2428,162 @@ mod tests {
         body_id[..5].copy_from_slice(b"earth");
         let command_result = sl_v2_session_apply_command(
             create.handle,
-            SlSessionCommand {
-                kind: SlCommandKind::FocusBody,
-                body_id,
-                body_id_len: 5,
-                observer_mode: SlObserverMode::Free,
-                delta_seconds: 0.0,
-                sim_seconds_per_real_second: 0.0,
-                recorded_at_unix_ms: 333,
-            },
+            test_session_command(SlCommandKind::FocusBody, |command| {
+                command.body_id = body_id;
+                command.body_id_len = 5;
+            }),
         );
         assert_eq!(command_result.result.code, SlStatusCode::InvalidArgument);
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn apply_command_spawn_body_adds_body() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+        body_id[..4].copy_from_slice(b"ship");
+        let command_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::SpawnBody, |command| {
+                command.body_id = body_id;
+                command.body_id_len = 4;
+                command.body_class = SlBodyClass::Spacecraft;
+                command.body_position = SlPackedVec3 {
+                    x: 4.0,
+                    y: 3.0,
+                    z: 2.0,
+                };
+                command.body_velocity = SlPackedVec3 {
+                    x: 0.5,
+                    y: 0.4,
+                    z: 0.0,
+                };
+                command.body_mass_kg = 4.2;
+                command.body_radius_m = 0.6;
+            }),
+        );
+        assert_eq!(command_result.result.code, SlStatusCode::Ok);
+        assert_eq!(command_result.summary.body_count, 1);
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn apply_command_remove_body_removes_existing_body() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let spawn = test_session_command(SlCommandKind::SpawnBody, |command| {
+            let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+            body_id[..4].copy_from_slice(b"ship");
+            command.body_id = body_id;
+            command.body_id_len = 4;
+            command.body_class = SlBodyClass::Spacecraft;
+        });
+        let spawn_result = sl_v2_session_apply_command(create.handle, spawn);
+        assert_eq!(spawn_result.result.code, SlStatusCode::Ok);
+        assert_eq!(spawn_result.summary.body_count, 1);
+
+        let mut remove_body_id = [0_u8; SL_V2_ID_CAPACITY];
+        remove_body_id[..4].copy_from_slice(b"ship");
+        let remove_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::RemoveBody, |command| {
+                command.body_id = remove_body_id;
+                command.body_id_len = 4;
+            }),
+        );
+        assert_eq!(remove_result.result.code, SlStatusCode::Ok);
+        assert_eq!(remove_result.summary.body_count, 0);
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn apply_command_set_body_kinematics_mutates_body_state() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        seed_runtime_with_body(create.handle, "ship", 1.0);
+
+        let command_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::SetBodyKinematics, |command| {
+                let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+                body_id[..4].copy_from_slice(b"ship");
+                command.body_id = body_id;
+                command.body_id_len = 4;
+                command.body_position = SlPackedVec3 {
+                    x: 10.0,
+                    y: 20.0,
+                    z: 30.0,
+                };
+                command.body_velocity = SlPackedVec3 {
+                    x: 0.5,
+                    y: 1.0,
+                    z: -1.0,
+                };
+            }),
+        );
+        assert_eq!(command_result.result.code, SlStatusCode::Ok);
+
+        let runtime = {
+            let registry = registry().lock().expect("session registry lock");
+            let session = registry.get(create.handle).expect("session exists");
+            session.runtime.snapshot()
+        };
+        let body = runtime
+            .bodies
+            .iter()
+            .find(|value| value.body_id == BodyId("ship".to_owned()))
+            .expect("body should exist");
+        assert_eq!(body.position_m.x, 10.0);
+        assert_eq!(body.position_m.y, 20.0);
+        assert_eq!(body.position_m.z, 30.0);
+        assert_eq!(body.velocity_mps.x, 0.5);
+        assert_eq!(body.velocity_mps.y, 1.0);
+        assert_eq!(body.velocity_mps.z, -1.0);
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn apply_command_create_checkpoint_and_branch_from_checkpoint() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let checkpoint_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::CreateCheckpoint, |command| {
+                let mut checkpoint_id = [0_u8; SL_V2_ID_CAPACITY];
+                checkpoint_id[..2].copy_from_slice(b"cp");
+                command.checkpoint_id = checkpoint_id;
+                command.checkpoint_id_len = 2;
+                let mut checkpoint_label = [0_u8; SL_V2_ID_CAPACITY];
+                checkpoint_label[..8].copy_from_slice(b"baseline");
+                command.checkpoint_label = checkpoint_label;
+                command.checkpoint_label_len = 8;
+            }),
+        );
+        assert_eq!(checkpoint_result.result.code, SlStatusCode::Ok);
+
+        let branch_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::CreateBranchFromCheckpoint, |command| {
+                let mut checkpoint_id = [0_u8; SL_V2_ID_CAPACITY];
+                checkpoint_id[..2].copy_from_slice(b"cp");
+                command.checkpoint_id = checkpoint_id;
+                command.checkpoint_id_len = 2;
+                let mut new_branch_id = [0_u8; SL_V2_ID_CAPACITY];
+                new_branch_id[..6].copy_from_slice(b"branch");
+                command.new_branch_id = new_branch_id;
+                command.new_branch_id_len = 6;
+            }),
+        );
+        assert_eq!(branch_result.result.code, SlStatusCode::Ok);
+        assert_eq!(branch_result.summary.active_branch_id, "branch");
 
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
@@ -2264,6 +2611,35 @@ mod tests {
             .apply_command(WorldCommand::SpawnBody { body }, 123)
             .expect("spawn body");
         assert!(!events.is_empty());
+    }
+
+    fn test_session_command(
+        kind: SlCommandKind,
+        mutate: impl FnOnce(&mut SlSessionCommand),
+    ) -> SlSessionCommand {
+        let mut command = SlSessionCommand {
+            kind,
+            body_id: [0_u8; SL_V2_ID_CAPACITY],
+            body_id_len: 0,
+            body_class: SlBodyClass::Planet,
+            body_position: SlPackedVec3::default(),
+            body_velocity: SlPackedVec3::default(),
+            body_mass_kg: 1.0,
+            body_radius_m: 1.0,
+            checkpoint_id: [0_u8; SL_V2_ID_CAPACITY],
+            checkpoint_id_len: 0,
+            checkpoint_label: [0_u8; SL_V2_ID_CAPACITY],
+            checkpoint_label_len: 0,
+            new_branch_id: [0_u8; SL_V2_ID_CAPACITY],
+            new_branch_id_len: 0,
+            observer_mode: SlObserverMode::Free,
+            delta_seconds: 0.0,
+            sim_seconds_per_real_second: 0.0,
+            recorded_at_unix_ms: 111,
+        };
+
+        mutate(&mut command);
+        command
     }
 
     fn focus_body(handle: super::SlRuntimeHandle, body_id: &str) {

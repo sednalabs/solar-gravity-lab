@@ -88,8 +88,24 @@ typedef enum SlCommandKind {
   SL_COMMAND_RESUME_PLAYBACK = 2,
   SL_COMMAND_SET_PLAYBACK_RATE = 3,
   SL_COMMAND_SET_OBSERVER_MODE = 4,
-  SL_COMMAND_FOCUS_BODY = 5
+  SL_COMMAND_FOCUS_BODY = 5,
+  SL_COMMAND_SPAWN_BODY = 6,
+  SL_COMMAND_REMOVE_BODY = 7,
+  SL_COMMAND_SET_BODY_KINEMATICS = 8,
+  SL_COMMAND_CREATE_CHECKPOINT = 9,
+  SL_COMMAND_CREATE_BRANCH_FROM_CHECKPOINT = 10
 } SlCommandKind;
+
+typedef enum SlBodyClass {
+  SL_BODY_CLASS_STAR = 0,
+  SL_BODY_CLASS_PLANET = 1,
+  SL_BODY_CLASS_DWARF_PLANET = 2,
+  SL_BODY_CLASS_MOON = 3,
+  SL_BODY_CLASS_SMALL_BODY = 4,
+  SL_BODY_CLASS_TRACER = 5,
+  SL_BODY_CLASS_SPACECRAFT = 6,
+  SL_BODY_CLASS_CUSTOM = 7
+} SlBodyClass;
 
 typedef struct SlRuntimeInfo {
   uint32_t abi_version;
@@ -215,6 +231,17 @@ typedef struct SlSessionCommand {
   SlCommandKind kind;
   uint8_t body_id[SL_V2_ID_CAPACITY];
   uint32_t body_id_len;
+  SlBodyClass body_class;
+  SlPackedVec3 body_position;
+  SlPackedVec3 body_velocity;
+  double body_mass_kg;
+  double body_radius_m;
+  uint8_t checkpoint_id[SL_V2_ID_CAPACITY];
+  uint32_t checkpoint_id_len;
+  uint8_t checkpoint_label[SL_V2_ID_CAPACITY];
+  uint32_t checkpoint_label_len;
+  uint8_t new_branch_id[SL_V2_ID_CAPACITY];
+  uint32_t new_branch_id_len;
   SlObserverMode observer_mode;
   double delta_seconds;
   double sim_seconds_per_real_second;

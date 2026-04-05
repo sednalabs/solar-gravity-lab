@@ -302,6 +302,11 @@ private fun RuntimeCommand.userFacingAction(): String = when (this) {
     is RuntimeCommand.SetPlaybackRate -> "Set playback rate to ${simSecondsPerRealSecond.asRateLabel()}"
     is RuntimeCommand.SetObserverMode -> "Switch observer to ${mode.displayLabel()}"
     is RuntimeCommand.FocusBody -> "Focus ${bodyId ?: "active selection"}"
+    is RuntimeCommand.SpawnBody -> "Spawn ${bodyId}"
+    is RuntimeCommand.RemoveBody -> "Remove ${bodyId}"
+    is RuntimeCommand.SetBodyKinematics -> "Update kinematics for ${bodyId}"
+    is RuntimeCommand.CreateCheckpoint -> "Create checkpoint ${checkpointId ?: "(auto)"}"
+    is RuntimeCommand.CreateBranchFromCheckpoint -> "Create branch from ${checkpointId}"
 }
 
 private fun RuntimeObserverMode.displayLabel(): String = when (this) {

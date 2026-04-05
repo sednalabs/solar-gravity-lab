@@ -337,6 +337,62 @@ sealed interface RuntimeCommand {
     data class FocusBody(val bodyId: String?) : RuntimeCommand {
         override val label: String = "observer.focus_body"
     }
+
+    data class SpawnBody(
+        val bodyId: String,
+        val bodyClass: RuntimeBodyClass = RuntimeBodyClass.Planet,
+        val positionX: Double = 0.0,
+        val positionY: Double = 0.0,
+        val positionZ: Double = 0.0,
+        val velocityX: Double = 0.0,
+        val velocityY: Double = 0.0,
+        val velocityZ: Double = 0.0,
+        val massKg: Double,
+        val radiusM: Double,
+    ) : RuntimeCommand {
+        override val label: String = "body.spawn"
+    }
+
+    data class RemoveBody(val bodyId: String) : RuntimeCommand {
+        override val label: String = "body.remove"
+    }
+
+    data class SetBodyKinematics(
+        val bodyId: String,
+        val positionX: Double,
+        val positionY: Double,
+        val positionZ: Double,
+        val velocityX: Double,
+        val velocityY: Double,
+        val velocityZ: Double,
+    ) : RuntimeCommand {
+        override val label: String = "body.set_kinematics"
+    }
+
+    data class CreateCheckpoint(
+        val checkpointId: String? = null,
+        val label: String? = null,
+    ) : RuntimeCommand {
+        override val label: String = "branching.create_checkpoint"
+    }
+
+    data class CreateBranchFromCheckpoint(
+        val checkpointId: String,
+        val newBranchId: String? = null,
+    ) : RuntimeCommand {
+        override val label: String = "branching.create_branch_from_checkpoint"
+    }
+}
+
+enum class RuntimeBodyClass(val nativeCode: Int) {
+    Star(0),
+    Planet(1),
+    DwarfPlanet(2),
+    Moon(3),
+    SmallBody(4),
+    Tracer(5),
+    Spacecraft(6),
+    Custom(7),
 }
 
 enum class RuntimeObserverMode(val nativeCode: Int) {
@@ -349,6 +405,18 @@ enum class RuntimeObserverMode(val nativeCode: Int) {
 internal data class NativeRuntimeCommandPayload(
     val kind: Int,
     val bodyIdUtf8: ByteArray? = null,
+    val bodyClass: Int = NATIVE_BODY_CLASS_PLANET,
+    val bodyPositionX: Double = 0.0,
+    val bodyPositionY: Double = 0.0,
+    val bodyPositionZ: Double = 0.0,
+    val bodyVelocityX: Double = 0.0,
+    val bodyVelocityY: Double = 0.0,
+    val bodyVelocityZ: Double = 0.0,
+    val bodyMassKg: Double = 0.0,
+    val bodyRadiusM: Double = 0.0,
+    val checkpointIdUtf8: ByteArray? = null,
+    val checkpointLabelUtf8: ByteArray? = null,
+    val newBranchIdUtf8: ByteArray? = null,
     val observerMode: Int = RuntimeObserverMode.Free.nativeCode,
     val deltaSeconds: Double = 0.0,
     val simSecondsPerRealSecond: Double = 0.0,
@@ -382,6 +450,48 @@ private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when
     is RuntimeCommand.FocusBody -> NativeRuntimeCommandPayload(
         kind = NATIVE_COMMAND_FOCUS_BODY,
         bodyIdUtf8 = bodyId?.toByteArray(StandardCharsets.UTF_8),
+    )
+
+    is RuntimeCommand.SpawnBody -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_SPAWN_BODY,
+        bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+        bodyClass = bodyClass.nativeCode,
+        bodyPositionX = positionX,
+        bodyPositionY = positionY,
+        bodyPositionZ = positionZ,
+        bodyVelocityX = velocityX,
+        bodyVelocityY = velocityY,
+        bodyVelocityZ = velocityZ,
+        bodyMassKg = massKg,
+        bodyRadiusM = radiusM,
+    )
+
+    is RuntimeCommand.RemoveBody -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_REMOVE_BODY,
+        bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+    )
+
+    is RuntimeCommand.SetBodyKinematics -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_SET_BODY_KINEMATICS,
+        bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+        bodyPositionX = positionX,
+        bodyPositionY = positionY,
+        bodyPositionZ = positionZ,
+        bodyVelocityX = velocityX,
+        bodyVelocityY = velocityY,
+        bodyVelocityZ = velocityZ,
+    )
+
+    is RuntimeCommand.CreateCheckpoint -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_CREATE_CHECKPOINT,
+        checkpointIdUtf8 = checkpointId?.toByteArray(StandardCharsets.UTF_8),
+        checkpointLabelUtf8 = label?.toByteArray(StandardCharsets.UTF_8),
+    )
+
+    is RuntimeCommand.CreateBranchFromCheckpoint -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_CREATE_BRANCH_FROM_CHECKPOINT,
+        checkpointIdUtf8 = checkpointId.toByteArray(StandardCharsets.UTF_8),
+        newBranchIdUtf8 = newBranchId?.toByteArray(StandardCharsets.UTF_8),
     )
 }
 
@@ -469,6 +579,18 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         handle = handle,
         kind = command.kind,
         bodyIdUtf8 = command.bodyIdUtf8,
+        bodyClass = command.bodyClass,
+        bodyPositionX = command.bodyPositionX,
+        bodyPositionY = command.bodyPositionY,
+        bodyPositionZ = command.bodyPositionZ,
+        bodyVelocityX = command.bodyVelocityX,
+        bodyVelocityY = command.bodyVelocityY,
+        bodyVelocityZ = command.bodyVelocityZ,
+        bodyMassKg = command.bodyMassKg,
+        bodyRadiusM = command.bodyRadiusM,
+        checkpointIdUtf8 = command.checkpointIdUtf8,
+        checkpointLabelUtf8 = command.checkpointLabelUtf8,
+        newBranchIdUtf8 = command.newBranchIdUtf8,
         observerMode = command.observerMode,
         deltaSeconds = command.deltaSeconds,
         simSecondsPerRealSecond = command.simSecondsPerRealSecond,
@@ -514,6 +636,18 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         handle: Long,
         kind: Int,
         bodyIdUtf8: ByteArray?,
+        bodyClass: Int,
+        bodyPositionX: Double,
+        bodyPositionY: Double,
+        bodyPositionZ: Double,
+        bodyVelocityX: Double,
+        bodyVelocityY: Double,
+        bodyVelocityZ: Double,
+        bodyMassKg: Double,
+        bodyRadiusM: Double,
+        checkpointIdUtf8: ByteArray?,
+        checkpointLabelUtf8: ByteArray?,
+        newBranchIdUtf8: ByteArray?,
         observerMode: Int,
         deltaSeconds: Double,
         simSecondsPerRealSecond: Double,
@@ -664,3 +798,16 @@ private const val NATIVE_COMMAND_RESUME_PLAYBACK = 2
 private const val NATIVE_COMMAND_SET_PLAYBACK_RATE = 3
 private const val NATIVE_COMMAND_SET_OBSERVER_MODE = 4
 private const val NATIVE_COMMAND_FOCUS_BODY = 5
+private const val NATIVE_COMMAND_SPAWN_BODY = 6
+private const val NATIVE_COMMAND_REMOVE_BODY = 7
+private const val NATIVE_COMMAND_SET_BODY_KINEMATICS = 8
+private const val NATIVE_COMMAND_CREATE_CHECKPOINT = 9
+private const val NATIVE_COMMAND_CREATE_BRANCH_FROM_CHECKPOINT = 10
+private const val NATIVE_BODY_CLASS_STAR = 0
+private const val NATIVE_BODY_CLASS_PLANET = 1
+private const val NATIVE_BODY_CLASS_DWARF_PLANET = 2
+private const val NATIVE_BODY_CLASS_MOON = 3
+private const val NATIVE_BODY_CLASS_SMALL_BODY = 4
+private const val NATIVE_BODY_CLASS_TRACER = 5
+private const val NATIVE_BODY_CLASS_SPACECRAFT = 6
+private const val NATIVE_BODY_CLASS_CUSTOM = 7
