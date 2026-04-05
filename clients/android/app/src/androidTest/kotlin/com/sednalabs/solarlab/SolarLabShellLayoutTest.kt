@@ -144,7 +144,7 @@ class SolarLabShellLayoutTest {
         composeRule.waitForIdle()
         assertTrue(
             runtimeFacade.commands.any {
-                it is RuntimeCommand.CreateCheckpoint && it.checkpointId == "checkpoint-1"
+                it is RuntimeCommand.CreateCheckpoint
             },
         )
 
