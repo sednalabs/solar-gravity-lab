@@ -24,10 +24,9 @@ on:
         options:
           - auto
           - bootstrap
-          - core-jvm
-          - feature-lab-unit
-          - physics-accuracy
-          - android-host
+          - rust-workspace
+          - ffi-abi
+          - android-shell
           - full
         default: auto
       write_wrapper:
@@ -55,10 +54,9 @@ jobs:
       profile_intent: ${{ steps.plan.outputs.profile_intent }}
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
-      core_jvm: ${{ steps.plan.outputs.core_jvm }}
-      feature_lab_unit: ${{ steps.plan.outputs.feature_lab_unit }}
-      android_assemble: ${{ steps.plan.outputs.android_assemble }}
-      physics_accuracy_telemetry: ${{ steps.plan.outputs.physics_accuracy_telemetry }}
+      rust_workspace: ${{ steps.plan.outputs.rust_workspace }}
+      ffi_abi: ${{ steps.plan.outputs.ffi_abi }}
+      android_shell: ${{ steps.plan.outputs.android_shell }}
       lane_summary: ${{ steps.plan.outputs.lane_summary }}
     steps:
       - name: Compute active lanes
@@ -77,21 +75,20 @@ jobs:
           write_wrapper='${{ inputs.write_wrapper }}'
 
           wrapper_bootstrap='false'
-          core_jvm='false'
-          feature_lab_unit='false'
-          android_assemble='false'
-          physics_accuracy_telemetry='false'
+          rust_workspace='false'
+          ffi_abi='false'
+          android_shell='false'
           profile_intent='targeted'
-          profile_notes='One active slice only; use this to prove the current seam before widening.'
+          profile_notes='One active slice only; use this to prove the current canonical seam before widening.'
 
           case "$profile" in
             targeted)
               profile_intent='targeted'
-              profile_notes='One active slice only; use this to prove the current seam before widening.'
+              profile_notes='One active slice only; use this to prove the current canonical seam before widening.'
               ;;
             frontier)
               profile_intent='frontier'
-              profile_notes='Bounded next-blocker harvest; keep the trusted baseline, add one wider seam family, avoid unrelated bootstrap churn.'
+              profile_notes='Bounded next-blocker harvest; keep the Rust baseline and add the Android shell when appropriate.'
               ;;
             broad|full)
               profile_intent='checkpoint'
@@ -105,31 +102,30 @@ jobs:
 
           case "$lane_set" in
             auto)
-              core_jvm='true'
+              rust_workspace='true'
               if [[ "$profile" == 'frontier' || "$profile" == 'broad' || "$profile" == 'full' ]]; then
-                android_assemble='true'
+                android_shell='true'
+              fi
+              if [[ "$profile" == 'broad' || "$profile" == 'full' ]]; then
+                ffi_abi='true'
               fi
               ;;
             bootstrap)
               wrapper_bootstrap='true'
               ;;
-            core-jvm)
-              core_jvm='true'
+            rust-workspace)
+              rust_workspace='true'
               ;;
-            feature-lab-unit)
-              feature_lab_unit='true'
+            ffi-abi)
+              ffi_abi='true'
               ;;
-            physics-accuracy)
-              physics_accuracy_telemetry='true'
-              ;;
-            android-host)
-              android_assemble='true'
+            android-shell)
+              android_shell='true'
               ;;
             full)
-              core_jvm='true'
-              feature_lab_unit='true'
-              physics_accuracy_telemetry='true'
-              android_assemble='true'
+              rust_workspace='true'
+              ffi_abi='true'
+              android_shell='true'
               ;;
             *)
               echo "Unknown lane_set: ${lane_set}" >&2
@@ -141,17 +137,16 @@ jobs:
             wrapper_bootstrap='true'
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, core_jvm=%s, feature_lab_unit=%s, physics_accuracy_telemetry=%s, android_assemble=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$core_jvm" "$feature_lab_unit" "$physics_accuracy_telemetry" "$android_assemble")"
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, ffi_abi=%s, android_shell=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$ffi_abi" "$android_shell")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
           echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
-          echo "core_jvm=${core_jvm}" >> "$GITHUB_OUTPUT"
-          echo "feature_lab_unit=${feature_lab_unit}" >> "$GITHUB_OUTPUT"
-          echo "android_assemble=${android_assemble}" >> "$GITHUB_OUTPUT"
-          echo "physics_accuracy_telemetry=${physics_accuracy_telemetry}" >> "$GITHUB_OUTPUT"
+          echo "rust_workspace=${rust_workspace}" >> "$GITHUB_OUTPUT"
+          echo "ffi_abi=${ffi_abi}" >> "$GITHUB_OUTPUT"
+          echo "android_shell=${android_shell}" >> "$GITHUB_OUTPUT"
           echo "lane_summary=${lane_summary}" >> "$GITHUB_OUTPUT"
 
   wrapper-bootstrap:
@@ -235,10 +230,10 @@ jobs:
           git commit -m "Generate Gradle wrapper jar"
           git push origin "HEAD:${branch_name}"
 
-  core-jvm:
-    name: Core JVM checks
+  rust-workspace:
+    name: Rust workspace tests
     needs: metadata
-    if: ${{ needs.metadata.outputs.core_jvm == 'true' }}
+    if: ${{ needs.metadata.outputs.rust_workspace == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -246,46 +241,37 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore standalone Gradle cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
-          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
-
-      - name: Setup standalone Gradle
-        shell: bash
-        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
-
-      - name: Run pure JVM module checks
+      - name: Run canonical workspace tests
         shell: bash
         run: |
           set -euo pipefail
-          "${STANDALONE_GRADLE}" --no-daemon --configure-on-demand \
-            :core-math:check \
-            :core-model:check \
-            :core-simulation:check \
-            :render-core:check
+          cargo test --workspace
 
-      - name: Upload JVM test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-jvm-reports-${{ github.run_id }}
-          if-no-files-found: warn
-          path: |
-            **/build/reports/tests/test/**
-            **/build/test-results/test/**
-
-  feature-lab-unit:
-    name: Feature-lab unit tests
+  ffi-abi:
+    name: FFI ABI tests
     needs: metadata
-    if: ${{ needs.metadata.outputs.feature_lab_unit == 'true' }}
+    if: ${{ needs.metadata.outputs.ffi_abi == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run focused FFI ABI tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p solarlab-ffi
+
+  android-shell:
+    name: Android shell assemble debug
+    needs: metadata
+    if: ${{ needs.metadata.outputs.android_shell == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -299,25 +285,9 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Restore standalone Gradle cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
-          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
-
       - uses: android-actions/setup-android@v3
 
-      - name: Restore Android SDK component cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/lib/android/sdk/licenses
-            /usr/local/lib/android/sdk/platform-tools
-            /usr/local/lib/android/sdk/platforms/android-36
-            /usr/local/lib/android/sdk/build-tools/36.0.0
-            /usr/local/lib/android/sdk/cmake/3.22.1
-            /usr/local/lib/android/sdk/ndk/27.2.12479018
-          key: validation-lab-android-sdk-${{ runner.os }}-api36-bt36.0.0-cmake3.22.1-ndk27.2.12479018
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Accept Android SDK licenses and install build toolchain
         shell: bash
@@ -333,155 +303,37 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.2.12479018"
 
-      - name: Setup standalone Gradle
-        shell: bash
-        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
-
-      - name: Run feature-lab unit tests
+      - name: Install Rust Android toolchain
         shell: bash
         run: |
           set -euo pipefail
-          "${STANDALONE_GRADLE}" --no-daemon :feature-lab:testDebugUnitTest
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --locked
 
-      - name: Upload feature-lab unit test reports
+      - name: Assemble debug Android shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew -p clients/android --no-daemon :app:assembleDebug
+
+      - name: Upload Android shell artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: feature-lab-unit-${{ github.run_id }}
+          name: android-shell-${{ github.run_id }}
           if-no-files-found: warn
           path: |
-            feature-lab/build/reports/tests/**
-            feature-lab/build/test-results/**
-
-  physics-accuracy-telemetry:
-    name: Physics accuracy telemetry
-    needs: metadata
-    if: ${{ needs.metadata.outputs.physics_accuracy_telemetry == 'true' }}
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.metadata.outputs.checkout_ref }}
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
-
-      - name: Restore standalone Gradle cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
-          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
-
-      - name: Setup standalone Gradle
-        shell: bash
-        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
-
-      - name: Run telemetry tests and generate physics-accuracy report artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          "${STANDALONE_GRADLE}" --no-daemon --configure-on-demand \
-            :core-simulation:test --tests com.graciousgazelles.solarlab.core.simulation.PhysicsAccuracyTelemetryReportGeneratorTest \
-            :core-simulation:generatePhysicsAccuracyTelemetryReport
-
-      - name: Upload physics telemetry artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: physics-accuracy-telemetry-${{ github.run_id }}
-          if-no-files-found: warn
-          path: |
-            core-simulation/build/reports/physics-accuracy/**
-            core-simulation/build/reports/tests/test/**
-            core-simulation/build/test-results/test/**
-
-  android-assemble:
-    name: Android assemble debug
-    needs: metadata
-    if: ${{ needs.metadata.outputs.android_assemble == 'true' }}
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.metadata.outputs.checkout_ref }}
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
-
-      - name: Restore standalone Gradle cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
-          key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
-
-      - uses: android-actions/setup-android@v3
-
-      - name: Restore Android SDK component cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/lib/android/sdk/licenses
-            /usr/local/lib/android/sdk/platform-tools
-            /usr/local/lib/android/sdk/platforms/android-36
-            /usr/local/lib/android/sdk/build-tools/36.0.0
-            /usr/local/lib/android/sdk/cmake/3.22.1
-            /usr/local/lib/android/sdk/ndk/27.2.12479018
-          key: validation-lab-android-sdk-${{ runner.os }}-api36-bt36.0.0-cmake3.22.1-ndk27.2.12479018
-
-      - name: Accept Android SDK licenses and install build toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          # `yes` exits with SIGPIPE once sdkmanager stops reading, so temporarily
-          # disable pipefail to keep a successful license acceptance from looking
-          # like a step failure.
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "cmake;3.22.1" \
-            "ndk;27.2.12479018"
-
-      - name: Setup standalone Gradle
-        shell: bash
-        run: ./.github/scripts/setup-standalone-gradle.sh "$PWD"
-
-      - name: Assemble debug APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          "${STANDALONE_GRADLE}" --no-daemon :app:assembleDebug
-
-      - name: Upload Android artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-assemble-${{ github.run_id }}
-          if-no-files-found: warn
-          path: |
-            app/build/outputs/**
-            **/build/reports/**
+            clients/android/app/build/outputs/**
+            clients/android/**/build/reports/**
 
   summary:
     name: Validation summary
     needs:
       - metadata
       - wrapper-bootstrap
-      - core-jvm
-      - feature-lab-unit
-      - physics-accuracy-telemetry
-      - android-assemble
+      - rust-workspace
+      - ffi-abi
+      - android-shell
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
@@ -497,8 +349,7 @@ jobs:
             echo "- lanes: \`${{ needs.metadata.outputs.lane_summary }}\`"
             echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
             echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
-            echo "- core-jvm: \`${{ needs['core-jvm'].result }}\`"
-            echo "- feature-lab-unit: \`${{ needs['feature-lab-unit'].result }}\`"
-            echo "- physics-accuracy-telemetry: \`${{ needs['physics-accuracy-telemetry'].result }}\`"
-            echo "- android-assemble: \`${{ needs['android-assemble'].result }}\`"
+            echo "- rust-workspace: \`${{ needs['rust-workspace'].result }}\`"
+            echo "- ffi-abi: \`${{ needs['ffi-abi'].result }}\`"
+            echo "- android-shell: \`${{ needs['android-shell'].result }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

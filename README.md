@@ -1,7 +1,6 @@
 # Solar Gravity Lab
 
-Solar Gravity Lab now runs on the canonical Rust runtime mainline. This
-`main` branch is the line that previously lived under the `v2` reset.
+Solar Gravity Lab now runs on the canonical Rust runtime mainline.
 
 The long-term product shape is:
 
@@ -13,8 +12,7 @@ The long-term product shape is:
 
 The existing Kotlin/Android/Vulkan code remains in this repository only as
 legacy reference material while the Rust-native platform continues to replace
-those seams. The pre-cutover Kotlin line is preserved on the archived branch
-`legacy/kotlin-main-20260405`.
+those seams.
 
 ## Status
 
@@ -35,6 +33,8 @@ What is intentionally still transitional:
 
 - the existing `app`, `core-*`, `feature-lab`, and `render-core` modules are
   still present as v1 reference code
+- the runtime and scene export surface are still earlier in behavioral maturity
+  than the old product line; this branch is structurally ahead of feature parity
 - the render backend adapter stack is only implemented far enough for the
   current Vulkan packet host seam and still needs broader scene-history and
   capability work
@@ -56,8 +56,8 @@ What is intentionally still transitional:
 - [`labs/`](labs)
   Conformance, data, render, hardware, and client validation harnesses.
 - [`legacy/`](legacy)
-  Documentation for the retained Kotlin/Android/Vulkan reference code now tracked
-  under `legacy/kotlin-main-20260405`.
+  Documentation for the retained Kotlin/Android/Vulkan reference code still
+  present at the repository root.
 
 ## Architecture reading order
 
@@ -92,15 +92,30 @@ Refresh and command semantics in this canonical Rust line:
 - `sl_v2_session_refresh` exists as an explicit read refresh point for shell callers that want a consistent control flow between “command + observe” turns.
 - `sl_v2_session_export_vulkan_scene` is also read-only; it returns a separate packet handle whose backing buffer must be consumed via `sl_v2_vulkan_scene_packet_buffer` and must be released with `sl_v2_vulkan_scene_packet_release`.
 
+## Operational truth on `main`
+
+Canonical `main` should be read operationally as:
+
+- Rust workspace + FFI + `clients/android` are the live product path
+- prerelease packaging comes from `clients/android`
+- validation should prove the Rust workspace and the Android shell
+- the root Kotlin modules are reference material and are not the active app on
+  this branch
+
 ## Validation
 
-The foundational validation target is currently the Rust workspace:
+The foundational validation target is the Rust workspace:
 
 ```bash
 cargo test --workspace
 ```
 
-This branch is intentionally not yet using the old Kotlin Android validation
-surface as its primary proof mechanism. Android, render, and data/update
-validation labs will continue to be rebuilt around the Rust-owned boundaries as
-those subsystems land.
+The canonical Android proof surface is the forward shell under `clients/android`,
+not the old root app:
+
+```bash
+./gradlew -p clients/android --no-daemon :app:assembleDebug
+```
+
+Use `.github/workflows/validation-lab.yml` and `.github/workflows/prerelease-apk.yml`
+for the remote-first versions of those same proof questions.

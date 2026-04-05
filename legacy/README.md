@@ -1,15 +1,19 @@
-# Legacy v1 code on the v2 branch
+# Legacy Kotlin reference code on canonical main
 
 The existing Kotlin/Android/Vulkan code still present at the repository root is
 retained here only as migration reference material.
 
-It is not the intended five-year architecture.
+It is not the canonical architecture of this branch.
 
-During the v2 build-out:
+On canonical `main`:
 
 - new durable architecture work goes into `engine/`, `proto/`, `clients/`,
   `data/`, `services/`, and `labs/`
 - old modules at the repository root are used as behavior references, data
   sources, benchmarks, and migration aids
-- the v1 line remains releasable on its own branch, not by treating these
-  modules as the long-term substrate of v2
+- the root Gradle build intentionally does not treat those legacy modules as the
+  active product surface
+
+If you need to compare behavior against the older app, use the retained source
+directly as an oracle. Do not assume the legacy modules are still the shipping
+or validated line on canonical `main`.

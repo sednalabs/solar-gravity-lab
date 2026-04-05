@@ -16,6 +16,11 @@ This directory is the forward path for Android. The older root-level `app` and
 `feature-lab` modules remain in the repository only as legacy reference
 material.
 
+One important truth boundary: the exported scene contract is Vulkan-shaped, but
+the current Android host is still a packet-render host rather than a full Vulkan
+backend. Keep the naming and responsibilities honest while the renderer adapter
+stack is still being brought up.
+
 ## Runtime seam responsibilities
 
 The Kotlin side is a host shell only. It owns:

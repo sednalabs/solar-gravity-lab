@@ -12,6 +12,7 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.Properties
 import kotlin.math.max
 import javax.inject.Inject
 
@@ -112,11 +113,7 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
             return directEnvPaths
         }
 
-        val sdkRoot = listOf("ANDROID_SDK_ROOT", "ANDROID_HOME")
-            .mapNotNull { System.getenv(it) }
-            .map(::File)
-            .firstOrNull(File::isDirectory)
-            ?: return null
+        val sdkRoot = resolveSdkRootDirectory() ?: return null
 
         val ndkRoot = sdkRoot.resolve("ndk")
         if (!ndkRoot.isDirectory) {
@@ -126,6 +123,26 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
         return ndkRoot.listFiles()
             ?.filter(File::isDirectory)
             ?.maxWithOrNull(::compareNdkDirectories)
+    }
+
+    private fun resolveSdkRootDirectory(): File? {
+        val envSdkRoot = listOf("ANDROID_SDK_ROOT", "ANDROID_HOME")
+            .mapNotNull { System.getenv(it) }
+            .map(::File)
+            .firstOrNull(File::isDirectory)
+        if (envSdkRoot != null) {
+            return envSdkRoot
+        }
+
+        val localPropertiesFile = project.rootProject.file("local.properties")
+        if (!localPropertiesFile.isFile) {
+            return null
+        }
+
+        val properties = Properties()
+        localPropertiesFile.inputStream().use(properties::load)
+        val sdkDir = properties.getProperty("sdk.dir")?.takeIf(String::isNotBlank) ?: return null
+        return File(sdkDir).takeIf(File::isDirectory)
     }
 
     private fun ensureCommandWorks(command: List<String>, failureHint: String) {

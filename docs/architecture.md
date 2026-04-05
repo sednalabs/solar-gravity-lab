@@ -1,106 +1,101 @@
-# Architecture Notes
+# Architecture
 
-## Core simulation design
+Solar Gravity Lab `main` is the Rust-owned platform line.
 
-The engine distinguishes between:
+The canonical product path on this branch is:
 
-- **Massive bodies**: mutually interact with each other.
-- **Tracer bodies**: feel gravity from massive bodies, but do not perturb the rest of the system.
+- `engine/` for authoritative runtime, history, scene extraction, data, and hardware crates
+- `proto/solarlab/v2/` for versioned cross-language contracts
+- `engine/ffi/` for the C ABI and opaque-handle boundary
+- `clients/android/` for the Android shell over the Rust runtime
+- `render/vulkan-adapter/` for the first backend adapter crate
 
-That gives us a scalable phone-friendly middle ground between fake toy physics and full pairwise gravity across tens of thousands of objects.
+The root-level Kotlin modules (`app`, `core-*`, `feature-lab`, `render-core`) are
+retained only as legacy/reference material. They are no longer the canonical
+architecture or validation target on this branch.
 
-## Integrator
+## Canonical boundaries
 
-The engine uses a kick-drift-kick leapfrog style update because orbital systems care about long-run energy behaviour more than about single-step local prettiness.
+### Runtime ownership
 
-## Coordinate system
+`engine/runtime` owns:
 
-The simulation is fully 3D even though the current renderer presents a top-down X/Y projection.
+- session and branch state
+- command application
+- checkpoints and history records
+- snapshot publication
+- scene extraction inputs
 
-Internal units are SI:
+All external integrations should treat the runtime as the single source of truth
+for mutable world semantics.
 
-- metres
-- kilograms
-- seconds
+### Contract ownership
 
-## Scenario philosophy
+`proto/solarlab/v2` defines the versioned schema surface for:
 
-This pass includes:
+- runtime/session contracts
+- diagnostics and hardware reporting
+- render-scene export
+- data/update package contracts
 
-- Sun
-- 8 major planets
-- selected dwarf planets
-- synthetic asteroid-belt tracers
-- synthetic Oort-shell tracers
+`engine/ffi` maps those runtime concepts into a stable C ABI using:
 
-The Sun-through-Neptune starter states are no longer using arbitrary phase angles. They now come from an explicit, epoch-tagged JPL-derived starter catalogue that generates cartesian state vectors at J2000 TDB. Dwarf planets are still seeded from representative orbital elements for now.
+- opaque session handles
+- explicit render-packet handles
+- borrowed buffer views
+- explicit release calls for exported packet memory
 
-## Seed catalogue layering
+### Client ownership
 
-The seed system is now explicitly layered:
+`clients/android` is a shell, not an authority layer. It owns:
 
-- `CartesianSeedBundle` for authoritative bundled cartesian states
-- Android asset loader in `feature-lab` that auto-loads a bundle if present
-- `JplApproximateSeedCatalog` fallback for the major planets when no valid bundle is present
-- representative orbital-element fallback for dwarf planets that still lack bundled vectors
+- Android lifecycle and Compose shell state
+- JNI transport over the FFI surface
+- host rendering of exported scene packets
+- control dispatch into the runtime command surface
 
-The point of the abstraction is to let the simulation and rendering layers stop caring where the authoritative starter states come from. External agents only need to generate the bundle file.
+The Android client must not grow its own simulation rules.
 
-## Render architecture
+## Current maturity
 
-The renderer is now split into four layers:
+The architecture is ahead of the product surface today.
 
-1. **Authoritative simulation** (`core-simulation`)  
-   Produces the physically correct snapshot.
+What is already real:
 
-2. **Backend-neutral render assembly** (`render-core`)  
-   Converts `SimulationSnapshot` into a `RenderSceneFrame` plus a primitive-array `NativeScenePacket` suitable for JNI.
+- the Rust workspace structure and ADR chain
+- the versioned protobuf and FFI seams
+- session creation, refresh, command application, and render-packet export
+- a working Android shell that can bind a runtime session and render exported packets
 
-3. **Backend host** (`feature-lab`)
-   `SolarSystemRenderHostView` owns Vulkan backend lifecycle forwarding and status updates.
+What is intentionally still early:
 
-4. **Backend implementation** (`feature-lab`)  
-   - `SolarSystemVulkanSurfaceView` + native bridge for the Vulkan renderer path
+- the runtime is still a bring-up slice rather than a full parity replacement for the
+  old Kotlin product line
+- physics implementation is not yet a deep authoritative solver surface
+- scene extraction is still bodies-first; richer tracer, trail, and light history
+  surfaces remain thin
+- the Android host currently renders exported packets in a software packet-render
+  path even though the exported scene contract is Vulkan-shaped
 
-## Vulkan-first migration shape
+That means this branch is strategically correct, but still in the phase where one
+real end-to-end vertical slice matters more than adding more abstract surface area.
 
-The Vulkan path now owns:
+## Operational repo truth
 
-- Vulkan instance creation
-- Android surface creation
-- physical-device and queue-family selection
-- logical-device creation
-- swapchain creation
-- image-view creation
-- render-pass creation
-- framebuffer creation
-- command-pool allocation
-- command-buffer recording
-- explicit sync objects
-- JNI scene-packet ingestion
+On canonical `main`:
 
-What is intentionally left for the next pass:
+- prerelease packaging targets `clients/android`
+- validation should prove the Rust workspace and the Android shell
+- the root Gradle settings should not imply that the legacy Kotlin app is the
+  shipping or validated app on this branch
 
-- body draw pipeline
-- trail draw pipeline
-- GPU-instanced tracer rendering
-- compute-driven tracer integration
-- GPU-side camera-relative precision strategy for very large scenes
+If you need the design rationale behind this layout, read the ADR chain first and
+then the reset-era architecture docs:
 
-## Vulkan-only backend
-
-The app now runs a Vulkan-only renderer path. Backend status reporting remains in place so the UI can surface unavailable-runtime and native-renderer failures without implying a fallback backend exists.
-
-## Collision model
-
-Current collision mode is merge-only:
-
-- conserve total mass
-- conserve linear momentum
-- combine volume to derive merged radius
-- keep the dominant category / role where sensible
-
-
-### Hybrid render packet
-
-`render-core` now owns a camera-aware packet build step for native backends. This is deliberate: it lets unrestricted agents keep the authoritative integrator on CPU while still pushing presentation-oriented LOD, tracer budgets, and trail simplification into a deterministic Kotlin pre-pass.
+1. `docs/adr/0001-rust-owned-core.md`
+2. `docs/adr/0002-versioned-protobuf-contracts.md`
+3. `docs/adr/0003-c-abi-and-opaque-handles.md`
+4. `docs/adr/0004-offline-first-data-and-updates.md`
+5. `docs/adr/0005-render-scene-and-backend-adapters.md`
+6. `docs/v2/architecture.md`
+7. `docs/v2/roadmap.md`
