@@ -110,10 +110,12 @@ class SolarLabShellLayoutTest {
 
     @Test
     fun shellControls_emitCommands_whenUserInteracts() {
+        scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).performTextInput("body-7")
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON).performTouchInput { click() }
         assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "body-7" })
 
+        scrollShellTo(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON).performTouchInput { click() }
         assertTrue(
             runtimeFacade.commands.any {
@@ -121,6 +123,7 @@ class SolarLabShellLayoutTest {
             },
         )
 
+        scrollShellTo(SolarLabTestTags.CHECKPOINT_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).performTextInput("checkpoint-1")
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).performTouchInput { click() }
         assertTrue(
@@ -129,8 +132,11 @@ class SolarLabShellLayoutTest {
             },
         )
 
+        scrollShellTo(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).performTextInput("checkpoint-1")
+        scrollShellTo(SolarLabTestTags.BRANCH_NAME_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_NAME_FIELD).performTextInput("branch-a")
+        scrollShellTo(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON).performTouchInput {
             click()
         }
@@ -199,8 +205,15 @@ class SolarLabShellLayoutTest {
     }
 
     private fun assertVisibleInScrollableShell(tag: String) {
+        scrollShellTo(tag)
+        composeRule.onNodeWithTag(tag).assertIsDisplayed()
+    }
+
+    private fun scrollShellTo(tag: String) {
+        if (tag == SolarLabTestTags.SHELL_COLUMN) {
+            return
+        }
         composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
             .performScrollToNode(hasTestTag(tag))
-        composeRule.onNodeWithTag(tag).assertIsDisplayed()
     }
 }

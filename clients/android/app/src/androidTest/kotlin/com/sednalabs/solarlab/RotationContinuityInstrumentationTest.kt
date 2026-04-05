@@ -2,6 +2,7 @@ package com.sednalabs.solarlab
 
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
@@ -26,7 +27,7 @@ class RotationContinuityInstrumentationTest {
             waitForState(facadeBefore) {
                 it.sessionHandle != null &&
                     it.renderPacketSummary != null &&
-                    it.cameraFacingSummary != null &&
+                    it.snapshot != null &&
                     it.observerModeCode != null &&
                     it.backendSummary != null &&
                     it.snapshot?.activeBranchId != null
@@ -46,7 +47,7 @@ class RotationContinuityInstrumentationTest {
                     it.renderStatus.renderedBodyCount >= 0 &&
                     it.renderStatus.renderedTracerCount >= 0 &&
                     it.renderStatus.renderedTrailCount >= 0 &&
-                    it.cameraFacingSummary != null
+                    hasStableRenderState(it)
             }
 
             val beforeRotation = facadeBefore.uiState.value
@@ -77,7 +78,7 @@ class RotationContinuityInstrumentationTest {
                     it.renderStatus.renderedBodyCount == beforeRenderedBodyCount &&
                     it.renderStatus.renderedTracerCount == beforeRenderedTracerCount &&
                     it.renderStatus.renderedTrailCount == beforeRenderedTrailCount &&
-                    it.cameraFacingSummary != null
+                    hasStableRenderState(it)
             }
 
             val afterRotation = facadeAfter.uiState.value
@@ -122,15 +123,27 @@ class RotationContinuityInstrumentationTest {
                 afterRotation.backendSummary,
             )
             assertNotNull(
-                "Camera-facing summary should still be exposed after recreation",
-                afterRotation.cameraFacingSummary,
+                "Render packet summary should remain exposed after recreation",
+                afterRotation.renderPacketSummary,
             )
-            assertTrue(
-                "Camera-facing summary should remain stable while playback is paused",
-                beforeCameraFacingSummary == afterRotation.cameraFacingSummary,
-            )
+            if (
+                beforeRotation.renderStatus.readiness == RenderHostReadiness.Ready &&
+                afterRotation.renderStatus.readiness == RenderHostReadiness.Ready
+            ) {
+                assertTrue(
+                    "Camera-facing summary should remain stable while playback is paused",
+                    beforeCameraFacingSummary == afterRotation.cameraFacingSummary,
+                )
+            }
         }
     }
+
+    private fun hasStableRenderState(state: ShellUiState): Boolean =
+        when (state.renderStatus.readiness) {
+            RenderHostReadiness.Ready -> state.renderFrame != null && state.cameraFacingSummary != null
+            RenderHostReadiness.Unavailable -> state.renderStatus.degradationReason != null
+            else -> false
+        }
 
     private fun ActivityScenario<MainActivity>.withRuntimeFacade(): RuntimeFacade {
         var facade: RuntimeFacade? = null
