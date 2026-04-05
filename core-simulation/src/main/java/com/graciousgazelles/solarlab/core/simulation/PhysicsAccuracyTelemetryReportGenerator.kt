@@ -389,11 +389,12 @@ class PhysicsAccuracyTelemetryReportGenerator(
 
         val shortHorizonSteps = min(GPU_TRACER_SHORT_HORIZON_STEPS, coarseTimeline.lastIndex)
         val mediumHorizonSteps = min(GPU_TRACER_MEDIUM_HORIZON_MAX_STEPS, coarseTimeline.lastIndex)
+        val longHorizonSteps = min(GPU_TRACER_LONG_HORIZON_MAX_STEPS, coarseTimeline.lastIndex)
         val emulatedStates = emulateGpuTracerTimeline(
             initialSnapshot = initialSnapshot,
             coarseTimeline = coarseTimeline,
             stepSeconds = stepSeconds,
-            maxSteps = mediumHorizonSteps,
+            maxSteps = longHorizonSteps,
             includeTracerMutualGravity = includeTracerMutualGravity,
         )
 
@@ -407,6 +408,7 @@ class PhysicsAccuracyTelemetryReportGenerator(
                     coarseTimeline = coarseTimeline,
                     shortHorizonSteps = shortHorizonSteps,
                     mediumHorizonSteps = mediumHorizonSteps,
+                    longHorizonSteps = longHorizonSteps,
                 ),
             )
             addAll(
@@ -418,6 +420,7 @@ class PhysicsAccuracyTelemetryReportGenerator(
                     coarseTimeline = coarseTimeline,
                     shortHorizonSteps = shortHorizonSteps,
                     mediumHorizonSteps = mediumHorizonSteps,
+                    longHorizonSteps = longHorizonSteps,
                 ),
             )
         }
@@ -481,12 +484,16 @@ class PhysicsAccuracyTelemetryReportGenerator(
         coarseTimeline: List<SimulationSnapshot>,
         shortHorizonSteps: Int,
         mediumHorizonSteps: Int,
+        longHorizonSteps: Int,
     ): List<PhysicsAccuracyTelemetryMetric> {
         val shortErrors = tracerIds.mapNotNull { bodyId ->
             tracerXyErrorAtStep(bodyId, shortHorizonSteps, emulatedStates, coarseTimeline)
         }
         val mediumErrors = tracerIds.mapNotNull { bodyId ->
             tracerXyErrorAtStep(bodyId, mediumHorizonSteps, emulatedStates, coarseTimeline)
+        }
+        val longErrors = tracerIds.mapNotNull { bodyId ->
+            tracerXyErrorAtStep(bodyId, longHorizonSteps, emulatedStates, coarseTimeline)
         }
         return listOf(
             PhysicsAccuracyTelemetryMetric(
@@ -530,6 +537,24 @@ class PhysicsAccuracyTelemetryReportGenerator(
                 value = maxOrZero(mediumErrors),
                 unit = "meters",
                 description = "Maximum XY position error versus CPU coarse reference at the medium horizon for the ${cohortName} tracer cohort",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "${metricPrefix}_${cohortName}_long_horizon_steps",
+                value = longHorizonSteps.toDouble(),
+                unit = "steps",
+                description = "Long-horizon coarse-step count used for GPU tracer parity checks",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "${metricPrefix}_${cohortName}_long_horizon_xy_rms_error_m",
+                value = rms(longErrors),
+                unit = "meters",
+                description = "RMS XY position error versus CPU coarse reference at the long horizon for the ${cohortName} tracer cohort",
+            ),
+            PhysicsAccuracyTelemetryMetric(
+                name = "${metricPrefix}_${cohortName}_long_horizon_xy_max_error_m",
+                value = maxOrZero(longErrors),
+                unit = "meters",
+                description = "Maximum XY position error versus CPU coarse reference at the long horizon for the ${cohortName} tracer cohort",
             ),
         )
     }
@@ -769,6 +794,7 @@ class PhysicsAccuracyTelemetryReportGenerator(
         const val DEFAULT_STEPS: Int = (PhysicalConstants.JULIAN_YEAR_SECONDS / DEFAULT_STEP_SECONDS).toInt()
         private const val GPU_TRACER_SHORT_HORIZON_STEPS: Int = 1
         private const val GPU_TRACER_MEDIUM_HORIZON_MAX_STEPS: Int = 24
+        private const val GPU_TRACER_LONG_HORIZON_MAX_STEPS: Int = 48
         private const val GPU_TRACER_MEDIUM_MAX_HELIOCENTRIC_DISTANCE_AU: Double = 10.0
         private const val GPU_TRACER_SOFTENING_SQUARED_M2: Double = 1.0
     }

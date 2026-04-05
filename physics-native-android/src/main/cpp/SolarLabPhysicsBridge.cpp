@@ -8,9 +8,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <span>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -80,6 +82,47 @@ bool HasArm64Asimd() {
 #endif
 }
 
+enum class AccelerationScheduleHint {
+    Massive,
+    Tracer,
+};
+
+constexpr size_t kMaxParallelWorkers = 6;
+constexpr size_t kMassiveMinTargetsPerWorker = 64;
+constexpr size_t kTracerMinTargetsPerWorker = 256;
+constexpr uint64_t kMassiveParallelWorkThreshold = 400000ULL;
+constexpr uint64_t kTracerParallelWorkThreshold = 700000ULL;
+
+size_t HardwareWorkerBudget() {
+    const auto concurrency = std::thread::hardware_concurrency();
+    if (concurrency <= 1U) return 1U;
+    const auto available = std::max<size_t>(1U, static_cast<size_t>(concurrency) - 1U);
+    return std::min(available, kMaxParallelWorkers);
+}
+
+size_t RecommendedWorkerCount(
+    const size_t sourceCount,
+    const size_t targetCount,
+    const AccelerationScheduleHint scheduleHint
+) {
+    const auto workerBudget = HardwareWorkerBudget();
+    if (workerBudget <= 1U) return 1U;
+    if (sourceCount == 0U || targetCount == 0U) return 1U;
+
+    const auto minTargetsPerWorker = scheduleHint == AccelerationScheduleHint::Tracer
+        ? kTracerMinTargetsPerWorker
+        : kMassiveMinTargetsPerWorker;
+    const auto workThreshold = scheduleHint == AccelerationScheduleHint::Tracer
+        ? kTracerParallelWorkThreshold
+        : kMassiveParallelWorkThreshold;
+
+    if (targetCount < minTargetsPerWorker * 2U) return 1U;
+    if (static_cast<uint64_t>(sourceCount) * static_cast<uint64_t>(targetCount) < workThreshold) return 1U;
+
+    const auto targetsBoundWorkers = std::max<size_t>(1U, targetCount / minTargetsPerWorker);
+    return std::max<size_t>(1U, std::min(workerBudget, targetsBoundWorkers));
+}
+
 std::string CpuBackendSummary() {
     std::ostringstream summary;
     summary << "cpu=";
@@ -113,6 +156,8 @@ std::string CpuBackendSummary() {
 #endif
     summary << " active=" << (HasArm64Asimd() ? "neon" : "scalar");
 #endif
+    summary << " sched=adaptive-tiles";
+    summary << " workers<=" << HardwareWorkerBudget();
 
     return summary.str();
 }
@@ -306,38 +351,89 @@ std::vector<jdouble> ComputeAccelerations(
     std::span<const jdouble> targetPosZ,
     const double gravitationalConstant,
     const double softeningSquared,
-    const bool skipSelf
+    const bool skipSelf,
+    const AccelerationScheduleHint scheduleHint
 ) {
+    const auto sourceCount = std::min({
+        sourceBodyIndices.size(),
+        sourceMassesKg.size(),
+        sourcePosX.size(),
+        sourcePosY.size(),
+        sourcePosZ.size(),
+    });
+    const auto targetCount = std::min({
+        targetBodyIndices.size(),
+        targetPosX.size(),
+        targetPosY.size(),
+        targetPosZ.size(),
+    });
+    const auto workerCount = RecommendedWorkerCount(sourceCount, targetCount, scheduleHint);
+    auto computeTile = [&](const size_t start, const size_t count) {
+        const auto targetIndexSlice = targetBodyIndices.subspan(start, count);
+        const auto targetXSlice = targetPosX.subspan(start, count);
+        const auto targetYSlice = targetPosY.subspan(start, count);
+        const auto targetZSlice = targetPosZ.subspan(start, count);
 #if defined(__aarch64__)
-    if (HasArm64Asimd()) {
-        return ComputeAccelerationsNeon(
+        if (HasArm64Asimd()) {
+            return ComputeAccelerationsNeon(
+                sourceBodyIndices,
+                sourceMassesKg,
+                sourcePosX,
+                sourcePosY,
+                sourcePosZ,
+                targetIndexSlice,
+                targetXSlice,
+                targetYSlice,
+                targetZSlice,
+                gravitationalConstant,
+                softeningSquared,
+                skipSelf);
+        }
+#endif
+        return ComputeAccelerationsScalar(
             sourceBodyIndices,
             sourceMassesKg,
             sourcePosX,
             sourcePosY,
             sourcePosZ,
-            targetBodyIndices,
-            targetPosX,
-            targetPosY,
-            targetPosZ,
+            targetIndexSlice,
+            targetXSlice,
+            targetYSlice,
+            targetZSlice,
             gravitationalConstant,
             softeningSquared,
             skipSelf);
+    };
+
+    if (workerCount <= 1U || targetCount <= 1U) {
+        return computeTile(0U, targetCount);
     }
-#endif
-    return ComputeAccelerationsScalar(
-        sourceBodyIndices,
-        sourceMassesKg,
-        sourcePosX,
-        sourcePosY,
-        sourcePosZ,
-        targetBodyIndices,
-        targetPosX,
-        targetPosY,
-        targetPosZ,
-        gravitationalConstant,
-        softeningSquared,
-        skipSelf);
+
+    std::vector<jdouble> packed(targetCount * 3U, 0.0);
+    const auto tileSize = std::max<size_t>(1U, (targetCount + workerCount - 1U) / workerCount);
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount - 1U);
+    size_t tileStart = 0U;
+
+    for (size_t workerIndex = 0U; workerIndex + 1U < workerCount && tileStart < targetCount; ++workerIndex) {
+        const auto start = tileStart;
+        const auto count = std::min(tileSize, targetCount - start);
+        workers.emplace_back([&, start, count]() {
+            auto tilePacked = computeTile(start, count);
+            std::copy(tilePacked.begin(), tilePacked.end(), packed.begin() + static_cast<std::ptrdiff_t>(start * 3U));
+        });
+        tileStart += count;
+    }
+
+    if (tileStart < targetCount) {
+        auto tilePacked = computeTile(tileStart, targetCount - tileStart);
+        std::copy(tilePacked.begin(), tilePacked.end(), packed.begin() + static_cast<std::ptrdiff_t>(tileStart * 3U));
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    return packed;
 }
 
 jdoubleArray ToJDoubleArray(JNIEnv* env, const std::vector<jdouble>& values) {
@@ -397,7 +493,8 @@ Java_com_sednalabs_solarlab_physics_nativeandroid_NativePhysicsBridge_nativeComp
         targetZ.span(),
         gravitationalConstant,
         softeningSquared,
-        true
+        true,
+        AccelerationScheduleHint::Massive
     );
     return ToJDoubleArray(env, packed);
 }
@@ -439,7 +536,8 @@ Java_com_sednalabs_solarlab_physics_nativeandroid_NativePhysicsBridge_nativeComp
         targetZ.span(),
         gravitationalConstant,
         softeningSquared,
-        true
+        true,
+        AccelerationScheduleHint::Tracer
     );
     return ToJDoubleArray(env, packed);
 }
