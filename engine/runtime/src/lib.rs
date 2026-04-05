@@ -108,6 +108,43 @@ pub struct WorldSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct RuntimeTrailHistoryCount {
+    /// Per-body trail sample totals for telemetry consumers.
+    pub body_id: BodyId,
+    pub sample_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MountedManifestTelemetry {
+    pub manifest_id: String,
+    pub manifest_version: String,
+    pub channel: String,
+    pub has_manifest_digest: bool,
+    pub mounted_packages: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimeTelemetryReport {
+    /// Compact, runtime-native report for diagnostics and telemetry surfaces.
+    pub scenario_id: ScenarioId,
+    pub branch_id: BranchId,
+    pub epoch_seconds: f64,
+    pub timeline_semantics: TimelineSemantics,
+    pub active_checkpoint_id: Option<CheckpointId>,
+    pub total_bodies: usize,
+    pub total_tracers: usize,
+    pub trail_history_counts: Vec<RuntimeTrailHistoryCount>,
+    pub total_trail_samples: usize,
+    pub invariants: PhysicsInvariants,
+    pub hardware_profile: HardwareProfile,
+    pub playback: PlaybackState,
+    pub observer: ObserverState,
+    pub mounted_manifest: Option<MountedManifestTelemetry>,
+    pub scene_revision: String,
+    pub diagnostics: RenderDiagnostics,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum WorldCommand {
     /// Mutation primitives that feed branch/state invariants, command logging, and
     /// history event generation.
@@ -646,6 +683,41 @@ impl WorldRuntime {
         }
     }
 
+    /// Project authoritative runtime state into a compact telemetry surface.
+    #[must_use]
+    pub fn telemetry_report(&self) -> RuntimeTelemetryReport {
+        let snapshot = self.snapshot();
+        let scene = extract_render_scene(&snapshot);
+        let trail_history_counts =
+            runtime_trail_history_counts(&snapshot.trail_history_by_body);
+        let total_trail_samples = trail_history_counts
+            .iter()
+            .map(|entry| entry.sample_count)
+            .sum();
+
+        RuntimeTelemetryReport {
+            scenario_id: snapshot.scenario_id,
+            branch_id: snapshot.branch_id,
+            epoch_seconds: snapshot.epoch_seconds,
+            timeline_semantics: snapshot.timeline_semantics,
+            active_checkpoint_id: snapshot.active_checkpoint.map(|checkpoint| checkpoint.checkpoint_id),
+            total_bodies: snapshot.bodies.len(),
+            total_tracers: scene.tracer_count as usize,
+            trail_history_counts,
+            total_trail_samples,
+            invariants: snapshot.invariants,
+            hardware_profile: snapshot.hardware_profile,
+            playback: snapshot.playback,
+            observer: snapshot.observer,
+            mounted_manifest: snapshot
+                .mounted_manifest
+                .as_ref()
+                .map(mounted_manifest_telemetry_from_state),
+            scene_revision: scene.scene_revision,
+            diagnostics: scene.diagnostics,
+        }
+    }
+
     /// Build a renderer-agnostic scene contract from the current runtime state.
     /// This pure extraction path is intentionally read-only and used by FFI
     /// scene export.
@@ -1129,6 +1201,32 @@ fn format_manifest_digest(digest: &Digest) -> String {
     format!("{}:{}", digest.algorithm, digest.hex_value())
 }
 
+fn mounted_manifest_telemetry_from_state(
+    mounted_manifest: &MountedManifestState,
+) -> MountedManifestTelemetry {
+    MountedManifestTelemetry {
+        manifest_id: mounted_manifest.manifest_id.clone(),
+        manifest_version: semver_to_string(&mounted_manifest.manifest_version),
+        channel: mounted_manifest.channel.clone(),
+        has_manifest_digest: mounted_manifest.manifest_digest.is_some(),
+        mounted_packages: mounted_manifest.mounted_packages.len(),
+    }
+}
+
+fn runtime_trail_history_counts(
+    trail_history_by_body: &HashMap<BodyId, Vec<Vector3d>>,
+) -> Vec<RuntimeTrailHistoryCount> {
+    let mut counts: Vec<RuntimeTrailHistoryCount> = trail_history_by_body
+        .iter()
+        .map(|(body_id, trail)| RuntimeTrailHistoryCount {
+            body_id: body_id.clone(),
+            sample_count: trail.len(),
+        })
+        .collect();
+    counts.sort_by(|left, right| left.body_id.0.cmp(&right.body_id.0));
+    counts
+}
+
 fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
     let mounted_manifest = snapshot.mounted_manifest.as_ref()?;
     Some(SceneProvenanceRef {
@@ -1395,7 +1493,8 @@ mod tests {
 
     use super::{
         extract_render_scene, ApplyUpdateManifestCommand, BodyState, MountPackageCommand,
-        RuntimeConfig, RuntimeError, RuntimeEvent, WorldCommand, WorldRuntime,
+        RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeTrailHistoryCount, WorldCommand,
+        WorldRuntime,
     };
 
     #[test]
@@ -1605,6 +1704,179 @@ mod tests {
         assert_eq!(scene.diagnostics.frame_number, 0);
         assert!(scene.diagnostics.gpu_upload_ms > 0.0);
         assert!(scene.scene_revision.contains("|diag:frame=0"));
+    }
+
+    #[test]
+    fn telemetry_report_captures_runtime_state_and_scene_diagnostics() {
+        let mut runtime = new_runtime();
+        let package_digest = digest(0x80);
+        let package_id = package_id_for(&PackageKind::Scenario, &package_digest);
+        runtime
+            .apply_update_manifest(ApplyUpdateManifestCommand {
+                manifest: manifest(
+                    "manifest-telemetry",
+                    vec![package_locator(
+                        PackageKind::Scenario,
+                        semver(1, 2, 0),
+                        package_digest.clone(),
+                        true,
+                    )],
+                ),
+                target: compatibility_target(),
+                fetched_packages_by_id: fetched_map(vec![stored_package(
+                    PackageKind::Scenario,
+                    semver(1, 2, 0),
+                    package_digest,
+                    "cache://pkg-scenario-telemetry-v120",
+                )]),
+            })
+            .expect("manifest apply should succeed");
+        runtime
+            .mount_package(MountPackageCommand {
+                package_id: package_id.clone(),
+            })
+            .expect("manifest package should mount");
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("planet".into()),
+                        body_class: BodyClass::Planet,
+                        mass_kg: 5.972e24,
+                        radius_m: 6_371_000.0,
+                        position_m: Vector3d {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("planet spawn should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("tracer".into()),
+                        body_class: BodyClass::Tracer,
+                        mass_kg: 1.0,
+                        radius_m: 10.0,
+                        position_m: Vector3d {
+                            x: 100.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                    },
+                },
+                2,
+            )
+            .expect("tracer spawn should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::SetPlaybackRate {
+                    sim_seconds_per_real_second: 2.0,
+                },
+                3,
+            )
+            .expect("playback rate should change");
+        runtime
+            .apply_command(
+                WorldCommand::SetObserverMode {
+                    mode: ObserverMode::FollowSelected,
+                },
+                4,
+            )
+            .expect("observer mode set should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(BodyId("tracer".into())),
+                },
+                5,
+            )
+            .expect("focus body should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 10.0,
+                },
+                6,
+            )
+            .expect("advance should succeed");
+
+        let report = runtime.telemetry_report();
+        let rendered_scene = runtime.render_scene();
+
+        assert_eq!(report.scenario_id, ScenarioId("sol-system".into()));
+        assert_eq!(report.branch_id, BranchId("main".into()));
+        assert_eq!(report.total_bodies, 2);
+        assert_eq!(report.total_tracers, 1);
+        assert_eq!(report.timeline_semantics, TimelineSemantics::BranchedSandbox);
+        assert_eq!(report.total_trail_samples, 4);
+        assert_eq!(report.hardware_profile, HardwareProfile::offline_reference());
+        assert_eq!(report.active_checkpoint_id, None);
+        assert_eq!(report.playback.sim_seconds_per_real_second, 2.0);
+        assert_eq!(report.observer.mode, ObserverMode::FollowSelected);
+        assert_eq!(report.observer.focus_body_id, Some(BodyId("tracer".into())));
+        assert_eq!(report.total_trail_samples, report.trail_history_counts.iter().map(|entry| entry.sample_count).sum());
+        assert_eq!(report.trail_history_counts.len(), 2);
+        assert_eq!(report.trail_history_counts[0].body_id, BodyId("planet".into()));
+        assert_eq!(report.trail_history_counts[0].sample_count, 2);
+        assert_eq!(report.trail_history_counts[1].body_id, BodyId("tracer".into()));
+        assert_eq!(report.trail_history_counts[1].sample_count, 2);
+        assert_eq!(report.mounted_manifest.as_ref().expect("manifest should be present").manifest_id, "manifest-telemetry");
+        assert_eq!(report.mounted_manifest.as_ref().expect("manifest should be present").manifest_version, "1.0.0");
+        assert_eq!(report.mounted_manifest.as_ref().expect("manifest should be present").mounted_packages, 1);
+        assert!(report.scene_revision.starts_with("scenario=sol-system|branch=main|epoch=10.000000|observer=FollowSelected"));
+        assert!(report.scene_revision.starts_with(&rendered_scene.scene_revision.split("|diag:").next().unwrap_or_default()));
+        assert_eq!(report.diagnostics.frame_number, rendered_scene.diagnostics.frame_number);
+
+        assert!(report.invariants.total_energy_j.is_finite());
+    }
+
+    #[test]
+    fn telemetry_report_uses_manifest_presence_none_when_unmounted() {
+        let mut runtime = new_runtime();
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("solo".into()),
+                        body_class: BodyClass::Planet,
+                        mass_kg: 1_000.0,
+                        radius_m: 1_000.0,
+                        position_m: Vector3d {
+                            x: 42.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("body spawn should succeed");
+
+        let report = runtime.telemetry_report();
+        assert_eq!(report.total_bodies, 1);
+        assert_eq!(report.total_tracers, 0);
+        assert_eq!(report.total_trail_samples, 1);
+        assert!(report.mounted_manifest.is_none());
+        assert_eq!(report.active_checkpoint_id, None);
+        assert_eq!(report.trail_history_counts, vec![RuntimeTrailHistoryCount {
+            body_id: BodyId("solo".into()),
+            sample_count: 1,
+        }]);
     }
 
     #[test]
