@@ -23,7 +23,7 @@ use solarlab_hardware::{CpuBackend, GpuBackend, HardwareProfile};
 use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_vulkan_adapter::{
-    adapt_render_scene, PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight,
+    PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight, VulkanSceneAdapter,
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
@@ -365,6 +365,7 @@ pub struct SlBufferViewResult {
 /// Single runtime session entry in the process registry.
 struct RuntimeSession {
     runtime: WorldRuntime,
+    vulkan_scene_adapter: VulkanSceneAdapter,
 }
 
 #[derive(Debug, Default)]
@@ -639,7 +640,10 @@ pub extern "C" fn sl_v2_session_create(params: SlSessionCreateParams) -> SlSessi
         }
     };
 
-    let handle = registry.insert(RuntimeSession { runtime });
+    let handle = registry.insert(RuntimeSession {
+        runtime,
+        vulkan_scene_adapter: VulkanSceneAdapter::default(),
+    });
 
     SlSessionCreateResult {
         result: status(SlStatusCode::Ok),
@@ -850,7 +854,7 @@ pub extern "C" fn sl_v2_session_export_vulkan_scene(
     }
 
     let scene_packet = {
-        let registry = match registry().lock() {
+        let mut registry = match registry().lock() {
             Ok(lock) => lock,
             Err(_) => {
                 return SlVulkanScenePacketResult {
@@ -861,7 +865,7 @@ pub extern "C" fn sl_v2_session_export_vulkan_scene(
             }
         };
 
-        let Some(session) = registry.get(handle) else {
+        let Some(session) = registry.get_mut(handle) else {
             return SlVulkanScenePacketResult {
                 result: status(SlStatusCode::NotReady),
                 handle: SlRenderPacketHandle::default(),
@@ -869,7 +873,8 @@ pub extern "C" fn sl_v2_session_export_vulkan_scene(
             };
         };
 
-        adapt_render_scene(&session.runtime.render_scene())
+        let scene = session.runtime.render_scene();
+        session.vulkan_scene_adapter.adapt(&scene)
     };
 
     let packet = ExportedVulkanScenePacket::from_scene_packet(scene_packet);
@@ -2227,7 +2232,6 @@ mod tests {
 
     use solarlab_domain::{BodyClass, BodyId, Vector3d};
     use solarlab_runtime::{BodyState, WorldCommand};
-    use solarlab_vulkan_adapter::adapt_render_scene;
 
     use super::{
         registry, sl_v2_abi_version, sl_v2_session_apply_command, sl_v2_session_create,
@@ -2346,9 +2350,13 @@ mod tests {
         focus_body(create.handle, "moon");
 
         let direct_packet = {
-            let registry = registry().lock().expect("session registry lock");
-            let session = registry.get(create.handle).expect("session exists");
-            adapt_render_scene(&session.runtime.render_scene())
+            let mut registry = registry().lock().expect("session registry lock");
+            let session = registry
+                .sessions
+                .get_mut(&create.handle.raw)
+                .expect("session exists");
+            let scene = session.runtime.render_scene();
+            session.vulkan_scene_adapter.adapt(&scene)
         };
 
         let exported = sl_v2_session_export_vulkan_scene(create.handle);
@@ -2391,6 +2399,69 @@ mod tests {
 
         assert_eq!(
             sl_v2_vulkan_scene_packet_release(exported.handle).code,
+            SlStatusCode::Ok
+        );
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn export_reuses_session_vulkan_adapter_cache_until_scene_revision_changes() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        seed_runtime_with_body(create.handle, "earth", 10.0);
+        seed_runtime_with_body(create.handle, "moon", 12.0);
+        focus_body(create.handle, "earth");
+
+        let first_export = sl_v2_session_export_vulkan_scene(create.handle);
+        assert_eq!(first_export.result.code, SlStatusCode::Ok);
+        let first_scene_revision = {
+            let registry = registry().lock().expect("session registry lock");
+            let session = registry.get(create.handle).expect("session exists");
+            let revision = session.vulkan_scene_adapter.cached_scene_revision();
+            revision_prefix(revision.unwrap_or_default()).to_owned()
+        };
+
+        let second_export = sl_v2_session_export_vulkan_scene(create.handle);
+        assert_eq!(second_export.result.code, SlStatusCode::Ok);
+        let second_scene_revision = {
+            let registry = registry().lock().expect("session registry lock");
+            let session = registry.get(create.handle).expect("session exists");
+            let revision = session.vulkan_scene_adapter.cached_scene_revision();
+            revision_prefix(revision.unwrap_or_default()).to_owned()
+        };
+
+        assert_eq!(first_scene_revision, second_scene_revision);
+
+        assert_eq!(
+            sl_v2_session_apply_command(
+                create.handle,
+                test_session_command(SlCommandKind::FocusBody, |command| {
+                    let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+                    body_id[..4].copy_from_slice(b"moon");
+                    command.body_id = body_id;
+                    command.body_id_len = 4;
+                }),
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+
+        let third_export = sl_v2_session_export_vulkan_scene(create.handle);
+        assert_eq!(third_export.result.code, SlStatusCode::Ok);
+        let third_scene_revision = {
+            let registry = registry().lock().expect("session registry lock");
+            let session = registry.get(create.handle).expect("session exists");
+            let revision = session.vulkan_scene_adapter.cached_scene_revision();
+            revision_prefix(revision.unwrap_or_default()).to_owned()
+        };
+
+        assert_ne!(first_scene_revision, third_scene_revision);
+
+        assert_eq!(sl_v2_vulkan_scene_packet_release(first_export.handle).code, SlStatusCode::Ok);
+        assert_eq!(sl_v2_vulkan_scene_packet_release(second_export.handle).code, SlStatusCode::Ok);
+        assert_eq!(
+            sl_v2_vulkan_scene_packet_release(third_export.handle).code,
             SlStatusCode::Ok
         );
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
@@ -2670,6 +2741,10 @@ mod tests {
             )
             .expect("focus body");
         assert!(!events.is_empty());
+    }
+
+    fn revision_prefix(scene_revision: &str) -> &str {
+        scene_revision.split("|diag:").next().unwrap_or_default()
     }
 
     fn new_params(scenario: &str, branch: &str) -> SlSessionCreateParams {

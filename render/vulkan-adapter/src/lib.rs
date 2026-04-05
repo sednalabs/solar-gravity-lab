@@ -131,14 +131,19 @@ pub struct VulkanScenePacket {
 impl VulkanSceneAdapter {
     #[must_use]
     pub fn adapt(&mut self, scene: &RenderScene) -> VulkanScenePacket {
+        let stable_revision = stable_scene_revision(&scene.scene_revision);
         let next_key = ScenePacketCacheKey {
-            scene_revision: scene.scene_revision.clone(),
+            scene_revision: stable_revision.to_owned(),
             origin_strategy: self.origin_strategy,
         };
 
         if let Some(cached_key) = &self.cache_key {
             if *cached_key == next_key {
-                if let Some(cached_packet) = &self.cached_packet {
+                if let Some(cached_packet) = self.cached_packet.as_mut() {
+                    // Keep live diagnostics and revision in sync while reusing cached
+                    // flattened topology when only volatile diagnostics fields changed.
+                    cached_packet.scene_revision = scene.scene_revision.clone();
+                    cached_packet.diagnostics = scene.diagnostics;
                     return cached_packet.clone();
                 }
             }
@@ -186,12 +191,23 @@ impl VulkanSceneAdapter {
         }
     }
 
+    #[must_use]
+    pub fn cached_scene_revision(&self) -> Option<&str> {
+        self.cached_packet
+            .as_ref()
+            .map(|packet| packet.scene_revision.as_str())
+    }
+
     fn frame_origin_for(&self, camera: &CameraPose) -> Vector3d {
         match self.origin_strategy {
             FrameOriginStrategy::CameraTarget => camera.target_m,
             FrameOriginStrategy::CameraPosition => camera.position_m,
         }
     }
+}
+
+fn stable_scene_revision(scene_revision: &str) -> &str {
+    scene_revision.split("|diag:").next().unwrap_or_default()
 }
 
 #[must_use]
