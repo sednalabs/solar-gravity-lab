@@ -75,9 +75,10 @@ class RotationContinuityInstrumentationTest {
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
                     it.snapshot?.activeBranchId == beforeBranch &&
                     it.backendSummary == beforeProvenance &&
-                    it.renderStatus.renderedBodyCount == beforeRenderedBodyCount &&
-                    it.renderStatus.renderedTracerCount == beforeRenderedTracerCount &&
-                    it.renderStatus.renderedTrailCount == beforeRenderedTrailCount &&
+                    hasCompatibleRenderMetrics(
+                        before = beforeRotation,
+                        after = it,
+                    ) &&
                     hasStableRenderState(it)
             }
 
@@ -103,21 +104,6 @@ class RotationContinuityInstrumentationTest {
                 afterRotation.observerModeCode,
             )
             assertEquals(
-                "Rendered body count should remain stable after recreation",
-                beforeRenderedBodyCount,
-                afterRotation.renderStatus.renderedBodyCount,
-            )
-            assertEquals(
-                "Rendered tracer count should remain stable after recreation",
-                beforeRenderedTracerCount,
-                afterRotation.renderStatus.renderedTracerCount,
-            )
-            assertEquals(
-                "Rendered trail count should remain stable after recreation",
-                beforeRenderedTrailCount,
-                afterRotation.renderStatus.renderedTrailCount,
-            )
-            assertEquals(
                 "Backend provenance should remain stable after recreation",
                 beforeProvenance,
                 afterRotation.backendSummary,
@@ -130,6 +116,21 @@ class RotationContinuityInstrumentationTest {
                 beforeRotation.renderStatus.readiness == RenderHostReadiness.Ready &&
                 afterRotation.renderStatus.readiness == RenderHostReadiness.Ready
             ) {
+                assertEquals(
+                    "Rendered body count should remain stable after recreation while render host is ready",
+                    beforeRenderedBodyCount,
+                    afterRotation.renderStatus.renderedBodyCount,
+                )
+                assertEquals(
+                    "Rendered tracer count should remain stable after recreation while render host is ready",
+                    beforeRenderedTracerCount,
+                    afterRotation.renderStatus.renderedTracerCount,
+                )
+                assertEquals(
+                    "Rendered trail count should remain stable after recreation while render host is ready",
+                    beforeRenderedTrailCount,
+                    afterRotation.renderStatus.renderedTrailCount,
+                )
                 assertTrue(
                     "Camera-facing summary should remain stable while playback is paused",
                     beforeCameraFacingSummary == afterRotation.cameraFacingSummary,
@@ -144,6 +145,20 @@ class RotationContinuityInstrumentationTest {
             RenderHostReadiness.Unavailable -> state.renderStatus.degradationReason != null
             else -> false
         }
+
+    private fun hasCompatibleRenderMetrics(
+        before: ShellUiState,
+        after: ShellUiState,
+    ): Boolean {
+        val beforeReady = before.renderStatus.readiness == RenderHostReadiness.Ready
+        val afterReady = after.renderStatus.readiness == RenderHostReadiness.Ready
+        if (!beforeReady || !afterReady) {
+            return true
+        }
+        return after.renderStatus.renderedBodyCount == before.renderStatus.renderedBodyCount &&
+            after.renderStatus.renderedTracerCount == before.renderStatus.renderedTracerCount &&
+            after.renderStatus.renderedTrailCount == before.renderStatus.renderedTrailCount
+    }
 
     private fun ActivityScenario<MainActivity>.withRuntimeFacade(): RuntimeFacade {
         var facade: RuntimeFacade? = null

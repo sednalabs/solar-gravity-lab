@@ -20,6 +20,7 @@ import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
+import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.SnapshotPresentation
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,7 @@ class SolarLabShellLayoutTest {
 
     private val runtimeFacade = FakeRuntimeFacade(
         ShellUiState(
+            connectionState = SessionConnectionState.Active,
             statusLine = "Status ready for UI validation",
             detailLine = "Detail line visible",
             sessionHandle = 99L,
