@@ -28,6 +28,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -36,7 +37,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -610,6 +613,11 @@ private fun ControlDeck(
     onRefresh: () -> Unit,
     onCommand: (RuntimeCommand) -> Unit,
 ) {
+    var focusBodyInput by mutableStateOf("")
+    var checkpointIdInput by mutableStateOf("")
+    var branchFromCheckpointIdInput by mutableStateOf("")
+    var newBranchIdInput by mutableStateOf("")
+
     LabPanel {
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text(
@@ -653,6 +661,52 @@ private fun ControlDeck(
                 }
             }
 
+            ControlSection(title = "Focus and follow context") {
+                OutlinedTextField(
+                    value = focusBodyInput,
+                    onValueChange = { focusBodyInput = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.FOCUS_BODY_FIELD),
+                    enabled = enabled,
+                    label = { Text("Body id (leave empty to clear)") },
+                    singleLine = true,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Button(
+                        onClick = {
+                            onCommand(
+                                RuntimeCommand.FocusBody(
+                                    focusBodyInput.trim().ifBlank { null },
+                                ),
+                            )
+                        },
+                        enabled = enabled,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON),
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text("Set focus body")
+                    }
+                    Button(
+                        onClick = {
+                            onCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.FollowSelected))
+                        },
+                        enabled = enabled,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON),
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text("Follow selection")
+                    }
+                }
+            }
+
             ControlSection(title = "Timeline nudge") {
                 RuntimeCommandChip(
                     label = "+60s",
@@ -683,6 +737,80 @@ private fun ControlDeck(
                         enabled = enabled,
                         onClick = { onCommand(RuntimeCommand.SetPlaybackRate(simSecondsPerRealSecond = rate)) },
                     )
+                }
+            }
+
+            ControlSection(title = "Checkpoint and branch controls") {
+                OutlinedTextField(
+                    value = checkpointIdInput,
+                    onValueChange = { checkpointIdInput = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.CHECKPOINT_ID_FIELD),
+                    enabled = enabled,
+                    label = { Text("Checkpoint id (optional)") },
+                    singleLine = true,
+                )
+                Button(
+                    onClick = {
+                        onCommand(
+                            RuntimeCommand.CreateCheckpoint(
+                                checkpointId = checkpointIdInput.trim().ifBlank { null },
+                                checkpointLabel = null,
+                            ),
+                        )
+                        checkpointIdInput = ""
+                    },
+                    enabled = enabled,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text("Create checkpoint")
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    OutlinedTextField(
+                        value = branchFromCheckpointIdInput,
+                        onValueChange = { branchFromCheckpointIdInput = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD),
+                        enabled = enabled,
+                        label = { Text("Checkpoint id") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = newBranchIdInput,
+                        onValueChange = { newBranchIdInput = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(SolarLabTestTags.BRANCH_NAME_FIELD),
+                        enabled = enabled,
+                        label = { Text("New branch id (optional)") },
+                        singleLine = true,
+                    )
+                }
+                Button(
+                    onClick = {
+                        onCommand(
+                            RuntimeCommand.CreateBranchFromCheckpoint(
+                                checkpointId = branchFromCheckpointIdInput.trim(),
+                                newBranchId = newBranchIdInput.trim().ifBlank { null },
+                            ),
+                        )
+                        newBranchIdInput = ""
+                    },
+                    enabled = enabled && branchFromCheckpointIdInput.trim().isNotBlank(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text("Create branch from checkpoint")
                 }
             }
 
@@ -797,6 +925,10 @@ private fun NoticeCard(uiState: ShellUiState) {
 
 @Composable
 private fun DetailGrid(uiState: ShellUiState) {
+    val renderSummaryFallback = uiState.renderPacketSummary
+        ?: uiState.renderStatus.summary
+        ?: "No packet summary yet"
+    val renderedIssue = uiState.renderStatus.issue ?: "None"
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         DetailCard(
             title = "Session boundary",
@@ -807,13 +939,26 @@ private fun DetailGrid(uiState: ShellUiState) {
                     SessionConnectionState.Unavailable -> "Unavailable"
                 },
                 "Session handle" to (uiState.sessionHandle?.toString() ?: "Not yet assigned"),
-                "Runtime backend" to (uiState.backendSummary ?: "Pending runtime info"),
+                "Provenance" to (uiState.backendSummary ?: "Not exposed by this state slice"),
             ),
+            valueTags = mapOf("Provenance" to SolarLabTestTags.METADATA_PROVENANCE),
         )
 
         DetailCard(
             title = "Authoritative snapshot",
-            entries = uiState.snapshot.toSnapshotEntries(),
+            entries = uiState.snapshot.toSnapshotEntries().plus(
+                listOf(
+                    "Active checkpoint" to uiState.deriveActiveCheckpoint(),
+                    "Focus target" to uiState.resolveFocusTarget(),
+                    "Observer mode code" to uiState.deriveObserverModeCode(),
+                ),
+            ),
+            valueTags = mapOf(
+                "Active branch" to SolarLabTestTags.METADATA_ACTIVE_BRANCH,
+                "Active checkpoint" to SolarLabTestTags.METADATA_ACTIVE_CHECKPOINT,
+                "Focus target" to SolarLabTestTags.METADATA_FOCUS_TARGET,
+                "Observer mode" to SolarLabTestTags.METADATA_OBSERVER_MODE,
+            ),
         )
 
         DetailCard(
@@ -821,11 +966,17 @@ private fun DetailGrid(uiState: ShellUiState) {
             entries = listOf(
                 "Readiness" to uiState.renderStatus.readiness.displayLabel(),
                 "Scene revision" to (uiState.renderStatus.sceneRevision ?: "Waiting for packet"),
-                "Decoded frame" to "${uiState.renderStatus.renderedBodyCount} bodies / ${uiState.renderStatus.renderedTracerCount} tracers / ${uiState.renderStatus.renderedTrailCount} trails",
-                "Packet summary" to (uiState.renderStatus.summary ?: "No packet summary yet"),
-                "Issue" to (uiState.renderStatus.issue ?: "None"),
+                "Body count" to uiState.renderStatus.renderedBodyCount.toString(),
+                "Tracer count" to uiState.renderStatus.renderedTracerCount.toString(),
+                "Trail count" to uiState.renderStatus.renderedTrailCount.toString(),
+                "Light count" to deriveLightCountFromSummary(renderSummaryFallback),
+                "Packet summary" to renderSummaryFallback,
+                "Issue" to renderedIssue,
             ),
-            valueTags = mapOf("Packet summary" to SolarLabTestTags.RENDER_PACKET_SUMMARY),
+            valueTags = mapOf(
+                "Packet summary" to SolarLabTestTags.RENDER_PACKET_SUMMARY,
+                "Light count" to SolarLabTestTags.METADATA_LIGHTS,
+            ),
         )
     }
 }
@@ -942,18 +1093,43 @@ private fun SnapshotPresentation?.toSnapshotEntries(): List<Pair<String, String>
         return listOf(
             "State" to "Waiting for the first authoritative snapshot",
             "Scenario" to "Pending",
-            "Branch" to "Pending",
+            "Active branch" to "Pending",
         )
     }
 
     return listOf(
         "Scenario" to scenarioId,
-        "Branch" to activeBranchId,
+        "Active branch" to activeBranchId,
         "Epoch" to epochSeconds.asEpochLabel(),
         "Bodies" to bodyCount.toString(),
         "Playback" to if (paused) "Paused" else simSecondsPerRealSecond.asPlaybackLabel(),
-        "Observer" to observerModeLabel,
+        "Observer mode" to observerModeLabel,
     )
+}
+
+private fun ShellUiState.deriveObserverModeCode(): String = observerModeCode?.let { code ->
+    RuntimeObserverMode.values().firstOrNull { it.nativeCode == code }?.displayLabel()
+        ?: "Mode code $code"
+} ?: "Not exposed by this state slice"
+
+private fun ShellUiState.resolveFocusTarget(): String = cameraFacingSummary ?: "Not exposed by this state slice"
+
+private fun ShellUiState.deriveActiveCheckpoint(): String = snapshotSummary?.parseActiveCheckpoint()
+    ?: "Not exposed by this state slice"
+
+private fun String.parseActiveCheckpoint(): String {
+    val capture = Regex("checkpoint=([^,;]+)").find(this)
+    return capture?.groupValues
+        ?.get(1)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: "Not exposed by this state slice"
+}
+
+private fun deriveLightCountFromSummary(summary: String): String {
+    val captured = Regex("light(?:s)?=([0-9]+)").find(summary)
+    return captured?.groupValues?.get(1)?.let { "$it (estimated)" }
+        ?: "Not exposed by this state slice"
 }
 
 private fun RenderHostReadiness.displayLabel(): String = when (this) {

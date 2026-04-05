@@ -27,7 +27,9 @@ class RotationContinuityInstrumentationTest {
                 it.sessionHandle != null &&
                     it.renderPacketSummary != null &&
                     it.cameraFacingSummary != null &&
-                    it.observerModeCode != null
+                    it.observerModeCode != null &&
+                    it.backendSummary != null &&
+                    it.snapshot?.activeBranchId != null
             }
 
             runBlocking {
@@ -40,12 +42,22 @@ class RotationContinuityInstrumentationTest {
                 it.sessionHandle != null &&
                     it.snapshotSummary?.contains("paused=true") == true &&
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
+                    it.snapshot?.activeBranchId != null &&
+                    it.renderStatus.renderedBodyCount >= 0 &&
+                    it.renderStatus.renderedTracerCount >= 0 &&
+                    it.renderStatus.renderedTrailCount >= 0 &&
                     it.cameraFacingSummary != null
             }
 
             val beforeRotation = facadeBefore.uiState.value
             val beforeSessionHandle = beforeRotation.sessionHandle
             val beforeCameraFacingSummary = beforeRotation.cameraFacingSummary
+            val beforeBranch = beforeRotation.snapshot?.activeBranchId
+            val beforeRenderedBodyCount = beforeRotation.renderStatus.renderedBodyCount
+            val beforeRenderedTracerCount = beforeRotation.renderStatus.renderedTracerCount
+            val beforeRenderedTrailCount = beforeRotation.renderStatus.renderedTrailCount
+            val beforeObserverMode = beforeRotation.observerModeCode
+            val beforeProvenance = beforeRotation.backendSummary
 
             scenario.recreate()
 
@@ -60,6 +72,11 @@ class RotationContinuityInstrumentationTest {
                 it.sessionHandle != null &&
                     it.snapshotSummary?.contains("paused=true") == true &&
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
+                    it.snapshot?.activeBranchId == beforeBranch &&
+                    it.backendSummary == beforeProvenance &&
+                    it.renderStatus.renderedBodyCount == beforeRenderedBodyCount &&
+                    it.renderStatus.renderedTracerCount == beforeRenderedTracerCount &&
+                    it.renderStatus.renderedTrailCount == beforeRenderedTrailCount &&
                     it.cameraFacingSummary != null
             }
 
@@ -70,9 +87,39 @@ class RotationContinuityInstrumentationTest {
                 afterRotation.sessionHandle,
             )
             assertEquals(
+                "Active branch should remain stable across recreation",
+                beforeBranch,
+                afterRotation.snapshot?.activeBranchId,
+            )
+            assertEquals(
                 "Observer mode should be preserved across recreation",
                 RuntimeObserverMode.FollowHost.nativeCode,
                 afterRotation.observerModeCode,
+            )
+            assertEquals(
+                "Observer mode code should remain stable after recreation",
+                beforeObserverMode,
+                afterRotation.observerModeCode,
+            )
+            assertEquals(
+                "Rendered body count should remain stable after recreation",
+                beforeRenderedBodyCount,
+                afterRotation.renderStatus.renderedBodyCount,
+            )
+            assertEquals(
+                "Rendered tracer count should remain stable after recreation",
+                beforeRenderedTracerCount,
+                afterRotation.renderStatus.renderedTracerCount,
+            )
+            assertEquals(
+                "Rendered trail count should remain stable after recreation",
+                beforeRenderedTrailCount,
+                afterRotation.renderStatus.renderedTrailCount,
+            )
+            assertEquals(
+                "Backend provenance should remain stable after recreation",
+                beforeProvenance,
+                afterRotation.backendSummary,
             )
             assertNotNull(
                 "Camera-facing summary should still be exposed after recreation",

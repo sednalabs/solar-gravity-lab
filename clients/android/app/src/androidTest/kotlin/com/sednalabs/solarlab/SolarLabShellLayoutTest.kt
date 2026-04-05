@@ -9,14 +9,17 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performTextInput
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.sednalabs.solarlab.runtime.RenderStatusPresentation
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
+import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.ShellUiState
+import com.sednalabs.solarlab.runtime.SnapshotPresentation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Assert.assertTrue
@@ -35,10 +38,28 @@ class SolarLabShellLayoutTest {
             statusLine = "Status ready for UI validation",
             detailLine = "Detail line visible",
             sessionHandle = 99L,
+            snapshot = SnapshotPresentation(
+                scenarioId = "alpha",
+                activeBranchId = "main",
+                bodyCount = 123,
+                epochSeconds = 12.5,
+                paused = false,
+                simSecondsPerRealSecond = 1.0,
+                observerModeLabel = "Follow host",
+            ),
             renderStatus = RenderStatusPresentation(
                 readiness = RenderHostReadiness.Ready,
-                summary = "Render packet summary visible",
+                renderedBodyCount = 123,
+                renderedTracerCount = 7,
+                renderedTrailCount = 2,
+                summary = "scene=alpha, light=8, trails=2",
+                issue = null,
             ),
+            renderPacketSummary = "scene=alpha, light=8, trails=2",
+            snapshotSummary = "scenario=alpha, branch=main, checkpoint=cp-1, paused=false",
+            observerModeCode = RuntimeObserverMode.FollowHost.nativeCode,
+            backendSummary = "Runtime backend localhost",
+            cameraFacingSummary = "target=(1.0,2.0,3.0), up=(0.0,1.0,0.0)",
         )
     )
 
@@ -62,11 +83,62 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.DETAIL_LINE).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.SESSION_HANDLE).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.RENDER_PACKET_SUMMARY).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_NAME_FIELD).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_FOCUS_TARGET).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_OBSERVER_MODE).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_ACTIVE_BRANCH).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_ACTIVE_CHECKPOINT).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_PROVENANCE).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_LIGHTS).assertIsDisplayed()
 
         // Touch input is accepted by the render panel layout node.
         composeRule.onNodeWithTag(SolarLabTestTags.RENDER_PANEL)
             .performTouchInput { click() }
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun shellControls_emitCommands_whenUserInteracts() {
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).performTextInput("body-7")
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON).performTouchInput { click() }
+        assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "body-7" })
+
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON).performTouchInput { click() }
+        assertTrue(
+            runtimeFacade.commands.any {
+                it is RuntimeCommand.SetObserverMode && it.mode == RuntimeObserverMode.FollowSelected
+            },
+        )
+
+        composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).performTextInput("checkpoint-1")
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).performTouchInput { click() }
+        assertTrue(
+            runtimeFacade.commands.any {
+                it is RuntimeCommand.CreateCheckpoint && it.checkpointId == "checkpoint-1"
+            },
+        )
+
+        composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).performTextInput("checkpoint-1")
+        composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_NAME_FIELD).performTextInput("branch-a")
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON).performTouchInput {
+            click()
+        }
+        assertTrue(
+            runtimeFacade.commands.any {
+                it is RuntimeCommand.CreateBranchFromCheckpoint &&
+                    it.checkpointId == "checkpoint-1" &&
+                    it.newBranchId == "branch-a"
+            },
+        )
+
+        assertTrue(runtimeFacade.commands.size > 4)
     }
 
     @Test
@@ -109,6 +181,7 @@ class SolarLabShellLayoutTest {
 
     private class FakeRuntimeFacade(initialState: ShellUiState) : RuntimeFacade {
         private val state = MutableStateFlow(initialState)
+        val commands = mutableListOf<RuntimeCommand>()
 
         override val uiState: StateFlow<ShellUiState> = state
 
@@ -116,6 +189,8 @@ class SolarLabShellLayoutTest {
 
         override suspend fun refresh() = Unit
 
-        override suspend fun applyCommand(command: RuntimeCommand) = Unit
+        override suspend fun applyCommand(command: RuntimeCommand) {
+            commands.add(command)
+        }
     }
 }
