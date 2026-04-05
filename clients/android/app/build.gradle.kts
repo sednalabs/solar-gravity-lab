@@ -231,8 +231,8 @@ android {
         applicationId = "com.sednalabs.solarlab"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 11
+        versionName = "0.1.0-alpha.10"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -240,6 +240,14 @@ android {
     }
 
     buildTypes {
+        create("prerelease") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            applicationIdSuffix = ".internal"
+            signingConfig = signingConfigs.getByName("debug")
+            resValue("string", "app_name", "Solar Gravity Lab Dev Preview")
+        }
+
         release {
             isMinifyEnabled = false
             proguardFiles(

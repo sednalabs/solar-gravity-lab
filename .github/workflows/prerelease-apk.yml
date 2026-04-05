@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon :app:assemblePrerelease
+          ./gradlew -p clients/android --no-daemon :app:assemblePrerelease
 
       - name: Derive artifact metadata
         id: meta
@@ -70,7 +70,7 @@ jobs:
           from pathlib import Path
 
           metadata = json.loads(
-              Path("app/build/outputs/apk/prerelease/output-metadata.json").read_text()
+              Path("clients/android/app/build/outputs/apk/prerelease/output-metadata.json").read_text()
           )
           element = metadata["elements"][0]
           version_name = element["versionName"]
@@ -92,7 +92,7 @@ jobs:
           mkdir -p dist
           artifact_name="solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-internal-dev-preview.apk"
           cp \
-            "app/build/outputs/apk/prerelease/${{ steps.meta.outputs.apk_name }}" \
+            "clients/android/app/build/outputs/apk/prerelease/${{ steps.meta.outputs.apk_name }}" \
             "dist/${artifact_name}"
           sha256sum "dist/${artifact_name}" > "dist/${artifact_name}.sha256"
 
@@ -104,7 +104,7 @@ jobs:
           path: |
             dist/*.apk
             dist/*.sha256
-            app/build/outputs/apk/prerelease/output-metadata.json
+            clients/android/app/build/outputs/apk/prerelease/output-metadata.json
 
       - name: Emit summary
         shell: bash
