@@ -232,8 +232,8 @@ typedef struct SlSessionCommand {
   uint8_t body_id[SL_V2_ID_CAPACITY];
   uint32_t body_id_len;
   SlBodyClass body_class;
-  SlPackedVec3 body_position;
-  SlPackedVec3 body_velocity;
+  SlVector3d body_position;
+  SlVector3d body_velocity;
   double body_mass_kg;
   double body_radius_m;
   uint8_t checkpoint_id[SL_V2_ID_CAPACITY];

@@ -306,8 +306,8 @@ pub struct SlSessionCommand {
     pub body_id: [u8; SL_V2_ID_CAPACITY],
     pub body_id_len: u32,
     pub body_class: SlBodyClass,
-    pub body_position: SlPackedVec3,
-    pub body_velocity: SlPackedVec3,
+    pub body_position: SlVector3d,
+    pub body_velocity: SlVector3d,
     pub body_mass_kg: f64,
     pub body_radius_m: f64,
     pub checkpoint_id: [u8; SL_V2_ID_CAPACITY],
@@ -1195,8 +1195,8 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
                     body_class,
                     mass_kg: command.body_mass_kg,
                     radius_m: command.body_radius_m,
-                    position_m: decode_packed_vec3(command.body_position),
-                    velocity_mps: decode_packed_vec3(command.body_velocity),
+                    position_m: decode_vector3d(command.body_position),
+                    velocity_mps: decode_vector3d(command.body_velocity),
                 },
             })
         }
@@ -1207,8 +1207,8 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
             let body_id = decode_identifier(&command.body_id, command.body_id_len)?;
             Ok(WorldCommand::SetBodyKinematics {
                 body_id: BodyId(body_id),
-                position_m: decode_packed_vec3(command.body_position),
-                velocity_mps: decode_packed_vec3(command.body_velocity),
+                position_m: decode_vector3d(command.body_position),
+                velocity_mps: decode_vector3d(command.body_velocity),
             })
         }
         SlCommandKind::CreateCheckpoint => {
@@ -1270,6 +1270,14 @@ fn decode_packed_vec3(value: SlPackedVec3) -> Vector3d {
         x: f64::from(value.x),
         y: f64::from(value.y),
         z: f64::from(value.z),
+    }
+}
+
+fn decode_vector3d(value: SlVector3d) -> Vector3d {
+    Vector3d {
+        x: value.x,
+        y: value.y,
+        z: value.z,
     }
 }
 
@@ -1762,15 +1770,15 @@ mod android_jni {
             Err(result) => return create_error_snapshot_summary(result),
         };
 
-        let body_position = SlPackedVec3 {
-            x: body_position_x as f32,
-            y: body_position_y as f32,
-            z: body_position_z as f32,
+        let body_position = SlVector3d {
+            x: body_position_x,
+            y: body_position_y,
+            z: body_position_z,
         };
-        let body_velocity = SlPackedVec3 {
-            x: body_velocity_x as f32,
-            y: body_velocity_y as f32,
-            z: body_velocity_z as f32,
+        let body_velocity = SlVector3d {
+            x: body_velocity_x,
+            y: body_velocity_y,
+            z: body_velocity_z,
         };
 
         let (checkpoint_id, checkpoint_id_len) = match decode_optional_java_id_bytes(
@@ -2451,12 +2459,12 @@ mod tests {
                 command.body_id = body_id;
                 command.body_id_len = 4;
                 command.body_class = SlBodyClass::Spacecraft;
-                command.body_position = SlPackedVec3 {
+                command.body_position = SlVector3d {
                     x: 4.0,
                     y: 3.0,
                     z: 2.0,
                 };
-                command.body_velocity = SlPackedVec3 {
+                command.body_velocity = SlVector3d {
                     x: 0.5,
                     y: 0.4,
                     z: 0.0,
@@ -2515,12 +2523,12 @@ mod tests {
                 body_id[..4].copy_from_slice(b"ship");
                 command.body_id = body_id;
                 command.body_id_len = 4;
-                command.body_position = SlPackedVec3 {
+                command.body_position = SlVector3d {
                     x: 10.0,
                     y: 20.0,
                     z: 30.0,
                 };
-                command.body_velocity = SlPackedVec3 {
+                command.body_velocity = SlVector3d {
                     x: 0.5,
                     y: 1.0,
                     z: -1.0,
@@ -2622,8 +2630,8 @@ mod tests {
             body_id: [0_u8; SL_V2_ID_CAPACITY],
             body_id_len: 0,
             body_class: SlBodyClass::Planet,
-            body_position: SlPackedVec3::default(),
-            body_velocity: SlPackedVec3::default(),
+            body_position: SlVector3d::default(),
+            body_velocity: SlVector3d::default(),
             body_mass_kg: 1.0,
             body_radius_m: 1.0,
             checkpoint_id: [0_u8; SL_V2_ID_CAPACITY],
