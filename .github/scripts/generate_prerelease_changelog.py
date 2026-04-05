@@ -63,9 +63,12 @@ def tag_target(repo_root: Path, tag: str) -> str:
 
 
 def previous_release_tag(repo_root: Path, ref: str) -> str | None:
-    target_sha = git(repo_root, "rev-parse", ref)
+    ref_name = ref.removeprefix("refs/tags/")
+    target_sha = git(repo_root, "rev-list", "-n", "1", ref)
     candidates = merged_tags(repo_root, ref)
     for tag in candidates:
+        if tag == ref or tag == ref_name:
+            continue
         if tag_target(repo_root, tag) == target_sha:
             continue
         return tag
@@ -169,11 +172,13 @@ def main() -> int:
     head_sha = git(repo_root, "rev-parse", ref)
     previous_tag = previous_release_tag(repo_root, ref)
     if previous_tag:
-        revision_range = f"{previous_tag}..{ref}"
+        revision_spec = f"{previous_tag}..{ref}"
+        revision_range = revision_spec
     else:
         first_commit = initial_commit(repo_root, ref)
-        revision_range = f"{first_commit}^..{ref}"
-    commits = commit_subjects(repo_root, revision_range)
+        revision_spec = ref
+        revision_range = f"{first_commit}..{ref} (initial baseline)"
+    commits = commit_subjects(repo_root, revision_spec)
 
     markdown = render_markdown(
         ref=ref,
