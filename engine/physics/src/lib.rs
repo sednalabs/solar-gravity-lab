@@ -200,8 +200,9 @@ fn norm_squared(v: Vector3d) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_authoritative_scalar, compute_invariants, CollisionModel, IntegratorKind,
-        MassiveBodyState, PhysicsPolicy, SolverBackend,
+        advance_authoritative_scalar, compute_invariants, CollisionModel, G_M3_PER_KG_S2,
+        IntegratorKind, MIN_DISTANCE_M2, MassiveBodyState, PhysicsPolicy, SolverBackend,
+        pairwise_gravity_accelerations,
     };
     use solarlab_domain::Vector3d;
 
@@ -274,6 +275,193 @@ mod tests {
 
         assert!((invariants.barycenter_m.x - 0.0).abs() < 1.0e-12);
         assert!((invariants.linear_momentum_kg_mps.x - 5.0).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn pairwise_kernel_matches_reference_mixed_loop() {
+        let bodies = mixed_gravity_scenario_for_parity();
+        let actual = pairwise_gravity_accelerations(&bodies);
+        let expected = legacy_reference_accelerations(&bodies);
+
+        for i in 0..actual.len() {
+            assert_vector_close(actual[i], expected[i], 1e-15);
+        }
+    }
+
+    #[test]
+    fn pairwise_kernel_returns_zero_with_no_secondary_sources() {
+        let body = MassiveBodyState {
+            mass_kg: 1.0e9,
+            position_m: Vector3d {
+                x: 42.0,
+                y: -7.0,
+                z: 13.0,
+            },
+            velocity_mps: Vector3d {
+                x: 1.0,
+                y: -0.5,
+                z: 2.0,
+            },
+        };
+        let policy = test_policy();
+
+        let mut only_body = vec![body];
+        let before = only_body.clone();
+        let accelerations = pairwise_gravity_accelerations(&only_body);
+        let mut stationary_body = vec![MassiveBodyState {
+            mass_kg: body.mass_kg,
+            position_m: body.position_m,
+            velocity_mps: Vector3d::default(),
+        }];
+
+        for component in [&accelerations[0].x, &accelerations[0].y, &accelerations[0].z] {
+            assert_eq!(*component, 0.0);
+        }
+
+        advance_authoritative_scalar(&policy, &mut only_body, 10.0);
+        advance_authoritative_scalar(&policy, &mut stationary_body, 10.0);
+
+        assert_eq!(before[0].velocity_mps.x, only_body[0].velocity_mps.x);
+        assert_eq!(before[0].velocity_mps.y, only_body[0].velocity_mps.y);
+        assert_eq!(before[0].velocity_mps.z, only_body[0].velocity_mps.z);
+        assert_eq!(before[0].position_m.x + 10.0 * before[0].velocity_mps.x, only_body[0].position_m.x);
+        assert_eq!(before[0].position_m.y + 10.0 * before[0].velocity_mps.y, only_body[0].position_m.y);
+        assert_eq!(before[0].position_m.z + 10.0 * before[0].velocity_mps.z, only_body[0].position_m.z);
+
+        assert_eq!(42.0, stationary_body[0].position_m.x);
+        assert_eq!(-7.0, stationary_body[0].position_m.y);
+        assert_eq!(13.0, stationary_body[0].position_m.z);
+        assert_eq!(0.0, stationary_body[0].velocity_mps.x);
+        assert_eq!(0.0, stationary_body[0].velocity_mps.y);
+        assert_eq!(0.0, stationary_body[0].velocity_mps.z);
+    }
+
+    #[test]
+    fn pairwise_kernel_stabilizes_edge_distance_and_conserves_pairwise_force() {
+        let bodies = vec![
+            MassiveBodyState {
+                mass_kg: 1.0e24,
+                position_m: Vector3d {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                velocity_mps: Vector3d::default(),
+            },
+            MassiveBodyState {
+                mass_kg: 1.0e20,
+                position_m: Vector3d {
+                    x: 1.0e-8,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                velocity_mps: Vector3d::default(),
+            },
+        ];
+
+        let accelerations = pairwise_gravity_accelerations(&bodies);
+
+        for body_accel in &accelerations {
+            assert!(body_accel.x.is_finite());
+            assert!(body_accel.y.is_finite());
+            assert!(body_accel.z.is_finite());
+        }
+
+        let force_balance_x = bodies[0].mass_kg * accelerations[0].x + bodies[1].mass_kg * accelerations[1].x;
+        let force_balance_y = bodies[0].mass_kg * accelerations[0].y + bodies[1].mass_kg * accelerations[1].y;
+        let force_balance_z = bodies[0].mass_kg * accelerations[0].z + bodies[1].mass_kg * accelerations[1].z;
+
+        assert!(force_balance_x.abs() < 1e-6);
+        assert!(force_balance_y.abs() < 1e-6);
+        assert!(force_balance_z.abs() < 1e-6);
+    }
+
+    fn assert_vector_close(actual: Vector3d, expected: Vector3d, eps: f64) {
+        assert!((actual.x - expected.x).abs() <= eps);
+        assert!((actual.y - expected.y).abs() <= eps);
+        assert!((actual.z - expected.z).abs() <= eps);
+    }
+
+    fn legacy_reference_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+        let mut accelerations = vec![Vector3d::default(); bodies.len()];
+        for i in 0..bodies.len() {
+            let body = bodies[i];
+            let body_position = body.position_m;
+            let mut acceleration_x = 0.0;
+            let mut acceleration_y = 0.0;
+            let mut acceleration_z = 0.0;
+
+            for source_index in 0..bodies.len() {
+                if source_index == i {
+                    continue;
+                }
+
+                let source = bodies[source_index];
+                let dx = source.position_m.x - body_position.x;
+                let dy = source.position_m.y - body_position.y;
+                let dz = source.position_m.z - body_position.z;
+                let distance_squared = (dx * dx) + (dy * dy) + (dz * dz) + MIN_DISTANCE_M2;
+
+                if distance_squared == 0.0 {
+                    continue;
+                }
+
+                let inv_distance = distance_squared.sqrt().recip();
+                let inv_distance_cubed = inv_distance * inv_distance * inv_distance;
+                let scale = G_M3_PER_KG_S2 * source.mass_kg * inv_distance_cubed;
+                acceleration_x += dx * scale;
+                acceleration_y += dy * scale;
+                acceleration_z += dz * scale;
+            }
+
+            accelerations[i] = Vector3d {
+                x: acceleration_x,
+                y: acceleration_y,
+                z: acceleration_z,
+            };
+        }
+        accelerations
+    }
+
+    fn mixed_gravity_scenario_for_parity() -> Vec<MassiveBodyState> {
+        vec![
+            MassiveBodyState {
+                mass_kg: 1.98847e30,
+                position_m: Vector3d {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                velocity_mps: Vector3d::default(),
+            },
+            MassiveBodyState {
+                mass_kg: 5.972168e24,
+                position_m: Vector3d {
+                    x: 1.496e11,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                velocity_mps: Vector3d::default(),
+            },
+            MassiveBodyState {
+                mass_kg: 7.342e22,
+                position_m: Vector3d {
+                    x: 1.499844e11,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                velocity_mps: Vector3d::default(),
+            },
+            MassiveBodyState {
+                mass_kg: 10.0,
+                position_m: Vector3d {
+                    x: 1.0408e11,
+                    y: 3.0e10,
+                    z: 0.0,
+                },
+                velocity_mps: Vector3d::default(),
+            },
+        ]
     }
 
     fn test_policy() -> PhysicsPolicy {
