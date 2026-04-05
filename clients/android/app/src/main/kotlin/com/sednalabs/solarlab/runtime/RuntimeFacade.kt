@@ -18,4 +18,5 @@ data class ShellUiState(
     val sessionHandle: Long? = null,
     val renderPacketSummary: String? = null,
     val snapshotSummary: String? = null,
+    val renderFrame: RenderFrame? = null,
 )

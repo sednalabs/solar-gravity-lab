@@ -14,26 +14,14 @@ internal interface RenderHostAdapter {
     fun releasePacket()
 }
 
-internal data class RenderPacketSnapshot(
-    val sceneRevision: String,
-    val bodyCount: Int,
-    val tracerCount: Int,
-    val trailSpanCount: Int,
-    val trailVertexCount: Int,
-    val directionalLightCount: Int,
-    val uploadBytes: Int,
-) {
-    fun summaryLine(): String =
-        "bodies=$bodyCount, tracers=$tracerCount, trails=$trailSpanCount/$trailVertexCount, lights=$directionalLightCount, uploadBytes=$uploadBytes"
-}
-
 internal class PacketLease internal constructor(
     private val packetHandle: Long,
-    val snapshot: RenderPacketSnapshot,
+    val packet: NativeVulkanScenePacket,
+    private val summaryLineValue: String,
     private val releaseAction: (Long) -> Unit,
 ) : AutoCloseable {
-    val sceneRevision: String get() = snapshot.sceneRevision
-    val summaryLine: String get() = snapshot.summaryLine()
+    val sceneRevision: String get() = packet.sceneRevision
+    val summaryLine: String get() = summaryLineValue
 
     @Volatile
     private var released: Boolean = false
@@ -89,7 +77,8 @@ internal class NativeRenderHostAdapter(
 
         val lease = PacketLease(
             packetHandle = packet.packetHandle,
-            snapshot = packet.toSnapshot(),
+            packet = packet,
+            summaryLineValue = packet.summaryLine(),
             releaseAction = transport::releaseVulkanScene,
         )
         activeLease = lease
@@ -103,23 +92,4 @@ internal class NativeRenderHostAdapter(
         lease.close()
         activeLease = null
     }
-}
-
-private fun NativeVulkanScenePacket.toSnapshot(): RenderPacketSnapshot {
-    val uploadBytes = listOf(
-        bodyInstances?.capacity() ?: 0,
-        tracerInstances?.capacity() ?: 0,
-        trailSpans?.capacity() ?: 0,
-        trailVertices?.capacity() ?: 0,
-        directionalLights?.capacity() ?: 0,
-    ).sum()
-    return RenderPacketSnapshot(
-        sceneRevision = sceneRevision,
-        bodyCount = bodyCount,
-        tracerCount = tracerCount,
-        trailSpanCount = trailSpanCount,
-        trailVertexCount = trailVertexCount,
-        directionalLightCount = directionalLightCount,
-        uploadBytes = uploadBytes,
-    )
 }
