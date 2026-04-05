@@ -88,15 +88,15 @@ class SolarLabShellLayoutTest {
         assertVisibleInScrollableShell(SolarLabTestTags.RENDER_PANEL)
         assertVisibleInScrollableShell(SolarLabTestTags.DETAIL_LINE)
         assertVisibleInScrollableShell(SolarLabTestTags.SESSION_HANDLE)
-        assertVisibleInScrollableShell(SolarLabTestTags.RENDER_PACKET_SUMMARY)
-        assertVisibleInScrollableShell(SolarLabTestTags.FOCUS_BODY_FIELD)
-        assertVisibleInScrollableShell(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
-        assertVisibleInScrollableShell(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
-        assertVisibleInScrollableShell(SolarLabTestTags.CHECKPOINT_ID_FIELD)
-        assertVisibleInScrollableShell(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
-        assertVisibleInScrollableShell(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
-        assertVisibleInScrollableShell(SolarLabTestTags.BRANCH_NAME_FIELD)
-        assertVisibleInScrollableShell(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.RENDER_PACKET_SUMMARY)
+        assertReachableInScrollableShell(SolarLabTestTags.FOCUS_BODY_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.CHECKPOINT_ID_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.BRANCH_NAME_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.METADATA_FOCUS_TARGET)
         assertReachableInScrollableShell(SolarLabTestTags.METADATA_OBSERVER_MODE)
         assertReachableInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_BRANCH)
@@ -120,12 +120,14 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
             .assertIsEnabled()
             .performClick()
+        composeRule.waitForIdle()
         assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "body-7" })
 
         scrollShellTo(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
             .assertIsEnabled()
             .performClick()
+        composeRule.waitForIdle()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.SetObserverMode && it.mode == RuntimeObserverMode.FollowSelected
@@ -138,6 +140,7 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
             .assertIsEnabled()
             .performClick()
+        composeRule.waitForIdle()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.CreateCheckpoint && it.checkpointId == "checkpoint-1"
@@ -153,6 +156,7 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
             .assertIsEnabled()
             .performClick()
+        composeRule.waitForIdle()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.CreateBranchFromCheckpoint &&

@@ -41,7 +41,7 @@ class RotationContinuityInstrumentationTest {
 
             waitForState(facadeBefore) {
                 it.sessionHandle != null &&
-                    it.snapshotSummary?.contains("paused=true") == true &&
+                    it.snapshot?.paused == true &&
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
                     it.snapshot?.activeBranchId != null &&
                     it.renderStatus.renderedBodyCount >= 0 &&
@@ -71,7 +71,7 @@ class RotationContinuityInstrumentationTest {
 
             waitForState(facadeAfter) {
                 it.sessionHandle != null &&
-                    it.snapshotSummary?.contains("paused=true") == true &&
+                    it.snapshot?.paused == true &&
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
                     it.snapshot?.activeBranchId == beforeBranch &&
                     hasCompatibleBackendSummary(
