@@ -1265,14 +1265,6 @@ fn decode_body_class(value: SlBodyClass) -> Result<BodyClass, SlResult> {
     }
 }
 
-fn decode_packed_vec3(value: SlPackedVec3) -> Vector3d {
-    Vector3d {
-        x: f64::from(value.x),
-        y: f64::from(value.y),
-        z: f64::from(value.z),
-    }
-}
-
 fn decode_vector3d(value: SlVector3d) -> Vector3d {
     Vector3d {
         x: value.x,
@@ -1418,9 +1410,9 @@ mod android_jni {
         sl_v2_session_apply_command, sl_v2_session_create, sl_v2_session_destroy,
         sl_v2_session_export_vulkan_scene, sl_v2_session_refresh, sl_v2_session_runtime_info,
         sl_v2_session_snapshot_summary, sl_v2_vulkan_scene_packet_buffer,
-        sl_v2_vulkan_scene_packet_release, status, SlBufferView, SlCommandKind,
+        sl_v2_vulkan_scene_packet_release, status, SlBodyClass, SlBufferView, SlCommandKind,
         SlRenderPacketHandle, SlResult, SlRuntimeHandle, SlSessionCommand, SlSessionCreateParams,
-        SlSessionCreateResult, SlSessionSnapshotSummaryResult, SlStatusCode,
+        SlSessionCreateResult, SlSessionSnapshotSummaryResult, SlStatusCode, SlVector3d,
         SlVulkanSceneBufferKind, SlVulkanScenePacketResult, SL_V2_ID_CAPACITY,
     };
     use jni::objects::{JByteArray, JObject, JValue};
@@ -2237,10 +2229,11 @@ mod tests {
         registry, sl_v2_abi_version, sl_v2_session_apply_command, sl_v2_session_create,
         sl_v2_session_destroy, sl_v2_session_export_vulkan_scene, sl_v2_session_refresh,
         sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
-        sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlCommandKind,
-        SlCpuBackend, SlGpuBackend, SlObserverMode, SlSessionCommand, SlSessionCreateParams,
-        SlStatusCode, SlTimelineSemantics, SlVulkanBodyInstance, SlVulkanSceneBufferKind,
-        SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
+        sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlBodyClass,
+        SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlSessionCommand,
+        SlSessionCreateParams, SlStatusCode, SlTimelineSemantics, SlVector3d,
+        SlVulkanBodyInstance, SlVulkanSceneBufferKind, SL_V2_ID_CAPACITY,
+        SOLARLAB_V2_ABI_VERSION,
     };
 
     #[test]
@@ -2591,7 +2584,14 @@ mod tests {
             }),
         );
         assert_eq!(branch_result.result.code, SlStatusCode::Ok);
-        assert_eq!(branch_result.summary.active_branch_id, "branch");
+        assert_eq!(
+            super::decode_identifier(
+                &branch_result.summary.active_branch_id,
+                branch_result.summary.active_branch_id_len,
+            )
+            .expect("branch id should decode"),
+            "branch"
+        );
 
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
