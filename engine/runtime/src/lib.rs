@@ -21,7 +21,10 @@ use solarlab_history::{
     BranchDescriptor, CheckpointDescriptor, CommandId, CommandRecord, CommandRecordHeader,
     HistoryEvent,
 };
-use solarlab_physics::{PhysicsInvariants, PhysicsPolicy};
+use solarlab_physics::{
+    advance_authoritative_scalar, compute_invariants, MassiveBodyState, PhysicsInvariants,
+    PhysicsPolicy,
+};
 use solarlab_scene::{
     CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneProvenanceRef,
 };
@@ -411,6 +414,7 @@ impl WorldRuntime {
                     return Err(RuntimeError::DuplicateBody(body.body_id.clone()));
                 }
                 branch.world.bodies.push(body.clone());
+                branch.world.invariants = compute_world_invariants(&branch.world.bodies);
             }
             WorldCommand::RemoveBody { body_id } => {
                 let branch = self.active_branch_mut();
@@ -422,6 +426,7 @@ impl WorldRuntime {
                 if branch.world.observer.focus_body_id.as_ref() == Some(body_id) {
                     branch.world.observer.focus_body_id = None;
                 }
+                branch.world.invariants = compute_world_invariants(&branch.world.bodies);
             }
             WorldCommand::SetBodyKinematics {
                 body_id,
@@ -439,12 +444,23 @@ impl WorldRuntime {
                 };
                 body.position_m = *position_m;
                 body.velocity_mps = *velocity_mps;
+                branch.world.invariants = compute_world_invariants(&branch.world.bodies);
             }
             WorldCommand::AdvanceEpoch { delta_seconds } => {
                 if *delta_seconds <= 0.0 {
                     return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
                 }
+
+                let physics_policy = self.config.physics.clone();
                 let branch = self.active_branch_mut();
+                let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
+                let invariants = advance_authoritative_scalar(
+                    &physics_policy,
+                    &mut solver_bodies,
+                    *delta_seconds,
+                );
+                apply_solver_state_to_world_bodies(&mut branch.world.bodies, &solver_bodies);
+                branch.world.invariants = invariants;
                 branch.world.epoch_seconds += *delta_seconds;
             }
             WorldCommand::PausePlayback => {
@@ -977,6 +993,29 @@ fn mounted_manifest_from_state(
     }))
 }
 
+fn world_bodies_to_solver_state(bodies: &[BodyState]) -> Vec<MassiveBodyState> {
+    bodies
+        .iter()
+        .map(|body| MassiveBodyState {
+            mass_kg: body.mass_kg,
+            position_m: body.position_m,
+            velocity_mps: body.velocity_mps,
+        })
+        .collect()
+}
+
+fn apply_solver_state_to_world_bodies(bodies: &mut [BodyState], solved: &[MassiveBodyState]) {
+    for (body, solved_body) in bodies.iter_mut().zip(solved.iter()) {
+        body.position_m = solved_body.position_m;
+        body.velocity_mps = solved_body.velocity_mps;
+    }
+}
+
+fn compute_world_invariants(bodies: &[BodyState]) -> PhysicsInvariants {
+    let solver_bodies = world_bodies_to_solver_state(bodies);
+    compute_invariants(&solver_bodies)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -1326,6 +1365,58 @@ mod tests {
         assert_eq!(descriptor.command_sequence, 2);
         assert_eq!(descriptor.epoch_seconds, 10.0);
         assert_eq!(descriptor.checkpoint_id.0, "manual-01");
+    }
+
+    #[test]
+    fn advance_epoch_moves_bodies_and_updates_invariants() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+
+        let before = runtime.snapshot();
+        let before_distance = body_separation_x(&before);
+
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 30.0,
+                },
+                3,
+            )
+            .expect("advance should succeed");
+
+        let after = runtime.snapshot();
+        let after_distance = body_separation_x(&after);
+
+        assert_eq!(after.epoch_seconds, 30.0);
+        assert!(after_distance < before_distance);
+        assert!(after.invariants.total_energy_j.is_finite());
+    }
+
+    #[test]
+    fn advance_epoch_is_deterministic_for_identical_command_streams() {
+        let mut runtime_a = new_runtime();
+        let mut runtime_b = new_runtime();
+        spawn_two_body_system(&mut runtime_a);
+        spawn_two_body_system(&mut runtime_b);
+
+        runtime_a
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 45.0,
+                },
+                3,
+            )
+            .expect("advance should succeed");
+        runtime_b
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 45.0,
+                },
+                3,
+            )
+            .expect("advance should succeed");
+
+        assert_eq!(runtime_a.snapshot(), runtime_b.snapshot());
     }
 
     #[test]
@@ -2255,5 +2346,63 @@ mod tests {
 
     fn package_id_for(kind: &PackageKind, digest: &Digest) -> String {
         digest.content_id(kind)
+    }
+
+    fn spawn_two_body_system(runtime: &mut WorldRuntime) {
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("primary".into()),
+                        body_class: BodyClass::Planet,
+                        mass_kg: 5.972e24,
+                        radius_m: 6_371_000.0,
+                        position_m: Vector3d {
+                            x: -2.0e7,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("primary spawn should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("secondary".into()),
+                        body_class: BodyClass::Moon,
+                        mass_kg: 7.348e22,
+                        radius_m: 1_737_000.0,
+                        position_m: Vector3d {
+                            x: 2.0e7,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                2,
+            )
+            .expect("secondary spawn should succeed");
+    }
+
+    fn body_separation_x(snapshot: &super::WorldSnapshot) -> f64 {
+        let primary = BodyId("primary".into());
+        let secondary = BodyId("secondary".into());
+        let left = snapshot
+            .bodies
+            .iter()
+            .find(|body| body.body_id == primary)
+            .expect("primary should exist");
+        let right = snapshot
+            .bodies
+            .iter()
+            .find(|body| body.body_id == secondary)
+            .expect("secondary should exist");
+        (right.position_m.x - left.position_m.x).abs()
     }
 }
