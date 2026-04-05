@@ -49,6 +49,11 @@ def commit_subjects(repo_root: Path, revision_range: str) -> list[CommitEntry]:
             continue
         if cleaned_subject.startswith("Merge branch "):
             continue
+        lower_subject = cleaned_subject.lower()
+        if lower_subject.startswith("release: prepare "):
+            continue
+        if lower_subject.startswith("chore(release): prepare "):
+            continue
         commits.append(CommitEntry(sha=sha, subject=cleaned_subject))
     return commits
 
