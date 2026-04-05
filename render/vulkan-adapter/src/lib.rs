@@ -27,15 +27,33 @@ pub enum FrameOriginStrategy {
     CameraPosition,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScenePacketCacheKey {
+    scene_revision: String,
+    origin_strategy: FrameOriginStrategy,
+}
+
 impl Default for FrameOriginStrategy {
     fn default() -> Self {
         Self::CameraTarget
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct VulkanSceneAdapter {
     pub origin_strategy: FrameOriginStrategy,
+    cache_key: Option<ScenePacketCacheKey>,
+    cached_packet: Option<VulkanScenePacket>,
+}
+
+impl Default for VulkanSceneAdapter {
+    fn default() -> Self {
+        Self {
+            origin_strategy: FrameOriginStrategy::default(),
+            cache_key: None,
+            cached_packet: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,7 +130,27 @@ pub struct VulkanScenePacket {
 
 impl VulkanSceneAdapter {
     #[must_use]
-    pub fn adapt(&self, scene: &RenderScene) -> VulkanScenePacket {
+    pub fn adapt(&mut self, scene: &RenderScene) -> VulkanScenePacket {
+        let next_key = ScenePacketCacheKey {
+            scene_revision: scene.scene_revision.clone(),
+            origin_strategy: self.origin_strategy,
+        };
+
+        if let Some(cached_key) = &self.cache_key {
+            if *cached_key == next_key {
+                if let Some(cached_packet) = &self.cached_packet {
+                    return cached_packet.clone();
+                }
+            }
+        }
+
+        let packet = self.adapt_uncached(scene);
+        self.cache_key = Some(next_key);
+        self.cached_packet = Some(packet.clone());
+        packet
+    }
+
+    fn adapt_uncached(&self, scene: &RenderScene) -> VulkanScenePacket {
         let frame_origin_m = self.frame_origin_for(&scene.camera);
         let camera = adapt_camera(&scene.camera, frame_origin_m);
 
@@ -158,7 +196,8 @@ impl VulkanSceneAdapter {
 
 #[must_use]
 pub fn adapt_render_scene(scene: &RenderScene) -> VulkanScenePacket {
-    VulkanSceneAdapter::default().adapt(scene)
+    let mut adapter = VulkanSceneAdapter::default();
+    adapter.adapt(scene)
 }
 
 fn adapt_camera(camera: &CameraPose, frame_origin_m: Vector3d) -> VulkanCameraPacket {
@@ -321,10 +360,9 @@ mod tests {
 
     #[test]
     fn adapter_can_switch_to_camera_position_origin() {
-        let packet = VulkanSceneAdapter {
-            origin_strategy: FrameOriginStrategy::CameraPosition,
-        }
-        .adapt(&sample_scene());
+        let mut adapter = VulkanSceneAdapter::default();
+        adapter.origin_strategy = FrameOriginStrategy::CameraPosition;
+        let packet = adapter.adapt(&sample_scene());
 
         assert_eq!(packet.camera.frame_origin_m.z, 20.0);
         assert_eq!(
@@ -334,6 +372,51 @@ mod tests {
                 y: 0.0,
                 z: -20.0,
             }
+        );
+    }
+
+    #[test]
+    fn adapter_reuses_cached_packet_when_scene_revision_and_strategy_are_unchanged() {
+        let mut adapter = VulkanSceneAdapter::default();
+        let mut scene = sample_scene();
+
+        let first_packet = adapter.adapt(&scene);
+        scene.camera.position_m.x += 10.0;
+        scene.tracers[0].position_m.z = 99.0;
+        let second_packet = adapter.adapt(&scene);
+
+        assert_eq!(first_packet, second_packet);
+    }
+
+    #[test]
+    fn adapter_invalidates_cache_when_scene_revision_changes() {
+        let mut adapter = VulkanSceneAdapter::default();
+        let mut scene = sample_scene();
+
+        let first_packet = adapter.adapt(&scene);
+        scene.scene_revision = "scene-rev-43".to_owned();
+        let second_packet = adapter.adapt(&scene);
+
+        assert_ne!(first_packet.scene_revision, second_packet.scene_revision);
+        assert_eq!(second_packet.scene_revision, "scene-rev-43");
+    }
+
+    #[test]
+    fn adapter_invalidates_cache_when_origin_strategy_changes() {
+        let mut adapter = VulkanSceneAdapter::default();
+        let scene = sample_scene();
+
+        let first_packet = adapter.adapt(&scene);
+        adapter.origin_strategy = FrameOriginStrategy::CameraPosition;
+        let second_packet = adapter.adapt(&scene);
+
+        assert_ne!(
+            first_packet.camera.position_from_origin_m,
+            second_packet.camera.position_from_origin_m
+        );
+        assert_ne!(
+            first_packet.camera.frame_origin_m,
+            second_packet.camera.frame_origin_m
         );
     }
 
