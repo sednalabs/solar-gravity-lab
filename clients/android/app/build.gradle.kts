@@ -219,8 +219,23 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun Project.stringPropertyOrEnv(propertyName: String, envName: String): String? {
+    val propertyValue = findProperty(propertyName)?.toString()?.trim().orEmpty()
+    if (propertyValue.isNotEmpty()) {
+        return propertyValue
+    }
+
+    val envValue = System.getenv(envName)?.trim().orEmpty()
+    return envValue.ifEmpty { null }
+}
+
 val workspaceRootDir = rootProject.projectDir.resolve("../..").canonicalFile
 val solarlabGeneratedJniLibsDir = layout.buildDirectory.dir("generated/jniLibs/solarlab_v2")
+val solarlabVersionCode = project.stringPropertyOrEnv("solarlab.versionCode", "SOLARLAB_VERSION_CODE")
+    ?.toIntOrNull()
+    ?: 11
+val solarlabVersionName = project.stringPropertyOrEnv("solarlab.versionName", "SOLARLAB_VERSION_NAME")
+    ?: "0.1.0-alpha.10"
 
 val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
     group = "build"
@@ -248,8 +263,8 @@ android {
         applicationId = "com.sednalabs.solarlab"
         minSdk = 31
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.1.0-alpha.10"
+        versionCode = solarlabVersionCode
+        versionName = solarlabVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
