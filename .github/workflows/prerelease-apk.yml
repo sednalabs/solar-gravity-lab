@@ -253,33 +253,6 @@ jobs:
               $prerelease_flag
           fi
 
-          release_id=""
-          for attempt in {1..10}; do
-            if release_id="$(gh release view "$tag_name" --repo "${{ github.repository }}" --json id --jq '.id' 2>/dev/null)"; then
-              break
-            fi
-            release_id=""
-            sleep 3
-          done
-          if [[ -z "$release_id" ]]; then
-            echo "Failed to resolve release id for $tag_name after publish/create." >&2
-            exit 1
-          fi
-
-          if [[ "${{ steps.meta.outputs.release_channel }}" == "prerelease" ]]; then
-            gh api \
-              --method PATCH \
-              "repos/${{ github.repository }}/releases/${release_id}" \
-              -F prerelease=true \
-              -F draft=false >/dev/null
-          else
-            gh api \
-              --method PATCH \
-              "repos/${{ github.repository }}/releases/${release_id}" \
-              -F prerelease=false \
-              -F draft=false >/dev/null
-          fi
-
           uploaded=false
           for attempt in {1..10}; do
             if gh release upload "$tag_name" \
