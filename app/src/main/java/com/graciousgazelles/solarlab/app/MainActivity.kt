@@ -1,7 +1,10 @@
 package com.graciousgazelles.solarlab.app
 
 import android.content.pm.ActivityInfo
+import android.os.Build
 import android.os.Bundle
+import android.os.Debug
+import android.os.PowerManager
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -39,6 +42,9 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var renderProcessingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
     private var latestBackendStatus: RenderBackendStatus? = null
     private var orientationLocked: Boolean = false
+    private var powerManager: PowerManager? = null
+    private var thermalStatusListener: PowerManager.OnThermalStatusChangedListener? = null
+    private var thermalStatusListenerRegistered: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,6 +53,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         setContentView(binding.root)
 
         orientationLocked = savedInstanceState?.getBoolean(STATE_ORIENTATION_LOCKED) ?: false
+        infoPanelVisible = savedInstanceState?.getBoolean(STATE_INFO_PANEL_VISIBLE) ?: false
         updateOrientationLock()
 
         val controlRail = binding.bottomControlRail
@@ -63,6 +70,8 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         session = LabSession.createDefault(context = this, listener = this)
         currentCollisionMode = session.collisionMode()
         currentTracerMutualGravity = session.tracerMutualGravityEnabled()
+        powerManager = getSystemService(PowerManager::class.java)
+        applyCurrentThermalStatus()
 
         binding.renderHost.setOnBackendStatusChangedListener(::onBackendStatusChanged)
         binding.renderHost.setInteractionListener(object : RenderInteractionListener {
@@ -205,6 +214,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     override fun onResume() {
         super.onResume()
+        registerThermalStatusListener()
         if (::binding.isInitialized) {
             binding.renderHost.onHostResume()
         }
@@ -215,6 +225,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     }
 
     override fun onPause() {
+        unregisterThermalStatusListener()
         if (::session.isInitialized) {
             resumeSimulationOnForeground = session.isRunning()
             session.pause()
@@ -227,6 +238,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     }
 
     override fun onDestroy() {
+        unregisterThermalStatusListener()
         if (::session.isInitialized) {
             session.release()
         }
@@ -238,6 +250,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_ORIENTATION_LOCKED, orientationLocked)
+        outState.putBoolean(STATE_INFO_PANEL_VISIBLE, infoPanelVisible)
         super.onSaveInstanceState(outState)
     }
 
@@ -428,6 +441,11 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             append("Scheduler: ")
             append(frame.timeline.schedulerSummary)
             append('\n')
+            if (infoPanelVisible) {
+                append("Perf window: ")
+                append(frame.timeline.performanceSummary ?: "warming up")
+                append('\n')
+            }
             append("Tracer mutual gravity: ")
             append(if (currentTracerMutualGravity) "enabled" else "disabled")
             append('\n')
@@ -440,6 +458,21 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             if (!frame.diagnosticsFresh) {
                 append(getString(R.string.diagnostics_cached_notice))
                 append('\n')
+            }
+            if (infoPanelVisible) {
+                append("App memory: ")
+                append(appMemorySummary())
+                append('\n')
+                latestBackendStatus?.sceneSummary?.let { sceneSummary ->
+                    append("Renderer scene: ")
+                    append(sceneSummary)
+                    append('\n')
+                }
+                latestBackendStatus?.hardwareDetails?.let { hardwareDetails ->
+                    append("Hardware detail:\n")
+                    append(hardwareDetails)
+                    append('\n')
+                }
             }
             append(frame.diagnostics.toPrettyString())
         }
@@ -604,6 +637,57 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         }
     }
 
+    private fun registerThermalStatusListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val powerManager = powerManager ?: return
+        if (thermalStatusListenerRegistered) {
+            applyCurrentThermalStatus()
+            return
+        }
+        val listener = thermalStatusListener ?: PowerManager.OnThermalStatusChangedListener { status ->
+            session.setThermalStatus(status)
+        }.also { thermalStatusListener = it }
+        powerManager.addThermalStatusListener(listener)
+        thermalStatusListenerRegistered = true
+        applyCurrentThermalStatus()
+    }
+
+    private fun unregisterThermalStatusListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val powerManager = powerManager ?: return
+        val listener = thermalStatusListener ?: return
+        if (!thermalStatusListenerRegistered) return
+        powerManager.removeThermalStatusListener(listener)
+        thermalStatusListenerRegistered = false
+    }
+
+    private fun applyCurrentThermalStatus() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val powerManager = powerManager ?: return
+        session.setThermalStatus(powerManager.currentThermalStatus)
+    }
+
+    private fun appMemorySummary(): String {
+        val runtime = Runtime.getRuntime()
+        val javaUsedBytes = runtime.totalMemory() - runtime.freeMemory()
+        val javaMaxBytes = runtime.maxMemory()
+        val nativeHeapBytes = Debug.getNativeHeapAllocatedSize()
+        return "java=${formatBytes(javaUsedBytes)}/${formatBytes(javaMaxBytes)} native=${formatBytes(nativeHeapBytes)}"
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        val kib = 1024.0
+        val mib = kib * 1024.0
+        val gib = mib * 1024.0
+        val value = bytes.toDouble()
+        return when {
+            value >= gib -> "%.2f GiB".format(value / gib)
+            value >= mib -> "%.1f MiB".format(value / mib)
+            value >= kib -> "%.1f KiB".format(value / kib)
+            else -> "$bytes B"
+        }
+    }
+
     private fun formatSpeed(speedMps: Double): String = when {
         speedMps >= 1_000.0 -> getString(R.string.format_speed_kmps, speedMps / 1_000.0)
         else -> getString(R.string.format_speed_mps, speedMps)
@@ -623,6 +707,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     private companion object {
         private const val STATE_ORIENTATION_LOCKED = "orientation_locked"
+        private const val STATE_INFO_PANEL_VISIBLE = "info_panel_visible"
         private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
         private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
     }

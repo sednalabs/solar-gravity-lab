@@ -6,4 +6,6 @@ data class RenderBackendStatus(
     val isHardwareAccelerated: Boolean,
     val message: String,
     val hardwareSummary: String? = null,
+    val hardwareDetails: String? = null,
+    val sceneSummary: String? = null,
 )

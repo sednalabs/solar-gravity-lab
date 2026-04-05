@@ -19,6 +19,15 @@ SolarLabVulkanRenderer* FromHandle(jlong handle) {
     return reinterpret_cast<SolarLabVulkanRenderer*>(handle);
 }
 
+std::string JoinStrings(const std::vector<std::string>& values, const char* separator) {
+    std::ostringstream out;
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index > 0U) out << separator;
+        out << values[index];
+    }
+    return out.str();
+}
+
 template <typename JArrayT, typename ElementT>
 class ScopedReadOnlyArray;
 
@@ -130,7 +139,7 @@ private:
     jlong* data_ = nullptr;
 };
 
-std::string GetCpuCapabilitySummary() {
+std::vector<std::string> GetCpuCapabilityFeatures() {
 #if defined(__aarch64__)
     const unsigned long hwcap = getauxval(AT_HWCAP);
     const unsigned long hwcap2 =
@@ -159,19 +168,37 @@ std::string GetCpuCapabilitySummary() {
 #ifdef HWCAP2_SVE2
     if ((hwcap2 & HWCAP2_SVE2) != 0UL) features.emplace_back("sve2");
 #endif
+    return features;
+#else
+    return {};
+#endif
+}
 
+std::string GetCpuCapabilitySummary() {
+#if defined(__aarch64__)
+    const auto features = GetCpuCapabilityFeatures();
     std::ostringstream out;
     out << "cpu=arm64";
     if (!features.empty()) {
         out << " simd=";
-        for (size_t index = 0; index < features.size(); ++index) {
-            if (index > 0U) out << ',';
-            out << features[index];
-        }
+        out << JoinStrings(features, ",");
     }
     return out.str();
 #else
     return "cpu=non-arm64";
+#endif
+}
+
+std::string GetCpuCapabilityDetails() {
+#if defined(__aarch64__)
+    const auto features = GetCpuCapabilityFeatures();
+    std::ostringstream out;
+    out << "CPU native bridge: arm64";
+    out << "\nCPU SIMD/HWCAP: ";
+    out << (features.empty() ? std::string("none detected") : JoinStrings(features, ", "));
+    return out.str();
+#else
+    return "CPU native bridge: non-arm64";
 #endif
 }
 
@@ -188,6 +215,13 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     JNIEnv* env, jclass) {
     const std::string summary = GetCpuCapabilitySummary();
     return env->NewStringUTF(summary.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetCpuCapabilityDetails(
+    JNIEnv* env, jclass) {
+    const std::string details = GetCpuCapabilityDetails();
+    return env->NewStringUTF(details.c_str());
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -403,5 +437,13 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     JNIEnv* env, jclass, jlong handle) {
     auto* renderer = FromHandle(handle);
     const std::string value = renderer != nullptr ? renderer->HardwareSummary() : std::string("Renderer handle is null.");
+    return env->NewStringUTF(value.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetHardwareDetails(
+    JNIEnv* env, jclass, jlong handle) {
+    auto* renderer = FromHandle(handle);
+    const std::string value = renderer != nullptr ? renderer->HardwareDetails() : std::string("Renderer handle is null.");
     return env->NewStringUTF(value.c_str());
 }

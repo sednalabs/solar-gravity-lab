@@ -73,6 +73,7 @@ public:
     std::string BackendLabel() const;
     std::string SceneSummary() const;
     std::string HardwareSummary() const;
+    std::string HardwareDetails() const;
 
 private:
     struct SeedBuffers {

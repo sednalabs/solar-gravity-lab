@@ -485,6 +485,34 @@ std::string SolarLabVulkanRenderer::HardwareSummary() const {
     return out.str();
 }
 
+std::string SolarLabVulkanRenderer::HardwareDetails() const {
+    std::scoped_lock lock(stateMutex_);
+
+    if (physicalDevice_ == VK_NULL_HANDLE) {
+        return "GPU renderer: Vulkan device unavailable";
+    }
+
+    const uint32_t apiVersion = physicalDeviceProperties_.apiVersion;
+    std::ostringstream out;
+    out << "GPU device: " << physicalDeviceProperties_.deviceName
+        << "\nVulkan API: "
+        << VK_API_VERSION_MAJOR(apiVersion) << '.'
+        << VK_API_VERSION_MINOR(apiVersion) << '.'
+        << VK_API_VERSION_PATCH(apiVersion)
+        << "\nVulkan instance extensions: "
+        << VK_KHR_SURFACE_EXTENSION_NAME << ", "
+        << VK_KHR_ANDROID_SURFACE_EXTENSION_NAME
+        << "\nVulkan device extensions: "
+        << VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        << "\nVulkan features: largePoints=" << (supportedFeatures_.largePoints ? "yes" : "no")
+        << ", queueCompute=" << (graphicsQueueSupportsCompute_ ? "yes" : "no")
+        << ", computeCompaction=" << (computeCompactionEnabled_ ? "on" : "off")
+        << "\nPoint size range: "
+        << physicalDeviceProperties_.limits.pointSizeRange[0] << " - "
+        << physicalDeviceProperties_.limits.pointSizeRange[1];
+    return out.str();
+}
+
 bool SolarLabVulkanRenderer::CreateInstance() {
     const std::array<const char*, 2> instanceExtensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,

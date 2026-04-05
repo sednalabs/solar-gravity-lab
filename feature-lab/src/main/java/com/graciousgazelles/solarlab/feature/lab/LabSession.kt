@@ -3,6 +3,7 @@ package com.graciousgazelles.solarlab.feature.lab
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.CollisionMode
@@ -47,6 +48,8 @@ class LabSession private constructor(
     private var pendingSimulationSeconds: Double = 0.0
     private var runningTickCount: Int = 0
     private val perfSamples = PerfSampleAccumulator()
+    private var latestPerformanceSummary: String? = null
+    private var thermalStatus: Int = PowerManager.THERMAL_STATUS_NONE
 
     private var scheduledTask: ScheduledFuture<*>? = null
     private var engine: SimulationEngine = engineFactory(defaultScenarioFactory(defaultCatalogEpochJdTdb), config)
@@ -232,6 +235,14 @@ class LabSession private constructor(
         }
     }
 
+    fun setThermalStatus(status: Int) {
+        executor.execute {
+            if (thermalStatus == status) return@execute
+            thermalStatus = status
+            emitCurrentFrame(emptyList(), pendingSimulationSeconds)
+        }
+    }
+
     fun release() {
         pause()
         executor.shutdownNow()
@@ -360,6 +371,7 @@ class LabSession private constructor(
                 playbackSpeed = playbackSpeedPreset,
                 stepQuantum = stepQuantumPreset,
                 schedulerSummary = schedulerSummaryForSnapshot(snapshot),
+                performanceSummary = latestPerformanceSummary,
                 simulationBacklogSeconds = simulationBacklogSeconds,
                 canJumpAbsolute = snapshot.isCatalogBacked,
                 canStepBackward = backControlAction != BackControlAction.None,
@@ -377,6 +389,7 @@ class LabSession private constructor(
                     simulationBacklogSeconds = simulationBacklogSeconds,
                 )
                 if (perfSummary != null) {
+                    latestPerformanceSummary = perfSummary
                     Log.i(TAG, perfSummary)
                 }
             }
@@ -393,6 +406,7 @@ class LabSession private constructor(
         schedulerWorkloadProfile(
             counts = engine.workloadCounts(),
             parallelAccelerationCapable = parallelSchedulerCapable,
+            thermalStatus = thermalStatus,
         )
 
     private fun schedulerSummaryForSnapshot(snapshot: SimulationSnapshot): String {
@@ -402,6 +416,7 @@ class LabSession private constructor(
             massiveBodyCount = massiveCount,
             tracerBodyCount = snapshot.bodies.size - massiveCount,
             parallelAccelerationCapable = parallelSchedulerCapable,
+            thermalStatus = thermalStatus,
         )
         return schedulerSummary(
             workloadProfile = workloadProfile,
@@ -493,6 +508,10 @@ class LabSession private constructor(
         private const val HEAVY_PARALLEL_MAX_BACKLOG_WINDOWS: Double = 6.0
         private const val PARALLEL_TRACER_THRESHOLD: Int = 192
         private const val HEAVY_PARALLEL_TRACER_THRESHOLD: Int = 768
+        private const val THERMAL_MODERATE_MAX_SUBSTEPS_PER_TICK: Double = 3.0
+        private const val THERMAL_MODERATE_MAX_BACKLOG_WINDOWS: Double = 3.0
+        private const val THERMAL_SEVERE_MAX_SUBSTEPS_PER_TICK: Double = 2.0
+        private const val THERMAL_SEVERE_MAX_BACKLOG_WINDOWS: Double = 2.0
         private const val RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS: Int = 4
         private const val PERF_LOG_SAMPLE_WINDOW_FRAMES: Int = 120
         private const val SUBSTEP_EPSILON_SECONDS: Double = 1.0e-9
@@ -587,6 +606,7 @@ class LabSession private constructor(
             val massiveBodyCount: Int = 0,
             val tracerBodyCount: Int = 0,
             val parallelAccelerationCapable: Boolean = false,
+            val thermalStatus: Int = PowerManager.THERMAL_STATUS_NONE,
         )
 
         internal data class SchedulerExecutionProfile(
@@ -672,11 +692,13 @@ class LabSession private constructor(
         internal fun schedulerWorkloadProfile(
             counts: SimulationWorkloadCounts,
             parallelAccelerationCapable: Boolean,
+            thermalStatus: Int = PowerManager.THERMAL_STATUS_NONE,
         ): SchedulerWorkloadProfile = SchedulerWorkloadProfile(
             totalBodyCount = counts.totalBodyCount,
             massiveBodyCount = counts.massiveBodyCount,
             tracerBodyCount = counts.tracerBodyCount,
             parallelAccelerationCapable = parallelAccelerationCapable,
+            thermalStatus = thermalStatus,
         )
 
         internal fun schedulerExecutionProfile(
@@ -688,6 +710,20 @@ class LabSession private constructor(
                     label = "collision-safe",
                     maxSubstepsPerTick = COLLISION_MAX_SUBSTEPS_PER_RENDER_TICK,
                     maxBacklogWindows = MAX_RENDER_TICK_BACKLOG_WINDOWS,
+                )
+            }
+            if (workloadProfile.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
+                return SchedulerExecutionProfile(
+                    label = "thermal-severe",
+                    maxSubstepsPerTick = THERMAL_SEVERE_MAX_SUBSTEPS_PER_TICK,
+                    maxBacklogWindows = THERMAL_SEVERE_MAX_BACKLOG_WINDOWS,
+                )
+            }
+            if (workloadProfile.thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE) {
+                return SchedulerExecutionProfile(
+                    label = "thermal-moderate",
+                    maxSubstepsPerTick = THERMAL_MODERATE_MAX_SUBSTEPS_PER_TICK,
+                    maxBacklogWindows = THERMAL_MODERATE_MAX_BACKLOG_WINDOWS,
                 )
             }
             if (!workloadProfile.parallelAccelerationCapable) {
@@ -734,6 +770,19 @@ class LabSession private constructor(
             append(" backlog<=")
             append(executionProfile.maxBacklogWindows.toInt())
             append("x")
+            append(" thermal=")
+            append(thermalStatusLabel(workloadProfile.thermalStatus))
+        }
+
+        internal fun thermalStatusLabel(status: Int): String = when (status) {
+            PowerManager.THERMAL_STATUS_NONE -> "none"
+            PowerManager.THERMAL_STATUS_LIGHT -> "light"
+            PowerManager.THERMAL_STATUS_MODERATE -> "moderate"
+            PowerManager.THERMAL_STATUS_SEVERE -> "severe"
+            PowerManager.THERMAL_STATUS_CRITICAL -> "critical"
+            PowerManager.THERMAL_STATUS_EMERGENCY -> "emergency"
+            PowerManager.THERMAL_STATUS_SHUTDOWN -> "shutdown"
+            else -> "unknown($status)"
         }
 
         private fun shouldApplyHostRelativeShortWindowCap(

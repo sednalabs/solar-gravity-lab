@@ -40,6 +40,23 @@ data class RenderDeviceCapabilities(
         append(if (supportsVulkan) "feature-present" else "feature-absent")
     }
 
+    fun hardwareDetails(): String = buildString {
+        append("Device target: ")
+        append(runtimeTarget)
+        append('\n')
+        append("Device: ")
+        append(deviceLabel())
+        append('\n')
+        append("Supported ABIs: ")
+        append(supportedAbis.ifEmpty { listOf("unknown") }.joinToString())
+        append('\n')
+        append("SoC: ")
+        append(listOfNotNull(socManufacturer, socModel).takeIf { it.isNotEmpty() }?.joinToString(" ") ?: "unknown")
+        append('\n')
+        append("Android Vulkan feature: ")
+        append(if (supportsVulkan) "present" else "absent")
+    }
+
     private fun deviceLabel(): String {
         val normalizedManufacturer = manufacturer.trim()
         val normalizedModel = model.trim()

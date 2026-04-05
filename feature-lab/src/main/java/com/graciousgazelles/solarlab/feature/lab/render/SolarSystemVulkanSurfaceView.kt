@@ -33,9 +33,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         capabilities.hardwareSummary(),
         SolarLabVulkanBridge.cpuCapabilitySummary(),
     ).joinToString(separator = " | ")
+    private val hardwareDetailsPrefix = listOf(
+        capabilities.hardwareDetails(),
+        SolarLabVulkanBridge.cpuCapabilityDetails(),
+    ).joinToString(separator = "\n")
     private var rendererHandle: Long = 0L
     private var surfaceReady: Boolean = false
     private var rendererHardwareSummary: String = "gpu=vulkan-pending"
+    private var rendererHardwareDetails: String = "GPU renderer details pending"
     private var latestScene: RenderSceneFrame = emptyScene()
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
@@ -388,6 +393,15 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     hardwareSummaryPrefix,
                     rendererHardwareSummary,
                 ).joinToString(separator = " | "),
+                hardwareDetails = listOf(
+                    hardwareDetailsPrefix,
+                    rendererHardwareDetails,
+                ).joinToString(separator = "\n"),
+                sceneSummary = if (rendererHandle != 0L && surfaceReady) {
+                    SolarLabVulkanBridge.sceneSummary(rendererHandle)
+                } else {
+                    null
+                },
             ),
         )
     }
@@ -398,6 +412,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         } else {
             "gpu=vulkan-pending"
         }
+        rendererHardwareDetails = if (rendererHandle != 0L && surfaceReady) {
+            SolarLabVulkanBridge.hardwareDetails(rendererHandle)
+        } else {
+            "GPU renderer details pending"
+        }
     }
 
     private fun resetSubmissionState() {
@@ -405,6 +424,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         packetDirty = true
         lastSubmittedFrameRevision = Long.MIN_VALUE
         lastSubmittedEpochSeconds = 0.0
+        rendererHardwareDetails = "GPU renderer details pending"
     }
 
     private fun emptyScene(): RenderSceneFrame = RenderSceneFrame(

@@ -1,5 +1,6 @@
 package com.graciousgazelles.solarlab.feature.lab
 
+import android.os.PowerManager
 import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
@@ -196,6 +197,56 @@ class LabSessionPlaybackSubstepPolicyTest {
         assertTrue(
             "Expected collision scheduler summary to stay conservative, summary=${budget.schedulerSummary}",
             budget.schedulerSummary.startsWith("collision-safe"),
+        )
+    }
+
+    @Test
+    fun `moderate thermal pressure clamps parallel tracer workloads to safer budget`() {
+        val workloadProfile = LabSession.Companion.SchedulerWorkloadProfile(
+            totalBodyCount = 352,
+            massiveBodyCount = 16,
+            tracerBodyCount = 336,
+            parallelAccelerationCapable = true,
+            thermalStatus = PowerManager.THERMAL_STATUS_MODERATE,
+        )
+
+        val budget = LabSession.simulationAdvanceBudget(
+            totalPendingSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.05,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+            workloadProfile = workloadProfile,
+        )
+
+        assertEquals(3.0, budget.maxSubstepsPerTick, 0.0)
+        assertEquals(3.0, budget.maxBacklogWindows, 0.0)
+        assertTrue(
+            "Expected moderate thermal scheduler summary, summary=${budget.schedulerSummary}",
+            budget.schedulerSummary.startsWith("thermal-moderate"),
+        )
+    }
+
+    @Test
+    fun `severe thermal pressure clamps scheduler to most conservative non-collision budget`() {
+        val workloadProfile = LabSession.Companion.SchedulerWorkloadProfile(
+            totalBodyCount = 1024,
+            massiveBodyCount = 16,
+            tracerBodyCount = 1008,
+            parallelAccelerationCapable = true,
+            thermalStatus = PowerManager.THERMAL_STATUS_SEVERE,
+        )
+
+        val budget = LabSession.simulationAdvanceBudget(
+            totalPendingSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.05,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+            workloadProfile = workloadProfile,
+        )
+
+        assertEquals(2.0, budget.maxSubstepsPerTick, 0.0)
+        assertEquals(2.0, budget.maxBacklogWindows, 0.0)
+        assertTrue(
+            "Expected severe thermal scheduler summary, summary=${budget.schedulerSummary}",
+            budget.schedulerSummary.startsWith("thermal-severe"),
         )
     }
 
