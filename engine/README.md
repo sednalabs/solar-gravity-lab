@@ -1,6 +1,10 @@
 # Engine workspace
 
-This Rust workspace is the canonical long-lived Solar Gravity Lab core.
+This Rust workspace is the canonical long-lived Solar Gravity Lab core and the
+primary implementation line for the runtime + FFI seam.
+
+Kotlin/Android legacy references now live under `../legacy/` and on the
+archived branch `legacy/kotlin-main-20260405`.
 
 The workspace boundary strategy is explicit:
 

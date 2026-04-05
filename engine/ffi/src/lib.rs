@@ -8,6 +8,9 @@
 //!   views passed across language boundaries.
 //! - JNI consumers must treat `long` handles as opaque capability tokens and
 //!   must call destroy/release APIs to free process-side state.
+//! - This seam documents the canonical Rust runtime boundary; legacy Kotlin lines
+//!   should consume this ABI contract rather than owning any simulation
+//!   transition logic.
 
 use std::collections::HashMap;
 use std::ffi::c_void;

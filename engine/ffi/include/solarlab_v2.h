@@ -1,6 +1,7 @@
 #ifndef SOLARLAB_V2_H
 #define SOLARLAB_V2_H
-// ABI versioning for runtime/session contracts. Bump when ABI layout changes.
+// ABI contract for the canonical Rust runtime/session seam.
+// Bump when ABI layout changes.
 
 #include <stdint.h>
 

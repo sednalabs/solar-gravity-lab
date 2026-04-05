@@ -1,8 +1,9 @@
 //! Authoritative v2 runtime core for simulation state.
 //!
-//! This crate owns all mutable world state and branch history for the V2
-//! architecture. All external integrations (FFI, JNI, adapters, services) should
-//! treat this crate as the single source of truth for world semantics.
+//! This crate owns all mutable world state and branch history for the Rust
+//! runtime architecture. All external integrations (FFI, JNI, adapters,
+//! services) should treat this crate as the single source of truth for world
+//! semantics.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use solarlab_data::{

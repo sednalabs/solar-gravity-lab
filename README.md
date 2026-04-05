@@ -1,7 +1,7 @@
 # Solar Gravity Lab
 
-Solar Gravity Lab now runs on the Rust-owned architecture reset that was
-previously developed as the `v2` line. This is the canonical `main` branch.
+Solar Gravity Lab now runs on the canonical Rust runtime mainline. This
+`main` branch is the line that previously lived under the `v2` reset.
 
 The long-term product shape is:
 
@@ -18,7 +18,7 @@ those seams. The pre-cutover Kotlin line is preserved on the archived branch
 
 ## Status
 
-What is real on this branch today:
+What is real on this canonical main line today:
 
 - an ADR-backed architecture record in [`docs/adr`](docs/adr)
 - a versioned protobuf schema surface in [`proto/solarlab/v2`](proto/solarlab/v2)
@@ -56,7 +56,8 @@ What is intentionally still transitional:
 - [`labs/`](labs)
   Conformance, data, render, hardware, and client validation harnesses.
 - [`legacy/`](legacy)
-  Documentation for the retained v1 code still present in this branch.
+  Documentation for the retained Kotlin/Android/Vulkan reference code now tracked
+  under `legacy/kotlin-main-20260405`.
 
 ## Architecture reading order
 
@@ -84,7 +85,7 @@ one clear owner:
   - and managing release lifetimes for export packets.
 - Android/Kotlin callers consume the ABI (direct C layer today) and should treat every returned handle as a short-lived capability that must be explicitly invalidated (destroy/release).
 
-Refresh and command semantics in this branch:
+Refresh and command semantics in this canonical Rust line:
 
 - `sl_v2_session_apply_command` is the canonical mutable entrypoint. Every successful command mutates runtime state and returns a snapshot-style summary.
 - `sl_v2_session_snapshot_summary` is a read-only observation of the current runtime state.
