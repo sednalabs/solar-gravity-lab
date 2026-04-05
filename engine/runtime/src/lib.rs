@@ -5,6 +5,8 @@
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::mem::size_of;
+use std::time::Instant;
 
 use solarlab_data::{
     apply_update_plan, plan_manifest_update, ApplyPackageInputs, ApplyProvenance, ApplyUpdateError,
@@ -26,7 +28,8 @@ use solarlab_physics::{
     PhysicsPolicy,
 };
 use solarlab_scene::{
-    CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneProvenanceRef,
+    CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
+    SceneProvenanceRef, SceneTracer, SceneTrail,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -101,6 +104,7 @@ pub struct WorldSnapshot {
     pub observer: ObserverState,
     pub playback: PlaybackState,
     pub mounted_manifest: Option<MountedManifestState>,
+    pub trail_history_by_body: HashMap<BodyId, Vec<Vector3d>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -200,6 +204,7 @@ struct BranchWorldState {
     invariants: PhysicsInvariants,
     local_data_state: LocalDataState,
     mounted_package_ids: BTreeSet<String>,
+    trail_history_by_body: HashMap<BodyId, Vec<Vector3d>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -216,6 +221,8 @@ struct BranchState {
     checkpoints: Vec<CheckpointRecord>,
     last_checkpoint: Option<CheckpointDescriptor>,
 }
+
+const TRAIL_HISTORY_MAX_SAMPLES: usize = 96;
 
 #[derive(Clone, Debug)]
 pub struct WorldRuntime {
@@ -265,6 +272,7 @@ impl WorldRuntime {
                 invariants: PhysicsInvariants::default(),
                 local_data_state: LocalDataState::empty(),
                 mounted_package_ids: BTreeSet::new(),
+                trail_history_by_body: HashMap::new(),
             },
             command_log: Vec::new(),
             checkpoints: Vec::new(),
@@ -415,6 +423,11 @@ impl WorldRuntime {
                 }
                 branch.world.bodies.push(body.clone());
                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+                push_trail_sample(
+                    &mut branch.world.trail_history_by_body,
+                    &body.body_id,
+                    body.position_m,
+                );
             }
             WorldCommand::RemoveBody { body_id } => {
                 let branch = self.active_branch_mut();
@@ -427,6 +440,7 @@ impl WorldRuntime {
                     branch.world.observer.focus_body_id = None;
                 }
                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+                branch.world.trail_history_by_body.remove(body_id);
             }
             WorldCommand::SetBodyKinematics {
                 body_id,
@@ -445,6 +459,11 @@ impl WorldRuntime {
                 body.position_m = *position_m;
                 body.velocity_mps = *velocity_mps;
                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+                push_trail_sample(
+                    &mut branch.world.trail_history_by_body,
+                    body_id,
+                    *position_m,
+                );
             }
             WorldCommand::AdvanceEpoch { delta_seconds } => {
                 if *delta_seconds <= 0.0 {
@@ -462,6 +481,10 @@ impl WorldRuntime {
                 apply_solver_state_to_world_bodies(&mut branch.world.bodies, &solver_bodies);
                 branch.world.invariants = invariants;
                 branch.world.epoch_seconds += *delta_seconds;
+                record_trail_samples_from_bodies(
+                    &branch.world.bodies,
+                    &mut branch.world.trail_history_by_body,
+                );
             }
             WorldCommand::PausePlayback => {
                 self.active_branch_mut().world.playback.paused = true;
@@ -619,6 +642,7 @@ impl WorldRuntime {
             observer: active.world.observer.clone(),
             playback: active.world.playback.clone(),
             mounted_manifest,
+            trail_history_by_body: active.world.trail_history_by_body.clone(),
         }
     }
 
@@ -766,45 +790,302 @@ impl WorldRuntime {
 
 #[must_use]
 pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
+    let extract_started_at = Instant::now();
     let selected_body = snapshot.observer.focus_body_id.as_ref();
-    let bodies = snapshot
+    let bodies: Vec<SceneBody> = snapshot
         .bodies
         .iter()
-        .map(|body| SceneBody {
-            body_id: body.body_id.clone(),
-            display_name: body.body_id.0.clone(),
-            position_m: body.position_m,
-            radius_m: body.radius_m,
-            albedo: ColorRgba {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            },
-            emissive_luminance: 0.0,
-            selected: selected_body
-                .map(|focused| focused == &body.body_id)
-                .unwrap_or(false),
+        .map(|body| {
+            let style = body_style(body.body_class.clone());
+            SceneBody {
+                body_id: body.body_id.clone(),
+                display_name: body.body_id.0.clone(),
+                position_m: body.position_m,
+                radius_m: body.radius_m,
+                albedo: style.albedo,
+                emissive_luminance: style.emissive_luminance,
+                selected: selected_body
+                    .map(|focused| focused == &body.body_id)
+                    .unwrap_or(false),
+            }
         })
         .collect();
+    let tracers = extract_scene_tracers(snapshot);
+    let trails = extract_scene_trails(snapshot);
+    let lights = extract_lights(snapshot);
+    let diagnostics = render_diagnostics(
+        snapshot,
+        &bodies,
+        &tracers,
+        &trails,
+        &lights,
+        extract_started_at,
+    );
 
     RenderScene {
         observer_mode: snapshot.observer.mode.clone(),
         body_count: 0,
         tracer_count: 0,
         trail_count: 0,
-        scene_revision: scene_revision_from_snapshot(snapshot),
+        scene_revision: scene_revision_from_snapshot(
+            snapshot,
+            &bodies,
+            &tracers,
+            &trails,
+            &lights,
+            &diagnostics,
+        ),
         epoch_seconds: snapshot.epoch_seconds,
         timeline_semantics: snapshot.timeline_semantics.clone(),
         camera: camera_pose_from_snapshot(snapshot),
         bodies,
-        tracers: Vec::new(),
-        trails: Vec::new(),
-        lights: Vec::new(),
+        tracers,
+        trails,
+        lights,
         provenance: scene_provenance(snapshot),
-        diagnostics: RenderDiagnostics::default(),
+        diagnostics,
     }
     .with_derived_counts()
+}
+
+#[derive(Clone, Copy)]
+struct BodyRenderStyle {
+    albedo: ColorRgba,
+    emissive_luminance: f64,
+    tracer_color: ColorRgba,
+    light_illuminance_lux: f64,
+}
+
+fn body_style(body_class: BodyClass) -> BodyRenderStyle {
+    match body_class {
+        BodyClass::Star => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 1.0,
+                g: 0.93,
+                b: 0.78,
+                a: 1.0,
+            },
+            emissive_luminance: 1_500_000.0,
+            tracer_color: ColorRgba {
+                r: 1.0,
+                g: 0.95,
+                b: 0.8,
+                a: 0.85,
+            },
+            light_illuminance_lux: 120_000.0,
+        },
+        BodyClass::Planet => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.28,
+                g: 0.42,
+                b: 0.78,
+                a: 1.0,
+            },
+            emissive_luminance: 0.0,
+            tracer_color: ColorRgba {
+                r: 0.58,
+                g: 0.74,
+                b: 1.0,
+                a: 0.6,
+            },
+            light_illuminance_lux: 0.0,
+        },
+        BodyClass::DwarfPlanet => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.56,
+                g: 0.54,
+                b: 0.64,
+                a: 1.0,
+            },
+            emissive_luminance: 0.0,
+            tracer_color: ColorRgba {
+                r: 0.75,
+                g: 0.75,
+                b: 0.88,
+                a: 0.55,
+            },
+            light_illuminance_lux: 0.0,
+        },
+        BodyClass::Moon => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.67,
+                g: 0.67,
+                b: 0.7,
+                a: 1.0,
+            },
+            emissive_luminance: 0.0,
+            tracer_color: ColorRgba {
+                r: 0.9,
+                g: 0.9,
+                b: 0.96,
+                a: 0.55,
+            },
+            light_illuminance_lux: 0.0,
+        },
+        BodyClass::SmallBody => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.51,
+                g: 0.43,
+                b: 0.34,
+                a: 1.0,
+            },
+            emissive_luminance: 0.0,
+            tracer_color: ColorRgba {
+                r: 0.78,
+                g: 0.66,
+                b: 0.54,
+                a: 0.55,
+            },
+            light_illuminance_lux: 0.0,
+        },
+        BodyClass::Tracer => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.95,
+                g: 0.95,
+                b: 0.98,
+                a: 1.0,
+            },
+            emissive_luminance: 5_000.0,
+            tracer_color: ColorRgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.9,
+            },
+            light_illuminance_lux: 0.0,
+        },
+        BodyClass::Spacecraft => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.82,
+                g: 0.84,
+                b: 0.9,
+                a: 1.0,
+            },
+            emissive_luminance: 400.0,
+            tracer_color: ColorRgba {
+                r: 0.72,
+                g: 0.88,
+                b: 1.0,
+                a: 0.8,
+            },
+            light_illuminance_lux: 0.0,
+        },
+        BodyClass::Custom => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.88,
+                g: 0.88,
+                b: 0.9,
+                a: 1.0,
+            },
+            emissive_luminance: 0.0,
+            tracer_color: ColorRgba {
+                r: 0.9,
+                g: 0.9,
+                b: 1.0,
+                a: 0.6,
+            },
+            light_illuminance_lux: 0.0,
+        },
+    }
+}
+
+fn extract_scene_tracers(snapshot: &WorldSnapshot) -> Vec<SceneTracer> {
+    snapshot
+        .bodies
+        .iter()
+        .filter(|body| body.body_class == BodyClass::Tracer)
+        .map(|body| {
+            let style = body_style(body.body_class.clone());
+            SceneTracer {
+                tracer_id: format!("tracer:{}", body.body_id.0),
+                source_body_id: body.body_id.clone(),
+                position_m: body.position_m,
+                color: style.tracer_color,
+                size_px: ((body.radius_m.abs().sqrt() / 20.0).clamp(1.25, 8.0)) as f32,
+            }
+        })
+        .collect()
+}
+
+fn extract_scene_trails(snapshot: &WorldSnapshot) -> Vec<SceneTrail> {
+    snapshot
+        .bodies
+        .iter()
+        .filter_map(|body| {
+            let samples_m = snapshot
+                .trail_history_by_body
+                .get(&body.body_id)
+                .filter(|samples| !samples.is_empty())?
+                .clone();
+            let style = body_style(body.body_class.clone());
+            Some(SceneTrail {
+                trail_id: format!("trail:{}", body.body_id.0),
+                source_body_id: body.body_id.clone(),
+                samples_m,
+                color: style.tracer_color,
+                max_samples: TRAIL_HISTORY_MAX_SAMPLES as u32,
+                head_highlighted: body.body_class == BodyClass::Tracer,
+            })
+        })
+        .collect()
+}
+
+fn extract_lights(snapshot: &WorldSnapshot) -> Vec<LightSource> {
+    snapshot
+        .bodies
+        .iter()
+        .filter_map(|body| {
+            let style = body_style(body.body_class.clone());
+            if style.light_illuminance_lux <= 0.0 {
+                return None;
+            }
+            let magnitude = vec_magnitude(body.position_m);
+            let direction = if magnitude > 0.0 {
+                Vector3d {
+                    x: -body.position_m.x / magnitude,
+                    y: -body.position_m.y / magnitude,
+                    z: -body.position_m.z / magnitude,
+                }
+            } else {
+                Vector3d {
+                    x: 0.0,
+                    y: -1.0,
+                    z: 0.0,
+                }
+            };
+            Some(LightSource {
+                light_id: format!("light:{}", body.body_id.0),
+                direction_ws: direction,
+                illuminance_lux: style.light_illuminance_lux,
+                color: style.albedo,
+            })
+        })
+        .collect()
+}
+
+fn render_diagnostics(
+    snapshot: &WorldSnapshot,
+    bodies: &[SceneBody],
+    tracers: &[SceneTracer],
+    trails: &[SceneTrail],
+    lights: &[LightSource],
+    extract_started_at: Instant,
+) -> RenderDiagnostics {
+    let trail_samples = trails
+        .iter()
+        .map(|trail| trail.samples_m.len())
+        .sum::<usize>();
+    let upload_bytes_estimate = bodies.len() * size_of::<SceneBody>()
+        + tracers.len() * size_of::<SceneTracer>()
+        + lights.len() * size_of::<LightSource>()
+        + trail_samples * size_of::<Vector3d>();
+
+    RenderDiagnostics {
+        frame_number: ((snapshot.epoch_seconds * 60.0).round().max(0.0)) as u64,
+        cpu_extract_ms: extract_started_at.elapsed().as_secs_f32() * 1_000.0,
+        gpu_upload_ms: (upload_bytes_estimate as f32) / 25_000.0,
+        dropped_frames: 0,
+    }
 }
 
 fn camera_pose_from_snapshot(snapshot: &WorldSnapshot) -> CameraPose {
@@ -875,7 +1156,14 @@ fn semver_to_string(version: &SemVer) -> String {
     rendered
 }
 
-fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
+fn scene_revision_from_snapshot(
+    snapshot: &WorldSnapshot,
+    bodies: &[SceneBody],
+    tracers: &[SceneTracer],
+    trails: &[SceneTrail],
+    lights: &[LightSource],
+    diagnostics: &RenderDiagnostics,
+) -> String {
     let selected_body_id = snapshot.observer.focus_body_id.as_ref();
     let mut revision = format!(
         "scenario={}|branch={}|epoch={:.6}|observer={:?}",
@@ -884,20 +1172,22 @@ fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
         snapshot.epoch_seconds,
         snapshot.observer.mode
     );
-    for body in &snapshot.bodies {
-        let selected = selected_body_id == Some(&body.body_id);
+    for (body_state, body_scene) in snapshot.bodies.iter().zip(bodies.iter()) {
+        let selected = selected_body_id == Some(&body_state.body_id);
         use std::fmt::Write as _;
         let _ = write!(
             &mut revision,
-            "|{}|selected={selected}|r={:.6}|p=({:.6},{:.6},{:.6})|v=({:.6},{:.6},{:.6})",
-            body.body_id.0,
-            body.radius_m,
-            body.position_m.x,
-            body.position_m.y,
-            body.position_m.z,
-            body.velocity_mps.x,
-            body.velocity_mps.y,
-            body.velocity_mps.z
+            "|{}|class={:?}|selected={selected}|r={:.6}|p=({:.6},{:.6},{:.6})|v=({:.6},{:.6},{:.6})|e={:.3}",
+            body_state.body_id.0,
+            body_state.body_class,
+            body_state.radius_m,
+            body_state.position_m.x,
+            body_state.position_m.y,
+            body_state.position_m.z,
+            body_state.velocity_mps.x,
+            body_state.velocity_mps.y,
+            body_state.velocity_mps.z,
+            body_scene.emissive_luminance
         );
     }
     if let Some(mounted_manifest) = &snapshot.mounted_manifest {
@@ -926,7 +1216,78 @@ fn scene_revision_from_snapshot(snapshot: &WorldSnapshot) -> String {
         revision.push_str("|manifest=none");
     }
 
+    use std::fmt::Write as _;
+    let _ = write!(
+        &mut revision,
+        "|families:bodies={}|tracers={}|trails={}|lights={}",
+        bodies.len(),
+        tracers.len(),
+        trails.len(),
+        lights.len()
+    );
+    for tracer in tracers {
+        let _ = write!(
+            &mut revision,
+            "|tracer:{}@({:.6},{:.6},{:.6})",
+            tracer.source_body_id.0, tracer.position_m.x, tracer.position_m.y, tracer.position_m.z
+        );
+    }
+    for trail in trails {
+        let sample_count = trail.samples_m.len();
+        let last_sample = trail.samples_m.last().copied().unwrap_or_default();
+        let _ = write!(
+            &mut revision,
+            "|trail:{}:{}@({:.6},{:.6},{:.6})",
+            trail.source_body_id.0, sample_count, last_sample.x, last_sample.y, last_sample.z
+        );
+    }
+    for light in lights {
+        let _ = write!(
+            &mut revision,
+            "|light:{}:lux={:.3}:dir=({:.6},{:.6},{:.6})",
+            light.light_id,
+            light.illuminance_lux,
+            light.direction_ws.x,
+            light.direction_ws.y,
+            light.direction_ws.z
+        );
+    }
+    let _ = write!(
+        &mut revision,
+        "|diag:frame={}:cpu={:.3}:gpu={:.3}:drop={}",
+        diagnostics.frame_number,
+        diagnostics.cpu_extract_ms,
+        diagnostics.gpu_upload_ms,
+        diagnostics.dropped_frames
+    );
+
     revision
+}
+
+fn vec_magnitude(vector: Vector3d) -> f64 {
+    (vector.x * vector.x + vector.y * vector.y + vector.z * vector.z).sqrt()
+}
+
+fn push_trail_sample(
+    trail_history_by_body: &mut HashMap<BodyId, Vec<Vector3d>>,
+    body_id: &BodyId,
+    sample: Vector3d,
+) {
+    let history = trail_history_by_body.entry(body_id.clone()).or_default();
+    history.push(sample);
+    if history.len() > TRAIL_HISTORY_MAX_SAMPLES {
+        let trim_count = history.len() - TRAIL_HISTORY_MAX_SAMPLES;
+        history.drain(0..trim_count);
+    }
+}
+
+fn record_trail_samples_from_bodies(
+    bodies: &[BodyState],
+    trail_history_by_body: &mut HashMap<BodyId, Vec<Vector3d>>,
+) {
+    for body in bodies {
+        push_trail_sample(trail_history_by_body, &body.body_id, body.position_m);
+    }
 }
 
 fn package_provenance_digest(mounted_packages: &[MountedPackageState]) -> Option<Digest> {
@@ -1118,6 +1479,8 @@ mod tests {
         let mut runtime = new_runtime();
         let earth = BodyId("earth".into());
         let moon = BodyId("moon".into());
+        let spark = BodyId("spark".into());
+        let sun = BodyId("sun".into());
 
         runtime
             .apply_command(
@@ -1158,13 +1521,47 @@ mod tests {
                 2,
             )
             .expect("spawn moon should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: spark.clone(),
+                        body_class: BodyClass::Tracer,
+                        mass_kg: 1.0,
+                        radius_m: 25.0,
+                        position_m: Vector3d {
+                            x: 410_000_000.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                3,
+            )
+            .expect("spawn tracer should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: sun,
+                        body_class: BodyClass::Star,
+                        mass_kg: 1.989e30,
+                        radius_m: 696_000_000.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                4,
+            )
+            .expect("spawn star should succeed");
 
         runtime
             .apply_command(
                 WorldCommand::SetObserverMode {
                     mode: ObserverMode::FollowSelected,
                 },
-                3,
+                5,
             )
             .expect("setting observer mode should succeed");
         runtime
@@ -1172,20 +1569,29 @@ mod tests {
                 WorldCommand::FocusBody {
                     body_id: Some(moon.clone()),
                 },
-                4,
+                6,
             )
             .expect("focus body should succeed");
 
         let scene = runtime.render_scene();
-        assert_eq!(scene.body_count, 2);
-        assert_eq!(scene.tracer_count, 0);
-        assert_eq!(scene.trail_count, 0);
+        assert_eq!(scene.body_count, 4);
+        assert_eq!(scene.tracer_count, 1);
+        assert_eq!(scene.trail_count, 4);
         assert_eq!(scene.observer_mode, ObserverMode::FollowSelected);
-        assert_eq!(scene.bodies.len(), 2);
-        assert_eq!(scene.tracers.len(), 0);
-        assert_eq!(scene.trails.len(), 0);
-        assert_eq!(scene.lights.len(), 0);
+        assert_eq!(scene.bodies.len(), 4);
+        assert_eq!(scene.tracers.len(), 1);
+        assert_eq!(scene.trails.len(), 4);
+        assert_eq!(scene.lights.len(), 1);
         assert!(scene.scene_revision.contains("branch=main"));
+        assert!(scene
+            .tracers
+            .iter()
+            .any(|tracer| tracer.source_body_id == spark));
+        assert!(scene
+            .lights
+            .iter()
+            .any(|light| light.light_id == "light:sun"));
+        assert!(scene.trails.iter().all(|trail| !trail.samples_m.is_empty()));
         assert!(
             scene
                 .bodies
@@ -1196,6 +1602,9 @@ mod tests {
         );
         assert_eq!(scene.camera.target_m.x, 384_400_000.0);
         assert!(scene.camera.position_m.z > scene.camera.target_m.z);
+        assert_eq!(scene.diagnostics.frame_number, 0);
+        assert!(scene.diagnostics.gpu_upload_ms > 0.0);
+        assert!(scene.scene_revision.contains("|diag:frame=0"));
     }
 
     #[test]
@@ -2183,6 +2592,175 @@ mod tests {
             .expect("focus body change should succeed");
 
         assert_ne!(runtime.render_scene().scene_revision, moon_revision);
+    }
+
+    #[test]
+    fn extract_render_scene_trail_history_is_bounded_and_checkpoint_scoped() {
+        let mut runtime = new_runtime();
+        let tracer = BodyId("trail-probe".into());
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: tracer.clone(),
+                        body_class: BodyClass::Tracer,
+                        mass_kg: 1.0,
+                        radius_m: 20.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("spawn tracer should succeed");
+
+        for i in 0..(super::TRAIL_HISTORY_MAX_SAMPLES + 20) {
+            runtime
+                .apply_command(
+                    WorldCommand::SetBodyKinematics {
+                        body_id: tracer.clone(),
+                        position_m: Vector3d {
+                            x: i as f64,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                    (i + 2) as i64,
+                )
+                .expect("kinematics update should succeed");
+        }
+
+        let checkpoint_events = runtime
+            .apply_command(
+                WorldCommand::CreateCheckpoint {
+                    checkpoint_id: Some(CheckpointId("trail-cp".into())),
+                    label: Some("trail checkpoint".into()),
+                },
+                500,
+            )
+            .expect("checkpoint creation should succeed");
+        let checkpoint_id = checkpoint_id_from_events(&checkpoint_events);
+
+        for i in 0..5 {
+            runtime
+                .apply_command(
+                    WorldCommand::SetBodyKinematics {
+                        body_id: tracer.clone(),
+                        position_m: Vector3d {
+                            x: 1_000.0 + i as f64,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                    600 + i as i64,
+                )
+                .expect("post-checkpoint update should succeed");
+        }
+
+        let scene_after_extra_updates = runtime.render_scene();
+        let trail_after_extra_updates = scene_after_extra_updates
+            .trails
+            .iter()
+            .find(|trail| trail.source_body_id == tracer)
+            .expect("trail should exist after updates");
+        assert_eq!(
+            trail_after_extra_updates.samples_m.len(),
+            super::TRAIL_HISTORY_MAX_SAMPLES
+        );
+
+        runtime
+            .apply_command(
+                WorldCommand::CreateBranchFromCheckpoint {
+                    checkpoint_id,
+                    new_branch_id: Some(BranchId("trail-restored".into())),
+                },
+                700,
+            )
+            .expect("branch restore should succeed");
+
+        let restored_scene = runtime.render_scene();
+        let restored_trail = restored_scene
+            .trails
+            .iter()
+            .find(|trail| trail.source_body_id == tracer)
+            .expect("restored trail should exist");
+        assert_eq!(
+            restored_trail.samples_m.len(),
+            super::TRAIL_HISTORY_MAX_SAMPLES
+        );
+        let restored_last_x = restored_trail
+            .samples_m
+            .last()
+            .expect("restored trail should have a last sample")
+            .x;
+        assert!(restored_last_x < 1_000.0);
+    }
+
+    #[test]
+    fn scene_revision_changes_when_tracer_or_light_families_change() {
+        let mut runtime = new_runtime();
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("planet-a".into()),
+                        body_class: BodyClass::Planet,
+                        mass_kg: 5.972e24,
+                        radius_m: 6_371_000.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("spawn planet should succeed");
+
+        let base_revision = runtime.render_scene().scene_revision;
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("tracer-a".into()),
+                        body_class: BodyClass::Tracer,
+                        mass_kg: 1.0,
+                        radius_m: 10.0,
+                        position_m: Vector3d {
+                            x: 10.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                2,
+            )
+            .expect("spawn tracer should succeed");
+        let tracer_revision = runtime.render_scene().scene_revision;
+        assert_ne!(tracer_revision, base_revision);
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("star-a".into()),
+                        body_class: BodyClass::Star,
+                        mass_kg: 1.989e30,
+                        radius_m: 696_000_000.0,
+                        position_m: Vector3d {
+                            x: -10.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                3,
+            )
+            .expect("spawn star should succeed");
+        let light_revision = runtime.render_scene().scene_revision;
+        assert_ne!(light_revision, tracer_revision);
     }
 
     #[test]
