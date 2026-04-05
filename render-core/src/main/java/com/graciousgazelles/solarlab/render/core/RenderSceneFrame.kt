@@ -32,10 +32,55 @@ data class RenderTrail(
     val pointsM: List<Vector3d>,
 )
 
+data class RenderFuturePath(
+    val bodyId: String,
+    val colorArgb: Int,
+    val alpha: Float,
+    val pointsM: List<Vector3d>,
+    val sampleStepSeconds: Double,
+)
+
+enum class RenderTrailVisibilityMode {
+    SELECTED_ONLY,
+    TRACKED_CLASSES,
+    ALL_OBJECTS,
+}
+
+enum class RenderFuturePathVisibilityMode {
+    NONE,
+    SELECTED_ONLY,
+    TRACKED_CLASSES,
+    ALL_OBJECTS,
+}
+
 data class RenderSceneFrame(
     val epochSeconds: Double,
     val authoritativeBodies: List<RenderBody>,
     val tracerBodies: List<RenderBody>,
     val trails: List<RenderTrail>,
+    val futurePaths: List<RenderFuturePath> = emptyList(),
     val sourceRevision: Long = 0L,
+)
+
+data class RenderSceneAssemblyOptions(
+    val selectedBodyId: String? = null,
+    val trailVisibilityMode: RenderTrailVisibilityMode = RenderTrailVisibilityMode.TRACKED_CLASSES,
+    val trackedTrailKinds: Set<RenderBodyKind> = DEFAULT_TRACKED_TRAIL_KINDS,
+    val futurePathVisibilityMode: RenderFuturePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+    val futurePathHorizonSeconds: Double = 14_400.0,
+    val futurePathSampleCount: Int = 24,
+) {
+    init {
+        require(futurePathHorizonSeconds > 0.0) { "futurePathHorizonSeconds must be positive." }
+        require(futurePathSampleCount >= 2) { "futurePathSampleCount must be at least 2." }
+    }
+}
+
+val DEFAULT_TRACKED_TRAIL_KINDS: Set<RenderBodyKind> = setOf(
+    RenderBodyKind.STAR,
+    RenderBodyKind.PLANET,
+    RenderBodyKind.DWARF_PLANET,
+    RenderBodyKind.COMET,
+    RenderBodyKind.PROBE,
+    RenderBodyKind.TEST_OBJECT,
 )

@@ -15,6 +15,7 @@ import com.graciousgazelles.solarlab.render.core.ObserverCameraResolver
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
+import com.graciousgazelles.solarlab.render.core.RenderTrail
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.SceneInteractionMath
 import com.graciousgazelles.solarlab.render.core.ScenePacketBuildPolicy
@@ -54,6 +55,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var placementStartScreen: Pair<Float, Float>? = null
+    private var sceneOverlaySettings: RenderSceneOverlaySettings = RenderSceneOverlaySettings()
 
     private var scenePacketPolicy = defaultScenePacketPolicy()
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
@@ -217,6 +219,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         renderLatestScene()
     }
 
+    override fun setSceneOverlaySettings(settings: RenderSceneOverlaySettings) {
+        sceneOverlaySettings = settings
+        packetDirty = true
+        renderLatestScene()
+    }
+
     override fun setObserverMode(mode: ObserverMode) {
         observerMode = mode
         applyObserverTargetIfNeeded(latestScene, snapToSuggestedRadius = mode != ObserverMode.FREE)
@@ -324,10 +332,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private fun renderLatestScene() {
         if (rendererHandle == 0L || !surfaceReady) return
+        val frameForRender = renderFrameWithOverlays(latestScene)
         pushCamera()
         if (packetDirty || latestPacket == null) {
             latestPacket = NativeScenePacket.fromScene(
-                frame = latestScene,
+                frame = frameForRender,
                 selectedBodyId = selectedBodyId,
                 cameraState = cameraState,
                 viewportWidthPx = width.coerceAtLeast(1),
@@ -342,19 +351,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 packet.sourceRevision == lastSubmittedFrameRevision -> 0.0
                 lastSubmittedFrameRevision == Long.MIN_VALUE -> 0.0
                 packet.sourceRevision < lastSubmittedFrameRevision -> 0.0
-                latestScene.epochSeconds < lastSubmittedEpochSeconds -> 0.0
-                else -> (latestScene.epochSeconds - lastSubmittedEpochSeconds).coerceAtLeast(0.0)
+                frameForRender.epochSeconds < lastSubmittedEpochSeconds -> 0.0
+                else -> (frameForRender.epochSeconds - lastSubmittedEpochSeconds).coerceAtLeast(0.0)
             }
             SolarLabVulkanBridge.setFrameState(
                 handle = rendererHandle,
                 frameState = packet.toFrameState(
-                    epochSeconds = latestScene.epochSeconds,
+                    epochSeconds = frameForRender.epochSeconds,
                     simulationAdvanceSeconds = simulationAdvanceSeconds,
                     includeTracerMutualGravity = tracerMutualGravityEnabled,
                 ),
             )
             lastSubmittedFrameRevision = packet.sourceRevision
-            lastSubmittedEpochSeconds = latestScene.epochSeconds
+            lastSubmittedEpochSeconds = frameForRender.epochSeconds
         }
         if (!SolarLabVulkanBridge.render(rendererHandle)) {
             fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
@@ -363,6 +372,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         latestPacket?.let {
             reportStatus(
                 "${SolarLabVulkanBridge.backendLabel(rendererHandle)} active. " +
+                    "overlays historical=${sceneOverlaySettings.trailVisibilityMode.name} " +
+                    "predicted=${sceneOverlaySettings.showPredictedTrails}. " +
                     SolarLabVulkanBridge.sceneSummary(rendererHandle)
             )
         }
@@ -433,6 +444,21 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         tracerBodies = emptyList(),
         trails = emptyList(),
     )
+
+    private fun renderFrameWithOverlays(frame: RenderSceneFrame): RenderSceneFrame {
+        if (!sceneOverlaySettings.showPredictedTrails || frame.futurePaths.isEmpty()) {
+            return frame
+        }
+        val predictedTrails = frame.futurePaths.map { futurePath ->
+            RenderTrail(
+                bodyId = "${futurePath.bodyId}#future",
+                colorArgb = futurePath.colorArgb,
+                alpha = futurePath.alpha,
+                pointsM = futurePath.pointsM,
+            )
+        }
+        return frame.copy(trails = frame.trails + predictedTrails)
+    }
 
     private fun defaultScenePacketPolicy(): ScenePacketBuildPolicy = ScenePacketBuildPolicy()
 

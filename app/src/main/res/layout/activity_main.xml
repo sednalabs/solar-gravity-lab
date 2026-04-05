@@ -73,6 +73,14 @@
             </LinearLayout>
 
             <Button
+                android:id="@+id/buttonObjectSearch"
+                style="@style/Widget.SolarLab.OverlayButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="@string/action_object_search" />
+
+            <Button
                 android:id="@+id/buttonInfoToggle"
                 style="@style/Widget.SolarLab.OverlayButton"
                 android:layout_width="wrap_content"
@@ -267,6 +275,22 @@
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
                         android:text="@string/action_tracer_gravity_off" />
+
+                    <Button
+                        android:id="@+id/buttonTrailVisibility"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_trail_visibility_tracked" />
+
+                    <Button
+                        android:id="@+id/buttonPredictivePath"
+                        style="@style/Widget.SolarLab.ControlButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/action_predictive_path_off" />
 
                     <Button
                         android:id="@+id/buttonProcessingMode"

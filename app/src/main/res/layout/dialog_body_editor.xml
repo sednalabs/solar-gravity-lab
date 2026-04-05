@@ -9,9 +9,27 @@
         android:orientation="vertical"
         android:padding="16dp">
 
+        <LinearLayout
+            android:id="@+id/groupBodyPreset"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/add_body_preset_title" />
+
+            <Spinner
+                android:id="@+id/spinnerBodyPreset"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
             android:text="Name" />
 
         <EditText

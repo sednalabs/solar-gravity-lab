@@ -8,6 +8,7 @@ import com.graciousgazelles.solarlab.core.model.GravitationalRole
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -556,6 +557,158 @@ class RenderSceneAssemblerTest {
         val trailIds = secondFrame.trails.map { it.bodyId }.toSet()
         assertTrue("moon" in trailIds)
         assertTrue("probe" in trailIds)
+    }
+
+    @Test
+    fun assembleSupportsTrailVisibilityModes() {
+        val firstSnapshot = SimulationSnapshot(
+            epochSeconds = 1.0,
+            bodies = listOf(
+                body("sun", GravitationalRole.MASSIVE, BodyCategory.STAR).copy(
+                    positionM = Vector3d(0.0, 0.0, 0.0),
+                ),
+                body("asteroid", GravitationalRole.TRACER, BodyCategory.ASTEROID).copy(
+                    positionM = Vector3d(2_000.0, 0.0, 0.0),
+                ),
+            ),
+        )
+        val secondSnapshot = firstSnapshot.copy(
+            epochSeconds = 2.0,
+            bodies = listOf(
+                firstSnapshot.bodies[0].copy(positionM = Vector3d(100.0, 0.0, 0.0)),
+                firstSnapshot.bodies[1].copy(positionM = Vector3d(2_100.0, 0.0, 0.0)),
+            ),
+        )
+
+        val trackedClassAssembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
+        trackedClassAssembler.assemble(firstSnapshot)
+        val trackedClassFrame = trackedClassAssembler.assemble(secondSnapshot)
+        assertEquals(setOf("sun"), trackedClassFrame.trails.map { it.bodyId }.toSet())
+
+        val selectedOnlyAssembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
+        selectedOnlyAssembler.assemble(
+            firstSnapshot,
+            RenderSceneAssemblyOptions(
+                selectedBodyId = "asteroid",
+                trailVisibilityMode = RenderTrailVisibilityMode.SELECTED_ONLY,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.NONE,
+            ),
+        )
+        val selectedOnlyFrame = selectedOnlyAssembler.assemble(
+            secondSnapshot,
+            RenderSceneAssemblyOptions(
+                selectedBodyId = "asteroid",
+                trailVisibilityMode = RenderTrailVisibilityMode.SELECTED_ONLY,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.NONE,
+            ),
+        )
+        assertEquals(setOf("asteroid"), selectedOnlyFrame.trails.map { it.bodyId }.toSet())
+
+        val allObjectsAssembler = RenderSceneAssembler(maxTrailPointsPerBody = 8)
+        allObjectsAssembler.assemble(
+            firstSnapshot,
+            RenderSceneAssemblyOptions(
+                trailVisibilityMode = RenderTrailVisibilityMode.ALL_OBJECTS,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.NONE,
+            ),
+        )
+        val allObjectsFrame = allObjectsAssembler.assemble(
+            secondSnapshot,
+            RenderSceneAssemblyOptions(
+                trailVisibilityMode = RenderTrailVisibilityMode.ALL_OBJECTS,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.NONE,
+            ),
+        )
+        assertEquals(setOf("sun", "asteroid"), allObjectsFrame.trails.map { it.bodyId }.toSet())
+    }
+
+    @Test
+    fun assembleKeepsDenserHistoricalSamplesForSelectedBody() {
+        val assembler = RenderSceneAssembler(
+            maxTrailPointsPerBody = 4,
+            selectedBodyHistoryMultiplier = 2,
+        )
+
+        val selectedSnapshots = (0 until 10).map { index ->
+            SimulationSnapshot(
+                epochSeconds = index.toDouble(),
+                bodies = listOf(
+                    body("selected", GravitationalRole.TRACER, BodyCategory.PROBE).copy(
+                        positionM = Vector3d(index.toDouble() * 10.0, 0.0, 0.0),
+                    ),
+                    body("other", GravitationalRole.TRACER, BodyCategory.PROBE).copy(
+                        positionM = Vector3d(0.0, index.toDouble() * 10.0, 0.0),
+                    ),
+                ),
+            )
+        }
+
+        var selectedFrame: RenderSceneFrame? = null
+        for (snapshot in selectedSnapshots) {
+            selectedFrame = assembler.assemble(
+                snapshot,
+                RenderSceneAssemblyOptions(
+                    selectedBodyId = "selected",
+                    trailVisibilityMode = RenderTrailVisibilityMode.ALL_OBJECTS,
+                    futurePathVisibilityMode = RenderFuturePathVisibilityMode.NONE,
+                ),
+            )
+        }
+
+        val selectedTrail = selectedFrame!!.trails.first { it.bodyId == "selected" }
+        val otherTrail = selectedFrame.trails.first { it.bodyId == "other" }
+        assertEquals(8, selectedTrail.pointsM.size)
+        assertEquals(4, otherTrail.pointsM.size)
+        assertTrue(selectedTrail.pointsM.size > otherTrail.pointsM.size)
+    }
+
+    @Test
+    fun assembleProducesFuturePathOverlaySeparateFromHistoricalTrails() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 6)
+        val selectedId = "probe"
+        val snapshot = SimulationSnapshot(
+            epochSeconds = 1.0,
+            bodies = listOf(
+                body("earth", GravitationalRole.MASSIVE, BodyCategory.PLANET).copy(
+                    positionM = Vector3d.ZERO,
+                ),
+                body(selectedId, GravitationalRole.TRACER, BodyCategory.PROBE).copy(
+                    positionM = Vector3d(100.0, 200.0, 0.0),
+                    velocityMps = Vector3d(10.0, -5.0, 0.0),
+                ),
+            ),
+        )
+
+        val firstFrame = assembler.assemble(
+            snapshot,
+            RenderSceneAssemblyOptions(
+                selectedBodyId = selectedId,
+                trailVisibilityMode = RenderTrailVisibilityMode.SELECTED_ONLY,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+                futurePathHorizonSeconds = 100.0,
+                futurePathSampleCount = 6,
+            ),
+        )
+        assertTrue(firstFrame.trails.isEmpty())
+        assertEquals(1, firstFrame.futurePaths.size)
+
+        val futurePath = firstFrame.futurePaths.single()
+        assertEquals(selectedId, futurePath.bodyId)
+        assertEquals(6, futurePath.pointsM.size)
+        assertEquals(20.0, futurePath.sampleStepSeconds, 1e-6)
+        assertEquals(Vector3d(100.0, 200.0, 0.0), futurePath.pointsM.first())
+        assertEquals(Vector3d(1_100.0, -300.0, 0.0), futurePath.pointsM.last())
+
+        val secondFrame = assembler.assemble(
+            snapshot.copy(epochSeconds = 2.0),
+            RenderSceneAssemblyOptions(
+                selectedBodyId = selectedId,
+                trailVisibilityMode = RenderTrailVisibilityMode.SELECTED_ONLY,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.NONE,
+            ),
+        )
+        assertFalse(secondFrame.trails.isEmpty())
+        assertTrue(secondFrame.futurePaths.isEmpty())
     }
 
     private fun body(id: String, role: GravitationalRole, category: BodyCategory): BodyState = BodyState(

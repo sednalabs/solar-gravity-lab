@@ -28,7 +28,13 @@
     <string name="action_backend_vulkan">Backend: Vulkan</string>
     <string name="action_info_show">Debug</string>
     <string name="action_info_hide">Hide debug</string>
-    <string name="controls_hint">Pinch to zoom. Drag to pan. Tap a body to select it. Follow mode locks the camera to the selected body or its host, the orientation lock keeps the screen fixed, the time-step controls move catalog time by the chosen step, and Debug shows app perf, thermal, and hardware capability details.</string>
+    <string name="action_object_search">Search</string>
+    <string name="action_trail_visibility_all">Trails: All</string>
+    <string name="action_trail_visibility_selected">Trails: Selected</string>
+    <string name="action_trail_visibility_tracked">Trails: Tracked</string>
+    <string name="action_predictive_path_on">Predictive path: On</string>
+    <string name="action_predictive_path_off">Predictive path: Off</string>
+    <string name="controls_hint">Pinch to zoom. Drag to pan. Tap a body to select it. Search jumps to a body and starts follow mode. Follow locks the camera to the selected body or its host. Trails and Predictive path control path overlays when available in the renderer. The orientation lock keeps the screen fixed, time-step controls move catalog time by the chosen step, and Debug shows app perf, thermal, and hardware capability details.</string>
     <string name="diagnostics_cached_notice">Diagnostics shown from recent running tick</string>
     <string name="selection_none_title">No body selected</string>
     <string name="selection_none">Tap a moving body to select it, then use Follow to keep it in view.</string>
@@ -57,4 +63,17 @@
     <string name="format_distance_au">%.2f AU</string>
     <string name="format_distance_km">%.0f km</string>
     <string name="format_distance_m">%.0f m</string>
+    <string name="add_body_preset_title">Preset</string>
+    <string name="add_body_preset_custom">Custom object</string>
+    <string name="add_body_preset_rocky_planet">Rocky planet</string>
+    <string name="add_body_preset_gas_giant">Gas giant</string>
+    <string name="add_body_preset_moonlet">Moonlet</string>
+    <string name="add_body_preset_probe_tracer">Probe (tracer)</string>
+    <string name="search_objects_title">Find object</string>
+    <string name="search_objects_hint">Type name, category, or role</string>
+    <string name="search_objects_results_format">%1$d result(s)</string>
+    <string name="search_objects_results_empty">No matching objects</string>
+    <string name="search_objects_empty_snapshot">No objects available to jump to yet.</string>
+    <string name="search_objects_row_format">%1$s • %2$s • %3$s</string>
+    <string name="search_objects_dialog_close">Close</string>
 </resources>

@@ -6,12 +6,17 @@ import android.os.Bundle
 import android.os.Debug
 import android.os.PowerManager
 import android.view.View
+import android.widget.ArrayAdapter
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.core.widget.doAfterTextChanged
 import com.graciousgazelles.solarlab.app.databinding.ActivityMainBinding
+import com.graciousgazelles.solarlab.app.databinding.DialogObjectSearchBinding
 import com.graciousgazelles.solarlab.core.math.Vector3d
+import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.TimelineMode
@@ -19,11 +24,14 @@ import com.graciousgazelles.solarlab.feature.lab.LabFrame
 import com.graciousgazelles.solarlab.feature.lab.LabFrameListener
 import com.graciousgazelles.solarlab.feature.lab.LabSession
 import com.graciousgazelles.solarlab.feature.lab.TimelineStatus
+import com.graciousgazelles.solarlab.feature.lab.render.RenderSceneOverlaySettings
 import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListener
 import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
+import com.graciousgazelles.solarlab.render.core.RenderTrailVisibilityMode
+import java.util.Locale
 
 class MainActivity : AppCompatActivity(), LabFrameListener {
 
@@ -40,6 +48,8 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var resumeSimulationAfterModalInteraction: Boolean = false
     private var infoPanelVisible: Boolean = false
     private var renderProcessingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
+    private var trailVisibilityMode: RenderTrailVisibilityMode = RenderTrailVisibilityMode.TRACKED_CLASSES
+    private var predictivePathEnabled: Boolean = false
     private var latestBackendStatus: RenderBackendStatus? = null
     private var orientationLocked: Boolean = false
     private var powerManager: PowerManager? = null
@@ -54,6 +64,10 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
         orientationLocked = savedInstanceState?.getBoolean(STATE_ORIENTATION_LOCKED) ?: false
         infoPanelVisible = savedInstanceState?.getBoolean(STATE_INFO_PANEL_VISIBLE) ?: false
+        trailVisibilityMode = savedInstanceState?.getString(STATE_TRAIL_VISIBILITY_MODE)
+            ?.let { savedValue -> RenderTrailVisibilityMode.entries.firstOrNull { it.name == savedValue } }
+            ?: RenderTrailVisibilityMode.TRACKED_CLASSES
+        predictivePathEnabled = savedInstanceState?.getBoolean(STATE_PREDICTIVE_PATH_ENABLED) ?: false
         updateOrientationLock()
 
         val controlRail = binding.bottomControlRail
@@ -143,6 +157,10 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             showEditSelectedBodyDialog()
         }
 
+        binding.buttonObjectSearch.setOnClickListener {
+            showObjectSearchDialog()
+        }
+
         binding.buttonCollisionMode.setOnClickListener {
             currentCollisionMode = when (currentCollisionMode) {
                 CollisionMode.NONE -> CollisionMode.MERGE
@@ -159,6 +177,16 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
             session.setTracerMutualGravityEnabled(currentTracerMutualGravity)
             binding.renderHost.setTracerMutualGravityEnabled(currentTracerMutualGravity)
             updateTracerGravityButtonText()
+        }
+
+        binding.buttonTrailVisibility.setOnClickListener {
+            cycleTrailVisibilityMode()
+        }
+
+        binding.buttonPredictivePath.setOnClickListener {
+            predictivePathEnabled = !predictivePathEnabled
+            applyOverlaySettingsToRenderer()
+            updatePredictivePathButtonText()
         }
 
         binding.buttonInfoToggle.setOnClickListener {
@@ -186,10 +214,13 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         updateAddButtonText()
         updateSelectedBodySummary()
         updateObserverButtonText()
+        updateTrailVisibilityButtonText()
+        updatePredictivePathButtonText()
         updateInfoPanelVisibility()
         updateProcessingModeButtonText()
         updateOrientationLock()
         binding.renderHost.setTracerMutualGravityEnabled(currentTracerMutualGravity)
+        applyOverlaySettingsToRenderer()
 
         session.dispatchCurrentFrame()
         session.start()
@@ -251,6 +282,8 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_ORIENTATION_LOCKED, orientationLocked)
         outState.putBoolean(STATE_INFO_PANEL_VISIBLE, infoPanelVisible)
+        outState.putString(STATE_TRAIL_VISIBILITY_MODE, trailVisibilityMode.name)
+        outState.putBoolean(STATE_PREDICTIVE_PATH_ENABLED, predictivePathEnabled)
         super.onSaveInstanceState(outState)
     }
 
@@ -312,6 +345,71 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         )
     }
 
+    private fun showObjectSearchDialog() {
+        if (pendingAddDraft != null) return
+        val snapshotBodies = latestFrame?.snapshot?.bodies.orEmpty()
+        if (snapshotBodies.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.search_objects_title)
+                .setMessage(R.string.search_objects_empty_snapshot)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
+        }
+
+        val dialogBinding = DialogObjectSearchBinding.inflate(layoutInflater)
+        val sortedBodies = snapshotBodies.sortedBy { it.name.lowercase(Locale.US) }
+        val filteredBodies = sortedBodies.toMutableList()
+        val rowAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_list_item_1,
+            filteredBodies.map(::searchRowLabel).toMutableList(),
+        )
+
+        fun refreshResults(query: String) {
+            val normalizedQuery = query.trim().lowercase(Locale.US)
+            val matches = if (normalizedQuery.isBlank()) {
+                sortedBodies
+            } else {
+                sortedBodies.filter { body ->
+                    body.name.lowercase(Locale.US).contains(normalizedQuery) ||
+                        prettyCategoryLabel(body.category).lowercase(Locale.US).contains(normalizedQuery) ||
+                        prettyRoleLabel(body.gravitationalRole).lowercase(Locale.US).contains(normalizedQuery)
+                }
+            }
+            filteredBodies.clear()
+            filteredBodies.addAll(matches)
+            rowAdapter.clear()
+            rowAdapter.addAll(matches.map(::searchRowLabel))
+            rowAdapter.notifyDataSetChanged()
+            dialogBinding.textSearchResultCount.text = if (matches.isEmpty()) {
+                getString(R.string.search_objects_results_empty)
+            } else {
+                getString(R.string.search_objects_results_format, matches.size)
+            }
+        }
+
+        dialogBinding.listSearchResults.adapter = rowAdapter
+        dialogBinding.editSearch.doAfterTextChanged { text ->
+            refreshResults(text?.toString().orEmpty())
+        }
+        refreshResults(query = "")
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.search_objects_title)
+            .setView(dialogBinding.root)
+            .setNegativeButton(R.string.search_objects_dialog_close, null)
+            .create()
+
+        dialogBinding.listSearchResults.setOnItemClickListener { _, _, position, _ ->
+            val chosenBody = filteredBodies.getOrNull(position) ?: return@setOnItemClickListener
+            jumpToBody(chosenBody.id)
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
     private fun handlePlacementGesture(
         startWorldPositionM: Vector3d,
         endWorldPositionM: Vector3d,
@@ -356,6 +454,13 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         updateSelectedBodySummary()
         updateObserverButtonText()
         updateSimulationButtons()
+    }
+
+    private fun jumpToBody(bodyId: String) {
+        updateSelectedBodyId(bodyId)
+        if (observerMode == ObserverMode.FREE) {
+            setObserverMode(ObserverMode.FOLLOW_SELECTED)
+        }
     }
 
     private fun setObserverMode(mode: ObserverMode) {
@@ -542,9 +647,13 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     private fun updateSimulationButtons() {
         val timeline = latestFrame?.timeline
+        val controlsEnabled = pendingAddDraft == null
         binding.buttonStartPause.isEnabled = pendingAddDraft == null
         binding.buttonCollisionMode.isEnabled = pendingAddDraft == null
         binding.buttonTracerGravity.isEnabled = pendingAddDraft == null
+        binding.buttonTrailVisibility.isEnabled = controlsEnabled
+        binding.buttonPredictivePath.isEnabled = controlsEnabled
+        binding.buttonObjectSearch.isEnabled = controlsEnabled
         binding.buttonStep.isEnabled = !session.isRunning() && pendingAddDraft == null
         binding.buttonTimeBack.isEnabled = !session.isRunning() && pendingAddDraft == null && (timeline?.canStepBackward == true)
         binding.buttonTimeForward.isEnabled = !session.isRunning() && pendingAddDraft == null
@@ -637,6 +746,48 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
         }
     }
 
+    private fun cycleTrailVisibilityMode() {
+        trailVisibilityMode = when (trailVisibilityMode) {
+            RenderTrailVisibilityMode.ALL_OBJECTS -> RenderTrailVisibilityMode.SELECTED_ONLY
+            RenderTrailVisibilityMode.SELECTED_ONLY -> RenderTrailVisibilityMode.TRACKED_CLASSES
+            RenderTrailVisibilityMode.TRACKED_CLASSES -> RenderTrailVisibilityMode.ALL_OBJECTS
+        }
+        applyOverlaySettingsToRenderer()
+        updateTrailVisibilityButtonText()
+    }
+
+    private fun updateTrailVisibilityButtonText() {
+        binding.buttonTrailVisibility.text = when (trailVisibilityMode) {
+            RenderTrailVisibilityMode.ALL_OBJECTS -> getString(R.string.action_trail_visibility_all)
+            RenderTrailVisibilityMode.SELECTED_ONLY -> getString(R.string.action_trail_visibility_selected)
+            RenderTrailVisibilityMode.TRACKED_CLASSES -> getString(R.string.action_trail_visibility_tracked)
+        }
+    }
+
+    private fun updatePredictivePathButtonText() {
+        binding.buttonPredictivePath.text = if (predictivePathEnabled) {
+            getString(R.string.action_predictive_path_on)
+        } else {
+            getString(R.string.action_predictive_path_off)
+        }
+    }
+
+    private fun applyOverlaySettingsToRenderer() {
+        binding.renderHost.setSceneOverlaySettings(
+            RenderSceneOverlaySettings(
+                trailVisibilityMode = trailVisibilityMode,
+                showPredictedTrails = predictivePathEnabled,
+            ),
+        )
+    }
+
+    private fun searchRowLabel(body: BodyState): String = getString(
+        R.string.search_objects_row_format,
+        body.name,
+        prettyCategoryLabel(body.category),
+        prettyRoleLabel(body.gravitationalRole),
+    )
+
     private fun registerThermalStatusListener() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         val powerManager = powerManager ?: return
@@ -708,6 +859,8 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private companion object {
         private const val STATE_ORIENTATION_LOCKED = "orientation_locked"
         private const val STATE_INFO_PANEL_VISIBLE = "info_panel_visible"
+        private const val STATE_TRAIL_VISIBILITY_MODE = "trail_visibility_mode"
+        private const val STATE_PREDICTIVE_PATH_ENABLED = "predictive_path_enabled"
         private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
         private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
     }

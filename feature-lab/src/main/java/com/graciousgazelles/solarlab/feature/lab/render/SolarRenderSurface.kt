@@ -12,6 +12,7 @@ internal interface SolarRenderSurface {
     fun setInteractionMode(mode: SceneInteractionMode) {}
     fun setSelectedBodyId(bodyId: String?) {}
     fun setObserverMode(mode: ObserverMode) {}
+    fun setSceneOverlaySettings(settings: RenderSceneOverlaySettings) {}
     fun onHostResume() {}
     fun onHostPause() {}
     fun release() {}

@@ -8,6 +8,8 @@ import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
+import com.graciousgazelles.solarlab.render.core.RenderFuturePathVisibilityMode
+import com.graciousgazelles.solarlab.render.core.RenderSceneAssemblyOptions
 import com.graciousgazelles.solarlab.render.core.RenderSceneAssembler
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 
@@ -22,6 +24,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private val requestedBackend: RenderBackend = RenderBackend.VULKAN
     private var activeSurface: SolarRenderSurface? = null
     private var activeSurfaceView: View? = null
+    private var latestSnapshot: SimulationSnapshot? = null
     private var latestScene: RenderSceneFrame? = null
     private var hostResumed: Boolean = false
     private var interactionListener: RenderInteractionListener? = null
@@ -30,6 +33,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var tracerMutualGravityEnabled: Boolean = false
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
+    private var overlaySettings: RenderSceneOverlaySettings = RenderSceneOverlaySettings()
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
         requested = requestedBackend,
@@ -45,13 +49,13 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     }
 
     fun submitSnapshot(snapshot: SimulationSnapshot) {
-        val scene = sceneAssembler.assemble(snapshot)
-        latestScene = scene
-        activeSurface?.submitScene(scene)
+        latestSnapshot = snapshot
+        rebuildScene()
     }
 
     fun resetScene() {
         sceneAssembler.clear()
+        latestSnapshot = null
         latestScene = null
     }
 
@@ -86,9 +90,18 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     fun setSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
         activeSurface?.setSelectedBodyId(bodyId)
+        rebuildScene()
     }
 
     fun selectedBodyId(): String? = selectedBodyId
+
+    fun setSceneOverlaySettings(settings: RenderSceneOverlaySettings) {
+        overlaySettings = settings
+        activeSurface?.setSceneOverlaySettings(settings)
+        rebuildScene()
+    }
+
+    fun sceneOverlaySettings(): RenderSceneOverlaySettings = overlaySettings
 
     fun setObserverMode(mode: ObserverMode) {
         observerMode = mode
@@ -178,6 +191,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setTracerMutualGravityEnabled(tracerMutualGravityEnabled)
         activeSurface?.setSelectedBodyId(selectedBodyId)
         activeSurface?.setObserverMode(observerMode)
+        activeSurface?.setSceneOverlaySettings(overlaySettings)
         addView(
             view,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
@@ -191,6 +205,24 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private fun updateStatus(status: RenderBackendStatus) {
         currentStatus = status
         backendStatusListener?.invoke(status)
+    }
+
+    private fun rebuildScene() {
+        val snapshot = latestSnapshot ?: return
+        val scene = sceneAssembler.assemble(
+            snapshot = snapshot,
+            options = RenderSceneAssemblyOptions(
+                selectedBodyId = selectedBodyId,
+                trailVisibilityMode = overlaySettings.trailVisibilityMode,
+                futurePathVisibilityMode = if (overlaySettings.showPredictedTrails) {
+                    RenderFuturePathVisibilityMode.SELECTED_ONLY
+                } else {
+                    RenderFuturePathVisibilityMode.NONE
+                },
+            ),
+        )
+        latestScene = scene
+        activeSurface?.submitScene(scene)
     }
 
     private fun baseHardwareSummary(): String =
