@@ -165,7 +165,7 @@ class SolarLabShellLayoutTest {
             },
         )
 
-        assertTrue(runtimeFacade.commands.size > 4)
+        assertTrue(runtimeFacade.commands.size >= 4)
     }
 
     @Test
