@@ -671,10 +671,12 @@ class RenderSceneAssemblerTest {
             bodies = listOf(
                 body("earth", GravitationalRole.MASSIVE, BodyCategory.PLANET).copy(
                     positionM = Vector3d.ZERO,
+                    massKg = 5.972e24,
                 ),
                 body(selectedId, GravitationalRole.TRACER, BodyCategory.PROBE).copy(
-                    positionM = Vector3d(100.0, 200.0, 0.0),
-                    velocityMps = Vector3d(10.0, -5.0, 0.0),
+                    positionM = Vector3d(3.84e8, 0.0, 0.0),
+                    velocityMps = Vector3d(0.0, 1_022.0, 0.0),
+                    massKg = 1_000.0,
                 ),
             ),
         )
@@ -685,7 +687,7 @@ class RenderSceneAssemblerTest {
                 selectedBodyId = selectedId,
                 trailVisibilityMode = RenderTrailVisibilityMode.SELECTED_ONLY,
                 futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
-                futurePathHorizonSeconds = 100.0,
+                futurePathHorizonSeconds = 3_600.0,
                 futurePathSampleCount = 6,
             ),
         )
@@ -695,9 +697,12 @@ class RenderSceneAssemblerTest {
         val futurePath = firstFrame.futurePaths.single()
         assertEquals(selectedId, futurePath.bodyId)
         assertEquals(6, futurePath.pointsM.size)
-        assertEquals(20.0, futurePath.sampleStepSeconds, 1e-6)
-        assertEquals(Vector3d(100.0, 200.0, 0.0), futurePath.pointsM.first())
-        assertEquals(Vector3d(1_100.0, -300.0, 0.0), futurePath.pointsM.last())
+        assertEquals(720.0, futurePath.sampleStepSeconds, 1e-6)
+        assertEquals(Vector3d(3.84e8, 0.0, 0.0), futurePath.pointsM.first())
+        val linearEnd = Vector3d(3.84e8, 1_022.0 * 3_600.0, 0.0)
+        assertTrue(futurePath.pointsM.last().x < linearEnd.x)
+        assertTrue(futurePath.pointsM.last().y < linearEnd.y)
+        assertFalse(futurePath.pointsM.last() == linearEnd)
 
         val secondFrame = assembler.assemble(
             snapshot.copy(epochSeconds = 2.0),
@@ -709,6 +714,52 @@ class RenderSceneAssemblerTest {
         )
         assertFalse(secondFrame.trails.isEmpty())
         assertTrue(secondFrame.futurePaths.isEmpty())
+    }
+
+    @Test
+    fun assembleFuturePathForecastCanIncludeTracerMutualGravity() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 6)
+        val selectedId = "probe-a"
+        val snapshot = SimulationSnapshot(
+            epochSeconds = 0.0,
+            bodies = listOf(
+                body(selectedId, GravitationalRole.TRACER, BodyCategory.PROBE).copy(
+                    positionM = Vector3d(-10_000.0, 0.0, 0.0),
+                    velocityMps = Vector3d(0.0, 0.0, 0.0),
+                    massKg = 8.0e18,
+                ),
+                body("probe-b", GravitationalRole.TRACER, BodyCategory.PROBE).copy(
+                    positionM = Vector3d(10_000.0, 0.0, 0.0),
+                    velocityMps = Vector3d(0.0, 0.0, 0.0),
+                    massKg = 8.0e18,
+                ),
+            ),
+        )
+
+        val withoutTracerGravity = assembler.assemble(
+            snapshot,
+            RenderSceneAssemblyOptions(
+                selectedBodyId = selectedId,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+                futurePathHorizonSeconds = 60.0,
+                futurePathSampleCount = 4,
+                includeTracerMutualGravityInForecast = false,
+            ),
+        ).futurePaths.single()
+
+        val withTracerGravity = assembler.assemble(
+            snapshot,
+            RenderSceneAssemblyOptions(
+                selectedBodyId = selectedId,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+                futurePathHorizonSeconds = 60.0,
+                futurePathSampleCount = 4,
+                includeTracerMutualGravityInForecast = true,
+            ),
+        ).futurePaths.single()
+
+        assertEquals(withoutTracerGravity.pointsM.first(), withTracerGravity.pointsM.first())
+        assertTrue(withTracerGravity.pointsM.last().x > withoutTracerGravity.pointsM.last().x)
     }
 
     private fun body(id: String, role: GravitationalRole, category: BodyCategory): BodyState = BodyState(

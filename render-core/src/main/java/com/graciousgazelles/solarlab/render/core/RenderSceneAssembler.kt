@@ -3,8 +3,11 @@ package com.graciousgazelles.solarlab.render.core
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.BodyState
+import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
+import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
+import com.graciousgazelles.solarlab.core.simulation.SimulationEngine
 import kotlin.collections.ArrayDeque
 
 class RenderSceneAssembler(
@@ -75,13 +78,7 @@ class RenderSceneAssembler(
                 )
             }
         }
-        val futurePaths = snapshot.bodies.mapNotNull { body ->
-            if (!shouldIncludeFuturePath(body, options)) {
-                null
-            } else {
-                buildFuturePath(body, options)
-            }
-        }
+        val futurePaths = buildFuturePaths(snapshot, options)
 
         return RenderSceneFrame(
             epochSeconds = snapshot.epochSeconds,
@@ -127,23 +124,55 @@ class RenderSceneAssembler(
         RenderFuturePathVisibilityMode.ALL_OBJECTS -> true
     }
 
-    private fun buildFuturePath(
-        body: BodyState,
+    private fun buildFuturePaths(
+        snapshot: SimulationSnapshot,
         options: RenderSceneAssemblyOptions,
-    ): RenderFuturePath {
-        val sampleStepSeconds = options.futurePathHorizonSeconds / (options.futurePathSampleCount - 1).toDouble()
-        val points = ArrayList<Vector3d>(options.futurePathSampleCount)
-        for (index in 0 until options.futurePathSampleCount) {
-            val dt = sampleStepSeconds * index.toDouble()
-            points += body.positionM + (body.velocityMps * dt)
+    ): List<RenderFuturePath> {
+        if (options.futurePathVisibilityMode == RenderFuturePathVisibilityMode.NONE) {
+            return emptyList()
         }
-        return RenderFuturePath(
-            bodyId = body.id,
-            colorArgb = body.colorArgb,
-            alpha = body.futurePathAlpha(),
-            pointsM = points,
-            sampleStepSeconds = sampleStepSeconds,
+        val includedBodyIds = snapshot.bodies
+            .filter { shouldIncludeFuturePath(it, options) }
+            .mapTo(linkedSetOf()) { it.id }
+        if (includedBodyIds.isEmpty()) {
+            return emptyList()
+        }
+
+        val sampleStepSeconds = options.futurePathHorizonSeconds / (options.futurePathSampleCount - 1).toDouble()
+        val pointsByBodyId = linkedMapOf<String, MutableList<Vector3d>>()
+        snapshot.bodies.forEach { body ->
+            if (body.id in includedBodyIds) {
+                pointsByBodyId[body.id] = mutableListOf(body.positionM)
+            }
+        }
+
+        val engine = SimulationEngine(
+            initialSnapshot = snapshot,
+            config = SimulationConfig(
+                collisionMode = CollisionMode.NONE,
+                includeTracerMutualGravity = options.includeTracerMutualGravityInForecast,
+            ),
         )
+        repeat(options.futurePathSampleCount - 1) {
+            val forecastSnapshot = engine.step(
+                deltaTimeSeconds = sampleStepSeconds,
+                recomputeDiagnostics = false,
+            ).snapshot
+            forecastSnapshot.bodies.forEach { body ->
+                pointsByBodyId[body.id]?.add(body.positionM)
+            }
+        }
+
+        return snapshot.bodies.mapNotNull { body ->
+            val points = pointsByBodyId[body.id] ?: return@mapNotNull null
+            RenderFuturePath(
+                bodyId = body.id,
+                colorArgb = body.colorArgb,
+                alpha = body.futurePathAlpha(),
+                pointsM = points,
+                sampleStepSeconds = sampleStepSeconds,
+            )
+        }
     }
 
     private fun sampleHistoryPoints(points: List<Vector3d>, maxPoints: Int): List<Vector3d> {

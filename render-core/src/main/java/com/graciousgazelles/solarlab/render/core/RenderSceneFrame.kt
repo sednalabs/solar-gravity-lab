@@ -69,6 +69,7 @@ data class RenderSceneAssemblyOptions(
     val futurePathVisibilityMode: RenderFuturePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
     val futurePathHorizonSeconds: Double = 14_400.0,
     val futurePathSampleCount: Int = 24,
+    val includeTracerMutualGravityInForecast: Boolean = false,
 ) {
     init {
         require(futurePathHorizonSeconds > 0.0) { "futurePathHorizonSeconds must be positive." }

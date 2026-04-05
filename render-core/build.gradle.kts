@@ -9,6 +9,7 @@ kotlin {
 dependencies {
     implementation(project(":core-math"))
     implementation(project(":core-model"))
+    implementation(project(":core-simulation"))
 
     testImplementation(libs.junit)
 }

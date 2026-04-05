@@ -85,6 +85,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     fun setTracerMutualGravityEnabled(enabled: Boolean) {
         tracerMutualGravityEnabled = enabled
         activeSurface?.setTracerMutualGravityEnabled(enabled)
+        rebuildScene()
     }
 
     fun setSelectedBodyId(bodyId: String?) {
@@ -219,6 +220,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
                 } else {
                     RenderFuturePathVisibilityMode.NONE
                 },
+                includeTracerMutualGravityInForecast = tracerMutualGravityEnabled,
             ),
         )
         latestScene = scene
