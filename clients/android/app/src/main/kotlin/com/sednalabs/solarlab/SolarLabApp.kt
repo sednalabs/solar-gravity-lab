@@ -45,6 +45,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -102,6 +103,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .testTag(SolarLabTestTags.SHELL_COLUMN)
                             .widthIn(max = 1320.dp)
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = 18.dp, vertical = 14.dp),
@@ -311,12 +313,14 @@ private fun HeroPanel(
                     text = uiState.statusLine,
                     style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.testTag(SolarLabTestTags.STATUS_LINE),
                 )
                 uiState.detailLine?.let { detail ->
                     Text(
                         text = detail,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag(SolarLabTestTags.DETAIL_LINE),
                     )
                 }
             }
@@ -338,6 +342,7 @@ private fun HeroCopy() {
             text = "Solar Gravity Lab",
             style = MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.testTag(SolarLabTestTags.TITLE),
         )
         Text(
             text = "A host-first mobile surface for the Rust runtime boundary, tuned for clarity, confidence, and touch use.",
@@ -399,6 +404,7 @@ private fun StatusStrip(uiState: ShellUiState) {
             StatusPill(
                 label = "Session $sessionHandle",
                 tone = ShellNoticeTone.Neutral,
+                modifier = Modifier.testTag(SolarLabTestTags.SESSION_HANDLE),
             )
         }
         uiState.backendSummary?.let { backend ->
@@ -457,6 +463,7 @@ private fun RenderStagePanel(
 
             Box(
                 modifier = Modifier
+                    .testTag(SolarLabTestTags.RENDER_PANEL)
                     .fillMaxWidth()
                     .heightIn(min = 320.dp, max = 560.dp)
                     .clip(RoundedCornerShape(28.dp))
@@ -823,6 +830,7 @@ private fun DetailGrid(uiState: ShellUiState) {
                 "Packet summary" to (uiState.renderStatus.summary ?: "No packet summary yet"),
                 "Issue" to (uiState.renderStatus.issue ?: "None"),
             ),
+            valueTags = mapOf("Packet summary" to SolarLabTestTags.RENDER_PACKET_SUMMARY),
         )
     }
 }
@@ -831,6 +839,7 @@ private fun DetailGrid(uiState: ShellUiState) {
 private fun DetailCard(
     title: String,
     entries: List<Pair<String, String>>,
+    valueTags: Map<String, String> = emptyMap(),
 ) {
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -868,7 +877,13 @@ private fun DetailCard(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.End,
-                        modifier = Modifier.weight(0.62f),
+                        modifier = Modifier
+                            .weight(0.62f)
+                            .then(
+                                valueTags[label]?.let { tag ->
+                                    Modifier.testTag(tag)
+                                } ?: Modifier
+                            ),
                     )
                 }
             }
@@ -910,8 +925,10 @@ private fun LabPanel(
 private fun StatusPill(
     label: String,
     tone: ShellNoticeTone,
+    modifier: Modifier = Modifier,
 ) {
     Surface(
+        modifier = modifier,
         shape = CircleShape,
         color = tone.containerColor(),
         border = BorderStroke(1.dp, tone.borderColor()),
