@@ -137,6 +137,7 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.CHECKPOINT_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).performTextInput("checkpoint-1")
         composeRule.waitForIdle()
+        scrollShellTo(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
             .assertIsEnabled()
             .performClick()
