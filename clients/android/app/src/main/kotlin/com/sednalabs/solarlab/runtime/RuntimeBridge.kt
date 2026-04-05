@@ -1,8 +1,11 @@
 package com.sednalabs.solarlab.runtime
 
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -12,14 +15,22 @@ import java.nio.charset.StandardCharsets
  * Kotlin owns orchestration and lifecycle semantics.
  * Native transport owns ABI calls into `engine/ffi` via a JNI shim.
  */
-interface RuntimeBridge {
+internal interface RuntimeBridge {
     fun connect(): Flow<RuntimeSignal>
+
+    suspend fun refresh(): List<RuntimeSignal>
+
+    suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal>
 }
 
-class JniRuntimeBridge(
+internal class JniRuntimeBridge(
     private val transport: NativeRuntimeTransport = JniNativeRuntimeTransport,
     private val renderHostAdapter: RenderHostAdapter = NativeRenderHostAdapter(transport),
 ) : RuntimeBridge {
+    private val stateLock = Any()
+    @Volatile
+    private var activeSessionHandle: Long = 0L
+
     override fun connect(): Flow<RuntimeSignal> = callbackFlow {
         val loadOutcome = transport.ensureLibraryLoaded()
         if (loadOutcome is NativeLibraryLoadOutcome.Failure) {
@@ -84,6 +95,11 @@ class JniRuntimeBridge(
             return@callbackFlow
         }
 
+        synchronized(stateLock) {
+            activeSessionHandle = handle
+            renderHostAdapter.bindSession(handle)
+        }
+
         trySend(RuntimeSignal.Connected(handle = handle))
 
         val runtimeInfoResult = runCatching {
@@ -95,10 +111,11 @@ class JniRuntimeBridge(
                 )
             )
             awaitClose {
-                transport.destroySession(handle)
+                releaseActiveSession(handle)
             }
             return@callbackFlow
         }
+
         if (runtimeInfoResult.result.isOk()) {
             trySend(
                 RuntimeSignal.Status(
@@ -109,42 +126,107 @@ class JniRuntimeBridge(
             trySend(RuntimeSignal.Status("Runtime info unavailable: ${runtimeInfoResult.result.describe()}"))
         }
 
-        val snapshotResult = runCatching {
-            transport.snapshotSummary(handle)
-        }.getOrElse { error ->
-            trySend(
-                RuntimeSignal.Status(
-                    "Snapshot summary unavailable: ${error.message ?: error::class.java.simpleName}"
-                )
-            )
-            awaitClose {
-                transport.destroySession(handle)
-            }
-            return@callbackFlow
-        }
-        if (snapshotResult.result.isOk()) {
-            trySend(
-                RuntimeSignal.Status(
-                    "Session ready: scenario=${snapshotResult.scenarioId}, branch=${snapshotResult.activeBranchId}, bodies=${snapshotResult.bodyCount}"
-                )
-            )
-        } else {
-            trySend(RuntimeSignal.Status("Snapshot summary unavailable: ${snapshotResult.result.describe()}"))
-        }
+        refreshSignalsForHandle(handle, includeSummary = true).forEach { trySend(it) }
 
-        renderHostAdapter.bindSession(handle)
-        val refreshResult = renderHostAdapter.refreshPacket()
-        if (refreshResult.lease != null) {
-            trySend(RuntimeSignal.RenderPacketReady(refreshResult.lease))
-        } else {
-            trySend(RuntimeSignal.Status(refreshResult.unavailableReason ?: "Render export unavailable"))
+        val refreshJob = launch {
+            while (isActive) {
+                delay(REFRESH_INTERVAL_MS)
+                val activeHandle = synchronized(stateLock) { activeSessionHandle }
+                if (activeHandle == 0L) {
+                    continue
+                }
+                refreshSignalsForHandle(activeHandle, includeSummary = true).forEach { trySend(it) }
+            }
         }
 
         awaitClose {
+            refreshJob.cancel()
+            releaseActiveSession(handle)
+        }
+    }
+
+    override suspend fun refresh(): List<RuntimeSignal> {
+        val handle = synchronized(stateLock) { activeSessionHandle }
+        if (handle == 0L) {
+            return listOf(RuntimeSignal.Status("Refresh skipped: no active runtime session"))
+        }
+
+        return refreshSignalsForHandle(handle, includeSummary = true)
+    }
+
+    override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> {
+        val handle = synchronized(stateLock) { activeSessionHandle }
+        if (handle == 0L) {
+            return listOf(RuntimeSignal.Status("Command skipped: no active runtime session"))
+        }
+
+        val commandResult = runCatching {
+            transport.applyCommand(handle, command.toNativePayload())
+        }.getOrElse { error ->
+            return listOf(
+                RuntimeSignal.Status(
+                    "Command failed: ${error.message ?: error::class.java.simpleName}"
+                )
+            )
+        }
+
+        if (!commandResult.result.isOk()) {
+            return listOf(RuntimeSignal.Status("Command failed: ${commandResult.result.describe()}"))
+        }
+
+        val signals = mutableListOf<RuntimeSignal>()
+        signals += RuntimeSignal.CommandApplied(command.label, commandResult)
+        signals += refreshSignalsForHandle(handle, includeSummary = false)
+        return signals
+    }
+
+    private fun refreshSignalsForHandle(handle: Long, includeSummary: Boolean): List<RuntimeSignal> {
+        val signals = mutableListOf<RuntimeSignal>()
+
+        if (includeSummary) {
+            val summary = runCatching {
+                transport.refreshSession(handle)
+            }.getOrElse { error ->
+                signals += RuntimeSignal.Status(
+                    "Refresh unavailable: ${error.message ?: error::class.java.simpleName}"
+                )
+                return signals
+            }
+
+            if (summary.result.isOk()) {
+                signals += RuntimeSignal.SnapshotUpdated(summary)
+            } else {
+                signals += RuntimeSignal.Status("Refresh failed: ${summary.result.describe()}")
+            }
+        }
+
+        synchronized(stateLock) {
+            if (activeSessionHandle != handle) {
+                return signals
+            }
+            val refreshResult = renderHostAdapter.refreshPacket()
+            if (refreshResult.lease != null) {
+                signals += RuntimeSignal.RenderPacketReady(refreshResult.lease)
+            } else {
+                signals += RuntimeSignal.Status(
+                    refreshResult.unavailableReason ?: "Render export unavailable"
+                )
+            }
+        }
+
+        return signals
+    }
+
+    private fun releaseActiveSession(expectedHandle: Long) {
+        synchronized(stateLock) {
+            if (activeSessionHandle != expectedHandle) {
+                return
+            }
             // Packet-backed ByteBuffer views are only valid while the native packet handle is alive.
             // Release packet leases before tearing down the owning runtime session.
             renderHostAdapter.releasePacket()
-            transport.destroySession(handle)
+            transport.destroySession(expectedHandle)
+            activeSessionHandle = 0L
         }
     }
 
@@ -152,14 +234,94 @@ class JniRuntimeBridge(
         private const val ABI_VERSION = 1
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
+        private const val REFRESH_INTERVAL_MS = 1_000L
     }
 }
 
-sealed interface RuntimeSignal {
+internal sealed interface RuntimeSignal {
     data class Connected(val handle: Long) : RuntimeSignal
     data class Status(val message: String) : RuntimeSignal
+    data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult) : RuntimeSignal
+    data class CommandApplied(
+        val commandLabel: String,
+        val summary: NativeSnapshotSummaryResult,
+    ) : RuntimeSignal
     data class RenderPacketReady(val lease: PacketLease) : RuntimeSignal
     data class Unavailable(val message: String, val detail: String? = null) : RuntimeSignal
+}
+
+sealed interface RuntimeCommand {
+    val label: String
+
+    data class AdvanceEpoch(val deltaSeconds: Double) : RuntimeCommand {
+        override val label: String = "timeline.advance_epoch"
+    }
+
+    data object PausePlayback : RuntimeCommand {
+        override val label: String = "playback.pause"
+    }
+
+    data object ResumePlayback : RuntimeCommand {
+        override val label: String = "playback.resume"
+    }
+
+    data class SetPlaybackRate(val simSecondsPerRealSecond: Double) : RuntimeCommand {
+        override val label: String = "playback.set_rate"
+    }
+
+    data class SetObserverMode(val mode: RuntimeObserverMode) : RuntimeCommand {
+        override val label: String = "observer.set_mode"
+    }
+
+    data class FocusBody(val bodyId: String?) : RuntimeCommand {
+        override val label: String = "observer.focus_body"
+    }
+}
+
+enum class RuntimeObserverMode(val nativeCode: Int) {
+    Free(0),
+    FollowSelected(1),
+    FollowHost(2),
+    SystemFrame(3),
+}
+
+internal data class NativeRuntimeCommandPayload(
+    val kind: Int,
+    val bodyIdUtf8: ByteArray? = null,
+    val observerMode: Int = RuntimeObserverMode.Free.nativeCode,
+    val deltaSeconds: Double = 0.0,
+    val simSecondsPerRealSecond: Double = 0.0,
+    val recordedAtUnixMs: Long = System.currentTimeMillis(),
+)
+
+private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when (this) {
+    is RuntimeCommand.AdvanceEpoch -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_ADVANCE_EPOCH,
+        deltaSeconds = deltaSeconds,
+    )
+
+    RuntimeCommand.PausePlayback -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_PAUSE_PLAYBACK,
+    )
+
+    RuntimeCommand.ResumePlayback -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_RESUME_PLAYBACK,
+    )
+
+    is RuntimeCommand.SetPlaybackRate -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_SET_PLAYBACK_RATE,
+        simSecondsPerRealSecond = simSecondsPerRealSecond,
+    )
+
+    is RuntimeCommand.SetObserverMode -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_SET_OBSERVER_MODE,
+        observerMode = mode.nativeCode,
+    )
+
+    is RuntimeCommand.FocusBody -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_FOCUS_BODY,
+        bodyIdUtf8 = bodyId?.toByteArray(StandardCharsets.UTF_8),
+    )
 }
 
 internal interface NativeRuntimeTransport {
@@ -173,6 +335,10 @@ internal interface NativeRuntimeTransport {
     fun runtimeInfo(handle: Long): NativeRuntimeInfoResult
 
     fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult
+
+    fun refreshSession(handle: Long): NativeSnapshotSummaryResult
+
+    fun applyCommand(handle: Long, command: NativeRuntimeCommandPayload): NativeSnapshotSummaryResult
 
     fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult
 
@@ -202,7 +368,8 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
                     val failure = runCatching { System.loadLibrary(LIBRARY_NAME) }
                         .exceptionOrNull()
                     loadFailure = failure?.let { throwable ->
-                        val summary = throwable.message?.takeIf { it.isNotBlank() } ?: throwable::class.java.simpleName
+                        val summary = throwable.message?.takeIf { it.isNotBlank() }
+                            ?: throwable::class.java.simpleName
                         "Unable to load native library '$LIBRARY_NAME': $summary"
                     }
                     loadAttempted = true
@@ -231,6 +398,21 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     override fun runtimeInfo(handle: Long): NativeRuntimeInfoResult = nativeRuntimeInfo(handle)
 
     override fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult = nativeSnapshotSummary(handle)
+
+    override fun refreshSession(handle: Long): NativeSnapshotSummaryResult = nativeRefreshSession(handle)
+
+    override fun applyCommand(
+        handle: Long,
+        command: NativeRuntimeCommandPayload,
+    ): NativeSnapshotSummaryResult = nativeApplyCommand(
+        handle = handle,
+        kind = command.kind,
+        bodyIdUtf8 = command.bodyIdUtf8,
+        observerMode = command.observerMode,
+        deltaSeconds = command.deltaSeconds,
+        simSecondsPerRealSecond = command.simSecondsPerRealSecond,
+        recordedAtUnixMs = command.recordedAtUnixMs,
+    )
 
     override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult =
         nativeExportVulkanScene(handle)
@@ -264,6 +446,18 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private external fun nativeRuntimeInfo(handle: Long): NativeRuntimeInfoResult
 
     private external fun nativeSnapshotSummary(handle: Long): NativeSnapshotSummaryResult
+
+    private external fun nativeRefreshSession(handle: Long): NativeSnapshotSummaryResult
+
+    private external fun nativeApplyCommand(
+        handle: Long,
+        kind: Int,
+        bodyIdUtf8: ByteArray?,
+        observerMode: Int,
+        deltaSeconds: Double,
+        simSecondsPerRealSecond: Double,
+        recordedAtUnixMs: Long,
+    ): NativeSnapshotSummaryResult
 
     private external fun nativeExportVulkanScene(handle: Long): NativeVulkanScenePacketResult
 
@@ -331,6 +525,11 @@ internal data class NativeSnapshotSummaryResult(
     val scenarioId: String,
     val activeBranchId: String,
     val bodyCount: Int,
+    val epochSeconds: Double,
+    val paused: Boolean,
+    val simSecondsPerRealSecond: Double,
+    val observerMode: Int,
+    val timelineSemantics: Int,
 )
 
 internal data class NativeVulkanScenePacketResult(
@@ -386,3 +585,10 @@ internal data class NativeVulkanScenePacket(
     val trailVertices: ByteBuffer?,
     val directionalLights: ByteBuffer?,
 )
+
+private const val NATIVE_COMMAND_ADVANCE_EPOCH = 0
+private const val NATIVE_COMMAND_PAUSE_PLAYBACK = 1
+private const val NATIVE_COMMAND_RESUME_PLAYBACK = 2
+private const val NATIVE_COMMAND_SET_PLAYBACK_RATE = 3
+private const val NATIVE_COMMAND_SET_OBSERVER_MODE = 4
+private const val NATIVE_COMMAND_FOCUS_BODY = 5

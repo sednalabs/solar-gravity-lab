@@ -75,6 +75,15 @@ typedef enum SlVulkanSceneBufferKind {
   SL_VULKAN_SCENE_DIRECTIONAL_LIGHTS = 4
 } SlVulkanSceneBufferKind;
 
+typedef enum SlCommandKind {
+  SL_COMMAND_ADVANCE_EPOCH = 0,
+  SL_COMMAND_PAUSE_PLAYBACK = 1,
+  SL_COMMAND_RESUME_PLAYBACK = 2,
+  SL_COMMAND_SET_PLAYBACK_RATE = 3,
+  SL_COMMAND_SET_OBSERVER_MODE = 4,
+  SL_COMMAND_FOCUS_BODY = 5
+} SlCommandKind;
+
 typedef struct SlRuntimeInfo {
   uint32_t abi_version;
   SlCpuBackend cpu_backend;
@@ -195,6 +204,16 @@ typedef struct SlSessionSnapshotSummary {
   SlObserverMode observer_mode;
 } SlSessionSnapshotSummary;
 
+typedef struct SlSessionCommand {
+  SlCommandKind kind;
+  uint8_t body_id[SL_V2_ID_CAPACITY];
+  uint32_t body_id_len;
+  SlObserverMode observer_mode;
+  double delta_seconds;
+  double sim_seconds_per_real_second;
+  int64_t recorded_at_unix_ms;
+} SlSessionCommand;
+
 typedef struct SlSessionCreateResult {
   SlResult result;
   SlRuntimeHandle handle;
@@ -228,6 +247,10 @@ SlSessionCreateResult sl_v2_session_create(SlSessionCreateParams params);
 SlResult sl_v2_session_destroy(SlRuntimeHandle handle);
 SlRuntimeInfoResult sl_v2_session_runtime_info(SlRuntimeHandle handle);
 SlSessionSnapshotSummaryResult sl_v2_session_snapshot_summary(SlRuntimeHandle handle);
+SlSessionSnapshotSummaryResult sl_v2_session_refresh(SlRuntimeHandle handle);
+SlSessionSnapshotSummaryResult sl_v2_session_apply_command(
+    SlRuntimeHandle handle,
+    SlSessionCommand command);
 SlVulkanScenePacketResult sl_v2_session_export_vulkan_scene(SlRuntimeHandle handle);
 SlBufferViewResult sl_v2_vulkan_scene_packet_buffer(
     SlRenderPacketHandle handle,

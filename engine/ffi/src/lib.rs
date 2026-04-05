@@ -6,10 +6,10 @@ use std::mem::size_of;
 use std::str;
 use std::sync::{Mutex, OnceLock};
 
-use solarlab_domain::{BranchId, ObserverMode, ScenarioId, TimelineSemantics};
+use solarlab_domain::{BodyId, BranchId, ObserverMode, ScenarioId, TimelineSemantics};
 use solarlab_hardware::{CpuBackend, GpuBackend, HardwareProfile};
 use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
-use solarlab_runtime::{RuntimeConfig, WorldRuntime};
+use solarlab_runtime::{RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_vulkan_adapter::{
     adapt_render_scene, PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight,
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
@@ -103,6 +103,17 @@ pub enum SlVulkanSceneBufferKind {
     TrailSpans = 2,
     TrailVertices = 3,
     DirectionalLights = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlCommandKind {
+    AdvanceEpoch = 0,
+    PausePlayback = 1,
+    ResumePlayback = 2,
+    SetPlaybackRate = 3,
+    SetObserverMode = 4,
+    FocusBody = 5,
 }
 
 #[repr(C)]
@@ -255,6 +266,18 @@ pub struct SlSessionSnapshotSummary {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlSessionCommand {
+    pub kind: SlCommandKind,
+    pub body_id: [u8; SL_V2_ID_CAPACITY],
+    pub body_id_len: u32,
+    pub observer_mode: SlObserverMode,
+    pub delta_seconds: f64,
+    pub sim_seconds_per_real_second: f64,
+    pub recorded_at_unix_ms: i64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlSessionCreateResult {
     pub result: SlResult,
     pub handle: SlRuntimeHandle,
@@ -324,6 +347,10 @@ impl SessionRegistry {
 
     fn get(&self, handle: SlRuntimeHandle) -> Option<&RuntimeSession> {
         self.sessions.get(&handle.raw)
+    }
+
+    fn get_mut(&mut self, handle: SlRuntimeHandle) -> Option<&mut RuntimeSession> {
+        self.sessions.get_mut(&handle.raw)
     }
 }
 
@@ -616,6 +643,80 @@ pub extern "C" fn sl_v2_session_runtime_info(handle: SlRuntimeHandle) -> SlRunti
 pub extern "C" fn sl_v2_session_snapshot_summary(
     handle: SlRuntimeHandle,
 ) -> SlSessionSnapshotSummaryResult {
+    read_session_snapshot_summary(handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_refresh(handle: SlRuntimeHandle) -> SlSessionSnapshotSummaryResult {
+    read_session_snapshot_summary(handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_apply_command(
+    handle: SlRuntimeHandle,
+    command: SlSessionCommand,
+) -> SlSessionSnapshotSummaryResult {
+    if handle.raw == 0 {
+        return SlSessionSnapshotSummaryResult {
+            result: status(SlStatusCode::InvalidArgument),
+            summary: empty_snapshot_summary(),
+        };
+    }
+
+    let mut registry = match registry().lock() {
+        Ok(lock) => lock,
+        Err(_) => {
+            return SlSessionSnapshotSummaryResult {
+                result: status(SlStatusCode::InternalError),
+                summary: empty_snapshot_summary(),
+            };
+        }
+    };
+
+    let Some(session) = registry.get_mut(handle) else {
+        return SlSessionSnapshotSummaryResult {
+            result: status(SlStatusCode::NotReady),
+            summary: empty_snapshot_summary(),
+        };
+    };
+
+    let world_command = match decode_world_command(command) {
+        Ok(value) => value,
+        Err(result) => {
+            return SlSessionSnapshotSummaryResult {
+                result,
+                summary: empty_snapshot_summary(),
+            };
+        }
+    };
+
+    if let Err(error) = session
+        .runtime
+        .apply_command(world_command, command.recorded_at_unix_ms)
+    {
+        return SlSessionSnapshotSummaryResult {
+            result: runtime_error_to_status(error),
+            summary: empty_snapshot_summary(),
+        };
+    }
+
+    let summary = match snapshot_summary(&session.runtime) {
+        Ok(summary) => summary,
+        Err(result) => {
+            return SlSessionSnapshotSummaryResult {
+                result,
+                summary: empty_snapshot_summary(),
+            };
+        }
+    };
+
+    SlSessionSnapshotSummaryResult {
+        result: status(SlStatusCode::Ok),
+        summary,
+    }
+}
+
+fn read_session_snapshot_summary(handle: SlRuntimeHandle) -> SlSessionSnapshotSummaryResult {
     if handle.raw == 0 {
         return SlSessionSnapshotSummaryResult {
             result: status(SlStatusCode::InvalidArgument),
@@ -975,6 +1076,65 @@ fn decode_timeline_semantics(value: u32) -> Result<TimelineSemantics, SlResult> 
     }
 }
 
+fn decode_observer_mode(value: SlObserverMode) -> ObserverMode {
+    match value {
+        SlObserverMode::Free => ObserverMode::Free,
+        SlObserverMode::FollowSelected => ObserverMode::FollowSelected,
+        SlObserverMode::FollowHost => ObserverMode::FollowHost,
+        SlObserverMode::SystemFrame => ObserverMode::SystemFrame,
+    }
+}
+
+fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlResult> {
+    match command.kind {
+        SlCommandKind::AdvanceEpoch => Ok(WorldCommand::AdvanceEpoch {
+            delta_seconds: command.delta_seconds,
+        }),
+        SlCommandKind::PausePlayback => Ok(WorldCommand::PausePlayback),
+        SlCommandKind::ResumePlayback => Ok(WorldCommand::ResumePlayback),
+        SlCommandKind::SetPlaybackRate => Ok(WorldCommand::SetPlaybackRate {
+            sim_seconds_per_real_second: command.sim_seconds_per_real_second,
+        }),
+        SlCommandKind::SetObserverMode => Ok(WorldCommand::SetObserverMode {
+            mode: decode_observer_mode(command.observer_mode),
+        }),
+        SlCommandKind::FocusBody => {
+            let body_id = decode_optional_identifier(&command.body_id, command.body_id_len)?;
+            Ok(WorldCommand::FocusBody {
+                body_id: body_id.map(BodyId),
+            })
+        }
+    }
+}
+
+fn decode_optional_identifier(
+    bytes: &[u8; SL_V2_ID_CAPACITY],
+    length: u32,
+) -> Result<Option<String>, SlResult> {
+    if length == 0 {
+        return Ok(None);
+    }
+
+    decode_identifier(bytes, length).map(Some)
+}
+
+fn runtime_error_to_status(error: RuntimeError) -> SlResult {
+    match error {
+        RuntimeError::DuplicateBody(_)
+        | RuntimeError::UnknownBody(_)
+        | RuntimeError::InvalidEpochDelta(_)
+        | RuntimeError::InvalidPlaybackRate(_)
+        | RuntimeError::UnknownCheckpoint(_)
+        | RuntimeError::DuplicateCheckpoint(_)
+        | RuntimeError::DuplicateBranch(_)
+        | RuntimeError::PackagePlanFailed(_)
+        | RuntimeError::NoInstalledManifestAvailable
+        | RuntimeError::PackageNotInstalled(_)
+        | RuntimeError::MountedPackageMissingFromStore(_) => status(SlStatusCode::InvalidArgument),
+        RuntimeError::PackageApplyFailed(_) => status(SlStatusCode::InternalError),
+    }
+}
+
 fn solver_for_cpu_backend(cpu_backend: &CpuBackend) -> SolverBackend {
     match cpu_backend {
         CpuBackend::ReferenceScalar => SolverBackend::ReferenceScalar,
@@ -1088,10 +1248,11 @@ fn empty_vulkan_scene_packet_info() -> SlVulkanScenePacketInfo {
 #[cfg(target_os = "android")]
 mod android_jni {
     use super::{
-        sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_export_vulkan_scene,
-        sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
-        sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, status, SlBufferView,
-        SlBufferViewResult, SlRenderPacketHandle, SlResult, SlRuntimeHandle, SlSessionCreateParams,
+        sl_v2_session_apply_command, sl_v2_session_create, sl_v2_session_destroy,
+        sl_v2_session_export_vulkan_scene, sl_v2_session_refresh, sl_v2_session_runtime_info,
+        sl_v2_session_snapshot_summary, sl_v2_vulkan_scene_packet_buffer,
+        sl_v2_vulkan_scene_packet_release, status, SlBufferView, SlCommandKind,
+        SlRenderPacketHandle, SlResult, SlRuntimeHandle, SlSessionCommand, SlSessionCreateParams,
         SlSessionCreateResult, SlSessionSnapshotSummaryResult, SlStatusCode,
         SlVulkanSceneBufferKind, SlVulkanScenePacketResult, SL_V2_ID_CAPACITY,
     };
@@ -1210,6 +1371,58 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeRefreshSession(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+    ) -> jobject {
+        let refresh_summary = if let Ok(handle_value) = u64::try_from(handle) {
+            sl_v2_session_refresh(SlRuntimeHandle { raw: handle_value })
+        } else {
+            SlSessionSnapshotSummaryResult {
+                result: status(SlStatusCode::InvalidArgument),
+                summary: super::empty_snapshot_summary(),
+            }
+        };
+
+        match create_native_snapshot_summary_result(&mut env, refresh_summary) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeApplyCommand(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+        kind: jint,
+        body_id_utf8: jbyteArray,
+        observer_mode: jint,
+        delta_seconds: f64,
+        sim_seconds_per_real_second: f64,
+        recorded_at_unix_ms: jlong,
+    ) -> jobject {
+        let command_result = build_apply_command_result(
+            &env,
+            handle,
+            kind,
+            body_id_utf8,
+            observer_mode,
+            delta_seconds,
+            sim_seconds_per_real_second,
+            recorded_at_unix_ms,
+        );
+
+        match create_native_snapshot_summary_result(&mut env, command_result) {
+            Ok(value) => value.into_raw(),
+            Err(_) => JObject::null().into_raw(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeExportVulkanScene(
         mut env: JNIEnv,
         _this: JObject,
@@ -1304,6 +1517,61 @@ mod android_jni {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn build_apply_command_result(
+        env: &JNIEnv,
+        handle: jlong,
+        kind: jint,
+        body_id_utf8: jbyteArray,
+        observer_mode: jint,
+        delta_seconds: f64,
+        sim_seconds_per_real_second: f64,
+        recorded_at_unix_ms: jlong,
+    ) -> SlSessionSnapshotSummaryResult {
+        let runtime_handle = match u64::try_from(handle) {
+            Ok(value) if value != 0 => SlRuntimeHandle { raw: value },
+            _ => {
+                return SlSessionSnapshotSummaryResult {
+                    result: status(SlStatusCode::InvalidArgument),
+                    summary: super::empty_snapshot_summary(),
+                };
+            }
+        };
+
+        let kind = match decode_command_kind(kind) {
+            Ok(value) => value,
+            Err(result) => return create_error_snapshot_summary(result),
+        };
+
+        let observer_mode = match decode_observer_mode(observer_mode) {
+            Ok(value) => value,
+            Err(result) => return create_error_snapshot_summary(result),
+        };
+
+        let (body_id, body_id_len) = match decode_optional_java_id_bytes(env, body_id_utf8) {
+            Ok(value) => value,
+            Err(result) => return create_error_snapshot_summary(result),
+        };
+
+        let recorded_at_unix_ms = match i64::try_from(recorded_at_unix_ms) {
+            Ok(value) => value,
+            Err(_) => return create_error_snapshot_summary(status(SlStatusCode::InvalidArgument)),
+        };
+
+        sl_v2_session_apply_command(
+            runtime_handle,
+            SlSessionCommand {
+                kind,
+                body_id,
+                body_id_len,
+                observer_mode,
+                delta_seconds,
+                sim_seconds_per_real_second,
+                recorded_at_unix_ms,
+            },
+        )
+    }
+
     fn decode_java_id_bytes(
         env: &JNIEnv,
         value: jbyteArray,
@@ -1323,6 +1591,39 @@ mod android_jni {
         Ok((output, length))
     }
 
+    fn decode_optional_java_id_bytes(
+        env: &JNIEnv,
+        value: jbyteArray,
+    ) -> Result<([u8; SL_V2_ID_CAPACITY], u32), SlResult> {
+        if value.is_null() {
+            return Ok(([0_u8; SL_V2_ID_CAPACITY], 0));
+        }
+
+        decode_java_id_bytes(env, value)
+    }
+
+    fn decode_command_kind(value: jint) -> Result<SlCommandKind, SlResult> {
+        match value {
+            0 => Ok(SlCommandKind::AdvanceEpoch),
+            1 => Ok(SlCommandKind::PausePlayback),
+            2 => Ok(SlCommandKind::ResumePlayback),
+            3 => Ok(SlCommandKind::SetPlaybackRate),
+            4 => Ok(SlCommandKind::SetObserverMode),
+            5 => Ok(SlCommandKind::FocusBody),
+            _ => Err(status(SlStatusCode::InvalidArgument)),
+        }
+    }
+
+    fn decode_observer_mode(value: jint) -> Result<super::SlObserverMode, SlResult> {
+        match value {
+            0 => Ok(super::SlObserverMode::Free),
+            1 => Ok(super::SlObserverMode::FollowSelected),
+            2 => Ok(super::SlObserverMode::FollowHost),
+            3 => Ok(super::SlObserverMode::SystemFrame),
+            _ => Err(status(SlStatusCode::InvalidArgument)),
+        }
+    }
+
     fn create_error_session(result: SlResult) -> SlSessionCreateResult {
         SlSessionCreateResult {
             result,
@@ -1332,7 +1633,17 @@ mod android_jni {
         }
     }
 
-    fn create_native_result(env: &mut JNIEnv, result: SlResult) -> jni::errors::Result<JObject> {
+    fn create_error_snapshot_summary(result: SlResult) -> SlSessionSnapshotSummaryResult {
+        SlSessionSnapshotSummaryResult {
+            result,
+            summary: super::empty_snapshot_summary(),
+        }
+    }
+
+    fn create_native_result<'local>(
+        env: &mut JNIEnv<'local>,
+        result: SlResult,
+    ) -> jni::errors::Result<JObject<'local>> {
         let context = env.new_string(status_label(result.code))?;
         let context_obj = JObject::from(context);
         env.new_object(
@@ -1345,10 +1656,10 @@ mod android_jni {
         )
     }
 
-    fn create_native_create_session_result(
-        env: &mut JNIEnv,
+    fn create_native_create_session_result<'local>(
+        env: &mut JNIEnv<'local>,
         result: &SlSessionCreateResult,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         let native_result = create_native_result(env, result.result)?;
         env.new_object(
             CLASS_NATIVE_CREATE_SESSION_RESULT,
@@ -1363,10 +1674,10 @@ mod android_jni {
         )
     }
 
-    fn create_native_runtime_info_result(
-        env: &mut JNIEnv,
+    fn create_native_runtime_info_result<'local>(
+        env: &mut JNIEnv<'local>,
         result: super::SlRuntimeInfoResult,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         let native_result = create_native_result(env, result.result)?;
         env.new_object(
             CLASS_NATIVE_RUNTIME_INFO_RESULT,
@@ -1380,10 +1691,10 @@ mod android_jni {
         )
     }
 
-    fn create_native_snapshot_summary_result(
-        env: &mut JNIEnv,
+    fn create_native_snapshot_summary_result<'local>(
+        env: &mut JNIEnv<'local>,
         result: SlSessionSnapshotSummaryResult,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         let native_result = create_native_result(env, result.result)?;
         let scenario_id = env.new_string(id_from_summary(
             &result.summary.scenario_id,
@@ -1398,20 +1709,25 @@ mod android_jni {
 
         env.new_object(
             CLASS_NATIVE_SNAPSHOT_SUMMARY_RESULT,
-            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Ljava/lang/String;Ljava/lang/String;I)V",
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Ljava/lang/String;Ljava/lang/String;IDZDII)V",
             &[
                 JValue::Object(&native_result),
                 JValue::Object(&scenario_id_obj),
                 JValue::Object(&active_branch_id_obj),
                 JValue::Int(i32::try_from(result.summary.body_count).unwrap_or(i32::MAX)),
+                JValue::Double(result.summary.epoch_seconds),
+                JValue::Bool(result.summary.paused),
+                JValue::Double(result.summary.sim_seconds_per_real_second),
+                JValue::Int(result.summary.observer_mode as i32),
+                JValue::Int(result.summary.timeline_semantics as i32),
             ],
         )
     }
 
-    fn create_native_vulkan_scene_packet_result(
-        env: &mut JNIEnv,
+    fn create_native_vulkan_scene_packet_result<'local>(
+        env: &mut JNIEnv<'local>,
         result: SlVulkanScenePacketResult,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         let native_result = create_native_result(env, result.result)?;
         let packet_object = if result.result.code == SlStatusCode::Ok && result.handle.raw != 0 {
             create_native_vulkan_scene_packet(env, result)?
@@ -1429,10 +1745,10 @@ mod android_jni {
         )
     }
 
-    fn create_native_vulkan_scene_packet(
-        env: &mut JNIEnv,
+    fn create_native_vulkan_scene_packet<'local>(
+        env: &mut JNIEnv<'local>,
         result: SlVulkanScenePacketResult,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         let camera = create_native_vulkan_camera_packet(env, result.info.camera)?;
         let diagnostics = create_native_render_diagnostics(env, result.info.diagnostics)?;
         let scene_revision = env.new_string(bytes_view_to_string(result.info.scene_revision))?;
@@ -1493,10 +1809,10 @@ mod android_jni {
         )
     }
 
-    fn create_native_vulkan_camera_packet(
-        env: &mut JNIEnv,
+    fn create_native_vulkan_camera_packet<'local>(
+        env: &mut JNIEnv<'local>,
         camera: super::SlVulkanCameraPacket,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         env.new_object(
             CLASS_NATIVE_VULKAN_CAMERA_PACKET,
             "(DDDFFFFFFFF)V",
@@ -1519,10 +1835,10 @@ mod android_jni {
         )
     }
 
-    fn create_native_render_diagnostics(
-        env: &mut JNIEnv,
+    fn create_native_render_diagnostics<'local>(
+        env: &mut JNIEnv<'local>,
         diagnostics: super::SlRenderDiagnostics,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         env.new_object(
             CLASS_NATIVE_RENDER_DIAGNOSTICS,
             "(JFFI)V",
@@ -1535,11 +1851,11 @@ mod android_jni {
         )
     }
 
-    fn create_buffer_object(
-        env: &mut JNIEnv,
+    fn create_buffer_object<'local>(
+        env: &mut JNIEnv<'local>,
         handle: SlRenderPacketHandle,
         kind: SlVulkanSceneBufferKind,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         let view_result = sl_v2_vulkan_scene_packet_buffer(handle, kind);
         if view_result.result.code != SlStatusCode::Ok || view_result.view.data.is_null() {
             return Ok(JObject::null());
@@ -1548,16 +1864,19 @@ mod android_jni {
         new_direct_buffer(env, view_result.view)
     }
 
-    fn new_direct_buffer(env: &mut JNIEnv, view: SlBufferView) -> jni::errors::Result<JObject> {
+    fn new_direct_buffer<'local>(
+        env: &mut JNIEnv<'local>,
+        view: SlBufferView,
+    ) -> jni::errors::Result<JObject<'local>> {
         let capacity = usize::try_from(view.size_bytes).unwrap_or(usize::MAX);
         let buffer = unsafe { env.new_direct_byte_buffer(view.data.cast_mut().cast(), capacity)? };
         Ok(JObject::from(buffer))
     }
 
-    fn new_nullable_java_string(
-        env: &mut JNIEnv,
+    fn new_nullable_java_string<'local>(
+        env: &mut JNIEnv<'local>,
         view: super::SlBytesView,
-    ) -> jni::errors::Result<JObject> {
+    ) -> jni::errors::Result<JObject<'local>> {
         if view.data.is_null() || view.length == 0 {
             return Ok(JObject::null());
         }
@@ -1633,10 +1952,11 @@ mod tests {
     use solarlab_vulkan_adapter::adapt_render_scene;
 
     use super::{
-        registry, sl_v2_abi_version, sl_v2_session_create, sl_v2_session_destroy,
-        sl_v2_session_export_vulkan_scene, sl_v2_session_runtime_info,
-        sl_v2_session_snapshot_summary, sl_v2_vulkan_scene_packet_buffer,
-        sl_v2_vulkan_scene_packet_release, SlCpuBackend, SlGpuBackend, SlSessionCreateParams,
+        registry, sl_v2_abi_version, sl_v2_session_apply_command, sl_v2_session_create,
+        sl_v2_session_destroy, sl_v2_session_export_vulkan_scene, sl_v2_session_refresh,
+        sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
+        sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlCommandKind,
+        SlCpuBackend, SlGpuBackend, SlObserverMode, SlSessionCommand, SlSessionCreateParams,
         SlStatusCode, SlTimelineSemantics, SlVulkanBodyInstance, SlVulkanSceneBufferKind,
         SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
@@ -1802,6 +2122,57 @@ mod tests {
         let packet = sl_v2_session_export_vulkan_scene(super::SlRuntimeHandle { raw: 777_777 });
         assert_eq!(packet.result.code, SlStatusCode::NotReady);
         assert_eq!(packet.handle.raw, 0);
+    }
+
+    #[test]
+    fn apply_command_advance_epoch_updates_snapshot_and_refresh() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let command_result = sl_v2_session_apply_command(
+            create.handle,
+            SlSessionCommand {
+                kind: SlCommandKind::AdvanceEpoch,
+                body_id: [0_u8; SL_V2_ID_CAPACITY],
+                body_id_len: 0,
+                observer_mode: SlObserverMode::Free,
+                delta_seconds: 12.5,
+                sim_seconds_per_real_second: 0.0,
+                recorded_at_unix_ms: 222,
+            },
+        );
+        assert_eq!(command_result.result.code, SlStatusCode::Ok);
+        assert_eq!(command_result.summary.epoch_seconds, 12.5);
+
+        let refresh_result = sl_v2_session_refresh(create.handle);
+        assert_eq!(refresh_result.result.code, SlStatusCode::Ok);
+        assert_eq!(refresh_result.summary.epoch_seconds, 12.5);
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn apply_command_focus_rejects_unknown_body() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+        body_id[..5].copy_from_slice(b"earth");
+        let command_result = sl_v2_session_apply_command(
+            create.handle,
+            SlSessionCommand {
+                kind: SlCommandKind::FocusBody,
+                body_id,
+                body_id_len: 5,
+                observer_mode: SlObserverMode::Free,
+                delta_seconds: 0.0,
+                sim_seconds_per_real_second: 0.0,
+                recorded_at_unix_ms: 333,
+            },
+        );
+        assert_eq!(command_result.result.code, SlStatusCode::InvalidArgument);
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
 
     fn seed_runtime_with_body(handle: super::SlRuntimeHandle, body_id: &str, position_x: f64) {
