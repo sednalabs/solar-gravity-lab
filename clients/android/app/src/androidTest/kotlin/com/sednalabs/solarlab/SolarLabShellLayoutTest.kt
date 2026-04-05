@@ -27,6 +27,7 @@ import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.SnapshotPresentation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -207,7 +208,7 @@ class SolarLabShellLayoutTest {
 
     private class FakeRuntimeFacade(initialState: ShellUiState) : RuntimeFacade {
         private val state = MutableStateFlow(initialState)
-        val commands = mutableListOf<RuntimeCommand>()
+        val commands = CopyOnWriteArrayList<RuntimeCommand>()
 
         override val uiState: StateFlow<ShellUiState> = state
 
@@ -217,6 +218,9 @@ class SolarLabShellLayoutTest {
 
         override suspend fun applyCommand(command: RuntimeCommand) {
             commands.add(command)
+            state.value = state.value.copy(
+                detailLine = "Command ${command::class.simpleName} sent via fake shell runtime.",
+            )
         }
     }
 
