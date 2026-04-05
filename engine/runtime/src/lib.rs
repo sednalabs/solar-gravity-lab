@@ -1393,6 +1393,142 @@ mod tests {
     }
 
     #[test]
+    fn moon_like_bodies_move_between_epoch_snapshots() {
+        let mut runtime = new_runtime();
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("sun".into()),
+                        body_class: BodyClass::Star,
+                        mass_kg: 1.98847e30,
+                        radius_m: 696_340_000.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("spawn sun should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("moon".into()),
+                        body_class: BodyClass::Moon,
+                        mass_kg: 7.35e22,
+                        radius_m: 1_737_000.0,
+                        position_m: Vector3d {
+                            x: 384_400_000.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d {
+                            x: 0.0,
+                            y: 1_022.0,
+                            z: 0.0,
+                        },
+                    },
+                },
+                2,
+            )
+            .expect("spawn moon should succeed");
+
+        let snapshot_t0 = runtime.snapshot();
+        let moon_t0 = body_position(&snapshot_t0, &BodyId("moon".into())).clone();
+
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 86_400.0,
+                },
+                3,
+            )
+            .expect("advance epoch should succeed");
+
+        let snapshot_t1 = runtime.snapshot();
+        let moon_t1 = body_position(&snapshot_t1, &BodyId("moon".into()));
+        let movement = displacement_magnitude(&moon_t1, &moon_t0);
+
+        assert!(
+            movement > 1.0e6,
+            "Expected Moon-like body to move between epochs, movement={movement}"
+        );
+    }
+
+    #[test]
+    fn fallback_pluto_like_orbit_changes_relative_position_with_epoch_delta() {
+        let mut runtime = new_runtime();
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("sun".into()),
+                        body_class: BodyClass::Star,
+                        mass_kg: 1.98847e30,
+                        radius_m: 696_340_000.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d::default(),
+                    },
+                },
+                1,
+            )
+            .expect("spawn sun should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("pluto".into()),
+                        body_class: BodyClass::DwarfPlanet,
+                        mass_kg: 1.309e22,
+                        radius_m: 1_188_000.0,
+                        position_m: Vector3d {
+                            x: 5_900_000_000_000.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_mps: Vector3d {
+                            x: 0.0,
+                            y: 4_700.0,
+                            z: 0.0,
+                        },
+                    },
+                },
+                2,
+            )
+            .expect("spawn pluto should succeed");
+
+        let snapshot_t0 = runtime.snapshot();
+        let sun_t0 = body_position(&snapshot_t0, &BodyId("sun".into()));
+        let pluto_t0 = body_position(&snapshot_t0, &BodyId("pluto".into()));
+        let relative_t0 = relative_position(&pluto_t0, &sun_t0);
+
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 31_536_000.0,
+                },
+                3,
+            )
+            .expect("advance epoch should succeed");
+
+        let snapshot_t1 = runtime.snapshot();
+        let sun_t1 = body_position(&snapshot_t1, &BodyId("sun".into()));
+        let pluto_t1 = body_position(&snapshot_t1, &BodyId("pluto".into()));
+        let relative_t1 = relative_position(&pluto_t1, &sun_t1);
+        let movement = displacement_magnitude(&relative_t1, &relative_t0);
+
+        assert!(
+            movement > 1.0e6,
+            "Expected Pluto fallback-style orbit to propagate across epochs, movement={movement}"
+        );
+    }
+
+    #[test]
     fn advance_epoch_is_deterministic_for_identical_command_streams() {
         let mut runtime_a = new_runtime();
         let mut runtime_b = new_runtime();
@@ -2404,5 +2540,29 @@ mod tests {
             .find(|body| body.body_id == secondary)
             .expect("secondary should exist");
         (right.position_m.x - left.position_m.x).abs()
+    }
+
+    fn body_position(snapshot: &super::WorldSnapshot, body_id: &BodyId) -> Vector3d {
+        let body = snapshot
+            .bodies
+            .iter()
+            .find(|body| body.body_id == *body_id)
+            .expect("body should exist");
+        body.position_m
+    }
+
+    fn relative_position(from: &Vector3d, to: &Vector3d) -> Vector3d {
+        Vector3d {
+            x: from.x - to.x,
+            y: from.y - to.y,
+            z: from.z - to.z,
+        }
+    }
+
+    fn displacement_magnitude(a: &Vector3d, b: &Vector3d) -> f64 {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        let dz = a.z - b.z;
+        (dx * dx + dy * dy + dz * dz).sqrt()
     }
 }
