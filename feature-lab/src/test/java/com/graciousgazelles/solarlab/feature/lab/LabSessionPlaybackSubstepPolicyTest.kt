@@ -150,7 +150,7 @@ class LabSessionPlaybackSubstepPolicyTest {
     @Test
     fun `parallel-native large tracer workloads widen per-tick scheduler budget`() {
         val simulatedTickSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.05
-        val workloadProfile = LabSession.SchedulerWorkloadProfile(
+        val workloadProfile = LabSession.Companion.SchedulerWorkloadProfile(
             totalBodyCount = 352,
             massiveBodyCount = 16,
             tracerBodyCount = 336,
@@ -176,7 +176,7 @@ class LabSessionPlaybackSubstepPolicyTest {
 
     @Test
     fun `collision workloads stay conservative even when native parallel solver is available`() {
-        val workloadProfile = LabSession.SchedulerWorkloadProfile(
+        val workloadProfile = LabSession.Companion.SchedulerWorkloadProfile(
             totalBodyCount = 352,
             massiveBodyCount = 16,
             tracerBodyCount = 336,
