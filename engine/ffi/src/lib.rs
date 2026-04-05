@@ -1,5 +1,14 @@
 #![allow(unsafe_code)]
 
+//! C ABI bridge for the V2 runtime seam.
+//!
+//! Ownership model:
+//! - `solarlab_runtime` owns simulation truth and command semantics.
+//! - This crate owns opaque, process-local handle registries and marshalled POD
+//!   views passed across language boundaries.
+//! - JNI consumers must treat `long` handles as opaque capability tokens and
+//!   must call destroy/release APIs to free process-side state.
+
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -16,16 +25,21 @@ use solarlab_vulkan_adapter::{
 };
 
 pub const SOLARLAB_V2_ABI_VERSION: u32 = 1;
+/// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
+/// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// Opaque session handle. A zero-valued handle is invalid.
 pub struct SlRuntimeHandle {
     pub raw: u64,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// Opaque exported scene packet handle. Packet storage must be released before
+/// its buffer views are considered invalid.
 pub struct SlRenderPacketHandle {
     pub raw: u64,
 }
@@ -315,17 +329,22 @@ pub struct SlBufferViewResult {
 }
 
 #[derive(Debug)]
+/// Single runtime session entry in the process registry.
 struct RuntimeSession {
     runtime: WorldRuntime,
 }
 
 #[derive(Debug, Default)]
+/// Registry for live runtime sessions keyed by opaque 64-bit handles.
+/// Handles are allocated monotonically (skipping 0) and must be released to
+/// avoid leaking process memory and registry state.
 struct SessionRegistry {
     next_handle: u64,
     sessions: HashMap<u64, RuntimeSession>,
 }
 
 impl SessionRegistry {
+    /// Insert returns a process-stable non-zero handle.
     fn insert(&mut self, session: RuntimeSession) -> SlRuntimeHandle {
         if self.next_handle == 0 {
             self.next_handle = 1;
@@ -341,14 +360,17 @@ impl SessionRegistry {
         }
     }
 
+    /// Remove is the canonical session teardown path; stale handles become invalid.
     fn remove(&mut self, handle: SlRuntimeHandle) -> bool {
         self.sessions.remove(&handle.raw).is_some()
     }
 
+    /// Read-only lookup for command/query APIs.
     fn get(&self, handle: SlRuntimeHandle) -> Option<&RuntimeSession> {
         self.sessions.get(&handle.raw)
     }
 
+    /// Mutable lookup for mutation APIs.
     fn get_mut(&mut self, handle: SlRuntimeHandle) -> Option<&mut RuntimeSession> {
         self.sessions.get_mut(&handle.raw)
     }
@@ -359,6 +381,8 @@ fn registry() -> &'static Mutex<SessionRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(SessionRegistry::default()))
 }
 
+/// Heap-owned projection of a Vulkan scene packet.
+/// Data is copied from `solarlab_runtime` into a stable C/JNI-friendly shape.
 #[derive(Debug)]
 struct ExportedVulkanScenePacket {
     scene_revision: Vec<u8>,
@@ -492,6 +516,8 @@ impl ExportedVulkanScenePacket {
     }
 }
 
+/// Process-local registry for exported render packets. Packet buffers remain valid
+/// only while this handle remains in the registry.
 #[derive(Debug, Default)]
 struct RenderPacketRegistry {
     next_handle: u64,
@@ -499,6 +525,7 @@ struct RenderPacketRegistry {
 }
 
 impl RenderPacketRegistry {
+    /// Packet handles are process-local and remain valid until explicitly released.
     fn insert(&mut self, packet: ExportedVulkanScenePacket) -> SlRenderPacketHandle {
         if self.next_handle == 0 {
             self.next_handle = 1;
@@ -514,10 +541,12 @@ impl RenderPacketRegistry {
         }
     }
 
+    /// Explicitly remove packet ownership to invalidate read pointers.
     fn remove(&mut self, handle: SlRenderPacketHandle) -> bool {
         self.packets.remove(&handle.raw).is_some()
     }
 
+    /// Read-only borrow for buffer extraction.
     fn get(&self, handle: SlRenderPacketHandle) -> Option<&ExportedVulkanScenePacket> {
         self.packets.get(&handle.raw)
     }
@@ -543,11 +572,14 @@ pub fn runtime_info(cpu_backend: CpuBackend, gpu_backend: GpuBackend) -> SlRunti
 }
 
 #[unsafe(no_mangle)]
+/// FFI version probe for clients that link dynamically and cache ABI behavior.
 pub extern "C" fn sl_v2_abi_version() -> u32 {
     abi_version()
 }
 
 #[unsafe(no_mangle)]
+/// Create a new runtime session and return both session handle and first snapshot.
+/// Handle `0` is never returned on success.
 pub extern "C" fn sl_v2_session_create(params: SlSessionCreateParams) -> SlSessionCreateResult {
     let build_outcome = build_session(params);
     let (runtime, info, summary) = match build_outcome {
@@ -585,6 +617,8 @@ pub extern "C" fn sl_v2_session_create(params: SlSessionCreateParams) -> SlSessi
 }
 
 #[unsafe(no_mangle)]
+/// Destroying a session invalidates its handle and frees runtime-side state for
+/// all in-memory branch and history data.
 pub extern "C" fn sl_v2_session_destroy(handle: SlRuntimeHandle) -> SlResult {
     if handle.raw == 0 {
         return status(SlStatusCode::InvalidArgument);
@@ -603,6 +637,7 @@ pub extern "C" fn sl_v2_session_destroy(handle: SlRuntimeHandle) -> SlResult {
 }
 
 #[unsafe(no_mangle)]
+/// Query static runtime config metadata; no mutation.
 pub extern "C" fn sl_v2_session_runtime_info(handle: SlRuntimeHandle) -> SlRuntimeInfoResult {
     if handle.raw == 0 {
         return SlRuntimeInfoResult {
@@ -640,6 +675,9 @@ pub extern "C" fn sl_v2_session_runtime_info(handle: SlRuntimeHandle) -> SlRunti
 }
 
 #[unsafe(no_mangle)]
+/// Retrieve latest snapshot summary for an existing session.
+/// This read path is used by shells that want deterministic host refresh without
+/// mutating runtime state.
 pub extern "C" fn sl_v2_session_snapshot_summary(
     handle: SlRuntimeHandle,
 ) -> SlSessionSnapshotSummaryResult {
@@ -647,11 +685,15 @@ pub extern "C" fn sl_v2_session_snapshot_summary(
 }
 
 #[unsafe(no_mangle)]
+/// Explicit refresh path. Semantically equivalent to a snapshot read in this seam
+/// and kept as a dedicated API for host loop clarity.
 pub extern "C" fn sl_v2_session_refresh(handle: SlRuntimeHandle) -> SlSessionSnapshotSummaryResult {
     read_session_snapshot_summary(handle)
 }
 
 #[unsafe(no_mangle)]
+/// Apply one command and return the refreshed snapshot summary.
+/// Command decoding happens at the boundary, then runtime applies state transitions.
 pub extern "C" fn sl_v2_session_apply_command(
     handle: SlRuntimeHandle,
     command: SlSessionCommand,
@@ -758,6 +800,11 @@ fn read_session_snapshot_summary(handle: SlRuntimeHandle) -> SlSessionSnapshotSu
 }
 
 #[unsafe(no_mangle)]
+/// Render extraction boundary:
+/// - lock session
+/// - capture pure runtime scene snapshot
+/// - adapt to Vulkan packet shape
+/// - register packet for buffer reads via a render handle.
 pub extern "C" fn sl_v2_session_export_vulkan_scene(
     handle: SlRuntimeHandle,
 ) -> SlVulkanScenePacketResult {
@@ -818,6 +865,8 @@ pub extern "C" fn sl_v2_session_export_vulkan_scene(
 }
 
 #[unsafe(no_mangle)]
+/// Borrow exported packet buffers by kind while packet handle is still registered.
+/// All returned views become invalid once `sl_v2_vulkan_scene_packet_release` runs.
 pub extern "C" fn sl_v2_vulkan_scene_packet_buffer(
     handle: SlRenderPacketHandle,
     buffer_kind: SlVulkanSceneBufferKind,
@@ -853,6 +902,7 @@ pub extern "C" fn sl_v2_vulkan_scene_packet_buffer(
 }
 
 #[unsafe(no_mangle)]
+/// Release packet handle and invalidate every previously returned view for that packet.
 pub extern "C" fn sl_v2_vulkan_scene_packet_release(handle: SlRenderPacketHandle) -> SlResult {
     if handle.raw == 0 {
         return status(SlStatusCode::InvalidArgument);
@@ -1246,6 +1296,10 @@ fn empty_vulkan_scene_packet_info() -> SlVulkanScenePacketInfo {
 }
 
 #[cfg(target_os = "android")]
+// JNI is a thin forwarding layer over C APIs.
+// Handles are still 64-bit integer capabilities; JNI must not copy/stash runtime
+// pointers and must treat every handle as invalid after its corresponding destroy/
+// release call.
 mod android_jni {
     use super::{
         sl_v2_session_apply_command, sl_v2_session_create, sl_v2_session_destroy,
@@ -1278,6 +1332,7 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    // CreateSession is the JNI entrypoint for `sl_v2_session_create`.
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeCreateSession(
         mut env: JNIEnv,
         _this: JObject,
@@ -1308,6 +1363,8 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    // DestroySession must be treated as the single teardown point for session
+    // handles coming from Kotlin.
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeDestroySession(
         mut env: JNIEnv,
         _this: JObject,
@@ -1349,6 +1406,7 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    // SnapshotSummary returns read-only session state.
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeSnapshotSummary(
         mut env: JNIEnv,
         _this: JObject,
@@ -1371,6 +1429,7 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    // RefreshSession is an explicit JNI read-refresh operation on the current session.
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeRefreshSession(
         mut env: JNIEnv,
         _this: JObject,
@@ -1393,6 +1452,7 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    // ApplyCommand forwards a single command and returns the updated snapshot summary.
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeApplyCommand(
         mut env: JNIEnv,
         _this: JObject,
@@ -1423,6 +1483,8 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    // ExportVulkanScene maps to the packet-export flow and returns a packet handle
+    // plus metadata required for buffer reads.
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeExportVulkanScene(
         mut env: JNIEnv,
         _this: JObject,
@@ -1446,6 +1508,7 @@ mod android_jni {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
+    // ReleaseVulkanScene must be called when Kotlin/Java owners are done with packet views.
     pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeReleaseVulkanScene(
         mut env: JNIEnv,
         _this: JObject,

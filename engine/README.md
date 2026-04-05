@@ -2,6 +2,30 @@
 
 This Rust workspace is the canonical long-lived Solar Gravity Lab core.
 
+The workspace boundary strategy is explicit:
+
+- `runtime` is authoritative for mutable state and command semantics.
+- `scene` owns the renderer-independent snapshot contract.
+- `ffi` owns process-boundary representation (C ABI + JNI bridge) and never owns simulation decisions.
+- `domain`, `history`, `physics`, `hardware`, and `data` crates provide stable types, invariants, and policies consumed by `runtime` and projected by `ffi`.
+
+Seam-level behavior expectations:
+
+- Ownership boundary:
+  - `runtime` owns `WorldRuntime`, branch trees, command logs, checkpoints, and snapshots.
+  - `ffi` owns opaque integer handles and packet handles for exported scene packets.
+  - Runtime references should never leak as raw pointers; only IDs and value objects cross boundaries.
+- Command/refresh boundary:
+  - Commands are applied in one place (`runtime` command application path).
+  - Consumers that need latest view state after a command are expected to call refresh/snapshot, not rely on out-of-band mutation side channels.
+- Snapshot/render extraction boundary:
+  - Snapshot summary types are intentionally compact for shell UX and diagnostics.
+  - Render extraction (`render_scene`) is a pure projection into the `scene` contract, then copied/exported through `ffi` packet buffers.
+- Handle lifetime boundary:
+  - Handle `0` is invalid in this API contract.
+  - Session handles: create, use, then destroy.
+  - Packet handles: export, read buffer views, then release explicitly.
+
 Crates:
 
 - `domain`

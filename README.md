@@ -60,6 +60,25 @@ What is intentionally still transitional:
 6. [`docs/v2/architecture.md`](docs/v2/architecture.md)
 7. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
 
+## Runtime/FFI seam contract (v2)
+
+The v2 Rust runtime + FFI integration is intentionally layered so each boundary has one clear owner:
+
+- `solarlab_runtime` owns authoritative simulation state, command application, and deterministic snapshots.
+- `solarlab_ffi` owns the C ABI process boundary and is responsible for:
+  - marshalling opaque handles and POD structs,
+  - enforcing handle validity and status code returns,
+  - extracting scene packets from `solarlab_runtime`,
+  - and managing release lifetimes for export packets.
+- Android/Kotlin callers consume the ABI (direct C layer today) and should treat every returned handle as a short-lived capability that must be explicitly invalidated (destroy/release).
+
+Refresh and command semantics in this branch:
+
+- `sl_v2_session_apply_command` is the canonical mutable entrypoint. Every successful command mutates runtime state and returns a snapshot-style summary.
+- `sl_v2_session_snapshot_summary` is a read-only observation of the current runtime state.
+- `sl_v2_session_refresh` exists as an explicit read refresh point for shell callers that want a consistent control flow between “command + observe” turns.
+- `sl_v2_session_export_vulkan_scene` is also read-only; it returns a separate packet handle whose backing buffer must be consumed via `sl_v2_vulkan_scene_packet_buffer` and must be released with `sl_v2_vulkan_scene_packet_release`.
+
 ## Validation
 
 The v2 foundational validation target is currently the Rust workspace:

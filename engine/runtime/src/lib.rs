@@ -1,3 +1,8 @@
+//! Authoritative v2 runtime core for simulation state.
+//!
+//! This crate owns all mutable world state and branch history for the V2
+//! architecture. All external integrations (FFI, JNI, adapters, services) should
+//! treat this crate as the single source of truth for world semantics.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use solarlab_data::{
@@ -32,18 +37,24 @@ pub struct BodyState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaybackState {
+    /// Playback controls are intentionally small and copy-friendly so shell snapshots
+    /// can transport sim-speed intent without runtime coupling.
     pub paused: bool,
     pub sim_seconds_per_real_second: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObserverState {
+    /// Observer state is persisted in snapshots to preserve viewer semantics when
+    /// replaying snapshots or restoring checkpoints.
     pub mode: ObserverMode,
     pub focus_body_id: Option<BodyId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuntimeConfig {
+    /// Immutable runtime policy selected for this session.
+    /// Changes to these knobs are represented as explicit commands or data updates.
     pub physics: PhysicsPolicy,
     pub timeline_semantics: TimelineSemantics,
     pub live_updates_enabled: bool,
@@ -51,6 +62,8 @@ pub struct RuntimeConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MountedPackageState {
+    /// Snapshot-friendly package metadata used for diagnostics, checkpoints, and
+    /// restore assertions. Runtime keeps authoritative package state.
     pub package_id: String,
     pub kind: PackageKind,
     pub package_version: SemVer,
@@ -61,6 +74,7 @@ pub struct MountedPackageState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MountedManifestState {
+    /// Snapshot-friendly view of the currently installed manifest.
     pub manifest_id: String,
     pub manifest_version: SemVer,
     pub channel: String,
@@ -70,6 +84,8 @@ pub struct MountedManifestState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorldSnapshot {
+    /// Copy-based snapshot boundary: external callers only get immutable
+    /// world-facing data; they cannot mutate runtime directly.
     pub scenario_id: ScenarioId,
     pub branch_id: BranchId,
     pub epoch_seconds: f64,
@@ -85,6 +101,8 @@ pub struct WorldSnapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorldCommand {
+    /// Mutation primitives that feed branch/state invariants, command logging, and
+    /// history event generation.
     SpawnBody {
         body: BodyState,
     },
@@ -122,12 +140,15 @@ pub enum WorldCommand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeEvent {
+    /// Event emissions are the stable boundary for lifecycle tracking and tests.
     HistoryAppended(HistoryEvent),
     SnapshotPublished(WorldSnapshot),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeError {
+    /// Stable runtime-facing invalid-state errors intended to map cleanly to ABI status
+    /// responses.
     DuplicateBody(BodyId),
     UnknownBody(BodyId),
     InvalidEpochDelta(f64),
@@ -144,6 +165,9 @@ pub enum RuntimeError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplyUpdateManifestCommand {
+    /// One explicit package update transaction request.
+    /// Runtime owns package manifests and update application details; this is the
+    /// immutable input boundary.
     pub manifest: UpdateManifest,
     pub target: CompatibilityTarget,
     pub fetched_packages_by_id: BTreeMap<String, StoredPackage>,
@@ -151,11 +175,13 @@ pub struct ApplyUpdateManifestCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MountPackageCommand {
+    /// Opaque package identity request from shells to mark installed data as mounted.
     pub package_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplyUpdateManifestResult {
+    /// Result is intentionally explicit to keep shell-facing diagnostics stable.
     pub plan: UpdatePlan,
     pub provenance: ApplyProvenance,
     pub mounted_manifest: Option<MountedManifestState>,
@@ -189,6 +215,8 @@ struct BranchState {
 
 #[derive(Clone, Debug)]
 pub struct WorldRuntime {
+    /// Simulation-owned mutable state. All mutable command, checkpoint, and branch
+    /// transitions should flow through this single root object.
     scenario_id: ScenarioId,
     config: RuntimeConfig,
     hardware_profile: HardwareProfile,
@@ -200,6 +228,8 @@ pub struct WorldRuntime {
 }
 
 impl WorldRuntime {
+    /// Session constructor initializes the root branch, baseline counters, and
+    /// empty mutable state for deterministic branch/counter progression.
     #[must_use]
     pub fn new(
         scenario_id: ScenarioId,
@@ -261,6 +291,9 @@ impl WorldRuntime {
         &self.active_branch_id
     }
 
+    /// Apply a package manifest to the active branch data state.
+    /// This can change installed package state and mounted-package visibility, but
+    /// does not directly mutate simulation motion state.
     pub fn apply_update_manifest(
         &mut self,
         command: ApplyUpdateManifestCommand,
@@ -306,10 +339,15 @@ impl WorldRuntime {
         })
     }
 
+    /// Explicitly mark an installed package as mounted.
+    /// Runtime tracks mount state independently from command replay to keep shell
+    /// intent explicit and observable.
     pub fn mount_package(
         &mut self,
         command: MountPackageCommand,
     ) -> Result<MountedManifestState, RuntimeError> {
+        // Mark a package as explicitly mounted for shell intent visibility.
+        // Mount intent is tracked by runtime and contributes to snapshot/reporting.
         let branch = self.active_branch_mut();
         let Some(installed_manifest) = &branch.world.local_data_state.installed_manifest else {
             return Err(RuntimeError::NoInstalledManifestAvailable);
@@ -345,6 +383,9 @@ impl WorldRuntime {
         Ok(mounted_manifest)
     }
 
+    /// Main mutation pipeline for simulation and history state.
+    /// Every command is converted into recorded events and an authoritative state
+    /// transition for the active branch.
     pub fn apply_command(
         &mut self,
         command: WorldCommand,
@@ -536,6 +577,9 @@ impl WorldRuntime {
         Ok(events)
     }
 
+    /// Return an ownership-safe world snapshot for host-visible status and
+    /// checkpoint provenance capture.
+    /// This method is a pure projection: it does not mutate runtime state.
     #[must_use]
     pub fn snapshot(&self) -> WorldSnapshot {
         let active = self.active_branch();
@@ -561,6 +605,9 @@ impl WorldRuntime {
         }
     }
 
+    /// Build a renderer-agnostic scene contract from the current runtime state.
+    /// This pure extraction path is intentionally read-only and used by FFI
+    /// scene export.
     #[must_use]
     pub fn render_scene(&self) -> RenderScene {
         extract_render_scene(&self.snapshot())

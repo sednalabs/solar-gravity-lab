@@ -1,5 +1,6 @@
 #ifndef SOLARLAB_V2_H
 #define SOLARLAB_V2_H
+// ABI versioning for runtime/session contracts. Bump when ABI layout changes.
 
 #include <stdint.h>
 
@@ -7,13 +8,18 @@
 extern "C" {
 #endif
 
+// ABI version of the runtime/session contract.
 #define SOLARLAB_V2_ABI_VERSION 1u
+// Fixed-size inline capacity for identifier payloads carried by value in structs.
 #define SL_V2_ID_CAPACITY 96u
 
+// Opaque per-session handle. Handle value 0 is reserved and treated as invalid.
 typedef struct SlRuntimeHandle {
   uint64_t raw;
 } SlRuntimeHandle;
 
+// Opaque exported scene packet handle. Release this handle to invalidate packet
+// buffers and prevent dangling views.
 typedef struct SlRenderPacketHandle {
   uint64_t raw;
 } SlRenderPacketHandle;
@@ -214,6 +220,7 @@ typedef struct SlSessionCommand {
   int64_t recorded_at_unix_ms;
 } SlSessionCommand;
 
+// Lifecycle + diagnostics result payload types:
 typedef struct SlSessionCreateResult {
   SlResult result;
   SlRuntimeHandle handle;
@@ -242,6 +249,10 @@ typedef struct SlBufferViewResult {
   SlBufferView view;
 } SlBufferViewResult;
 
+// ABI contract entrypoints.
+// - session_*: create/read/command/refresh lifecycle
+// - *_session_export_*: render extraction + packet handle ownership flow
+// - *_buffer/release: borrowed packet view + explicit release
 uint32_t sl_v2_abi_version(void);
 SlSessionCreateResult sl_v2_session_create(SlSessionCreateParams params);
 SlResult sl_v2_session_destroy(SlRuntimeHandle handle);
