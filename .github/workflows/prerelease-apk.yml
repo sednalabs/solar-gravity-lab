@@ -258,7 +258,11 @@ jobs:
             if gh release upload "$tag_name" \
               --repo "${{ github.repository }}" \
               --clobber \
-              dist/*; then
+              dist/*.apk \
+              dist/*.sha256 \
+              dist/*.json \
+              dist/*.md \
+              clients/android/app/build/outputs/apk/prerelease/output-metadata.json; then
               uploaded=true
               break
             fi
