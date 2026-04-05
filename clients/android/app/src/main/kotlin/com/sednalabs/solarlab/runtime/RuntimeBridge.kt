@@ -45,7 +45,12 @@ internal class JniRuntimeBridge(
             return@callbackFlow
         }
 
-        trySend(RuntimeSignal.Status("Native runtime library loaded"))
+        trySend(
+            RuntimeSignal.Notice(
+                message = "Native runtime library loaded",
+                level = RuntimeNoticeLevel.Success,
+            )
+        )
 
         val createResult = runCatching {
             transport.createSession(
@@ -112,8 +117,9 @@ internal class JniRuntimeBridge(
             transport.runtimeInfo(handle)
         }.getOrElse { error ->
             trySend(
-                RuntimeSignal.Status(
-                    "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}"
+                RuntimeSignal.Notice(
+                    message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Warning,
                 )
             )
             awaitClose {
@@ -124,12 +130,18 @@ internal class JniRuntimeBridge(
 
         if (runtimeInfoResult.result.isOk()) {
             trySend(
-                RuntimeSignal.Status(
-                    "Runtime backend: ${runtimeInfoResult.cpuBackendLabel()} + ${runtimeInfoResult.gpuBackendLabel()}"
+                RuntimeSignal.RuntimeInfoAvailable(
+                    cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
+                    gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
                 )
             )
         } else {
-            trySend(RuntimeSignal.Status("Runtime info unavailable: ${runtimeInfoResult.result.describe()}"))
+            trySend(
+                RuntimeSignal.Notice(
+                    message = "Runtime info unavailable: ${runtimeInfoResult.result.describe()}",
+                    level = RuntimeNoticeLevel.Warning,
+                )
+            )
         }
 
         refreshSignalsForHandle(handle, includeSummary = true).forEach { trySend(it) }
@@ -155,7 +167,12 @@ internal class JniRuntimeBridge(
     override suspend fun refresh(): List<RuntimeSignal> {
         val handle = synchronized(stateLock) { activeSessionHandle }
         if (handle == 0L) {
-            return listOf(RuntimeSignal.Status("Refresh skipped: no active runtime session"))
+            return listOf(
+                RuntimeSignal.Notice(
+                    message = "Refresh skipped: no active runtime session",
+                    level = RuntimeNoticeLevel.Warning,
+                )
+            )
         }
 
         return refreshSignalsForHandle(handle, includeSummary = true)
@@ -165,21 +182,32 @@ internal class JniRuntimeBridge(
     override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> {
         val handle = synchronized(stateLock) { activeSessionHandle }
         if (handle == 0L) {
-            return listOf(RuntimeSignal.Status("Command skipped: no active runtime session"))
+            return listOf(
+                RuntimeSignal.Notice(
+                    message = "Command skipped: no active runtime session",
+                    level = RuntimeNoticeLevel.Warning,
+                )
+            )
         }
 
         val commandResult = runCatching {
             transport.applyCommand(handle, command.toNativePayload())
         }.getOrElse { error ->
             return listOf(
-                RuntimeSignal.Status(
-                    "Command failed: ${error.message ?: error::class.java.simpleName}"
+                RuntimeSignal.Notice(
+                    message = "Command failed: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Error,
                 )
             )
         }
 
         if (!commandResult.result.isOk()) {
-            return listOf(RuntimeSignal.Status("Command failed: ${commandResult.result.describe()}"))
+            return listOf(
+                RuntimeSignal.Notice(
+                    message = "Command failed: ${commandResult.result.describe()}",
+                    level = RuntimeNoticeLevel.Error,
+                )
+            )
         }
 
         val signals = mutableListOf<RuntimeSignal>()
@@ -197,8 +225,9 @@ internal class JniRuntimeBridge(
             val summary = runCatching {
                 transport.refreshSession(handle)
             }.getOrElse { error ->
-                signals += RuntimeSignal.Status(
-                    "Refresh unavailable: ${error.message ?: error::class.java.simpleName}"
+                signals += RuntimeSignal.Notice(
+                    message = "Refresh unavailable: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Error,
                 )
                 return signals
             }
@@ -206,7 +235,10 @@ internal class JniRuntimeBridge(
             if (summary.result.isOk()) {
                 signals += RuntimeSignal.SnapshotUpdated(summary)
             } else {
-                signals += RuntimeSignal.Status("Refresh failed: ${summary.result.describe()}")
+                signals += RuntimeSignal.Notice(
+                    message = "Refresh failed: ${summary.result.describe()}",
+                    level = RuntimeNoticeLevel.Error,
+                )
             }
         }
 
@@ -220,8 +252,8 @@ internal class JniRuntimeBridge(
             if (refreshResult.lease != null) {
                 signals += RuntimeSignal.RenderPacketReady(refreshResult.lease)
             } else {
-                signals += RuntimeSignal.Status(
-                    refreshResult.unavailableReason ?: "Render export unavailable"
+                signals += RuntimeSignal.RenderUnavailable(
+                    reason = refreshResult.unavailableReason ?: "Render export unavailable"
                 )
             }
         }
@@ -254,14 +286,29 @@ internal class JniRuntimeBridge(
 
 internal sealed interface RuntimeSignal {
     data class Connected(val handle: Long) : RuntimeSignal
-    data class Status(val message: String) : RuntimeSignal
+    data class RuntimeInfoAvailable(
+        val cpuBackendLabel: String,
+        val gpuBackendLabel: String,
+    ) : RuntimeSignal
+    data class Notice(
+        val message: String,
+        val level: RuntimeNoticeLevel = RuntimeNoticeLevel.Info,
+    ) : RuntimeSignal
     data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult) : RuntimeSignal
     data class CommandApplied(
         val commandLabel: String,
         val summary: NativeSnapshotSummaryResult,
     ) : RuntimeSignal
     data class RenderPacketReady(val lease: PacketLease) : RuntimeSignal
+    data class RenderUnavailable(val reason: String) : RuntimeSignal
     data class Unavailable(val message: String, val detail: String? = null) : RuntimeSignal
+}
+
+internal enum class RuntimeNoticeLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
 }
 
 sealed interface RuntimeCommand {

@@ -4,6 +4,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
+import java.util.Locale
 
 /**
  * Android-local implementation of `RuntimeFacade`.
@@ -19,7 +21,9 @@ class BridgeBackedRuntimeFacade internal constructor(
     private val _uiState = MutableStateFlow(
         ShellUiState(
             statusLine = "Preparing Rust runtime session",
-            detailLine = "Android shell owns presentation and command flow only"
+            detailLine = "Android shell waits for authoritative runtime state from Rust",
+            noticeLine = "Android owns presentation, controls, and host rendering only",
+            pendingActionLabel = "Connecting to runtime boundary",
         )
     )
 
@@ -28,72 +32,274 @@ class BridgeBackedRuntimeFacade internal constructor(
     // Session handoff is one-way from bridge to UI state.
     // The flow is treated as the only driver for initial connection lifecycle.
     override suspend fun startSession() {
+        _uiState.update { current ->
+            current.copy(
+                connectionState = SessionConnectionState.Connecting,
+                statusLine = "Preparing Rust runtime session",
+                detailLine = "Opening the Android shell against the Rust-owned runtime boundary",
+                noticeLine = "Android owns presentation, controls, and host rendering only",
+                noticeTone = ShellNoticeTone.Neutral,
+                pendingActionLabel = "Connecting to runtime boundary",
+                renderStatus = RenderStatusPresentation(
+                    readiness = RenderHostReadiness.WaitingForSession,
+                ),
+                renderFrame = null,
+            )
+        }
         bridge.connect().collect(::applySignal)
     }
 
     // Explicit refresh and command paths are intentionally mapped 1:1 from UI intent to
     // runtime boundary outputs and then to immutable UI copies.
     override suspend fun refresh() {
-        bridge.refresh().forEach(::applySignal)
+        runShellAction(
+            label = "Refreshing runtime snapshot",
+            onStart = { current ->
+                current.copy(
+                    statusLine = "Refreshing runtime snapshot",
+                    detailLine = "Pulling the latest authoritative snapshot and render packet",
+                    pendingActionLabel = "Refreshing runtime snapshot",
+                    renderStatus = current.renderStatus.copy(
+                        readiness = if (current.sessionHandle != null) {
+                            RenderHostReadiness.Refreshing
+                        } else {
+                            RenderHostReadiness.WaitingForSession
+                        },
+                        issue = null,
+                    ),
+                )
+            }
+        ) {
+            bridge.refresh().forEach(::applySignal)
+        }
     }
 
     override suspend fun applyCommand(command: RuntimeCommand) {
-        bridge.applyCommand(command).forEach(::applySignal)
+        val actionLabel = command.userFacingAction()
+        runShellAction(
+            label = actionLabel,
+            onStart = { current ->
+                current.copy(
+                    statusLine = actionLabel,
+                    detailLine = "Sending ${command.label} across the runtime boundary",
+                    noticeLine = "Command intent: $actionLabel",
+                    noticeTone = ShellNoticeTone.Neutral,
+                    pendingActionLabel = actionLabel,
+                )
+            }
+        ) {
+            bridge.applyCommand(command).forEach(::applySignal)
+        }
     }
 
     private fun applySignal(signal: RuntimeSignal) {
-        _uiState.value = when (signal) {
-            is RuntimeSignal.Connected -> _uiState.value.copy(
-                statusLine = "Connected to runtime boundary",
-                detailLine = "Native session handle=${signal.handle}",
-                sessionHandle = signal.handle
-            )
+        when (signal) {
+            is RuntimeSignal.Connected -> _uiState.update { current ->
+                current.copy(
+                    connectionState = SessionConnectionState.Active,
+                    statusLine = "Runtime session connected",
+                    detailLine = "Session handle ${signal.handle} is now owned by the Rust boundary",
+                    noticeLine = "Session bridge established",
+                    noticeTone = ShellNoticeTone.Positive,
+                    pendingActionLabel = null,
+                    sessionHandle = signal.handle,
+                    renderStatus = current.renderStatus.copy(
+                        readiness = RenderHostReadiness.Refreshing,
+                        issue = null,
+                    ),
+                )
+            }
 
-            is RuntimeSignal.Status -> _uiState.value.copy(
-                detailLine = signal.message
-            )
+            is RuntimeSignal.RuntimeInfoAvailable -> _uiState.update { current ->
+                current.copy(
+                    backendSummary = "${signal.cpuBackendLabel} + ${signal.gpuBackendLabel}",
+                    noticeLine = "Runtime backend: ${signal.cpuBackendLabel} + ${signal.gpuBackendLabel}",
+                    noticeTone = ShellNoticeTone.Positive,
+                )
+            }
 
-            is RuntimeSignal.SnapshotUpdated -> _uiState.value.copy(
-                statusLine = "Runtime snapshot refreshed",
-                detailLine = "epoch=${signal.summary.epochSeconds}, bodies=${signal.summary.bodyCount}",
-                snapshotSummary = "scenario=${signal.summary.scenarioId}, branch=${signal.summary.activeBranchId}, paused=${signal.summary.paused}"
-            )
+            is RuntimeSignal.Notice -> _uiState.update { current ->
+                current.copy(
+                    noticeLine = signal.message,
+                    noticeTone = signal.level.toShellTone(),
+                )
+            }
 
-            is RuntimeSignal.CommandApplied -> _uiState.value.copy(
-                statusLine = "Command applied",
-                detailLine = "${signal.commandLabel} -> epoch=${signal.summary.epochSeconds}",
-                snapshotSummary = "scenario=${signal.summary.scenarioId}, branch=${signal.summary.activeBranchId}, bodies=${signal.summary.bodyCount}"
-            )
+            is RuntimeSignal.SnapshotUpdated -> _uiState.update { current ->
+                current.copy(
+                    connectionState = SessionConnectionState.Active,
+                    statusLine = if (signal.summary.paused) {
+                        "Paused runtime snapshot ready"
+                    } else {
+                        "Live runtime snapshot refreshed"
+                    },
+                    detailLine = "Epoch ${signal.summary.epochSeconds.asEpochLabel()} with ${signal.summary.bodyCount} authoritative bodies",
+                    pendingActionLabel = null,
+                    snapshot = signal.summary.toSnapshotPresentation(),
+                    renderStatus = current.renderStatus.copy(
+                        readiness = if (current.renderFrame != null) {
+                            current.renderStatus.readiness
+                        } else {
+                            RenderHostReadiness.Refreshing
+                        },
+                    ),
+                )
+            }
+
+            is RuntimeSignal.CommandApplied -> _uiState.update { current ->
+                current.copy(
+                    connectionState = SessionConnectionState.Active,
+                    statusLine = "Runtime command applied",
+                    detailLine = "${signal.commandLabel} at epoch ${signal.summary.epochSeconds.asEpochLabel()}",
+                    noticeLine = "Runtime accepted ${signal.commandLabel}",
+                    noticeTone = ShellNoticeTone.Positive,
+                    pendingActionLabel = null,
+                    snapshot = signal.summary.toSnapshotPresentation(),
+                    renderStatus = current.renderStatus.copy(
+                        readiness = if (current.renderFrame != null) {
+                            current.renderStatus.readiness
+                        } else {
+                            RenderHostReadiness.Refreshing
+                        },
+                    ),
+                )
+            }
 
             is RuntimeSignal.RenderPacketReady -> {
                 val lease = signal.lease
                 try {
-                    // Decode packet payloads only on the UI boundary and close the packet lease
-                    // in finally to guarantee host-side release independent of decode outcome.
                     val renderFrame = VulkanPacketRenderFrameDecoder.decode(lease.packet)
-                    _uiState.value.copy(
-                        statusLine = "Vulkan render host ready",
-                        detailLine = "Scene revision=${lease.sceneRevision}",
-                        renderPacketSummary = lease.summaryLine,
-                        renderFrame = renderFrame,
-                    )
+                    _uiState.update { current ->
+                        current.copy(
+                            connectionState = SessionConnectionState.Active,
+                            statusLine = "Render host ready",
+                            detailLine = "Scene revision ${lease.sceneRevision}",
+                            noticeLine = "Fresh packet decoded for the Android render host",
+                            noticeTone = ShellNoticeTone.Positive,
+                            pendingActionLabel = null,
+                            renderStatus = RenderStatusPresentation(
+                                readiness = RenderHostReadiness.Ready,
+                                sceneRevision = lease.sceneRevision,
+                                summary = lease.summaryLine,
+                                renderedBodyCount = renderFrame.bodies.size,
+                                renderedTracerCount = renderFrame.tracers.size,
+                                renderedTrailCount = renderFrame.trails.size,
+                            ),
+                            renderFrame = renderFrame,
+                        )
+                    }
                 } catch (error: Throwable) {
-                    _uiState.value.copy(
-                        statusLine = "Render packet decode failed",
-                        detailLine = error.message ?: error::class.java.simpleName,
-                        renderPacketSummary = lease.summaryLine,
-                        renderFrame = null,
-                    )
+                    _uiState.update { current ->
+                        current.copy(
+                            statusLine = "Render packet decode failed",
+                            detailLine = error.message ?: error::class.java.simpleName,
+                            noticeLine = "The render host received a packet but could not decode it",
+                            noticeTone = ShellNoticeTone.Critical,
+                            pendingActionLabel = null,
+                            renderStatus = current.renderStatus.copy(
+                                readiness = RenderHostReadiness.Failed,
+                                sceneRevision = lease.sceneRevision,
+                                summary = lease.summaryLine,
+                                issue = error.message ?: error::class.java.simpleName,
+                            ),
+                            renderFrame = null,
+                        )
+                    }
                 } finally {
                     lease.close()
                 }
             }
 
-            is RuntimeSignal.Unavailable -> _uiState.value.copy(
-                statusLine = signal.message,
-                detailLine = signal.detail,
-                renderFrame = null,
-            )
+            is RuntimeSignal.RenderUnavailable -> _uiState.update { current ->
+                current.copy(
+                    noticeLine = signal.reason,
+                    noticeTone = ShellNoticeTone.Caution,
+                    pendingActionLabel = null,
+                    renderStatus = current.renderStatus.copy(
+                        readiness = RenderHostReadiness.Unavailable,
+                        issue = signal.reason,
+                    ),
+                )
+            }
+
+            is RuntimeSignal.Unavailable -> _uiState.update { current ->
+                current.copy(
+                    connectionState = SessionConnectionState.Unavailable,
+                    statusLine = signal.message,
+                    detailLine = signal.detail,
+                    noticeLine = signal.detail ?: signal.message,
+                    noticeTone = ShellNoticeTone.Critical,
+                    pendingActionLabel = null,
+                    sessionHandle = null,
+                    snapshot = null,
+                    renderStatus = current.renderStatus.copy(
+                        readiness = RenderHostReadiness.Unavailable,
+                        issue = signal.detail ?: signal.message,
+                    ),
+                    renderFrame = null,
+                )
+            }
+        }
+    }
+
+    private suspend fun runShellAction(
+        label: String,
+        onStart: (ShellUiState) -> ShellUiState,
+        action: suspend () -> Unit,
+    ) {
+        _uiState.update(onStart)
+        try {
+            action()
+        } finally {
+            _uiState.update { current ->
+                if (current.pendingActionLabel == label) {
+                    current.copy(pendingActionLabel = null)
+                } else {
+                    current
+                }
+            }
         }
     }
 }
+
+private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresentation {
+    return SnapshotPresentation(
+        scenarioId = scenarioId,
+        activeBranchId = activeBranchId,
+        bodyCount = bodyCount,
+        epochSeconds = epochSeconds,
+        paused = paused,
+        simSecondsPerRealSecond = simSecondsPerRealSecond,
+        observerModeLabel = RuntimeObserverMode.values()
+            .firstOrNull { it.nativeCode == observerMode }
+            ?.displayLabel()
+            ?: "Unknown mode ($observerMode)",
+    )
+}
+
+private fun RuntimeCommand.userFacingAction(): String = when (this) {
+    is RuntimeCommand.AdvanceEpoch -> "Advance by ${deltaSeconds.asEpochLabel()}"
+    RuntimeCommand.PausePlayback -> "Pause playback"
+    RuntimeCommand.ResumePlayback -> "Resume playback"
+    is RuntimeCommand.SetPlaybackRate -> "Set playback rate to ${simSecondsPerRealSecond.asRateLabel()}"
+    is RuntimeCommand.SetObserverMode -> "Switch observer to ${mode.displayLabel()}"
+    is RuntimeCommand.FocusBody -> "Focus ${bodyId ?: "active selection"}"
+}
+
+private fun RuntimeObserverMode.displayLabel(): String = when (this) {
+    RuntimeObserverMode.Free -> "Free camera"
+    RuntimeObserverMode.FollowSelected -> "Follow selected"
+    RuntimeObserverMode.FollowHost -> "Follow host"
+    RuntimeObserverMode.SystemFrame -> "System frame"
+}
+
+private fun RuntimeNoticeLevel.toShellTone(): ShellNoticeTone = when (this) {
+    RuntimeNoticeLevel.Info -> ShellNoticeTone.Neutral
+    RuntimeNoticeLevel.Success -> ShellNoticeTone.Positive
+    RuntimeNoticeLevel.Warning -> ShellNoticeTone.Caution
+    RuntimeNoticeLevel.Error -> ShellNoticeTone.Critical
+}
+
+private fun Double.asEpochLabel(): String = String.format(Locale.US, "%,.1f s", this)
+
+private fun Double.asRateLabel(): String = String.format(Locale.US, "%,.2fx", this)

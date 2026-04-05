@@ -3,8 +3,12 @@ package com.sednalabs.solarlab
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
+import android.graphics.RectF
+import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -32,7 +36,20 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private var surfaceReady: Boolean = false
 
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(10, 13, 20)
+        color = Color.rgb(7, 11, 19)
+        style = Paint.Style.FILL
+    }
+    private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(42, 110, 168, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 1.8f
+    }
+    private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(24, 232, 238, 249)
+        style = Paint.Style.STROKE
+        strokeWidth = 1.2f
+    }
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -104,7 +121,63 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     }
 
     private fun drawBackground(canvas: Canvas) {
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
+        val viewportWidth = width.toFloat().coerceAtLeast(1f)
+        val viewportHeight = height.toFloat().coerceAtLeast(1f)
+        backgroundPaint.shader = LinearGradient(
+            0f,
+            0f,
+            0f,
+            viewportHeight,
+            Color.rgb(6, 10, 18),
+            Color.rgb(14, 27, 43),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, backgroundPaint)
+
+        glowPaint.shader = RadialGradient(
+            viewportWidth * 0.5f,
+            viewportHeight * 0.42f,
+            min(viewportWidth, viewportHeight) * 0.55f,
+            intArrayOf(
+                Color.argb(62, 55, 110, 193),
+                Color.argb(22, 22, 55, 100),
+                Color.TRANSPARENT,
+            ),
+            floatArrayOf(0f, 0.48f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, glowPaint)
+
+        val orbitBounds = RectF(
+            viewportWidth * 0.2f,
+            viewportHeight * 0.12f,
+            viewportWidth * 0.8f,
+            viewportHeight * 0.72f,
+        )
+        canvas.drawOval(orbitBounds, guidePaint)
+        canvas.drawCircle(
+            viewportWidth * 0.5f,
+            viewportHeight * 0.42f,
+            min(viewportWidth, viewportHeight) * 0.18f,
+            guidePaint,
+        )
+        canvas.drawLine(
+            viewportWidth * 0.12f,
+            viewportHeight * 0.42f,
+            viewportWidth * 0.88f,
+            viewportHeight * 0.42f,
+            crosshairPaint,
+        )
+        canvas.drawLine(
+            viewportWidth * 0.5f,
+            viewportHeight * 0.1f,
+            viewportWidth * 0.5f,
+            viewportHeight * 0.82f,
+            crosshairPaint,
+        )
+
+        backgroundPaint.shader = null
+        glowPaint.shader = null
     }
 
     // Decode step: convert shared world-space coordinates into screen space, apply safe

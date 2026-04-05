@@ -19,11 +19,57 @@ interface RuntimeFacade {
     suspend fun applyCommand(command: RuntimeCommand)
 }
 
+enum class SessionConnectionState {
+    Connecting,
+    Active,
+    Unavailable,
+}
+
+enum class ShellNoticeTone {
+    Neutral,
+    Positive,
+    Caution,
+    Critical,
+}
+
+enum class RenderHostReadiness {
+    WaitingForSession,
+    Refreshing,
+    Ready,
+    Unavailable,
+    Failed,
+}
+
+data class SnapshotPresentation(
+    val scenarioId: String,
+    val activeBranchId: String,
+    val bodyCount: Int,
+    val epochSeconds: Double,
+    val paused: Boolean,
+    val simSecondsPerRealSecond: Double,
+    val observerModeLabel: String,
+)
+
+data class RenderStatusPresentation(
+    val readiness: RenderHostReadiness = RenderHostReadiness.WaitingForSession,
+    val sceneRevision: String? = null,
+    val summary: String? = null,
+    val renderedBodyCount: Int = 0,
+    val renderedTracerCount: Int = 0,
+    val renderedTrailCount: Int = 0,
+    val issue: String? = null,
+)
+
 data class ShellUiState(
+    val connectionState: SessionConnectionState = SessionConnectionState.Connecting,
     val statusLine: String,
     val detailLine: String? = null,
+    val noticeLine: String? = null,
+    val noticeTone: ShellNoticeTone = ShellNoticeTone.Neutral,
+    val pendingActionLabel: String? = null,
     val sessionHandle: Long? = null,
-    val renderPacketSummary: String? = null,
-    val snapshotSummary: String? = null,
+    val backendSummary: String? = null,
+    val snapshot: SnapshotPresentation? = null,
+    val renderStatus: RenderStatusPresentation = RenderStatusPresentation(),
     val renderFrame: RenderFrame? = null,
 )
