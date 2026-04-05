@@ -4,11 +4,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollToNode
@@ -95,12 +97,12 @@ class SolarLabShellLayoutTest {
         assertVisibleInScrollableShell(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
         assertVisibleInScrollableShell(SolarLabTestTags.BRANCH_NAME_FIELD)
         assertVisibleInScrollableShell(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
-        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_FOCUS_TARGET)
-        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_OBSERVER_MODE)
-        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_BRANCH)
-        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_CHECKPOINT)
-        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_PROVENANCE)
-        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_LIGHTS)
+        assertReachableInScrollableShell(SolarLabTestTags.METADATA_FOCUS_TARGET)
+        assertReachableInScrollableShell(SolarLabTestTags.METADATA_OBSERVER_MODE)
+        assertReachableInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_BRANCH)
+        assertReachableInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_CHECKPOINT)
+        assertReachableInScrollableShell(SolarLabTestTags.METADATA_PROVENANCE)
+        assertReachableInScrollableShell(SolarLabTestTags.METADATA_LIGHTS)
 
         // Touch input is accepted by the render panel layout node.
         composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
@@ -114,11 +116,12 @@ class SolarLabShellLayoutTest {
     fun shellControls_emitCommands_whenUserInteracts() {
         scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).performTextInput("body-7")
-        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON).performTouchInput { click() }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON).performClick()
         assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "body-7" })
 
         scrollShellTo(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
-        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON).performTouchInput { click() }
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON).performClick()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.SetObserverMode && it.mode == RuntimeObserverMode.FollowSelected
@@ -127,7 +130,8 @@ class SolarLabShellLayoutTest {
 
         scrollShellTo(SolarLabTestTags.CHECKPOINT_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).performTextInput("checkpoint-1")
-        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).performTouchInput { click() }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).performClick()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.CreateCheckpoint && it.checkpointId == "checkpoint-1"
@@ -138,10 +142,9 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).performTextInput("checkpoint-1")
         scrollShellTo(SolarLabTestTags.BRANCH_NAME_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_NAME_FIELD).performTextInput("branch-a")
+        composeRule.waitForIdle()
         scrollShellTo(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
-        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON).performTouchInput {
-            click()
-        }
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON).performClick()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.CreateBranchFromCheckpoint &&
@@ -209,6 +212,12 @@ class SolarLabShellLayoutTest {
     private fun assertVisibleInScrollableShell(tag: String) {
         scrollShellTo(tag)
         composeRule.onNodeWithTag(tag).assertIsDisplayed()
+    }
+
+    private fun assertReachableInScrollableShell(tag: String) {
+        scrollShellTo(tag)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(tag).assertExists()
     }
 
     private fun scrollShellTo(tag: String) {

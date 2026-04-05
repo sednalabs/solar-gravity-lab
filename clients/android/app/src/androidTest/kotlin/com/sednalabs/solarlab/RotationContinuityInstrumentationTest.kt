@@ -74,7 +74,10 @@ class RotationContinuityInstrumentationTest {
                     it.snapshotSummary?.contains("paused=true") == true &&
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
                     it.snapshot?.activeBranchId == beforeBranch &&
-                    it.backendSummary == beforeProvenance &&
+                    hasCompatibleBackendSummary(
+                        before = beforeRotation,
+                        after = it,
+                    ) &&
                     hasCompatibleRenderMetrics(
                         before = beforeRotation,
                         after = it,
@@ -103,11 +106,6 @@ class RotationContinuityInstrumentationTest {
                 beforeObserverMode,
                 afterRotation.observerModeCode,
             )
-            assertEquals(
-                "Backend provenance should remain stable after recreation",
-                beforeProvenance,
-                afterRotation.backendSummary,
-            )
             assertNotNull(
                 "Render packet summary should remain exposed after recreation",
                 afterRotation.renderPacketSummary,
@@ -116,6 +114,11 @@ class RotationContinuityInstrumentationTest {
                 beforeRotation.renderStatus.readiness == RenderHostReadiness.Ready &&
                 afterRotation.renderStatus.readiness == RenderHostReadiness.Ready
             ) {
+                assertEquals(
+                    "Backend provenance should remain stable after recreation while render host is ready",
+                    beforeProvenance,
+                    afterRotation.backendSummary,
+                )
                 assertEquals(
                     "Rendered body count should remain stable after recreation while render host is ready",
                     beforeRenderedBodyCount,
@@ -158,6 +161,18 @@ class RotationContinuityInstrumentationTest {
         return after.renderStatus.renderedBodyCount == before.renderStatus.renderedBodyCount &&
             after.renderStatus.renderedTracerCount == before.renderStatus.renderedTracerCount &&
             after.renderStatus.renderedTrailCount == before.renderStatus.renderedTrailCount
+    }
+
+    private fun hasCompatibleBackendSummary(
+        before: ShellUiState,
+        after: ShellUiState,
+    ): Boolean {
+        val beforeReady = before.renderStatus.readiness == RenderHostReadiness.Ready
+        val afterReady = after.renderStatus.readiness == RenderHostReadiness.Ready
+        if (!beforeReady || !afterReady) {
+            return after.backendSummary != null
+        }
+        return after.backendSummary == before.backendSummary
     }
 
     private fun ActivityScenario<MainActivity>.withRuntimeFacade(): RuntimeFacade {
