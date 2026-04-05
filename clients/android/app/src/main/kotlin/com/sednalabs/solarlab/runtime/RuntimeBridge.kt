@@ -371,7 +371,7 @@ sealed interface RuntimeCommand {
 
     data class CreateCheckpoint(
         val checkpointId: String? = null,
-        val label: String? = null,
+        val checkpointLabel: String? = null,
     ) : RuntimeCommand {
         override val label: String = "branching.create_checkpoint"
     }
@@ -485,7 +485,7 @@ private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when
     is RuntimeCommand.CreateCheckpoint -> NativeRuntimeCommandPayload(
         kind = NATIVE_COMMAND_CREATE_CHECKPOINT,
         checkpointIdUtf8 = checkpointId?.toByteArray(StandardCharsets.UTF_8),
-        checkpointLabelUtf8 = label?.toByteArray(StandardCharsets.UTF_8),
+        checkpointLabelUtf8 = checkpointLabel?.toByteArray(StandardCharsets.UTF_8),
     )
 
     is RuntimeCommand.CreateBranchFromCheckpoint -> NativeRuntimeCommandPayload(
