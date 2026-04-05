@@ -71,5 +71,9 @@ data class ShellUiState(
     val backendSummary: String? = null,
     val snapshot: SnapshotPresentation? = null,
     val renderStatus: RenderStatusPresentation = RenderStatusPresentation(),
+    val renderPacketSummary: String? = null,
+    val snapshotSummary: String? = null,
+    val observerModeCode: Int? = null,
+    val cameraFacingSummary: String? = null,
     val renderFrame: RenderFrame? = null,
 )

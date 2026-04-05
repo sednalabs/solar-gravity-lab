@@ -34,7 +34,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -65,10 +64,6 @@ import java.util.Locale
 fun SolarLabApp(runtimeFacade: RuntimeFacade) {
     val uiState by runtimeFacade.uiState.collectAsState()
     val scope = rememberCoroutineScope()
-
-    LaunchedEffect(runtimeFacade) {
-        runtimeFacade.startSession()
-    }
 
     SolarLabTheme {
         Scaffold(

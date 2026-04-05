@@ -4,7 +4,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
+import androidx.annotation.VisibleForTesting
+import androidx.lifecycle.ViewModel
 import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
+import com.sednalabs.solarlab.runtime.RuntimeFacade
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Android entrypoint for the v2 shell.
@@ -13,16 +22,33 @@ import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
  * the runtime facade, then hands full control to composable UI.
  */
 class MainActivity : ComponentActivity() {
+    private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
+
+    @VisibleForTesting
+    internal val runtimeFacadeForTesting: RuntimeFacade
+        get() = runtimeViewModel.runtimeFacade
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Android owns lifecycle; the runtime boundary is created once per Activity instance
-        // and passed through dependency-injection-like ownership to the Compose shell.
-        val runtimeFacade = BridgeBackedRuntimeFacade()
-
         setContent {
-            SolarLabApp(runtimeFacade = runtimeFacade)
+            SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
         }
+    }
+}
+
+private class RuntimeSessionViewModel : ViewModel() {
+    val runtimeFacade: RuntimeFacade = BridgeBackedRuntimeFacade()
+    private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    init {
+        runtimeScope.launch {
+            runtimeFacade.startSession()
+        }
+    }
+
+    override fun onCleared() {
+        runtimeScope.cancel()
     }
 }

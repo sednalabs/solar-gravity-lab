@@ -43,6 +43,10 @@ class BridgeBackedRuntimeFacade internal constructor(
                 renderStatus = RenderStatusPresentation(
                     readiness = RenderHostReadiness.WaitingForSession,
                 ),
+                renderPacketSummary = null,
+                snapshotSummary = null,
+                observerModeCode = null,
+                cameraFacingSummary = null,
                 renderFrame = null,
             )
         }
@@ -136,6 +140,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     detailLine = "Epoch ${signal.summary.epochSeconds.asEpochLabel()} with ${signal.summary.bodyCount} authoritative bodies",
                     pendingActionLabel = null,
                     snapshot = signal.summary.toSnapshotPresentation(),
+                    snapshotSummary = "scenario=${signal.summary.scenarioId}, branch=${signal.summary.activeBranchId}, paused=${signal.summary.paused}",
+                    observerModeCode = signal.summary.observerMode,
                     renderStatus = current.renderStatus.copy(
                         readiness = if (current.renderFrame != null) {
                             current.renderStatus.readiness
@@ -155,6 +161,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     noticeTone = ShellNoticeTone.Positive,
                     pendingActionLabel = null,
                     snapshot = signal.summary.toSnapshotPresentation(),
+                    snapshotSummary = "scenario=${signal.summary.scenarioId}, branch=${signal.summary.activeBranchId}, paused=${signal.summary.paused}",
+                    observerModeCode = signal.summary.observerMode,
                     renderStatus = current.renderStatus.copy(
                         readiness = if (current.renderFrame != null) {
                             current.renderStatus.readiness
@@ -177,6 +185,9 @@ class BridgeBackedRuntimeFacade internal constructor(
                             noticeLine = "Fresh packet decoded for the Android render host",
                             noticeTone = ShellNoticeTone.Positive,
                             pendingActionLabel = null,
+                            renderPacketSummary = lease.summaryLine,
+                            observerModeCode = lease.packet.observerMode,
+                            cameraFacingSummary = lease.packet.camera.toFacingSummary(),
                             renderStatus = RenderStatusPresentation(
                                 readiness = RenderHostReadiness.Ready,
                                 sceneRevision = lease.sceneRevision,
@@ -196,6 +207,9 @@ class BridgeBackedRuntimeFacade internal constructor(
                             noticeLine = "The render host received a packet but could not decode it",
                             noticeTone = ShellNoticeTone.Critical,
                             pendingActionLabel = null,
+                            renderPacketSummary = lease.summaryLine,
+                            observerModeCode = lease.packet.observerMode,
+                            cameraFacingSummary = lease.packet.camera.toFacingSummary(),
                             renderStatus = current.renderStatus.copy(
                                 readiness = RenderHostReadiness.Failed,
                                 sceneRevision = lease.sceneRevision,
@@ -215,6 +229,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                     noticeLine = signal.reason,
                     noticeTone = ShellNoticeTone.Caution,
                     pendingActionLabel = null,
+                    renderPacketSummary = signal.reason,
                     renderStatus = current.renderStatus.copy(
                         readiness = RenderHostReadiness.Unavailable,
                         issue = signal.reason,
@@ -232,6 +247,9 @@ class BridgeBackedRuntimeFacade internal constructor(
                     pendingActionLabel = null,
                     sessionHandle = null,
                     snapshot = null,
+                    snapshotSummary = null,
+                    observerModeCode = null,
+                    cameraFacingSummary = null,
                     renderStatus = current.renderStatus.copy(
                         readiness = RenderHostReadiness.Unavailable,
                         issue = signal.detail ?: signal.message,
@@ -298,6 +316,10 @@ private fun RuntimeNoticeLevel.toShellTone(): ShellNoticeTone = when (this) {
     RuntimeNoticeLevel.Success -> ShellNoticeTone.Positive
     RuntimeNoticeLevel.Warning -> ShellNoticeTone.Caution
     RuntimeNoticeLevel.Error -> ShellNoticeTone.Critical
+}
+
+private fun NativeVulkanCameraPacket.toFacingSummary(): String {
+    return "target=($targetFromOriginX, $targetFromOriginY, $targetFromOriginZ), up=($upX, $upY, $upZ)"
 }
 
 private fun Double.asEpochLabel(): String = String.format(Locale.US, "%,.1f s", this)
