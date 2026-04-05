@@ -47,6 +47,11 @@ data class SnapshotPresentation(
     val epochSeconds: Double,
     val paused: Boolean,
     val simSecondsPerRealSecond: Double,
+    val focusTargetBodyId: String? = null,
+    val activeCheckpointId: String? = null,
+    val activeCheckpointLabel: String? = null,
+    val timelineSemantics: Int = 0,
+    val timelineSemanticsLabel: String = "Unknown timeline semantics",
     val observerModeLabel: String,
 )
 
@@ -57,6 +62,18 @@ data class RenderStatusPresentation(
     val renderedBodyCount: Int = 0,
     val renderedTracerCount: Int = 0,
     val renderedTrailCount: Int = 0,
+    val directionalLightCount: Int = 0,
+    val diagnosticsFrameNumber: Long? = null,
+    val diagnosticsCpuExtractMs: Float? = null,
+    val diagnosticsGpuUploadMs: Float? = null,
+    val diagnosticsDroppedFrames: Int = 0,
+    val provenanceSource: String? = null,
+    val provenanceVersion: String? = null,
+    val provenanceManifestId: String? = null,
+    val provenanceManifestDigest: String? = null,
+    val provenancePackageDigest: String? = null,
+    val isDegraded: Boolean = false,
+    val degradationReason: String? = null,
     val issue: String? = null,
 )
 
@@ -75,5 +92,8 @@ data class ShellUiState(
     val snapshotSummary: String? = null,
     val observerModeCode: Int? = null,
     val cameraFacingSummary: String? = null,
+    val focusedBodyId: String? = null,
+    val activeCheckpointId: String? = null,
+    val activeCheckpointLabel: String? = null,
     val renderFrame: RenderFrame? = null,
 )

@@ -42,11 +42,17 @@ class BridgeBackedRuntimeFacade internal constructor(
                 pendingActionLabel = "Connecting to runtime boundary",
                 renderStatus = RenderStatusPresentation(
                     readiness = RenderHostReadiness.WaitingForSession,
+                    issue = null,
+                    isDegraded = false,
+                    degradationReason = null,
                 ),
                 renderPacketSummary = null,
                 snapshotSummary = null,
                 observerModeCode = null,
                 cameraFacingSummary = null,
+                focusedBodyId = null,
+                activeCheckpointId = null,
+                activeCheckpointLabel = null,
                 renderFrame = null,
             )
         }
@@ -130,6 +136,11 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
 
             is RuntimeSignal.SnapshotUpdated -> _uiState.update { current ->
+                val snapshot = signal.summary.toSnapshotPresentation(
+                    focusTargetBodyId = current.focusedBodyId,
+                    activeCheckpointId = current.activeCheckpointId,
+                    activeCheckpointLabel = current.activeCheckpointLabel,
+                )
                 current.copy(
                     connectionState = SessionConnectionState.Active,
                     statusLine = if (signal.summary.paused) {
@@ -139,9 +150,12 @@ class BridgeBackedRuntimeFacade internal constructor(
                     },
                     detailLine = "Epoch ${signal.summary.epochSeconds.asEpochLabel()} with ${signal.summary.bodyCount} authoritative bodies",
                     pendingActionLabel = null,
-                    snapshot = signal.summary.toSnapshotPresentation(),
-                    snapshotSummary = "scenario=${signal.summary.scenarioId}, branch=${signal.summary.activeBranchId}, paused=${signal.summary.paused}",
+                    snapshot = snapshot,
+                    snapshotSummary = snapshot.toSnapshotSummaryLine(),
                     observerModeCode = signal.summary.observerMode,
+                    focusedBodyId = snapshot.focusTargetBodyId,
+                    activeCheckpointId = snapshot.activeCheckpointId,
+                    activeCheckpointLabel = snapshot.activeCheckpointLabel,
                     renderStatus = current.renderStatus.copy(
                         readiness = if (current.renderFrame != null) {
                             current.renderStatus.readiness
@@ -153,6 +167,14 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
 
             is RuntimeSignal.CommandApplied -> _uiState.update { current ->
+                val focusedBodyId = signal.command.focusTargetBodyId(current.focusedBodyId)
+                val checkpointId = signal.command.activeCheckpointId(current.activeCheckpointId)
+                val checkpointLabel = signal.command.activeCheckpointLabel(current.activeCheckpointLabel)
+                val snapshot = signal.summary.toSnapshotPresentation(
+                    focusTargetBodyId = focusedBodyId,
+                    activeCheckpointId = checkpointId,
+                    activeCheckpointLabel = checkpointLabel,
+                )
                 current.copy(
                     connectionState = SessionConnectionState.Active,
                     statusLine = "Runtime command applied",
@@ -160,9 +182,12 @@ class BridgeBackedRuntimeFacade internal constructor(
                     noticeLine = "Runtime accepted ${signal.commandLabel}",
                     noticeTone = ShellNoticeTone.Positive,
                     pendingActionLabel = null,
-                    snapshot = signal.summary.toSnapshotPresentation(),
-                    snapshotSummary = "scenario=${signal.summary.scenarioId}, branch=${signal.summary.activeBranchId}, paused=${signal.summary.paused}",
+                    snapshot = snapshot,
+                    snapshotSummary = snapshot.toSnapshotSummaryLine(),
                     observerModeCode = signal.summary.observerMode,
+                    focusedBodyId = focusedBodyId,
+                    activeCheckpointId = checkpointId,
+                    activeCheckpointLabel = checkpointLabel,
                     renderStatus = current.renderStatus.copy(
                         readiness = if (current.renderFrame != null) {
                             current.renderStatus.readiness
@@ -175,6 +200,7 @@ class BridgeBackedRuntimeFacade internal constructor(
 
             is RuntimeSignal.RenderPacketReady -> {
                 val lease = signal.lease
+                val packet = lease.packet
                 try {
                     val renderFrame = VulkanPacketRenderFrameDecoder.decode(lease.packet)
                     _uiState.update { current ->
@@ -188,7 +214,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                             renderPacketSummary = lease.summaryLine,
                             observerModeCode = lease.packet.observerMode,
                             cameraFacingSummary = lease.packet.camera.toFacingSummary(),
-                            renderStatus = RenderStatusPresentation(
+                            renderStatus = packet.toRenderStatusPresentation(
                                 readiness = RenderHostReadiness.Ready,
                                 sceneRevision = lease.sceneRevision,
                                 summary = lease.summaryLine,
@@ -214,6 +240,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                                 readiness = RenderHostReadiness.Failed,
                                 sceneRevision = lease.sceneRevision,
                                 summary = lease.summaryLine,
+                                isDegraded = true,
+                                degradationReason = error.message ?: error::class.java.simpleName,
                                 issue = error.message ?: error::class.java.simpleName,
                             ),
                             renderFrame = null,
@@ -232,6 +260,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     renderPacketSummary = signal.reason,
                     renderStatus = current.renderStatus.copy(
                         readiness = RenderHostReadiness.Unavailable,
+                        isDegraded = true,
+                        degradationReason = signal.reason,
                         issue = signal.reason,
                     ),
                 )
@@ -250,8 +280,13 @@ class BridgeBackedRuntimeFacade internal constructor(
                     snapshotSummary = null,
                     observerModeCode = null,
                     cameraFacingSummary = null,
+                    focusedBodyId = null,
+                    activeCheckpointId = null,
+                    activeCheckpointLabel = null,
                     renderStatus = current.renderStatus.copy(
                         readiness = RenderHostReadiness.Unavailable,
+                        isDegraded = true,
+                        degradationReason = signal.detail ?: signal.message,
                         issue = signal.detail ?: signal.message,
                     ),
                     renderFrame = null,
@@ -281,6 +316,18 @@ class BridgeBackedRuntimeFacade internal constructor(
 }
 
 private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresentation {
+    return toSnapshotPresentation(
+        focusTargetBodyId = null,
+        activeCheckpointId = null,
+        activeCheckpointLabel = null,
+    )
+}
+
+private fun NativeSnapshotSummaryResult.toSnapshotPresentation(
+    focusTargetBodyId: String?,
+    activeCheckpointId: String?,
+    activeCheckpointLabel: String?,
+): SnapshotPresentation {
     return SnapshotPresentation(
         scenarioId = scenarioId,
         activeBranchId = activeBranchId,
@@ -288,11 +335,102 @@ private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresen
         epochSeconds = epochSeconds,
         paused = paused,
         simSecondsPerRealSecond = simSecondsPerRealSecond,
+        focusTargetBodyId = focusTargetBodyId,
+        activeCheckpointId = activeCheckpointId,
+        activeCheckpointLabel = activeCheckpointLabel,
+        timelineSemantics = timelineSemantics,
+        timelineSemanticsLabel = timelineSemantics.toTimelineSemanticsLabel(),
         observerModeLabel = RuntimeObserverMode.values()
             .firstOrNull { it.nativeCode == observerMode }
             ?.displayLabel()
             ?: "Unknown mode ($observerMode)",
     )
+}
+
+private fun SnapshotPresentation.toSnapshotSummaryLine(): String {
+    val focusText = focusTargetBodyId?.let { ", focus=$it" } ?: ""
+    val checkpointText = activeCheckpointId?.let {
+        if (activeCheckpointLabel.isNullOrBlank()) {
+            ", checkpoint=$it"
+        } else {
+            ", checkpoint=$it (${activeCheckpointLabel})"
+        }
+    } ?: ""
+    return "scenario=$scenarioId branch=$activeBranchId bodies=$bodyCount epoch=${epochSeconds.asEpochLabel()}" +
+        ", timeline=${timelineSemanticsLabel}, mode=$observerModeLabel$focusText$checkpointText"
+}
+
+private fun Int.toTimelineSemanticsLabel(): String = when (this) {
+    1 -> "Branched sandbox"
+    else -> "Timeline semantics $this"
+}
+
+private fun NativeRenderDiagnostics.toRenderIssue(): String? {
+    if (droppedFrames <= 0) {
+        return null
+    }
+
+    return buildString {
+        append("frame#")
+        append(frameNumber)
+        append(": dropped_frames=")
+        append(droppedFrames)
+    }
+}
+
+private fun NativeRenderDiagnostics.isDegraded(): Boolean = droppedFrames > 0
+
+private fun NativeVulkanScenePacket.toRenderStatusPresentation(
+    readiness: RenderHostReadiness,
+    sceneRevision: String,
+    summary: String,
+    renderedBodyCount: Int,
+    renderedTracerCount: Int,
+    renderedTrailCount: Int,
+): RenderStatusPresentation {
+    return RenderStatusPresentation(
+        readiness = readiness,
+        sceneRevision = sceneRevision,
+        summary = summary,
+        renderedBodyCount = renderedBodyCount,
+        renderedTracerCount = renderedTracerCount,
+        renderedTrailCount = renderedTrailCount,
+        directionalLightCount = directionalLightCount,
+        diagnosticsFrameNumber = diagnostics.frameNumber,
+        diagnosticsCpuExtractMs = diagnostics.cpuExtractMs,
+        diagnosticsGpuUploadMs = diagnostics.gpuUploadMs,
+        diagnosticsDroppedFrames = diagnostics.droppedFrames,
+        provenanceSource = provenanceSource,
+        provenanceVersion = provenanceVersion,
+        provenanceManifestId = provenanceManifestId,
+        provenanceManifestDigest = provenanceManifestDigest,
+        provenancePackageDigest = provenancePackageDigest,
+        isDegraded = diagnostics.isDegraded(),
+        degradationReason = diagnostics.toRenderIssue(),
+        issue = diagnostics.toRenderIssue(),
+    )
+}
+
+private fun RuntimeCommand.focusTargetBodyId(existing: String?): String? {
+    return when (this) {
+        is RuntimeCommand.FocusBody -> bodyId
+        else -> existing
+    }
+}
+
+private fun RuntimeCommand.activeCheckpointId(existing: String?): String? {
+    return when (this) {
+        is RuntimeCommand.CreateCheckpoint -> checkpointId ?: existing
+        is RuntimeCommand.CreateBranchFromCheckpoint -> checkpointId
+        else -> existing
+    }
+}
+
+private fun RuntimeCommand.activeCheckpointLabel(existing: String?): String? {
+    return when (this) {
+        is RuntimeCommand.CreateCheckpoint -> checkpointLabel ?: existing
+        else -> existing
+    }
 }
 
 private fun RuntimeCommand.userFacingAction(): String = when (this) {

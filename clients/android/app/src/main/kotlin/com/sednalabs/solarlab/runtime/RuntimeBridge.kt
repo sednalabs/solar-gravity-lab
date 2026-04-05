@@ -211,7 +211,11 @@ internal class JniRuntimeBridge(
         }
 
         val signals = mutableListOf<RuntimeSignal>()
-        signals += RuntimeSignal.CommandApplied(command.label, commandResult)
+        signals += RuntimeSignal.CommandApplied(
+            command = command,
+            commandLabel = command.label,
+            summary = commandResult,
+        )
         signals += refreshSignalsForHandle(handle, includeSummary = false)
         return signals
     }
@@ -296,6 +300,7 @@ internal sealed interface RuntimeSignal {
     ) : RuntimeSignal
     data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult) : RuntimeSignal
     data class CommandApplied(
+        val command: RuntimeCommand,
         val commandLabel: String,
         val summary: NativeSnapshotSummaryResult,
     ) : RuntimeSignal
