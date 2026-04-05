@@ -4,7 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -117,11 +117,15 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).performTextInput("body-7")
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
+            .assertIsEnabled()
+            .performClick()
         assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "body-7" })
 
         scrollShellTo(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
-        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
+            .assertIsEnabled()
+            .performClick()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.SetObserverMode && it.mode == RuntimeObserverMode.FollowSelected
@@ -131,7 +135,9 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.CHECKPOINT_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).performTextInput("checkpoint-1")
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
+            .assertIsEnabled()
+            .performClick()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.CreateCheckpoint && it.checkpointId == "checkpoint-1"
@@ -144,7 +150,9 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_NAME_FIELD).performTextInput("branch-a")
         composeRule.waitForIdle()
         scrollShellTo(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
-        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
+            .assertIsEnabled()
+            .performClick()
         assertTrue(
             runtimeFacade.commands.any {
                 it is RuntimeCommand.CreateBranchFromCheckpoint &&
@@ -217,7 +225,7 @@ class SolarLabShellLayoutTest {
     private fun assertReachableInScrollableShell(tag: String) {
         scrollShellTo(tag)
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag(tag).assertExists()
+        composeRule.onNodeWithTag(tag).fetchSemanticsNode()
     }
 
     private fun scrollShellTo(tag: String) {
