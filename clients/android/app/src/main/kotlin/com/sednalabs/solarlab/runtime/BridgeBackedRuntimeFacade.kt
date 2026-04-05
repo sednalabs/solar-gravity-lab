@@ -5,6 +5,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 
+/**
+ * Android-local implementation of `RuntimeFacade`.
+ *
+ * It is the shell's runtime adapter: receives boundary signals and materializes UI state
+ * while keeping all business/physics behavior inside the native runtime.
+ */
 class BridgeBackedRuntimeFacade internal constructor(
     private val bridge: RuntimeBridge
 ) : RuntimeFacade {
@@ -19,10 +25,14 @@ class BridgeBackedRuntimeFacade internal constructor(
 
     override val uiState: StateFlow<ShellUiState> = _uiState.asStateFlow()
 
+    // Session handoff is one-way from bridge to UI state.
+    // The flow is treated as the only driver for initial connection lifecycle.
     override suspend fun startSession() {
         bridge.connect().collect(::applySignal)
     }
 
+    // Explicit refresh and command paths are intentionally mapped 1:1 from UI intent to
+    // runtime boundary outputs and then to immutable UI copies.
     override suspend fun refresh() {
         bridge.refresh().forEach(::applySignal)
     }
@@ -58,6 +68,8 @@ class BridgeBackedRuntimeFacade internal constructor(
             is RuntimeSignal.RenderPacketReady -> {
                 val lease = signal.lease
                 try {
+                    // Decode packet payloads only on the UI boundary and close the packet lease
+                    // in finally to guarantee host-side release independent of decode outcome.
                     val renderFrame = VulkanPacketRenderFrameDecoder.decode(lease.packet)
                     _uiState.value.copy(
                         statusLine = "Vulkan render host ready",

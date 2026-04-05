@@ -55,6 +55,9 @@ internal object VulkanPacketRenderFrameDecoder {
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
     private const val TRAIL_SPAN_STRIDE_BYTES = 32
 
+    // Decodes native-side packet layout into immutable Kotlin domain models.
+    // Stride constants and slice math are intentionally colocated with decode paths
+    // so packet schema drift stays contained to this file.
     fun decode(packet: NativeVulkanScenePacket): RenderFrame {
         val bodies = decodeBodies(packet.bodyInstances, packet.bodyCount)
         val tracers = decodeTracers(packet.tracerInstances, packet.tracerCount)
@@ -69,6 +72,7 @@ internal object VulkanPacketRenderFrameDecoder {
     }
 
     private fun decodeBodies(buffer: ByteBuffer?, count: Int): List<RenderBody> {
+        // Native packet buffers may be absent; callers treat null/empty as an intentional no-op draw.
         val ordered = preparedBuffer(buffer) ?: return emptyList()
         val available = min(count.coerceAtLeast(0), ordered.limit() / BODY_STRIDE_BYTES)
         return List(available) { index ->
@@ -147,6 +151,7 @@ internal object VulkanPacketRenderFrameDecoder {
 
     private fun preparedBuffer(buffer: ByteBuffer?): ByteBuffer? {
         if (buffer == null) return null
+        // Duplicate keeps native order and avoids mutating caller cursor/state.
         return buffer.duplicate().order(ByteOrder.nativeOrder())
     }
 }

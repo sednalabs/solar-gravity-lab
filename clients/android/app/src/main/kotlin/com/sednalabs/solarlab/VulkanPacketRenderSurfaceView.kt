@@ -17,10 +17,17 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
+/**
+ * Rendering host for decoded packets.
+ *
+ * This view is Android-only host glue: it paints decoded `RenderFrame` models into a
+ * SurfaceView and has no ownership of simulation state.
+ */
 class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback2 {
+    // Frame reference is replaced atomically from Compose callbacks and read on draw.
     private var latestFrame: RenderFrame? = null
     private var surfaceReady: Boolean = false
 
@@ -51,6 +58,10 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         setWillNotDraw(false)
     }
 
+    /**
+     * Called by Compose on UI updates. The frame is a value snapshot; drawing is then
+     * driven by the Surface lifecycle to avoid stale direct canvas calls.
+     */
     fun submitFrame(frame: RenderFrame?) {
         latestFrame = frame
         drawNow()
@@ -74,6 +85,12 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         drawNow()
     }
 
+    /**
+     * Draw flow is conservative and SurfaceView-owned:
+     * - only render while surface is ready
+     * - lock/unlock a single canvas per attempt
+     * - always draw background first to keep deterministic frame content.
+     */
     private fun drawNow() {
         if (!surfaceReady) return
         val canvas = holder.lockCanvas() ?: return
@@ -90,6 +107,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
     }
 
+    // Decode step: convert shared world-space coordinates into screen space, apply safe
+    // fallback scale, then draw bodies, tracers, and trail polylines in that order.
     private fun drawFrame(canvas: Canvas, frame: RenderFrame) {
         val viewportWidth = width.toFloat().coerceAtLeast(1f)
         val viewportHeight = height.toFloat().coerceAtLeast(1f)
@@ -187,6 +206,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     }
 
     private fun computeExtent(frame: RenderFrame): Extent {
+        // Compute a bounded viewport envelope from all visible render entities.
+        // If no entities arrive this tick, we keep a 1.0f half-span floor.
         var centerX = 0f
         var centerY = 0f
         var count = 0

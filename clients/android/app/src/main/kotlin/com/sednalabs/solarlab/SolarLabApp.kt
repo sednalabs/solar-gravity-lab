@@ -22,10 +22,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 
+/**
+ * Composable shell for v2 runtime rendering.
+ *
+ * It is intentionally UI-only: all mutation commands, session lifecycle, and snapshot
+ * interpretation sit behind `RuntimeFacade`.
+ */
 @Composable
 fun SolarLabApp(runtimeFacade: RuntimeFacade) {
+    // Single source of truth for the shell; collectAsState keeps recomposition tied to
+    // boundary-delivered signals without local cache duplication.
     val uiState by runtimeFacade.uiState.collectAsState()
 
+    // Start handshake once per facade identity; this ties session ownership to the caller
+    // that owns the facade instance.
     LaunchedEffect(runtimeFacade) {
         runtimeFacade.startSession()
     }
@@ -53,6 +63,9 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                         .clip(RoundedCornerShape(16.dp))
                 ) {
                     if (uiState.renderFrame != null) {
+                        // AndroidView is used only as a host for the SurfaceView renderer;
+                        // it receives immutable frame snapshots from state and never executes
+                        // scene interpretation itself.
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { context ->

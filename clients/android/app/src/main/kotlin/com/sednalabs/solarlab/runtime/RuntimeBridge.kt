@@ -16,10 +16,13 @@ import java.nio.charset.StandardCharsets
  * Native transport owns ABI calls into `engine/ffi` via a JNI shim.
  */
 internal interface RuntimeBridge {
+    // Streamed connection events from the runtime host.
     fun connect(): Flow<RuntimeSignal>
 
+    // Synchronous refresh/query path for already-bound handles.
     suspend fun refresh(): List<RuntimeSignal>
 
+    // Command path: apply intent and surface resulting state deltas.
     suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal>
 }
 
@@ -27,10 +30,13 @@ internal class JniRuntimeBridge(
     private val transport: NativeRuntimeTransport = JniNativeRuntimeTransport,
     private val renderHostAdapter: RenderHostAdapter = NativeRenderHostAdapter(transport),
 ) : RuntimeBridge {
+    // Serialize access to activeSessionHandle and avoid races between connect/refresh/apply.
     private val stateLock = Any()
     @Volatile
     private var activeSessionHandle: Long = 0L
 
+    // Creates the native session and starts the periodic snapshot refresh loop.
+    // Emitted signals are boundary-only; all rendering state remains host-owned.
     override fun connect(): Flow<RuntimeSignal> = callbackFlow {
         val loadOutcome = transport.ensureLibraryLoaded()
         if (loadOutcome is NativeLibraryLoadOutcome.Failure) {
@@ -145,6 +151,7 @@ internal class JniRuntimeBridge(
         }
     }
 
+    // Explicit pull refresh for currently bound session; reuses handle snapshot guard.
     override suspend fun refresh(): List<RuntimeSignal> {
         val handle = synchronized(stateLock) { activeSessionHandle }
         if (handle == 0L) {
@@ -154,6 +161,7 @@ internal class JniRuntimeBridge(
         return refreshSignalsForHandle(handle, includeSummary = true)
     }
 
+    // Dispatches UI command into native runtime and returns resulting status + snapshot signals.
     override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> {
         val handle = synchronized(stateLock) { activeSessionHandle }
         if (handle == 0L) {
@@ -180,6 +188,8 @@ internal class JniRuntimeBridge(
         return signals
     }
 
+    // Collects one snapshot refresh bundle for one handle:
+    // optional world-state summary plus render packet lease.
     private fun refreshSignalsForHandle(handle: Long, includeSummary: Boolean): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
 
@@ -204,6 +214,8 @@ internal class JniRuntimeBridge(
             if (activeSessionHandle != handle) {
                 return signals
             }
+            // Render packets are refreshed only for the current active handle; stale handle
+            // refresh is intentionally dropped to avoid cross-session packet aliasing.
             val refreshResult = renderHostAdapter.refreshPacket()
             if (refreshResult.lease != null) {
                 signals += RuntimeSignal.RenderPacketReady(refreshResult.lease)
@@ -222,6 +234,8 @@ internal class JniRuntimeBridge(
             if (activeSessionHandle != expectedHandle) {
                 return
             }
+            // Session teardown order is host-defined:
+            // lease -> native transport release -> zero active handle.
             // Packet-backed ByteBuffer views are only valid while the native packet handle is alive.
             // Release packet leases before tearing down the owning runtime session.
             renderHostAdapter.releasePacket()
