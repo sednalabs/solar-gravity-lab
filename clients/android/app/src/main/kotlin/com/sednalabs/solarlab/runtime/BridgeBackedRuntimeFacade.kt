@@ -12,6 +12,9 @@ import java.util.Locale
  *
  * It is the shell's runtime adapter: receives boundary signals and materializes UI state
  * while keeping all business/physics behavior inside the native runtime.
+ * 
+ * This facade serves as the "source of truth" for the Android UI, transforming 
+ * low-level boundary signals (handles, revision counts) into a stable ShellUiState.
  */
 class BridgeBackedRuntimeFacade internal constructor(
     private val bridge: RuntimeBridge
@@ -29,8 +32,12 @@ class BridgeBackedRuntimeFacade internal constructor(
 
     override val uiState: StateFlow<ShellUiState> = _uiState.asStateFlow()
 
-    // Session handoff is one-way from bridge to UI state.
-    // The flow is treated as the only driver for initial connection lifecycle.
+    /**
+     * Initializes the connection to the Rust-owned runtime boundary.
+     * 
+     * Session handoff is one-way from the bridge to the UI state. The bridge's 
+     * connection flow is the primary driver for the initial shell lifecycle.
+     */
     override suspend fun startSession() {
         _uiState.update { current ->
             current.copy(
