@@ -9,6 +9,11 @@ import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.core.simulation.SimulationEngine
 import kotlin.collections.ArrayDeque
+import kotlin.math.PI
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sqrt
 
 class RenderSceneAssembler(
     private val maxTrailPointsPerBody: Int = 128,
@@ -138,7 +143,13 @@ class RenderSceneAssembler(
             return emptyList()
         }
 
-        val sampleStepSeconds = options.futurePathHorizonSeconds / (options.futurePathSampleCount - 1).toDouble()
+        val bodiesById = snapshot.bodies.associateBy { it.id }
+        val plan = buildForecastPlan(
+            snapshot = snapshot,
+            bodiesById = bodiesById,
+            includedBodyIds = includedBodyIds,
+            options = options,
+        )
         val pointsByBodyId = linkedMapOf<String, MutableList<Vector3d>>()
         snapshot.bodies.forEach { body ->
             if (body.id in includedBodyIds) {
@@ -153,13 +164,26 @@ class RenderSceneAssembler(
                 includeTracerMutualGravity = options.includeTracerMutualGravityInForecast,
             ),
         )
-        repeat(options.futurePathSampleCount - 1) {
+
+        var elapsedSeconds = 0.0
+        var nextSampleSeconds = plan.sampleStepSeconds
+        while (elapsedSeconds + FORECAST_EPSILON < plan.horizonSeconds) {
+            val stepSeconds = min(plan.integrationStepSeconds, plan.horizonSeconds - elapsedSeconds)
             val forecastSnapshot = engine.step(
-                deltaTimeSeconds = sampleStepSeconds,
+                deltaTimeSeconds = stepSeconds,
                 recomputeDiagnostics = false,
             ).snapshot
-            forecastSnapshot.bodies.forEach { body ->
-                pointsByBodyId[body.id]?.add(body.positionM)
+            elapsedSeconds += stepSeconds
+            var sampledPointCount = pointsByBodyId.values.firstOrNull()?.size ?: 0
+            while (
+                elapsedSeconds + FORECAST_EPSILON >= nextSampleSeconds &&
+                sampledPointCount < plan.sampleCount
+            ) {
+                forecastSnapshot.bodies.forEach { body ->
+                    pointsByBodyId[body.id]?.add(body.positionM)
+                }
+                sampledPointCount += 1
+                nextSampleSeconds += plan.sampleStepSeconds
             }
         }
 
@@ -170,9 +194,112 @@ class RenderSceneAssembler(
                 colorArgb = body.colorArgb,
                 alpha = body.futurePathAlpha(),
                 pointsM = points,
-                sampleStepSeconds = sampleStepSeconds,
+                horizonSeconds = plan.horizonSeconds,
+                sampleStepSeconds = plan.sampleStepSeconds,
             )
         }
+    }
+
+    private fun buildForecastPlan(
+        snapshot: SimulationSnapshot,
+        bodiesById: Map<String, BodyState>,
+        includedBodyIds: Set<String>,
+        options: RenderSceneAssemblyOptions,
+    ): ForecastPlan {
+        val requestedHorizonSeconds = options.futurePathHorizonSeconds
+        val requestedSampleCount = options.futurePathSampleCount
+        val selectedBody = options.selectedBodyId?.let(bodiesById::get)
+        val adaptivePeriodSeconds = if (
+            options.futurePathForecastMode == RenderFuturePathForecastMode.ADAPTIVE_ORBITAL &&
+            includedBodyIds.size == 1 &&
+            selectedBody != null &&
+            selectedBody.id in includedBodyIds
+        ) {
+            estimateBoundOrbitalPeriodSeconds(selectedBody, snapshot.bodies)
+        } else {
+            null
+        }
+
+        val horizonSeconds = adaptivePeriodSeconds
+            ?.coerceAtLeast(requestedHorizonSeconds)
+            ?.coerceAtMost(options.futurePathMaxHorizonSeconds)
+            ?: requestedHorizonSeconds
+        val sampleCount = if (horizonSeconds > requestedHorizonSeconds + FORECAST_EPSILON) {
+            val scaledSampleCount = 1 + ceil(
+                (requestedSampleCount - 1).toDouble() * (horizonSeconds / requestedHorizonSeconds),
+            ).toInt()
+            min(options.futurePathMaxSampleCount, max(requestedSampleCount, scaledSampleCount))
+        } else {
+            requestedSampleCount
+        }
+        val sampleStepSeconds = horizonSeconds / (sampleCount - 1).toDouble()
+        val targetIntegrationStepSeconds = adaptivePeriodSeconds
+            ?.div(512.0)
+            ?.coerceIn(MIN_FORECAST_INTEGRATION_STEP_SECONDS, MAX_FORECAST_INTEGRATION_STEP_SECONDS)
+            ?: sampleStepSeconds
+        val integrationSteps = min(
+            options.futurePathMaxIntegrationSteps,
+            max(sampleCount - 1, ceil(horizonSeconds / targetIntegrationStepSeconds).toInt()),
+        )
+        val integrationStepSeconds = horizonSeconds / integrationSteps.toDouble()
+        return ForecastPlan(
+            horizonSeconds = horizonSeconds,
+            sampleCount = sampleCount,
+            sampleStepSeconds = sampleStepSeconds,
+            integrationStepSeconds = integrationStepSeconds,
+        )
+    }
+
+    private fun estimateBoundOrbitalPeriodSeconds(
+        body: BodyState,
+        bodies: List<BodyState>,
+    ): Double? {
+        val primary = selectForecastPrimary(body, bodies) ?: return null
+        val relativePosition = body.positionM - primary.positionM
+        val relativeVelocity = body.velocityMps - primary.velocityMps
+        val radius = relativePosition.magnitude()
+        if (radius <= FORECAST_EPSILON) {
+            return null
+        }
+        val mu = FORECAST_GRAVITATIONAL_CONSTANT * (primary.massKg + body.massKg)
+        if (mu <= FORECAST_EPSILON) {
+            return null
+        }
+
+        val speedSquared = relativeVelocity.magnitudeSquared()
+        val specificOrbitalEnergy = (speedSquared * 0.5) - (mu / radius)
+        if (specificOrbitalEnergy < -FORECAST_EPSILON) {
+            val semiMajorAxis = -mu / (2.0 * specificOrbitalEnergy)
+            return 2.0 * PI * sqrt((semiMajorAxis * semiMajorAxis * semiMajorAxis) / mu)
+        }
+
+        val speed = sqrt(speedSquared)
+        return if (speed > FORECAST_EPSILON) {
+            (2.0 * PI * radius / speed).coerceAtMost(MAX_FALLBACK_ORBITAL_PERIOD_SECONDS)
+        } else {
+            null
+        }
+    }
+
+    private fun selectForecastPrimary(body: BodyState, bodies: List<BodyState>): BodyState? {
+        body.hostBodyId?.let { hostId ->
+            bodies.firstOrNull { candidate ->
+                candidate.id == hostId && candidate.gravitationalRole == GravitationalRole.MASSIVE
+            }?.let { return it }
+        }
+
+        return bodies
+            .asSequence()
+            .filter { candidate ->
+                candidate.id != body.id &&
+                    candidate.gravitationalRole == GravitationalRole.MASSIVE &&
+                    candidate.massKg > FORECAST_EPSILON
+            }
+            .maxByOrNull { candidate ->
+                val distanceSquared = candidate.positionM.distanceSquaredTo(body.positionM)
+                    .coerceAtLeast(FORECAST_EPSILON)
+                candidate.massKg / distanceSquared
+            }
     }
 
     private fun sampleHistoryPoints(points: List<Vector3d>, maxPoints: Int): List<Vector3d> {
@@ -188,6 +315,19 @@ class RenderSceneAssembler(
         }
     }
 }
+
+private data class ForecastPlan(
+    val horizonSeconds: Double,
+    val sampleCount: Int,
+    val sampleStepSeconds: Double,
+    val integrationStepSeconds: Double,
+)
+
+private const val FORECAST_GRAVITATIONAL_CONSTANT: Double = 6.67430e-11
+private const val FORECAST_EPSILON: Double = 1e-9
+private const val MIN_FORECAST_INTEGRATION_STEP_SECONDS: Double = 60.0
+private const val MAX_FORECAST_INTEGRATION_STEP_SECONDS: Double = 6.0 * 3_600.0
+private const val MAX_FALLBACK_ORBITAL_PERIOD_SECONDS: Double = 365.25 * 86_400.0
 
 private fun BodyState.trailAlpha(): Float = when {
     category == BodyCategory.STAR -> 0.20f

@@ -687,6 +687,7 @@ class RenderSceneAssemblerTest {
                 selectedBodyId = selectedId,
                 trailVisibilityMode = RenderTrailVisibilityMode.SELECTED_ONLY,
                 futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+                futurePathForecastMode = RenderFuturePathForecastMode.SHORT_HORIZON,
                 futurePathHorizonSeconds = 3_600.0,
                 futurePathSampleCount = 6,
             ),
@@ -697,6 +698,7 @@ class RenderSceneAssemblerTest {
         val futurePath = firstFrame.futurePaths.single()
         assertEquals(selectedId, futurePath.bodyId)
         assertEquals(6, futurePath.pointsM.size)
+        assertEquals(3_600.0, futurePath.horizonSeconds, 1e-6)
         assertEquals(720.0, futurePath.sampleStepSeconds, 1e-6)
         assertEquals(Vector3d(3.84e8, 0.0, 0.0), futurePath.pointsM.first())
         val linearEnd = Vector3d(3.84e8, 1_022.0 * 3_600.0, 0.0)
@@ -741,6 +743,7 @@ class RenderSceneAssemblerTest {
             RenderSceneAssemblyOptions(
                 selectedBodyId = selectedId,
                 futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+                futurePathForecastMode = RenderFuturePathForecastMode.SHORT_HORIZON,
                 futurePathHorizonSeconds = 60.0,
                 futurePathSampleCount = 4,
                 includeTracerMutualGravityInForecast = false,
@@ -752,6 +755,7 @@ class RenderSceneAssemblerTest {
             RenderSceneAssemblyOptions(
                 selectedBodyId = selectedId,
                 futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+                futurePathForecastMode = RenderFuturePathForecastMode.SHORT_HORIZON,
                 futurePathHorizonSeconds = 60.0,
                 futurePathSampleCount = 4,
                 includeTracerMutualGravityInForecast = true,
@@ -760,6 +764,41 @@ class RenderSceneAssemblerTest {
 
         assertEquals(withoutTracerGravity.pointsM.first(), withTracerGravity.pointsM.first())
         assertTrue(withTracerGravity.pointsM.last().x > withoutTracerGravity.pointsM.last().x)
+    }
+
+    @Test
+    fun assembleAdaptiveFuturePathForecastExtendsTowardSelectedOrbit() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 6)
+        val selectedId = "moon"
+        val snapshot = SimulationSnapshot(
+            epochSeconds = 0.0,
+            bodies = listOf(
+                body("earth", GravitationalRole.MASSIVE, BodyCategory.PLANET).copy(
+                    massKg = 5.972e24,
+                    positionM = Vector3d.ZERO,
+                ),
+                body(selectedId, GravitationalRole.TRACER, BodyCategory.MOON).copy(
+                    hostBodyId = "earth",
+                    massKg = 7.342e22,
+                    positionM = Vector3d(3.844e8, 0.0, 0.0),
+                    velocityMps = Vector3d(0.0, 1_022.0, 0.0),
+                ),
+            ),
+        )
+
+        val futurePath = assembler.assemble(
+            snapshot,
+            RenderSceneAssemblyOptions(
+                selectedBodyId = selectedId,
+                futurePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+                futurePathHorizonSeconds = 3_600.0,
+                futurePathSampleCount = 8,
+            ),
+        ).futurePaths.single()
+
+        assertTrue(futurePath.horizonSeconds > 86_400.0)
+        assertTrue(futurePath.pointsM.size > 8)
+        assertTrue(futurePath.sampleStepSeconds > (3_600.0 / 7.0))
     }
 
     private fun body(id: String, role: GravitationalRole, category: BodyCategory): BodyState = BodyState(

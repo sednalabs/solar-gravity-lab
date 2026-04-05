@@ -37,6 +37,7 @@ data class RenderFuturePath(
     val colorArgb: Int,
     val alpha: Float,
     val pointsM: List<Vector3d>,
+    val horizonSeconds: Double,
     val sampleStepSeconds: Double,
 )
 
@@ -53,6 +54,11 @@ enum class RenderFuturePathVisibilityMode {
     ALL_OBJECTS,
 }
 
+enum class RenderFuturePathForecastMode {
+    SHORT_HORIZON,
+    ADAPTIVE_ORBITAL,
+}
+
 data class RenderSceneFrame(
     val epochSeconds: Double,
     val authoritativeBodies: List<RenderBody>,
@@ -67,13 +73,26 @@ data class RenderSceneAssemblyOptions(
     val trailVisibilityMode: RenderTrailVisibilityMode = RenderTrailVisibilityMode.TRACKED_CLASSES,
     val trackedTrailKinds: Set<RenderBodyKind> = DEFAULT_TRACKED_TRAIL_KINDS,
     val futurePathVisibilityMode: RenderFuturePathVisibilityMode = RenderFuturePathVisibilityMode.SELECTED_ONLY,
+    val futurePathForecastMode: RenderFuturePathForecastMode = RenderFuturePathForecastMode.ADAPTIVE_ORBITAL,
     val futurePathHorizonSeconds: Double = 14_400.0,
     val futurePathSampleCount: Int = 24,
+    val futurePathMaxHorizonSeconds: Double = 365.25 * 86_400.0,
+    val futurePathMaxSampleCount: Int = 96,
+    val futurePathMaxIntegrationSteps: Int = 256,
     val includeTracerMutualGravityInForecast: Boolean = false,
 ) {
     init {
         require(futurePathHorizonSeconds > 0.0) { "futurePathHorizonSeconds must be positive." }
         require(futurePathSampleCount >= 2) { "futurePathSampleCount must be at least 2." }
+        require(futurePathMaxHorizonSeconds >= futurePathHorizonSeconds) {
+            "futurePathMaxHorizonSeconds must be >= futurePathHorizonSeconds."
+        }
+        require(futurePathMaxSampleCount >= futurePathSampleCount) {
+            "futurePathMaxSampleCount must be >= futurePathSampleCount."
+        }
+        require(futurePathMaxIntegrationSteps >= futurePathSampleCount - 1) {
+            "futurePathMaxIntegrationSteps must be >= futurePathSampleCount - 1."
+        }
     }
 }
 
