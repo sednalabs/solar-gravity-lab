@@ -280,10 +280,22 @@ jobs:
               -F draft=false >/dev/null
           fi
 
-          gh release upload "$tag_name" \
-            --repo "${{ github.repository }}" \
-            --clobber \
-            dist/*
+          uploaded=false
+          for attempt in {1..10}; do
+            if gh release upload "$tag_name" \
+              --repo "${{ github.repository }}" \
+              --clobber \
+              dist/*; then
+              uploaded=true
+              break
+            fi
+            sleep 3
+          done
+
+          if [[ "$uploaded" != true ]]; then
+            echo "Failed to upload release assets for $tag_name after retries." >&2
+            exit 1
+          fi
 
       - name: Emit summary
         if: always()
