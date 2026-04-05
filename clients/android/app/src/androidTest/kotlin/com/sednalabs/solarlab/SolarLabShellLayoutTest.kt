@@ -142,11 +142,9 @@ class SolarLabShellLayoutTest {
             .assertIsEnabled()
             .performClick()
         composeRule.waitForIdle()
-        assertTrue(
-            runtimeFacade.commands.any {
-                it is RuntimeCommand.CreateCheckpoint
-            },
-        )
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runtimeFacade.commands.any { it is RuntimeCommand.CreateCheckpoint }
+        }
 
         scrollShellTo(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).performTextInput("checkpoint-1")
