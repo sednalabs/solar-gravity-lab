@@ -136,12 +136,16 @@ class SolarLabShellLayoutTest {
         )
 
         scrollShellTo(SolarLabTestTags.CHECKPOINT_ID_FIELD)
-        composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).performTextInput("checkpoint-1")
+        composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD)
+            .assertIsEnabled()
+            .performTextInput("checkpoint-1")
         composeRule.waitForIdle()
         scrollShellTo(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
             .assertIsEnabled()
-            .performClick()
+            .performTouchInput { click() }
         composeRule.waitForIdle()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             runtimeFacade.commands.any { it is RuntimeCommand.CreateCheckpoint }
