@@ -1939,6 +1939,17 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         vkCmdDispatch(commandBuffer, sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX, 1, 1);
     }
     if (runFar) {
+        /**
+         * --- Far Tracer Spatial Thinning ---
+         * 
+         * To maintain performance in dense asteroid belts or Oort clouds, the far compute
+         * shader performs viewport-relative spatial thinning. It uses a 3D hash of the
+         * screen-space tile coordinates and the current zoom level to deterministically
+         * drop tracers while preserving a statistically uniform distribution.
+         * 
+         * This avoids the "aliasing" or flickering that simple modular subsampling would
+         * cause when panning the camera across high-density regions.
+         */
         const ComputePushConstants pushConstants{.sourceCount = sceneGpuStreams_.tracerFarCompute.sourceVertexCount};
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, farComputePipeline_);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_, 0, 1, &tracerFarComputeDescriptorSet_, 0, nullptr);
@@ -1946,6 +1957,19 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         vkCmdDispatch(commandBuffer, sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX, 1, 1);
     }
 
+    /**
+     * --- Compute-to-Graphics Synchronization ---
+     * 
+     * The compute shaders above write to output vertex buffers and an indirect draw
+     * command buffer. We must ensure these writes are globally visible before the
+     * graphics pipeline attempts to read them as vertex data or indirect parameters.
+     * 
+     * Pipeline Barrier:
+     * - srcStage: COMPUTE_SHADER
+     * - dstStage: DRAW_INDIRECT (for the command buffer) and VERTEX_INPUT (for the vertex data)
+     * - srcAccess: SHADER_WRITE
+     * - dstAccess: INDIRECT_COMMAND_READ and VERTEX_ATTRIBUTE_READ
+     */
     const VkMemoryBarrier computeToGraphicsBarrier{
         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = nullptr,

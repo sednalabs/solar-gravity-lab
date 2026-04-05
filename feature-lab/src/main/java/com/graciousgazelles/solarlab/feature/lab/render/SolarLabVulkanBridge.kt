@@ -106,11 +106,17 @@ internal object SolarLabVulkanBridge {
         lastSubmittedPacket = null
     }
 
+    /**
+     * Heuristic to avoid redundant native scene uploads when the visual state is 
+     * functionally identical to the previous frame.
+     * 
+     * Because `sourceRevision` increments on every assembled snapshot (even if only 
+     * the camera moved), we perform a deep comparison of the primitive arrays to 
+     * distinguish between "camera-only" changes and "material simulation" changes.
+     */
     private fun NativeScenePacket.contentMatches(other: NativeScenePacket?): Boolean {
         if (other == null) return false
         if (this === other) return true
-        // `sourceRevision` changes on every assembled snapshot, so dedupe must
-        // compare the rendered packet content rather than the revision counter.
         return authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
             authoritativeRadiiM.contentEquals(other.authoritativeRadiiM) &&
             authoritativeColorsArgb.contentEquals(other.authoritativeColorsArgb) &&

@@ -93,6 +93,10 @@ pub struct MountedManifestState {
 pub struct WorldSnapshot {
     /// Copy-based snapshot boundary: external callers only get immutable
     /// world-facing data; they cannot mutate runtime directly.
+    /// 
+    /// Snapshots are published after every authoritative state transition (command
+    /// application or simulation step). The data is decoupled from the internal
+    /// tree-based branch state to ensure stable observation across FFI.
     pub scenario_id: ScenarioId,
     pub branch_id: BranchId,
     pub epoch_seconds: f64,
@@ -109,37 +113,54 @@ pub struct WorldSnapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorldCommand {
-    /// Mutation primitives that feed branch/state invariants, command logging, and
-    /// history event generation.
+    /// Spawns a new body into the simulation.
+    /// This triggers a recomputation of total system mass and barycenter invariants.
     SpawnBody {
         body: BodyState,
     },
+    /// Removes an existing body.
+    /// This is a material state change that will branch the sandbox if current
+    /// semantics are based on a fixed catalog.
     RemoveBody {
         body_id: BodyId,
     },
+    /// Directly updates a body's position or velocity.
+    /// Intended for user "grab and launch" interactions or small corrections.
     SetBodyKinematics {
         body_id: BodyId,
         position_m: Vector3d,
         velocity_mps: Vector3d,
     },
+    /// Advances the system epoch.
+    /// This invokes the authoritative physics solver for the delta duration.
     AdvanceEpoch {
         delta_seconds: f64,
     },
+    /// Pauses simulation propagation.
     PausePlayback,
+    /// Resumes simulation propagation.
     ResumePlayback,
+    /// Sets the time-scale multiplier for real-time playback.
     SetPlaybackRate {
         sim_seconds_per_real_second: f64,
     },
+    /// Changes the camera mode (e.g., from Free to Follow).
     SetObserverMode {
         mode: ObserverMode,
     },
+    /// Selects a specific body for the observer focus.
     FocusBody {
         body_id: Option<BodyId>,
     },
+    /// Captures the current authoritative state as a named or ID-based checkpoint.
+    /// Checkpoints are required before a branch can be created.
     CreateCheckpoint {
         checkpoint_id: Option<CheckpointId>,
         label: Option<String>,
     },
+    /// Forks the timeline into a new branch starting from a checkpoint.
+    /// This preserves the command log of the parent up to the checkpoint and
+    /// enables non-destructive "what-if" explorations.
     CreateBranchFromCheckpoint {
         checkpoint_id: CheckpointId,
         new_branch_id: Option<BranchId>,
@@ -226,8 +247,16 @@ const TRAIL_HISTORY_MAX_SAMPLES: usize = 96;
 
 #[derive(Clone, Debug)]
 pub struct WorldRuntime {
-    /// Simulation-owned mutable state. All mutable command, checkpoint, and branch
-    /// transitions should flow through this single root object.
+    /// Simulation-owned mutable state and history.
+    /// 
+    /// The runtime implements a tree-based branching model where the "Active Branch"
+    /// represents the current writable timeline. Users can capture Checkpoints at any
+    /// point and later create new Branches from those checkpoints to explore alternative
+    /// scenarios without losing the original history.
+    /// 
+    /// Every branch maintains its own authoritative WorldState and a CommandLog
+    /// that records every material change since the branch was created. This log
+    /// ensures that any state can be deterministically replayed or verified.
     scenario_id: ScenarioId,
     config: RuntimeConfig,
     hardware_profile: HardwareProfile,
