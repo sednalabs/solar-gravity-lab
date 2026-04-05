@@ -269,7 +269,7 @@ jobs:
           cargo test -p solarlab-ffi
 
   android-shell:
-    name: Android shell assemble debug
+    name: Android shell emulator smoke
     needs: metadata
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
     runs-on: ubuntu-24.04
@@ -289,6 +289,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Accept Android SDK licenses and install build toolchain
         shell: bash
         run: |
@@ -297,9 +299,11 @@ jobs:
           yes | sdkmanager --licenses >/dev/null
           set -o pipefail
           sdkmanager --install \
+            "emulator" \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
+            "system-images;android-35;google_apis;x86_64" \
             "cmake;3.22.1" \
             "ndk;27.2.12479018"
 
@@ -310,11 +314,32 @@ jobs:
           rustup target add aarch64-linux-android x86_64-linux-android
           cargo install cargo-ndk --locked
 
-      - name: Assemble debug Android shell
+      - name: Assemble debug Android shell and androidTest
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew -p clients/android --no-daemon :app:assembleDebug
+          ./gradlew -p clients/android --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Enable KVM for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run connected Android shell smoke and continuity tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          target: google_apis
+          emulator-boot-timeout: 1200
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          disable-animations: true
+          script: bash .github/scripts/run_validation_android_shell_smoke.sh
 
       - name: Upload Android shell artifacts
         if: always()

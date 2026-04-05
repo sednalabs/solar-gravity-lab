@@ -56,49 +56,73 @@ class BridgeBackedRuntimeFacade internal constructor(
                 renderFrame = null,
             )
         }
-        bridge.connect().collect(::applySignal)
+        try {
+            bridge.connect().collect(::applySignal)
+        } catch (error: Throwable) {
+            surfaceShellFailure(
+                statusLine = "Runtime startup failed",
+                detailLine = error.message ?: error::class.java.simpleName,
+                noticeLine = "Android shell caught an unhandled startup failure instead of crashing",
+            )
+        }
     }
 
     // Explicit refresh and command paths are intentionally mapped 1:1 from UI intent to
     // runtime boundary outputs and then to immutable UI copies.
     override suspend fun refresh() {
-        runShellAction(
-            label = "Refreshing runtime snapshot",
-            onStart = { current ->
-                current.copy(
-                    statusLine = "Refreshing runtime snapshot",
-                    detailLine = "Pulling the latest authoritative snapshot and render packet",
-                    pendingActionLabel = "Refreshing runtime snapshot",
-                    renderStatus = current.renderStatus.copy(
-                        readiness = if (current.sessionHandle != null) {
-                            RenderHostReadiness.Refreshing
-                        } else {
-                            RenderHostReadiness.WaitingForSession
-                        },
-                        issue = null,
-                    ),
-                )
+        try {
+            runShellAction(
+                label = "Refreshing runtime snapshot",
+                onStart = { current ->
+                    current.copy(
+                        statusLine = "Refreshing runtime snapshot",
+                        detailLine = "Pulling the latest authoritative snapshot and render packet",
+                        pendingActionLabel = "Refreshing runtime snapshot",
+                        renderStatus = current.renderStatus.copy(
+                            readiness = if (current.sessionHandle != null) {
+                                RenderHostReadiness.Refreshing
+                            } else {
+                                RenderHostReadiness.WaitingForSession
+                            },
+                            issue = null,
+                        ),
+                    )
+                }
+            ) {
+                bridge.refresh().forEach(::applySignal)
             }
-        ) {
-            bridge.refresh().forEach(::applySignal)
+        } catch (error: Throwable) {
+            surfaceShellFailure(
+                statusLine = "Runtime refresh failed",
+                detailLine = error.message ?: error::class.java.simpleName,
+                noticeLine = "Android shell caught an unhandled refresh failure instead of crashing",
+            )
         }
     }
 
     override suspend fun applyCommand(command: RuntimeCommand) {
         val actionLabel = command.userFacingAction()
-        runShellAction(
-            label = actionLabel,
-            onStart = { current ->
-                current.copy(
-                    statusLine = actionLabel,
-                    detailLine = "Sending ${command.label} across the runtime boundary",
-                    noticeLine = "Command intent: $actionLabel",
-                    noticeTone = ShellNoticeTone.Neutral,
-                    pendingActionLabel = actionLabel,
-                )
+        try {
+            runShellAction(
+                label = actionLabel,
+                onStart = { current ->
+                    current.copy(
+                        statusLine = actionLabel,
+                        detailLine = "Sending ${command.label} across the runtime boundary",
+                        noticeLine = "Command intent: $actionLabel",
+                        noticeTone = ShellNoticeTone.Neutral,
+                        pendingActionLabel = actionLabel,
+                    )
+                }
+            ) {
+                bridge.applyCommand(command).forEach(::applySignal)
             }
-        ) {
-            bridge.applyCommand(command).forEach(::applySignal)
+        } catch (error: Throwable) {
+            surfaceShellFailure(
+                statusLine = "Runtime command failed",
+                detailLine = error.message ?: error::class.java.simpleName,
+                noticeLine = "Android shell caught an unhandled command failure instead of crashing",
+            )
         }
     }
 
@@ -311,6 +335,30 @@ class BridgeBackedRuntimeFacade internal constructor(
                     current
                 }
             }
+        }
+    }
+
+    private fun surfaceShellFailure(
+        statusLine: String,
+        detailLine: String,
+        noticeLine: String,
+    ) {
+        _uiState.update { current ->
+            current.copy(
+                connectionState = SessionConnectionState.Unavailable,
+                statusLine = statusLine,
+                detailLine = detailLine,
+                noticeLine = noticeLine,
+                noticeTone = ShellNoticeTone.Critical,
+                pendingActionLabel = null,
+                renderStatus = current.renderStatus.copy(
+                    readiness = RenderHostReadiness.Unavailable,
+                    isDegraded = true,
+                    degradationReason = detailLine,
+                    issue = detailLine,
+                ),
+                renderFrame = null,
+            )
         }
     }
 }

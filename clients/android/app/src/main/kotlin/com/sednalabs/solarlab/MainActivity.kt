@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private class RuntimeSessionViewModel : ViewModel() {
+internal class RuntimeSessionViewModel : ViewModel() {
     val runtimeFacade: RuntimeFacade = BridgeBackedRuntimeFacade()
     private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 

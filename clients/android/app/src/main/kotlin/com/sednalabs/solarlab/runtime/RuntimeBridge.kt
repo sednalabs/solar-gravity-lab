@@ -252,7 +252,14 @@ internal class JniRuntimeBridge(
             }
             // Render packets are refreshed only for the current active handle; stale handle
             // refresh is intentionally dropped to avoid cross-session packet aliasing.
-            val refreshResult = renderHostAdapter.refreshPacket()
+            val refreshResult = runCatching {
+                renderHostAdapter.refreshPacket()
+            }.getOrElse { error ->
+                signals += RuntimeSignal.RenderUnavailable(
+                    reason = "Render export unavailable: ${error.message ?: error::class.java.simpleName}"
+                )
+                return signals
+            }
             if (refreshResult.lease != null) {
                 signals += RuntimeSignal.RenderPacketReady(refreshResult.lease)
             } else {

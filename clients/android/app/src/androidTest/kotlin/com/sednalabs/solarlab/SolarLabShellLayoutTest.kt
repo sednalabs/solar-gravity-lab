@@ -7,9 +7,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollToNode
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -76,29 +78,31 @@ class SolarLabShellLayoutTest {
 
     @Test
     fun primaryShellElements_areRenderedVisible_andTouchAccessible() {
-        composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.TITLE).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STATUS_LINE).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.RENDER_PANEL).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.DETAIL_LINE).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.SESSION_HANDLE).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.RENDER_PACKET_SUMMARY).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_NAME_FIELD).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_FOCUS_TARGET).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_OBSERVER_MODE).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_ACTIVE_BRANCH).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_ACTIVE_CHECKPOINT).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_PROVENANCE).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.METADATA_LIGHTS).assertIsDisplayed()
+        assertVisibleInScrollableShell(SolarLabTestTags.SHELL_COLUMN)
+        assertVisibleInScrollableShell(SolarLabTestTags.TITLE)
+        assertVisibleInScrollableShell(SolarLabTestTags.STATUS_LINE)
+        assertVisibleInScrollableShell(SolarLabTestTags.RENDER_PANEL)
+        assertVisibleInScrollableShell(SolarLabTestTags.DETAIL_LINE)
+        assertVisibleInScrollableShell(SolarLabTestTags.SESSION_HANDLE)
+        assertVisibleInScrollableShell(SolarLabTestTags.RENDER_PACKET_SUMMARY)
+        assertVisibleInScrollableShell(SolarLabTestTags.FOCUS_BODY_FIELD)
+        assertVisibleInScrollableShell(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
+        assertVisibleInScrollableShell(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
+        assertVisibleInScrollableShell(SolarLabTestTags.CHECKPOINT_ID_FIELD)
+        assertVisibleInScrollableShell(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
+        assertVisibleInScrollableShell(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
+        assertVisibleInScrollableShell(SolarLabTestTags.BRANCH_NAME_FIELD)
+        assertVisibleInScrollableShell(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
+        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_FOCUS_TARGET)
+        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_OBSERVER_MODE)
+        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_BRANCH)
+        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_CHECKPOINT)
+        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_PROVENANCE)
+        assertVisibleInScrollableShell(SolarLabTestTags.METADATA_LIGHTS)
 
         // Touch input is accepted by the render panel layout node.
+        composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
+            .performScrollToNode(hasTestTag(SolarLabTestTags.RENDER_PANEL))
         composeRule.onNodeWithTag(SolarLabTestTags.RENDER_PANEL)
             .performTouchInput { click() }
             .assertIsDisplayed()
@@ -192,5 +196,11 @@ class SolarLabShellLayoutTest {
         override suspend fun applyCommand(command: RuntimeCommand) {
             commands.add(command)
         }
+    }
+
+    private fun assertVisibleInScrollableShell(tag: String) {
+        composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
+            .performScrollToNode(hasTestTag(tag))
+        composeRule.onNodeWithTag(tag).assertIsDisplayed()
     }
 }

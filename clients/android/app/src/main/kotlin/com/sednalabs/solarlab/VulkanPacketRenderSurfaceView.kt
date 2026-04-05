@@ -10,6 +10,7 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.util.AttributeSet
+import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import com.sednalabs.solarlab.runtime.RenderBody
@@ -31,6 +32,10 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback2 {
+    companion object {
+        private const val TAG = "SolarLabRenderHost"
+    }
+
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
     private var latestFrame: RenderFrame? = null
     private var surfaceReady: Boolean = false
@@ -115,6 +120,9 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             drawBackground(canvas)
             val frame = latestFrame ?: return
             drawFrame(canvas, frame)
+        } catch (error: Throwable) {
+            Log.e(TAG, "Render host draw failed", error)
+            latestFrame = null
         } finally {
             holder.unlockCanvasAndPost(canvas)
         }
@@ -210,8 +218,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         viewportHeight: Float,
         halfWorldSpan: Float,
     ) {
+        if (!body.x.isFinite() || !body.y.isFinite() || !body.radiusM.isFinite()) {
+            return
+        }
         val sx = viewportWidth * 0.5f + ((body.x - centerX) * scale)
         val sy = viewportHeight * 0.5f - ((body.y - centerY) * scale)
+        if (!sx.isFinite() || !sy.isFinite()) {
+            return
+        }
         val radiusPx = (body.radiusM / halfWorldSpan * min(viewportWidth, viewportHeight) * 0.5f)
             .coerceIn(2.5f, 20f)
         bodyPaint.color = Color.argb(
@@ -235,8 +249,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         viewportWidth: Float,
         viewportHeight: Float,
     ) {
+        if (!tracer.x.isFinite() || !tracer.y.isFinite() || !tracer.sizePx.isFinite()) {
+            return
+        }
         val sx = viewportWidth * 0.5f + ((tracer.x - centerX) * scale)
         val sy = viewportHeight * 0.5f - ((tracer.y - centerY) * scale)
+        if (!sx.isFinite() || !sy.isFinite()) {
+            return
+        }
         val radiusPx = tracer.sizePx.coerceIn(0.8f, 3.5f)
         tracerPaint.color = Color.argb(
             (tracer.colorA.coerceIn(0f, 1f) * 255f).toInt(),
@@ -258,15 +278,24 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     ) {
         if (trail.points.size < 2) return
         val path = Path()
+        var plottedPointCount = 0
         trail.points.forEachIndexed { index, point ->
+            if (!point.x.isFinite() || !point.y.isFinite()) {
+                return@forEachIndexed
+            }
             val sx = viewportWidth * 0.5f + ((point.x - centerX) * scale)
             val sy = viewportHeight * 0.5f - ((point.y - centerY) * scale)
-            if (index == 0) {
+            if (!sx.isFinite() || !sy.isFinite()) {
+                return@forEachIndexed
+            }
+            if (plottedPointCount == 0) {
                 path.moveTo(sx, sy)
             } else {
                 path.lineTo(sx, sy)
             }
+            plottedPointCount++
         }
+        if (plottedPointCount < 2) return
         val alphaScale = if (trail.headHighlighted) 1f else 0.65f
         trailPaint.color = Color.argb(
             (trail.colorA.coerceIn(0f, 1f) * alphaScale * 255f).toInt(),
@@ -286,11 +315,17 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         var count = 0
 
         frame.bodies.forEach { body ->
+            if (!body.x.isFinite() || !body.y.isFinite()) {
+                return@forEach
+            }
             centerX += body.x
             centerY += body.y
             count++
         }
         frame.tracers.forEach { tracer ->
+            if (!tracer.x.isFinite() || !tracer.y.isFinite()) {
+                return@forEach
+            }
             centerX += tracer.x
             centerY += tracer.y
             count++
@@ -302,13 +337,22 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
 
         var maxDistance = 1f
         frame.bodies.forEach { body ->
+            if (!body.x.isFinite() || !body.y.isFinite()) {
+                return@forEach
+            }
             maxDistance = max(maxDistance, xyDistance(body.x, body.y, centerX, centerY))
         }
         frame.tracers.forEach { tracer ->
+            if (!tracer.x.isFinite() || !tracer.y.isFinite()) {
+                return@forEach
+            }
             maxDistance = max(maxDistance, xyDistance(tracer.x, tracer.y, centerX, centerY))
         }
         frame.trails.forEach { trail ->
             trail.points.forEach { point ->
+                if (!point.x.isFinite() || !point.y.isFinite()) {
+                    return@forEach
+                }
                 maxDistance = max(maxDistance, xyDistance(point.x, point.y, centerX, centerY))
             }
         }
