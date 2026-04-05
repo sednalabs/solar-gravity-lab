@@ -115,6 +115,9 @@ installable `prerelease` APK artifact on GitHub Actions. That path is meant for
 internal dev preview sideloading only: it uses the application id
 `com.sednalabs.solarlab.internal` and is signed with the default debug key, so
 it is appropriate for device testing but not for a public production release.
+That workflow also emits an internal dev preview changelog artifact derived from
+git history since the previous release tag so each preview has a usable release
+note trail instead of only raw APK metadata.
 
 For contributors, the most reliable near-term validation target is the pure JVM core:
 

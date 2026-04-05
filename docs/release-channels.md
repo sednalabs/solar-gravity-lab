@@ -19,6 +19,12 @@ This is the current installable phone build channel, but it is not a public
 production release. It is best thought of as an internal dev preview that uses
 conservative semver prerelease numbering instead of a polished launch label.
 
+Every internal dev preview should also carry a changelog. The current
+`prerelease-apk` workflow derives one from the commits since the previous
+release tag and publishes it as an artifact plus job-summary content, so the
+GitHub prerelease can link to an actual note trail instead of only APK
+metadata.
+
 ### Remote validation
 
 - Workflow: `.github/workflows/validation-lab.yml`

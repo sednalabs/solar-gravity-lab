@@ -96,6 +96,16 @@ jobs:
             "dist/${artifact_name}"
           sha256sum "dist/${artifact_name}" > "dist/${artifact_name}.sha256"
 
+      - name: Generate changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/generate_prerelease_changelog.py \
+            --repo-root . \
+            --ref "${{ inputs.ref != '' && inputs.ref || github.ref_name }}" \
+            --output dist/internal-dev-preview-changelog.md \
+            --json-output dist/internal-dev-preview-changelog.json
+
       - name: Upload prerelease APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -104,6 +114,8 @@ jobs:
           path: |
             dist/*.apk
             dist/*.sha256
+            dist/internal-dev-preview-changelog.md
+            dist/internal-dev-preview-changelog.json
             app/build/outputs/apk/prerelease/output-metadata.json
 
       - name: Emit summary
@@ -119,4 +131,7 @@ jobs:
             echo "- package id: \`com.sednalabs.solarlab.internal\`"
             echo "- signing: debug key for internal sideload testing only"
             echo "- artifact: \`solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-internal-dev-preview.apk\`"
+            echo "- changelog: \`internal-dev-preview-changelog.md\`"
+            echo
+            cat dist/internal-dev-preview-changelog.md
           } >> "$GITHUB_STEP_SUMMARY"
