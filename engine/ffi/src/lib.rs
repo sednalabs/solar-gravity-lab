@@ -94,6 +94,7 @@ pub enum SlGpuBackend {
     Vulkan = 1,
     Metal = 2,
     WebGpuClass = 3,
+    OpenCl = 4,
 }
 
 #[repr(C)]
@@ -975,6 +976,7 @@ fn build_session(
     let hardware_profile = HardwareProfile {
         cpu_backend: cpu_backend.clone(),
         gpu_backend: gpu_backend.clone(),
+        gpu_backend_report: Default::default(),
         cpu_features: Vec::new(),
         gpu_features: Vec::new(),
         acceleration_modes: Vec::new(),
@@ -1146,6 +1148,7 @@ fn decode_gpu_backend(value: u32) -> Result<GpuBackend, SlResult> {
         1 => Ok(GpuBackend::Vulkan),
         2 => Ok(GpuBackend::Metal),
         3 => Ok(GpuBackend::WebGpuClass),
+        4 => Ok(GpuBackend::OpenCl),
         _ => Err(status(SlStatusCode::InvalidArgument)),
     }
 }
@@ -1312,6 +1315,7 @@ fn encode_gpu_backend(gpu_backend: &GpuBackend) -> SlGpuBackend {
         GpuBackend::Vulkan => SlGpuBackend::Vulkan,
         GpuBackend::Metal => SlGpuBackend::Metal,
         GpuBackend::WebGpuClass => SlGpuBackend::WebGpuClass,
+        GpuBackend::OpenCl => SlGpuBackend::OpenCl,
     }
 }
 
