@@ -137,24 +137,32 @@ bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width,
         SetError("AAssetManager must be set before Vulkan initialisation so compiled SPIR-V shaders can be loaded.");
         return false;
     }
+
+    // --- Phase 1: Core Instance & Surface ---
     if (!CreateInstance()) {
         return false;
     }
     if (!CreateSurface(env, surface)) {
         return false;
     }
+
+    // --- Phase 2: Device Selection & Logical Device ---
     if (!PickPhysicalDevice()) {
         return false;
     }
     if (!CreateDevice()) {
         return false;
     }
+
+    // --- Phase 3: Global Resources (Descriptors & Compute) ---
     if (!CreateDescriptorResources()) {
         return false;
     }
     if (!CreateComputePipelines()) {
         return false;
     }
+
+    // --- Phase 4: Swapchain & Render Target ---
     if (!CreateSwapchain(width, height)) {
         return false;
     }
@@ -164,6 +172,8 @@ bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width,
     if (!CreateFramebuffers()) {
         return false;
     }
+
+    // --- Phase 5: Graphics Pipelines & Command Infrastructure ---
     if (!CreateGraphicsPipelines()) {
         return false;
     }
@@ -173,6 +183,8 @@ bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width,
     if (!AllocateAndRecordCommandBuffers()) {
         return false;
     }
+
+    // --- Phase 6: Synchronisation ---
     if (!CreateSyncObjects()) {
         return false;
     }
