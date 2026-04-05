@@ -44,6 +44,15 @@ class SimulationEngine(
         provenanceSource = provenanceSource,
     )
 
+    fun workloadCounts(): SimulationWorkloadCounts {
+        val massiveCount = bodies.count { it.gravitationalRole == GravitationalRole.MASSIVE }
+        return SimulationWorkloadCounts(
+            totalBodyCount = bodies.size,
+            massiveBodyCount = massiveCount,
+            tracerBodyCount = bodies.size - massiveCount,
+        )
+    }
+
     fun diagnostics(forceRecompute: Boolean = true): SystemDiagnostics {
         if (forceRecompute) {
             diagnosticsCache = computeDiagnostics()
@@ -824,3 +833,9 @@ class SimulationEngine(
         private const val FRAGMENTATION_SEPARATION_MULTIPLIER: Double = 1.05
     }
 }
+
+data class SimulationWorkloadCounts(
+    val totalBodyCount: Int,
+    val massiveBodyCount: Int,
+    val tracerBodyCount: Int,
+)

@@ -6,12 +6,14 @@ import android.os.Looper
 import android.util.Log
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.CollisionMode
+import com.graciousgazelles.solarlab.core.model.GravitationalRole
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.SimulationConfig
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.core.model.TimelineMode
 import com.graciousgazelles.solarlab.core.simulation.CatalogBodyDefinition
 import com.graciousgazelles.solarlab.core.simulation.SimulationEngine
+import com.graciousgazelles.solarlab.core.simulation.SimulationWorkloadCounts
 import com.graciousgazelles.solarlab.core.simulation.SolarSystemScenarios
 import com.graciousgazelles.solarlab.feature.lab.data.CartesianSeedBundleAssetLoader
 import com.graciousgazelles.solarlab.feature.lab.data.OrbitingBodyCatalogAssetLoader
@@ -26,6 +28,7 @@ class LabSession private constructor(
     initialConfig: SimulationConfig,
     private val engineFactory: (SimulationSnapshot, SimulationConfig) -> SimulationEngine,
     private val accelerationBackendSummary: String?,
+    private val parallelSchedulerCapable: Boolean,
     private val listener: LabFrameListener,
 ) {
 
@@ -249,6 +252,7 @@ class LabSession private constructor(
             totalPendingSeconds = pendingSimulationSeconds + simDeltaSeconds,
             collisionMode = config.collisionMode,
             playbackSpeedPreset = playbackSpeedPreset,
+            workloadProfile = currentSchedulerWorkloadProfile(),
         ).cappedPendingSeconds
         if (pendingSimulationSeconds <= SUBSTEP_EPSILON_SECONDS) return
         val requestFreshDiagnostics = shouldRefreshDiagnosticsForRunningTick()
@@ -256,6 +260,7 @@ class LabSession private constructor(
             totalPendingSeconds = pendingSimulationSeconds,
             collisionMode = config.collisionMode,
             playbackSpeedPreset = playbackSpeedPreset,
+            workloadProfile = currentSchedulerWorkloadProfile(),
         )
         if (advanceBudget.secondsToAdvance <= SUBSTEP_EPSILON_SECONDS) {
             emitCurrentFrame(emptyList(), pendingSimulationSeconds)
@@ -354,6 +359,7 @@ class LabSession private constructor(
                 absoluteJulianDateTdb = snapshot.absoluteJulianDateTdbOrNull(),
                 playbackSpeed = playbackSpeedPreset,
                 stepQuantum = stepQuantumPreset,
+                schedulerSummary = schedulerSummaryForSnapshot(snapshot),
                 simulationBacklogSeconds = simulationBacklogSeconds,
                 canJumpAbsolute = snapshot.isCatalogBacked,
                 canStepBackward = backControlAction != BackControlAction.None,
@@ -381,6 +387,29 @@ class LabSession private constructor(
     private fun shouldRefreshDiagnosticsForRunningTick(): Boolean {
         runningTickCount += 1
         return (runningTickCount % RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS) == 0
+    }
+
+    private fun currentSchedulerWorkloadProfile(): SchedulerWorkloadProfile =
+        schedulerWorkloadProfile(
+            counts = engine.workloadCounts(),
+            parallelAccelerationCapable = parallelSchedulerCapable,
+        )
+
+    private fun schedulerSummaryForSnapshot(snapshot: SimulationSnapshot): String {
+        val massiveCount = snapshot.bodies.count { it.gravitationalRole == GravitationalRole.MASSIVE }
+        val workloadProfile = SchedulerWorkloadProfile(
+            totalBodyCount = snapshot.bodies.size,
+            massiveBodyCount = massiveCount,
+            tracerBodyCount = snapshot.bodies.size - massiveCount,
+            parallelAccelerationCapable = parallelSchedulerCapable,
+        )
+        return schedulerSummary(
+            workloadProfile = workloadProfile,
+            executionProfile = schedulerExecutionProfile(
+                workloadProfile = workloadProfile,
+                collisionMode = config.collisionMode,
+            ),
+        )
     }
 
     private class PerfSampleAccumulator {
@@ -458,6 +487,12 @@ class LabSession private constructor(
         private const val PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK: Double = 3.0
         private const val COLLISION_MAX_SUBSTEPS_PER_RENDER_TICK: Double = 2.0
         private const val MAX_RENDER_TICK_BACKLOG_WINDOWS: Double = 4.0
+        private const val PARALLEL_PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK: Double = 4.0
+        private const val PARALLEL_MAX_RENDER_TICK_BACKLOG_WINDOWS: Double = 5.0
+        private const val HEAVY_PARALLEL_MAX_SUBSTEPS_PER_TICK: Double = 5.0
+        private const val HEAVY_PARALLEL_MAX_BACKLOG_WINDOWS: Double = 6.0
+        private const val PARALLEL_TRACER_THRESHOLD: Int = 192
+        private const val HEAVY_PARALLEL_TRACER_THRESHOLD: Int = 768
         private const val RUNNING_DIAGNOSTICS_REFRESH_EVERY_N_TICKS: Int = 4
         private const val PERF_LOG_SAMPLE_WINDOW_FRAMES: Int = 120
         private const val SUBSTEP_EPSILON_SECONDS: Double = 1.0e-9
@@ -476,6 +511,7 @@ class LabSession private constructor(
                 initialConfig = SimulationConfig(),
                 engineFactory = { snapshot, config -> SimulationEngine(snapshot, config) },
                 accelerationBackendSummary = "kotlin-reference",
+                parallelSchedulerCapable = false,
                 listener = listener,
             )
         }
@@ -511,6 +547,7 @@ class LabSession private constructor(
                 initialConfig = SimulationConfig(),
                 engineFactory = physicsSelection.engineFactory,
                 accelerationBackendSummary = physicsSelection.accelerationBackendSummary,
+                parallelSchedulerCapable = physicsSelection.accelerationBackendSummary.contains("sched=adaptive-tiles"),
                 listener = listener,
             )
         }
@@ -540,6 +577,22 @@ class LabSession private constructor(
             val secondsToAdvance: Double,
             val deferredSeconds: Double,
             val maxSubstepSeconds: Double,
+            val maxSubstepsPerTick: Double,
+            val maxBacklogWindows: Double,
+            val schedulerSummary: String,
+        )
+
+        internal data class SchedulerWorkloadProfile(
+            val totalBodyCount: Int = 0,
+            val massiveBodyCount: Int = 0,
+            val tracerBodyCount: Int = 0,
+            val parallelAccelerationCapable: Boolean = false,
+        )
+
+        internal data class SchedulerExecutionProfile(
+            val label: String,
+            val maxSubstepsPerTick: Double,
+            val maxBacklogWindows: Double,
         )
 
         internal fun effectivePlaybackMaxSubstepSeconds(
@@ -579,14 +632,22 @@ class LabSession private constructor(
             totalPendingSeconds: Double,
             collisionMode: CollisionMode,
             playbackSpeedPreset: PlaybackSpeedPreset = DEFAULT_PLAYBACK_SPEED,
+            workloadProfile: SchedulerWorkloadProfile = SchedulerWorkloadProfile(),
         ): SimulationAdvanceBudget {
             val nonNegativePending = totalPendingSeconds.coerceAtLeast(0.0)
+            val executionProfile = schedulerExecutionProfile(
+                workloadProfile = workloadProfile,
+                collisionMode = collisionMode,
+            )
             if (nonNegativePending <= SUBSTEP_EPSILON_SECONDS) {
                 return SimulationAdvanceBudget(
                     cappedPendingSeconds = 0.0,
                     secondsToAdvance = 0.0,
                     deferredSeconds = 0.0,
                     maxSubstepSeconds = MAX_SIMULATION_SUBSTEP_SECONDS,
+                    maxSubstepsPerTick = executionProfile.maxSubstepsPerTick,
+                    maxBacklogWindows = executionProfile.maxBacklogWindows,
+                    schedulerSummary = schedulerSummary(workloadProfile, executionProfile),
                 )
             }
             val playbackPlan = playbackSubstepPlan(
@@ -594,20 +655,85 @@ class LabSession private constructor(
                 collisionMode = collisionMode,
                 playbackSpeedPreset = playbackSpeedPreset,
             )
-            val maxSubstepsPerTick = if (collisionMode == CollisionMode.NONE) {
-                PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK
-            } else {
-                COLLISION_MAX_SUBSTEPS_PER_RENDER_TICK
-            }
-            val maxSecondsPerTick = playbackPlan.maxSubstepSeconds * maxSubstepsPerTick
-            val cappedPendingSeconds = nonNegativePending.coerceAtMost(maxSecondsPerTick * MAX_RENDER_TICK_BACKLOG_WINDOWS)
+            val maxSecondsPerTick = playbackPlan.maxSubstepSeconds * executionProfile.maxSubstepsPerTick
+            val cappedPendingSeconds = nonNegativePending.coerceAtMost(maxSecondsPerTick * executionProfile.maxBacklogWindows)
             val secondsToAdvance = cappedPendingSeconds.coerceAtMost(maxSecondsPerTick)
             return SimulationAdvanceBudget(
                 cappedPendingSeconds = cappedPendingSeconds,
                 secondsToAdvance = secondsToAdvance,
                 deferredSeconds = (cappedPendingSeconds - secondsToAdvance).coerceAtLeast(0.0),
                 maxSubstepSeconds = playbackPlan.maxSubstepSeconds,
+                maxSubstepsPerTick = executionProfile.maxSubstepsPerTick,
+                maxBacklogWindows = executionProfile.maxBacklogWindows,
+                schedulerSummary = schedulerSummary(workloadProfile, executionProfile),
             )
+        }
+
+        internal fun schedulerWorkloadProfile(
+            counts: SimulationWorkloadCounts,
+            parallelAccelerationCapable: Boolean,
+        ): SchedulerWorkloadProfile = SchedulerWorkloadProfile(
+            totalBodyCount = counts.totalBodyCount,
+            massiveBodyCount = counts.massiveBodyCount,
+            tracerBodyCount = counts.tracerBodyCount,
+            parallelAccelerationCapable = parallelAccelerationCapable,
+        )
+
+        internal fun schedulerExecutionProfile(
+            workloadProfile: SchedulerWorkloadProfile,
+            collisionMode: CollisionMode,
+        ): SchedulerExecutionProfile {
+            if (collisionMode != CollisionMode.NONE) {
+                return SchedulerExecutionProfile(
+                    label = "collision-safe",
+                    maxSubstepsPerTick = COLLISION_MAX_SUBSTEPS_PER_RENDER_TICK,
+                    maxBacklogWindows = MAX_RENDER_TICK_BACKLOG_WINDOWS,
+                )
+            }
+            if (!workloadProfile.parallelAccelerationCapable) {
+                return SchedulerExecutionProfile(
+                    label = "serial-safe",
+                    maxSubstepsPerTick = PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK,
+                    maxBacklogWindows = MAX_RENDER_TICK_BACKLOG_WINDOWS,
+                )
+            }
+            if (workloadProfile.tracerBodyCount >= HEAVY_PARALLEL_TRACER_THRESHOLD) {
+                return SchedulerExecutionProfile(
+                    label = "parallel-heavy",
+                    maxSubstepsPerTick = HEAVY_PARALLEL_MAX_SUBSTEPS_PER_TICK,
+                    maxBacklogWindows = HEAVY_PARALLEL_MAX_BACKLOG_WINDOWS,
+                )
+            }
+            if (workloadProfile.tracerBodyCount >= PARALLEL_TRACER_THRESHOLD) {
+                return SchedulerExecutionProfile(
+                    label = "parallel-tracer",
+                    maxSubstepsPerTick = PARALLEL_PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK,
+                    maxBacklogWindows = PARALLEL_MAX_RENDER_TICK_BACKLOG_WINDOWS,
+                )
+            }
+            return SchedulerExecutionProfile(
+                label = "parallel-ready",
+                maxSubstepsPerTick = PLAYBACK_MAX_SUBSTEPS_PER_RENDER_TICK,
+                maxBacklogWindows = MAX_RENDER_TICK_BACKLOG_WINDOWS,
+            )
+        }
+
+        internal fun schedulerSummary(
+            workloadProfile: SchedulerWorkloadProfile,
+            executionProfile: SchedulerExecutionProfile,
+        ): String = buildString {
+            append(executionProfile.label)
+            append(" bodies=")
+            append(workloadProfile.totalBodyCount)
+            append(" massive=")
+            append(workloadProfile.massiveBodyCount)
+            append(" tracers=")
+            append(workloadProfile.tracerBodyCount)
+            append(" tick<=")
+            append(executionProfile.maxSubstepsPerTick.toInt())
+            append(" backlog<=")
+            append(executionProfile.maxBacklogWindows.toInt())
+            append("x")
         }
 
         private fun shouldApplyHostRelativeShortWindowCap(

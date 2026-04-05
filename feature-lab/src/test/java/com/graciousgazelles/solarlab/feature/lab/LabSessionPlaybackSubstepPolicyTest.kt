@@ -148,6 +148,58 @@ class LabSessionPlaybackSubstepPolicyTest {
     }
 
     @Test
+    fun `parallel-native large tracer workloads widen per-tick scheduler budget`() {
+        val simulatedTickSeconds = PlaybackSpeedPreset.MONTH_PER_SECOND.simSecondsPerRealSecond * 0.05
+        val workloadProfile = LabSession.SchedulerWorkloadProfile(
+            totalBodyCount = 352,
+            massiveBodyCount = 16,
+            tracerBodyCount = 336,
+            parallelAccelerationCapable = true,
+        )
+
+        val budget = LabSession.simulationAdvanceBudget(
+            totalPendingSeconds = simulatedTickSeconds,
+            collisionMode = CollisionMode.NONE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+            workloadProfile = workloadProfile,
+        )
+
+        assertEquals(10_800.0, budget.maxSubstepSeconds, 0.0)
+        assertEquals(4.0, budget.maxSubstepsPerTick, 0.0)
+        assertEquals(5.0, budget.maxBacklogWindows, 0.0)
+        assertEquals(43_200.0, budget.secondsToAdvance, 0.0)
+        assertTrue(
+            "Expected scheduler summary to advertise parallel tracer mode, summary=${budget.schedulerSummary}",
+            budget.schedulerSummary.startsWith("parallel-tracer"),
+        )
+    }
+
+    @Test
+    fun `collision workloads stay conservative even when native parallel solver is available`() {
+        val workloadProfile = LabSession.SchedulerWorkloadProfile(
+            totalBodyCount = 352,
+            massiveBodyCount = 16,
+            tracerBodyCount = 336,
+            parallelAccelerationCapable = true,
+        )
+
+        val budget = LabSession.simulationAdvanceBudget(
+            totalPendingSeconds = 86_400.0,
+            collisionMode = CollisionMode.MERGE,
+            playbackSpeedPreset = PlaybackSpeedPreset.MONTH_PER_SECOND,
+            workloadProfile = workloadProfile,
+        )
+
+        assertEquals(3_600.0, budget.maxSubstepSeconds, 0.0)
+        assertEquals(2.0, budget.maxSubstepsPerTick, 0.0)
+        assertEquals(4.0, budget.maxBacklogWindows, 0.0)
+        assertTrue(
+            "Expected collision scheduler summary to stay conservative, summary=${budget.schedulerSummary}",
+            budget.schedulerSummary.startsWith("collision-safe"),
+        )
+    }
+
+    @Test
     fun `all collision-enabled playback modes keep conservative one-hour cap`() {
         listOf(
             CollisionMode.MERGE,
