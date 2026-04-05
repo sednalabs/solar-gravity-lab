@@ -1,6 +1,7 @@
-# Solar Gravity Lab v2
+# Solar Gravity Lab
 
-This branch is the clean-room `v2` architecture reset for Solar Gravity Lab.
+Solar Gravity Lab now runs on the Rust-owned architecture reset that was
+previously developed as the `v2` line. This is the canonical `main` branch.
 
 The long-term product shape is:
 
@@ -10,26 +11,33 @@ The long-term product shape is:
 - a renderer-independent scene contract with backend adapters
 - optional hardware fast paths behind open, portable interfaces
 
-The existing Kotlin/Android/Vulkan code remains in this branch only as legacy
-reference material while the v2 platform is built out.
+The existing Kotlin/Android/Vulkan code remains in this repository only as
+legacy reference material while the Rust-native platform continues to replace
+those seams. The pre-cutover Kotlin line is preserved on the archived branch
+`legacy/kotlin-main-20260405`.
 
 ## Status
 
 What is real on this branch today:
 
-- an ADR-backed v2 architecture record in [`docs/adr`](docs/adr)
+- an ADR-backed architecture record in [`docs/adr`](docs/adr)
 - a versioned protobuf schema surface in [`proto/solarlab/v2`](proto/solarlab/v2)
 - a Rust workspace in [`engine`](engine) with the canonical long-lived module
   boundaries
-- an explicit FFI contract starting point for native client shells
-- placeholder directories for future Android, data, service, and lab surfaces
+- an explicit FFI contract and JNI bridge for native client shells
+- an operational Android shell in [`clients/android`](clients/android) that can
+  start a Rust runtime session, refresh/apply commands, and host the exported
+  Vulkan render packet surface
+- working Android native builds through `cargo-ndk` and the Android app Gradle
+  pipeline
 
 What is intentionally still transitional:
 
 - the existing `app`, `core-*`, `feature-lab`, and `render-core` modules are
   still present as v1 reference code
-- the new Android shell under `clients/android` is not implemented yet
-- the new render backend adapter stack is designed but not implemented yet
+- the render backend adapter stack is only implemented far enough for the
+  current Vulkan packet host seam and still needs broader scene-history and
+  capability work
 - the offline update services are designed but not implemented yet
 
 ## Repository layout
@@ -60,9 +68,13 @@ What is intentionally still transitional:
 6. [`docs/v2/architecture.md`](docs/v2/architecture.md)
 7. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
 
-## Runtime/FFI seam contract (v2)
+The `docs/v2/*` paths remain named that way because they were written during
+the reset, but they now describe the architecture that lives on `main`.
 
-The v2 Rust runtime + FFI integration is intentionally layered so each boundary has one clear owner:
+## Runtime/FFI seam contract
+
+The Rust runtime + FFI integration is intentionally layered so each boundary has
+one clear owner:
 
 - `solarlab_runtime` owns authoritative simulation state, command application, and deterministic snapshots.
 - `solarlab_ffi` owns the C ABI process boundary and is responsible for:
@@ -81,12 +93,13 @@ Refresh and command semantics in this branch:
 
 ## Validation
 
-The v2 foundational validation target is currently the Rust workspace:
+The foundational validation target is currently the Rust workspace:
 
 ```bash
 cargo test --workspace
 ```
 
-This branch is intentionally not yet using the old Android validation surface as
-its primary proof mechanism. Android, render, and data/update validation labs
-will be rebuilt around the v2 boundaries as those subsystems land.
+This branch is intentionally not yet using the old Kotlin Android validation
+surface as its primary proof mechanism. Android, render, and data/update
+validation labs will continue to be rebuilt around the Rust-owned boundaries as
+those subsystems land.
