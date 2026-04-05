@@ -37,6 +37,11 @@ pub struct PhysicsInvariants {
     pub barycenter_m: Vector3d,
 }
 
+/// Authoritative state for a massive body participating in mutual gravity.
+/// 
+/// Massive bodies exert force on all other massive bodies and tracers.
+/// Position and velocity use double-precision (f64) to maintain orbital 
+/// stability over long simulation durations.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MassiveBodyState {
     pub mass_kg: f64,
@@ -115,6 +120,17 @@ pub fn compute_invariants(bodies: &[MassiveBodyState]) -> PhysicsInvariants {
     }
 }
 
+/// Performs a single Kick-Drift-Kick (Leapfrog) integration substep.
+/// 
+/// The sequence is:
+/// 1. Compute initial accelerations (a0) based on current positions.
+/// 2. Kick: Update velocities by half a time step (v = v + a0 * dt/2).
+/// 3. Drift: Update positions by a full time step (r = r + v * dt).
+/// 4. Recompute accelerations (a1) at the new positions.
+/// 5. Kick: Update velocities by the remaining half time step (v = v + a1 * dt/2).
+/// 
+/// This method is second-order accurate and symplectic, ensuring that the 
+/// orbital energy of the system remains stable (non-drifting) over many steps.
 fn integrate_substep(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
     let a0 = pairwise_gravity_accelerations(bodies);
 

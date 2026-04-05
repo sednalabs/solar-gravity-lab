@@ -11,6 +11,13 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Rust runtime boundary for Android.
+ * 
+ * --- Handle Ownership Rules ---
+ * 1. Kotlin owns the lifecycle of the `activeSessionHandle`.
+ * 2. Successful `connect()` or `createSession()` calls return an "owned" handle.
+ * 3. The caller MUST ensure `destroySession()` is called via the transport when the 
+ *    session is no longer needed or if the boundary connection fails.
+ * 4. Failure to release handles results in native memory leaks in the Rust world.
  *
  * Kotlin owns orchestration and lifecycle semantics.
  * Native transport owns ABI calls into `engine/ffi` via a JNI shim.

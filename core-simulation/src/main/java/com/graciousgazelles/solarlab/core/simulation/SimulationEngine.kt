@@ -14,6 +14,12 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
+/**
+ * Authoritative simulation engine for N-body dynamics and continuous collision resolution.
+ *
+ * This engine uses a double-precision Kick-Drift-Kick (Leapfrog/Velocity-Verlet) integrator
+ * to maintain long-term energy stability in orbital systems.
+ */
 class SimulationEngine(
     initialSnapshot: SimulationSnapshot,
     private val config: SimulationConfig = SimulationConfig(),
@@ -81,6 +87,21 @@ class SimulationEngine(
         return true
     }
 
+    /**
+     * Advances the simulation state by [deltaTimeSeconds].
+     *
+     * Integration follows the Kick-Drift-Kick sequence:
+     * 1. **Kick 1**: Update velocities by half a time step using current accelerations.
+     * 2. **Drift**: Update positions using the updated velocities. If collision modes
+     *    are enabled, this phase performs continuous sweep tests and resolves impacts
+     *    iteratively to prevent tunneling.
+     * 3. **Kick 2**: Recompute accelerations at new positions and update velocities
+     *    by the remaining half time step.
+     *
+     * This interleaved approach is second-order accurate and symplectic, meaning it
+     * preserves the phase-space volume and prevents the artificial energy inflation
+     * common in Euler or simple Runge-Kutta methods when applied to orbital systems.
+     */
     fun step(
         deltaTimeSeconds: Double,
         recomputeDiagnostics: Boolean = true,
@@ -99,6 +120,7 @@ class SimulationEngine(
             )
         }
 
+        // --- Step 1: Kick (first half) ---
         val firstAccelerations = computeAccelerations()
         val halfDelta = deltaTimeSeconds * 0.5
 
@@ -107,6 +129,7 @@ class SimulationEngine(
             body.velocityMps = body.velocityMps + (firstAccelerations[index] * halfDelta)
         }
 
+        // --- Step 2: Drift (full step) + Collision Resolution ---
         val collisions = when (config.collisionMode) {
             CollisionMode.NONE -> {
                 advancePositions(deltaTimeSeconds)
@@ -118,6 +141,8 @@ class SimulationEngine(
             -> resolveCollisionsDuringDrift(deltaTimeSeconds)
         }
 
+        // --- Step 3: Kick (second half) ---
+        // Accelerations must be recomputed at the NEW positions
         val secondAccelerations = computeAccelerations()
 
         for (index in bodies.indices) {
@@ -202,6 +227,13 @@ class SimulationEngine(
         return accelerations
     }
 
+    /**
+     * Resolves collisions during the position-drift phase using continuous sweep tests.
+     *
+     * Because multiple bodies may collide in a single time step, this loop resolves the
+     * earliest impact, advances all bodies to that point in time, resolves the impact
+     * (merging or bouncing), and then repeats for the remaining time in the step.
+     */
     private fun resolveCollisionsDuringDrift(deltaTimeSeconds: Double): List<CollisionEvent> {
         val collisions = mutableListOf<CollisionEvent>()
         var remaining = deltaTimeSeconds
@@ -209,26 +241,31 @@ class SimulationEngine(
 
         while (remaining > COLLISION_TIME_EPSILON && bodies.size > 1) {
             if (++iterations > MAX_COLLISION_ITERATIONS_PER_STEP) {
+                // Safety break to prevent infinite loops in extremely dense or unstable systems.
                 advancePositions(remaining)
                 break
             }
 
+            // Correct any initial overlaps that may have occurred due to external state changes
             if (config.collisionMode != CollisionMode.NONE) {
                 correctPassiveOverlaps()
             }
 
+            // Find the earliest collision in the remaining time window
             val candidate = findEarliestCollision(remaining)
             if (candidate == null) {
                 advancePositions(remaining)
                 break
             }
 
+            // Move everyone to the exact moment of the first impact
             val drift = candidate.timeSeconds.coerceIn(0.0, remaining)
             if (drift > 0.0) {
                 advancePositions(drift)
                 remaining -= drift
             }
 
+            // Resolve the impact and update topology/velocities
             val impactOffset = deltaTimeSeconds - remaining
             val event = when (config.collisionMode) {
                 CollisionMode.MERGE -> resolveMergeCollision(candidate, impactOffset)

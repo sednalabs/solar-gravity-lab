@@ -73,6 +73,11 @@ pub struct SceneProvenanceRef {
     pub package_digest: Option<Digest>,
 }
 
+/// Authoritative scene state published by the runtime for rendering.
+/// 
+/// This structure is backend-neutral and contains all the data required to 
+/// reconstruct a physically grounded frame, including camera, bodies, tracers, 
+/// and lights.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderScene {
     pub observer_mode: ObserverMode,
@@ -101,6 +106,10 @@ impl RenderScene {
     }
 }
 
+/// Represents an incremental update to a [RenderScene].
+/// 
+/// Used to avoid full scene transfers between the runtime core and 
+/// render adapters. The delta is anchored to a `base_revision`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderSceneDelta {
     pub scene_revision: String,

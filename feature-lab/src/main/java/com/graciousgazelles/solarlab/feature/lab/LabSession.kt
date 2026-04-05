@@ -392,7 +392,18 @@ class LabSession private constructor(
         private const val MAX_SIMULATION_SUBSTEP_SECONDS: Double = 3600.0
         private const val PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK: Double = 12.0
         private const val HOST_RELATIVE_PLAYBACK_TARGET_MAX_SUBSTEPS_PER_TICK: Double = 24.0
+
+        /**
+         * The maximum real-time duration (1 day) where we apply tighter substep 
+         * caps to ensure smooth visual orbits when the user is panned in close.
+         */
         private const val HOST_RELATIVE_SHORT_WINDOW_MAX_SECONDS: Double = PhysicalConstants.DAY_SECONDS
+
+        /**
+         * Adaptive substep cap for high-speed playback (e.g., month/sec).
+         * Balances the need for fast forward motion with the risk of 
+         * integration divergence in multi-body systems.
+         */
         private const val HOST_RELATIVE_SHORT_WINDOW_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 10_800.0
         private const val PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 32_400.0
         private const val HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: Double = 21_600.0
@@ -470,6 +481,17 @@ class LabSession private constructor(
             val maxSubstepSeconds: Double,
         )
 
+        /**
+         * Calculates the optimal maximum substep duration for the current playback speed.
+         * 
+         * This function implements an "Adaptive Advance Budget" strategy:
+         * 1. If collisions are enabled, we lock to a conservative 1-hour cap to prevent 
+         *    missed impacts.
+         * 2. For high-speed playback, we widen the substep cap to allow the simulation 
+         *    to keep up with the rendering clock without exploding CPU usage.
+         * 3. We apply a "Host-Relative" cap for short durations to preserve visual 
+         *    smoothness (reducing "jumping" or "jitter") when viewing close-in orbits.
+         */
         internal fun effectivePlaybackMaxSubstepSeconds(
             totalSeconds: Double,
             collisionMode: CollisionMode,
