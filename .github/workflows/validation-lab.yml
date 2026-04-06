@@ -25,7 +25,7 @@ on:
           - auto
           - bootstrap
           - rust-workspace
-          - arm64-isa-proof
+          - rust-workspace-arm64
           - ffi-abi
           - android-shell
           - runtime-scene-telemetry
@@ -57,7 +57,7 @@ jobs:
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       rust_workspace: ${{ steps.plan.outputs.rust_workspace }}
-      arm64_isa_proof: ${{ steps.plan.outputs.arm64_isa_proof }}
+      rust_workspace_arm64: ${{ steps.plan.outputs.rust_workspace_arm64 }}
       ffi_abi: ${{ steps.plan.outputs.ffi_abi }}
       android_shell: ${{ steps.plan.outputs.android_shell }}
       runtime_scene_telemetry: ${{ steps.plan.outputs.runtime_scene_telemetry }}
@@ -80,7 +80,7 @@ jobs:
 
           wrapper_bootstrap='false'
           rust_workspace='false'
-          arm64_isa_proof='false'
+          rust_workspace_arm64='false'
           ffi_abi='false'
           android_shell='false'
           runtime_scene_telemetry='false'
@@ -114,7 +114,7 @@ jobs:
               fi
               if [[ "$profile" == 'broad' || "$profile" == 'full' ]]; then
                 ffi_abi='true'
-                arm64_isa_proof='true'
+                rust_workspace_arm64='true'
               fi
               ;;
             bootstrap)
@@ -123,8 +123,8 @@ jobs:
             rust-workspace)
               rust_workspace='true'
               ;;
-            arm64-isa-proof)
-              arm64_isa_proof='true'
+            rust-workspace-arm64)
+              rust_workspace_arm64='true'
               ;;
             ffi-abi)
               ffi_abi='true'
@@ -137,7 +137,7 @@ jobs:
               ;;
             full)
               rust_workspace='true'
-              arm64_isa_proof='true'
+              rust_workspace_arm64='true'
               ffi_abi='true'
               android_shell='true'
               runtime_scene_telemetry='true'
@@ -152,15 +152,15 @@ jobs:
             wrapper_bootstrap='true'
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, arm64_isa_proof=%s, ffi_abi=%s, android_shell=%s, runtime_scene_telemetry=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$arm64_isa_proof" "$ffi_abi" "$android_shell" "$runtime_scene_telemetry")"
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_shell=%s, runtime_scene_telemetry=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_shell" "$runtime_scene_telemetry")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
           echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "rust_workspace=${rust_workspace}" >> "$GITHUB_OUTPUT"
-          echo "arm64_isa_proof=${arm64_isa_proof}" >> "$GITHUB_OUTPUT"
+          echo "rust_workspace_arm64=${rust_workspace_arm64}" >> "$GITHUB_OUTPUT"
           echo "ffi_abi=${ffi_abi}" >> "$GITHUB_OUTPUT"
           echo "android_shell=${android_shell}" >> "$GITHUB_OUTPUT"
           echo "runtime_scene_telemetry=${runtime_scene_telemetry}" >> "$GITHUB_OUTPUT"
@@ -282,10 +282,10 @@ jobs:
           set -euo pipefail
           cargo test --workspace
 
-  arm64-isa-proof:
-    name: ARM64 ISA proof
+  rust-workspace-arm64:
+    name: Rust workspace tests (Arm64)
     needs: metadata
-    if: ${{ needs.metadata.outputs.arm64_isa_proof == 'true' }}
+    if: ${{ needs.metadata.outputs.rust_workspace_arm64 == 'true' }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
@@ -295,22 +295,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Run ARM64 ISA activation + scalar oracle proof
+      - name: Run canonical workspace tests on Arm64
         shell: bash
         run: |
           set -euo pipefail
-          bash .github/scripts/run_arm64_isa_proof.sh
-
-      - name: Upload ARM64 ISA proof artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: arm64-isa-proof-${{ github.run_id }}
-          if-no-files-found: warn
-          path: |
-            dist/arm64-isa-proof/**
+          cargo test --workspace
 
   ffi-abi:
     name: FFI ABI tests
@@ -441,7 +430,7 @@ jobs:
       - wrapper-bootstrap
       - parity-matrix
       - rust-workspace
-      - arm64-isa-proof
+      - rust-workspace-arm64
       - ffi-abi
       - android-shell
       - runtime-scene-telemetry
@@ -462,7 +451,7 @@ jobs:
             echo "- parity-matrix: \`${{ needs['parity-matrix'].result }}\`"
             echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
             echo "- rust-workspace: \`${{ needs['rust-workspace'].result }}\`"
-            echo "- arm64-isa-proof: \`${{ needs['arm64-isa-proof'].result }}\`"
+            echo "- rust-workspace-arm64: \`${{ needs['rust-workspace-arm64'].result }}\`"
             echo "- ffi-abi: \`${{ needs['ffi-abi'].result }}\`"
             echo "- android-shell: \`${{ needs['android-shell'].result }}\`"
             echo "- runtime-scene-telemetry: \`${{ needs['runtime-scene-telemetry'].result }}\`"
