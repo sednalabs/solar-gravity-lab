@@ -191,14 +191,20 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
 
             is RuntimeSignal.RuntimeInfoAvailable -> _uiState.update { current ->
+                val backendSummary = backendSummaryLabel(
+                    cpuBackendLabel = signal.cpuBackendLabel,
+                    gpuBackendLabel = signal.gpuBackendLabel,
+                    workloadSummary = signal.workloadSummary,
+                    interopErrorBudgetSummary = signal.interopErrorBudgetSummary,
+                )
                 current.copy(
-                    backendSummary = "${signal.cpuBackendLabel} + ${signal.gpuBackendLabel}",
-                    noticeLine = "Runtime backend: ${signal.cpuBackendLabel} + ${signal.gpuBackendLabel}",
+                    backendSummary = backendSummary,
+                    noticeLine = "Runtime backend: $backendSummary",
                     noticeTone = ShellNoticeTone.Positive,
                     developerTelemetry = recordTelemetry(
                         level = DeveloperTelemetryLevel.Info,
                         category = "runtime.info",
-                        message = "cpu=${signal.cpuBackendLabel}, gpu=${signal.gpuBackendLabel}",
+                        message = runtimeInfoTelemetryMessage(signal),
                     ),
                 )
             }
@@ -720,6 +726,36 @@ private fun RuntimeNoticeLevel.toDeveloperTelemetryLevel(): DeveloperTelemetryLe
     -> DeveloperTelemetryLevel.Info
     RuntimeNoticeLevel.Warning -> DeveloperTelemetryLevel.Warning
     RuntimeNoticeLevel.Error -> DeveloperTelemetryLevel.Error
+}
+
+private fun backendSummaryLabel(
+    cpuBackendLabel: String,
+    gpuBackendLabel: String,
+    workloadSummary: String?,
+    interopErrorBudgetSummary: String?,
+): String {
+    val segments = mutableListOf("$cpuBackendLabel + $gpuBackendLabel")
+    workloadSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "workloads: $it"
+    }
+    interopErrorBudgetSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "policy: $it"
+    }
+    return segments.joinToString(" | ")
+}
+
+private fun runtimeInfoTelemetryMessage(signal: RuntimeSignal.RuntimeInfoAvailable): String {
+    val segments = mutableListOf(
+        "cpu=${signal.cpuBackendLabel}",
+        "gpu=${signal.gpuBackendLabel}",
+    )
+    signal.workloadSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "workloads=$it"
+    }
+    signal.interopErrorBudgetSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "policy=$it"
+    }
+    return segments.joinToString(", ")
 }
 
 private fun SnapshotPresentation.toTelemetryKey(): String {

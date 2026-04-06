@@ -1011,10 +1011,14 @@ fn build_session(
     };
 
     let gpu_backend_report = default_gpu_backend_report(&gpu_backend);
+    let gpu_workload_assignments = gpu_backend_report.workload_assignments();
+    let gpu_interop_policy = gpu_backend_report.interop_policy();
     let hardware_profile = HardwareProfile {
         cpu_backend: cpu_backend.clone(),
         gpu_backend: gpu_backend.clone(),
         gpu_backend_report,
+        gpu_workload_assignments,
+        gpu_interop_policy,
         cpu_features: Vec::new(),
         gpu_features: Vec::new(),
         acceleration_modes: default_acceleration_modes(&gpu_backend),
@@ -1096,7 +1100,12 @@ fn default_gpu_backend_report(gpu_backend: &GpuBackend) -> GpuBackendReport {
 
 fn default_acceleration_modes(gpu_backend: &GpuBackend) -> Vec<String> {
     match gpu_backend {
-        GpuBackend::OpenCl => vec!["dual-gpu".to_owned()],
+        GpuBackend::OpenCl => vec![
+            "dual-gpu".to_owned(),
+            "opencl-long-horizon".to_owned(),
+            "vulkan-in-frame".to_owned(),
+            "interop-error-budget-v1".to_owned(),
+        ],
         GpuBackend::Vulkan => vec!["gpu-render".to_owned()],
         GpuBackend::Metal => vec!["gpu-render".to_owned()],
         GpuBackend::WebGpuClass => vec!["gpu-render".to_owned()],
@@ -2437,6 +2446,25 @@ mod tests {
                 .iter()
                 .any(|mode| mode == "dual-gpu"),
             "OpenCL sessions should advertise dual-gpu acceleration mode"
+        );
+        assert!(
+            profile
+                .acceleration_modes
+                .iter()
+                .any(|mode| mode == "opencl-long-horizon"),
+            "OpenCL sessions should expose long-horizon workload mode"
+        );
+        assert!(
+            profile
+                .acceleration_modes
+                .iter()
+                .any(|mode| mode == "interop-error-budget-v1"),
+            "OpenCL sessions should expose interop error-budget policy mode"
+        );
+        assert!(profile.has_explicit_opencl_workload_surface());
+        assert!(
+            profile.interop_error_budget_policy().is_some(),
+            "OpenCL sessions should surface a concrete interop error-budget policy"
         );
 
         drop(registry_lock);

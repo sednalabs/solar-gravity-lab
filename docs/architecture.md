@@ -45,6 +45,18 @@ for mutable world semantics.
 - borrowed buffer views
 - explicit release calls for exported packet memory
 
+### Dual-GPU policy ownership
+
+When `OpenCL` is selected on canonical main, the intended split is explicit:
+
+- `Vulkan` owns realtime rendering and in-frame packet compaction work.
+- `OpenCL` owns long-horizon tracer integration and forecast/path sampling assists.
+- CPU remains authoritative for checkpoint publication and canonical world state.
+
+Interop is policy-driven, not implicit. The runtime/hardware surface should expose
+the active workload map plus an explicit error-budget policy so clients and
+telemetry can report what is actually active.
+
 ### Client ownership
 
 `clients/android` is a shell, not an authority layer. It owns:

@@ -66,7 +66,9 @@
       "status": "wip",
       "owner_item": "3493",
       "proof_refs": [
-        "Vulkan/OpenCL capability reporting and runtime partition tests"
+        "Vulkan/OpenCL capability reporting and runtime partition tests",
+        "engine/hardware explicit workload assignments for Vulkan realtime and OpenCL long-horizon classes",
+        "engine/hardware interop error-budget policy surfaced in hardware profile and OpenCL session tests"
       ],
       "notes": "Keep CPU authoritative; accelerators provide optional tiered compute."
     },

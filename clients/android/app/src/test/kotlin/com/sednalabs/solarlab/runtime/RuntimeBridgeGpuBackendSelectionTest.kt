@@ -1,6 +1,8 @@
 package com.sednalabs.solarlab.runtime
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RuntimeBridgeGpuBackendSelectionTest {
@@ -30,5 +32,31 @@ class RuntimeBridgeGpuBackendSelectionTest {
         assertEquals(NATIVE_GPU_BACKEND_NONE, preferredGpuBackendCode(""))
         assertEquals(NATIVE_GPU_BACKEND_NONE, preferredGpuBackendCode("  "))
         assertEquals(NATIVE_GPU_BACKEND_NONE, preferredGpuBackendCode("cuda"))
+    }
+
+    @Test
+    fun nativeRuntimeInfoResult_surfacesOpenClWorkloadsAndInteropPolicy() {
+        val info = NativeRuntimeInfoResult(
+            result = NativeResult(code = 0),
+            abiVersion = 2,
+            cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            gpuBackend = NATIVE_GPU_BACKEND_OPENCL,
+        )
+
+        assertTrue(info.gpuWorkloadSummary()?.contains("long-horizon") == true)
+        assertTrue(info.gpuInteropErrorBudgetSummary()?.contains("position<=5m") == true)
+    }
+
+    @Test
+    fun nativeRuntimeInfoResult_returnsNoInteropPolicy_forNonOpenClBackends() {
+        val info = NativeRuntimeInfoResult(
+            result = NativeResult(code = 0),
+            abiVersion = 2,
+            cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
+        )
+
+        assertTrue(info.gpuWorkloadSummary()?.contains("realtime") == true)
+        assertNull(info.gpuInteropErrorBudgetSummary())
     }
 }
