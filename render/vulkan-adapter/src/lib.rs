@@ -792,8 +792,8 @@ mod tests {
 
         let packet = adapt_render_scene(&scene);
         let span = &packet.trail_spans[0];
-        let first_vertex = packet.trail_vertices[span.vertex_offset as usize];
-        let last_vertex = packet.trail_vertices
+        let first_vertex = &packet.trail_vertices[span.vertex_offset as usize];
+        let last_vertex = &packet.trail_vertices
             [(span.vertex_offset + span.vertex_count.saturating_sub(1)) as usize];
 
         assert_eq!(span.max_samples, 384);
