@@ -259,6 +259,10 @@ val solarlabDevTelemetryToken = project.stringPropertyOrEnv(
     "solarlab.devTelemetryToken",
     "SOLARLAB_DEV_TELEMETRY_TOKEN",
 ) ?: ""
+val solarlabPreferredGpuBackend = project.stringPropertyOrEnv(
+    "solarlab.preferredGpuBackend",
+    "SOLARLAB_PREFERRED_GPU_BACKEND",
+) ?: "none"
 
 val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
     group = "build"
@@ -291,6 +295,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DEV_TELEMETRY_ENDPOINT", solarlabDevTelemetryEndpoint.toBuildConfigStringLiteral())
         buildConfigField("String", "DEV_TELEMETRY_TOKEN", solarlabDevTelemetryToken.toBuildConfigStringLiteral())
+        buildConfigField("String", "PREFERRED_GPU_BACKEND", solarlabPreferredGpuBackend.toBuildConfigStringLiteral())
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")

@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab.runtime
 
+import com.sednalabs.solarlab.BuildConfig
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -8,6 +9,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.acos
 import kotlin.math.abs
@@ -1212,6 +1214,29 @@ internal sealed interface NativeLibraryLoadOutcome {
     data class Failure(val reason: String) : NativeLibraryLoadOutcome
 }
 
+internal const val NATIVE_TIMELINE_SEMANTICS_BRANCHED_SANDBOX = 1
+internal const val NATIVE_CPU_BACKEND_SIMD_ARM64 = 1
+internal const val NATIVE_GPU_BACKEND_NONE = 0
+internal const val NATIVE_GPU_BACKEND_VULKAN = 1
+internal const val NATIVE_GPU_BACKEND_METAL = 2
+internal const val NATIVE_GPU_BACKEND_WEBGPU_CLASS = 3
+internal const val NATIVE_GPU_BACKEND_OPENCL = 4
+
+internal fun preferredGpuBackendCode(preferredBackendRaw: String): Int {
+    val normalized = preferredBackendRaw.trim()
+        .lowercase(Locale.US)
+        .replace(Regex("\\s+"), "")
+    return when (normalized) {
+        "", "none" -> NATIVE_GPU_BACKEND_NONE
+        "vulkan" -> NATIVE_GPU_BACKEND_VULKAN
+        "metal" -> NATIVE_GPU_BACKEND_METAL
+        "webgpu", "webgpu-class", "webgpu_class" -> NATIVE_GPU_BACKEND_WEBGPU_CLASS
+        "vulkan+opencl", "opencl+vulkan", "vulkan,opencl", "opencl,vulkan" -> NATIVE_GPU_BACKEND_OPENCL
+        "opencl", "open-cl", "open_cl" -> NATIVE_GPU_BACKEND_OPENCL
+        else -> NATIVE_GPU_BACKEND_NONE
+    }
+}
+
 internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private const val LIBRARY_NAME = "solarlab_v2"
 
@@ -1251,7 +1276,7 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
             timelineSemantics = NATIVE_TIMELINE_SEMANTICS_BRANCHED_SANDBOX,
             liveUpdatesEnabled = true,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
-            gpuBackend = NATIVE_GPU_BACKEND_NONE,
+            gpuBackend = preferredGpuBackendCode(BuildConfig.PREFERRED_GPU_BACKEND),
         )
     }
 
@@ -1347,9 +1372,6 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
 
     private external fun nativeReleaseVulkanScene(packetHandle: Long): NativeResult
 
-    private const val NATIVE_TIMELINE_SEMANTICS_BRANCHED_SANDBOX = 1
-    private const val NATIVE_CPU_BACKEND_SIMD_ARM64 = 1
-    private const val NATIVE_GPU_BACKEND_NONE = 0
 }
 
 internal data class NativeResult(
@@ -1396,11 +1418,11 @@ internal data class NativeRuntimeInfoResult(
     }
 
     fun gpuBackendLabel(): String = when (gpuBackend) {
-        0 -> "none"
-        1 -> "vulkan"
-        2 -> "metal"
-        3 -> "webgpu-class"
-        4 -> "opencl"
+        NATIVE_GPU_BACKEND_NONE -> "none"
+        NATIVE_GPU_BACKEND_VULKAN -> "vulkan"
+        NATIVE_GPU_BACKEND_METAL -> "metal"
+        NATIVE_GPU_BACKEND_WEBGPU_CLASS -> "webgpu-class"
+        NATIVE_GPU_BACKEND_OPENCL -> "opencl"
         else -> "unknown($gpuBackend)"
     }
 }

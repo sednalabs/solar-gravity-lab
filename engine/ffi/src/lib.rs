@@ -19,7 +19,10 @@ use std::str;
 use std::sync::{Mutex, OnceLock};
 
 use solarlab_domain::{BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics, Vector3d};
-use solarlab_hardware::{CpuBackend, GpuBackend, HardwareProfile};
+use solarlab_hardware::{
+    BackendFamilyAssignment, CpuBackend, GpuBackend, GpuBackendReport, GpuBackendStateFamily,
+    HardwareProfile,
+};
 use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_vulkan_adapter::{
@@ -1003,13 +1006,14 @@ fn build_session(
         live_updates_enabled: params.live_updates_enabled != 0,
     };
 
+    let gpu_backend_report = default_gpu_backend_report(&gpu_backend);
     let hardware_profile = HardwareProfile {
         cpu_backend: cpu_backend.clone(),
         gpu_backend: gpu_backend.clone(),
-        gpu_backend_report: Default::default(),
+        gpu_backend_report,
         cpu_features: Vec::new(),
         gpu_features: Vec::new(),
-        acceleration_modes: Vec::new(),
+        acceleration_modes: default_acceleration_modes(&gpu_backend),
     };
 
     let runtime = WorldRuntime::new(
@@ -1024,6 +1028,76 @@ fn build_session(
     let summary = snapshot_summary(&runtime)?;
 
     Ok((runtime, info, summary))
+}
+
+fn default_gpu_backend_report(gpu_backend: &GpuBackend) -> GpuBackendReport {
+    match gpu_backend {
+        GpuBackend::None => GpuBackendReport::default(),
+        GpuBackend::Vulkan => GpuBackendReport {
+            active: vec![BackendFamilyAssignment {
+                state_family: GpuBackendStateFamily::Rendering,
+                backend: GpuBackend::Vulkan,
+            }],
+            available: vec![BackendFamilyAssignment {
+                state_family: GpuBackendStateFamily::Rendering,
+                backend: GpuBackend::Vulkan,
+            }],
+        },
+        // OpenCL selection is treated as the dual-backend profile:
+        // OpenCL for simulation and Vulkan for rendering.
+        GpuBackend::OpenCl => GpuBackendReport {
+            active: vec![
+                BackendFamilyAssignment {
+                    state_family: GpuBackendStateFamily::Simulation,
+                    backend: GpuBackend::OpenCl,
+                },
+                BackendFamilyAssignment {
+                    state_family: GpuBackendStateFamily::Rendering,
+                    backend: GpuBackend::Vulkan,
+                },
+            ],
+            available: vec![
+                BackendFamilyAssignment {
+                    state_family: GpuBackendStateFamily::Simulation,
+                    backend: GpuBackend::OpenCl,
+                },
+                BackendFamilyAssignment {
+                    state_family: GpuBackendStateFamily::Rendering,
+                    backend: GpuBackend::Vulkan,
+                },
+            ],
+        },
+        GpuBackend::Metal => GpuBackendReport {
+            active: vec![BackendFamilyAssignment {
+                state_family: GpuBackendStateFamily::Rendering,
+                backend: GpuBackend::Metal,
+            }],
+            available: vec![BackendFamilyAssignment {
+                state_family: GpuBackendStateFamily::Rendering,
+                backend: GpuBackend::Metal,
+            }],
+        },
+        GpuBackend::WebGpuClass => GpuBackendReport {
+            active: vec![BackendFamilyAssignment {
+                state_family: GpuBackendStateFamily::Rendering,
+                backend: GpuBackend::WebGpuClass,
+            }],
+            available: vec![BackendFamilyAssignment {
+                state_family: GpuBackendStateFamily::Rendering,
+                backend: GpuBackend::WebGpuClass,
+            }],
+        },
+    }
+}
+
+fn default_acceleration_modes(gpu_backend: &GpuBackend) -> Vec<String> {
+    match gpu_backend {
+        GpuBackend::OpenCl => vec!["dual-gpu".to_owned()],
+        GpuBackend::Vulkan => vec!["gpu-render".to_owned()],
+        GpuBackend::Metal => vec!["gpu-render".to_owned()],
+        GpuBackend::WebGpuClass => vec!["gpu-render".to_owned()],
+        GpuBackend::None => Vec::new(),
+    }
 }
 
 fn snapshot_summary(runtime: &WorldRuntime) -> Result<SlSessionSnapshotSummary, SlResult> {
@@ -2258,6 +2332,7 @@ mod tests {
     use std::mem::size_of;
 
     use solarlab_domain::{BodyClass, BodyId, Vector3d};
+    use solarlab_hardware::{GpuBackend, GpuBackendStateFamily};
     use solarlab_runtime::{BodyState, WorldCommand};
 
     use super::{
@@ -2326,6 +2401,48 @@ mod tests {
 
         let destroy = sl_v2_session_destroy(create.handle);
         assert_eq!(destroy.code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn opencl_session_uses_dual_backend_family_assignments() {
+        let mut params = new_params("sol-system", "main");
+        params.gpu_backend = 4;
+
+        let create = sl_v2_session_create(params);
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let registry_lock = registry().lock().expect("session registry lock");
+        let session = registry_lock
+            .sessions
+            .get(&create.handle.raw)
+            .expect("session should exist");
+        let profile = &session.runtime.snapshot().hardware_profile;
+
+        assert!(profile.has_one_owner_per_state_family());
+        assert!(
+            profile
+                .active_gpu_backends()
+                .iter()
+                .any(|assignment| assignment.state_family == GpuBackendStateFamily::Rendering
+                    && assignment.backend == GpuBackend::Vulkan)
+        );
+        assert!(
+            profile
+                .active_gpu_backends()
+                .iter()
+                .any(|assignment| assignment.state_family == GpuBackendStateFamily::Simulation
+                    && assignment.backend == GpuBackend::OpenCl)
+        );
+        assert!(
+            profile
+                .acceleration_modes
+                .iter()
+                .any(|mode| mode == "dual-gpu"),
+            "OpenCL sessions should advertise dual-gpu acceleration mode"
+        );
+
+        drop(registry_lock);
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
 
     #[test]
