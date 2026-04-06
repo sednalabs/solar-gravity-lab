@@ -66,6 +66,7 @@ import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellNoticeTone
 import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.SnapshotPresentation
+import com.sednalabs.solarlab.runtime.developerTelemetryStreamingTargetLabel
 import com.sednalabs.solarlab.runtime.toDisplayLine
 import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
@@ -1053,6 +1054,7 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val shareText = presentation.toShareText(maxEntries = 24, locale = Locale.getDefault())
+    val streamingTarget = developerTelemetryStreamingTargetLabel()
 
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -1079,6 +1081,13 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            streamingTarget?.let { target ->
+                Text(
+                    text = "Remote stream target: $target",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
 
             if (presentation.enabled) {
                 Row(

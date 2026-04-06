@@ -8,6 +8,7 @@ The service layer is intentionally narrow:
 - host bundle and catalog payloads
 - support incremental content refresh
 - expose provenance and compatibility metadata
+- optionally accept developer telemetry during bring-up and validation
 
 The runtime must remain functional without these services. Services enhance the
 product; they do not define whether the simulation can operate.

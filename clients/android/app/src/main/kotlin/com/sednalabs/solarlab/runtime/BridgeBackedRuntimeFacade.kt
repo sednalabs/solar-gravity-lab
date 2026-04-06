@@ -18,7 +18,7 @@ import java.util.Locale
  */
 class BridgeBackedRuntimeFacade internal constructor(
     private val bridge: RuntimeBridge,
-    private val developerTelemetryRecorder: DeveloperTelemetryRecorder = DeveloperTelemetryRecorder(),
+    private val developerTelemetryRecorder: DeveloperTelemetryRecorder = defaultDeveloperTelemetryRecorder(),
 ) : RuntimeFacade {
     constructor() : this(JniRuntimeBridge())
 

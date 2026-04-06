@@ -229,6 +229,21 @@ fun Project.stringPropertyOrEnv(propertyName: String, envName: String): String? 
     return envValue.ifEmpty { null }
 }
 
+fun String.toBuildConfigStringLiteral(): String = buildString {
+    append('"')
+    this@toBuildConfigStringLiteral.forEach { character ->
+        when (character) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(character)
+        }
+    }
+    append('"')
+}
+
 val workspaceRootDir = rootProject.projectDir.resolve("../..").canonicalFile
 val solarlabGeneratedJniLibsDir = layout.buildDirectory.dir("generated/jniLibs/solarlab_v2")
 val solarlabVersionCode = project.stringPropertyOrEnv("solarlab.versionCode", "SOLARLAB_VERSION_CODE")
@@ -236,6 +251,14 @@ val solarlabVersionCode = project.stringPropertyOrEnv("solarlab.versionCode", "S
     ?: 11
 val solarlabVersionName = project.stringPropertyOrEnv("solarlab.versionName", "SOLARLAB_VERSION_NAME")
     ?: "0.1.0-alpha.10"
+val solarlabDevTelemetryEndpoint = project.stringPropertyOrEnv(
+    "solarlab.devTelemetryEndpoint",
+    "SOLARLAB_DEV_TELEMETRY_ENDPOINT",
+) ?: ""
+val solarlabDevTelemetryToken = project.stringPropertyOrEnv(
+    "solarlab.devTelemetryToken",
+    "SOLARLAB_DEV_TELEMETRY_TOKEN",
+) ?: ""
 
 val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
     group = "build"
@@ -266,6 +289,8 @@ android {
         versionCode = solarlabVersionCode
         versionName = solarlabVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "DEV_TELEMETRY_ENDPOINT", solarlabDevTelemetryEndpoint.toBuildConfigStringLiteral())
+        buildConfigField("String", "DEV_TELEMETRY_TOKEN", solarlabDevTelemetryToken.toBuildConfigStringLiteral())
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")

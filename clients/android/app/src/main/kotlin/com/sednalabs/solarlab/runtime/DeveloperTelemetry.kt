@@ -9,6 +9,12 @@ import kotlin.collections.ArrayDeque
 
 internal const val DEVELOPER_TELEMETRY_LOG_TAG = "SolarLabDevTelemetry"
 
+internal fun defaultDeveloperTelemetryRecorder(): DeveloperTelemetryRecorder {
+    val sinks = mutableListOf<DeveloperTelemetrySink>(LogcatDeveloperTelemetrySink)
+    defaultDeveloperTelemetryHttpSink()?.let(sinks::add)
+    return DeveloperTelemetryRecorder(sinks = sinks)
+}
+
 enum class DeveloperTelemetryLevel {
     Debug,
     Info,

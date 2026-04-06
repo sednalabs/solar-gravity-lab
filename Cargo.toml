@@ -9,6 +9,7 @@ members = [
     "engine/runtime",
     "engine/ffi",
     "render/vulkan-adapter",
+    "services/dev-telemetry-collector",
 ]
 resolver = "2"
 
