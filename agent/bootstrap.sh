@@ -76,6 +76,8 @@ fi
 require_command bash
 require_command git
 require_command python3
+require_command zip
+require_command unzip
 
 case "$LANE" in
   smoke|rust-workspace|ffi-abi|runtime-scene-telemetry|full)
