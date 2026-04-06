@@ -10,16 +10,6 @@ import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.Locale
-import kotlin.math.PI
-import kotlin.math.acos
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.pow
-import kotlin.math.sin
-import kotlin.math.sqrt
-import kotlin.random.Random
-
 /**
  * Rust runtime boundary for Android.
  * 
@@ -324,653 +314,38 @@ internal class JniRuntimeBridge(
 
     private fun ensureStartupSeedApplied(handle: Long): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
-        val seedCommands = startupSeedCommands()
-        for (command in seedCommands) {
-            val commandResult = runCatching {
-                transport.applyCommand(handle, command.toNativePayload())
-            }.getOrElse { error ->
-                signals += RuntimeSignal.Notice(
-                    message = "Startup bootstrap command failed: ${error.message ?: error::class.java.simpleName}",
-                    level = RuntimeNoticeLevel.Error,
-                )
-                return signals
-            }
-
-            if (!commandResult.result.isOk()) {
-                signals += RuntimeSignal.Notice(
-                    message = "Startup bootstrap command rejected: ${commandResult.result.describe()}",
-                    level = RuntimeNoticeLevel.Warning,
-                )
-                return signals
-            }
-        }
-
-        if (signals.isEmpty()) {
+        val commandResult = runCatching {
+            transport.applyCommand(handle, RuntimeCommand.SeedCanonicalSolarSystem.toNativePayload())
+        }.getOrElse { error ->
             signals += RuntimeSignal.Notice(
-                message = "Seeded default startup solar system (${seedCommands.size} bodies; " +
-                    "${STARTUP_CURATED_SMALL_BODY_COUNT} curated small bodies, " +
-                    "${STARTUP_SYNTHETIC_ASTEROID_BELT_COUNT} belt tracers, " +
-                    "${STARTUP_SYNTHETIC_OORT_CLOUD_COUNT} Oort tracers) for session $handle",
-                level = RuntimeNoticeLevel.Info,
+                message = "Startup canonical seed command failed: ${error.message ?: error::class.java.simpleName}",
+                level = RuntimeNoticeLevel.Error,
             )
+            return signals
         }
+
+        if (!commandResult.result.isOk()) {
+            signals += RuntimeSignal.Notice(
+                message = "Startup canonical seed command rejected: ${commandResult.result.describe()}",
+                level = RuntimeNoticeLevel.Warning,
+            )
+            return signals
+        }
+
+        signals += RuntimeSignal.Notice(
+            message = "Seeded canonical solar system via Rust authority for session $handle",
+            level = RuntimeNoticeLevel.Info,
+        )
 
         return signals
     }
 
-    private fun startupSeedCommands(): List<RuntimeCommand> {
-        val sun = RuntimeCommand.SpawnBody(
-            bodyId = "sun",
-            bodyClass = RuntimeBodyClass.Star,
-            positionX = 0.0,
-            positionY = 0.0,
-            positionZ = 0.0,
-            velocityX = 0.0,
-            velocityY = 0.0,
-            velocityZ = 0.0,
-            massKg = 1.988_47e30,
-            radiusM = 6.9634e8,
-        )
-        val mercury = RuntimeCommand.SpawnBody(
-            bodyId = "mercury",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = -1.946_172_635_585_372e10,
-            positionY = -5.992_796_777_348_039e10,
-            positionZ = -2.999_277_267_983_142e10,
-            velocityX = 3.699_499_185_727_919e4,
-            velocityY = -8_529.675_283_382_268,
-            velocityZ = -8_393.121_143_467_224,
-            massKg = 3.3011e23,
-            radiusM = 2.4397e6,
-        )
-        val venus = RuntimeCommand.SpawnBody(
-            bodyId = "venus",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = -1.074_564_940_521_906e11,
-            positionY = -6.922_528_774_882_654e9,
-            positionZ = 3.686_187_045_620_657e9,
-            velocityX = 1_381.906_029_263_447,
-            velocityY = -32_017.818_431_682_73,
-            velocityZ = -14_491.835_473_268_0,
-            massKg = 4.8675e24,
-            radiusM = 6.0518e6,
-        )
-        val earth = RuntimeCommand.SpawnBody(
-            bodyId = "earth",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = -2.649_903_367_743_05e10,
-            positionY = 1.327_574_173_383_451e11,
-            positionZ = 5.755_671_847_054_072e10,
-            velocityX = -2.979_426_007_043_741e4,
-            velocityY = -5_018.052_308_799_903,
-            velocityZ = -2_175.393_802_830_554,
-            massKg = 5.97237e24,
-            radiusM = 6.3710e6,
-        )
-        val moon = moonStartupCommand(earth)
-        val mars = RuntimeCommand.SpawnBody(
-            bodyId = "mars",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = 2.080_481_406_418_42e11,
-            positionY = 2.096_191_735_388_105e8,
-            positionZ = -5.529_162_313_155_326e9,
-            velocityX = 1_162.672_403_766_088,
-            velocityY = 23_918.409_699_116_61,
-            velocityZ = 10_939.171_916_766_48,
-            massKg = 6.4171e23,
-            radiusM = 3.3895e6,
-        )
-        val jupiter = RuntimeCommand.SpawnBody(
-            bodyId = "jupiter",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = 5.985_676_246_570_645e11,
-            positionY = 4.093_863_059_841_62e11,
-            positionZ = 1.608_943_268_775_687e11,
-            velocityX = -7_909.860_292_172_008,
-            velocityY = 10_183.574_082_354_88,
-            velocityZ = 4_557.755_393_988_428,
-            massKg = 1.8982e27,
-            radiusM = 6.9911e7,
-        )
-        val saturn = RuntimeCommand.SpawnBody(
-            bodyId = "saturn",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = 9.583_853_589_157_217e11,
-            positionY = 9.237_154_712_422_728e11,
-            positionZ = 3.403_008_584_583_76e11,
-            velocityX = -7_431.212_958_764_64,
-            velocityY = 6_110.152_327_010_504,
-            velocityZ = 2_842.799_239_481_524,
-            massKg = 5.6834e26,
-            radiusM = 5.8232e7,
-        )
-        val uranus = RuntimeCommand.SpawnBody(
-            bodyId = "uranus",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = 2.158_974_819_528_798e12,
-            positionY = -1.870_911_063_386_387e12,
-            positionZ = -8.499_688_608_118_601e11,
-            velocityX = 4_637.272_105_685_132,
-            velocityY = 4_262.811_704_355_634,
-            velocityZ = 1_801.372_818_270_055,
-            massKg = 8.6810e25,
-            radiusM = 2.5362e7,
-        )
-        val neptune = RuntimeCommand.SpawnBody(
-            bodyId = "neptune",
-            bodyClass = RuntimeBodyClass.Planet,
-            positionX = 2.515_046_471_487_719e12,
-            positionY = -3.437_774_106_197_624e12,
-            positionZ = -1.469_713_518_152_847e12,
-            velocityX = 4_465.275_177_950_522,
-            velocityY = 2_888.286_551_585_958,
-            velocityZ = 1_071.024_500_381_687,
-            massKg = 1.02413e26,
-            radiusM = 2.4622e7,
-        )
-        val pluto = RuntimeCommand.SpawnBody(
-            bodyId = "pluto",
-            bodyClass = RuntimeBodyClass.DwarfPlanet,
-            positionX = -1.477_330_922_306_794e12,
-            positionY = -4.185_578_139_004_337e12,
-            positionZ = -8.607_382_312_063_003e11,
-            velocityX = 5_259.850_276_851_352,
-            velocityY = -1_939.761_452_556_408,
-            velocityZ = -2_204.049_388_416_424,
-            massKg = 1.303e22,
-            radiusM = 1.1883e6,
-        )
-        val haumea = spawnOrbitingBodyAroundPrimary(
-            bodyId = "haumea",
-            bodyClass = RuntimeBodyClass.DwarfPlanet,
-            primary = sun,
-            massKg = 4.006e21,
-            radiusM = 7.16e5,
-            elements = startupOrbitalElements(
-                semiMajorAxisAu = 43.13,
-                eccentricity = 0.191,
-                inclinationDeg = 28.19,
-                ascendingNodeDeg = 122.0,
-                periapsisDeg = 240.0,
-                trueAnomalyDeg = 80.0,
-            ),
-        )
-        val makemake = spawnOrbitingBodyAroundPrimary(
-            bodyId = "makemake",
-            bodyClass = RuntimeBodyClass.DwarfPlanet,
-            primary = sun,
-            massKg = 3.1e21,
-            radiusM = 7.15e5,
-            elements = startupOrbitalElements(
-                semiMajorAxisAu = 45.79,
-                eccentricity = 0.159,
-                inclinationDeg = 28.96,
-                ascendingNodeDeg = 79.6,
-                periapsisDeg = 294.0,
-                trueAnomalyDeg = 170.0,
-            ),
-        )
-        val eris = spawnOrbitingBodyAroundPrimary(
-            bodyId = "eris",
-            bodyClass = RuntimeBodyClass.DwarfPlanet,
-            primary = sun,
-            massKg = 1.6466e22,
-            radiusM = 1.163e6,
-            elements = startupOrbitalElements(
-                semiMajorAxisAu = 67.78,
-                eccentricity = 0.44,
-                inclinationDeg = 44.04,
-                ascendingNodeDeg = 35.95,
-                periapsisDeg = 151.4,
-                trueAnomalyDeg = 260.0,
-            ),
-        )
-        val ceres = RuntimeCommand.SpawnBody(
-            bodyId = "ceres",
-            bodyClass = RuntimeBodyClass.DwarfPlanet,
-            positionX = -3.559_423_585_024_965e11,
-            positionY = 8.163_123_942_918_420e10,
-            positionZ = 1.108_857_536_222_865e11,
-            velocityX = -6_205.936_548_273_125,
-            velocityY = -17_046.568_817_332_89,
-            velocityZ = -6_760.549_102_192_67,
-            massKg = 9.3835e20,
-            radiusM = 4.731e5,
-        )
-        val curatedSmallBodies = startupCuratedSmallBodyCommands(primary = sun)
-        val syntheticAsteroidBelt = syntheticAsteroidBeltCommands(primary = sun)
-        val syntheticOortCloud = syntheticOortCloudCommands(primary = sun)
-
-        return buildList {
-            add(sun)
-            add(mercury)
-            add(venus)
-            add(earth)
-            add(moon)
-            add(mars)
-            add(jupiter)
-            add(saturn)
-            add(uranus)
-            add(neptune)
-            add(pluto)
-            add(haumea)
-            add(makemake)
-            add(eris)
-            add(ceres)
-            addAll(curatedSmallBodies)
-            addAll(syntheticAsteroidBelt)
-            addAll(syntheticOortCloud)
-        }
-    }
-
-    private fun moonStartupCommand(earth: RuntimeCommand.SpawnBody): RuntimeCommand.SpawnBody {
-        // Keep the Android bootstrap seed coherent with the legacy starter-moon propagation
-        // until the Rust runtime owns a full cartesian seed import for host-relative moons.
-        val moonState = stateVectorAroundPrimaryAtEpoch(
-            primaryMassKg = earth.massKg,
-            bodyMassKg = STARTUP_MOON_MASS_KG,
-            orbit = StartupOrbitAtEpoch(
-                epochJdTdb = STARTUP_SEED_JULIAN_DATE_TDB,
-                semiMajorAxisM = 3.844e8,
-                eccentricity = 0.0549,
-                inclinationRad = 5.145.degreesToRadians(),
-                longitudeOfAscendingNodeRad = 125.08.degreesToRadians(),
-                argumentOfPeriapsisRad = 318.15.degreesToRadians(),
-                meanAnomalyAtEpochRad = 135.27.degreesToRadians(),
-            ),
-            targetJulianDateTdb = STARTUP_SEED_JULIAN_DATE_TDB,
-            gravitationalConstant = STARTUP_GRAVITATIONAL_CONSTANT_M3_PER_KG_S2,
-        )
-
-        return RuntimeCommand.SpawnBody(
-            bodyId = "moon",
-            bodyClass = RuntimeBodyClass.Moon,
-            positionX = earth.positionX + moonState.positionX,
-            positionY = earth.positionY + moonState.positionY,
-            positionZ = earth.positionZ + moonState.positionZ,
-            velocityX = earth.velocityX + moonState.velocityX,
-            velocityY = earth.velocityY + moonState.velocityY,
-            velocityZ = earth.velocityZ + moonState.velocityZ,
-            massKg = STARTUP_MOON_MASS_KG,
-            radiusM = STARTUP_MOON_RADIUS_M,
-        )
-    }
-
-    private fun startupCuratedSmallBodyCommands(
-        primary: RuntimeCommand.SpawnBody,
-    ): List<RuntimeCommand.SpawnBody> = listOf(
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "vesta",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 2.59076e20,
-            radiusM = 2.626e5,
-            elements = startupOrbitalElements(2.361, 0.089, 7.14, 103.8, 150.9, 40.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "pallas",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 2.14e20,
-            radiusM = 2.56e5,
-            elements = startupOrbitalElements(2.773, 0.231, 34.84, 173.1, 310.2, 220.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "hygiea",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 8.32e19,
-            radiusM = 2.17e5,
-            elements = startupOrbitalElements(3.141, 0.117, 3.83, 283.2, 313.4, 120.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "psyche",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 2.3e19,
-            radiusM = 1.13e5,
-            elements = startupOrbitalElements(2.923, 0.140, 3.10, 150.0, 228.0, 280.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "eros",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 6.687e15,
-            radiusM = 8_420.0,
-            elements = startupOrbitalElements(1.458, 0.223, 10.83, 304.4, 178.7, 60.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "bennu",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 7.329e10,
-            radiusM = 245.0,
-            elements = startupOrbitalElements(1.1264, 0.2037, 6.03, 2.06, 66.22, 300.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "ryugu",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 4.5e11,
-            radiusM = 448.0,
-            elements = startupOrbitalElements(1.1896, 0.1902, 5.88, 251.45, 211.61, 170.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "itokawa",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 3.51e10,
-            radiusM = 165.0,
-            elements = startupOrbitalElements(1.324, 0.280, 1.62, 69.1, 162.8, 25.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "apophis",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 6.1e10,
-            radiusM = 185.0,
-            elements = startupOrbitalElements(0.9224, 0.1912, 3.34, 204.4, 126.4, 320.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "didymos",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 5.24e11,
-            radiusM = 390.0,
-            elements = startupOrbitalElements(1.644, 0.384, 3.41, 73.2, 319.6, 80.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "halley",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 2.2e14,
-            radiusM = 5_500.0,
-            elements = startupOrbitalElements(17.834, 0.967, 162.26, 58.42, 111.33, 38.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "encke",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 3.5e13,
-            radiusM = 2_400.0,
-            elements = startupOrbitalElements(2.215, 0.850, 11.78, 334.6, 186.5, 140.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "churyumov-gerasimenko",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 9.98e12,
-            radiusM = 2_000.0,
-            elements = startupOrbitalElements(3.463, 0.641, 7.04, 50.17, 12.78, 90.0),
-        ),
-        spawnOrbitingBodyAroundPrimary(
-            bodyId = "wild-2",
-            bodyClass = RuntimeBodyClass.SmallBody,
-            primary = primary,
-            massKg = 2.3e13,
-            radiusM = 2_000.0,
-            elements = startupOrbitalElements(3.447, 0.538, 3.24, 136.1, 41.0, 260.0),
-        ),
-    )
-
-    private fun syntheticAsteroidBeltCommands(
-        primary: RuntimeCommand.SpawnBody,
-        count: Int = STARTUP_SYNTHETIC_ASTEROID_BELT_COUNT,
-        seed: Long = STARTUP_SYNTHETIC_ASTEROID_BELT_SEED,
-    ): List<RuntimeCommand.SpawnBody> {
-        val random = Random(seed)
-        return List(count) { index ->
-            spawnOrbitingBodyAroundPrimary(
-                bodyId = "belt-$index",
-                bodyClass = RuntimeBodyClass.Tracer,
-                primary = primary,
-                massKg = 0.0,
-                radiusM = random.nextDouble(500.0, 50_000.0),
-                elements = startupOrbitalElements(
-                    semiMajorAxisAu = random.nextDouble(2.1, 3.3),
-                    eccentricity = random.nextDouble(0.0, 0.18),
-                    inclinationDeg = random.nextDouble(0.0, 18.0),
-                    ascendingNodeDeg = random.nextDouble(0.0, 360.0),
-                    periapsisDeg = random.nextDouble(0.0, 360.0),
-                    trueAnomalyDeg = random.nextDouble(0.0, 360.0),
-                ),
-            )
-        }
-    }
-
-    private fun syntheticOortCloudCommands(
-        primary: RuntimeCommand.SpawnBody,
-        count: Int = STARTUP_SYNTHETIC_OORT_CLOUD_COUNT,
-        seed: Long = STARTUP_SYNTHETIC_OORT_CLOUD_SEED,
-    ): List<RuntimeCommand.SpawnBody> {
-        val random = Random(seed)
-        return List(count) { index ->
-            val logSemiMajorAxisAu = random.nextDouble(3.3, 5.0)
-            val semiMajorAxisAu = 10.0.pow(logSemiMajorAxisAu)
-            val inclinationDeg = Math.toDegrees(acos(random.nextDouble(-1.0, 1.0)))
-            spawnOrbitingBodyAroundPrimary(
-                bodyId = "oort-$index",
-                bodyClass = RuntimeBodyClass.Tracer,
-                primary = primary,
-                massKg = 0.0,
-                radiusM = random.nextDouble(1_000.0, 20_000.0),
-                elements = startupOrbitalElements(
-                    semiMajorAxisAu = semiMajorAxisAu,
-                    eccentricity = random.nextDouble(0.85, 0.999),
-                    inclinationDeg = inclinationDeg,
-                    ascendingNodeDeg = random.nextDouble(0.0, 360.0),
-                    periapsisDeg = random.nextDouble(0.0, 360.0),
-                    trueAnomalyDeg = random.nextDouble(0.0, 360.0),
-                ),
-            )
-        }
-    }
-
-    private fun spawnOrbitingBodyAroundPrimary(
-        bodyId: String,
-        bodyClass: RuntimeBodyClass,
-        primary: RuntimeCommand.SpawnBody,
-        massKg: Double,
-        radiusM: Double,
-        elements: StartupOrbitalElements,
-    ): RuntimeCommand.SpawnBody {
-        val state = stateVectorAroundPrimary(
-            primaryMassKg = primary.massKg,
-            bodyMassKg = massKg,
-            elements = elements,
-            gravitationalConstant = STARTUP_GRAVITATIONAL_CONSTANT_M3_PER_KG_S2,
-        )
-
-        return RuntimeCommand.SpawnBody(
-            bodyId = bodyId,
-            bodyClass = bodyClass,
-            positionX = primary.positionX + state.positionX,
-            positionY = primary.positionY + state.positionY,
-            positionZ = primary.positionZ + state.positionZ,
-            velocityX = primary.velocityX + state.velocityX,
-            velocityY = primary.velocityY + state.velocityY,
-            velocityZ = primary.velocityZ + state.velocityZ,
-            massKg = massKg,
-            radiusM = radiusM,
-        )
-    }
-
-    private fun startupOrbitalElements(
-        semiMajorAxisAu: Double,
-        eccentricity: Double,
-        inclinationDeg: Double,
-        ascendingNodeDeg: Double,
-        periapsisDeg: Double,
-        trueAnomalyDeg: Double,
-    ): StartupOrbitalElements = StartupOrbitalElements(
-        semiMajorAxisM = semiMajorAxisAu * STARTUP_ASTRONOMICAL_UNIT_M,
-        eccentricity = eccentricity,
-        inclinationRad = inclinationDeg.degreesToRadians(),
-        longitudeOfAscendingNodeRad = ascendingNodeDeg.degreesToRadians(),
-        argumentOfPeriapsisRad = periapsisDeg.degreesToRadians(),
-        trueAnomalyRad = trueAnomalyDeg.degreesToRadians(),
-    )
-
-    private fun stateVectorAroundPrimaryAtEpoch(
-        primaryMassKg: Double,
-        bodyMassKg: Double,
-        orbit: StartupOrbitAtEpoch,
-        targetJulianDateTdb: Double,
-        gravitationalConstant: Double,
-    ): StartupStateVector {
-        val mu = gravitationalConstant * (primaryMassKg + bodyMassKg)
-        val meanMotionRadPerSecond = sqrt(mu / (orbit.semiMajorAxisM * orbit.semiMajorAxisM * orbit.semiMajorAxisM))
-        val deltaSeconds = (targetJulianDateTdb - orbit.epochJdTdb) * STARTUP_DAY_SECONDS
-        val meanAnomaly = normalizeRadians(orbit.meanAnomalyAtEpochRad + (meanMotionRadPerSecond * deltaSeconds))
-        val eccentricAnomaly = solveKeplerEquation(meanAnomalyRad = meanAnomaly, eccentricity = orbit.eccentricity)
-        val trueAnomaly = 2.0 * atan2(
-            sqrt(1.0 + orbit.eccentricity) * sin(eccentricAnomaly / 2.0),
-            sqrt(1.0 - orbit.eccentricity) * cos(eccentricAnomaly / 2.0),
-        )
-
-        return stateVectorAroundPrimary(
-            primaryMassKg = primaryMassKg,
-            bodyMassKg = bodyMassKg,
-            elements = StartupOrbitalElements(
-                semiMajorAxisM = orbit.semiMajorAxisM,
-                eccentricity = orbit.eccentricity,
-                inclinationRad = orbit.inclinationRad,
-                longitudeOfAscendingNodeRad = orbit.longitudeOfAscendingNodeRad,
-                argumentOfPeriapsisRad = orbit.argumentOfPeriapsisRad,
-                trueAnomalyRad = normalizeRadians(trueAnomaly),
-            ),
-            gravitationalConstant = gravitationalConstant,
-        )
-    }
-
-    private fun stateVectorAroundPrimary(
-        primaryMassKg: Double,
-        bodyMassKg: Double,
-        elements: StartupOrbitalElements,
-        gravitationalConstant: Double,
-    ): StartupStateVector {
-        val mu = gravitationalConstant * (primaryMassKg + bodyMassKg)
-        val p = elements.semiMajorAxisM * (1.0 - elements.eccentricity * elements.eccentricity)
-        val cosNu = cos(elements.trueAnomalyRad)
-        val sinNu = sin(elements.trueAnomalyRad)
-        val radius = p / (1.0 + elements.eccentricity * cosNu)
-        val speedFactor = sqrt(mu / p)
-
-        val rotation = StartupRotation.from(elements)
-
-        return StartupStateVector(
-            positionX = rotation.transformX(radius * cosNu, radius * sinNu),
-            positionY = rotation.transformY(radius * cosNu, radius * sinNu),
-            positionZ = rotation.transformZ(radius * cosNu, radius * sinNu),
-            velocityX = rotation.transformX(-speedFactor * sinNu, speedFactor * (elements.eccentricity + cosNu)),
-            velocityY = rotation.transformY(-speedFactor * sinNu, speedFactor * (elements.eccentricity + cosNu)),
-            velocityZ = rotation.transformZ(-speedFactor * sinNu, speedFactor * (elements.eccentricity + cosNu)),
-        )
-    }
-
-    private fun solveKeplerEquation(
-        meanAnomalyRad: Double,
-        eccentricity: Double,
-    ): Double {
-        var eccentricAnomaly = if (eccentricity < 0.8) meanAnomalyRad else PI
-
-        repeat(24) {
-            val functionValue = eccentricAnomaly - eccentricity * sin(eccentricAnomaly) - meanAnomalyRad
-            val derivative = 1.0 - eccentricity * cos(eccentricAnomaly)
-            val delta = functionValue / derivative
-            eccentricAnomaly -= delta
-            if (abs(delta) <= 1e-14) {
-                return eccentricAnomaly
-            }
-        }
-
-        return eccentricAnomaly
-    }
-
-    private fun normalizeRadians(angle: Double): Double {
-        val wrapped = (angle + PI) % (2.0 * PI)
-        return if (wrapped < 0.0) wrapped + PI else wrapped - PI
-    }
-
-    private fun Double.degreesToRadians(): Double = this * PI / 180.0
-
-    private data class StartupOrbitAtEpoch(
-        val epochJdTdb: Double,
-        val semiMajorAxisM: Double,
-        val eccentricity: Double,
-        val inclinationRad: Double,
-        val longitudeOfAscendingNodeRad: Double,
-        val argumentOfPeriapsisRad: Double,
-        val meanAnomalyAtEpochRad: Double,
-    )
-
-    private data class StartupOrbitalElements(
-        val semiMajorAxisM: Double,
-        val eccentricity: Double,
-        val inclinationRad: Double,
-        val longitudeOfAscendingNodeRad: Double,
-        val argumentOfPeriapsisRad: Double,
-        val trueAnomalyRad: Double,
-    )
-
-    private data class StartupStateVector(
-        val positionX: Double,
-        val positionY: Double,
-        val positionZ: Double,
-        val velocityX: Double,
-        val velocityY: Double,
-        val velocityZ: Double,
-    )
-
-    private data class StartupRotation(
-        val rotation11: Double,
-        val rotation12: Double,
-        val rotation21: Double,
-        val rotation22: Double,
-        val rotation31: Double,
-        val rotation32: Double,
-    ) {
-        fun transformX(x: Double, y: Double): Double = rotation11 * x + rotation12 * y
-        fun transformY(x: Double, y: Double): Double = rotation21 * x + rotation22 * y
-        fun transformZ(x: Double, y: Double): Double = rotation31 * x + rotation32 * y
-
-        companion object {
-            fun from(elements: StartupOrbitalElements): StartupRotation {
-                val cosOmega = cos(elements.longitudeOfAscendingNodeRad)
-                val sinOmega = sin(elements.longitudeOfAscendingNodeRad)
-                val cosI = cos(elements.inclinationRad)
-                val sinI = sin(elements.inclinationRad)
-                val cosW = cos(elements.argumentOfPeriapsisRad)
-                val sinW = sin(elements.argumentOfPeriapsisRad)
-
-                return StartupRotation(
-                    rotation11 = cosOmega * cosW - sinOmega * sinW * cosI,
-                    rotation12 = -cosOmega * sinW - sinOmega * cosW * cosI,
-                    rotation21 = sinOmega * cosW + cosOmega * sinW * cosI,
-                    rotation22 = -sinOmega * sinW + cosOmega * cosW * cosI,
-                    rotation31 = sinW * sinI,
-                    rotation32 = cosW * sinI,
-                )
-            }
-        }
-    }
 
     private companion object {
         private const val ABI_VERSION = 2
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 1_000L
-        private const val STARTUP_ASTRONOMICAL_UNIT_M = 1.495_978_707e11
-        private const val STARTUP_SEED_JULIAN_DATE_TDB = 2_451_545.0
-        private const val STARTUP_DAY_SECONDS = 86_400.0
-        private const val STARTUP_GRAVITATIONAL_CONSTANT_M3_PER_KG_S2 = 6.67430e-11
-        private const val STARTUP_MOON_MASS_KG = 7.342e22
-        private const val STARTUP_MOON_RADIUS_M = 1.7374e6
-        private const val STARTUP_CURATED_SMALL_BODY_COUNT = 14
-        private const val STARTUP_SYNTHETIC_ASTEROID_BELT_COUNT = 240
-        private const val STARTUP_SYNTHETIC_OORT_CLOUD_COUNT = 96
-        private const val STARTUP_SYNTHETIC_ASTEROID_BELT_SEED = 42L
-        private const val STARTUP_SYNTHETIC_OORT_CLOUD_SEED = 43L
     }
 }
 
@@ -1027,6 +402,10 @@ sealed interface RuntimeCommand {
 
     data class FocusBody(val bodyId: String?) : RuntimeCommand {
         override val label: String = "observer.focus_body"
+    }
+
+    data object SeedCanonicalSolarSystem : RuntimeCommand {
+        override val label: String = "world.seed_canonical_solar_system"
     }
 
     data class SpawnBody(
@@ -1141,6 +520,10 @@ private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when
     is RuntimeCommand.FocusBody -> NativeRuntimeCommandPayload(
         kind = NATIVE_COMMAND_FOCUS_BODY,
         bodyIdUtf8 = bodyId?.toByteArray(StandardCharsets.UTF_8),
+    )
+
+    RuntimeCommand.SeedCanonicalSolarSystem -> NativeRuntimeCommandPayload(
+        kind = NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM,
     )
 
     is RuntimeCommand.SpawnBody -> NativeRuntimeCommandPayload(
@@ -1515,6 +898,7 @@ private const val NATIVE_COMMAND_REMOVE_BODY = 7
 private const val NATIVE_COMMAND_SET_BODY_KINEMATICS = 8
 private const val NATIVE_COMMAND_CREATE_CHECKPOINT = 9
 private const val NATIVE_COMMAND_CREATE_BRANCH_FROM_CHECKPOINT = 10
+private const val NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM = 11
 private const val NATIVE_BODY_CLASS_STAR = 0
 private const val NATIVE_BODY_CLASS_PLANET = 1
 private const val NATIVE_BODY_CLASS_DWARF_PLANET = 2

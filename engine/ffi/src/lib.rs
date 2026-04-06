@@ -18,7 +18,10 @@ use std::mem::size_of;
 use std::str;
 use std::sync::{Mutex, OnceLock};
 
-use solarlab_domain::{BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics, Vector3d};
+use solarlab_domain::{
+    BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics,
+    Vector3d,
+};
 use solarlab_hardware::{
     BackendFamilyAssignment, CpuBackend, GpuBackend, GpuBackendReport, GpuBackendStateFamily,
     HardwareProfile,
@@ -140,6 +143,7 @@ pub enum SlCommandKind {
     SetBodyKinematics = 8,
     CreateCheckpoint = 9,
     CreateBranchFromCheckpoint = 10,
+    SeedCanonicalSolarSystem = 11,
 }
 
 #[repr(C)]
@@ -1278,6 +1282,7 @@ fn decode_observer_mode(value: SlObserverMode) -> ObserverMode {
 
 fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlResult> {
     match command.kind {
+        SlCommandKind::SeedCanonicalSolarSystem => Ok(WorldCommand::SeedCanonicalSolarSystem),
         SlCommandKind::AdvanceEpoch => Ok(WorldCommand::AdvanceEpoch {
             delta_seconds: command.delta_seconds,
         }),
@@ -1321,11 +1326,9 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
             })
         }
         SlCommandKind::CreateCheckpoint => {
-            let checkpoint_id = decode_optional_identifier(
-                &command.checkpoint_id,
-                command.checkpoint_id_len,
-            )?
-            .map(CheckpointId);
+            let checkpoint_id =
+                decode_optional_identifier(&command.checkpoint_id, command.checkpoint_id_len)?
+                    .map(CheckpointId);
             let label = decode_optional_identifier(
                 &command.checkpoint_label,
                 command.checkpoint_label_len,
@@ -1340,8 +1343,9 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
                 &command.checkpoint_id,
                 command.checkpoint_id_len,
             )?);
-            let new_branch_id = decode_optional_identifier(&command.new_branch_id, command.new_branch_id_len)?
-                .map(BranchId);
+            let new_branch_id =
+                decode_optional_identifier(&command.new_branch_id, command.new_branch_id_len)?
+                    .map(BranchId);
             Ok(WorldCommand::CreateBranchFromCheckpoint {
                 checkpoint_id,
                 new_branch_id,
@@ -1883,29 +1887,23 @@ mod android_jni {
             z: body_velocity_z,
         };
 
-        let (checkpoint_id, checkpoint_id_len) = match decode_optional_java_id_bytes(
-            env,
-            checkpoint_id_utf8,
-        ) {
-            Ok(value) => value,
-            Err(result) => return create_error_snapshot_summary(result),
-        };
+        let (checkpoint_id, checkpoint_id_len) =
+            match decode_optional_java_id_bytes(env, checkpoint_id_utf8) {
+                Ok(value) => value,
+                Err(result) => return create_error_snapshot_summary(result),
+            };
 
-        let (checkpoint_label, checkpoint_label_len) = match decode_optional_java_id_bytes(
-            env,
-            checkpoint_label_utf8,
-        ) {
-            Ok(value) => value,
-            Err(result) => return create_error_snapshot_summary(result),
-        };
+        let (checkpoint_label, checkpoint_label_len) =
+            match decode_optional_java_id_bytes(env, checkpoint_label_utf8) {
+                Ok(value) => value,
+                Err(result) => return create_error_snapshot_summary(result),
+            };
 
-        let (new_branch_id, new_branch_id_len) = match decode_optional_java_id_bytes(
-            env,
-            new_branch_id_utf8,
-        ) {
-            Ok(value) => value,
-            Err(result) => return create_error_snapshot_summary(result),
-        };
+        let (new_branch_id, new_branch_id_len) =
+            match decode_optional_java_id_bytes(env, new_branch_id_utf8) {
+                Ok(value) => value,
+                Err(result) => return create_error_snapshot_summary(result),
+            };
 
         let recorded_at_unix_ms = match i64::try_from(recorded_at_unix_ms) {
             Ok(value) => value,
@@ -1980,6 +1978,7 @@ mod android_jni {
             8 => Ok(SlCommandKind::SetBodyKinematics),
             9 => Ok(SlCommandKind::CreateCheckpoint),
             10 => Ok(SlCommandKind::CreateBranchFromCheckpoint),
+            11 => Ok(SlCommandKind::SeedCanonicalSolarSystem),
             _ => Err(status(SlStatusCode::InvalidArgument)),
         }
     }
@@ -2336,14 +2335,13 @@ mod tests {
     use solarlab_runtime::{BodyState, WorldCommand};
 
     use super::{
-        decode_identifier, registry, sl_v2_abi_version, sl_v2_session_apply_command, sl_v2_session_create,
-        sl_v2_session_destroy, sl_v2_session_export_vulkan_scene, sl_v2_session_refresh,
-        sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
+        decode_identifier, registry, sl_v2_abi_version, sl_v2_session_apply_command,
+        sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_export_vulkan_scene,
+        sl_v2_session_refresh, sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
         sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlBodyClass,
         SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlSessionCommand,
-        SlSessionCreateParams, SlStatusCode, SlTimelineSemantics, SlVector3d,
-        SlVulkanBodyInstance, SlVulkanSceneBufferKind, SlVulkanTrailSpan, SL_V2_ID_CAPACITY,
-        SOLARLAB_V2_ABI_VERSION,
+        SlSessionCreateParams, SlStatusCode, SlTimelineSemantics, SlVector3d, SlVulkanBodyInstance,
+        SlVulkanSceneBufferKind, SlVulkanTrailSpan, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
 
     #[test]
@@ -2419,20 +2417,20 @@ mod tests {
         let profile = &session.runtime.snapshot().hardware_profile;
 
         assert!(profile.has_one_owner_per_state_family());
-        assert!(
-            profile
-                .active_gpu_backends()
-                .iter()
-                .any(|assignment| assignment.state_family == GpuBackendStateFamily::Rendering
-                    && assignment.backend == GpuBackend::Vulkan)
-        );
-        assert!(
-            profile
-                .active_gpu_backends()
-                .iter()
-                .any(|assignment| assignment.state_family == GpuBackendStateFamily::Simulation
-                    && assignment.backend == GpuBackend::OpenCl)
-        );
+        assert!(profile
+            .active_gpu_backends()
+            .iter()
+            .any(
+                |assignment| assignment.state_family == GpuBackendStateFamily::Rendering
+                    && assignment.backend == GpuBackend::Vulkan
+            ));
+        assert!(profile
+            .active_gpu_backends()
+            .iter()
+            .any(
+                |assignment| assignment.state_family == GpuBackendStateFamily::Simulation
+                    && assignment.backend == GpuBackend::OpenCl
+            ));
         assert!(
             profile
                 .acceleration_modes
@@ -2559,10 +2557,8 @@ mod tests {
         );
         assert_eq!(exported_bodies[1].selected, 1);
 
-        let trail_view = sl_v2_vulkan_scene_packet_buffer(
-            exported.handle,
-            SlVulkanSceneBufferKind::TrailSpans,
-        );
+        let trail_view =
+            sl_v2_vulkan_scene_packet_buffer(exported.handle, SlVulkanSceneBufferKind::TrailSpans);
         assert_eq!(trail_view.result.code, SlStatusCode::Ok);
         let exported_trails = unsafe {
             std::slice::from_raw_parts(
@@ -2645,8 +2641,14 @@ mod tests {
 
         assert_ne!(first_scene_revision, third_scene_revision);
 
-        assert_eq!(sl_v2_vulkan_scene_packet_release(first_export.handle).code, SlStatusCode::Ok);
-        assert_eq!(sl_v2_vulkan_scene_packet_release(second_export.handle).code, SlStatusCode::Ok);
+        assert_eq!(
+            sl_v2_vulkan_scene_packet_release(first_export.handle).code,
+            SlStatusCode::Ok
+        );
+        assert_eq!(
+            sl_v2_vulkan_scene_packet_release(second_export.handle).code,
+            SlStatusCode::Ok
+        );
         assert_eq!(
             sl_v2_vulkan_scene_packet_release(third_export.handle).code,
             SlStatusCode::Ok
@@ -2853,6 +2855,32 @@ mod tests {
             )
             .expect("branch id should decode"),
             "branch"
+        );
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn apply_command_seed_canonical_solar_system_populates_once() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let seed_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::SeedCanonicalSolarSystem, |_command| {}),
+        );
+        assert_eq!(seed_result.result.code, SlStatusCode::Ok);
+        assert!(seed_result.summary.body_count > 0);
+        assert_eq!(seed_result.summary.body_count, 365);
+
+        let second_seed_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::SeedCanonicalSolarSystem, |_command| {}),
+        );
+        assert_eq!(second_seed_result.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            second_seed_result.summary.body_count,
+            seed_result.summary.body_count
         );
 
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);

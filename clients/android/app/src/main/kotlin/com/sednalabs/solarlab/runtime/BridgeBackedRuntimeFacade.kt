@@ -692,6 +692,7 @@ private fun RuntimeCommand.userFacingAction(): String = when (this) {
     is RuntimeCommand.SetPlaybackRate -> "Set playback rate to ${simSecondsPerRealSecond.asRateLabel()}"
     is RuntimeCommand.SetObserverMode -> "Switch observer to ${mode.displayLabel()}"
     is RuntimeCommand.FocusBody -> "Focus ${bodyId ?: "active selection"}"
+    RuntimeCommand.SeedCanonicalSolarSystem -> "Seed canonical solar system"
     is RuntimeCommand.SpawnBody -> "Spawn ${bodyId}"
     is RuntimeCommand.RemoveBody -> "Remove ${bodyId}"
     is RuntimeCommand.SetBodyKinematics -> "Update kinematics for ${bodyId}"

@@ -9,9 +9,9 @@ use std::mem::size_of;
 use std::time::Instant;
 
 use solarlab_data::{
-    apply_update_plan, plan_manifest_update, ApplyPackageInputs, ApplyProvenance, ApplyUpdateError,
-    CompatibilityTarget, Digest, LocalDataState, PackageKind, SemVer, StoredPackage,
-    UpdateManifest, UpdatePlan, UpdatePlanError,
+    apply_update_plan, canonical_startup_seed, plan_manifest_update, ApplyPackageInputs,
+    ApplyProvenance, ApplyUpdateError, CompatibilityTarget, Digest, LocalDataState, PackageKind,
+    SemVer, StoredPackage, UpdateManifest, UpdatePlan, UpdatePlanError,
 };
 
 use solarlab_domain::{
@@ -93,7 +93,7 @@ pub struct MountedManifestState {
 pub struct WorldSnapshot {
     /// Copy-based snapshot boundary: external callers only get immutable
     /// world-facing data; they cannot mutate runtime directly.
-    /// 
+    ///
     /// Snapshots are published after every authoritative state transition (command
     /// application or simulation step). The data is decoupled from the internal
     /// tree-based branch state to ensure stable observation across FFI.
@@ -150,17 +150,16 @@ pub struct RuntimeTelemetryReport {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorldCommand {
+    /// Seeds the canonical startup solar-system catalog into an empty world.
+    /// Runtime owns the catalog truth; host clients only request this action.
+    SeedCanonicalSolarSystem,
     /// Spawns a new body into the simulation.
     /// This triggers a recomputation of total system mass and barycenter invariants.
-    SpawnBody {
-        body: BodyState,
-    },
+    SpawnBody { body: BodyState },
     /// Removes an existing body.
     /// This is a material state change that will branch the sandbox if current
     /// semantics are based on a fixed catalog.
-    RemoveBody {
-        body_id: BodyId,
-    },
+    RemoveBody { body_id: BodyId },
     /// Directly updates a body's position or velocity.
     /// Intended for user "grab and launch" interactions or small corrections.
     SetBodyKinematics {
@@ -170,25 +169,17 @@ pub enum WorldCommand {
     },
     /// Advances the system epoch.
     /// This invokes the authoritative physics solver for the delta duration.
-    AdvanceEpoch {
-        delta_seconds: f64,
-    },
+    AdvanceEpoch { delta_seconds: f64 },
     /// Pauses simulation propagation.
     PausePlayback,
     /// Resumes simulation propagation.
     ResumePlayback,
     /// Sets the time-scale multiplier for real-time playback.
-    SetPlaybackRate {
-        sim_seconds_per_real_second: f64,
-    },
+    SetPlaybackRate { sim_seconds_per_real_second: f64 },
     /// Changes the camera mode (e.g., from Free to Follow).
-    SetObserverMode {
-        mode: ObserverMode,
-    },
+    SetObserverMode { mode: ObserverMode },
     /// Selects a specific body for the observer focus.
-    FocusBody {
-        body_id: Option<BodyId>,
-    },
+    FocusBody { body_id: Option<BodyId> },
     /// Captures the current authoritative state as a named or ID-based checkpoint.
     /// Checkpoints are required before a branch can be created.
     CreateCheckpoint {
@@ -285,12 +276,12 @@ const TRAIL_HISTORY_MAX_SAMPLES: usize = 96;
 #[derive(Clone, Debug)]
 pub struct WorldRuntime {
     /// Simulation-owned mutable state and history.
-    /// 
+    ///
     /// The runtime implements a tree-based branching model where the "Active Branch"
     /// represents the current writable timeline. Users can capture Checkpoints at any
     /// point and later create new Branches from those checkpoints to explore alternative
     /// scenarios without losing the original history.
-    /// 
+    ///
     /// Every branch maintains its own authoritative WorldState and a CommandLog
     /// that records every material change since the branch was created. This log
     /// ensures that any state can be deterministically replayed or verified.
@@ -477,6 +468,30 @@ impl WorldRuntime {
         self.next_command_ordinal += 1;
 
         match &command {
+            WorldCommand::SeedCanonicalSolarSystem => {
+                let branch = self.active_branch_mut();
+                if branch.world.bodies.is_empty() {
+                    let seed = canonical_startup_seed();
+                    branch.world.bodies = seed
+                        .bodies
+                        .into_iter()
+                        .map(|body| BodyState {
+                            body_id: BodyId(body.body_id),
+                            body_class: body.body_class,
+                            mass_kg: body.mass_kg,
+                            radius_m: body.radius_m,
+                            position_m: body.position_m,
+                            velocity_mps: body.velocity_mps,
+                        })
+                        .collect();
+                    branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+                    branch.world.trail_history_by_body.clear();
+                    record_trail_samples_from_bodies(
+                        &branch.world.bodies,
+                        &mut branch.world.trail_history_by_body,
+                    );
+                }
+            }
             WorldCommand::SpawnBody { body } => {
                 let branch = self.active_branch_mut();
                 if branch
@@ -717,8 +732,7 @@ impl WorldRuntime {
     pub fn telemetry_report(&self) -> RuntimeTelemetryReport {
         let snapshot = self.snapshot();
         let scene = extract_render_scene(&snapshot);
-        let trail_history_counts =
-            runtime_trail_history_counts(&snapshot.trail_history_by_body);
+        let trail_history_counts = runtime_trail_history_counts(&snapshot.trail_history_by_body);
         let total_trail_samples = trail_history_counts
             .iter()
             .map(|entry| entry.sample_count)
@@ -729,7 +743,9 @@ impl WorldRuntime {
             branch_id: snapshot.branch_id,
             epoch_seconds: snapshot.epoch_seconds,
             timeline_semantics: snapshot.timeline_semantics,
-            active_checkpoint_id: snapshot.active_checkpoint.map(|checkpoint| checkpoint.checkpoint_id),
+            active_checkpoint_id: snapshot
+                .active_checkpoint
+                .map(|checkpoint| checkpoint.checkpoint_id),
             total_bodies: snapshot.bodies.len(),
             total_tracers: scene.tracer_count as usize,
             trail_history_counts,
@@ -771,6 +787,7 @@ impl WorldRuntime {
 
     fn command_kind(&self, command: &WorldCommand) -> String {
         match command {
+            WorldCommand::SeedCanonicalSolarSystem => "catalog.seed_canonical_solar_system",
             WorldCommand::SpawnBody { .. } => "body.spawn",
             WorldCommand::RemoveBody { .. } => "body.remove",
             WorldCommand::SetBodyKinematics { .. } => "body.set_kinematics",
@@ -790,6 +807,7 @@ impl WorldRuntime {
 
     fn command_summary(&self, command: &WorldCommand) -> String {
         match command {
+            WorldCommand::SeedCanonicalSolarSystem => "seed canonical startup solar system".into(),
             WorldCommand::SpawnBody { body } => format!("spawn {}", body.body_id.0),
             WorldCommand::RemoveBody { body_id } => format!("remove {}", body_id.0),
             WorldCommand::SetBodyKinematics { body_id, .. } => {
@@ -1126,8 +1144,8 @@ fn extract_scene_trails(snapshot: &WorldSnapshot) -> Vec<SceneTrail> {
                 samples_m,
                 color: style.tracer_color,
                 max_samples: TRAIL_HISTORY_MAX_SAMPLES as u32,
-                head_highlighted: body.body_class == BodyClass::Tracer ||
-                    focused_body_id == Some(&body.body_id),
+                head_highlighted: body.body_class == BodyClass::Tracer
+                    || focused_body_id == Some(&body.body_id),
             })
         })
         .collect()
@@ -1605,6 +1623,52 @@ mod tests {
     }
 
     #[test]
+    fn seed_canonical_solar_system_populates_authoritative_startup_world() {
+        let mut runtime = new_runtime();
+        assert!(runtime.snapshot().bodies.is_empty());
+
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .expect("seed command should succeed");
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.bodies.len(), 365);
+        assert!(snapshot.bodies.iter().any(|body| body.body_id.0 == "sun"));
+        assert!(snapshot.bodies.iter().any(|body| body.body_id.0 == "moon"));
+        assert!(snapshot
+            .bodies
+            .iter()
+            .any(|body| body.body_id.0 == "halley"));
+        assert!(snapshot
+            .bodies
+            .iter()
+            .any(|body| body.body_id.0 == "belt-239"));
+        assert!(snapshot
+            .bodies
+            .iter()
+            .any(|body| body.body_id.0 == "oort-95"));
+        assert_eq!(snapshot.trail_history_by_body.len(), 365);
+    }
+
+    #[test]
+    fn seed_canonical_solar_system_is_idempotent_for_non_empty_world() {
+        let mut runtime = new_runtime();
+
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .expect("first seed command should succeed");
+        let first_count = runtime.snapshot().bodies.len();
+
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 2)
+            .expect("second seed command should succeed");
+        let second_count = runtime.snapshot().bodies.len();
+
+        assert_eq!(first_count, 365);
+        assert_eq!(second_count, 365);
+    }
+
+    #[test]
     fn render_scene_extracts_selected_body_counts_and_camera_from_runtime() {
         let mut runtime = new_runtime();
         let earth = BodyId("earth".into());
@@ -1859,25 +1923,76 @@ mod tests {
         assert_eq!(report.branch_id, BranchId("main".into()));
         assert_eq!(report.total_bodies, 2);
         assert_eq!(report.total_tracers, 1);
-        assert_eq!(report.timeline_semantics, TimelineSemantics::BranchedSandbox);
+        assert_eq!(
+            report.timeline_semantics,
+            TimelineSemantics::BranchedSandbox
+        );
         assert_eq!(report.total_trail_samples, 4);
-        assert_eq!(report.hardware_profile, HardwareProfile::offline_reference());
+        assert_eq!(
+            report.hardware_profile,
+            HardwareProfile::offline_reference()
+        );
         assert_eq!(report.active_checkpoint_id, None);
         assert_eq!(report.playback.sim_seconds_per_real_second, 2.0);
         assert_eq!(report.observer.mode, ObserverMode::FollowSelected);
         assert_eq!(report.observer.focus_body_id, Some(BodyId("tracer".into())));
-        assert_eq!(report.total_trail_samples, report.trail_history_counts.iter().map(|entry| entry.sample_count).sum());
+        assert_eq!(
+            report.total_trail_samples,
+            report
+                .trail_history_counts
+                .iter()
+                .map(|entry| entry.sample_count)
+                .sum()
+        );
         assert_eq!(report.trail_history_counts.len(), 2);
-        assert_eq!(report.trail_history_counts[0].body_id, BodyId("planet".into()));
+        assert_eq!(
+            report.trail_history_counts[0].body_id,
+            BodyId("planet".into())
+        );
         assert_eq!(report.trail_history_counts[0].sample_count, 2);
-        assert_eq!(report.trail_history_counts[1].body_id, BodyId("tracer".into()));
+        assert_eq!(
+            report.trail_history_counts[1].body_id,
+            BodyId("tracer".into())
+        );
         assert_eq!(report.trail_history_counts[1].sample_count, 2);
-        assert_eq!(report.mounted_manifest.as_ref().expect("manifest should be present").manifest_id, "manifest-telemetry");
-        assert_eq!(report.mounted_manifest.as_ref().expect("manifest should be present").manifest_version, "1.0.0");
-        assert_eq!(report.mounted_manifest.as_ref().expect("manifest should be present").mounted_packages, 1);
-        assert!(report.scene_revision.starts_with("scenario=sol-system|branch=main|epoch=10.000000|observer=FollowSelected"));
-        assert!(report.scene_revision.starts_with(&rendered_scene.scene_revision.split("|diag:").next().unwrap_or_default()));
-        assert_eq!(report.diagnostics.frame_number, rendered_scene.diagnostics.frame_number);
+        assert_eq!(
+            report
+                .mounted_manifest
+                .as_ref()
+                .expect("manifest should be present")
+                .manifest_id,
+            "manifest-telemetry"
+        );
+        assert_eq!(
+            report
+                .mounted_manifest
+                .as_ref()
+                .expect("manifest should be present")
+                .manifest_version,
+            "1.0.0"
+        );
+        assert_eq!(
+            report
+                .mounted_manifest
+                .as_ref()
+                .expect("manifest should be present")
+                .mounted_packages,
+            1
+        );
+        assert!(report.scene_revision.starts_with(
+            "scenario=sol-system|branch=main|epoch=10.000000|observer=FollowSelected"
+        ));
+        assert!(report.scene_revision.starts_with(
+            &rendered_scene
+                .scene_revision
+                .split("|diag:")
+                .next()
+                .unwrap_or_default()
+        ));
+        assert_eq!(
+            report.diagnostics.frame_number,
+            rendered_scene.diagnostics.frame_number
+        );
 
         assert!(report.invariants.total_energy_j.is_finite());
     }
@@ -1912,10 +2027,13 @@ mod tests {
         assert_eq!(report.total_trail_samples, 1);
         assert!(report.mounted_manifest.is_none());
         assert_eq!(report.active_checkpoint_id, None);
-        assert_eq!(report.trail_history_counts, vec![RuntimeTrailHistoryCount {
-            body_id: BodyId("solo".into()),
-            sample_count: 1,
-        }]);
+        assert_eq!(
+            report.trail_history_counts,
+            vec![RuntimeTrailHistoryCount {
+                body_id: BodyId("solo".into()),
+                sample_count: 1,
+            }]
+        );
     }
 
     #[test]

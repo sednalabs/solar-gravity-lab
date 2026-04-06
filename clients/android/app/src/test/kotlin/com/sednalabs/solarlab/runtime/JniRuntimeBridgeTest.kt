@@ -10,12 +10,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.nio.charset.StandardCharsets
-import kotlin.math.sqrt
-
 class JniRuntimeBridgeTest {
     @Test
     fun connect_seedsDefaultSolarSystem_whenInitialSnapshotIsEmpty() = runBlocking {
@@ -45,94 +41,13 @@ class JniRuntimeBridgeTest {
         assertEquals(2, renderHostAdapter.refreshCount)
         assertEquals(1, renderHostAdapter.releaseCount)
 
-        val spawnedBodyIds = transport.appliedCommands.map { payload ->
-            payload.bodyIdUtf8?.let { String(it, StandardCharsets.UTF_8) }
-        }
-        assertEquals(STARTUP_EXPECTED_BODY_COUNT, spawnedBodyIds.size)
-        assertTrue(
-            spawnedBodyIds.containsAll(
-                listOf(
-                    "sun",
-                    "moon",
-                    "haumea",
-                    "makemake",
-                    "eris",
-                    "vesta",
-                    "halley",
-                    "belt-0",
-                    "belt-239",
-                    "oort-0",
-                    "oort-95",
-                )
-            )
-        )
-        assertEquals(
-            STARTUP_EXPECTED_TRACER_COUNT,
-            transport.appliedCommands.count { it.bodyClass == RuntimeBodyClass.Tracer.nativeCode },
-        )
-        assertEquals(
-            STARTUP_EXPECTED_SMALL_BODY_COUNT,
-            transport.appliedCommands.count { it.bodyClass == RuntimeBodyClass.SmallBody.nativeCode },
-        )
-        assertEquals(
-            STARTUP_EXPECTED_DWARF_PLANET_COUNT,
-            transport.appliedCommands.count { it.bodyClass == RuntimeBodyClass.DwarfPlanet.nativeCode },
-        )
-
-        val earthPayload = transport.commandForBody("earth")
-        val moonPayload = transport.commandForBody("moon")
-        val halleyPayload = transport.commandForBody("halley")
-        val beltPayload = transport.commandForBody("belt-0")
-        val oortPayload = transport.commandForBody("oort-0")
-        assertNotNull("Expected Earth spawn payload in startup seed", earthPayload)
-        assertNotNull("Expected Moon spawn payload in startup seed", moonPayload)
-        assertNotNull("Expected Halley spawn payload in startup seed", halleyPayload)
-        assertNotNull("Expected synthetic belt tracer in startup seed", beltPayload)
-        assertNotNull("Expected synthetic Oort tracer in startup seed", oortPayload)
-
-        earthPayload!!
-        moonPayload!!
-        halleyPayload!!
-        beltPayload!!
-        oortPayload!!
-
-        val earthMoonDistanceMeters = distanceBetween(
-            earthPayload.bodyPositionX,
-            earthPayload.bodyPositionY,
-            earthPayload.bodyPositionZ,
-            moonPayload.bodyPositionX,
-            moonPayload.bodyPositionY,
-            moonPayload.bodyPositionZ,
-        )
-        assertTrue(
-            "Earth-Moon startup distance should be physically plausible, found $earthMoonDistanceMeters m",
-            earthMoonDistanceMeters in 3.0e8..4.5e8,
-        )
-
-        val earthMoonRelativeSpeedMetersPerSecond = distanceBetween(
-            earthPayload.bodyVelocityX,
-            earthPayload.bodyVelocityY,
-            earthPayload.bodyVelocityZ,
-            moonPayload.bodyVelocityX,
-            moonPayload.bodyVelocityY,
-            moonPayload.bodyVelocityZ,
-        )
-        assertTrue(
-            "Earth-Moon startup relative speed should be physically plausible, found $earthMoonRelativeSpeedMetersPerSecond m/s",
-            earthMoonRelativeSpeedMetersPerSecond in 500.0..1_500.0,
-        )
-        assertEquals(RuntimeBodyClass.SmallBody.nativeCode, halleyPayload.bodyClass)
-        assertTrue("Halley should keep a physical mass in the startup seed", halleyPayload.bodyMassKg > 0.0)
-        assertEquals(RuntimeBodyClass.Tracer.nativeCode, beltPayload.bodyClass)
-        assertEquals(0.0, beltPayload.bodyMassKg, 0.0)
-        assertTrue("Synthetic belt tracer radius should stay bounded", beltPayload.bodyRadiusM in 500.0..50_000.0)
-        assertEquals(RuntimeBodyClass.Tracer.nativeCode, oortPayload.bodyClass)
-        assertEquals(0.0, oortPayload.bodyMassKg, 0.0)
-        assertTrue("Synthetic Oort tracer radius should stay bounded", oortPayload.bodyRadiusM in 1_000.0..20_000.0)
+        assertEquals(1, transport.appliedCommands.size)
+        val seedCommandPayload = transport.appliedCommands.single()
+        assertEquals(11, seedCommandPayload.kind)
         assertTrue(
             signals
                 .filterIsInstance<RuntimeSignal.Notice>()
-                .any { it.message.contains("Seeded default startup solar system") }
+                .any { it.message.contains("Seeded canonical solar system via Rust authority") }
         )
         assertTrue(
             signals
@@ -167,7 +82,7 @@ class JniRuntimeBridgeTest {
         assertFalse(
             signals
                 .filterIsInstance<RuntimeSignal.Notice>()
-                .any { it.message.contains("Seeded default startup solar system") }
+                .any { it.message.contains("Seeded canonical solar system via Rust authority") }
         )
     }
 
@@ -291,11 +206,6 @@ class JniRuntimeBridgeTest {
             return snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT)
         }
 
-        fun commandForBody(bodyId: String): NativeRuntimeCommandPayload? =
-            appliedCommands.firstOrNull { payload ->
-                payload.bodyIdUtf8?.let { String(it, StandardCharsets.UTF_8) } == bodyId
-            }
-
         override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
             error("exportVulkanScene is unused in this test")
 
@@ -306,23 +216,6 @@ class JniRuntimeBridgeTest {
 
     private companion object {
         const val STARTUP_EXPECTED_BODY_COUNT = 365
-        const val STARTUP_EXPECTED_SMALL_BODY_COUNT = 14
-        const val STARTUP_EXPECTED_TRACER_COUNT = 336
-        const val STARTUP_EXPECTED_DWARF_PLANET_COUNT = 5
-
-        fun distanceBetween(
-            ax: Double,
-            ay: Double,
-            az: Double,
-            bx: Double,
-            by: Double,
-            bz: Double,
-        ): Double {
-            val dx = ax - bx
-            val dy = ay - by
-            val dz = az - bz
-            return sqrt(dx * dx + dy * dy + dz * dz)
-        }
 
         fun snapshotSummary(bodyCount: Int): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
             result = NativeResult(code = 0),
