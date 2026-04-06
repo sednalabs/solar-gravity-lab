@@ -9,6 +9,8 @@ import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import org.junit.Assert.assertFalse
@@ -120,6 +122,7 @@ class StartupSmokeInstrumentationTest {
             .takeScreenshot()
             ?: throw AssertionError("Unable to capture startup screenshot from instrumentation")
         try {
+            persistValidationScreenshot("startup-ready", screenshot)
             val metrics = screenshot.renderCropMetrics()
             Log.i(
                 LOG_TAG,
@@ -167,6 +170,22 @@ class StartupSmokeInstrumentationTest {
             brightSampleCount = brightSamples,
             uniqueColorCount = uniqueColors.size,
         )
+    }
+
+    private fun persistValidationScreenshot(name: String, bitmap: Bitmap) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val outputDir = File(
+            context.getExternalFilesDir(null),
+            "validation-screenshots",
+        ).apply {
+            mkdirs()
+        }
+        val outputFile = File(outputDir, "$name.png")
+        FileOutputStream(outputFile).use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.flush()
+        }
+        Log.i(LOG_TAG, "StartupSmokeInstrumentationTest.savedScreenshot ${outputFile.absolutePath}")
     }
 
     private data class VisualMetrics(
