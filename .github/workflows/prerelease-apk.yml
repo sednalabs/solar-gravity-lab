@@ -56,6 +56,19 @@ permissions:
 jobs:
   build-prerelease-apk:
     name: Build internal dev preview APK
+    outputs:
+      head_sha: ${{ steps.git_meta.outputs.head_sha }}
+      version_name: ${{ steps.meta.outputs.version_name }}
+      version_code: ${{ steps.meta.outputs.version_code }}
+      safe_version: ${{ steps.meta.outputs.safe_version }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      build_variant: ${{ steps.meta.outputs.build_variant }}
+      release_channel: ${{ steps.meta.outputs.release_channel }}
+      package_label: ${{ steps.meta.outputs.package_label }}
+      release_title: ${{ steps.meta.outputs.release_title }}
+      launch_smoke_outcome: ${{ steps.launch_smoke.outcome }}
+      changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
+      changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -221,48 +234,90 @@ jobs:
             dist/startup-smoke/**
             clients/android/app/build/outputs/apk/${{ steps.meta.outputs.build_variant }}/output-metadata.json
 
-      - name: Publish GitHub Release
-        if: success() && (github.event_name == 'push' || inputs.publish_release == true)
-        env:
-          GH_TOKEN: ${{ github.token }}
+  arm64-prerelease-proof:
+    name: ARM64 prerelease proof
+    needs: build-prerelease-apk
+    if: needs.build-prerelease-apk.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run ARM64 Rust proof slice
         shell: bash
         run: |
           set -euo pipefail
-          tag_name="${{ steps.meta.outputs.tag_name }}"
-          release_title="${{ steps.meta.outputs.release_title }}"
-          release_target="${{ steps.git_meta.outputs.head_sha }}"
-          release_notes="dist/changelog-${{ steps.meta.outputs.safe_version }}.md"
+          cargo test -p solarlab-physics --lib
+          cargo test -p solarlab-runtime --lib
+
+  publish-prerelease-apk:
+    name: Publish GitHub release
+    needs:
+      - build-prerelease-apk
+      - arm64-prerelease-proof
+    if: |
+      always() &&
+      needs.build-prerelease-apk.result == 'success' &&
+      needs.arm64-prerelease-proof.result == 'success' &&
+      (github.event_name == 'push' || inputs.publish_release == true)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: solar-gravity-lab-${{ needs.build-prerelease-apk.outputs.safe_version }}-${{ needs.build-prerelease-apk.outputs.package_label }}-${{ github.run_id }}
+          path: dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.build-prerelease-apk.outputs.tag_name }}
+          RELEASE_TITLE: ${{ needs.build-prerelease-apk.outputs.release_title }}
+          RELEASE_TARGET: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          SAFE_VERSION: ${{ needs.build-prerelease-apk.outputs.safe_version }}
+          RELEASE_CHANNEL: ${{ needs.build-prerelease-apk.outputs.release_channel }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_notes="dist/changelog-${SAFE_VERSION}.md"
+
           prerelease_flag=""
-          if [[ "${{ steps.meta.outputs.release_channel }}" == "prerelease" ]]; then
+          if [[ "$RELEASE_CHANNEL" == "prerelease" ]]; then
             prerelease_flag="--prerelease"
           fi
 
-          if gh release view "$tag_name" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release edit "$tag_name" \
+          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
               --repo "${{ github.repository }}" \
-              --title "$release_title" \
+              --title "$RELEASE_TITLE" \
               --notes-file "$release_notes" \
-              --target "$release_target" \
+              --target "$RELEASE_TARGET" \
               $prerelease_flag
           else
-            gh release create "$tag_name" \
+            gh release create "$TAG_NAME" \
               --repo "${{ github.repository }}" \
-              --target "$release_target" \
-              --title "$release_title" \
+              --target "$RELEASE_TARGET" \
+              --title "$RELEASE_TITLE" \
               --notes-file "$release_notes" \
               $prerelease_flag
           fi
 
           uploaded=false
           for attempt in {1..10}; do
-            if gh release upload "$tag_name" \
+            if gh release upload "$TAG_NAME" \
               --repo "${{ github.repository }}" \
               --clobber \
               dist/*.apk \
               dist/*.sha256 \
               dist/*.json \
               dist/*.md \
-              clients/android/app/build/outputs/apk/prerelease/output-metadata.json; then
+              dist/clients/android/app/build/outputs/apk/${{ needs.build-prerelease-apk.outputs.build_variant }}/output-metadata.json; then
               uploaded=true
               break
             fi
@@ -270,11 +325,11 @@ jobs:
           done
 
           if [[ "$uploaded" != true ]]; then
-            echo "Failed to upload release assets for $tag_name after retries." >&2
+            echo "Failed to upload release assets for $TAG_NAME after retries." >&2
             exit 1
           fi
 
-      - name: Emit summary
+      - name: Emit release summary
         if: always()
         shell: bash
         run: |
@@ -282,19 +337,18 @@ jobs:
             echo "## prerelease-apk"
             echo
             echo "- ref: \`${{ inputs.ref != '' && inputs.ref || github.ref_name }}\`"
-            echo "- git head: \`${{ steps.git_meta.outputs.head_sha }}\`"
-            echo "- version: \`${{ steps.meta.outputs.version_name }}\`"
-            echo "- versionCode: \`${{ steps.meta.outputs.version_code }}\`"
-            echo "- build type: \`${{ steps.meta.outputs.build_variant }}\`"
-            echo "- release channel: \`${{ steps.meta.outputs.release_channel }}\`"
-            echo "- release tag: \`${{ steps.meta.outputs.tag_name }}\`"
-            echo "- package id: \`${{ steps.meta.outputs.build_variant == 'prerelease' && 'com.sednalabs.solarlab.internal' || 'com.sednalabs.solarlab' }}\`"
-            echo "- signing: \`${{ steps.meta.outputs.build_variant == 'prerelease' && 'debug key for internal sideload testing only' || 'unsigned release artifact unless a release signing config is supplied' }}\`"
-            echo "- artifact: \`solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-${{ steps.meta.outputs.package_label }}.apk\`"
-            echo "- launch smoke: \`${{ steps.launch_smoke.outcome || 'skipped' }}\`"
-            echo "- publish release: \`${{ (github.event_name == 'push' || inputs.publish_release == true) && 'enabled' || 'disabled' }}\`"
-            echo "- changelog baseline: \`${{ steps.changelog.outputs.baseline_tag }}\`"
-            echo "- changelog commits: \`${{ steps.changelog.outputs.commit_count }}\`"
-            echo "- changelog (JSON): \`dist/changelog-${{ steps.meta.outputs.safe_version }}.json\`"
-            echo "- changelog (markdown): \`dist/changelog-${{ steps.meta.outputs.safe_version }}.md\`"
+            echo "- git head: \`${{ needs.build-prerelease-apk.outputs.head_sha }}\`"
+            echo "- version: \`${{ needs.build-prerelease-apk.outputs.version_name }}\`"
+            echo "- versionCode: \`${{ needs.build-prerelease-apk.outputs.version_code }}\`"
+            echo "- build type: \`${{ needs.build-prerelease-apk.outputs.build_variant }}\`"
+            echo "- release channel: \`${{ needs.build-prerelease-apk.outputs.release_channel }}\`"
+            echo "- release tag: \`${{ needs.build-prerelease-apk.outputs.tag_name }}\`"
+            echo "- package label: \`${{ needs.build-prerelease-apk.outputs.package_label }}\`"
+            echo "- artifact: \`solar-gravity-lab-${{ needs.build-prerelease-apk.outputs.safe_version }}-${{ needs.build-prerelease-apk.outputs.package_label }}.apk\`"
+            echo "- launch smoke: \`${{ needs.build-prerelease-apk.outputs.launch_smoke_outcome }}\`"
+            echo "- arm64 proof: \`${{ needs.arm64-prerelease-proof.result }}\`"
+            echo "- changelog baseline: \`${{ needs.build-prerelease-apk.outputs.changelog_baseline_tag }}\`"
+            echo "- changelog commits: \`${{ needs.build-prerelease-apk.outputs.changelog_commit_count }}\`"
+            echo "- changelog (JSON): \`dist/changelog-${{ needs.build-prerelease-apk.outputs.safe_version }}.json\`"
+            echo "- changelog (markdown): \`dist/changelog-${{ needs.build-prerelease-apk.outputs.safe_version }}.md\`"
           } >> "$GITHUB_STEP_SUMMARY"
