@@ -238,6 +238,22 @@ jobs:
           git commit -m "Generate Gradle wrapper jar"
           git push origin "HEAD:${branch_name}"
 
+  parity-matrix:
+    name: Validate parity matrix
+    needs: metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - name: Validate parity matrix schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/validate_parity_matrix.py labs/parity/matrix.json
+
   rust-workspace:
     name: Rust workspace tests
     needs: metadata
@@ -384,6 +400,7 @@ jobs:
     needs:
       - metadata
       - wrapper-bootstrap
+      - parity-matrix
       - rust-workspace
       - ffi-abi
       - android-shell
@@ -402,6 +419,7 @@ jobs:
             echo "- intent: \`${{ needs.metadata.outputs.profile_intent }}\`"
             echo "- lanes: \`${{ needs.metadata.outputs.lane_summary }}\`"
             echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
+            echo "- parity-matrix: \`${{ needs['parity-matrix'].result }}\`"
             echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
             echo "- rust-workspace: \`${{ needs['rust-workspace'].result }}\`"
             echo "- ffi-abi: \`${{ needs['ffi-abi'].result }}\`"

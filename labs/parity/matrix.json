@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0.0",
+  "generated_for": "beyond-parity program",
+  "capabilities": [
+    {
+      "id": "P-001",
+      "family": "scientific correctness",
+      "source_oracle": "legacy-root+alpha-9 telemetry and scenario baselines",
+      "status": "port",
+      "owner_item": "3490",
+      "proof_refs": [
+        "validation-lab parity coverage for drift and scenario checks"
+      ],
+      "notes": "Seed all canonical checks to confirm authoritative authority and accuracy are not regressed."
+    },
+    {
+      "id": "P-002",
+      "family": "command authority",
+      "source_oracle": "legacy command surface + runtime command model",
+      "status": "port",
+      "owner_item": "3493",
+      "proof_refs": [
+        "engine command and ABI parity tests"
+      ],
+      "notes": "Runtime command APIs must remain authoritative and map cleanly through FFI boundary."
+    },
+    {
+      "id": "P-003",
+      "family": "scene/render richness",
+      "source_oracle": "legacy feature-lab scene and render contracts",
+      "status": "wip",
+      "owner_item": "3497",
+      "proof_refs": [
+        "tracer and trail extraction assertions pending expansion"
+      ],
+      "notes": "Bring forward tracer/trail/light families and richer provenance payloads incrementally."
+    },
+    {
+      "id": "P-004",
+      "family": "teaching UX",
+      "source_oracle": "alpha-5/alpha-7/alpha-9 teaching surfaces",
+      "status": "wip",
+      "owner_item": "3531",
+      "proof_refs": [
+        "search/presets flow and branch/ checkpoint UI tests"
+      ],
+      "notes": "Keep shell interactions as host, but restore parity features in a canonical form."
+    },
+    {
+      "id": "P-005",
+      "family": "telemetry diagnostics",
+      "source_oracle": "legacy physics report + Rust-native telemetry",
+      "status": "port",
+      "owner_item": "3496",
+      "proof_refs": [
+        "PhysicsAccuracyTelemetryReportGeneratorTest"
+      ],
+      "notes": "Rust-native surface should become source of truth before legacy assertion backport."
+    },
+    {
+      "id": "P-006",
+      "family": "hardware acceleration",
+      "source_oracle": "alpha-7 hardware intent + dual backend plan",
+      "status": "wip",
+      "owner_item": "3493",
+      "proof_refs": [
+        "Vulkan/OpenCL capability reporting and runtime partition tests"
+      ],
+      "notes": "Keep CPU authoritative; accelerators provide optional tiered compute."
+    },
+    {
+      "id": "P-007",
+      "family": "release proof",
+      "source_oracle": "prerelease + validation lane contract",
+      "status": "wip",
+      "owner_item": "3492",
+      "proof_refs": [
+        "startup smoke + non-empty render checks"
+      ],
+      "notes": "Use matrix status gates and validator as release-time truth."
+    }
+  ]
+}
