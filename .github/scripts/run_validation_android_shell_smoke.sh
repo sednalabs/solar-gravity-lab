@@ -22,7 +22,6 @@ LAST_LOGCAT_PID=""
 CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
   "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
-  "com.sednalabs.solarlab.RotationContinuityInstrumentationTest"
   "com.sednalabs.solarlab.SolarLabShellLayoutTest"
 )
 

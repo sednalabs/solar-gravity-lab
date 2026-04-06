@@ -38,6 +38,11 @@ The `prerelease-apk` workflow now includes a second gate for prerelease builds:
 5. `android-shell`
    Installs the Android toolchain plus Rust Android targets, then builds the real
    app under `clients/android` with `:app:assembleDebug`.
+   It supports fast-path controls:
+   - `android_test_scope=core`: startup + shell layout smoke classes (stable and fast)
+   - `android_test_scope=full`: adds rotation continuity + playback continuity
+   - `android_artifact_mode=failures-only|always`: controls heavy artifact capture
+   - `emulator_boot_strategy=cold|snapshot-cache`: reliable cold boot default with opt-in AVD snapshot cache
 
 ## Profiles
 
