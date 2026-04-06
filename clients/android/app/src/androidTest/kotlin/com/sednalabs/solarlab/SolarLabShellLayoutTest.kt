@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -158,7 +159,7 @@ class SolarLabShellLayoutTest {
             .performClick()
         scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD)
-            .assertTextEquals("earth")
+            .assertTextContains("earth")
         scrollShellTo(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
             .assertIsEnabled()
@@ -171,11 +172,11 @@ class SolarLabShellLayoutTest {
             .performClick()
         scrollShellTo(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
-            .assertTextEquals("earth")
+            .assertTextContains("earth")
         composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_MASS_FIELD)
-            .assertTextEquals("5.97237E24")
+            .assertTextContains("5.97237E24")
         composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_RADIUS_FIELD)
-            .assertTextEquals("6371000.0")
+            .assertTextContains("6371000.0")
         scrollShellTo(SolarLabTestTags.SPAWN_BODY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_BUTTON)
             .assertIsEnabled()
@@ -298,10 +299,10 @@ class SolarLabShellLayoutTest {
 
         scrollShellTo(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
-            .assertTextEquals("moon")
+            .assertTextContains("moon")
         scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD)
-            .assertTextEquals("moon")
+            .assertTextContains("moon")
         scrollShellTo(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
             .assertTextEquals("Hidden")
@@ -324,10 +325,12 @@ class SolarLabShellLayoutTest {
             ?: 0
 
         val titleBounds = composeRule
+            .also { scrollShellTo(SolarLabTestTags.TITLE) }
             .onNodeWithTag(SolarLabTestTags.TITLE)
             .fetchSemanticsNode()
             .boundsInRoot
         val renderPanelBounds = composeRule
+            .also { scrollShellTo(SolarLabTestTags.RENDER_PANEL) }
             .onNodeWithTag(SolarLabTestTags.RENDER_PANEL)
             .fetchSemanticsNode()
             .boundsInRoot

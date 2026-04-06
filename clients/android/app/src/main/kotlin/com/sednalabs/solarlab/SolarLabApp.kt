@@ -119,16 +119,17 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                             .padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
+                        HeroPanel(
+                            uiState = uiState,
+                            onRefresh = {
+                                scope.launch {
+                                    runtimeFacade.refresh()
+                                }
+                            },
+                            canRefresh = canRefresh,
+                        )
+
                         if (isWide) {
-                            HeroPanel(
-                                uiState = uiState,
-                                onRefresh = {
-                                    scope.launch {
-                                        runtimeFacade.refresh()
-                                    }
-                                },
-                                canRefresh = canRefresh,
-                            )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -171,15 +172,6 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                 uiState = uiState,
                                 modifier = Modifier.fillMaxWidth(),
                                 compactStage = true,
-                                onRefresh = {
-                                    scope.launch {
-                                        runtimeFacade.refresh()
-                                    }
-                                },
-                                canRefresh = canRefresh,
-                            )
-                            HeroPanel(
-                                uiState = uiState,
                                 onRefresh = {
                                     scope.launch {
                                         runtimeFacade.refresh()
