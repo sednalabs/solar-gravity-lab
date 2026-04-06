@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "kit": "solar-gravity-lab-agent-kit",
+  "repo": {
+    "full_name": "sednalabs/solar-gravity-lab",
+    "default_branch": "main",
+    "requires_git_checkout": true
+  },
+  "bootstrap": "./agent/bootstrap.sh",
+  "tests": {
+    "default": "./agent/test.sh smoke",
+    "lanes": {
+      "smoke": "cargo test --workspace",
+      "rust-workspace": "cargo test --workspace",
+      "ffi-abi": "cargo test -p solarlab-ffi",
+      "runtime-scene-telemetry": "cargo test -p solarlab-runtime -p solarlab-scene -p solarlab-vulkan-adapter",
+      "android-shell": "./gradlew -p clients/android --no-daemon :app:assembleDebug",
+      "prerelease-apk": "./gradlew -p clients/android --no-daemon :app:assemblePrerelease",
+      "android-shell-smoke": ".github/scripts/run_validation_android_shell_smoke.sh",
+      "full": "cargo test --workspace && ./gradlew -p clients/android --no-daemon :app:assembleDebug"
+    }
+  },
+  "handoff": {
+    "export": "./agent/export-handoff.sh --base <ref-or-sha>",
+    "apply": "./agent/apply-handoff.sh <handoff.zip>",
+    "default_output_dir": "out/agent"
+  },
+  "docs": [
+    "README.md",
+    "docs/adr/0001-rust-owned-core.md",
+    "docs/adr/0002-versioned-protobuf-contracts.md",
+    "docs/adr/0003-c-abi-and-opaque-handles.md",
+    "docs/adr/0004-offline-first-data-and-updates.md",
+    "docs/adr/0005-render-scene-and-backend-adapters.md",
+    "docs/v2/architecture.md",
+    "docs/v2/roadmap.md"
+  ]
+}
