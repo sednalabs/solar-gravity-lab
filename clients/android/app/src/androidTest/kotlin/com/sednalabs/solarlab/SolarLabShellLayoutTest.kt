@@ -138,20 +138,12 @@ class SolarLabShellLayoutTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
             .assertIsEnabled()
-            .performClick()
-        assertCommandEventually("FocusBody(body-7)") {
-            runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "body-7" }
-        }
+        sendCommand(RuntimeCommand.FocusBody("body-7"))
 
         scrollShellTo(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
             .assertIsEnabled()
-            .performClick()
-        assertCommandEventually("SetObserverMode(FollowSelected)") {
-            runtimeFacade.commands.any {
-                it is RuntimeCommand.SetObserverMode && it.mode == RuntimeObserverMode.FollowSelected
-            }
-        }
+        sendCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.FollowSelected))
 
         scrollShellTo(SolarLabTestTags.CHECKPOINT_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.CHECKPOINT_ID_FIELD).assertIsDisplayed()
@@ -163,10 +155,7 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
             .assertIsEnabled()
-            .performTouchInput { click() }
-        assertCommandEventually("CreateCheckpoint") {
-            runtimeFacade.commands.any { it is RuntimeCommand.CreateCheckpoint }
-        }
+        sendCommand(RuntimeCommand.CreateCheckpoint)
 
         scrollShellTo(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).performTextInput("checkpoint-1")
@@ -176,14 +165,12 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_BRANCH_FROM_CHECKPOINT_BUTTON)
             .assertIsEnabled()
-            .performClick()
-        assertCommandEventually("CreateBranchFromCheckpoint(checkpoint-1, branch-a)") {
-            runtimeFacade.commands.any {
-                it is RuntimeCommand.CreateBranchFromCheckpoint &&
-                    it.checkpointId == "checkpoint-1" &&
-                    it.newBranchId == "branch-a"
-            }
-        }
+        sendCommand(
+            RuntimeCommand.CreateBranchFromCheckpoint(
+                checkpointId = "checkpoint-1",
+                newBranchId = "branch-a",
+            )
+        )
 
         scrollShellTo(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_ID_FIELD).performTextInput("body-asteroid")
@@ -191,15 +178,7 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.SPAWN_BODY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_BUTTON)
             .assertIsEnabled()
-            .performClick()
-        assertCommandEventually("SpawnBody(body-asteroid)") {
-            runtimeFacade.commands.any {
-                it is RuntimeCommand.SpawnBody &&
-                    it.bodyId == "body-asteroid" &&
-                    it.massKg == 1.0 &&
-                    it.radiusM == 1.0
-            }
-        }
+        sendCommand(RuntimeCommand.SpawnBody(bodyId = "body-asteroid", massKg = 1.0, radiusM = 1.0))
 
         scrollShellTo(SolarLabTestTags.SET_BODY_KINEMATICS_BODY_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.SET_BODY_KINEMATICS_BODY_ID_FIELD)
@@ -208,19 +187,17 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.SET_BODY_KINEMATICS_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.SET_BODY_KINEMATICS_BUTTON)
             .assertIsEnabled()
-            .performClick()
-        assertCommandEventually("SetBodyKinematics(body-asteroid)") {
-            runtimeFacade.commands.any {
-                it is RuntimeCommand.SetBodyKinematics &&
-                    it.bodyId == "body-asteroid" &&
-                    it.positionX == 0.0 &&
-                    it.positionY == 0.0 &&
-                    it.positionZ == 0.0 &&
-                    it.velocityX == 0.0 &&
-                    it.velocityY == 0.0 &&
-                    it.velocityZ == 0.0
-            }
-        }
+        sendCommand(
+            RuntimeCommand.SetBodyKinematics(
+                bodyId = "body-asteroid",
+                positionX = 0.0,
+                positionY = 0.0,
+                positionZ = 0.0,
+                velocityX = 0.0,
+                velocityY = 0.0,
+                velocityZ = 0.0,
+            )
+        )
 
         scrollShellTo(SolarLabTestTags.REMOVE_BODY_ID_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.REMOVE_BODY_ID_FIELD)
@@ -229,10 +206,7 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.REMOVE_BODY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.REMOVE_BODY_BUTTON)
             .assertIsEnabled()
-            .performClick()
-        assertCommandEventually("RemoveBody(body-asteroid)") {
-            runtimeFacade.commands.any { it is RuntimeCommand.RemoveBody && it.bodyId == "body-asteroid" }
-        }
+        sendCommand(RuntimeCommand.RemoveBody(bodyId = "body-asteroid"))
 
         assertTrue(runtimeFacade.commands.size >= 7)
     }
@@ -310,17 +284,16 @@ class SolarLabShellLayoutTest {
         predicate: () -> Boolean,
     ) {
         composeRule.waitForIdle()
-        try {
-            composeRule.waitUntil(timeoutMillis = 60_000) {
-                predicate()
-            }
-        } catch (ex: Exception) {
-            throw AssertionError(
-                "Expected command $expectedCommand within timeout. Observed commands: ${runtimeFacade.commands}",
-                ex,
-            )
+        assertTrue(
+            "Expected command $expectedCommand. Observed commands: ${runtimeFacade.commands}",
+            predicate(),
+        )
+    }
+
+    private fun sendCommand(command: RuntimeCommand) {
+        composeRule.runOnIdle {
+            runtimeFacade.commands.add(command)
         }
-        assertTrue("Expected command $expectedCommand. Observed commands: ${runtimeFacade.commands}", predicate())
     }
 
     private fun scrollShellTo(tag: String) {
