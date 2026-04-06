@@ -24,6 +24,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.sednalabs.solarlab.runtime.RenderStatusPresentation
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
+import com.sednalabs.solarlab.runtime.RenderCamera
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeCommand
@@ -75,6 +76,25 @@ class SolarLabShellLayoutTest {
             cameraFacingSummary = "target=(1.0,2.0,3.0), up=(0.0,1.0,0.0)",
             renderFrame = RenderFrame(
                 sceneRevision = "scene-alpha",
+                epochSeconds = 12.5,
+                observerModeCode = RuntimeObserverMode.FollowHost.nativeCode,
+                directionalLightCount = 8,
+                camera = RenderCamera(
+                    frameOriginX = 0.0,
+                    frameOriginY = 0.0,
+                    frameOriginZ = 0.0,
+                    positionFromOriginX = 0f,
+                    positionFromOriginY = 0f,
+                    positionFromOriginZ = 10f,
+                    targetFromOriginX = 0f,
+                    targetFromOriginY = 0f,
+                    targetFromOriginZ = 0f,
+                    upX = 0f,
+                    upY = 1f,
+                    upZ = 0f,
+                    verticalFovDegrees = 60f,
+                    exposure = 1f,
+                ),
                 bodies = emptyList(),
                 tracers = emptyList(),
                 trails = emptyList(),
