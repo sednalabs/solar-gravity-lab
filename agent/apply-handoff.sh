@@ -49,6 +49,7 @@ if [[ -z "$ZIP_PATH" ]]; then
   exit 1
 fi
 
+ZIP_PATH="$(python3 -c "import os, sys; print(os.path.abspath(sys.argv[1]))" "$ZIP_PATH")"
 cd "$REPO_ROOT"
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
   echo "This apply script requires a real Git checkout." >&2
