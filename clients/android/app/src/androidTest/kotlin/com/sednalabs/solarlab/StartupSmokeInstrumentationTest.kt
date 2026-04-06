@@ -1,8 +1,10 @@
 package com.sednalabs.solarlab
 
+import android.graphics.Bitmap
 import android.util.Log
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.SessionConnectionState
@@ -34,6 +36,7 @@ class StartupSmokeInstrumentationTest {
             }
 
             scenario.onActivity { activity ->
+                assertVisualReadiness(activity)
                 assertFalse("MainActivity should not be finishing after startup", activity.isFinishing)
                 assertFalse("MainActivity should not be destroyed after startup", activity.isDestroyed)
             }
@@ -110,6 +113,75 @@ class StartupSmokeInstrumentationTest {
             "renderBodies=${state.renderStatus.renderedBodyCount}, renderTracers=${state.renderStatus.renderedTracerCount}, " +
             "renderTrails=${state.renderStatus.renderedTrailCount}, readiness=${state.renderStatus.readiness}, " +
             "issue=${state.renderStatus.issue ?: "none"}"
+
+    private fun assertVisualReadiness(activity: MainActivity) {
+        val screenshot = InstrumentationRegistry.getInstrumentation()
+            .uiAutomation
+            .takeScreenshot()
+            ?: throw AssertionError("Unable to capture startup screenshot from instrumentation")
+        try {
+            val metrics = screenshot.renderCropMetrics(activity)
+            Log.i(
+                LOG_TAG,
+                "StartupSmokeInstrumentationTest.visualMetrics sampled=${metrics.sampleCount}, " +
+                    "bright=${metrics.brightSampleCount}, unique=${metrics.uniqueColorCount}, " +
+                    "size=${screenshot.width}x${screenshot.height}"
+            )
+            assertTrue(
+                "Startup screenshot looks too visually empty: $metrics",
+                metrics.brightSampleCount >= 20 && metrics.uniqueColorCount >= 12,
+            )
+        } finally {
+            screenshot.recycle()
+        }
+    }
+
+    private fun Bitmap.renderCropMetrics(activity: MainActivity): VisualMetrics {
+        val rootView = activity.window?.decorView
+            ?: throw AssertionError("MainActivity decor view is unavailable for visual metrics")
+        val width = width
+        val height = height
+        val cropLeft = (width * 0.08f).toInt().coerceIn(0, width - 1)
+        val cropRight = (width * 0.92f).toInt().coerceAtLeast(cropLeft + 1)
+        val cropTop = (height * 0.10f).toInt().coerceIn(0, height - 1)
+        val cropBottom = minOf(
+            height,
+            maxOf(
+                cropTop + 1,
+                rootView.height.coerceAtLeast((height * 0.72f).toInt())
+            ),
+        )
+        val stepX = maxOf(1, (cropRight - cropLeft) / 18)
+        val stepY = maxOf(1, (cropBottom - cropTop) / 18)
+        val uniqueColors = linkedSetOf<Int>()
+        var brightSamples = 0
+        var sampleCount = 0
+        for (x in cropLeft until cropRight step stepX) {
+            for (y in cropTop until cropBottom step stepY) {
+                val pixel = getPixel(x, y)
+                val red = (pixel shr 16) and 0xFF
+                val green = (pixel shr 8) and 0xFF
+                val blue = pixel and 0xFF
+                val brightness = (red + green + blue) / 3
+                if (brightness >= 48) {
+                    brightSamples++
+                }
+                uniqueColors += ((red and 0xF0) shl 12) or ((green and 0xF0) shl 4) or ((blue and 0xF0) shr 4)
+                sampleCount++
+            }
+        }
+        return VisualMetrics(
+            sampleCount = sampleCount,
+            brightSampleCount = brightSamples,
+            uniqueColorCount = uniqueColors.size,
+        )
+    }
+
+    private data class VisualMetrics(
+        val sampleCount: Int,
+        val brightSampleCount: Int,
+        val uniqueColorCount: Int,
+    )
 
     private companion object {
         const val LOG_TAG = "SolarLabInstrumentation"

@@ -45,6 +45,8 @@ run_binary_capture() {
 
 capture_device_state() {
   local class_dir="$1"
+  local phase_label="${2:-post}"
+  local screen_png="${class_dir}/screen.${phase_label}.png"
 
   run_capture "${class_dir}/logcat.txt" adb logcat -d
   run_capture "${class_dir}/dumpsys_activity.txt" adb shell dumpsys activity activities
@@ -54,9 +56,11 @@ capture_device_state() {
   run_capture "${class_dir}/anr_traces.txt" adb shell cat /data/anr/traces.txt
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb shell uiautomator dump /sdcard/solarlab-window-dump.xml >/dev/null 2>&1 || true
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull /sdcard/solarlab-window-dump.xml "${class_dir}/window_dump.xml" >/dev/null 2>&1 || true
-  run_binary_capture "${class_dir}/screen.png" adb exec-out screencap -p
-  if [[ ! -s "${class_dir}/screen.png" ]]; then
-    rm -f "${class_dir}/screen.png"
+  run_binary_capture "${screen_png}" adb exec-out screencap -p
+  if [[ ! -s "${screen_png}" ]]; then
+    rm -f "${screen_png}"
+  elif [[ "${phase_label}" == "post" ]]; then
+    cp "${screen_png}" "${class_dir}/screen.png"
   fi
 }
 
@@ -122,7 +126,7 @@ run_test_class() {
   stop_live_logcat "${LAST_LOGCAT_PID}"
   LAST_LOGCAT_PID=""
 
-  capture_device_state "${class_dir}"
+  capture_device_state "${class_dir}" "post"
 
   {
     printf 'test_class=%s\n' "${test_class}"
@@ -131,9 +135,11 @@ run_test_class() {
   } > "${class_dir}/status.txt"
 
   if [[ "${command_status}" -eq 124 ]]; then
+    capture_device_state "${class_dir}" "fail"
     echo "Timed out while running ${test_class}" >&2
     emit_failure_summary "${class_dir}"
   elif [[ "${command_status}" -ne 0 ]]; then
+    capture_device_state "${class_dir}" "fail"
     echo "Instrumentation class ${test_class} failed with exit code ${command_status}" >&2
     emit_failure_summary "${class_dir}"
   else
