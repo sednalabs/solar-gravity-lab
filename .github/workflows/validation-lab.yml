@@ -382,6 +382,16 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      - name: Restore Android emulator AVD cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd
+            ~/.android/adb*
+          key: avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-v1
+          restore-keys: |
+            avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -465,7 +475,8 @@ jobs:
           profile: pixel_7
           target: google_apis
           emulator-boot-timeout: 1200
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_validation_android_shell_smoke.sh
         env:
