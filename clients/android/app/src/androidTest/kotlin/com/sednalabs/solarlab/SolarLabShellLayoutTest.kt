@@ -15,6 +15,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
@@ -306,6 +307,13 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.focusCatalogFocusPresetTag("moon"))
         composeRule.onNodeWithTag(SolarLabTestTags.focusCatalogFocusPresetTag("moon"))
             .performClick()
+        scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD)
+            .performTextClearance()
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD)
+            .performTextInput("moon")
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD)
+            .assertTextContains("moon")
         scrollShellTo(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
             .performClick()
