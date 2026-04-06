@@ -31,20 +31,33 @@ class JniRuntimeBridgeTest {
         )
 
         val signals = collectSignalsUntil(bridge) { collected ->
-            collected
+            val seeded = collected
                 .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
                 .any { it.summary.bodyCount == STARTUP_EXPECTED_BODY_COUNT }
+            val startupPlaybackConfigured = collected
+                .filterIsInstance<RuntimeSignal.Notice>()
+                .any { it.message.contains("Startup playback rate set") }
+            seeded && startupPlaybackConfigured
         }
 
         assertEquals(listOf(42L), transport.runtimeInfoHandles)
-        assertEquals(listOf(42L, 42L), transport.refreshedHandles)
+        assertEquals(listOf(42L, 42L, 42L), transport.refreshedHandles)
         assertEquals(listOf(42L), renderHostAdapter.boundSessionHandles)
-        assertEquals(2, renderHostAdapter.refreshCount)
+        assertEquals(3, renderHostAdapter.refreshCount)
         assertEquals(1, renderHostAdapter.releaseCount)
 
-        assertEquals(1, transport.appliedCommands.size)
-        val seedCommandPayload = transport.appliedCommands.single()
-        assertEquals(11, seedCommandPayload.kind)
+        assertTrue(
+            "Expected startup to seed canonical world",
+            transport.appliedCommands.any { it.kind == 11 },
+        )
+        assertTrue(
+            "Expected startup to resume playback for visible motion",
+            transport.appliedCommands.any { it.kind == 2 },
+        )
+        assertTrue(
+            "Expected startup to set visible playback rate",
+            transport.appliedCommands.any { it.kind == 3 },
+        )
         assertTrue(
             signals
                 .filterIsInstance<RuntimeSignal.Notice>()
@@ -71,14 +84,29 @@ class JniRuntimeBridgeTest {
         )
 
         val signals = collectSignalsUntil(bridge) { collected ->
-            collected
+            val snapshotReady = collected
                 .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
                 .any { it.summary.bodyCount == 2 }
+            val startupPlaybackConfigured = collected
+                .filterIsInstance<RuntimeSignal.Notice>()
+                .any { it.message.contains("Startup playback rate set") }
+            snapshotReady && startupPlaybackConfigured
         }
 
-        assertTrue(transport.appliedCommands.isEmpty())
-        assertEquals(listOf(42L), transport.refreshedHandles)
-        assertEquals(1, renderHostAdapter.refreshCount)
+        assertFalse(
+            "Seed should not be issued when snapshot already has bodies",
+            transport.appliedCommands.any { it.kind == 11 },
+        )
+        assertTrue(
+            "Expected startup to resume playback for visible motion",
+            transport.appliedCommands.any { it.kind == 2 },
+        )
+        assertTrue(
+            "Expected startup to set visible playback rate",
+            transport.appliedCommands.any { it.kind == 3 },
+        )
+        assertEquals(listOf(42L, 42L), transport.refreshedHandles)
+        assertEquals(2, renderHostAdapter.refreshCount)
         assertEquals(1, renderHostAdapter.releaseCount)
         assertFalse(
             signals
