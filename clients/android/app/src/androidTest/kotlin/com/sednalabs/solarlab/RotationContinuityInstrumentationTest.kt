@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import android.util.Log
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
@@ -21,6 +22,7 @@ import org.junit.runner.RunWith
 class RotationContinuityInstrumentationTest {
     @Test
     fun rotation_recreation_preserves_session_and_runtime_state() {
+        Log.i(LOG_TAG, "RotationContinuityInstrumentationTest.begin")
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val facadeBefore = scenario.withRuntimeFacade()
 
@@ -55,6 +57,7 @@ class RotationContinuityInstrumentationTest {
             }
 
             val beforeRotation = facadeBefore.uiState.value
+            Log.i(LOG_TAG, "RotationContinuityInstrumentationTest.preRecreate ${summarizeState(beforeRotation)}")
             val beforeSessionHandle = beforeRotation.sessionHandle
             val beforeCameraFacingSummary = beforeRotation.cameraFacingSummary
             val beforeBranch = beforeRotation.snapshot?.activeBranchId
@@ -91,6 +94,7 @@ class RotationContinuityInstrumentationTest {
             }
 
             val afterRotation = facadeAfter.uiState.value
+            Log.i(LOG_TAG, "RotationContinuityInstrumentationTest.postRecreate ${summarizeState(afterRotation)}")
             assertEquals(
                 "Session handle should remain stable across recreation",
                 beforeSessionHandle,
@@ -209,15 +213,36 @@ class RotationContinuityInstrumentationTest {
         predicate: (ShellUiState) -> Boolean,
     ) {
         val deadlineMs = System.currentTimeMillis() + timeout.inWholeMilliseconds
+        var nextProgressLogMs = System.currentTimeMillis()
         while (System.currentTimeMillis() < deadlineMs) {
-            if (predicate(facade.uiState.value)) {
+            val state = facade.uiState.value
+            if (predicate(state)) {
+                Log.i(LOG_TAG, "RotationContinuityInstrumentationTest.conditionMet ${summarizeState(state)}")
                 return
+            }
+            if (System.currentTimeMillis() >= nextProgressLogMs) {
+                Log.i(LOG_TAG, "RotationContinuityInstrumentationTest.waiting ${summarizeState(state)}")
+                nextProgressLogMs += PROGRESS_LOG_INTERVAL_MS
             }
             Thread.sleep(50)
         }
         val finalState = facade.uiState.value
+        Log.e(LOG_TAG, "RotationContinuityInstrumentationTest.timeout ${summarizeState(finalState)}")
         throw AssertionError(
             "Timed out waiting for runtime state continuity condition. Final state: $finalState"
         )
+    }
+
+    private fun summarizeState(state: ShellUiState): String =
+        "connection=${state.connectionState}, session=${state.sessionHandle}, " +
+            "paused=${state.snapshot?.paused}, branch=${state.snapshot?.activeBranchId}, " +
+            "observerMode=${state.observerModeCode}, frameBodies=${state.renderFrame?.bodies?.size ?: 0}, " +
+            "renderBodies=${state.renderStatus.renderedBodyCount}, renderTracers=${state.renderStatus.renderedTracerCount}, " +
+            "renderTrails=${state.renderStatus.renderedTrailCount}, readiness=${state.renderStatus.readiness}, " +
+            "issue=${state.renderStatus.issue ?: "none"}"
+
+    private companion object {
+        const val LOG_TAG = "SolarLabInstrumentation"
+        const val PROGRESS_LOG_INTERVAL_MS = 2_000L
     }
 }

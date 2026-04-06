@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import android.util.Log
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
@@ -18,6 +19,7 @@ import org.junit.runner.RunWith
 class StartupSmokeInstrumentationTest {
     @Test
     fun mainActivity_launches_and_reaches_first_runtime_frame_without_process_death() {
+        Log.i(LOG_TAG, "StartupSmokeInstrumentationTest.begin")
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val facade = scenario.withRuntimeFacade()
 
@@ -37,6 +39,7 @@ class StartupSmokeInstrumentationTest {
             }
 
             val finalState = facade.uiState.value
+            Log.i(LOG_TAG, "StartupSmokeInstrumentationTest.ready ${summarizeState(finalState)}")
             assertNotNull("Runtime session handle should be available after startup", finalState.sessionHandle)
             assertNotNull("Runtime snapshot should be available after startup", finalState.snapshot)
             assertNotNull(
@@ -81,14 +84,35 @@ class StartupSmokeInstrumentationTest {
         predicate: (ShellUiState) -> Boolean,
     ) {
         val deadlineMs = System.currentTimeMillis() + timeout.inWholeMilliseconds
+        var nextProgressLogMs = System.currentTimeMillis()
         while (System.currentTimeMillis() < deadlineMs) {
-            if (predicate(facade.uiState.value)) {
+            val state = facade.uiState.value
+            if (predicate(state)) {
+                Log.i(LOG_TAG, "StartupSmokeInstrumentationTest.conditionMet ${summarizeState(state)}")
                 return
+            }
+            if (System.currentTimeMillis() >= nextProgressLogMs) {
+                Log.i(LOG_TAG, "StartupSmokeInstrumentationTest.waiting ${summarizeState(state)}")
+                nextProgressLogMs += PROGRESS_LOG_INTERVAL_MS
             }
             Thread.sleep(50)
         }
+        val finalState = facade.uiState.value
+        Log.e(LOG_TAG, "StartupSmokeInstrumentationTest.timeout ${summarizeState(finalState)}")
         throw AssertionError(
-            "Timed out waiting for startup smoke condition. Final state: ${facade.uiState.value}"
+            "Timed out waiting for startup smoke condition. Final state: $finalState"
         )
+    }
+
+    private fun summarizeState(state: ShellUiState): String =
+        "connection=${state.connectionState}, session=${state.sessionHandle}, " +
+            "snapshotBodies=${state.snapshot?.bodyCount ?: 0}, frameBodies=${state.renderFrame?.bodies?.size ?: 0}, " +
+            "renderBodies=${state.renderStatus.renderedBodyCount}, renderTracers=${state.renderStatus.renderedTracerCount}, " +
+            "renderTrails=${state.renderStatus.renderedTrailCount}, readiness=${state.renderStatus.readiness}, " +
+            "issue=${state.renderStatus.issue ?: "none"}"
+
+    private companion object {
+        const val LOG_TAG = "SolarLabInstrumentation"
+        const val PROGRESS_LOG_INTERVAL_MS = 2_000L
     }
 }

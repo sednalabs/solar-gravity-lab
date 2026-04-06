@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -84,6 +85,7 @@ class SolarLabShellLayoutTest {
 
     @Test
     fun primaryShellElements_areRenderedVisible_andTouchAccessible() {
+        Log.i(LOG_TAG, "SolarLabShellLayoutTest.primaryShellElements.begin")
         assertVisibleInScrollableShell(SolarLabTestTags.SHELL_COLUMN)
         assertVisibleInScrollableShell(SolarLabTestTags.TITLE)
         assertVisibleInScrollableShell(SolarLabTestTags.STATUS_LINE)
@@ -130,6 +132,7 @@ class SolarLabShellLayoutTest {
 
     @Test
     fun shellControls_emitCommands_whenUserInteracts() {
+        Log.i(LOG_TAG, "SolarLabShellLayoutTest.shellControls.begin")
         scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).performTextInput("body-7")
         composeRule.waitForIdle()
@@ -239,6 +242,7 @@ class SolarLabShellLayoutTest {
 
     @Test
     fun shellContent_respectsSystemBarsSafeDrawingPadding() {
+        Log.i(LOG_TAG, "SolarLabShellLayoutTest.safeDrawing.begin")
         val rootInsets = ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
         val statusBarTopInsetPx = rootInsets
             ?.getInsets(WindowInsetsCompat.Type.statusBars())
@@ -312,9 +316,14 @@ class SolarLabShellLayoutTest {
         try {
             targetNode.performScrollTo()
         } catch (_: AssertionError) {
+            Log.w(LOG_TAG, "SolarLabShellLayoutTest.scrollFallback tag=$tag")
             composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
                 .performScrollToNode(hasTestTag(tag))
         }
         composeRule.waitForIdle()
+    }
+
+    private companion object {
+        const val LOG_TAG = "SolarLabInstrumentation"
     }
 }
