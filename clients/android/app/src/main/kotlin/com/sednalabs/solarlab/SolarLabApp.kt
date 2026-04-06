@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab
 
 import android.content.Intent
+import android.view.MotionEvent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -49,11 +50,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.awaitPointerEvent
-import androidx.compose.ui.input.pointer.awaitPointerEventScope
-import androidx.compose.ui.input.pointer.consume
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -298,15 +296,11 @@ private fun ImmersiveStageShell(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color(0x9E040711))
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    event.changes.forEach { pointerChange ->
-                                        pointerChange.consume()
-                                    }
-                                }
+                        .pointerInteropFilter { motionEvent ->
+                            if (motionEvent.actionMasked == MotionEvent.ACTION_UP) {
+                                showOverlay = false
                             }
+                            true
                         },
                 )
                 Surface(
