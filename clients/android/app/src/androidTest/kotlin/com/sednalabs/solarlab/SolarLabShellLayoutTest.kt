@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -82,13 +83,17 @@ class SolarLabShellLayoutTest {
 
     @Before
     fun setUpContent() {
-        composeRule.activity.runOnUiThread {
-            composeRule.activity.enableEdgeToEdge()
-            composeRule.activity.setContent {
+        setTestContent()
+        composeRule.waitForIdle()
+    }
+
+    private fun setTestContent() {
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.enableEdgeToEdge()
+            activity.setContent {
                 TestApp(runtimeFacade = runtimeFacade)
             }
         }
-        composeRule.waitForIdle()
     }
 
     @Test
@@ -288,6 +293,7 @@ class SolarLabShellLayoutTest {
             .performClick()
 
         composeRule.activityRule.scenario.recreate()
+        setTestContent()
         composeRule.waitForIdle()
 
         scrollShellTo(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
@@ -393,6 +399,7 @@ class SolarLabShellLayoutTest {
         if (tag == SolarLabTestTags.SHELL_COLUMN) {
             return
         }
+        waitForShellHierarchy()
         val targetNode = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
         try {
             targetNode.performScrollTo()
@@ -402,6 +409,17 @@ class SolarLabShellLayoutTest {
                 .performScrollToNode(hasTestTag(tag))
         }
         composeRule.waitForIdle()
+    }
+
+    private fun waitForShellHierarchy(timeoutMillis: Long = 5_000L) {
+        composeRule.waitUntil(timeoutMillis) {
+            runCatching {
+                composeRule
+                    .onAllNodesWithTag(SolarLabTestTags.SHELL_COLUMN, useUnmergedTree = true)
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }.getOrDefault(false)
+        }
     }
 
     private companion object {

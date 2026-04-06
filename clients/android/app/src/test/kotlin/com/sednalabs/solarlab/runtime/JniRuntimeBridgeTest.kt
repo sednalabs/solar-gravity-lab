@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -113,6 +114,41 @@ class JniRuntimeBridgeTest {
         assertTrue(runtimeInfo.interopErrorBudgetSummary?.contains("checkpoint-publication") == true)
     }
 
+    @Test
+    fun connect_autoAdvancesEpoch_whenPlaybackIsLive() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            refreshResults = ArrayDeque(
+                listOf(
+                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
+                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
+                )
+            ),
+        )
+        val bridge = JniRuntimeBridge(
+            transport = transport,
+            renderHostAdapter = FakeRenderHostAdapter(),
+        )
+
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val job = scope.launch {
+            bridge.connect().collect { /* keep session alive for periodic refresh */ }
+        }
+
+        withTimeout(2_500) {
+            while (transport.appliedCommands.none { it.kind == 0 }) {
+                delay(25)
+            }
+        }
+
+        job.cancel()
+        scope.cancel()
+
+        assertTrue(
+            "Expected periodic live playback to issue advance-epoch command",
+            transport.appliedCommands.any { it.kind == 0 && it.deltaSeconds > 0.0 },
+        )
+    }
+
     private suspend fun collectSignalsUntil(
         bridge: RuntimeBridge,
         predicate: (List<RuntimeSignal>) -> Boolean,
@@ -219,14 +255,18 @@ class JniRuntimeBridgeTest {
     private companion object {
         const val STARTUP_EXPECTED_BODY_COUNT = 365
 
-        fun snapshotSummary(bodyCount: Int): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
+        fun snapshotSummary(
+            bodyCount: Int,
+            paused: Boolean = true,
+            simSecondsPerRealSecond: Double = 1.0,
+        ): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
             result = NativeResult(code = 0),
             scenarioId = "sol-system",
             activeBranchId = "main",
             bodyCount = bodyCount,
             epochSeconds = 0.0,
-            paused = true,
-            simSecondsPerRealSecond = 1.0,
+            paused = paused,
+            simSecondsPerRealSecond = simSecondsPerRealSecond,
             observerMode = RuntimeObserverMode.SystemFrame.nativeCode,
             timelineSemantics = 1,
         )

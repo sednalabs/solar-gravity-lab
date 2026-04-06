@@ -169,7 +169,11 @@ internal class JniRuntimeBridge(
                 if (activeHandle == 0L) {
                     continue
                 }
-                refreshSignalsForHandle(activeHandle, includeSummary = true).forEach { trySend(it) }
+                refreshSignalsForHandle(
+                    handle = activeHandle,
+                    includeSummary = true,
+                    advancePlayback = true,
+                ).forEach { trySend(it) }
             }
         }
 
@@ -238,11 +242,15 @@ internal class JniRuntimeBridge(
 
     // Collects one snapshot refresh bundle for one handle:
     // optional world-state summary plus render packet lease.
-    private fun refreshSignalsForHandle(handle: Long, includeSummary: Boolean): List<RuntimeSignal> {
+    private fun refreshSignalsForHandle(
+        handle: Long,
+        includeSummary: Boolean,
+        advancePlayback: Boolean = false,
+    ): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
 
         if (includeSummary) {
-            val summary = runCatching {
+            var summary = runCatching {
                 transport.refreshSession(handle)
             }.getOrElse { error ->
                 signals += RuntimeSignal.Notice(
@@ -253,6 +261,38 @@ internal class JniRuntimeBridge(
             }
 
             if (summary.result.isOk()) {
+                if (advancePlayback && !summary.paused) {
+                    val deltaSeconds = (REFRESH_INTERVAL_MS.toDouble() / 1_000.0) *
+                        summary.simSecondsPerRealSecond.coerceAtLeast(0.0)
+                    if (deltaSeconds > 0.0) {
+                        val advanceResult = runCatching {
+                            transport.applyCommand(
+                                handle,
+                                NativeRuntimeCommandPayload(
+                                    kind = NATIVE_COMMAND_ADVANCE_EPOCH,
+                                    deltaSeconds = deltaSeconds,
+                                ),
+                            )
+                        }.getOrElse { error ->
+                            signals += RuntimeSignal.Notice(
+                                message = "Live playback advance failed: ${error.message ?: error::class.java.simpleName}",
+                                level = RuntimeNoticeLevel.Warning,
+                            )
+                            null
+                        }
+
+                        if (advanceResult != null) {
+                            if (advanceResult.result.isOk()) {
+                                summary = advanceResult
+                            } else {
+                                signals += RuntimeSignal.Notice(
+                                    message = "Live playback advance rejected: ${advanceResult.result.describe()}",
+                                    level = RuntimeNoticeLevel.Warning,
+                                )
+                            }
+                        }
+                    }
+                }
                 signals += RuntimeSignal.SnapshotUpdated(summary)
             } else {
                 signals += RuntimeSignal.Notice(
