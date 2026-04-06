@@ -355,7 +355,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                             ),
                             renderFrame = renderFrame,
                         )
-                        val renderTelemetryKey = packet.toTelemetryKey(sceneRevision = lease.sceneRevision)
+                        val renderTelemetryKey = packet.toTelemetryKey(sceneRevisionLabel = sceneRevisionLabel)
                         lastRenderUnavailableReason = null
                         if (renderTelemetryKey == lastRenderTelemetryKey) {
                             next
@@ -737,9 +737,9 @@ private fun SnapshotPresentation.toTelemetrySummary(): String {
     return "scenario=$scenarioId, branch=$activeBranchId, bodies=$bodyCount, paused=$paused, mode=$observerModeLabel"
 }
 
-private fun NativeVulkanScenePacket.toTelemetryKey(sceneRevision: String): String {
+private fun NativeVulkanScenePacket.toTelemetryKey(sceneRevisionLabel: String): String {
     return listOf(
-        sceneRevision.toSceneRevisionKey(),
+        sceneRevisionLabel,
         bodyCount.toString(),
         tracerCount.toString(),
         trailSpanCount.toString(),
@@ -761,14 +761,6 @@ private fun String.toSceneRevisionLabel(maxChars: Int = 96): String {
     val suffix = "... (${length} chars)"
     val prefixLength = (maxChars - suffix.length).coerceAtLeast(0)
     return take(prefixLength) + suffix
-}
-
-private fun String.toSceneRevisionKey(): String {
-    return if (length <= 96) {
-        this
-    } else {
-        "${take(24)}|len=$length|hash=${hashCode()}"
-    }
 }
 
 private fun NativeVulkanCameraPacket.toFacingSummary(): String {

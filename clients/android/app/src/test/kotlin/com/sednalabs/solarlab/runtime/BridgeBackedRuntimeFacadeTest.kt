@@ -147,6 +147,48 @@ class BridgeBackedRuntimeFacadeTest {
     }
 
     @Test
+    fun renderPacketReady_dedupesTelemetryWhenOnlyOversizedRevisionTailChanges() = runBlocking {
+        val commonPrefix = "scenario=sol-system|" + "sun|class=Star|".repeat(12)
+        val bridge = FakeRuntimeBridge(
+            connectSignals = flowOf(
+                RuntimeSignal.RenderPacketReady(
+                    packetLease(
+                        bodyCount = 365,
+                        tracerCount = 336,
+                        trailSpanCount = 365,
+                        trailVertexCount = 365,
+                        directionalLightCount = 1,
+                        sceneRevision = commonPrefix + "tail-a".repeat(120),
+                    ),
+                ),
+                RuntimeSignal.RenderPacketReady(
+                    packetLease(
+                        bodyCount = 365,
+                        tracerCount = 336,
+                        trailSpanCount = 365,
+                        trailVertexCount = 365,
+                        directionalLightCount = 1,
+                        sceneRevision = commonPrefix + "tail-b".repeat(120),
+                    ),
+                ),
+            ),
+        )
+        val sink = RecordingTelemetrySink()
+        val facade = BridgeBackedRuntimeFacade(
+            bridge = bridge,
+            developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                enabled = true,
+                sinks = listOf(sink),
+            ),
+        )
+
+        facade.startSession()
+
+        val renderReadyEvents = sink.events.filter { it.category == "render.ready" }
+        assertEquals(1, renderReadyEvents.size)
+    }
+
+    @Test
     fun applyCommand_recordsDeveloperTelemetryForCommandLifecycle() = runBlocking {
         val bridge = FakeRuntimeBridge(
             connectSignals = flowOf(
@@ -351,5 +393,13 @@ class BridgeBackedRuntimeFacadeTest {
             observerMode = RuntimeObserverMode.SystemFrame.nativeCode,
             timelineSemantics = 1,
         )
+    }
+
+    private class RecordingTelemetrySink : DeveloperTelemetrySink {
+        val events = mutableListOf<DeveloperTelemetryEvent>()
+
+        override fun publish(event: DeveloperTelemetryEvent) {
+            events += event
+        }
     }
 }
