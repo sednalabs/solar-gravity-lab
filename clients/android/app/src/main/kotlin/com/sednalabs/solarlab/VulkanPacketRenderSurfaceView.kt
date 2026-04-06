@@ -37,6 +37,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         private const val MAX_TRACER_POINTS_FOR_EXTENT = 512
         private const val MAX_TRAIL_POINTS_FOR_EXTENT = 1_024
         private const val STARFIELD_POINT_COUNT = 84
+        private const val AUXILIARY_SPAN_TO_BODY_SPAN_CAP = 3.2f
     }
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
@@ -59,6 +60,9 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
+    private val bodyGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
     private val selectedBodyStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(255, 239, 128)
         style = Paint.Style.STROKE
@@ -70,6 +74,12 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.5f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val trailGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.8f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
@@ -296,6 +306,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             (body.colorG.coerceIn(0f, 1f) * 255f).toInt(),
             (body.colorB.coerceIn(0f, 1f) * 255f).toInt(),
         )
+        val glowAlpha = (body.colorA.coerceIn(0f, 1f) * 0.34f * 255f).toInt().coerceIn(0, 255)
+        bodyGlowPaint.color = Color.argb(
+            glowAlpha,
+            (body.colorR.coerceIn(0f, 1f) * 255f).toInt(),
+            (body.colorG.coerceIn(0f, 1f) * 255f).toInt(),
+            (body.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+        )
+        canvas.drawCircle(sx, sy, radiusPx * 2.15f, bodyGlowPaint)
         canvas.drawCircle(sx, sy, radiusPx, bodyPaint)
         if (body.selected) {
             canvas.drawCircle(sx, sy, radiusPx + 2.5f, selectedBodyStroke)
@@ -389,6 +407,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             trail.headHighlighted -> 2.1f
             else -> 1.4f
         }
+        trailGlowPaint.color = Color.argb(
+            (trail.colorA.coerceIn(0f, 1f) * alphaScale * 0.42f * 255f).toInt(),
+            (trail.colorR.coerceIn(0f, 1f) * 255f).toInt(),
+            (trail.colorG.coerceIn(0f, 1f) * 255f).toInt(),
+            (trail.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+        )
+        trailGlowPaint.strokeWidth = trailPaint.strokeWidth * 2.1f
+        canvas.drawPath(path, trailGlowPaint)
         canvas.drawPath(path, trailPaint)
     }
 
@@ -415,6 +441,22 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             }
             .toList()
             .sampleUpTo(MAX_TRACER_POINTS_FOR_EXTENT)
+        val highlightedSourceBodyIds = highlightedTrailSourceBodyIds.toSet()
+        val highlightedTrailPoints = frame.trails
+            .asSequence()
+            .filter { trail ->
+                trail.headHighlighted || highlightedSourceBodyIds.contains(trail.sourceBodyId)
+            }
+            .flatMap { trail ->
+                trail.points.asSequence().mapNotNull { point ->
+                    projectedPoint(
+                        x = point.x,
+                        y = projectY(point.y, point.z, projectionPlane),
+                    )
+                }
+            }
+            .toList()
+            .sampleUpTo(MAX_TRAIL_POINTS_FOR_EXTENT / 2)
         val projectedTrailPoints = frame.trails
             .asSequence()
             .flatMap { trail ->
@@ -431,6 +473,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             addAll(projectedBodyPoints)
             addAll(projectedTracerPoints)
             addAll(projectedTrailPoints)
+            addAll(highlightedTrailPoints)
         }
         if (points.isEmpty()) {
             return Extent(centerX = 0f, centerY = 0f, halfWorldSpan = 1f)
@@ -447,18 +490,47 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val centerY = anchorBody?.let { body -> projectY(body.y, body.z, projectionPlane) }
             ?: medianOf(points.map { it.y })
 
-        val sortedDistances = points
+        val bodySortedDistances = projectedBodyPoints
             .asSequence()
             .map { xyDistance(it.x, it.y, centerX, centerY) }
             .filter { it.isFinite() }
             .sorted()
             .toList()
-        if (sortedDistances.isEmpty()) {
+        val auxiliarySortedDistances = buildList {
+            addAll(projectedTracerPoints)
+            addAll(projectedTrailPoints)
+            addAll(highlightedTrailPoints)
+        }
+            .asSequence()
+            .map { xyDistance(it.x, it.y, centerX, centerY) }
+            .filter { it.isFinite() }
+            .sorted()
+            .toList()
+        val allSortedDistances = points
+            .asSequence()
+            .map { xyDistance(it.x, it.y, centerX, centerY) }
+            .filter { it.isFinite() }
+            .sorted()
+            .toList()
+        if (allSortedDistances.isEmpty()) {
             return Extent(centerX = centerX, centerY = centerY, halfWorldSpan = 1f)
         }
 
-        val clippedDistance = percentile(sortedDistances, 0.92f)
-        val halfWorldSpan = max(1f, clippedDistance * 1.28f)
+        val bodySpan = if (bodySortedDistances.isNotEmpty()) {
+            val bodyPercentile = if (bodySortedDistances.size >= 12) 0.84f else 0.94f
+            max(1f, percentile(bodySortedDistances, bodyPercentile) * 1.45f)
+        } else {
+            max(1f, percentile(allSortedDistances, 0.9f) * 1.35f)
+        }
+        val auxiliarySpan = if (auxiliarySortedDistances.isNotEmpty()) {
+            max(1f, percentile(auxiliarySortedDistances, 0.72f) * 1.22f)
+        } else {
+            bodySpan
+        }
+        val halfWorldSpan = auxiliarySpan.coerceIn(
+            minimumValue = bodySpan,
+            maximumValue = bodySpan * AUXILIARY_SPAN_TO_BODY_SPAN_CAP,
+        )
         return Extent(
             centerX = centerX,
             centerY = centerY,
