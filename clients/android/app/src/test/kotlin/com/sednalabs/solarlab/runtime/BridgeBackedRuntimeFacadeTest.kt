@@ -114,6 +114,39 @@ class BridgeBackedRuntimeFacadeTest {
     }
 
     @Test
+    fun renderPacketReady_compactsOversizedSceneRevisionForUi() = runBlocking {
+        val hugeSceneRevision = "scenario=sol-system|" + "body|".repeat(80)
+        val bridge = FakeRuntimeBridge(
+            connectSignals = flowOf(
+                RuntimeSignal.RenderPacketReady(
+                    packetLease(
+                        bodyCount = 1,
+                        tracerCount = 0,
+                        trailSpanCount = 0,
+                        trailVertexCount = 0,
+                        directionalLightCount = 0,
+                        sceneRevision = hugeSceneRevision,
+                    ),
+                ),
+            ),
+        )
+        val facade = BridgeBackedRuntimeFacade(
+            bridge = bridge,
+            developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                enabled = true,
+                sinks = emptyList(),
+            ),
+        )
+
+        facade.startSession()
+
+        val state = facade.uiState.value
+        assertTrue((state.detailLine ?: "").length < hugeSceneRevision.length)
+        assertTrue((state.renderStatus.sceneRevision ?: "").length < hugeSceneRevision.length)
+        assertTrue((state.detailLine ?: "").contains("chars"))
+    }
+
+    @Test
     fun applyCommand_recordsDeveloperTelemetryForCommandLifecycle() = runBlocking {
         val bridge = FakeRuntimeBridge(
             connectSignals = flowOf(
@@ -225,11 +258,12 @@ class BridgeBackedRuntimeFacadeTest {
         trailSpanCount: Int,
         trailVertexCount: Int,
         directionalLightCount: Int,
+        sceneRevision: String = "v1",
     ): PacketLease = PacketLease(
         packetHandle = 42L,
         packet = NativeVulkanScenePacket(
             packetHandle = 42L,
-            sceneRevision = "v1",
+            sceneRevision = sceneRevision,
             epochSeconds = 1.0,
             observerMode = 0,
             timelineSemantics = 0,

@@ -33,4 +33,23 @@ class DeveloperTelemetryRecorderTest {
         assertEquals(1, presentation.droppedEntryCount)
         assertEquals(listOf("beta", "gamma"), presentation.entries.map { it.category })
     }
+
+    @Test
+    fun record_truncatesOversizedMessages_beforePublishing() {
+        val recorder = DeveloperTelemetryRecorder(
+            enabled = true,
+            maxMessageChars = 96,
+            sinks = emptyList(),
+        )
+
+        val presentation = recorder.record(
+            level = DeveloperTelemetryLevel.Info,
+            category = "render.ready",
+            message = "x".repeat(200),
+        )
+
+        val message = presentation.entries.single().message
+        assertTrue(message.length <= 96)
+        assertTrue(message.contains("truncated"))
+    }
 }

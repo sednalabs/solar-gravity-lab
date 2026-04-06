@@ -8,6 +8,7 @@ import java.util.Locale
 import kotlin.collections.ArrayDeque
 
 internal const val DEVELOPER_TELEMETRY_LOG_TAG = "SolarLabDevTelemetry"
+internal const val DEVELOPER_TELEMETRY_MAX_MESSAGE_CHARS = 512
 
 internal fun defaultDeveloperTelemetryRecorder(): DeveloperTelemetryRecorder {
     val sinks = mutableListOf<DeveloperTelemetrySink>(LogcatDeveloperTelemetrySink)
@@ -41,11 +42,13 @@ internal fun interface DeveloperTelemetrySink {
 
 internal class DeveloperTelemetryRecorder(
     private val maxEntries: Int = 48,
+    private val maxMessageChars: Int = DEVELOPER_TELEMETRY_MAX_MESSAGE_CHARS,
     private val enabled: Boolean = BuildConfig.DEBUG || BuildConfig.APPLICATION_ID.endsWith(".internal"),
     private val sinks: List<DeveloperTelemetrySink> = listOf(LogcatDeveloperTelemetrySink),
 ) {
     init {
         require(maxEntries > 0) { "maxEntries must be greater than zero" }
+        require(maxMessageChars >= 64) { "maxMessageChars must be at least 64" }
     }
 
     private val entries = ArrayDeque<DeveloperTelemetryEvent>()
@@ -70,7 +73,7 @@ internal class DeveloperTelemetryRecorder(
             recordedAtUnixMs = System.currentTimeMillis(),
             level = level,
             category = category,
-            message = message,
+            message = message.truncatedForDeveloperTelemetry(maxMessageChars),
         )
         if (entries.size >= maxEntries) {
             entries.removeFirst()
@@ -86,6 +89,16 @@ internal class DeveloperTelemetryRecorder(
         }
         return presentation()
     }
+}
+
+private fun String.truncatedForDeveloperTelemetry(maxChars: Int): String {
+    if (length <= maxChars) {
+        return this
+    }
+
+    val suffix = "... [truncated ${length - maxChars} chars]"
+    val prefixLength = (maxChars - suffix.length).coerceAtLeast(0)
+    return take(prefixLength) + suffix
 }
 
 private object LogcatDeveloperTelemetrySink : DeveloperTelemetrySink {

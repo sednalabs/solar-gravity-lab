@@ -307,6 +307,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                 val packet = lease.packet
                 try {
                     val renderFrame = VulkanPacketRenderFrameDecoder.decode(lease.packet)
+                    val sceneRevisionLabel = lease.sceneRevision.toSceneRevisionLabel()
                     val packetRenderIssue = packet.diagnostics.toRenderIssue()
                     val hasRenderableScene = packet.bodyCount > 0 && (
                         renderFrame.hasRenderableSceneContent() || packet.hasRenderablePayload()
@@ -325,7 +326,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                         val next = current.copy(
                             connectionState = SessionConnectionState.Active,
                             statusLine = if (hasRenderableScene) "Render host ready" else "Render packet empty",
-                            detailLine = "Scene revision ${lease.sceneRevision}",
+                            detailLine = "Scene revision $sceneRevisionLabel",
                             noticeLine = if (hasRenderableScene) {
                                 "Fresh packet decoded for the Android render host"
                             } else {
@@ -342,7 +343,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                             cameraFacingSummary = lease.packet.camera.toFacingSummary(),
                             renderStatus = packet.toRenderStatusPresentation(
                                 readiness = readyReadiness,
-                                sceneRevision = lease.sceneRevision,
+                                sceneRevision = sceneRevisionLabel,
                                 summary = lease.summaryLine,
                                 renderedBodyCount = renderFrame.bodies.size,
                                 renderedTracerCount = renderFrame.tracers.size,
@@ -364,7 +365,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                                 developerTelemetry = recordTelemetry(
                                     level = DeveloperTelemetryLevel.Info,
                                     category = "render.ready",
-                                    message = packet.toTelemetrySummary(sceneRevision = lease.sceneRevision),
+                                    message = packet.toTelemetrySummary(sceneRevision = sceneRevisionLabel),
                                 ),
                             )
                         }
@@ -738,7 +739,7 @@ private fun SnapshotPresentation.toTelemetrySummary(): String {
 
 private fun NativeVulkanScenePacket.toTelemetryKey(sceneRevision: String): String {
     return listOf(
-        sceneRevision,
+        sceneRevision.toSceneRevisionKey(),
         bodyCount.toString(),
         tracerCount.toString(),
         trailSpanCount.toString(),
@@ -750,6 +751,24 @@ private fun NativeVulkanScenePacket.toTelemetryKey(sceneRevision: String): Strin
 
 private fun NativeVulkanScenePacket.toTelemetrySummary(sceneRevision: String): String {
     return "revision=$sceneRevision, bodies=$bodyCount, tracers=$tracerCount, trails=$trailSpanCount/$trailVertexCount, lights=$directionalLightCount"
+}
+
+private fun String.toSceneRevisionLabel(maxChars: Int = 96): String {
+    if (length <= maxChars) {
+        return this
+    }
+
+    val suffix = "... (${length} chars)"
+    val prefixLength = (maxChars - suffix.length).coerceAtLeast(0)
+    return take(prefixLength) + suffix
+}
+
+private fun String.toSceneRevisionKey(): String {
+    return if (length <= 96) {
+        this
+    } else {
+        "${take(24)}|len=$length|hash=${hashCode()}"
+    }
 }
 
 private fun NativeVulkanCameraPacket.toFacingSummary(): String {
