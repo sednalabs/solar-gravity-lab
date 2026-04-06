@@ -119,17 +119,16 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                             .padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
-                        HeroPanel(
-                            uiState = uiState,
-                            onRefresh = {
-                                scope.launch {
-                                    runtimeFacade.refresh()
-                                }
-                            },
-                            canRefresh = canRefresh,
-                        )
-
                         if (isWide) {
+                            HeroPanel(
+                                uiState = uiState,
+                                onRefresh = {
+                                    scope.launch {
+                                        runtimeFacade.refresh()
+                                    }
+                                },
+                                canRefresh = canRefresh,
+                            )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -138,6 +137,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                 RenderStagePanel(
                                     uiState = uiState,
                                     modifier = Modifier.weight(1.35f),
+                                    compactStage = false,
                                     onRefresh = {
                                         scope.launch {
                                             runtimeFacade.refresh()
@@ -170,6 +170,16 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                             RenderStagePanel(
                                 uiState = uiState,
                                 modifier = Modifier.fillMaxWidth(),
+                                compactStage = true,
+                                onRefresh = {
+                                    scope.launch {
+                                        runtimeFacade.refresh()
+                                    }
+                                },
+                                canRefresh = canRefresh,
+                            )
+                            HeroPanel(
+                                uiState = uiState,
                                 onRefresh = {
                                     scope.launch {
                                         runtimeFacade.refresh()
@@ -430,6 +440,7 @@ private fun StatusStrip(uiState: ShellUiState) {
 private fun RenderStagePanel(
     uiState: ShellUiState,
     modifier: Modifier = Modifier,
+    compactStage: Boolean = false,
     onRefresh: () -> Unit,
     canRefresh: Boolean,
 ) {
@@ -450,7 +461,7 @@ private fun RenderStagePanel(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = "Host-owned packet presentation over the Rust scene export contract.",
+                        text = "Overhead orbital view from Rust-authoritative scene packets.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -478,7 +489,10 @@ private fun RenderStagePanel(
                 modifier = Modifier
                     .testTag(SolarLabTestTags.RENDER_PANEL)
                     .fillMaxWidth()
-                    .heightIn(min = 320.dp, max = 560.dp)
+                    .heightIn(
+                        min = if (compactStage) 420.dp else 320.dp,
+                        max = if (compactStage) 720.dp else 560.dp,
+                    )
                     .clip(RoundedCornerShape(28.dp))
                     .background(
                         brush = Brush.verticalGradient(

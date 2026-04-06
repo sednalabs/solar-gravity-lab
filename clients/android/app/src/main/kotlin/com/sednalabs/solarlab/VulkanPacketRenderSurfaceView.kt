@@ -18,6 +18,7 @@ import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RenderTrail
 import com.sednalabs.solarlab.runtime.RenderTracer
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -34,6 +35,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback2 {
     companion object {
         private const val TAG = "SolarLabRenderHost"
+        private const val MAX_TRACER_POINTS_FOR_EXTENT = 512
+        private const val MAX_TRAIL_POINTS_FOR_EXTENT = 1_024
     }
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
@@ -203,7 +206,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private fun drawFrame(canvas: Canvas, frame: RenderFrame) {
         val viewportWidth = width.toFloat().coerceAtLeast(1f)
         val viewportHeight = height.toFloat().coerceAtLeast(1f)
-        val extent = computeExtent(frame)
+        val projectionPlane = selectOverheadProjectionPlane(frame)
+        val extent = computeExtent(frame, projectionPlane)
         val halfWorldSpan = extent.halfWorldSpan.coerceAtLeast(1f)
         val scale = 0.44f * min(viewportWidth, viewportHeight) / halfWorldSpan
         val trailHighlightRanks = highlightedTrailSourceBodyIds
@@ -216,6 +220,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 trail = trail,
                 centerX = extent.centerX,
                 centerY = extent.centerY,
+                projectionPlane = projectionPlane,
                 scale = scale,
                 viewportWidth = viewportWidth,
                 viewportHeight = viewportHeight,
@@ -223,10 +228,29 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             )
         }
         frame.tracers.forEach { tracer ->
-            drawTracer(canvas, tracer, extent.centerX, extent.centerY, scale, viewportWidth, viewportHeight)
+            drawTracer(
+                canvas = canvas,
+                tracer = tracer,
+                centerX = extent.centerX,
+                centerY = extent.centerY,
+                projectionPlane = projectionPlane,
+                scale = scale,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+            )
         }
         frame.bodies.forEach { body ->
-            drawBody(canvas, body, extent.centerX, extent.centerY, scale, viewportWidth, viewportHeight, halfWorldSpan)
+            drawBody(
+                canvas = canvas,
+                body = body,
+                centerX = extent.centerX,
+                centerY = extent.centerY,
+                projectionPlane = projectionPlane,
+                scale = scale,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+                halfWorldSpan = halfWorldSpan,
+            )
         }
     }
 
@@ -235,16 +259,18 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         body: RenderBody,
         centerX: Float,
         centerY: Float,
+        projectionPlane: ProjectionPlane,
         scale: Float,
         viewportWidth: Float,
         viewportHeight: Float,
         halfWorldSpan: Float,
     ) {
-        if (!body.x.isFinite() || !body.y.isFinite() || !body.radiusM.isFinite()) {
+        val projectedY = projectY(body.y, body.z, projectionPlane)
+        if (!body.x.isFinite() || !projectedY.isFinite() || !body.radiusM.isFinite()) {
             return
         }
         val sx = viewportWidth * 0.5f + ((body.x - centerX) * scale)
-        val sy = viewportHeight * 0.5f - ((body.y - centerY) * scale)
+        val sy = viewportHeight * 0.5f - ((projectedY - centerY) * scale)
         if (!sx.isFinite() || !sy.isFinite()) {
             return
         }
@@ -267,15 +293,17 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         tracer: RenderTracer,
         centerX: Float,
         centerY: Float,
+        projectionPlane: ProjectionPlane,
         scale: Float,
         viewportWidth: Float,
         viewportHeight: Float,
     ) {
-        if (!tracer.x.isFinite() || !tracer.y.isFinite() || !tracer.sizePx.isFinite()) {
+        val projectedY = projectY(tracer.y, tracer.z, projectionPlane)
+        if (!tracer.x.isFinite() || !projectedY.isFinite() || !tracer.sizePx.isFinite()) {
             return
         }
         val sx = viewportWidth * 0.5f + ((tracer.x - centerX) * scale)
-        val sy = viewportHeight * 0.5f - ((tracer.y - centerY) * scale)
+        val sy = viewportHeight * 0.5f - ((projectedY - centerY) * scale)
         if (!sx.isFinite() || !sy.isFinite()) {
             return
         }
@@ -294,6 +322,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         trail: RenderTrail,
         centerX: Float,
         centerY: Float,
+        projectionPlane: ProjectionPlane,
         scale: Float,
         viewportWidth: Float,
         viewportHeight: Float,
@@ -303,11 +332,12 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val path = Path()
         var plottedPointCount = 0
         trail.points.forEachIndexed { index, point ->
-            if (!point.x.isFinite() || !point.y.isFinite()) {
+            val projectedY = projectY(point.y, point.z, projectionPlane)
+            if (!point.x.isFinite() || !projectedY.isFinite()) {
                 return@forEachIndexed
             }
             val sx = viewportWidth * 0.5f + ((point.x - centerX) * scale)
-            val sy = viewportHeight * 0.5f - ((point.y - centerY) * scale)
+            val sy = viewportHeight * 0.5f - ((projectedY - centerY) * scale)
             if (!sx.isFinite() || !sy.isFinite()) {
                 return@forEachIndexed
             }
@@ -348,62 +378,156 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         canvas.drawPath(path, trailPaint)
     }
 
-    private fun computeExtent(frame: RenderFrame): Extent {
-        // Compute a bounded viewport envelope from all visible render entities.
-        // If no entities arrive this tick, we keep a 1.0f half-span floor.
-        var centerX = 0f
-        var centerY = 0f
-        var count = 0
-
-        frame.bodies.forEach { body ->
-            if (!body.x.isFinite() || !body.y.isFinite()) {
-                return@forEach
+    private fun computeExtent(
+        frame: RenderFrame,
+        projectionPlane: ProjectionPlane,
+    ): Extent {
+        val projectedBodyPoints = frame.bodies
+            .asSequence()
+            .mapNotNull { body ->
+                projectedPoint(
+                    x = body.x,
+                    y = projectY(body.y, body.z, projectionPlane),
+                )
             }
-            centerX += body.x
-            centerY += body.y
-            count++
-        }
-        frame.tracers.forEach { tracer ->
-            if (!tracer.x.isFinite() || !tracer.y.isFinite()) {
-                return@forEach
+            .toList()
+        val projectedTracerPoints = frame.tracers
+            .asSequence()
+            .mapNotNull { tracer ->
+                projectedPoint(
+                    x = tracer.x,
+                    y = projectY(tracer.y, tracer.z, projectionPlane),
+                )
             }
-            centerX += tracer.x
-            centerY += tracer.y
-            count++
-        }
-        if (count > 0) {
-            centerX /= count.toFloat()
-            centerY /= count.toFloat()
-        }
-
-        var maxDistance = 1f
-        frame.bodies.forEach { body ->
-            if (!body.x.isFinite() || !body.y.isFinite()) {
-                return@forEach
-            }
-            maxDistance = max(maxDistance, xyDistance(body.x, body.y, centerX, centerY))
-        }
-        frame.tracers.forEach { tracer ->
-            if (!tracer.x.isFinite() || !tracer.y.isFinite()) {
-                return@forEach
-            }
-            maxDistance = max(maxDistance, xyDistance(tracer.x, tracer.y, centerX, centerY))
-        }
-        frame.trails.forEach { trail ->
-            trail.points.forEach { point ->
-                if (!point.x.isFinite() || !point.y.isFinite()) {
-                    return@forEach
+            .toList()
+            .sampleUpTo(MAX_TRACER_POINTS_FOR_EXTENT)
+        val projectedTrailPoints = frame.trails
+            .asSequence()
+            .flatMap { trail ->
+                trail.points.asSequence().mapNotNull { point ->
+                    projectedPoint(
+                        x = point.x,
+                        y = projectY(point.y, point.z, projectionPlane),
+                    )
                 }
-                maxDistance = max(maxDistance, xyDistance(point.x, point.y, centerX, centerY))
             }
+            .toList()
+            .sampleUpTo(MAX_TRAIL_POINTS_FOR_EXTENT)
+        val points = buildList {
+            addAll(projectedBodyPoints)
+            addAll(projectedTracerPoints)
+            addAll(projectedTrailPoints)
+        }
+        if (points.isEmpty()) {
+            return Extent(centerX = 0f, centerY = 0f, halfWorldSpan = 1f)
         }
 
-        val padded = maxDistance * 1.2f
+        val anchorBody = frame.bodies.firstOrNull { body ->
+            body.selected && body.x.isFinite() && projectY(body.y, body.z, projectionPlane).isFinite()
+        } ?: frame.bodies.maxByOrNull { body ->
+            if (body.radiusM.isFinite()) body.radiusM else Float.NEGATIVE_INFINITY
+        }
+
+        val centerX = anchorBody?.x
+            ?: medianOf(points.map { it.x })
+        val centerY = anchorBody?.let { body -> projectY(body.y, body.z, projectionPlane) }
+            ?: medianOf(points.map { it.y })
+
+        val sortedDistances = points
+            .asSequence()
+            .map { xyDistance(it.x, it.y, centerX, centerY) }
+            .filter { it.isFinite() }
+            .sorted()
+            .toList()
+        if (sortedDistances.isEmpty()) {
+            return Extent(centerX = centerX, centerY = centerY, halfWorldSpan = 1f)
+        }
+
+        val clippedDistance = percentile(sortedDistances, 0.92f)
+        val halfWorldSpan = max(1f, clippedDistance * 1.28f)
         return Extent(
             centerX = centerX,
             centerY = centerY,
-            halfWorldSpan = if (abs(padded) < 1f) 1f else padded,
+            halfWorldSpan = if (abs(halfWorldSpan) < 1f) 1f else halfWorldSpan,
         )
+    }
+
+    private fun selectOverheadProjectionPlane(frame: RenderFrame): ProjectionPlane {
+        var ySpread = 0f
+        var zSpread = 0f
+        var sampleCount = 0
+        frame.bodies.forEach { body ->
+            if (!body.x.isFinite()) {
+                return@forEach
+            }
+            if (body.y.isFinite()) {
+                ySpread += abs(body.y)
+            }
+            if (body.z.isFinite()) {
+                zSpread += abs(body.z)
+            }
+            sampleCount++
+        }
+        if (sampleCount == 0) {
+            return ProjectionPlane.XZ
+        }
+        val meanYSpread = ySpread / sampleCount.toFloat()
+        val meanZSpread = zSpread / sampleCount.toFloat()
+        return if (meanZSpread > meanYSpread * 1.5f) {
+            ProjectionPlane.XZ
+        } else {
+            ProjectionPlane.XY
+        }
+    }
+
+    private fun projectY(
+        y: Float,
+        z: Float,
+        projectionPlane: ProjectionPlane,
+    ): Float {
+        return when (projectionPlane) {
+            ProjectionPlane.XY -> y
+            ProjectionPlane.XZ -> z
+        }
+    }
+
+    private fun projectedPoint(x: Float, y: Float): ProjectedPoint? {
+        if (!x.isFinite() || !y.isFinite()) {
+            return null
+        }
+        return ProjectedPoint(x = x, y = y)
+    }
+
+    private fun List<ProjectedPoint>.sampleUpTo(maxCount: Int): List<ProjectedPoint> {
+        if (size <= maxCount) {
+            return this
+        }
+        val stride = ceil(size / maxCount.toFloat()).toInt().coerceAtLeast(1)
+        return filterIndexed { index, _ -> index % stride == 0 }
+            .take(maxCount)
+    }
+
+    private fun medianOf(values: List<Float>): Float {
+        if (values.isEmpty()) {
+            return 0f
+        }
+        val sorted = values.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 0) {
+            (sorted[mid - 1] + sorted[mid]) * 0.5f
+        } else {
+            sorted[mid]
+        }
+    }
+
+    private fun percentile(sortedValues: List<Float>, percentile: Float): Float {
+        if (sortedValues.isEmpty()) {
+            return 1f
+        }
+        val clamped = percentile.coerceIn(0f, 1f)
+        val index = (clamped * (sortedValues.lastIndex.toFloat())).toInt()
+            .coerceIn(0, sortedValues.lastIndex)
+        return sortedValues[index]
     }
 
     private fun xyDistance(x: Float, y: Float, cx: Float, cy: Float): Float {
@@ -417,4 +541,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val centerY: Float,
         val halfWorldSpan: Float,
     )
+
+    private data class ProjectedPoint(
+        val x: Float,
+        val y: Float,
+    )
+
+    private enum class ProjectionPlane {
+        XY,
+        XZ,
+    }
+
 }
