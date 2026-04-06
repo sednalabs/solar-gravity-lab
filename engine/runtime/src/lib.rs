@@ -1539,13 +1539,16 @@ mod tests {
     };
     use solarlab_hardware::HardwareProfile;
     use solarlab_history::HistoryEvent;
-    use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
+    use solarlab_physics::{
+        CollisionModel, IntegratorKind, PhysicsInvariants, PhysicsPolicy, SolverBackend,
+    };
     use solarlab_scene::{SceneDetailBand, SceneItemFamily};
 
     use super::{
-        extract_render_scene, ApplyUpdateManifestCommand, BodyState, MountPackageCommand,
-        RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeTrailHistoryCount, WorldCommand,
-        WorldRuntime,
+        compute_world_invariants, extract_render_scene, record_trail_samples_from_bodies,
+        vec_magnitude, ApplyUpdateManifestCommand, BodyState, MountPackageCommand, RuntimeConfig,
+        RuntimeError, RuntimeEvent, RuntimeTrailHistoryCount, WorldCommand, WorldRuntime,
+        WorldSnapshot,
     };
 
     #[test]
@@ -3378,6 +3381,43 @@ mod tests {
         assert_ne!(runtime.render_scene().scene_revision, initial_revision);
     }
 
+    #[test]
+    fn major_body_orbit_telemetry_stays_within_legacy_thresholds() {
+        let metrics = run_major_body_telemetry(900.0, 32);
+
+        const RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX: f64 = 1.0e-6;
+        const BARYCENTER_DRIFT_M_MAX: f64 = 50.0;
+        const BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX: f64 = 10.0;
+        const MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX: f64 = 1.0e-3;
+
+        assert!(
+            metrics.relative_angular_momentum_drift <= RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX,
+            "relative_angular_momentum_drift={} exceeded {}",
+            metrics.relative_angular_momentum_drift,
+            RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX
+        );
+        assert!(
+            metrics.barycenter_drift_m <= BARYCENTER_DRIFT_M_MAX,
+            "barycenter_drift_m={} exceeded {}",
+            metrics.barycenter_drift_m,
+            BARYCENTER_DRIFT_M_MAX
+        );
+        assert!(
+            metrics.barycenter_fine_baseline_distance_error_m
+                <= BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX,
+            "barycenter_fine_baseline_distance_error_m={} exceeded {}",
+            metrics.barycenter_fine_baseline_distance_error_m,
+            BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX
+        );
+        assert!(
+            metrics.moon_earth_fine_baseline_error_ratio
+                <= MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX,
+            "moon_earth_fine_baseline_error_ratio={} exceeded {}",
+            metrics.moon_earth_fine_baseline_error_ratio,
+            MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX
+        );
+    }
+
     fn checkpoint_id_from_events(events: &[RuntimeEvent]) -> CheckpointId {
         events
             .iter()
@@ -3587,5 +3627,140 @@ mod tests {
         let dy = a.y - b.y;
         let dz = a.z - b.z;
         (dx * dx + dy * dy + dz * dz).sqrt()
+    }
+
+    struct TelemetryMetrics {
+        relative_energy_drift: f64,
+        relative_angular_momentum_drift: f64,
+        barycenter_drift_m: f64,
+        barycenter_fine_baseline_distance_error_m: f64,
+        moon_earth_fine_baseline_error_ratio: f64,
+    }
+
+    fn run_major_body_telemetry(step_seconds: f64, steps: usize) -> TelemetryMetrics {
+        let coarse = propagate_major_bodies(step_seconds, steps);
+        let fine_step = step_seconds / 4.0;
+        let fine = propagate_major_bodies(fine_step, steps * 4);
+
+        let relative_energy_drift = drift(
+            coarse.initial_invariants.total_energy_j,
+            coarse.final_invariants.total_energy_j,
+        );
+        let relative_angular_momentum_drift = drift(
+            vec_magnitude(coarse.initial_invariants.angular_momentum_kg_m2ps),
+            vec_magnitude(coarse.final_invariants.angular_momentum_kg_m2ps),
+        );
+
+        let barycenter_drift_m =
+            displacement_magnitude(&coarse.initial_barycenter, &coarse.final_barycenter);
+        let barycenter_fine_baseline_distance_error_m =
+            displacement_magnitude(&coarse.final_barycenter, &fine.final_barycenter);
+
+        let moon_earth_fine_baseline_error_ratio = {
+            let coarse_distance = moon_earth_distance_au(&coarse.final_snapshot);
+            let fine_distance = moon_earth_distance_au(&fine.final_snapshot);
+            if fine_distance > 0.0 {
+                (coarse_distance - fine_distance).abs() / fine_distance
+            } else {
+                0.0
+            }
+        };
+
+        TelemetryMetrics {
+            relative_energy_drift,
+            relative_angular_momentum_drift,
+            barycenter_drift_m,
+            barycenter_fine_baseline_distance_error_m,
+            moon_earth_fine_baseline_error_ratio,
+        }
+    }
+
+    struct PropagationResult {
+        initial_snapshot: WorldSnapshot,
+        final_snapshot: WorldSnapshot,
+        initial_invariants: PhysicsInvariants,
+        final_invariants: PhysicsInvariants,
+        initial_barycenter: Vector3d,
+        final_barycenter: Vector3d,
+    }
+
+    fn propagate_major_bodies(step_seconds: f64, steps: usize) -> PropagationResult {
+        let mut runtime = new_runtime();
+        runtime.config.physics.max_substep_seconds = step_seconds.min(60.0);
+        seed_major_bodies(&mut runtime);
+
+        let initial_snapshot = runtime.snapshot();
+        let initial_invariants = compute_world_invariants(&initial_snapshot.bodies);
+        let initial_barycenter = initial_invariants.barycenter_m;
+
+        for i in 0..steps {
+            runtime
+                .apply_command(
+                    WorldCommand::AdvanceEpoch {
+                        delta_seconds: step_seconds,
+                    },
+                    (i as i64) + 1_000,
+                )
+                .expect("advance epoch should succeed");
+        }
+
+        let final_snapshot = runtime.snapshot();
+        let final_invariants = compute_world_invariants(&final_snapshot.bodies);
+        let final_barycenter = final_invariants.barycenter_m;
+
+        PropagationResult {
+            initial_snapshot,
+            final_snapshot,
+            initial_invariants,
+            final_invariants,
+            initial_barycenter,
+            final_barycenter,
+        }
+    }
+
+    fn seed_major_bodies(runtime: &mut WorldRuntime) {
+        use solarlab_data::canonical_startup_seed;
+
+        let seed = canonical_startup_seed();
+        let major_bodies: Vec<BodyState> = seed
+            .bodies
+            .into_iter()
+            .filter(|body| body.body_class != BodyClass::SmallBody)
+            .map(|body| BodyState {
+                body_id: BodyId(body.body_id),
+                body_class: body.body_class,
+                mass_kg: body.mass_kg,
+                radius_m: body.radius_m,
+                position_m: body.position_m,
+                velocity_mps: body.velocity_mps,
+            })
+            .collect();
+
+        let branch = runtime.active_branch_mut();
+        branch.world.bodies = major_bodies;
+        branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+        branch.world.trail_history_by_body.clear();
+        record_trail_samples_from_bodies(
+            &branch.world.bodies,
+            &mut branch.world.trail_history_by_body,
+        );
+    }
+
+    fn drift(initial: f64, final_value: f64) -> f64 {
+        if initial.abs() <= f64::EPSILON {
+            0.0
+        } else {
+            (final_value - initial).abs() / initial.abs()
+        }
+    }
+
+    fn moon_earth_distance_au(snapshot: &WorldSnapshot) -> f64 {
+        const AU_M: f64 = 1.495_978_707e11;
+        let earth = BodyId("earth".into());
+        let moon = BodyId("moon".into());
+
+        let earth_pos = body_position(snapshot, &earth);
+        let moon_pos = body_position(snapshot, &moon);
+        displacement_magnitude(&earth_pos, &moon_pos) / AU_M
     }
 }

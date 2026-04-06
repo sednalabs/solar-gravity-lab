@@ -756,4 +756,25 @@ mod tests {
             "earth-moon relative speed out of expected range: {relative_speed_mps}"
         );
     }
+
+    #[test]
+    fn startup_seed_is_deterministic_for_fixed_constants() {
+        let first = canonical_startup_seed();
+        let second = canonical_startup_seed();
+
+        assert_eq!(
+            first.curated_small_body_count,
+            second.curated_small_body_count
+        );
+        assert_eq!(
+            first.synthetic_asteroid_belt_count,
+            second.synthetic_asteroid_belt_count
+        );
+        assert_eq!(
+            first.synthetic_oort_cloud_count,
+            second.synthetic_oort_cloud_count
+        );
+        assert_eq!(first.bodies.len(), second.bodies.len());
+        assert_eq!(first.bodies, second.bodies);
+    }
 }
