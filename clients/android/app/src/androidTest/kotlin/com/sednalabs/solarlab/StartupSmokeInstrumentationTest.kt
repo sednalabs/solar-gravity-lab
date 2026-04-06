@@ -1,7 +1,12 @@
 package com.sednalabs.solarlab
 
+import android.content.ContentValues
+import android.content.Context
+import android.content.ContentUris
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -229,18 +234,86 @@ class StartupSmokeInstrumentationTest {
 
     private fun persistValidationScreenshot(name: String, bitmap: Bitmap) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val outputDir = File(
-            context.filesDir,
-            "validation-screenshots",
-        ).apply {
-            mkdirs()
-        }
+        persistInternalValidationScreenshot(context, name, bitmap)
+        persistSharedValidationScreenshot(context, name, bitmap)
+    }
+
+    private fun persistInternalValidationScreenshot(
+        context: Context,
+        name: String,
+        bitmap: Bitmap,
+    ) {
+        val outputDir = File(context.filesDir, "validation-screenshots").apply { mkdirs() }
         val outputFile = File(outputDir, "$name.png")
         FileOutputStream(outputFile).use { stream ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
             stream.flush()
         }
         Log.i(LOG_TAG, "StartupSmokeInstrumentationTest.savedScreenshot ${outputFile.absolutePath}")
+    }
+
+    private fun persistSharedValidationScreenshot(
+        context: Context,
+        name: String,
+        bitmap: Bitmap,
+    ) {
+        val resolver = context.contentResolver
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/solarlab-validation"
+        val displayName = "$name.png"
+        deleteExistingSharedScreenshot(resolver, displayName, relativePath)
+
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+            put(MediaStore.Downloads.MIME_TYPE, "image/png")
+            put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val targetUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            ?: return
+
+        try {
+            resolver.openOutputStream(targetUri)?.use { stream ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                stream.flush()
+            }
+            val finalizeValues = ContentValues().apply {
+                put(MediaStore.Downloads.IS_PENDING, 0)
+            }
+            resolver.update(targetUri, finalizeValues, null, null)
+            Log.i(
+                LOG_TAG,
+                "StartupSmokeInstrumentationTest.savedSharedScreenshot ${Environment.DIRECTORY_DOWNLOADS}/solarlab-validation/$displayName"
+            )
+        } catch (error: Throwable) {
+            resolver.delete(targetUri, null, null)
+            Log.w(
+                LOG_TAG,
+                "StartupSmokeInstrumentationTest.sharedScreenshotSaveFailed ${error.message ?: error::class.java.simpleName}",
+            )
+        }
+    }
+
+    private fun deleteExistingSharedScreenshot(
+        resolver: android.content.ContentResolver,
+        displayName: String,
+        relativePath: String,
+    ) {
+        resolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Downloads._ID),
+            "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
+            arrayOf(displayName, relativePath),
+            null,
+        )?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+            while (cursor.moveToNext()) {
+                val contentUri = ContentUris.withAppendedId(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    cursor.getLong(idIndex),
+                )
+                resolver.delete(contentUri, null, null)
+            }
+        }
     }
 
     private data class VisualMetrics(
