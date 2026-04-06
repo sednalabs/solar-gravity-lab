@@ -151,7 +151,13 @@ internal class JniRuntimeBridge(
             )
         }
 
-        refreshSignalsForHandle(handle, includeSummary = true).forEach { trySend(it) }
+        val initialSignals = refreshSignalsForHandle(handle, includeSummary = true)
+        initialSignals.forEach { trySend(it) }
+
+        if (extractBodyCountFrom(initialSignals) == 0L) {
+            ensureStartupSeedApplied(handle).forEach { trySend(it) }
+            refreshSignalsForHandle(handle, includeSummary = true).forEach { trySend(it) }
+        }
 
         val refreshJob = launch {
             while (isActive) {
@@ -293,6 +299,88 @@ internal class JniRuntimeBridge(
             activeSessionHandle = 0L
         }
     }
+
+    private fun extractBodyCountFrom(signals: List<RuntimeSignal>): Long {
+        return signals
+            .asSequence()
+            .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
+            .firstOrNull()
+            ?.summary
+            ?.bodyCount
+            ?.toLong()
+            ?: 0L
+    }
+
+    private fun ensureStartupSeedApplied(handle: Long): List<RuntimeSignal> {
+        val signals = mutableListOf<RuntimeSignal>()
+        for (command in startupSeedCommands()) {
+            val commandResult = runCatching {
+                transport.applyCommand(handle, command.toNativePayload())
+            }.getOrElse { error ->
+                signals += RuntimeSignal.Notice(
+                    message = "Startup bootstrap command failed: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Error,
+                )
+                return signals
+            }
+
+            if (!commandResult.result.isOk()) {
+                signals += RuntimeSignal.Notice(
+                    message = "Startup bootstrap command rejected: ${commandResult.result.describe()}",
+                    level = RuntimeNoticeLevel.Warning,
+                )
+                return signals
+            }
+        }
+
+        if (signals.isEmpty()) {
+            signals += RuntimeSignal.Notice(
+                message = "Seeded default startup solar system for session $handle",
+                level = RuntimeNoticeLevel.Info,
+            )
+        }
+
+        return signals
+    }
+
+    private fun startupSeedCommands(): List<RuntimeCommand> = listOf(
+        RuntimeCommand.SpawnBody(
+            bodyId = "Sun",
+            bodyClass = RuntimeBodyClass.Star,
+            positionX = 0.0,
+            positionY = 0.0,
+            positionZ = 0.0,
+            velocityX = 0.0,
+            velocityY = 0.0,
+            velocityZ = 0.0,
+            massKg = 1.988_47e30,
+            radiusM = 6.9634e8,
+        ),
+        RuntimeCommand.SpawnBody(
+            bodyId = "Earth",
+            bodyClass = RuntimeBodyClass.Planet,
+            positionX = 1.495_978_707e11,
+            positionY = 0.0,
+            positionZ = 0.0,
+            velocityX = 0.0,
+            velocityY = 29_782.0,
+            velocityZ = 0.0,
+            massKg = 5.972e24,
+            radiusM = 6.371e6,
+        ),
+        RuntimeCommand.SpawnBody(
+            bodyId = "Moon",
+            bodyClass = RuntimeBodyClass.Moon,
+            positionX = 1.496_577_707e11,
+            positionY = 0.0,
+            positionZ = 0.0,
+            velocityX = 0.0,
+            velocityY = 29_782.0 + 1_022.0,
+            velocityZ = 0.0,
+            massKg = 7.348e22,
+            radiusM = 1.737e6,
+        ),
+    )
 
     private companion object {
         private const val ABI_VERSION = 1
