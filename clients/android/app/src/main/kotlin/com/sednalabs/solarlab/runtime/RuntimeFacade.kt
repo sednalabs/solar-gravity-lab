@@ -96,4 +96,5 @@ data class ShellUiState(
     val activeCheckpointId: String? = null,
     val activeCheckpointLabel: String? = null,
     val renderFrame: RenderFrame? = null,
+    val developerTelemetry: DeveloperTelemetryPresentation = DeveloperTelemetryPresentation(),
 )

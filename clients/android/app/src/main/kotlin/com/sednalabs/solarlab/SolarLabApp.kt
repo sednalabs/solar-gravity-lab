@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -47,10 +48,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.sednalabs.solarlab.runtime.DEVELOPER_TELEMETRY_LOG_TAG
+import com.sednalabs.solarlab.runtime.DeveloperTelemetryEvent
+import com.sednalabs.solarlab.runtime.DeveloperTelemetryPresentation
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
@@ -59,6 +66,8 @@ import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellNoticeTone
 import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.SnapshotPresentation
+import com.sednalabs.solarlab.runtime.toDisplayLine
+import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -879,6 +888,8 @@ private fun RuntimeDetailPanel(uiState: ShellUiState) {
             NoticeCard(uiState = uiState)
 
             DetailGrid(uiState = uiState)
+
+            DeveloperTelemetryCard(presentation = uiState.developerTelemetry)
         }
     }
 }
@@ -1034,6 +1045,123 @@ private fun DetailCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val shareText = presentation.toShareText(maxEntries = 24, locale = Locale.getDefault())
+
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Developer telemetry",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = if (presentation.enabled) {
+                    "Local shell diagnostics are mirrored to logcat with tag $DEVELOPER_TELEMETRY_LOG_TAG and can be copied or shared from here."
+                } else {
+                    "Developer telemetry is disabled for this build."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (presentation.enabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(shareText))
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        Text("Copy telemetry")
+                    }
+                    Button(
+                        onClick = {
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_SUBJECT, "Solar Gravity Lab developer telemetry")
+                                        putExtra(Intent.EXTRA_TEXT, shareText)
+                                    },
+                                    "Share developer telemetry",
+                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        Text("Share")
+                    }
+                }
+            }
+
+            if (presentation.droppedEntryCount > 0) {
+                Text(
+                    text = "Dropped oldest entries: ${presentation.droppedEntryCount}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+
+            if (!presentation.enabled || presentation.entries.isEmpty()) {
+                Text(
+                    text = if (presentation.enabled) {
+                        "No local telemetry captured yet."
+                    } else {
+                        "Use a debug or internal build to enable live device telemetry."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    presentation.entries
+                        .takeLast(8)
+                        .asReversed()
+                        .forEach { event ->
+                            DeveloperTelemetryEntry(event = event)
+                        }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeveloperTelemetryEntry(event: DeveloperTelemetryEvent) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+    ) {
+        Text(
+            text = event.toDisplayLine(locale = Locale.getDefault()),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        )
     }
 }
 

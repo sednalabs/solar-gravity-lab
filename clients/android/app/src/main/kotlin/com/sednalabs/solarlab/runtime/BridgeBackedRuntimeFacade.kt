@@ -17,9 +17,14 @@ import java.util.Locale
  * low-level boundary signals (handles, revision counts) into a stable ShellUiState.
  */
 class BridgeBackedRuntimeFacade internal constructor(
-    private val bridge: RuntimeBridge
+    private val bridge: RuntimeBridge,
+    private val developerTelemetryRecorder: DeveloperTelemetryRecorder = DeveloperTelemetryRecorder(),
 ) : RuntimeFacade {
     constructor() : this(JniRuntimeBridge())
+
+    private var lastSnapshotTelemetryKey: String? = null
+    private var lastRenderTelemetryKey: String? = null
+    private var lastRenderUnavailableReason: String? = null
 
     private val _uiState = MutableStateFlow(
         ShellUiState(
@@ -27,6 +32,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             detailLine = "Android shell waits for authoritative runtime state from Rust",
             noticeLine = "Android owns presentation, controls, and host rendering only",
             pendingActionLabel = "Connecting to runtime boundary",
+            developerTelemetry = developerTelemetryRecorder.presentation(),
         )
     )
 
@@ -61,6 +67,11 @@ class BridgeBackedRuntimeFacade internal constructor(
                 activeCheckpointId = null,
                 activeCheckpointLabel = null,
                 renderFrame = null,
+                developerTelemetry = recordTelemetry(
+                    level = DeveloperTelemetryLevel.Info,
+                    category = "session.start",
+                    message = "Opening Rust runtime session from Android shell",
+                ),
             )
         }
         try {
@@ -80,6 +91,11 @@ class BridgeBackedRuntimeFacade internal constructor(
         try {
             runShellAction(
                 label = "Refreshing runtime snapshot",
+                telemetry = TelemetryEvent(
+                    level = DeveloperTelemetryLevel.Info,
+                    category = "session.refresh",
+                    message = "Requested runtime snapshot and render packet refresh",
+                ),
                 onStart = { current ->
                     current.copy(
                         statusLine = "Refreshing runtime snapshot",
@@ -112,6 +128,11 @@ class BridgeBackedRuntimeFacade internal constructor(
         try {
             runShellAction(
                 label = actionLabel,
+                telemetry = TelemetryEvent(
+                    level = DeveloperTelemetryLevel.Info,
+                    category = "command.requested",
+                    message = "$actionLabel (${command.label})",
+                ),
                 onStart = { current ->
                     current.copy(
                         statusLine = actionLabel,
@@ -148,6 +169,11 @@ class BridgeBackedRuntimeFacade internal constructor(
                         readiness = RenderHostReadiness.Refreshing,
                         issue = null,
                     ),
+                    developerTelemetry = recordTelemetry(
+                        level = DeveloperTelemetryLevel.Info,
+                        category = "session.connected",
+                        message = "Bound runtime session handle ${signal.handle}",
+                    ),
                 )
             }
 
@@ -156,6 +182,11 @@ class BridgeBackedRuntimeFacade internal constructor(
                     backendSummary = "${signal.cpuBackendLabel} + ${signal.gpuBackendLabel}",
                     noticeLine = "Runtime backend: ${signal.cpuBackendLabel} + ${signal.gpuBackendLabel}",
                     noticeTone = ShellNoticeTone.Positive,
+                    developerTelemetry = recordTelemetry(
+                        level = DeveloperTelemetryLevel.Info,
+                        category = "runtime.info",
+                        message = "cpu=${signal.cpuBackendLabel}, gpu=${signal.gpuBackendLabel}",
+                    ),
                 )
             }
 
@@ -163,6 +194,11 @@ class BridgeBackedRuntimeFacade internal constructor(
                 current.copy(
                     noticeLine = signal.message,
                     noticeTone = signal.level.toShellTone(),
+                    developerTelemetry = recordTelemetry(
+                        level = signal.level.toDeveloperTelemetryLevel(),
+                        category = "runtime.notice",
+                        message = signal.message,
+                    ),
                 )
             }
 
@@ -172,7 +208,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                     activeCheckpointId = current.activeCheckpointId,
                     activeCheckpointLabel = current.activeCheckpointLabel,
                 )
-                current.copy(
+                val next = current.copy(
                     connectionState = SessionConnectionState.Active,
                     statusLine = if (signal.summary.paused) {
                         "Paused runtime snapshot ready"
@@ -195,6 +231,19 @@ class BridgeBackedRuntimeFacade internal constructor(
                         },
                     ),
                 )
+                val snapshotTelemetryKey = snapshot.toTelemetryKey()
+                if (snapshotTelemetryKey == lastSnapshotTelemetryKey) {
+                    next
+                } else {
+                    lastSnapshotTelemetryKey = snapshotTelemetryKey
+                    next.copy(
+                        developerTelemetry = recordTelemetry(
+                            level = DeveloperTelemetryLevel.Info,
+                            category = "snapshot.updated",
+                            message = snapshot.toTelemetrySummary(),
+                        ),
+                    )
+                }
             }
 
             is RuntimeSignal.CommandApplied -> _uiState.update { current ->
@@ -226,6 +275,11 @@ class BridgeBackedRuntimeFacade internal constructor(
                             RenderHostReadiness.Refreshing
                         },
                     ),
+                    developerTelemetry = recordTelemetry(
+                        level = DeveloperTelemetryLevel.Info,
+                        category = "command.applied",
+                        message = "${signal.commandLabel} -> ${snapshot.toTelemetrySummary()}",
+                    ),
                 )
             }
 
@@ -235,7 +289,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                 try {
                     val renderFrame = VulkanPacketRenderFrameDecoder.decode(lease.packet)
                     _uiState.update { current ->
-                        current.copy(
+                        val next = current.copy(
                             connectionState = SessionConnectionState.Active,
                             statusLine = "Render host ready",
                             detailLine = "Scene revision ${lease.sceneRevision}",
@@ -255,6 +309,20 @@ class BridgeBackedRuntimeFacade internal constructor(
                             ),
                             renderFrame = renderFrame,
                         )
+                        val renderTelemetryKey = packet.toTelemetryKey(sceneRevision = lease.sceneRevision)
+                        lastRenderUnavailableReason = null
+                        if (renderTelemetryKey == lastRenderTelemetryKey) {
+                            next
+                        } else {
+                            lastRenderTelemetryKey = renderTelemetryKey
+                            next.copy(
+                                developerTelemetry = recordTelemetry(
+                                    level = DeveloperTelemetryLevel.Info,
+                                    category = "render.ready",
+                                    message = packet.toTelemetrySummary(sceneRevision = lease.sceneRevision),
+                                ),
+                            )
+                        }
                     }
                 } catch (error: Throwable) {
                     _uiState.update { current ->
@@ -276,6 +344,11 @@ class BridgeBackedRuntimeFacade internal constructor(
                                 issue = error.message ?: error::class.java.simpleName,
                             ),
                             renderFrame = null,
+                            developerTelemetry = recordTelemetry(
+                                level = DeveloperTelemetryLevel.Error,
+                                category = "render.decode_failed",
+                                message = error.message ?: error::class.java.simpleName,
+                            ),
                         )
                     }
                 } finally {
@@ -284,7 +357,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
 
             is RuntimeSignal.RenderUnavailable -> _uiState.update { current ->
-                current.copy(
+                val next = current.copy(
                     noticeLine = signal.reason,
                     noticeTone = ShellNoticeTone.Caution,
                     pendingActionLabel = null,
@@ -296,6 +369,18 @@ class BridgeBackedRuntimeFacade internal constructor(
                         issue = signal.reason,
                     ),
                 )
+                if (signal.reason == lastRenderUnavailableReason) {
+                    next
+                } else {
+                    lastRenderUnavailableReason = signal.reason
+                    next.copy(
+                        developerTelemetry = recordTelemetry(
+                            level = DeveloperTelemetryLevel.Warning,
+                            category = "render.unavailable",
+                            message = signal.reason,
+                        ),
+                    )
+                }
             }
 
             is RuntimeSignal.Unavailable -> _uiState.update { current ->
@@ -321,6 +406,11 @@ class BridgeBackedRuntimeFacade internal constructor(
                         issue = signal.detail ?: signal.message,
                     ),
                     renderFrame = null,
+                    developerTelemetry = recordTelemetry(
+                        level = DeveloperTelemetryLevel.Error,
+                        category = "session.unavailable",
+                        message = signal.detail ?: signal.message,
+                    ),
                 )
             }
         }
@@ -328,10 +418,22 @@ class BridgeBackedRuntimeFacade internal constructor(
 
     private suspend fun runShellAction(
         label: String,
+        telemetry: TelemetryEvent? = null,
         onStart: (ShellUiState) -> ShellUiState,
         action: suspend () -> Unit,
     ) {
-        _uiState.update(onStart)
+        _uiState.update { current ->
+            val started = onStart(current)
+            telemetry?.let {
+                started.copy(
+                    developerTelemetry = recordTelemetry(
+                        level = it.level,
+                        category = it.category,
+                        message = it.message,
+                    ),
+                )
+            } ?: started
+        }
         try {
             action()
         } finally {
@@ -365,9 +467,32 @@ class BridgeBackedRuntimeFacade internal constructor(
                     issue = detailLine,
                 ),
                 renderFrame = null,
+                developerTelemetry = recordTelemetry(
+                    level = DeveloperTelemetryLevel.Error,
+                    category = "shell.failure",
+                    message = "$statusLine: $detailLine",
+                ),
             )
         }
     }
+
+    private fun recordTelemetry(
+        level: DeveloperTelemetryLevel,
+        category: String,
+        message: String,
+    ): DeveloperTelemetryPresentation {
+        return developerTelemetryRecorder.record(
+            level = level,
+            category = category,
+            message = message,
+        )
+    }
+
+    private data class TelemetryEvent(
+        val level: DeveloperTelemetryLevel,
+        val category: String,
+        val message: String,
+    )
 }
 
 private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresentation {
@@ -514,6 +639,46 @@ private fun RuntimeNoticeLevel.toShellTone(): ShellNoticeTone = when (this) {
     RuntimeNoticeLevel.Success -> ShellNoticeTone.Positive
     RuntimeNoticeLevel.Warning -> ShellNoticeTone.Caution
     RuntimeNoticeLevel.Error -> ShellNoticeTone.Critical
+}
+
+private fun RuntimeNoticeLevel.toDeveloperTelemetryLevel(): DeveloperTelemetryLevel = when (this) {
+    RuntimeNoticeLevel.Info,
+    RuntimeNoticeLevel.Success,
+    -> DeveloperTelemetryLevel.Info
+    RuntimeNoticeLevel.Warning -> DeveloperTelemetryLevel.Warning
+    RuntimeNoticeLevel.Error -> DeveloperTelemetryLevel.Error
+}
+
+private fun SnapshotPresentation.toTelemetryKey(): String {
+    return listOf(
+        scenarioId,
+        activeBranchId,
+        bodyCount.toString(),
+        paused.toString(),
+        focusTargetBodyId ?: "-",
+        activeCheckpointId ?: "-",
+        observerModeLabel,
+    ).joinToString("|")
+}
+
+private fun SnapshotPresentation.toTelemetrySummary(): String {
+    return "scenario=$scenarioId, branch=$activeBranchId, bodies=$bodyCount, paused=$paused, mode=$observerModeLabel"
+}
+
+private fun NativeVulkanScenePacket.toTelemetryKey(sceneRevision: String): String {
+    return listOf(
+        sceneRevision,
+        bodyCount.toString(),
+        tracerCount.toString(),
+        trailSpanCount.toString(),
+        trailVertexCount.toString(),
+        directionalLightCount.toString(),
+        diagnostics.droppedFrames.toString(),
+    ).joinToString("|")
+}
+
+private fun NativeVulkanScenePacket.toTelemetrySummary(sceneRevision: String): String {
+    return "revision=$sceneRevision, bodies=$bodyCount, tracers=$tracerCount, trails=$trailSpanCount/$trailVertexCount, lights=$directionalLightCount"
 }
 
 private fun NativeVulkanCameraPacket.toFacingSummary(): String {
