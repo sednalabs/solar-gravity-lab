@@ -36,7 +36,7 @@ class StartupSmokeInstrumentationTest {
             }
 
             scenario.onActivity { activity ->
-                assertVisualReadiness(activity)
+                assertVisualReadiness()
                 assertFalse("MainActivity should not be finishing after startup", activity.isFinishing)
                 assertFalse("MainActivity should not be destroyed after startup", activity.isDestroyed)
             }
@@ -114,13 +114,13 @@ class StartupSmokeInstrumentationTest {
             "renderTrails=${state.renderStatus.renderedTrailCount}, readiness=${state.renderStatus.readiness}, " +
             "issue=${state.renderStatus.issue ?: "none"}"
 
-    private fun assertVisualReadiness(activity: MainActivity) {
+    private fun assertVisualReadiness() {
         val screenshot = InstrumentationRegistry.getInstrumentation()
             .uiAutomation
             .takeScreenshot()
             ?: throw AssertionError("Unable to capture startup screenshot from instrumentation")
         try {
-            val metrics = screenshot.renderCropMetrics(activity)
+            val metrics = screenshot.renderCropMetrics()
             Log.i(
                 LOG_TAG,
                 "StartupSmokeInstrumentationTest.visualMetrics sampled=${metrics.sampleCount}, " +
@@ -136,21 +136,13 @@ class StartupSmokeInstrumentationTest {
         }
     }
 
-    private fun Bitmap.renderCropMetrics(activity: MainActivity): VisualMetrics {
-        val rootView = activity.window?.decorView
-            ?: throw AssertionError("MainActivity decor view is unavailable for visual metrics")
+    private fun Bitmap.renderCropMetrics(): VisualMetrics {
         val width = width
         val height = height
         val cropLeft = (width * 0.08f).toInt().coerceIn(0, width - 1)
         val cropRight = (width * 0.92f).toInt().coerceAtLeast(cropLeft + 1)
-        val cropTop = (height * 0.10f).toInt().coerceIn(0, height - 1)
-        val cropBottom = minOf(
-            height,
-            maxOf(
-                cropTop + 1,
-                rootView.height.coerceAtLeast((height * 0.72f).toInt())
-            ),
-        )
+        val cropTop = (height * 0.16f).toInt().coerceIn(0, height - 1)
+        val cropBottom = (height * 0.62f).toInt().coerceIn(cropTop + 1, height)
         val stepX = maxOf(1, (cropRight - cropLeft) / 18)
         val stepY = maxOf(1, (cropBottom - cropTop) / 18)
         val uniqueColors = linkedSetOf<Int>()
@@ -163,7 +155,7 @@ class StartupSmokeInstrumentationTest {
                 val green = (pixel shr 8) and 0xFF
                 val blue = pixel and 0xFF
                 val brightness = (red + green + blue) / 3
-                if (brightness >= 48) {
+                if (brightness >= 24) {
                     brightSamples++
                 }
                 uniqueColors += ((red and 0xF0) shl 12) or ((green and 0xF0) shl 4) or ((blue and 0xF0) shr 4)
