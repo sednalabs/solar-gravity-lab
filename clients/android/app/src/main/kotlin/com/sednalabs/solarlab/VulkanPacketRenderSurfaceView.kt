@@ -41,10 +41,18 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         private const val MAX_TRAIL_POINTS_FOR_EXTENT = 1_024
         private const val STARFIELD_POINT_COUNT = 84
         private const val PRIMARY_BODY_EXTENT_CAP = 14
-        private const val AUXILIARY_SPAN_TO_BODY_SPAN_CAP = 1.8f
+        private const val AUXILIARY_SPAN_TO_BODY_SPAN_CAP = 1.45f
         private const val MIN_USER_SCALE_MULTIPLIER = 0.6f
         private const val MAX_USER_SCALE_MULTIPLIER = 24f
         private const val MIN_TAP_SELECTION_RADIUS_PX = 18f
+        private val TEACHING_FRAME_BODY_IDS = setOf(
+            "sun",
+            "mercury",
+            "venus",
+            "earth",
+            "moon",
+            "mars",
+        )
     }
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
@@ -101,9 +109,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                userScaleMultiplier = (userScaleMultiplier * detector.scaleFactor)
-                    .coerceIn(MIN_USER_SCALE_MULTIPLIER, MAX_USER_SCALE_MULTIPLIER)
-                drawNow()
+                zoomBy(detector.scaleFactor)
                 return true
             }
         },
@@ -166,6 +172,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         userScaleMultiplier = 1f
         userPanX = 0f
         userPanY = 0f
+        drawNow()
+    }
+
+    fun zoomBy(scaleFactor: Float) {
+        if (!scaleFactor.isFinite() || scaleFactor <= 0f) {
+            return
+        }
+        userScaleMultiplier = (userScaleMultiplier * scaleFactor)
+            .coerceIn(MIN_USER_SCALE_MULTIPLIER, MAX_USER_SCALE_MULTIPLIER)
         drawNow()
     }
 
@@ -558,6 +573,20 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 )
             }
             .toList()
+        val teachingBodyPoints = frame.bodies
+            .asSequence()
+            .filter { body ->
+                body.bodyId.lowercase() in TEACHING_FRAME_BODY_IDS &&
+                    body.x.isFinite() &&
+                    projectY(body.y, body.z, projectionPlane).isFinite()
+            }
+            .mapNotNull { body ->
+                projectedPoint(
+                    x = body.x,
+                    y = projectY(body.y, body.z, projectionPlane),
+                )
+            }
+            .toList()
         val projectedTracerPoints = frame.tracers
             .asSequence()
             .mapNotNull { tracer ->
@@ -606,18 +635,28 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             return Extent(centerX = 0f, centerY = 0f, halfWorldSpan = 1f)
         }
 
+        val framingBodyPoints = when {
+            teachingBodyPoints.size >= 4 -> teachingBodyPoints
+            primaryBodyPoints.isNotEmpty() -> primaryBodyPoints
+            else -> projectedBodyPoints
+        }
+
         val anchorBody = frame.bodies.firstOrNull { body ->
             body.selected && body.x.isFinite() && projectY(body.y, body.z, projectionPlane).isFinite()
+        } ?: frame.bodies.firstOrNull { body ->
+            body.bodyId.equals("sun", ignoreCase = true) &&
+                body.x.isFinite() &&
+                projectY(body.y, body.z, projectionPlane).isFinite()
         } ?: frame.bodies.maxByOrNull { body ->
             if (body.radiusM.isFinite()) body.radiusM else Float.NEGATIVE_INFINITY
         }
 
         val centerX = anchorBody?.x
-            ?: medianOf((if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else points).map { it.x })
+            ?: medianOf((if (framingBodyPoints.isNotEmpty()) framingBodyPoints else points).map { it.x })
         val centerY = anchorBody?.let { body -> projectY(body.y, body.z, projectionPlane) }
-            ?: medianOf((if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else points).map { it.y })
+            ?: medianOf((if (framingBodyPoints.isNotEmpty()) framingBodyPoints else points).map { it.y })
 
-        val bodySortedDistances = (if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else projectedBodyPoints)
+        val bodySortedDistances = framingBodyPoints
             .asSequence()
             .map { xyDistance(it.x, it.y, centerX, centerY) }
             .filter { it.isFinite() }

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -39,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -54,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.sednalabs.solarlab.runtime.DEVELOPER_TELEMETRY_LOG_TAG
@@ -106,6 +107,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                     contentAlignment = Alignment.TopCenter,
                 ) {
                     val isWide = maxWidth >= 920.dp
+                    val compactStageViewportHeight = (maxHeight * 0.56f).coerceIn(460.dp, 760.dp)
                     val canSendCommands = uiState.connectionState == SessionConnectionState.Active &&
                         uiState.pendingActionLabel == null
                     val canRefresh = canSendCommands
@@ -122,6 +124,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                         if (isWide) {
                             HeroPanel(
                                 uiState = uiState,
+                                compact = false,
                                 onRefresh = {
                                     scope.launch {
                                         runtimeFacade.refresh()
@@ -138,6 +141,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                     uiState = uiState,
                                     modifier = Modifier.weight(1.35f),
                                     compactStage = false,
+                                    compactStageHeight = 520.dp,
                                     onRefresh = {
                                         scope.launch {
                                             runtimeFacade.refresh()
@@ -176,6 +180,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                 uiState = uiState,
                                 modifier = Modifier.fillMaxWidth(),
                                 compactStage = true,
+                                compactStageHeight = compactStageViewportHeight,
                                 onRefresh = {
                                     scope.launch {
                                         runtimeFacade.refresh()
@@ -190,6 +195,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                             )
                             HeroPanel(
                                 uiState = uiState,
+                                compact = true,
                                 onRefresh = {
                                     scope.launch {
                                         runtimeFacade.refresh()
@@ -269,12 +275,13 @@ private fun OrbitalBackdrop() {
 @Composable
 private fun HeroPanel(
     uiState: ShellUiState,
+    compact: Boolean,
     onRefresh: () -> Unit,
     canRefresh: Boolean,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(32.dp),
+        shape = RoundedCornerShape(if (compact) 26.dp else 32.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
         shadowElevation = 16.dp,
@@ -291,14 +298,14 @@ private fun HeroPanel(
                         ),
                     )
                 )
-                .padding(24.dp),
+                .padding(if (compact) 18.dp else 24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             BoxWithConstraints {
                 val stackedHeader = maxWidth < 560.dp
                 if (stackedHeader) {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        HeroCopy()
+                        HeroCopy(compact = compact)
                         FilledTonalButton(
                             onClick = onRefresh,
                             enabled = canRefresh,
@@ -321,7 +328,7 @@ private fun HeroPanel(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            HeroCopy()
+                            HeroCopy(compact = compact)
                         }
                         FilledTonalButton(
                             onClick = onRefresh,
@@ -361,22 +368,26 @@ private fun HeroPanel(
 }
 
 @Composable
-private fun HeroCopy() {
+private fun HeroCopy(compact: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = "Canonical Android shell",
+            text = if (compact) "Rust-authoritative stage shell" else "Canonical Android shell",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.secondary,
         )
         Text(
             text = "Solar Gravity Lab",
-            style = MaterialTheme.typography.displaySmall,
+            style = if (compact) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.testTag(SolarLabTestTags.TITLE),
         )
         Text(
-            text = "A host-first mobile surface for the Rust runtime boundary, tuned for clarity, confidence, and touch use.",
-            style = MaterialTheme.typography.bodyLarge,
+            text = if (compact) {
+                "A stage-first mobile shell for exploring the live solar system before dropping into the deeper controls."
+            } else {
+                "A host-first mobile surface for the Rust runtime boundary, tuned for clarity, confidence, and touch use."
+            },
+            style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -447,16 +458,23 @@ private fun StatusStrip(uiState: ShellUiState) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun RenderStagePanel(
     uiState: ShellUiState,
     modifier: Modifier = Modifier,
     compactStage: Boolean = false,
+    compactStageHeight: Dp = 620.dp,
     onRefresh: () -> Unit,
-    onFocusBodyRequested: (String) -> Unit,
+    onFocusBodyRequested: (String?) -> Unit,
     canRefresh: Boolean,
 ) {
     var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
     var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
+    var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
+    val quickFocusEntries = SolarLabTeachingCatalog.entries.filter { entry ->
+        entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
+            uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
+    }
 
     LabPanel(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -472,12 +490,20 @@ private fun RenderStagePanel(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = "Live overhead orbital view from Rust-authoritative scene packets.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = if (compactStage) {
+                            "Live overhead teaching view from Rust-authoritative scene packets."
+                        } else {
+                            "Live overhead orbital view from Rust-authoritative scene packets."
+                        },
+                        style = if (compactStage) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "Pinch to zoom, drag to pan, tap a body to focus, double-tap to reset the view.",
+                        text = if (compactStage) {
+                            "Tap to focus, pinch to zoom, drag to pan, double-tap to reset."
+                        } else {
+                            "Pinch to zoom, drag to pan, tap a body to focus, double-tap to reset the view."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.secondary,
                     )
@@ -505,10 +531,7 @@ private fun RenderStagePanel(
                 modifier = Modifier
                     .testTag(SolarLabTestTags.RENDER_PANEL)
                     .fillMaxWidth()
-                    .heightIn(
-                        min = if (compactStage) 620.dp else 360.dp,
-                        max = if (compactStage) 860.dp else 620.dp,
-                    )
+                    .height(if (compactStage) compactStageHeight else 520.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(
                         brush = Brush.verticalGradient(
@@ -524,10 +547,15 @@ private fun RenderStagePanel(
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { context ->
-                            VulkanPacketRenderSurfaceView(context = context)
+                            VulkanPacketRenderSurfaceView(context = context).also { view ->
+                                renderSurfaceView = view
+                            }
                         },
                         update = { view ->
-                            view.setOnBodyTapped(onFocusBodyRequested)
+                            renderSurfaceView = view
+                            view.setOnBodyTapped { bodyId ->
+                                onFocusBodyRequested(bodyId)
+                            }
                             view.submitFrame(
                                 frame = uiState.renderFrame,
                                 highlightedTrailSourceBodyIds = uiState.recentFocusedBodyIds,
@@ -576,6 +604,14 @@ private fun RenderStagePanel(
             }
 
             if (uiState.renderFrame != null && compactStage) {
+                StageInteractionDock(
+                    focusedBodyId = uiState.focusedBodyId,
+                    quickFocusEntries = quickFocusEntries,
+                    onFocusBodyRequested = onFocusBodyRequested,
+                    onZoomIn = { renderSurfaceView?.zoomBy(1.35f) },
+                    onZoomOut = { renderSurfaceView?.zoomBy(0.74f) },
+                    onResetView = { renderSurfaceView?.resetViewTransform() },
+                )
                 TrackedOrbitHistoryPanel(
                     trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
                     showTrackedOrbits = showTrackedOrbits,
@@ -627,6 +663,80 @@ private fun RenderStageSummaryCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StageInteractionDock(
+    focusedBodyId: String?,
+    quickFocusEntries: List<SolarLabTeachingCatalogEntry>,
+    onFocusBodyRequested: (String?) -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onResetView: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = focusedBodyId?.let { "Stage tools · focused on $it" } ?: "Stage tools",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                RuntimeCommandChip(
+                    label = "Zoom +",
+                    selected = false,
+                    enabled = true,
+                    onClick = onZoomIn,
+                )
+                RuntimeCommandChip(
+                    label = "Zoom -",
+                    selected = false,
+                    enabled = true,
+                    onClick = onZoomOut,
+                )
+                RuntimeCommandChip(
+                    label = "Reset view",
+                    selected = false,
+                    enabled = true,
+                    onClick = onResetView,
+                )
+                if (focusedBodyId != null) {
+                    RuntimeCommandChip(
+                        label = "Clear focus",
+                        selected = false,
+                        enabled = true,
+                        onClick = { onFocusBodyRequested(null) },
+                    )
+                }
+            }
+            if (quickFocusEntries.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    quickFocusEntries.forEach { entry ->
+                        RuntimeCommandChip(
+                            label = entry.displayName,
+                            selected = focusedBodyId == entry.bodyId,
+                            enabled = true,
+                            onClick = { onFocusBodyRequested(entry.bodyId) },
+                        )
+                    }
+                }
             }
         }
     }
