@@ -58,14 +58,14 @@ capture_device_state() {
   run_capture "${class_dir}/anr_traces.txt" adb shell cat /data/anr/traces.txt
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb shell uiautomator dump /sdcard/solarlab-window-dump.xml >/dev/null 2>&1 || true
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull /sdcard/solarlab-window-dump.xml "${class_dir}/window_dump.xml" >/dev/null 2>&1 || true
-  if timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb exec-out run-as "${APP_PACKAGE}" cat "files/validation-screenshots/startup-ready.png" > "${in_app_full_png}" 2>/dev/null; then
+  if timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb exec-out sh -c "run-as '${APP_PACKAGE}' cat 'files/validation-screenshots/startup-ready.png'" > "${in_app_full_png}" 2>/dev/null; then
     if [[ ! -s "${in_app_full_png}" ]]; then
       rm -f "${in_app_full_png}"
     fi
   else
     rm -f "${in_app_full_png}"
   fi
-  if timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb exec-out run-as "${APP_PACKAGE}" cat "files/validation-screenshots/startup-ready-stage.png" > "${in_app_stage_png}" 2>/dev/null; then
+  if timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb exec-out sh -c "run-as '${APP_PACKAGE}' cat 'files/validation-screenshots/startup-ready-stage.png'" > "${in_app_stage_png}" 2>/dev/null; then
     if [[ ! -s "${in_app_stage_png}" ]]; then
       rm -f "${in_app_stage_png}"
     fi
