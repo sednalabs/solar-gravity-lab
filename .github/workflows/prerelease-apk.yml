@@ -56,7 +56,7 @@ on:
       emulator_boot_strategy:
         description: Emulator startup strategy for launch smoke
         required: true
-        default: snapshot-cache
+        default: cold
         type: choice
         options:
           - snapshot-cache
