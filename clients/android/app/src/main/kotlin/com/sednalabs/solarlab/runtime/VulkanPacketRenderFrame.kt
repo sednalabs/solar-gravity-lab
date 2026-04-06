@@ -13,6 +13,7 @@ data class RenderFrame(
 )
 
 data class RenderBody(
+    val bodyId: String,
     val x: Float,
     val y: Float,
     val z: Float,
@@ -52,10 +53,13 @@ data class RenderPoint(
 )
 
 internal object VulkanPacketRenderFrameDecoder {
-    private const val BODY_STRIDE_BYTES = 40
+    private const val BODY_STRIDE_BYTES = 140
     private const val TRACER_STRIDE_BYTES = 32
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
     private const val TRAIL_SPAN_STRIDE_BYTES = 132
+    private const val BODY_ID_OFFSET_BYTES = 40
+    private const val BODY_ID_MAX_BYTES = 96
+    private const val BODY_ID_LENGTH_OFFSET_BYTES = 136
     private const val TRAIL_SOURCE_BODY_ID_OFFSET_BYTES = 32
     private const val TRAIL_SOURCE_BODY_ID_MAX_BYTES = 96
     private const val TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 128
@@ -83,6 +87,12 @@ internal object VulkanPacketRenderFrameDecoder {
         return List(available) { index ->
             val base = index * BODY_STRIDE_BYTES
             RenderBody(
+                bodyId = decodeIdentifier(
+                    ordered = ordered,
+                    bytesOffset = base + BODY_ID_OFFSET_BYTES,
+                    maxBytes = BODY_ID_MAX_BYTES,
+                    lengthOffset = base + BODY_ID_LENGTH_OFFSET_BYTES,
+                ),
                 x = ordered.getFloat(base + 0),
                 y = ordered.getFloat(base + 4),
                 z = ordered.getFloat(base + 8),

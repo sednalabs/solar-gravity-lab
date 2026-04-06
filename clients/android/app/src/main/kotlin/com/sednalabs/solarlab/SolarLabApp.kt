@@ -143,6 +143,11 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                             runtimeFacade.refresh()
                                         }
                                     },
+                                    onFocusBodyRequested = { bodyId ->
+                                        scope.launch {
+                                            runtimeFacade.applyCommand(RuntimeCommand.FocusBody(bodyId))
+                                        }
+                                    },
                                     canRefresh = canRefresh,
                                 )
                                 Column(
@@ -174,6 +179,11 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                 onRefresh = {
                                     scope.launch {
                                         runtimeFacade.refresh()
+                                    }
+                                },
+                                onFocusBodyRequested = { bodyId ->
+                                    scope.launch {
+                                        runtimeFacade.applyCommand(RuntimeCommand.FocusBody(bodyId))
                                     }
                                 },
                                 canRefresh = canRefresh,
@@ -442,6 +452,7 @@ private fun RenderStagePanel(
     modifier: Modifier = Modifier,
     compactStage: Boolean = false,
     onRefresh: () -> Unit,
+    onFocusBodyRequested: (String) -> Unit,
     canRefresh: Boolean,
 ) {
     var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
@@ -464,6 +475,11 @@ private fun RenderStagePanel(
                         text = "Live overhead orbital view from Rust-authoritative scene packets.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Pinch to zoom, drag to pan, tap a body to focus, double-tap to reset the view.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
                     )
                 }
                 StatusPill(
@@ -490,8 +506,8 @@ private fun RenderStagePanel(
                     .testTag(SolarLabTestTags.RENDER_PANEL)
                     .fillMaxWidth()
                     .heightIn(
-                        min = if (compactStage) 500.dp else 320.dp,
-                        max = if (compactStage) 680.dp else 560.dp,
+                        min = if (compactStage) 620.dp else 360.dp,
+                        max = if (compactStage) 860.dp else 620.dp,
                     )
                     .clip(RoundedCornerShape(28.dp))
                     .background(
@@ -511,6 +527,7 @@ private fun RenderStagePanel(
                             VulkanPacketRenderSurfaceView(context = context)
                         },
                         update = { view ->
+                            view.setOnBodyTapped(onFocusBodyRequested)
                             view.submitFrame(
                                 frame = uiState.renderFrame,
                                 highlightedTrailSourceBodyIds = uiState.recentFocusedBodyIds,
@@ -518,54 +535,36 @@ private fun RenderStagePanel(
                         },
                     )
 
-                    TrackedOrbitHistoryPanel(
-                        trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
-                        showTrackedOrbits = showTrackedOrbits,
-                        trackedOrbitLimit = trackedOrbitLimit,
-                        onShowTrackedOrbitsChange = { showTrackedOrbits = it },
-                        onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(16.dp),
-                    )
+                    if (compactStage) {
+                        StatusPill(
+                            label = uiState.focusedBodyId?.let { "Focused: $it" } ?: "Tap a body to focus",
+                            tone = if (uiState.focusedBodyId != null) {
+                                ShellNoticeTone.Positive
+                            } else {
+                                ShellNoticeTone.Neutral
+                            },
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(16.dp),
+                        )
+                    } else {
+                        TrackedOrbitHistoryPanel(
+                            trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
+                            showTrackedOrbits = showTrackedOrbits,
+                            trackedOrbitLimit = trackedOrbitLimit,
+                            onShowTrackedOrbitsChange = { showTrackedOrbits = it },
+                            onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(16.dp),
+                        )
 
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(16.dp),
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                text = uiState.renderStatus.sceneRevision ?: uiState.renderFrame.sceneRevision,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.secondary,
-                            )
-                            Text(
-                                text = "${uiState.renderStatus.renderedBodyCount} bodies · ${uiState.renderStatus.renderedTracerCount} tracers · ${uiState.renderStatus.renderedTrailCount} trails",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            uiState.renderStatus.summary?.let { summary ->
-                                Text(
-                                    text = summary,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (uiState.renderStatus.readiness == RenderHostReadiness.Unavailable) {
-                                Text(
-                                    text = "Showing the last decoded frame while packet export catches up.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
+                        RenderStageSummaryCard(
+                            uiState = uiState,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(16.dp),
+                        )
                     }
                 } else {
                     EmptyRenderStage(
@@ -574,6 +573,60 @@ private fun RenderStagePanel(
                         canRefresh = canRefresh,
                     )
                 }
+            }
+
+            if (uiState.renderFrame != null && compactStage) {
+                TrackedOrbitHistoryPanel(
+                    trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
+                    showTrackedOrbits = showTrackedOrbits,
+                    trackedOrbitLimit = trackedOrbitLimit,
+                    onShowTrackedOrbitsChange = { showTrackedOrbits = it },
+                    onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
+                )
+                RenderStageSummaryCard(uiState = uiState)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderStageSummaryCard(
+    uiState: ShellUiState,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision.orEmpty(),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Text(
+                text = "${uiState.renderStatus.renderedBodyCount} bodies · ${uiState.renderStatus.renderedTracerCount} tracers · ${uiState.renderStatus.renderedTrailCount} trails",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            uiState.renderStatus.summary?.let { summary ->
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (uiState.renderStatus.readiness == RenderHostReadiness.Unavailable) {
+                Text(
+                    text = "Showing the last decoded frame while packet export catches up.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }

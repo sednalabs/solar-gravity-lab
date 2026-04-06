@@ -215,13 +215,29 @@ pub struct SlVulkanCameraPacket {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlVulkanBodyInstance {
     pub position_from_origin_m: SlPackedVec3,
     pub radius_m: f32,
     pub albedo: SlPackedColor,
     pub emissive_luminance: f32,
     pub selected: u32,
+    pub body_id: [u8; SL_V2_ID_CAPACITY],
+    pub body_id_len: u32,
+}
+
+impl Default for SlVulkanBodyInstance {
+    fn default() -> Self {
+        Self {
+            position_from_origin_m: SlPackedVec3::default(),
+            radius_m: 0.0,
+            albedo: SlPackedColor::default(),
+            emissive_luminance: 0.0,
+            selected: 0,
+            body_id: [0; SL_V2_ID_CAPACITY],
+            body_id_len: 0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -1187,6 +1203,8 @@ fn encode_body_instance(value: VulkanBodyInstance) -> SlVulkanBodyInstance {
         albedo: encode_packed_color(value.albedo),
         emissive_luminance: value.emissive_luminance,
         selected: u32::from(value.selected),
+        body_id: encode_identifier(&value.body_id.0).expect("body id should fit into packet"),
+        body_id_len: string_length_to_u32(&value.body_id.0),
     }
 }
 
@@ -2589,6 +2607,11 @@ mod tests {
             direct_packet.body_instances[1].position_from_origin_m.z
         );
         assert_eq!(exported_bodies[1].selected, 1);
+        assert_eq!(
+            decode_identifier(&exported_bodies[1].body_id, exported_bodies[1].body_id_len)
+                .expect("body id should decode"),
+            direct_packet.body_instances[1].body_id.0,
+        );
 
         let trail_view =
             sl_v2_vulkan_scene_packet_buffer(exported.handle, SlVulkanSceneBufferKind::TrailSpans);

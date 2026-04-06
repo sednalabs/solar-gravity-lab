@@ -10,6 +10,9 @@ import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.util.AttributeSet
 import android.util.Log
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import com.sednalabs.solarlab.runtime.RenderBody
@@ -37,13 +40,24 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         private const val MAX_TRACER_POINTS_FOR_EXTENT = 512
         private const val MAX_TRAIL_POINTS_FOR_EXTENT = 1_024
         private const val STARFIELD_POINT_COUNT = 84
-        private const val AUXILIARY_SPAN_TO_BODY_SPAN_CAP = 3.2f
+        private const val PRIMARY_BODY_EXTENT_CAP = 14
+        private const val AUXILIARY_SPAN_TO_BODY_SPAN_CAP = 1.8f
+        private const val MIN_USER_SCALE_MULTIPLIER = 0.6f
+        private const val MAX_USER_SCALE_MULTIPLIER = 24f
+        private const val MIN_TAP_SELECTION_RADIUS_PX = 18f
     }
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
     private var latestFrame: RenderFrame? = null
     private var highlightedTrailSourceBodyIds: List<String> = emptyList()
     private var surfaceReady: Boolean = false
+    private var onBodyTapped: ((String) -> Unit)? = null
+    private var activeViewportState: ViewportState? = null
+    private var userScaleMultiplier: Float = 1f
+    private var userPanX: Float = 0f
+    private var userPanY: Float = 0f
+    private var lastTouchX: Float = 0f
+    private var lastTouchY: Float = 0f
 
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(7, 11, 19)
@@ -83,10 +97,44 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    private val scaleGestureDetector = ScaleGestureDetector(
+        context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                userScaleMultiplier = (userScaleMultiplier * detector.scaleFactor)
+                    .coerceIn(MIN_USER_SCALE_MULTIPLIER, MAX_USER_SCALE_MULTIPLIER)
+                drawNow()
+                return true
+            }
+        },
+    )
+    private val gestureDetector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                val bodyId = activeViewportState
+                    ?.nearestBodyHit(e.x, e.y)
+                    ?.bodyId
+                    ?.takeIf(String::isNotBlank)
+                    ?: return false
+                onBodyTapped?.invoke(bodyId)
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                resetViewTransform()
+                return true
+            }
+        },
+    )
 
     init {
         holder.addCallback(this)
         setWillNotDraw(false)
+        isClickable = true
+        isFocusable = true
     }
 
     /**
@@ -98,12 +146,26 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         highlightedTrailSourceBodyIds: List<String> = emptyList(),
     ) {
         latestFrame = frame
+        if (frame == null) {
+            activeViewportState = null
+        }
         this.highlightedTrailSourceBodyIds = highlightedTrailSourceBodyIds
             .asSequence()
             .map(String::trim)
             .filter(String::isNotEmpty)
             .distinct()
             .toList()
+        drawNow()
+    }
+
+    fun setOnBodyTapped(listener: ((String) -> Unit)?) {
+        onBodyTapped = listener
+    }
+
+    fun resetViewTransform() {
+        userScaleMultiplier = 1f
+        userPanX = 0f
+        userPanY = 0f
         drawNow()
     }
 
@@ -119,10 +181,46 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         surfaceReady = false
+        activeViewportState = null
     }
 
     override fun surfaceRedrawNeeded(holder: SurfaceHolder) {
         drawNow()
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val scaleHandled = scaleGestureDetector.onTouchEvent(event)
+        val gestureHandled = gestureDetector.onTouchEvent(event)
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                lastTouchX = event.x
+                lastTouchY = event.y
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (!scaleGestureDetector.isInProgress && event.pointerCount == 1) {
+                    val dx = event.x - lastTouchX
+                    val dy = event.y - lastTouchY
+                    if (dx != 0f || dy != 0f) {
+                        userPanX += dx
+                        userPanY += dy
+                        drawNow()
+                    }
+                }
+                lastTouchX = event.x
+                lastTouchY = event.y
+            }
+
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL,
+            -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+            }
+        }
+
+        return scaleHandled || gestureHandled || true
     }
 
     /**
@@ -233,10 +331,11 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val projectionPlane = selectOverheadProjectionPlane(frame)
         val extent = computeExtent(frame, projectionPlane)
         val halfWorldSpan = extent.halfWorldSpan.coerceAtLeast(1f)
-        val scale = 0.44f * min(viewportWidth, viewportHeight) / halfWorldSpan
+        val scale = (0.46f * min(viewportWidth, viewportHeight) / halfWorldSpan) * userScaleMultiplier
         val trailHighlightRanks = highlightedTrailSourceBodyIds
             .withIndex()
             .associate { (index, sourceBodyId) -> sourceBodyId to index }
+        val bodyHits = ArrayList<BodyHitTarget>(frame.bodies.size)
 
         frame.trails.forEach { trail ->
             drawTrail(
@@ -274,8 +373,13 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 viewportWidth = viewportWidth,
                 viewportHeight = viewportHeight,
                 halfWorldSpan = halfWorldSpan,
+                bodyHits = bodyHits,
             )
         }
+
+        activeViewportState = ViewportState(
+            bodyHits = bodyHits,
+        )
     }
 
     private fun drawBody(
@@ -288,13 +392,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         viewportWidth: Float,
         viewportHeight: Float,
         halfWorldSpan: Float,
+        bodyHits: MutableList<BodyHitTarget>,
     ) {
         val projectedY = projectY(body.y, body.z, projectionPlane)
         if (!body.x.isFinite() || !projectedY.isFinite() || !body.radiusM.isFinite()) {
             return
         }
-        val sx = viewportWidth * 0.5f + ((body.x - centerX) * scale)
-        val sy = viewportHeight * 0.5f - ((projectedY - centerY) * scale)
+        val sx = screenX(body.x, centerX, scale, viewportWidth)
+        val sy = screenY(projectedY, centerY, scale, viewportHeight)
         if (!sx.isFinite() || !sy.isFinite()) {
             return
         }
@@ -318,6 +423,12 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         if (body.selected) {
             canvas.drawCircle(sx, sy, radiusPx + 2.5f, selectedBodyStroke)
         }
+        bodyHits += BodyHitTarget(
+            bodyId = body.bodyId,
+            x = sx,
+            y = sy,
+            selectionRadiusPx = max(radiusPx * 2.4f, MIN_TAP_SELECTION_RADIUS_PX),
+        )
     }
 
     private fun drawTracer(
@@ -334,8 +445,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         if (!tracer.x.isFinite() || !projectedY.isFinite() || !tracer.sizePx.isFinite()) {
             return
         }
-        val sx = viewportWidth * 0.5f + ((tracer.x - centerX) * scale)
-        val sy = viewportHeight * 0.5f - ((projectedY - centerY) * scale)
+        val sx = screenX(tracer.x, centerX, scale, viewportWidth)
+        val sy = screenY(projectedY, centerY, scale, viewportHeight)
         if (!sx.isFinite() || !sy.isFinite()) {
             return
         }
@@ -368,8 +479,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             if (!point.x.isFinite() || !projectedY.isFinite()) {
                 return@forEachIndexed
             }
-            val sx = viewportWidth * 0.5f + ((point.x - centerX) * scale)
-            val sy = viewportHeight * 0.5f - ((projectedY - centerY) * scale)
+            val sx = screenX(point.x, centerX, scale, viewportWidth)
+            val sy = screenY(projectedY, centerY, scale, viewportHeight)
             if (!sx.isFinite() || !sy.isFinite()) {
                 return@forEachIndexed
             }
@@ -431,6 +542,22 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 )
             }
             .toList()
+        val primaryBodyPoints = frame.bodies
+            .asSequence()
+            .filter { body ->
+                body.x.isFinite() &&
+                    projectY(body.y, body.z, projectionPlane).isFinite() &&
+                    body.radiusM.isFinite()
+            }
+            .sortedByDescending { body -> body.radiusM }
+            .take(PRIMARY_BODY_EXTENT_CAP)
+            .mapNotNull { body ->
+                projectedPoint(
+                    x = body.x,
+                    y = projectY(body.y, body.z, projectionPlane),
+                )
+            }
+            .toList()
         val projectedTracerPoints = frame.tracers
             .asSequence()
             .mapNotNull { tracer ->
@@ -470,7 +597,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             .toList()
             .sampleUpTo(MAX_TRAIL_POINTS_FOR_EXTENT)
         val points = buildList {
-            addAll(projectedBodyPoints)
+            addAll(if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else projectedBodyPoints)
             addAll(projectedTracerPoints)
             addAll(projectedTrailPoints)
             addAll(highlightedTrailPoints)
@@ -486,11 +613,11 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         }
 
         val centerX = anchorBody?.x
-            ?: medianOf(points.map { it.x })
+            ?: medianOf((if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else points).map { it.x })
         val centerY = anchorBody?.let { body -> projectY(body.y, body.z, projectionPlane) }
-            ?: medianOf(points.map { it.y })
+            ?: medianOf((if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else points).map { it.y })
 
-        val bodySortedDistances = projectedBodyPoints
+        val bodySortedDistances = (if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else projectedBodyPoints)
             .asSequence()
             .map { xyDistance(it.x, it.y, centerX, centerY) }
             .filter { it.isFinite() }
@@ -517,13 +644,13 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         }
 
         val bodySpan = if (bodySortedDistances.isNotEmpty()) {
-            val bodyPercentile = if (bodySortedDistances.size >= 12) 0.84f else 0.94f
-            max(1f, percentile(bodySortedDistances, bodyPercentile) * 1.45f)
+            val bodyPercentile = if (bodySortedDistances.size >= 12) 0.72f else 0.88f
+            max(1f, percentile(bodySortedDistances, bodyPercentile) * 1.28f)
         } else {
-            max(1f, percentile(allSortedDistances, 0.9f) * 1.35f)
+            max(1f, percentile(allSortedDistances, 0.78f) * 1.22f)
         }
         val auxiliarySpan = if (auxiliarySortedDistances.isNotEmpty()) {
-            max(1f, percentile(auxiliarySortedDistances, 0.72f) * 1.22f)
+            max(1f, percentile(auxiliarySortedDistances, 0.64f) * 1.14f)
         } else {
             bodySpan
         }
@@ -622,6 +749,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         return sqrt(dx * dx + dy * dy)
     }
 
+    private fun screenX(worldX: Float, centerX: Float, scale: Float, viewportWidth: Float): Float {
+        return viewportWidth * 0.5f + ((worldX - centerX) * scale) + userPanX
+    }
+
+    private fun screenY(worldY: Float, centerY: Float, scale: Float, viewportHeight: Float): Float {
+        return viewportHeight * 0.5f - ((worldY - centerY) * scale) + userPanY
+    }
+
     private data class Extent(
         val centerX: Float,
         val centerY: Float,
@@ -632,6 +767,34 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val x: Float,
         val y: Float,
     )
+
+    private data class BodyHitTarget(
+        val bodyId: String,
+        val x: Float,
+        val y: Float,
+        val selectionRadiusPx: Float,
+    )
+
+    private data class ViewportState(
+        val bodyHits: List<BodyHitTarget>,
+    ) {
+        fun nearestBodyHit(x: Float, y: Float): BodyHitTarget? {
+            return bodyHits
+                .asSequence()
+                .mapNotNull { hit ->
+                    val dx = hit.x - x
+                    val dy = hit.y - y
+                    val distance = sqrt(dx * dx + dy * dy)
+                    if (distance <= hit.selectionRadiusPx) {
+                        hit to distance
+                    } else {
+                        null
+                    }
+                }
+                .minByOrNull { (_, distance) -> distance }
+                ?.first
+        }
+    }
 
     private enum class ProjectionPlane {
         XY,

@@ -156,6 +156,8 @@ typedef struct SlVulkanBodyInstance {
   SlPackedColor albedo;
   float emissive_luminance;
   uint32_t selected;
+  uint8_t body_id[SL_V2_ID_CAPACITY];
+  uint32_t body_id_len;
 } SlVulkanBodyInstance;
 
 typedef struct SlVulkanTracerInstance {
