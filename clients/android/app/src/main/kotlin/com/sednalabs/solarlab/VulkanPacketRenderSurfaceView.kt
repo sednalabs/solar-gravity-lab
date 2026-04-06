@@ -102,7 +102,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
     private var latestFrame: RenderFrame? = null
-    private var highlightedTrailSourceBodyIds: List<String> = emptyList()
+    private var historicalTrailSourceBodyIds: List<String> = emptyList()
+    private var historicalTrailsEnabled: Boolean = true
     private var forecastTrailSourceBodyIds: Set<String> = emptySet()
     private var forecastOverlayEnabled: Boolean = true
     private var surfaceReady: Boolean = false
@@ -235,7 +236,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
      */
     fun submitFrame(
         frame: RenderFrame?,
-        highlightedTrailSourceBodyIds: List<String> = emptyList(),
+        historicalTrailSourceBodyIds: List<String> = emptyList(),
+        showHistoricalTrails: Boolean = true,
         showForecastOverlay: Boolean = true,
         forecastTrailSourceBodyIds: List<String> = emptyList(),
     ) {
@@ -246,12 +248,13 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             userCameraOverrideActive = false
             lastSelectedBodyId = null
         }
-        this.highlightedTrailSourceBodyIds = highlightedTrailSourceBodyIds
+        this.historicalTrailSourceBodyIds = historicalTrailSourceBodyIds
             .asSequence()
             .map(String::trim)
             .filter(String::isNotEmpty)
             .distinct()
             .toList()
+        historicalTrailsEnabled = showHistoricalTrails
         forecastOverlayEnabled = showForecastOverlay
         this.forecastTrailSourceBodyIds = forecastTrailSourceBodyIds
             .asSequence()
@@ -526,36 +529,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val effectiveCamera = resolveEffectiveCameraState(targetCamera)
         val halfWorldSpan = effectiveCamera.viewRadiusM.coerceAtLeast(MIN_CAMERA_DISTANCE_EPSILON_M)
         val scale = (0.46f * min(viewportWidth, viewportHeight) / halfWorldSpan)
-        val highlightedBodyIds = highlightedTrailSourceBodyIds
+        val highlightedBodyIds = historicalTrailSourceBodyIds
             .asSequence()
             .map { it.lowercase(Locale.US) }
             .toSet()
-        val trailHighlightRanks = highlightedTrailSourceBodyIds
+        val trailHighlightRanks = historicalTrailSourceBodyIds
             .withIndex()
             .associate { (index, sourceBodyId) -> sourceBodyId.lowercase(Locale.US) to index }
         val bodyHits = ArrayList<BodyHitTarget>(frame.bodies.size)
         val labelAnchors = ArrayList<BodyLabelAnchor>(min(frame.bodies.size, MAX_SCENE_LABELS + 2))
-
-        if (cameraPresentationMode == CameraPresentationMode.Overhead) {
-            val orbitAnchorBody = frame.bodies.firstOrNull { body ->
-                body.bodyId.equals("sun", ignoreCase = true)
-            }
-            val orbitAnchorX = orbitAnchorBody?.x ?: 0f
-            val orbitAnchorY = orbitAnchorBody?.let { body ->
-                projectY(body.y, body.z, projectionPlane)
-            } ?: 0f
-            drawOrbitGuides(
-                canvas = canvas,
-                viewportWidth = viewportWidth,
-                viewportHeight = viewportHeight,
-                halfWorldSpan = halfWorldSpan,
-                scale = scale,
-                cameraCenterX = effectiveCamera.centerX,
-                cameraCenterY = effectiveCamera.centerY,
-                orbitAnchorX = orbitAnchorX,
-                orbitAnchorY = orbitAnchorY,
-            )
-        }
         drawSolarKeyLight(
             canvas = canvas,
             frame = frame,
@@ -568,18 +550,26 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         )
 
         frame.trails.forEach { trail ->
-            drawTrail(
-                canvas = canvas,
-                trail = trail,
-                centerX = effectiveCamera.centerX,
-                centerY = effectiveCamera.centerY,
-                projectionPlane = projectionPlane,
-                scale = scale,
-                viewportWidth = viewportWidth,
-                viewportHeight = viewportHeight,
-                highlightRank = trailHighlightRanks[trail.sourceBodyId.lowercase(Locale.US)],
-            )
             val normalizedSourceBodyId = trail.sourceBodyId.lowercase(Locale.US)
+            val highlightRank = trailHighlightRanks[normalizedSourceBodyId]
+            val shouldDrawHistoricalTrail = historicalTrailsEnabled && (
+                historicalTrailSourceBodyIds.isEmpty() ||
+                    highlightRank != null ||
+                    trail.headHighlighted
+                )
+            if (shouldDrawHistoricalTrail) {
+                drawTrail(
+                    canvas = canvas,
+                    trail = trail,
+                    centerX = effectiveCamera.centerX,
+                    centerY = effectiveCamera.centerY,
+                    projectionPlane = projectionPlane,
+                    scale = scale,
+                    viewportWidth = viewportWidth,
+                    viewportHeight = viewportHeight,
+                    highlightRank = highlightRank,
+                )
+            }
             if (
                 forecastOverlayEnabled &&
                 (
@@ -1477,11 +1467,20 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             }
             .toList()
             .sampleUpTo(MAX_TRACER_POINTS_FOR_EXTENT)
-        val highlightedSourceBodyIds = highlightedTrailSourceBodyIds.toSet()
-        val highlightedTrailPoints = frame.trails
+        val highlightedSourceBodyIds = historicalTrailSourceBodyIds
+            .asSequence()
+            .map { it.lowercase(Locale.US) }
+            .toSet()
+        val visibleTrailPoints = frame.trails
             .asSequence()
             .filter { trail ->
-                trail.headHighlighted || highlightedSourceBodyIds.contains(trail.sourceBodyId)
+                val normalizedSourceId = trail.sourceBodyId.lowercase(Locale.US)
+                historicalTrailsEnabled &&
+                    (
+                        historicalTrailSourceBodyIds.isEmpty() ||
+                            trail.headHighlighted ||
+                            highlightedSourceBodyIds.contains(normalizedSourceId)
+                        )
             }
             .flatMap { trail ->
                 trail.points.asSequence().mapNotNull { point ->
@@ -1493,8 +1492,13 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             }
             .toList()
             .sampleUpTo(MAX_TRAIL_POINTS_FOR_EXTENT / 2)
-        val projectedTrailPoints = frame.trails
+        val forecastSourceBodyIds = forecastTrailSourceBodyIds
+        val forecastTrailPoints = frame.trails
             .asSequence()
+            .filter { trail ->
+                trail.headHighlighted ||
+                    forecastSourceBodyIds.contains(trail.sourceBodyId.lowercase(Locale.US))
+            }
             .flatMap { trail ->
                 trail.points.asSequence().mapNotNull { point ->
                     projectedPoint(
@@ -1508,8 +1512,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val points = buildList {
             addAll(if (primaryBodyPoints.isNotEmpty()) primaryBodyPoints else projectedBodyPoints)
             addAll(projectedTracerPoints)
-            addAll(projectedTrailPoints)
-            addAll(highlightedTrailPoints)
+            addAll(visibleTrailPoints)
+            addAll(forecastTrailPoints)
         }
         if (points.isEmpty()) {
             return Extent(centerX = 0f, centerY = 0f, halfWorldSpan = 1f)
@@ -1544,8 +1548,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             .toList()
         val auxiliarySortedDistances = buildList {
             addAll(projectedTracerPoints)
-            addAll(projectedTrailPoints)
-            addAll(highlightedTrailPoints)
+            addAll(visibleTrailPoints)
+            addAll(forecastTrailPoints)
         }
             .asSequence()
             .map { xyDistance(it.x, it.y, centerX, centerY) }

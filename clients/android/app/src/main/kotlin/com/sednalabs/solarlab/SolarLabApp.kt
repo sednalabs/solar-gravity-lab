@@ -259,11 +259,12 @@ private fun ImmersiveStageShell(
                             }
                             view.submitFrame(
                                 frame = uiState.renderFrame,
-                                highlightedTrailSourceBodyIds = if (showTrackedOrbits) {
+                                historicalTrailSourceBodyIds = if (showTrackedOrbits) {
                                     uiState.recentFocusedBodyIds.take(trackedOrbitLimit)
                                 } else {
                                     emptyList()
                                 },
+                                showHistoricalTrails = showTrackedOrbits,
                                 showForecastOverlay = showForecastPaths,
                                 forecastTrailSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
                                     uiState.recentFocusedBodyIds.take(2)
@@ -800,7 +801,8 @@ private fun RenderStagePanel(
                             }
                             view.submitFrame(
                                 frame = uiState.renderFrame,
-                                highlightedTrailSourceBodyIds = uiState.recentFocusedBodyIds,
+                                historicalTrailSourceBodyIds = uiState.recentFocusedBodyIds,
+                                showHistoricalTrails = showTrackedOrbits,
                                 showForecastOverlay = showForecastPaths,
                                 forecastTrailSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
                                     uiState.recentFocusedBodyIds.take(2)
