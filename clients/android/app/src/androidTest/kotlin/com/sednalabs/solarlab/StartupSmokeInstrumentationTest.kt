@@ -1,7 +1,10 @@
 package com.sednalabs.solarlab
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -38,7 +41,7 @@ class StartupSmokeInstrumentationTest {
             }
 
             scenario.onActivity { activity ->
-                assertVisualReadiness()
+                assertVisualReadiness(activity)
                 assertFalse("MainActivity should not be finishing after startup", activity.isFinishing)
                 assertFalse("MainActivity should not be destroyed after startup", activity.isDestroyed)
             }
@@ -116,43 +119,80 @@ class StartupSmokeInstrumentationTest {
             "renderTrails=${state.renderStatus.renderedTrailCount}, readiness=${state.renderStatus.readiness}, " +
             "issue=${state.renderStatus.issue ?: "none"}"
 
-    private fun assertVisualReadiness() {
+    private fun assertVisualReadiness(activity: MainActivity) {
+        val renderSurface = findRenderSurfaceView(activity.window.decorView)
+            ?: throw AssertionError("Unable to find VulkanPacketRenderSurfaceView for stage capture")
+        assertTrue(
+            "Render surface should have a non-zero size before screenshot capture",
+            renderSurface.width > 0 && renderSurface.height > 0,
+        )
         val screenshot = InstrumentationRegistry.getInstrumentation()
             .uiAutomation
             .takeScreenshot()
             ?: throw AssertionError("Unable to capture startup screenshot from instrumentation")
         try {
             persistValidationScreenshot("startup-ready", screenshot)
-            val metrics = screenshot.renderCropMetrics()
+            val stageScreenshot = screenshot.cropToStage(renderSurface)
+            try {
+                persistValidationScreenshot("startup-ready-stage", stageScreenshot)
+                val metrics = stageScreenshot.visualMetrics()
+                Log.i(
+                    LOG_TAG,
+                    "StartupSmokeInstrumentationTest.visualMetrics sampled=${metrics.sampleCount}, " +
+                        "bright=${metrics.brightSampleCount}, unique=${metrics.uniqueColorCount}, " +
+                        "stage=${stageScreenshot.width}x${stageScreenshot.height}"
+                )
+                assertTrue(
+                    "Startup stage screenshot looks too visually empty: $metrics",
+                    metrics.brightSampleCount >= 20 && metrics.uniqueColorCount >= 12,
+                )
+            } finally {
+                stageScreenshot.recycle()
+            }
             Log.i(
                 LOG_TAG,
-                "StartupSmokeInstrumentationTest.visualMetrics sampled=${metrics.sampleCount}, " +
-                    "bright=${metrics.brightSampleCount}, unique=${metrics.uniqueColorCount}, " +
-                    "size=${screenshot.width}x${screenshot.height}"
-            )
-            assertTrue(
-                "Startup screenshot looks too visually empty: $metrics",
-                metrics.brightSampleCount >= 20 && metrics.uniqueColorCount >= 12,
+                "StartupSmokeInstrumentationTest.savedFullScreenshot size=${screenshot.width}x${screenshot.height}"
             )
         } finally {
             screenshot.recycle()
         }
     }
 
-    private fun Bitmap.renderCropMetrics(): VisualMetrics {
+    private fun Bitmap.cropToStage(surfaceView: VulkanPacketRenderSurfaceView): Bitmap {
+        val location = IntArray(2)
+        surfaceView.getLocationOnScreen(location)
+        val stageRect = Rect(
+            location[0],
+            location[1],
+            location[0] + surfaceView.width,
+            location[1] + surfaceView.height,
+        )
+        val boundedRect = Rect(
+            stageRect.left.coerceIn(0, width - 1),
+            stageRect.top.coerceIn(0, height - 1),
+            stageRect.right.coerceIn(stageRect.left + 1, width),
+            stageRect.bottom.coerceIn(stageRect.top + 1, height),
+        )
+        Log.i(LOG_TAG, "StartupSmokeInstrumentationTest.stageBounds=$boundedRect")
+        return Bitmap.createBitmap(
+            this,
+            boundedRect.left,
+            boundedRect.top,
+            boundedRect.width(),
+            boundedRect.height(),
+        )
+    }
+
+    private fun Bitmap.visualMetrics(): VisualMetrics {
         val width = width
         val height = height
-        val cropLeft = (width * 0.08f).toInt().coerceIn(0, width - 1)
-        val cropRight = (width * 0.92f).toInt().coerceAtLeast(cropLeft + 1)
-        val cropTop = (height * 0.16f).toInt().coerceIn(0, height - 1)
-        val cropBottom = (height * 0.62f).toInt().coerceIn(cropTop + 1, height)
-        val stepX = maxOf(1, (cropRight - cropLeft) / 18)
-        val stepY = maxOf(1, (cropBottom - cropTop) / 18)
+        val stepX = maxOf(1, width / 24)
+        val stepY = maxOf(1, height / 24)
         val uniqueColors = linkedSetOf<Int>()
         var brightSamples = 0
         var sampleCount = 0
-        for (x in cropLeft until cropRight step stepX) {
-            for (y in cropTop until cropBottom step stepY) {
+        for (x in 0 until width step stepX) {
+            for (y in 0 until height step stepY) {
                 val pixel = getPixel(x, y)
                 val red = (pixel shr 16) and 0xFF
                 val green = (pixel shr 8) and 0xFF
@@ -172,10 +212,25 @@ class StartupSmokeInstrumentationTest {
         )
     }
 
+    private fun findRenderSurfaceView(root: View): VulkanPacketRenderSurfaceView? {
+        if (root is VulkanPacketRenderSurfaceView) {
+            return root
+        }
+        if (root is ViewGroup) {
+            for (index in 0 until root.childCount) {
+                val match = findRenderSurfaceView(root.getChildAt(index))
+                if (match != null) {
+                    return match
+                }
+            }
+        }
+        return null
+    }
+
     private fun persistValidationScreenshot(name: String, bitmap: Bitmap) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val outputDir = File(
-            context.getExternalFilesDir(null),
+            context.filesDir,
             "validation-screenshots",
         ).apply {
             mkdirs()

@@ -47,6 +47,8 @@ capture_device_state() {
   local class_dir="$1"
   local phase_label="${2:-post}"
   local screen_png="${class_dir}/screen.${phase_label}.png"
+  local in_app_full_png="${class_dir}/startup-ready.in-app.png"
+  local in_app_stage_png="${class_dir}/startup-ready-stage.in-app.png"
 
   run_capture "${class_dir}/logcat.txt" adb logcat -d
   run_capture "${class_dir}/dumpsys_activity.txt" adb shell dumpsys activity activities
@@ -56,7 +58,20 @@ capture_device_state() {
   run_capture "${class_dir}/anr_traces.txt" adb shell cat /data/anr/traces.txt
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb shell uiautomator dump /sdcard/solarlab-window-dump.xml >/dev/null 2>&1 || true
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull /sdcard/solarlab-window-dump.xml "${class_dir}/window_dump.xml" >/dev/null 2>&1 || true
-  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull "/storage/emulated/0/Android/data/${APP_PACKAGE}/files/validation-screenshots" "${class_dir}/validation-screenshots" >/dev/null 2>&1 || true
+  if timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb exec-out run-as "${APP_PACKAGE}" cat "files/validation-screenshots/startup-ready.png" > "${in_app_full_png}" 2>/dev/null; then
+    if [[ ! -s "${in_app_full_png}" ]]; then
+      rm -f "${in_app_full_png}"
+    fi
+  else
+    rm -f "${in_app_full_png}"
+  fi
+  if timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb exec-out run-as "${APP_PACKAGE}" cat "files/validation-screenshots/startup-ready-stage.png" > "${in_app_stage_png}" 2>/dev/null; then
+    if [[ ! -s "${in_app_stage_png}" ]]; then
+      rm -f "${in_app_stage_png}"
+    fi
+  else
+    rm -f "${in_app_stage_png}"
+  fi
   run_binary_capture "${screen_png}" adb exec-out screencap -p
   if [[ ! -s "${screen_png}" ]]; then
     rm -f "${screen_png}"
