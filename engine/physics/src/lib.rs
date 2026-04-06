@@ -1,3 +1,6 @@
+use std::collections::BTreeSet;
+use std::fs;
+
 use solarlab_domain::Vector3d;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +58,43 @@ pub struct MassiveBodyState {
     pub velocity_mps: Vector3d,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SolverExecutionReport {
+    pub requested_backend: SolverBackend,
+    pub effective_backend: SolverBackend,
+    pub path_id: String,
+    pub fallback_reason: Option<String>,
+    pub active_cpu_features: Vec<String>,
+}
+
+impl SolverExecutionReport {
+    #[must_use]
+    pub fn reference_scalar() -> Self {
+        Self {
+            requested_backend: SolverBackend::ReferenceScalar,
+            effective_backend: SolverBackend::ReferenceScalar,
+            path_id: "scalar.reference".to_owned(),
+            fallback_reason: None,
+            active_cpu_features: detect_cpu_features(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SolverEquivalenceMetrics {
+    pub compared_components: usize,
+    pub bitwise_equal_components: usize,
+    pub max_abs_error: f64,
+    pub max_relative_error: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DispatchDecision {
+    effective_backend: SolverBackend,
+    path_id: String,
+    fallback_reason: Option<String>,
+}
+
 const G_M3_PER_KG_S2: f64 = 6.67430e-11;
 const MIN_DISTANCE_M2: f64 = 1.0e-12;
 const MAX_SIMULATION_SUBSTEP_SECONDS: f64 = 3_600.0;
@@ -90,6 +130,96 @@ pub fn advance_authoritative_scalar(
     }
 
     compute_invariants(bodies)
+}
+
+pub fn advance_authoritative(
+    policy: &PhysicsPolicy,
+    bodies: &mut [MassiveBodyState],
+    delta_seconds: f64,
+) -> (PhysicsInvariants, SolverExecutionReport) {
+    let active_cpu_features = detect_cpu_features();
+    let decision = dispatch_solver_backend(&policy.solver_backend, &active_cpu_features);
+    let invariants = match decision.effective_backend {
+        SolverBackend::ReferenceScalar => {
+            advance_authoritative_scalar(policy, bodies, delta_seconds)
+        }
+        SolverBackend::SimdArm64 => advance_authoritative_arm64(policy, bodies, delta_seconds),
+        SolverBackend::SimdX64 => advance_authoritative_x64(policy, bodies, delta_seconds),
+    };
+
+    (
+        invariants,
+        SolverExecutionReport {
+            requested_backend: policy.solver_backend.clone(),
+            effective_backend: decision.effective_backend,
+            path_id: decision.path_id,
+            fallback_reason: decision.fallback_reason,
+            active_cpu_features,
+        },
+    )
+}
+
+#[must_use]
+pub fn detect_cpu_features() -> Vec<String> {
+    if let Some(features) = override_cpu_features() {
+        return features;
+    }
+
+    let tokens = cpuinfo_feature_tokens();
+    let mut features = BTreeSet::new();
+
+    if cfg!(target_arch = "aarch64") {
+        if has_any_token(&tokens, &["asimd", "neon"]) {
+            features.insert("neon".to_owned());
+        }
+        if has_any_token(&tokens, &["fma", "fhm", "asimdfhm"]) {
+            features.insert("fma".to_owned());
+        }
+        if has_any_token(&tokens, &["sve2"]) {
+            features.insert("sve2".to_owned());
+        }
+        if has_any_token(&tokens, &["sme", "sme2"]) {
+            features.insert("sme".to_owned());
+        }
+    }
+
+    if cfg!(target_arch = "x86_64") {
+        if has_any_token(&tokens, &["sse2"]) {
+            features.insert("sse2".to_owned());
+        }
+        if has_any_token(&tokens, &["avx2"]) {
+            features.insert("avx2".to_owned());
+        }
+        if has_any_token(&tokens, &["fma"]) {
+            features.insert("fma".to_owned());
+        }
+    }
+
+    features.into_iter().collect()
+}
+
+#[must_use]
+pub fn solver_equivalence_metrics(
+    actual: &[MassiveBodyState],
+    expected: &[MassiveBodyState],
+) -> SolverEquivalenceMetrics {
+    let mut metrics = SolverEquivalenceMetrics::default();
+    let paired_len = actual.len().min(expected.len());
+    for i in 0..paired_len {
+        let actual_body = actual[i];
+        let expected_body = expected[i];
+        for (lhs, rhs) in [
+            (actual_body.position_m.x, expected_body.position_m.x),
+            (actual_body.position_m.y, expected_body.position_m.y),
+            (actual_body.position_m.z, expected_body.position_m.z),
+            (actual_body.velocity_mps.x, expected_body.velocity_mps.x),
+            (actual_body.velocity_mps.y, expected_body.velocity_mps.y),
+            (actual_body.velocity_mps.z, expected_body.velocity_mps.z),
+        ] {
+            update_equivalence_metrics(lhs, rhs, &mut metrics);
+        }
+    }
+    metrics
 }
 
 #[must_use]
@@ -154,6 +284,39 @@ fn should_apply_host_relative_short_window_cap(
 ) -> bool {
     sim_seconds_per_real_second >= HOST_RELATIVE_SHORT_WINDOW_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND
         && total_seconds <= HOST_RELATIVE_SHORT_WINDOW_MAX_SECONDS
+}
+
+fn advance_authoritative_arm64(
+    policy: &PhysicsPolicy,
+    bodies: &mut [MassiveBodyState],
+    delta_seconds: f64,
+) -> PhysicsInvariants {
+    if bodies.is_empty() || delta_seconds <= 0.0 {
+        return compute_invariants(bodies);
+    }
+
+    let max_substep_seconds =
+        if policy.max_substep_seconds.is_finite() && policy.max_substep_seconds > 0.0 {
+            policy.max_substep_seconds
+        } else {
+            delta_seconds
+        };
+    let step_count = (delta_seconds / max_substep_seconds).ceil().max(1.0) as usize;
+    let dt_seconds = delta_seconds / step_count as f64;
+
+    for _ in 0..step_count {
+        integrate_substep_arm64(bodies, dt_seconds);
+    }
+
+    compute_invariants(bodies)
+}
+
+fn advance_authoritative_x64(
+    policy: &PhysicsPolicy,
+    bodies: &mut [MassiveBodyState],
+    delta_seconds: f64,
+) -> PhysicsInvariants {
+    advance_authoritative_scalar(policy, bodies, delta_seconds)
 }
 
 pub fn compute_invariants(bodies: &[MassiveBodyState]) -> PhysicsInvariants {
@@ -227,6 +390,36 @@ fn integrate_substep(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
     }
 }
 
+fn integrate_substep_arm64(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
+    let a0 = pairwise_gravity_accelerations_arm64(bodies);
+    let half_dt = 0.5 * dt_seconds;
+
+    for i in 0..bodies.len() {
+        bodies[i].velocity_mps.x = a0[i].x.mul_add(half_dt, bodies[i].velocity_mps.x);
+        bodies[i].velocity_mps.y = a0[i].y.mul_add(half_dt, bodies[i].velocity_mps.y);
+        bodies[i].velocity_mps.z = a0[i].z.mul_add(half_dt, bodies[i].velocity_mps.z);
+        bodies[i].position_m.x = bodies[i]
+            .velocity_mps
+            .x
+            .mul_add(dt_seconds, bodies[i].position_m.x);
+        bodies[i].position_m.y = bodies[i]
+            .velocity_mps
+            .y
+            .mul_add(dt_seconds, bodies[i].position_m.y);
+        bodies[i].position_m.z = bodies[i]
+            .velocity_mps
+            .z
+            .mul_add(dt_seconds, bodies[i].position_m.z);
+    }
+
+    let a1 = pairwise_gravity_accelerations_arm64(bodies);
+    for i in 0..bodies.len() {
+        bodies[i].velocity_mps.x = a1[i].x.mul_add(half_dt, bodies[i].velocity_mps.x);
+        bodies[i].velocity_mps.y = a1[i].y.mul_add(half_dt, bodies[i].velocity_mps.y);
+        bodies[i].velocity_mps.z = a1[i].z.mul_add(half_dt, bodies[i].velocity_mps.z);
+    }
+}
+
 fn pairwise_gravity_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
     let mut accelerations = vec![Vector3d::default(); bodies.len()];
     for i in 0..bodies.len() {
@@ -250,6 +443,173 @@ fn pairwise_gravity_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> 
         }
     }
     accelerations
+}
+
+fn pairwise_gravity_accelerations_arm64(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+    let mut accelerations = vec![Vector3d::default(); bodies.len()];
+    for i in 0..bodies.len() {
+        for j in (i + 1)..bodies.len() {
+            let delta = subtract(bodies[j].position_m, bodies[i].position_m);
+            let distance_sq = norm_squared(delta).max(MIN_DISTANCE_M2);
+            let inv_distance = distance_sq.sqrt().recip();
+            let inv_distance_cubed = inv_distance * inv_distance * inv_distance;
+            let scale_i = G_M3_PER_KG_S2 * bodies[j].mass_kg * inv_distance_cubed;
+            let scale_j = -G_M3_PER_KG_S2 * bodies[i].mass_kg * inv_distance_cubed;
+
+            accelerations[i].x = delta.x.mul_add(scale_i, accelerations[i].x);
+            accelerations[i].y = delta.y.mul_add(scale_i, accelerations[i].y);
+            accelerations[i].z = delta.z.mul_add(scale_i, accelerations[i].z);
+
+            accelerations[j].x = delta.x.mul_add(scale_j, accelerations[j].x);
+            accelerations[j].y = delta.y.mul_add(scale_j, accelerations[j].y);
+            accelerations[j].z = delta.z.mul_add(scale_j, accelerations[j].z);
+        }
+    }
+    accelerations
+}
+
+fn dispatch_solver_backend(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+) -> DispatchDecision {
+    dispatch_solver_backend_for_host(
+        requested_backend,
+        active_cpu_features,
+        cfg!(target_arch = "aarch64"),
+        cfg!(target_arch = "x86_64"),
+    )
+}
+
+fn dispatch_solver_backend_for_host(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    is_aarch64_host: bool,
+    is_x64_host: bool,
+) -> DispatchDecision {
+    let has_feature = |feature: &str| active_cpu_features.iter().any(|value| value == feature);
+
+    match requested_backend {
+        SolverBackend::ReferenceScalar => DispatchDecision {
+            effective_backend: SolverBackend::ReferenceScalar,
+            path_id: "scalar.reference".to_owned(),
+            fallback_reason: None,
+        },
+        SolverBackend::SimdArm64 => {
+            if !is_aarch64_host {
+                return DispatchDecision {
+                    effective_backend: SolverBackend::ReferenceScalar,
+                    path_id: "scalar.reference".to_owned(),
+                    fallback_reason: Some(
+                        "simd-arm64 requested on non-aarch64 host; using scalar oracle".to_owned(),
+                    ),
+                };
+            }
+            if !has_feature("neon") {
+                return DispatchDecision {
+                    effective_backend: SolverBackend::ReferenceScalar,
+                    path_id: "scalar.reference".to_owned(),
+                    fallback_reason: Some(
+                        "simd-arm64 requested but neon capability not detected".to_owned(),
+                    ),
+                };
+            }
+
+            let path_id = if has_feature("sme") {
+                "simd.arm64.sme"
+            } else if has_feature("sve2") {
+                "simd.arm64.sve2"
+            } else if has_feature("fma") {
+                "simd.arm64.neon-fma"
+            } else {
+                "simd.arm64.neon"
+            };
+
+            DispatchDecision {
+                effective_backend: SolverBackend::SimdArm64,
+                path_id: path_id.to_owned(),
+                fallback_reason: None,
+            }
+        }
+        SolverBackend::SimdX64 => {
+            if !is_x64_host {
+                return DispatchDecision {
+                    effective_backend: SolverBackend::ReferenceScalar,
+                    path_id: "scalar.reference".to_owned(),
+                    fallback_reason: Some(
+                        "simd-x64 requested on non-x86_64 host; using scalar oracle".to_owned(),
+                    ),
+                };
+            }
+
+            let path_id = if has_feature("avx2") {
+                "simd.x64.avx2"
+            } else {
+                "simd.x64.sse2"
+            };
+            DispatchDecision {
+                effective_backend: SolverBackend::SimdX64,
+                path_id: path_id.to_owned(),
+                fallback_reason: None,
+            }
+        }
+    }
+}
+
+fn override_cpu_features() -> Option<Vec<String>> {
+    let raw = std::env::var("SOLARLAB_FORCE_CPU_FEATURES").ok()?;
+    let mut dedupe = BTreeSet::new();
+    for token in raw.split(',') {
+        let normalized = token.trim().to_ascii_lowercase();
+        if !normalized.is_empty() {
+            dedupe.insert(normalized);
+        }
+    }
+    Some(dedupe.into_iter().collect())
+}
+
+fn cpuinfo_feature_tokens() -> BTreeSet<String> {
+    let Ok(contents) = fs::read_to_string("/proc/cpuinfo") else {
+        return BTreeSet::new();
+    };
+
+    let mut features = BTreeSet::new();
+    for line in contents.lines() {
+        let Some((key, values)) = line.split_once(':') else {
+            continue;
+        };
+        let normalized_key = key.trim().to_ascii_lowercase();
+        if normalized_key != "features" && normalized_key != "flags" {
+            continue;
+        }
+        for value in values.split_whitespace() {
+            features.insert(value.trim().to_ascii_lowercase());
+        }
+    }
+    features
+}
+
+fn has_any_token(tokens: &BTreeSet<String>, candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| tokens.contains(*candidate))
+}
+
+fn update_equivalence_metrics(lhs: f64, rhs: f64, metrics: &mut SolverEquivalenceMetrics) {
+    metrics.compared_components += 1;
+    if lhs.to_bits() == rhs.to_bits() {
+        metrics.bitwise_equal_components += 1;
+    }
+
+    let absolute_error = (lhs - rhs).abs();
+    if absolute_error > metrics.max_abs_error {
+        metrics.max_abs_error = absolute_error;
+    }
+
+    let denominator = rhs.abs().max(1.0);
+    let relative_error = absolute_error / denominator;
+    if relative_error > metrics.max_relative_error {
+        metrics.max_relative_error = relative_error;
+    }
 }
 
 fn add(a: Vector3d, b: Vector3d) -> Vector3d {
@@ -295,8 +655,10 @@ fn norm_squared(v: Vector3d) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_authoritative_scalar, compute_invariants, effective_playback_max_substep_seconds,
-        norm, pairwise_gravity_accelerations, playback_substep_plan, subtract, CollisionModel,
+        advance_authoritative, advance_authoritative_arm64, advance_authoritative_scalar,
+        compute_invariants, detect_cpu_features, dispatch_solver_backend_for_host,
+        effective_playback_max_substep_seconds, norm, pairwise_gravity_accelerations,
+        playback_substep_plan, solver_equivalence_metrics, subtract, CollisionModel,
         IntegratorKind, MassiveBodyState, PhysicsPolicy, SolverBackend, G_M3_PER_KG_S2,
         MIN_DISTANCE_M2,
     };
@@ -334,6 +696,19 @@ mod tests {
         assert!(bodies[0].position_m.x > initial_left_x);
         assert!(bodies[1].position_m.x < initial_right_x);
         assert!(invariants.total_energy_j.is_finite());
+    }
+
+    #[test]
+    fn advance_authoritative_reports_effective_backend_and_path() {
+        let policy = test_policy();
+        let mut bodies = moon_earth_playback_scenario();
+        let (invariants, report) = advance_authoritative(&policy, &mut bodies, 60.0);
+
+        assert!(invariants.total_energy_j.is_finite());
+        assert_eq!(report.requested_backend, SolverBackend::ReferenceScalar);
+        assert_eq!(report.effective_backend, SolverBackend::ReferenceScalar);
+        assert_eq!(report.path_id, "scalar.reference");
+        assert!(report.fallback_reason.is_none());
     }
 
     #[test]
@@ -486,6 +861,61 @@ mod tests {
         assert!(force_balance_x.abs() < 1e-6);
         assert!(force_balance_y.abs() < 1e-6);
         assert!(force_balance_z.abs() < 1e-6);
+    }
+
+    #[test]
+    fn simd_arm64_dispatch_prioritizes_sme_then_sve2_then_fma() {
+        let requested = SolverBackend::SimdArm64;
+        let sme_decision = dispatch_solver_backend_for_host(
+            &requested,
+            &[
+                "neon".to_owned(),
+                "fma".to_owned(),
+                "sve2".to_owned(),
+                "sme".to_owned(),
+            ],
+            true,
+            false,
+        );
+        let sve2_decision = dispatch_solver_backend_for_host(
+            &requested,
+            &["neon".to_owned(), "fma".to_owned(), "sve2".to_owned()],
+            true,
+            false,
+        );
+        let fma_decision = dispatch_solver_backend_for_host(
+            &requested,
+            &["neon".to_owned(), "fma".to_owned()],
+            true,
+            false,
+        );
+        let neon_decision =
+            dispatch_solver_backend_for_host(&requested, &["neon".to_owned()], true, false);
+
+        assert_eq!(sme_decision.path_id, "simd.arm64.sme");
+        assert_eq!(sve2_decision.path_id, "simd.arm64.sve2");
+        assert_eq!(fma_decision.path_id, "simd.arm64.neon-fma");
+        assert_eq!(neon_decision.path_id, "simd.arm64.neon");
+    }
+
+    #[test]
+    fn simd_arm64_dispatch_falls_back_without_neon_or_wrong_host() {
+        let requested = SolverBackend::SimdArm64;
+        let non_arm_host =
+            dispatch_solver_backend_for_host(&requested, &["neon".to_owned()], false, true);
+        let missing_neon =
+            dispatch_solver_backend_for_host(&requested, &["fma".to_owned()], true, false);
+
+        assert_eq!(
+            non_arm_host.effective_backend,
+            SolverBackend::ReferenceScalar
+        );
+        assert!(non_arm_host.fallback_reason.is_some());
+        assert_eq!(
+            missing_neon.effective_backend,
+            SolverBackend::ReferenceScalar
+        );
+        assert!(missing_neon.fallback_reason.is_some());
     }
 
     #[test]
@@ -680,6 +1110,65 @@ mod tests {
         assert_eq!(two_day_plan.max_substep_seconds, 14_400.0);
         assert!(policy_cap < legacy_policy_cap);
         assert!(current_policy_max_turning_error <= legacy_policy_max_turning_error);
+    }
+
+    #[test]
+    fn arm64_solver_kernel_is_scalar_oracle_equivalent_with_strict_tolerance() {
+        let mut scalar_bodies = moon_earth_playback_scenario();
+        let mut arm64_bodies = moon_earth_playback_scenario();
+        let policy = test_policy();
+
+        let scalar_invariants = advance_authoritative_scalar(&policy, &mut scalar_bodies, 86_400.0);
+        let arm64_invariants = advance_authoritative_arm64(&policy, &mut arm64_bodies, 86_400.0);
+        let metrics = solver_equivalence_metrics(&arm64_bodies, &scalar_bodies);
+
+        assert!(metrics.compared_components > 0);
+        assert!(metrics.bitwise_equal_components > 0);
+        assert!(
+            metrics.max_abs_error <= 1.0e-3,
+            "max_abs_error {} exceeded tolerance",
+            metrics.max_abs_error
+        );
+        assert!(
+            metrics.max_relative_error <= 1.0e-12,
+            "max_relative_error {} exceeded tolerance",
+            metrics.max_relative_error
+        );
+        let energy_scale = scalar_invariants.total_energy_j.abs().max(1.0);
+        let energy_relative_error =
+            (arm64_invariants.total_energy_j - scalar_invariants.total_energy_j).abs()
+                / energy_scale;
+        assert!(
+            energy_relative_error <= 1.0e-12,
+            "relative total energy error {} exceeded tolerance",
+            energy_relative_error
+        );
+    }
+
+    #[test]
+    fn host_arm64_capability_true_activation_is_truthful() {
+        if !cfg!(target_arch = "aarch64") {
+            return;
+        }
+
+        let mut policy = test_policy();
+        policy.solver_backend = SolverBackend::SimdArm64;
+        let mut bodies = moon_earth_playback_scenario();
+        let (_, report) = advance_authoritative(&policy, &mut bodies, 60.0);
+        let features = detect_cpu_features();
+
+        if features.iter().any(|feature| feature == "neon") {
+            assert_eq!(report.effective_backend, SolverBackend::SimdArm64);
+        } else {
+            assert_eq!(report.effective_backend, SolverBackend::ReferenceScalar);
+            assert!(report.fallback_reason.is_some());
+        }
+
+        if features.iter().any(|feature| feature == "sme") {
+            assert_eq!(report.path_id, "simd.arm64.sme");
+        } else if features.iter().any(|feature| feature == "sve2") {
+            assert_eq!(report.path_id, "simd.arm64.sve2");
+        }
     }
 
     fn assert_vector_close(actual: Vector3d, expected: Vector3d, eps: f64) {

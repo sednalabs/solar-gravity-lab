@@ -11,6 +11,7 @@ Use the smallest relevant command for the seam you touch:
 - `cargo test --workspace` checks the canonical Rust platform.
 - `cargo fmt --all` formats Rust code.
 - `cargo clippy --workspace --all-targets` catches lint regressions.
+- `bash .github/scripts/run_arm64_isa_proof.sh` runs the ARM64 ISA activation and scalar-oracle proof slice.
 - `./gradlew -p clients/android :app:assembleDebug` builds the forward Android shell.
 - `python3 tools/validate_parity_matrix.py labs/parity/matrix.json` validates the parity contract used by CI.
 

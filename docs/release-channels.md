@@ -27,9 +27,11 @@ on canonical `main`.
 - Intended use: proving the current branch or seam without burning local Orchard
   compute
 
-The installable prerelease workflow also now runs an ARM64 proof lane (`ARM64
-prerelease proof`) that executes CPU-side canonical physics/runtime slices on
-`ubuntu-24.04-arm` before release publication.
+The installable prerelease workflow also now runs an ARM64 ISA proof lane
+(`isa-prerelease-proof`) that executes
+`.github/scripts/run_arm64_isa_proof.sh` on `ubuntu-24.04-arm` before release
+publication. This gate validates backend activation truth and scalar-oracle
+equivalence evidence for the ARM64 CPU path.
 
 Validation runs are evidence, not release artifacts. They answer whether a
 slice is green; they do not imply that the app is ready for external

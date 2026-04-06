@@ -119,5 +119,6 @@ not the old root app:
 
 Use `.github/workflows/validation-lab.yml` for canonical validation slices and
 `.github/workflows/prerelease-apk.yml` for installable release candidates.
-`prerelease-apk` now includes an ARM64-native CPU proof gate (`ubuntu-24.04-arm`)
-for canonical Rust runtime/workspace slices before publish.
+`prerelease-apk` now includes an ARM64-native ISA proof gate
+(`ubuntu-24.04-arm`) via `.github/scripts/run_arm64_isa_proof.sh` before
+publish.

@@ -24,8 +24,8 @@ use solarlab_history::{
     HistoryEvent,
 };
 use solarlab_physics::{
-    advance_authoritative_scalar, compute_invariants, MassiveBodyState, PhysicsInvariants,
-    PhysicsPolicy,
+    advance_authoritative, compute_invariants, MassiveBodyState, PhysicsInvariants, PhysicsPolicy,
+    SolverExecutionReport,
 };
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
@@ -109,6 +109,7 @@ pub struct WorldSnapshot {
     pub playback: PlaybackState,
     pub mounted_manifest: Option<MountedManifestState>,
     pub trail_history_by_body: HashMap<BodyId, Vec<Vector3d>>,
+    pub solver_execution: SolverExecutionReport,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -146,6 +147,7 @@ pub struct RuntimeTelemetryReport {
     pub mounted_manifest: Option<MountedManifestTelemetry>,
     pub scene_revision: String,
     pub diagnostics: RenderDiagnostics,
+    pub solver_execution: SolverExecutionReport,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -254,6 +256,7 @@ struct BranchWorldState {
     local_data_state: LocalDataState,
     mounted_package_ids: BTreeSet<String>,
     trail_history_by_body: HashMap<BodyId, Vec<Vector3d>>,
+    solver_execution: SolverExecutionReport,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -330,6 +333,7 @@ impl WorldRuntime {
                 local_data_state: LocalDataState::empty(),
                 mounted_package_ids: BTreeSet::new(),
                 trail_history_by_body: HashMap::new(),
+                solver_execution: SolverExecutionReport::reference_scalar(),
             },
             command_log: Vec::new(),
             checkpoints: Vec::new(),
@@ -554,13 +558,11 @@ impl WorldRuntime {
                 let physics_policy = self.config.physics.clone();
                 let branch = self.active_branch_mut();
                 let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
-                let invariants = advance_authoritative_scalar(
-                    &physics_policy,
-                    &mut solver_bodies,
-                    *delta_seconds,
-                );
+                let (invariants, solver_execution) =
+                    advance_authoritative(&physics_policy, &mut solver_bodies, *delta_seconds);
                 apply_solver_state_to_world_bodies(&mut branch.world.bodies, &solver_bodies);
                 branch.world.invariants = invariants;
+                branch.world.solver_execution = solver_execution;
                 branch.world.epoch_seconds += *delta_seconds;
                 record_trail_samples_from_bodies(
                     &branch.world.bodies,
@@ -724,6 +726,7 @@ impl WorldRuntime {
             playback: active.world.playback.clone(),
             mounted_manifest,
             trail_history_by_body: active.world.trail_history_by_body.clone(),
+            solver_execution: active.world.solver_execution.clone(),
         }
     }
 
@@ -760,6 +763,7 @@ impl WorldRuntime {
                 .map(mounted_manifest_telemetry_from_state),
             scene_revision: scene.scene_revision,
             diagnostics: scene.diagnostics,
+            solver_execution: snapshot.solver_execution,
         }
     }
 

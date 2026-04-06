@@ -234,8 +234,8 @@ jobs:
             dist/startup-smoke/**
             clients/android/app/build/outputs/apk/${{ steps.meta.outputs.build_variant }}/output-metadata.json
 
-  arm64-prerelease-proof:
-    name: ARM64 prerelease proof
+  isa-prerelease-proof:
+    name: ARM64 ISA prerelease proof
     needs: build-prerelease-apk
     if: needs.build-prerelease-apk.result == 'success'
     runs-on: ubuntu-24.04-arm
@@ -249,22 +249,30 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run ARM64 Rust proof slice
+      - name: Run ARM64 ISA activation + scalar oracle proof
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p solarlab-physics --lib
-          cargo test -p solarlab-runtime --lib
+          bash .github/scripts/run_arm64_isa_proof.sh
+
+      - name: Upload ARM64 ISA proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-isa-proof-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            dist/arm64-isa-proof/**
 
   publish-prerelease-apk:
     name: Publish GitHub release
     needs:
       - build-prerelease-apk
-      - arm64-prerelease-proof
+      - isa-prerelease-proof
     if: |
       always() &&
       needs.build-prerelease-apk.result == 'success' &&
-      needs.arm64-prerelease-proof.result == 'success' &&
+      needs.isa-prerelease-proof.result == 'success' &&
       (github.event_name == 'push' || inputs.publish_release == true)
     runs-on: ubuntu-24.04
     steps:
@@ -372,7 +380,7 @@ jobs:
             echo "- package label: \`${{ needs.build-prerelease-apk.outputs.package_label }}\`"
             echo "- artifact: \`solar-gravity-lab-${{ needs.build-prerelease-apk.outputs.safe_version }}-${{ needs.build-prerelease-apk.outputs.package_label }}.apk\`"
             echo "- launch smoke: \`${{ needs.build-prerelease-apk.outputs.launch_smoke_outcome }}\`"
-            echo "- arm64 proof: \`${{ needs.arm64-prerelease-proof.result }}\`"
+            echo "- arm64 ISA proof: \`${{ needs.isa-prerelease-proof.result }}\`"
             echo "- changelog baseline: \`${{ needs.build-prerelease-apk.outputs.changelog_baseline_tag }}\`"
             echo "- changelog commits: \`${{ needs.build-prerelease-apk.outputs.changelog_commit_count }}\`"
             echo "- changelog (JSON): \`${{ steps.release_artifacts.outputs.changelog_json }}\`"

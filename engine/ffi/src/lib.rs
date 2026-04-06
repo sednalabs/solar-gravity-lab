@@ -26,7 +26,9 @@ use solarlab_hardware::{
     BackendFamilyAssignment, CpuBackend, GpuBackend, GpuBackendReport, GpuBackendStateFamily,
     HardwareProfile,
 };
-use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
+use solarlab_physics::{
+    detect_cpu_features, CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend,
+};
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_vulkan_adapter::{
     PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight, VulkanSceneAdapter,
@@ -1011,13 +1013,14 @@ fn build_session(
     };
 
     let gpu_backend_report = default_gpu_backend_report(&gpu_backend);
+    let cpu_features = detect_cpu_features();
     let hardware_profile = HardwareProfile {
         cpu_backend: cpu_backend.clone(),
         gpu_backend: gpu_backend.clone(),
         gpu_backend_report,
-        cpu_features: Vec::new(),
+        cpu_features: cpu_features.clone(),
         gpu_features: Vec::new(),
-        acceleration_modes: default_acceleration_modes(&gpu_backend),
+        acceleration_modes: default_acceleration_modes(&gpu_backend, &cpu_backend, &cpu_features),
     };
 
     let runtime = WorldRuntime::new(
@@ -1094,7 +1097,12 @@ fn default_gpu_backend_report(gpu_backend: &GpuBackend) -> GpuBackendReport {
     }
 }
 
-fn default_acceleration_modes(gpu_backend: &GpuBackend) -> Vec<String> {
+fn default_acceleration_modes(
+    gpu_backend: &GpuBackend,
+    cpu_backend: &CpuBackend,
+    cpu_features: &[String],
+) -> Vec<String> {
+    let mut modes = cpu_acceleration_modes(cpu_backend, cpu_features);
     match gpu_backend {
         GpuBackend::OpenCl => vec!["dual-gpu".to_owned()],
         GpuBackend::Vulkan => vec!["gpu-render".to_owned()],
@@ -1102,6 +1110,31 @@ fn default_acceleration_modes(gpu_backend: &GpuBackend) -> Vec<String> {
         GpuBackend::WebGpuClass => vec!["gpu-render".to_owned()],
         GpuBackend::None => Vec::new(),
     }
+    .into_iter()
+    .for_each(|mode| {
+        if !modes.contains(&mode) {
+            modes.push(mode);
+        }
+    });
+
+    modes
+}
+
+fn cpu_acceleration_modes(cpu_backend: &CpuBackend, cpu_features: &[String]) -> Vec<String> {
+    let mut modes = Vec::new();
+    match cpu_backend {
+        CpuBackend::ReferenceScalar => modes.push("cpu-scalar".to_owned()),
+        CpuBackend::SimdArm64 => modes.push("cpu-simd-arm64-requested".to_owned()),
+        CpuBackend::SimdX64 => modes.push("cpu-simd-x64-requested".to_owned()),
+    }
+
+    for feature in cpu_features {
+        let mode = format!("cpu-isa-{feature}");
+        if !modes.contains(&mode) {
+            modes.push(mode);
+        }
+    }
+    modes
 }
 
 fn snapshot_summary(runtime: &WorldRuntime) -> Result<SlSessionSnapshotSummary, SlResult> {

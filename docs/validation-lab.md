@@ -19,7 +19,8 @@ build or workflow behavior.
 
 The `prerelease-apk` workflow now includes a second gate for prerelease builds:
 - build and launch smoke on `prerelease` APK
-- ARM64 CPU proof lane (`ubuntu-24.04-arm`) that runs `cargo test -p solarlab-physics --lib` and `cargo test -p solarlab-runtime --lib` before publish
+- ARM64 ISA proof lane (`ubuntu-24.04-arm`) that runs
+  `.github/scripts/run_arm64_isa_proof.sh` before publish
 
 ## Current lane families
 
@@ -28,10 +29,13 @@ The `prerelease-apk` workflow now includes a second gate for prerelease builds:
    real question.
 2. `rust-workspace`
    Runs `cargo test --workspace` for the canonical Rust crates.
-3. `ffi-abi`
+3. `arm64-isa-proof`
+   Runs the ARM64 capability and scalar-oracle equivalence gate on an ARM64
+   runner.
+4. `ffi-abi`
    Runs a narrower `cargo test -p solarlab-ffi` proof slice when the active seam
    is runtime/ABI/JNI-facing rather than the whole workspace.
-4. `android-shell`
+5. `android-shell`
    Installs the Android toolchain plus Rust Android targets, then builds the real
    app under `clients/android` with `:app:assembleDebug`.
 
@@ -54,6 +58,8 @@ The `prerelease-apk` workflow now includes a second gate for prerelease builds:
   Run only wrapper generation.
 - `rust-workspace`
   Run only the canonical Rust workspace tests.
+- `arm64-isa-proof`
+  Run only the ARM64 ISA capability + scalar-oracle gate.
 - `ffi-abi`
   Run only the focused FFI ABI test slice.
 - `android-shell`
@@ -71,7 +77,7 @@ The `prerelease-apk` workflow now includes a second gate for prerelease builds:
 4. Reserve `profile=broad` or `profile=full` for milestone checkpoints.
 5. Use `prerelease-apk` when the real question is packaging an installable device
    build rather than simply proving the branch compiles.
-6. For prerelease publication, confirm the new ARM64 proof lane is green before
+6. For prerelease publication, confirm the new ARM64 ISA proof lane is green before
    treating the build as release-ready.
 
 ## Cheap path for docs-only changes
