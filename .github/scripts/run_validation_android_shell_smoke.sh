@@ -56,7 +56,7 @@ capture_device_state() {
   run_capture "${class_dir}/anr_traces.txt" adb shell cat /data/anr/traces.txt
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb shell uiautomator dump /sdcard/solarlab-window-dump.xml >/dev/null 2>&1 || true
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull /sdcard/solarlab-window-dump.xml "${class_dir}/window_dump.xml" >/dev/null 2>&1 || true
-  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull "/sdcard/Android/data/${APP_PACKAGE}/files/validation-screenshots" "${class_dir}/validation-screenshots" >/dev/null 2>&1 || true
+  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull "/storage/emulated/0/Android/data/${APP_PACKAGE}/files/validation-screenshots" "${class_dir}/validation-screenshots" >/dev/null 2>&1 || true
   run_binary_capture "${screen_png}" adb exec-out screencap -p
   if [[ ! -s "${screen_png}" ]]; then
     rm -f "${screen_png}"
