@@ -117,5 +117,7 @@ not the old root app:
 ./gradlew -p clients/android --no-daemon :app:assembleDebug
 ```
 
-Use `.github/workflows/validation-lab.yml` and `.github/workflows/prerelease-apk.yml`
-for the remote-first versions of those same proof questions.
+Use `.github/workflows/validation-lab.yml` for canonical validation slices and
+`.github/workflows/prerelease-apk.yml` for installable release candidates.
+`prerelease-apk` now includes an ARM64-native CPU proof gate (`ubuntu-24.04-arm`)
+for canonical Rust runtime/workspace slices before publish.

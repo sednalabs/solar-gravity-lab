@@ -17,6 +17,10 @@ build or workflow behavior.
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 - `.github/workflows/prerelease-apk.yml` for installable internal dev previews
 
+The `prerelease-apk` workflow now includes a second gate for prerelease builds:
+- build and launch smoke on `prerelease` APK
+- ARM64 CPU proof lane (`ubuntu-24.04-arm`) that runs `cargo test -p solarlab-physics --lib` and `cargo test -p solarlab-runtime --lib` before publish
+
 ## Current lane families
 
 1. `wrapper-bootstrap`
@@ -67,6 +71,8 @@ build or workflow behavior.
 4. Reserve `profile=broad` or `profile=full` for milestone checkpoints.
 5. Use `prerelease-apk` when the real question is packaging an installable device
    build rather than simply proving the branch compiles.
+6. For prerelease publication, confirm the new ARM64 proof lane is green before
+   treating the build as release-ready.
 
 ## Cheap path for docs-only changes
 
