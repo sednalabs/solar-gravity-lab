@@ -100,62 +100,53 @@ class FocusedCompositionInstrumentationTest {
                         )
             }
 
+            val focusSample = waitForBodyViewportSample(
+                scenario = scenario,
+                bodyId = focusBodyId,
+                maxNormalizedDistance = maxNormalizedCenterDistance,
+                timeout = 10.seconds,
+            )
+            assertPointWithinViewport(
+                point = focusSample.point,
+                viewportWidth = focusSample.viewportWidth,
+                viewportHeight = focusSample.viewportHeight,
+                bodyId = focusBodyId,
+            )
+            assertNearViewportCenter(
+                point = focusSample.point,
+                viewportWidth = focusSample.viewportWidth,
+                viewportHeight = focusSample.viewportHeight,
+                maxNormalizedDistance = maxNormalizedCenterDistance,
+                bodyId = focusBodyId,
+            )
+
+            if (requireCompanionVisible) {
+                val companionSample = waitForAnyBodyViewportSample(
+                    scenario = scenario,
+                    bodyIds = companionCandidateIds,
+                    timeout = 10.seconds,
+                )
+                assertPointWithinViewport(
+                    point = companionSample.point,
+                    viewportWidth = companionSample.viewportWidth,
+                    viewportHeight = companionSample.viewportHeight,
+                    bodyId = companionSample.bodyId,
+                )
+                assertCompanionSeparation(
+                    primaryPoint = focusSample.point,
+                    companionPoint = companionSample.point,
+                    viewportWidth = focusSample.viewportWidth,
+                    viewportHeight = focusSample.viewportHeight,
+                    focusBodyId = focusBodyId,
+                    companionBodyId = companionSample.bodyId,
+                    minimumSeparationFraction = minimumSeparationFraction,
+                    maximumSeparationFraction = maximumSeparationFraction,
+                )
+            }
+
             scenario.onActivity { activity ->
                 val renderSurface = findRenderSurfaceView(activity.window.decorView)
-                    ?: throw AssertionError("Unable to find VulkanPacketRenderSurfaceView for focus assertions")
-                assertTrue(
-                    "Render surface should have non-zero dimensions for focus composition assertions",
-                    renderSurface.width > 0 && renderSurface.height > 0,
-                )
-
-                val focusPoint = renderSurface.debugBodyScreenPoint(focusBodyId)
-                assertNotNull("Focused body '$focusBodyId' should be visible in viewport", focusPoint)
-                val safeFocusPoint = requireNotNull(focusPoint)
-                assertPointWithinViewport(
-                    point = safeFocusPoint,
-                    viewportWidth = renderSurface.width.toFloat(),
-                    viewportHeight = renderSurface.height.toFloat(),
-                    bodyId = focusBodyId,
-                )
-                assertNearViewportCenter(
-                    point = safeFocusPoint,
-                    viewportWidth = renderSurface.width.toFloat(),
-                    viewportHeight = renderSurface.height.toFloat(),
-                    maxNormalizedDistance = maxNormalizedCenterDistance,
-                    bodyId = focusBodyId,
-                )
-
-                if (requireCompanionVisible) {
-                    val companionPoint = companionCandidateIds
-                        .asSequence()
-                        .mapNotNull { candidateId ->
-                            val position = renderSurface.debugBodyScreenPoint(candidateId)
-                            if (position != null) candidateId to position else null
-                        }
-                        .firstOrNull()
-                    assertNotNull(
-                        "Expected at least one companion for '$focusBodyId' to be visible: $companionCandidateIds",
-                        companionPoint,
-                    )
-                    val (companionBodyId, safeCompanionPoint) = requireNotNull(companionPoint)
-                    assertPointWithinViewport(
-                        point = safeCompanionPoint,
-                        viewportWidth = renderSurface.width.toFloat(),
-                        viewportHeight = renderSurface.height.toFloat(),
-                        bodyId = companionBodyId,
-                    )
-                    assertCompanionSeparation(
-                        primaryPoint = safeFocusPoint,
-                        companionPoint = safeCompanionPoint,
-                        viewportWidth = renderSurface.width.toFloat(),
-                        viewportHeight = renderSurface.height.toFloat(),
-                        focusBodyId = focusBodyId,
-                        companionBodyId = companionBodyId,
-                        minimumSeparationFraction = minimumSeparationFraction,
-                        maximumSeparationFraction = maximumSeparationFraction,
-                    )
-                }
-
+                    ?: throw AssertionError("Unable to find VulkanPacketRenderSurfaceView for focus screenshot capture")
                 val screenshot = captureScreenshot()
                 try {
                     persistValidationScreenshot("$screenshotPrefix-ready", screenshot)
@@ -175,6 +166,62 @@ class FocusedCompositionInstrumentationTest {
                 }
             }
         }
+    }
+
+    private fun waitForBodyViewportSample(
+        scenario: ActivityScenario<MainActivity>,
+        bodyId: String,
+        maxNormalizedDistance: Float,
+        timeout: Duration,
+    ): BodyViewportSample {
+        val deadlineMs = System.currentTimeMillis() + timeout.inWholeMilliseconds
+        while (System.currentTimeMillis() < deadlineMs) {
+            val sample = sampleBodyViewport(scenario = scenario, bodyId = bodyId)
+            if (sample != null && sample.normalizedDistanceFromCenter() <= maxNormalizedDistance) {
+                return sample
+            }
+            Thread.sleep(60)
+        }
+        throw AssertionError("Focused body '$bodyId' should be visible and near center within $timeout")
+    }
+
+    private fun waitForAnyBodyViewportSample(
+        scenario: ActivityScenario<MainActivity>,
+        bodyIds: List<String>,
+        timeout: Duration,
+    ): BodyViewportSample {
+        val deadlineMs = System.currentTimeMillis() + timeout.inWholeMilliseconds
+        while (System.currentTimeMillis() < deadlineMs) {
+            bodyIds.forEach { bodyId ->
+                val sample = sampleBodyViewport(scenario = scenario, bodyId = bodyId)
+                if (sample != null) {
+                    return sample
+                }
+            }
+            Thread.sleep(60)
+        }
+        throw AssertionError("Expected at least one companion body to be visible in viewport: $bodyIds")
+    }
+
+    private fun sampleBodyViewport(
+        scenario: ActivityScenario<MainActivity>,
+        bodyId: String,
+    ): BodyViewportSample? {
+        var sample: BodyViewportSample? = null
+        scenario.onActivity { activity ->
+            val renderSurface = findRenderSurfaceView(activity.window.decorView)
+            if (renderSurface == null || renderSurface.width <= 0 || renderSurface.height <= 0) {
+                return@onActivity
+            }
+            val bodyPoint = renderSurface.debugBodyScreenPoint(bodyId) ?: return@onActivity
+            sample = BodyViewportSample(
+                bodyId = bodyId,
+                point = bodyPoint,
+                viewportWidth = renderSurface.width.toFloat(),
+                viewportHeight = renderSurface.height.toFloat(),
+            )
+        }
+        return sample
     }
 
     private fun assertPointWithinViewport(
@@ -418,6 +465,22 @@ class FocusedCompositionInstrumentationTest {
         val brightSampleCount: Int,
         val uniqueColorCount: Int,
     )
+
+    private data class BodyViewportSample(
+        val bodyId: String,
+        val point: Pair<Float, Float>,
+        val viewportWidth: Float,
+        val viewportHeight: Float,
+    ) {
+        fun normalizedDistanceFromCenter(): Float {
+            val centerX = viewportWidth * 0.5f
+            val centerY = viewportHeight * 0.5f
+            val dx = point.first - centerX
+            val dy = point.second - centerY
+            val normalization = max(min(viewportWidth, viewportHeight) * 0.5f, 1f)
+            return sqrt((dx * dx) + (dy * dy)) / normalization
+        }
+    }
 
     private companion object {
         const val LOG_TAG = "SolarLabInstrumentation"
