@@ -3650,6 +3650,13 @@ mod tests {
         let coarse = propagate_major_bodies(step_seconds, steps);
         let fine_step = step_seconds / 4.0;
         let fine = propagate_major_bodies(fine_step, steps * 4);
+        let elapsed_seconds = step_seconds * steps as f64;
+        let total_mass_kg = total_mass_kg(&coarse.initial_snapshot);
+        let expected_final_barycenter = expected_barycenter_after_seconds(
+            &coarse.initial_invariants,
+            total_mass_kg,
+            elapsed_seconds,
+        );
 
         let relative_energy_drift = drift(
             coarse.initial_invariants.total_energy_j,
@@ -3661,7 +3668,7 @@ mod tests {
         );
 
         let barycenter_drift_m =
-            displacement_magnitude(&coarse.initial_barycenter, &coarse.final_barycenter);
+            displacement_magnitude(&expected_final_barycenter, &coarse.final_barycenter);
         let barycenter_fine_baseline_distance_error_m =
             displacement_magnitude(&coarse.final_barycenter, &fine.final_barycenter);
 
@@ -3689,7 +3696,6 @@ mod tests {
         final_snapshot: WorldSnapshot,
         initial_invariants: PhysicsInvariants,
         final_invariants: PhysicsInvariants,
-        initial_barycenter: Vector3d,
         final_barycenter: Vector3d,
     }
 
@@ -3700,7 +3706,6 @@ mod tests {
 
         let initial_snapshot = runtime.snapshot();
         let initial_invariants = compute_world_invariants(&initial_snapshot.bodies);
-        let initial_barycenter = initial_invariants.barycenter_m;
 
         for i in 0..steps {
             runtime
@@ -3722,7 +3727,6 @@ mod tests {
             final_snapshot,
             initial_invariants,
             final_invariants,
-            initial_barycenter,
             final_barycenter,
         }
     }
@@ -3760,6 +3764,29 @@ mod tests {
             0.0
         } else {
             (final_value - initial).abs() / initial.abs()
+        }
+    }
+
+    fn total_mass_kg(snapshot: &WorldSnapshot) -> f64 {
+        snapshot.bodies.iter().map(|body| body.mass_kg).sum()
+    }
+
+    fn expected_barycenter_after_seconds(
+        invariants: &PhysicsInvariants,
+        total_mass_kg: f64,
+        elapsed_seconds: f64,
+    ) -> Vector3d {
+        if total_mass_kg <= 0.0 {
+            return invariants.barycenter_m;
+        }
+
+        Vector3d {
+            x: invariants.barycenter_m.x
+                + (invariants.linear_momentum_kg_mps.x / total_mass_kg) * elapsed_seconds,
+            y: invariants.barycenter_m.y
+                + (invariants.linear_momentum_kg_mps.y / total_mass_kg) * elapsed_seconds,
+            z: invariants.barycenter_m.z
+                + (invariants.linear_momentum_kg_mps.z / total_mass_kg) * elapsed_seconds,
         }
     }
 
