@@ -10,6 +10,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -26,7 +27,8 @@ class StartupSmokeInstrumentationTest {
                     it.snapshot != null &&
                     it.renderPacketSummary != null &&
                     it.renderStatus.readiness == RenderHostReadiness.Ready &&
-                    it.renderFrame != null
+                    it.renderFrame != null &&
+                    hasRenderableSceneContent(it)
             }
 
             scenario.onActivity { activity ->
@@ -41,7 +43,22 @@ class StartupSmokeInstrumentationTest {
                 "A decoded render frame should be available after startup. Final state: $finalState",
                 finalState.renderFrame,
             )
+            assertTrue(
+                "Startup reached Ready with non-null frame but no scene content. Need rendered body count >0 or decoded frame bodies or packet body count >0. Final state: $finalState",
+                hasRenderableSceneContent(finalState),
+            )
         }
+    }
+
+    private fun hasRenderableSceneContent(state: ShellUiState): Boolean =
+        state.renderStatus.renderedBodyCount > 0 ||
+            state.renderFrame?.bodies?.isNotEmpty() == true ||
+            parsePacketBodyCount(state.renderPacketSummary) > 0
+
+    private fun parsePacketBodyCount(summary: String?): Int {
+        if (summary == null) return 0
+        val match = Regex("bodies=\\s*(\\d+)").find(summary)
+        return match?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
     }
 
     private fun ActivityScenario<MainActivity>.withRuntimeFacade(): RuntimeFacade {

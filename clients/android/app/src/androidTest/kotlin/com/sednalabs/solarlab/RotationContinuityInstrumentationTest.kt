@@ -30,7 +30,9 @@ class RotationContinuityInstrumentationTest {
                     it.snapshot != null &&
                     it.observerModeCode != null &&
                     it.backendSummary != null &&
-                    it.snapshot?.activeBranchId != null
+                    it.snapshot?.activeBranchId != null &&
+                    it.renderStatus.readiness == RenderHostReadiness.Ready &&
+                    hasRenderableSceneContent(it)
             }
 
             runBlocking {
@@ -44,9 +46,11 @@ class RotationContinuityInstrumentationTest {
                     it.snapshot?.paused == true &&
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
                     it.snapshot?.activeBranchId != null &&
+                    it.renderStatus.readiness == RenderHostReadiness.Ready &&
                     it.renderStatus.renderedBodyCount >= 0 &&
                     it.renderStatus.renderedTracerCount >= 0 &&
                     it.renderStatus.renderedTrailCount >= 0 &&
+                    hasRenderableSceneContent(it) &&
                     hasStableRenderState(it)
             }
 
@@ -75,14 +79,15 @@ class RotationContinuityInstrumentationTest {
                     it.observerModeCode == RuntimeObserverMode.FollowHost.nativeCode &&
                     it.snapshot?.activeBranchId == beforeBranch &&
                     hasCompatibleBackendSummary(
-                        before = beforeRotation,
-                        after = it,
-                    ) &&
-                    hasCompatibleRenderMetrics(
-                        before = beforeRotation,
-                        after = it,
-                    ) &&
-                    hasStableRenderState(it)
+                    before = beforeRotation,
+                    after = it,
+                ) &&
+                it.renderStatus.readiness == RenderHostReadiness.Ready &&
+                hasCompatibleRenderMetrics(
+                    before = beforeRotation,
+                    after = it,
+                ) &&
+                hasStableRenderState(it)
             }
 
             val afterRotation = facadeAfter.uiState.value
@@ -144,10 +149,25 @@ class RotationContinuityInstrumentationTest {
 
     private fun hasStableRenderState(state: ShellUiState): Boolean =
         when (state.renderStatus.readiness) {
-            RenderHostReadiness.Ready -> state.renderFrame != null && state.cameraFacingSummary != null
+            RenderHostReadiness.Ready -> {
+                state.renderFrame != null &&
+                    state.cameraFacingSummary != null &&
+                    hasRenderableSceneContent(state)
+            }
             RenderHostReadiness.Unavailable -> state.renderStatus.degradationReason != null
             else -> false
         }
+
+    private fun hasRenderableSceneContent(state: ShellUiState): Boolean =
+        state.renderStatus.renderedBodyCount > 0 ||
+            state.renderFrame?.bodies?.isNotEmpty() == true ||
+            parsePacketBodyCount(state.renderPacketSummary) > 0
+
+    private fun parsePacketBodyCount(summary: String?): Int {
+        if (summary == null) return 0
+        val match = Regex("bodies=\\s*(\\d+)").find(summary)
+        return match?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
+    }
 
     private fun hasCompatibleRenderMetrics(
         before: ShellUiState,
