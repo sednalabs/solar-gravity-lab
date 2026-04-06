@@ -155,7 +155,7 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
             .assertIsEnabled()
-        sendCommand(RuntimeCommand.CreateCheckpoint)
+        sendCommand(RuntimeCommand.CreateCheckpoint(checkpointId = "checkpoint-1"))
 
         scrollShellTo(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD).performTextInput("checkpoint-1")
