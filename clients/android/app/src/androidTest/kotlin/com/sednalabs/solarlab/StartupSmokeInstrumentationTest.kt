@@ -133,15 +133,16 @@ class StartupSmokeInstrumentationTest {
             "Render surface should have a non-zero size before screenshot capture",
             renderSurface.width > 0 && renderSurface.height > 0,
         )
-        val screenshot = InstrumentationRegistry.getInstrumentation()
-            .uiAutomation
-            .takeScreenshot()
-            ?: throw AssertionError("Unable to capture startup screenshot from instrumentation")
+        val screenshot = captureStartupScreenshot()
         try {
             persistValidationScreenshot("startup-ready", screenshot)
             val stageScreenshot = screenshot.cropToStage(renderSurface)
             try {
                 persistValidationScreenshot("startup-ready-stage", stageScreenshot)
+                assertFalse(
+                    "Startup screenshot is obscured by a blocking system dialog",
+                    hasBlockingSystemDialog(),
+                )
                 val metrics = stageScreenshot.visualMetrics()
                 Log.i(
                     LOG_TAG,
@@ -156,10 +157,6 @@ class StartupSmokeInstrumentationTest {
             } finally {
                 stageScreenshot.recycle()
             }
-            assertFalse(
-                "Startup screenshot is obscured by a blocking system dialog",
-                hasBlockingSystemDialog(),
-            )
             Log.i(
                 LOG_TAG,
                 "StartupSmokeInstrumentationTest.savedFullScreenshot size=${screenshot.width}x${screenshot.height}"
@@ -167,6 +164,21 @@ class StartupSmokeInstrumentationTest {
         } finally {
             screenshot.recycle()
         }
+    }
+
+    private fun captureStartupScreenshot(): Bitmap {
+        val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        ensureBlockingSystemDialogsCleared()
+        val initialScreenshot = uiAutomation.takeScreenshot()
+            ?: throw AssertionError("Unable to capture startup screenshot from instrumentation")
+        if (!hasBlockingSystemDialog()) {
+            return initialScreenshot
+        }
+        Log.w(LOG_TAG, "StartupSmokeInstrumentationTest.blockingDialogDetectedAfterInitialCapture retrying")
+        initialScreenshot.recycle()
+        ensureBlockingSystemDialogsCleared()
+        return uiAutomation.takeScreenshot()
+            ?: throw AssertionError("Unable to capture retry startup screenshot from instrumentation")
     }
 
     private fun Bitmap.cropToStage(surfaceView: VulkanPacketRenderSurfaceView): Bitmap {
@@ -260,23 +272,41 @@ class StartupSmokeInstrumentationTest {
     private fun hasBlockingSystemDialog(): Boolean = blockingSystemDialogTitle() != null
 
     private fun blockingSystemDialogTitle(): String? {
-        val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return null
-        return findFirstNode(root) { node ->
-            val text = node.text?.toString().orEmpty()
-            text.contains("isn't responding", ignoreCase = true) ||
-                text.contains("Application Not Responding", ignoreCase = true)
+        return findNodeAcrossWindows { node ->
+            isBlockingSystemDialogText(node.text?.toString().orEmpty())
         }?.text?.toString()
     }
 
     private fun findBlockingSystemDialogDismissNode(): AccessibilityNodeInfo? {
-        val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return null
-        return findFirstNode(root) { node ->
+        return findNodeAcrossWindows { node ->
             val text = node.text?.toString().orEmpty()
             val viewId = node.viewIdResourceName.orEmpty()
             text.equals("Wait", ignoreCase = true) ||
                 text.equals("OK", ignoreCase = true) ||
                 viewId == "android:id/aerr_wait"
         }
+    }
+
+    private fun findNodeAcrossWindows(
+        predicate: (AccessibilityNodeInfo) -> Boolean,
+    ): AccessibilityNodeInfo? {
+        val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val windowRoots = uiAutomation.windows
+            .asSequence()
+            .mapNotNull { window -> window.root }
+            .toList()
+            .ifEmpty { listOfNotNull(uiAutomation.rootInActiveWindow) }
+
+        return windowRoots.firstNotNullOfOrNull { root ->
+            findFirstNode(root, predicate)
+        }
+    }
+
+    private fun isBlockingSystemDialogText(text: String): Boolean {
+        val normalized = text.replace('\u2019', '\'')
+        return normalized.contains("isn't responding", ignoreCase = true) ||
+            normalized.contains("is not responding", ignoreCase = true) ||
+            normalized.contains("Application Not Responding", ignoreCase = true)
     }
 
     private fun findFirstNode(
