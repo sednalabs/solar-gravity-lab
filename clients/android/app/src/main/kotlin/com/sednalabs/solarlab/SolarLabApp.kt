@@ -263,34 +263,19 @@ private fun ImmersiveStageShell(
                 }
             }
 
-            if (!showOverlay) {
+            if (!showOverlay &&
+                (
+                    uiState.renderFrame == null ||
+                        uiState.renderStatus.readiness != RenderHostReadiness.Ready ||
+                        uiState.renderStatus.issue != null
+                    )
+            ) {
                 ImmersiveStageHud(
                     uiState = uiState,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(18.dp),
                 )
-
-                if (uiState.renderFrame != null) {
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(horizontal = 18.dp, vertical = 22.dp),
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                        border = BorderStroke(
-                            1.dp,
-                            MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
-                        ),
-                    ) {
-                        Text(
-                            text = "Tap focus · pinch to zoom · drag to pan · double-tap to reset",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                        )
-                    }
-                }
             }
 
             if (showOverlay) {
@@ -370,11 +355,13 @@ private fun ImmersiveStageShell(
                     .padding(18.dp)
                     .testTag(SolarLabTestTags.OVERLAY_TOGGLE_BUTTON),
                 colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+                    containerColor = MaterialTheme.colorScheme.surface.copy(
+                        alpha = if (showOverlay) 0.92f else 0.68f
+                    ),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                 ),
             ) {
-                Text(if (showOverlay) "Scene only" else "Show controls")
+                Text(if (showOverlay) "Hide controls" else "Controls")
             }
         }
     }

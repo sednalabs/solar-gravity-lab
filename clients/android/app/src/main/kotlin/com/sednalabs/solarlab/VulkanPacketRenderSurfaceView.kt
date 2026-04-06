@@ -7,7 +7,9 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
+import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.Typeface
 import android.util.AttributeSet
 import android.util.Log
 import android.view.GestureDetector
@@ -19,6 +21,7 @@ import com.sednalabs.solarlab.runtime.RenderBody
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RenderTrail
 import com.sednalabs.solarlab.runtime.RenderTracer
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -39,12 +42,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         private const val TAG = "SolarLabRenderHost"
         private const val MAX_TRACER_POINTS_FOR_EXTENT = 512
         private const val MAX_TRAIL_POINTS_FOR_EXTENT = 1_024
-        private const val STARFIELD_POINT_COUNT = 84
+        private const val STARFIELD_POINT_COUNT = 118
+        private const val ACCENT_STAR_COUNT = 28
         private const val PRIMARY_BODY_EXTENT_CAP = 14
         private const val AUXILIARY_SPAN_TO_BODY_SPAN_CAP = 1.45f
         private const val MIN_USER_SCALE_MULTIPLIER = 0.6f
         private const val MAX_USER_SCALE_MULTIPLIER = 24f
         private const val MIN_TAP_SELECTION_RADIUS_PX = 18f
+        private const val MAX_SCENE_LABELS = 6
         private val TEACHING_FRAME_BODY_IDS = setOf(
             "sun",
             "mercury",
@@ -53,6 +58,29 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             "moon",
             "mars",
         )
+        private val PROMINENT_BODY_IDS = setOf(
+            "sun",
+            "mercury",
+            "venus",
+            "earth",
+            "moon",
+            "mars",
+            "jupiter",
+            "saturn",
+            "uranus",
+            "neptune",
+        )
+        private val LABELLED_BODY_IDS = setOf(
+            "sun",
+            "earth",
+            "moon",
+            "mars",
+            "jupiter",
+            "saturn",
+        )
+        private val BODY_DISPLAY_NAMES = SolarLabTeachingCatalog.entries.associate { entry ->
+            entry.bodyId.lowercase(Locale.US) to entry.displayName
+        }
     }
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
@@ -88,9 +116,16 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private val selectedBodyStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(255, 239, 128)
         style = Paint.Style.STROKE
-        strokeWidth = 2f
+        strokeWidth = 2.2f
+    }
+    private val highlightedBodyStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.6f
     }
     private val tracerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val bodyCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
     private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -104,6 +139,23 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         strokeWidth = 2.8f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
+    }
+    private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val labelBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.25f
+    }
+    private val labelConnectorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.25f
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val labelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(235, 243, 252)
+        textSize = 12.5f * resources.displayMetrics.scaledDensity
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
     private val scaleGestureDetector = ScaleGestureDetector(
         context,
@@ -262,27 +314,39 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private fun drawBackground(canvas: Canvas) {
         val viewportWidth = width.toFloat().coerceAtLeast(1f)
         val viewportHeight = height.toFloat().coerceAtLeast(1f)
+        val minDimension = min(viewportWidth, viewportHeight)
         backgroundPaint.shader = LinearGradient(
             0f,
             0f,
-            0f,
+            viewportWidth,
             viewportHeight,
-            Color.rgb(6, 10, 18),
-            Color.rgb(14, 27, 43),
+            Color.rgb(3, 7, 15),
+            Color.rgb(10, 23, 40),
             Shader.TileMode.CLAMP,
         )
         canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, backgroundPaint)
 
         glowPaint.shader = RadialGradient(
-            viewportWidth * 0.5f,
-            viewportHeight * 0.5f,
-            min(viewportWidth, viewportHeight) * 0.68f,
+            viewportWidth * 0.34f,
+            viewportHeight * 0.24f,
+            minDimension * 0.72f,
             intArrayOf(
-                Color.argb(84, 73, 132, 214),
-                Color.argb(26, 24, 60, 110),
+                Color.argb(82, 28, 69, 146),
+                Color.argb(24, 11, 29, 58),
                 Color.TRANSPARENT,
             ),
-            floatArrayOf(0f, 0.56f, 1f),
+            floatArrayOf(0f, 0.58f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, glowPaint)
+
+        glowPaint.shader = LinearGradient(
+            0f,
+            viewportHeight * 0.16f,
+            viewportWidth,
+            viewportHeight * 0.82f,
+            Color.argb(28, 54, 103, 171),
+            Color.TRANSPARENT,
             Shader.TileMode.CLAMP,
         )
         canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, glowPaint)
@@ -295,38 +359,70 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             val normalizedY = pseudoRandomUnit(index * 53 + 19)
             val starX = normalizedX * viewportWidth
             val starY = normalizedY * viewportHeight
-            val alpha = (44 + (pseudoRandomUnit(index * 97 + 7) * 130f)).toInt().coerceIn(32, 188)
-            val radius = (0.65f + pseudoRandomUnit(index * 73 + 3) * 1.55f)
+            val warmMix = pseudoRandomUnit(index * 67 + 5)
+            val alpha = (26 + (pseudoRandomUnit(index * 97 + 7) * 116f)).toInt().coerceIn(20, 164)
+            val radius = (0.45f + pseudoRandomUnit(index * 73 + 3) * 1.45f)
             glowPaint.shader = null
-            glowPaint.color = Color.argb(alpha, 222, 234, 255)
+            glowPaint.color = when {
+                warmMix > 0.84f -> Color.argb(alpha, 255, 212, 158)
+                warmMix < 0.18f -> Color.argb(alpha, 188, 214, 255)
+                else -> Color.argb(alpha, 224, 235, 255)
+            }
             canvas.drawCircle(starX, starY, radius, glowPaint)
         }
 
-        guidePaint.color = Color.argb(30, 147, 183, 255)
-        guidePaint.strokeWidth = 1.4f
-        repeat(3) { ring ->
-            val radiusScale = 0.2f + ring * 0.14f
-            canvas.drawCircle(
-                centerX,
-                centerY,
-                min(viewportWidth, viewportHeight) * radiusScale,
-                guidePaint,
+        for (index in 0 until ACCENT_STAR_COUNT) {
+            val normalizedX = pseudoRandomUnit(index * 89 + 13)
+            val normalizedY = pseudoRandomUnit(index * 41 + 29)
+            val starX = normalizedX * viewportWidth
+            val starY = normalizedY * viewportHeight
+            val radius = 1.35f + pseudoRandomUnit(index * 71 + 17) * 1.8f
+            val alpha = (92 + pseudoRandomUnit(index * 131 + 17) * 110f).toInt().coerceIn(80, 192)
+            glowPaint.shader = RadialGradient(
+                starX,
+                starY,
+                radius * 4.6f,
+                intArrayOf(
+                    Color.argb(alpha, 255, 247, 220),
+                    Color.argb((alpha * 0.34f).toInt(), 125, 170, 255),
+                    Color.TRANSPARENT,
+                ),
+                floatArrayOf(0f, 0.45f, 1f),
+                Shader.TileMode.CLAMP,
             )
+            canvas.drawCircle(starX, starY, radius * 4.6f, glowPaint)
+            glowPaint.shader = null
+            glowPaint.color = Color.argb(alpha, 255, 245, 230)
+            canvas.drawCircle(starX, starY, radius, glowPaint)
         }
 
         glowPaint.shader = RadialGradient(
             centerX,
             centerY,
-            min(viewportWidth, viewportHeight) * 0.08f,
+            minDimension * 0.18f,
             intArrayOf(
-                Color.argb(210, 255, 215, 115),
-                Color.argb(110, 255, 157, 67),
+                Color.argb(188, 255, 228, 156),
+                Color.argb(92, 255, 173, 92),
                 Color.TRANSPARENT,
             ),
-            floatArrayOf(0f, 0.38f, 1f),
+            floatArrayOf(0f, 0.28f, 1f),
             Shader.TileMode.CLAMP,
         )
-        canvas.drawCircle(centerX, centerY, min(viewportWidth, viewportHeight) * 0.09f, glowPaint)
+        canvas.drawCircle(centerX, centerY, minDimension * 0.18f, glowPaint)
+
+        glowPaint.shader = RadialGradient(
+            centerX,
+            centerY,
+            minDimension * 0.92f,
+            intArrayOf(
+                Color.TRANSPARENT,
+                Color.argb(18, 3, 6, 13),
+                Color.argb(136, 2, 4, 9),
+            ),
+            floatArrayOf(0.58f, 0.84f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, glowPaint)
 
         backgroundPaint.shader = null
         glowPaint.shader = null
@@ -347,10 +443,23 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val extent = computeExtent(frame, projectionPlane)
         val halfWorldSpan = extent.halfWorldSpan.coerceAtLeast(1f)
         val scale = (0.46f * min(viewportWidth, viewportHeight) / halfWorldSpan) * userScaleMultiplier
+        val highlightedBodyIds = highlightedTrailSourceBodyIds
+            .asSequence()
+            .map { it.lowercase(Locale.US) }
+            .toSet()
         val trailHighlightRanks = highlightedTrailSourceBodyIds
             .withIndex()
-            .associate { (index, sourceBodyId) -> sourceBodyId to index }
+            .associate { (index, sourceBodyId) -> sourceBodyId.lowercase(Locale.US) to index }
         val bodyHits = ArrayList<BodyHitTarget>(frame.bodies.size)
+        val labelAnchors = ArrayList<BodyLabelAnchor>(min(frame.bodies.size, MAX_SCENE_LABELS + 2))
+
+        drawOrbitGuides(
+            canvas = canvas,
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight,
+            halfWorldSpan = halfWorldSpan,
+            scale = scale,
+        )
 
         frame.trails.forEach { trail ->
             drawTrail(
@@ -362,7 +471,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 scale = scale,
                 viewportWidth = viewportWidth,
                 viewportHeight = viewportHeight,
-                highlightRank = trailHighlightRanks[trail.sourceBodyId],
+                highlightRank = trailHighlightRanks[trail.sourceBodyId.lowercase(Locale.US)],
             )
         }
         frame.tracers.forEach { tracer ->
@@ -388,9 +497,18 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 viewportWidth = viewportWidth,
                 viewportHeight = viewportHeight,
                 halfWorldSpan = halfWorldSpan,
+                highlighted = highlightedBodyIds.contains(body.bodyId.lowercase(Locale.US)),
                 bodyHits = bodyHits,
+                labelAnchors = labelAnchors,
             )
         }
+
+        drawBodyLabels(
+            canvas = canvas,
+            labelAnchors = labelAnchors,
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight,
+        )
 
         activeViewportState = ViewportState(
             bodyHits = bodyHits,
@@ -407,7 +525,9 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         viewportWidth: Float,
         viewportHeight: Float,
         halfWorldSpan: Float,
+        highlighted: Boolean,
         bodyHits: MutableList<BodyHitTarget>,
+        labelAnchors: MutableList<BodyLabelAnchor>,
     ) {
         val projectedY = projectY(body.y, body.z, projectionPlane)
         if (!body.x.isFinite() || !projectedY.isFinite() || !body.radiusM.isFinite()) {
@@ -418,25 +538,96 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         if (!sx.isFinite() || !sy.isFinite()) {
             return
         }
-        val radiusPx = (body.radiusM / halfWorldSpan * min(viewportWidth, viewportHeight) * 0.5f)
-            .coerceIn(2.5f, 20f)
-        bodyPaint.color = Color.argb(
-            (body.colorA.coerceIn(0f, 1f) * 255f).toInt(),
-            (body.colorR.coerceIn(0f, 1f) * 255f).toInt(),
-            (body.colorG.coerceIn(0f, 1f) * 255f).toInt(),
-            (body.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+        val normalizedBodyId = body.bodyId.lowercase(Locale.US)
+        val isSun = normalizedBodyId == "sun"
+        val isProminent = normalizedBodyId in PROMINENT_BODY_IDS
+        val minDimension = min(viewportWidth, viewportHeight)
+        val linearRadiusPx = (body.radiusM / halfWorldSpan * minDimension * 0.5f).coerceAtLeast(0f)
+        val boostedRadiusPx = sqrt(linearRadiusPx + 0.18f) * when {
+            isSun -> 2.95f
+            body.selected -> 2.4f
+            highlighted -> 2.1f
+            isProminent -> 1.85f
+            else -> 1.32f
+        }
+        val radiusPx = when {
+            isSun -> boostedRadiusPx.coerceIn(10f, 28f)
+            body.selected -> boostedRadiusPx.coerceIn(4.6f, 15.5f)
+            highlighted -> boostedRadiusPx.coerceIn(3.9f, 12.4f)
+            isProminent -> boostedRadiusPx.coerceIn(3.0f, 10.8f)
+            else -> boostedRadiusPx.coerceIn(1.1f, 5.0f)
+        }
+        val colorAlpha = (body.colorA.coerceIn(0f, 1f) * 255f).toInt().coerceIn(0, 255)
+        val colorRed = (body.colorR.coerceIn(0f, 1f) * 255f).toInt()
+        val colorGreen = (body.colorG.coerceIn(0f, 1f) * 255f).toInt()
+        val colorBlue = (body.colorB.coerceIn(0f, 1f) * 255f).toInt()
+        bodyPaint.color = Color.argb(colorAlpha, colorRed, colorGreen, colorBlue)
+        val glowAlpha = (body.colorA.coerceIn(0f, 1f) * when {
+            isSun -> 0.48f
+            body.selected -> 0.4f
+            highlighted -> 0.34f
+            isProminent -> 0.28f
+            else -> 0.2f
+        } * 255f).toInt().coerceIn(0, 255)
+        bodyGlowPaint.color = Color.argb(glowAlpha, colorRed, colorGreen, colorBlue)
+        if (isSun) {
+            bodyGlowPaint.color = Color.argb(62, 255, 206, 122)
+            canvas.drawCircle(sx, sy, radiusPx * 4.8f, bodyGlowPaint)
+            bodyGlowPaint.color = Color.argb(124, 255, 184, 102)
+            canvas.drawCircle(sx, sy, radiusPx * 2.8f, bodyGlowPaint)
+        }
+        canvas.drawCircle(
+            sx,
+            sy,
+            radiusPx * when {
+                body.selected -> 2.7f
+                highlighted -> 2.35f
+                isProminent -> 2.1f
+                else -> 1.8f
+            },
+            bodyGlowPaint,
         )
-        val glowAlpha = (body.colorA.coerceIn(0f, 1f) * 0.34f * 255f).toInt().coerceIn(0, 255)
-        bodyGlowPaint.color = Color.argb(
-            glowAlpha,
-            (body.colorR.coerceIn(0f, 1f) * 255f).toInt(),
-            (body.colorG.coerceIn(0f, 1f) * 255f).toInt(),
-            (body.colorB.coerceIn(0f, 1f) * 255f).toInt(),
-        )
-        canvas.drawCircle(sx, sy, radiusPx * 2.15f, bodyGlowPaint)
         canvas.drawCircle(sx, sy, radiusPx, bodyPaint)
+        if (body.selected || highlighted || isProminent) {
+            bodyCorePaint.color = Color.argb(
+                if (isSun) 218 else if (body.selected) 160 else 110,
+                255,
+                249,
+                242,
+            )
+            canvas.drawCircle(
+                sx - radiusPx * 0.18f,
+                sy - radiusPx * 0.18f,
+                max(1.1f, radiusPx * 0.28f),
+                bodyCorePaint,
+            )
+        }
+        if (highlighted && !body.selected) {
+            highlightedBodyStroke.color = Color.argb(128, colorRed, colorGreen, colorBlue)
+            canvas.drawCircle(sx, sy, radiusPx + 2.4f, highlightedBodyStroke)
+        }
         if (body.selected) {
+            selectedBodyStroke.color = Color.argb(228, 255, 239, 128)
             canvas.drawCircle(sx, sy, radiusPx + 2.5f, selectedBodyStroke)
+            highlightedBodyStroke.color = Color.argb(92, 255, 239, 128)
+            canvas.drawCircle(sx, sy, radiusPx + 6.2f, highlightedBodyStroke)
+        }
+        if (body.selected || normalizedBodyId in LABELLED_BODY_IDS) {
+            labelAnchors += BodyLabelAnchor(
+                displayName = BODY_DISPLAY_NAMES[normalizedBodyId] ?: body.bodyId,
+                x = sx,
+                y = sy,
+                radiusPx = radiusPx,
+                accentColor = Color.argb(220, colorRed, colorGreen, colorBlue),
+                priority = when {
+                    body.selected -> 0
+                    isSun -> 1
+                    normalizedBodyId == "earth" -> 2
+                    normalizedBodyId == "moon" -> 3
+                    normalizedBodyId == "mars" -> 4
+                    else -> 5
+                },
+            )
         }
         bodyHits += BodyHitTarget(
             bodyId = body.bodyId,
@@ -472,6 +663,16 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             (tracer.colorG.coerceIn(0f, 1f) * 255f).toInt(),
             (tracer.colorB.coerceIn(0f, 1f) * 255f).toInt(),
         )
+        if (radiusPx >= 1.4f) {
+            glowPaint.shader = null
+            glowPaint.color = Color.argb(
+                (tracer.colorA.coerceIn(0f, 1f) * 0.18f * 255f).toInt(),
+                (tracer.colorR.coerceIn(0f, 1f) * 255f).toInt(),
+                (tracer.colorG.coerceIn(0f, 1f) * 255f).toInt(),
+                (tracer.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+            )
+            canvas.drawCircle(sx, sy, radiusPx * 2.1f, glowPaint)
+        }
         canvas.drawCircle(sx, sy, radiusPx, tracerPaint)
     }
 
@@ -489,15 +690,17 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         if (trail.points.size < 2) return
         val path = Path()
         var plottedPointCount = 0
-        trail.points.forEachIndexed { index, point ->
+        var previousScreenPoint: ScreenPoint? = null
+        var lastScreenPoint: ScreenPoint? = null
+        trail.points.forEach { point ->
             val projectedY = projectY(point.y, point.z, projectionPlane)
             if (!point.x.isFinite() || !projectedY.isFinite()) {
-                return@forEachIndexed
+                return@forEach
             }
             val sx = screenX(point.x, centerX, scale, viewportWidth)
             val sy = screenY(projectedY, centerY, scale, viewportHeight)
             if (!sx.isFinite() || !sy.isFinite()) {
-                return@forEachIndexed
+                return@forEach
             }
             if (plottedPointCount == 0) {
                 path.moveTo(sx, sy)
@@ -505,6 +708,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 path.lineTo(sx, sy)
             }
             plottedPointCount++
+            previousScreenPoint = lastScreenPoint
+            lastScreenPoint = ScreenPoint(x = sx, y = sy)
         }
         if (plottedPointCount < 2) return
         val rankEmphasis = highlightRank?.let { rank ->
@@ -542,6 +747,190 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         trailGlowPaint.strokeWidth = trailPaint.strokeWidth * 2.1f
         canvas.drawPath(path, trailGlowPaint)
         canvas.drawPath(path, trailPaint)
+        lastScreenPoint?.let { head ->
+            val headRadius = when {
+                highlightRank == 0 -> 4.8f
+                highlightRank != null -> 3.9f
+                trail.headHighlighted -> 3.2f
+                else -> 2.2f
+            }
+            glowPaint.shader = null
+            glowPaint.color = Color.argb(
+                (trail.colorA.coerceIn(0f, 1f) * alphaScale * 0.26f * 255f).toInt(),
+                (trail.colorR.coerceIn(0f, 1f) * 255f).toInt(),
+                (trail.colorG.coerceIn(0f, 1f) * 255f).toInt(),
+                (trail.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+            )
+            canvas.drawCircle(head.x, head.y, headRadius * 2.5f, glowPaint)
+            tracerPaint.color = Color.argb(
+                (trail.colorA.coerceIn(0f, 1f) * alphaScale * 255f).toInt(),
+                (trail.colorR.coerceIn(0f, 1f) * 255f).toInt(),
+                (trail.colorG.coerceIn(0f, 1f) * 255f).toInt(),
+                (trail.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+            )
+            canvas.drawCircle(head.x, head.y, headRadius, tracerPaint)
+            previousScreenPoint?.let { previous ->
+                val dx = head.x - previous.x
+                val dy = head.y - previous.y
+                val length = sqrt(dx * dx + dy * dy)
+                if (length > 0.6f) {
+                    val tickLength = min(12f, length * 0.38f + headRadius)
+                    val tickStartX = head.x - dx / length * tickLength
+                    val tickStartY = head.y - dy / length * tickLength
+                    canvas.drawLine(tickStartX, tickStartY, head.x, head.y, trailPaint)
+                }
+            }
+        }
+    }
+
+    private fun drawOrbitGuides(
+        canvas: Canvas,
+        viewportWidth: Float,
+        viewportHeight: Float,
+        halfWorldSpan: Float,
+        scale: Float,
+    ) {
+        val centerX = viewportWidth * 0.5f + userPanX
+        val centerY = viewportHeight * 0.5f + userPanY
+        val orbitGuideRadii = listOf(0.16f, 0.28f, 0.42f, 0.6f, 0.82f)
+            .map { fraction -> (halfWorldSpan * fraction * scale).coerceAtLeast(0f) }
+            .filter { radiusPx -> radiusPx >= 32f }
+            .take(5)
+
+        orbitGuideRadii.forEachIndexed { index, radiusPx ->
+            guidePaint.color = Color.argb(
+                (42 - index * 5).coerceAtLeast(14),
+                94,
+                152,
+                236,
+            )
+            guidePaint.strokeWidth = when (index) {
+                0 -> 1.55f
+                1 -> 1.3f
+                else -> 1.05f
+            }
+            canvas.drawCircle(centerX, centerY, radiusPx, guidePaint)
+        }
+
+        if (orbitGuideRadii.isNotEmpty()) {
+            glowPaint.shader = RadialGradient(
+                centerX,
+                centerY,
+                orbitGuideRadii.last() * 1.08f,
+                intArrayOf(
+                    Color.argb(24, 65, 114, 196),
+                    Color.TRANSPARENT,
+                ),
+                floatArrayOf(0f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawCircle(centerX, centerY, orbitGuideRadii.last() * 1.08f, glowPaint)
+            glowPaint.shader = null
+        }
+    }
+
+    private fun drawBodyLabels(
+        canvas: Canvas,
+        labelAnchors: List<BodyLabelAnchor>,
+        viewportWidth: Float,
+        viewportHeight: Float,
+    ) {
+        if (labelAnchors.isEmpty()) {
+            return
+        }
+        val occupiedBounds = mutableListOf<RectF>()
+        val textPaddingHorizontal = 12f
+        val textPaddingVertical = 7f
+        val fontMetrics = labelTextPaint.fontMetrics
+        val textHeight = fontMetrics.bottom - fontMetrics.top
+        val maxLabelTop = max(12f, viewportHeight - textHeight - textPaddingVertical * 2f - 12f)
+
+        labelAnchors
+            .sortedWith(
+                compareBy<BodyLabelAnchor> { it.priority }
+                    .thenByDescending { it.radiusPx }
+            )
+            .take(MAX_SCENE_LABELS + 2)
+            .forEach { anchor ->
+                val textWidth = labelTextPaint.measureText(anchor.displayName)
+                val bubbleWidth = textWidth + textPaddingHorizontal * 2f
+                val bubbleHeight = textHeight + textPaddingVertical * 2f
+                val maxLabelLeft = max(12f, viewportWidth - bubbleWidth - 12f)
+                val rightSideRect = RectF(
+                    (anchor.x + anchor.radiusPx + 12f).coerceIn(12f, maxLabelLeft),
+                    (anchor.y - anchor.radiusPx - bubbleHeight - 10f).coerceIn(12f, maxLabelTop),
+                    0f,
+                    0f,
+                ).apply {
+                    right = left + bubbleWidth
+                    bottom = top + bubbleHeight
+                }
+                val leftSideRect = RectF(
+                    (anchor.x - anchor.radiusPx - bubbleWidth - 12f).coerceAtLeast(12f),
+                    (anchor.y - anchor.radiusPx - bubbleHeight - 10f).coerceIn(12f, maxLabelTop),
+                    0f,
+                    0f,
+                ).apply {
+                    right = left + bubbleWidth
+                    bottom = top + bubbleHeight
+                }
+                val lowerRightRect = RectF(
+                    (anchor.x + anchor.radiusPx + 12f).coerceIn(12f, maxLabelLeft),
+                    (anchor.y + anchor.radiusPx + 10f).coerceIn(12f, maxLabelTop),
+                    0f,
+                    0f,
+                ).apply {
+                    right = left + bubbleWidth
+                    bottom = top + bubbleHeight
+                }
+
+                val bubbleRect = listOf(rightSideRect, leftSideRect, lowerRightRect)
+                    .firstOrNull { candidate ->
+                        occupiedBounds.none { existing -> RectF.intersects(existing, candidate) }
+                    }
+                    ?: return@forEach
+
+                occupiedBounds += bubbleRect
+                labelBackgroundPaint.color = Color.argb(
+                    if (anchor.priority == 0) 196 else 164,
+                    6,
+                    11,
+                    20,
+                )
+                labelBorderPaint.color = withAlpha(anchor.accentColor, if (anchor.priority == 0) 184 else 126)
+                labelConnectorPaint.color = withAlpha(anchor.accentColor, if (anchor.priority == 0) 176 else 118)
+                val connectorEndX = if (bubbleRect.centerX() >= anchor.x) {
+                    bubbleRect.left + 10f
+                } else {
+                    bubbleRect.right - 10f
+                }
+                val connectorEndY = bubbleRect.bottom - 9f
+                val connectorStartX = if (bubbleRect.centerX() >= anchor.x) {
+                    anchor.x + anchor.radiusPx * 0.78f
+                } else {
+                    anchor.x - anchor.radiusPx * 0.78f
+                }
+                val connectorStartY = anchor.y - anchor.radiusPx * 0.2f
+                canvas.drawLine(connectorStartX, connectorStartY, connectorEndX, connectorEndY, labelConnectorPaint)
+                canvas.drawRoundRect(bubbleRect, 18f, 18f, labelBackgroundPaint)
+                canvas.drawRoundRect(bubbleRect, 18f, 18f, labelBorderPaint)
+                labelTextPaint.color = if (anchor.priority == 0) {
+                    Color.rgb(255, 249, 236)
+                } else {
+                    Color.rgb(232, 240, 250)
+                }
+                val textBaseline = bubbleRect.top + textPaddingVertical - fontMetrics.top
+                canvas.drawText(anchor.displayName, bubbleRect.left + textPaddingHorizontal, textBaseline, labelTextPaint)
+            }
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int {
+        return Color.argb(
+            alpha.coerceIn(0, 255),
+            Color.red(color),
+            Color.green(color),
+            Color.blue(color),
+        )
     }
 
     private fun computeExtent(
@@ -812,6 +1201,20 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val x: Float,
         val y: Float,
         val selectionRadiusPx: Float,
+    )
+
+    private data class BodyLabelAnchor(
+        val displayName: String,
+        val x: Float,
+        val y: Float,
+        val radiusPx: Float,
+        val accentColor: Int,
+        val priority: Int,
+    )
+
+    private data class ScreenPoint(
+        val x: Float,
+        val y: Float,
     )
 
     private data class ViewportState(
