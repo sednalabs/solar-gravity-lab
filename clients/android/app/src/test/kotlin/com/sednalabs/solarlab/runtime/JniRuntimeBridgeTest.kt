@@ -138,6 +138,8 @@ class JniRuntimeBridgeTest {
 
         assertEquals("simd-arm64", runtimeInfo.cpuBackendLabel)
         assertEquals("opencl", runtimeInfo.gpuBackendLabel)
+        assertTrue(runtimeInfo.workloadSummary?.contains("long-horizon") == true)
+        assertTrue(runtimeInfo.interopErrorBudgetSummary?.contains("checkpoint-publication") == true)
     }
 
     @Test

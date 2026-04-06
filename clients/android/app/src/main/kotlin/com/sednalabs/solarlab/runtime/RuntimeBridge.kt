@@ -141,6 +141,8 @@ internal class JniRuntimeBridge(
                 RuntimeSignal.RuntimeInfoAvailable(
                     cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
                     gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
+                    workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
+                    interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
                 )
             )
         } else {
@@ -492,6 +494,8 @@ internal sealed interface RuntimeSignal {
     data class RuntimeInfoAvailable(
         val cpuBackendLabel: String,
         val gpuBackendLabel: String,
+        val workloadSummary: String? = null,
+        val interopErrorBudgetSummary: String? = null,
     ) : RuntimeSignal
     data class Notice(
         val message: String,
@@ -945,6 +949,19 @@ internal data class NativeRuntimeInfoResult(
         NATIVE_GPU_BACKEND_WEBGPU_CLASS -> "webgpu-class"
         NATIVE_GPU_BACKEND_OPENCL -> "opencl"
         else -> "unknown($gpuBackend)"
+    }
+
+    fun gpuWorkloadSummary(): String? = when (gpuBackend) {
+        NATIVE_GPU_BACKEND_OPENCL ->
+            "simulation=opencl(long-horizon tracer, forecast), rendering=vulkan(in-frame)"
+        NATIVE_GPU_BACKEND_VULKAN -> "rendering=vulkan(realtime + in-frame)"
+        else -> null
+    }
+
+    fun gpuInteropErrorBudgetSummary(): String? = when (gpuBackend) {
+        NATIVE_GPU_BACKEND_OPENCL ->
+            "sync=checkpoint-publication, budget=position<=5m velocity<=1mm/s drift<=10ppm"
+        else -> null
     }
 }
 
