@@ -4,6 +4,8 @@ set -euo pipefail
 REPORT_ROOT="clients/android/app/build/reports/emulator-smoke"
 APP_PACKAGE="com.sednalabs.solarlab"
 CLASS_TIMEOUT_SECONDS="${ANDROID_TEST_CLASS_TIMEOUT_SECONDS:-300}"
+TEST_SCOPE="${ANDROID_TEST_SCOPE:-core}"
+ARTIFACT_MODE="${ANDROID_ARTIFACT_MODE:-failures-only}"
 ADB_CAPTURE_TIMEOUT_SECONDS="${ANDROID_TEST_ADB_CAPTURE_TIMEOUT_SECONDS:-20}"
 LOGCAT_SHUTDOWN_TIMEOUT_SECONDS="${ANDROID_TEST_LOGCAT_SHUTDOWN_TIMEOUT_SECONDS:-5}"
 LOGCAT_FILTER_SPECS=(
@@ -17,12 +19,22 @@ LOGCAT_FILTER_SPECS=(
 )
 LAST_LOGCAT_PID=""
 
-TEST_CLASSES=(
+CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
   "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
   "com.sednalabs.solarlab.RotationContinuityInstrumentationTest"
   "com.sednalabs.solarlab.SolarLabShellLayoutTest"
 )
+
+FULL_TEST_CLASSES=(
+  "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
+  "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
+  "com.sednalabs.solarlab.SolarLabShellLayoutTest"
+  "com.sednalabs.solarlab.RotationContinuityInstrumentationTest"
+  "com.sednalabs.solarlab.PlaybackContinuityInstrumentationTest"
+)
+
+TEST_CLASSES=()
 
 mkdir -p "${REPORT_ROOT}"
 
@@ -99,59 +111,84 @@ stop_live_logcat() {
 }
 
 emit_failure_summary() {
-  local class_dir="$1"
-  local class_name
-  class_name="$(basename "${class_dir}")"
-
-  echo "Failure summary for ${class_name}:"
-  tail -n 80 "${class_dir}/gradle-output.txt" || true
-  if [[ -f "${class_dir}/live-logcat.txt" ]]; then
-    tail -n 120 "${class_dir}/live-logcat.txt" || true
+  local run_dir="$1"
+  echo "Failure summary for instrumentation batch:"
+  tail -n 120 "${run_dir}/gradle-output.txt" || true
+  if [[ -f "${run_dir}/live-logcat.txt" ]]; then
+    tail -n 160 "${run_dir}/live-logcat.txt" || true
   fi
 }
 
-run_test_class() {
-  local test_class="$1"
-  local class_name="${test_class##*.}"
-  local class_dir="${REPORT_ROOT}/${class_name}"
-  local command_status=0
+resolve_test_classes() {
+  if [[ -n "${ANDROID_TEST_CLASSES:-}" ]]; then
+    IFS=',' read -r -a TEST_CLASSES <<< "${ANDROID_TEST_CLASSES}"
+    return
+  fi
 
-  mkdir -p "${class_dir}"
+  case "${TEST_SCOPE}" in
+    core)
+      TEST_CLASSES=("${CORE_TEST_CLASSES[@]}")
+      ;;
+    full)
+      TEST_CLASSES=("${FULL_TEST_CLASSES[@]}")
+      ;;
+    *)
+      echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}'" >&2
+      exit 2
+      ;;
+  esac
+}
+
+run_test_batch() {
+  local run_dir="${REPORT_ROOT}/instrumentation-batch"
+  local command_status=0
+  local run_timeout_seconds
+  local class_arg
+
+  mkdir -p "${run_dir}"
   adb logcat -c || true
 
-  echo "::group::${class_name}"
-  echo "Running ${test_class} with timeout ${CLASS_TIMEOUT_SECONDS}s"
-  start_live_logcat "${class_dir}"
+  class_arg="$(IFS=,; echo "${TEST_CLASSES[*]}")"
+  run_timeout_seconds="${ANDROID_TEST_RUN_TIMEOUT_SECONDS:-$((CLASS_TIMEOUT_SECONDS * ${#TEST_CLASSES[@]}))}"
+
+  echo "::group::InstrumentationBatch"
+  echo "Running ${#TEST_CLASSES[@]} instrumentation classes with timeout ${run_timeout_seconds}s"
+  printf 'Classes:\n%s\n' "${class_arg//,/$'\n'}"
+  start_live_logcat "${run_dir}"
 
   set +e
-  timeout --foreground "${CLASS_TIMEOUT_SECONDS}s" \
-    ./gradlew -p clients/android --no-daemon --stacktrace \
+  timeout --foreground "${run_timeout_seconds}s" \
+    ./gradlew -p clients/android --stacktrace \
       :app:connectedDebugAndroidTest \
-      "-Pandroid.testInstrumentationRunnerArguments.class=${test_class}" \
-      2>&1 | tee "${class_dir}/gradle-output.txt"
+      "-Pandroid.testInstrumentationRunnerArguments.class=${class_arg}" \
+      2>&1 | tee "${run_dir}/gradle-output.txt"
   command_status=${PIPESTATUS[0]}
   set -e
   stop_live_logcat "${LAST_LOGCAT_PID}"
   LAST_LOGCAT_PID=""
 
-  capture_device_state "${class_dir}" "post"
+  if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
+    capture_device_state "${run_dir}" "post"
+  fi
 
   {
-    printf 'test_class=%s\n' "${test_class}"
-    printf 'timeout_seconds=%s\n' "${CLASS_TIMEOUT_SECONDS}"
+    printf 'test_classes=%s\n' "${class_arg}"
+    printf 'scope=%s\n' "${TEST_SCOPE}"
+    printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
+    printf 'timeout_seconds=%s\n' "${run_timeout_seconds}"
     printf 'exit_code=%s\n' "${command_status}"
-  } > "${class_dir}/status.txt"
+  } > "${run_dir}/status.txt"
 
   if [[ "${command_status}" -eq 124 ]]; then
-    capture_device_state "${class_dir}" "fail"
-    echo "Timed out while running ${test_class}" >&2
-    emit_failure_summary "${class_dir}"
+    capture_device_state "${run_dir}" "fail"
+    echo "Timed out while running instrumentation batch" >&2
+    emit_failure_summary "${run_dir}"
   elif [[ "${command_status}" -ne 0 ]]; then
-    capture_device_state "${class_dir}" "fail"
-    echo "Instrumentation class ${test_class} failed with exit code ${command_status}" >&2
-    emit_failure_summary "${class_dir}"
+    capture_device_state "${run_dir}" "fail"
+    echo "Instrumentation batch failed with exit code ${command_status}" >&2
+    emit_failure_summary "${run_dir}"
   else
-    echo "Instrumentation class ${test_class} completed successfully"
+    echo "Instrumentation batch completed successfully"
   fi
 
   echo "::endgroup::"
@@ -159,15 +196,10 @@ run_test_class() {
   return "${command_status}"
 }
 
-overall_status=0
-
-for test_class in "${TEST_CLASSES[@]}"; do
-  if run_test_class "${test_class}"; then
-    continue
-  else
-    overall_status=$?
-    break
-  fi
-done
+resolve_test_classes
+set +e
+run_test_batch
+overall_status=$?
+set -e
 
 exit "${overall_status}"
