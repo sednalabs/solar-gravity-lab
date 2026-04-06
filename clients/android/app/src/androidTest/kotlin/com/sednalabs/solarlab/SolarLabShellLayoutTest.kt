@@ -94,6 +94,20 @@ class SolarLabShellLayoutTest {
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_BODY_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_MASS_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_RADIUS_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_BODY_ID_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_POSITION_X_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_POSITION_Y_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_POSITION_Z_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_VELOCITY_X_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_VELOCITY_Y_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_VELOCITY_Z_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.SET_BODY_KINEMATICS_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.REMOVE_BODY_ID_FIELD)
+        assertReachableInScrollableShell(SolarLabTestTags.REMOVE_BODY_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.CHECKPOINT_ID_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.CREATE_CHECKPOINT_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.BRANCH_FROM_CHECKPOINT_FIELD)
@@ -170,7 +184,57 @@ class SolarLabShellLayoutTest {
             },
         )
 
-        assertTrue(runtimeFacade.commands.size >= 4)
+        scrollShellTo(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_ID_FIELD).performTextInput("body-asteroid")
+        composeRule.waitForIdle()
+        scrollShellTo(SolarLabTestTags.SPAWN_BODY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_BUTTON)
+            .assertIsEnabled()
+            .performClick()
+        composeRule.waitForIdle()
+        assertTrue(
+            runtimeFacade.commands.any {
+                it is RuntimeCommand.SpawnBody &&
+                    it.bodyId == "body-asteroid" &&
+                    it.massKg == 1.0 &&
+                    it.radiusM == 1.0
+            },
+        )
+
+        scrollShellTo(SolarLabTestTags.SET_BODY_KINEMATICS_BODY_ID_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.SET_BODY_KINEMATICS_BODY_ID_FIELD)
+            .performTextInput("body-asteroid")
+        composeRule.waitForIdle()
+        scrollShellTo(SolarLabTestTags.SET_BODY_KINEMATICS_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.SET_BODY_KINEMATICS_BUTTON)
+            .assertIsEnabled()
+            .performClick()
+        composeRule.waitForIdle()
+        assertTrue(
+            runtimeFacade.commands.any {
+                it is RuntimeCommand.SetBodyKinematics &&
+                    it.bodyId == "body-asteroid" &&
+                    it.positionX == 0.0 &&
+                    it.positionY == 0.0 &&
+                    it.positionZ == 0.0 &&
+                    it.velocityX == 0.0 &&
+                    it.velocityY == 0.0 &&
+                    it.velocityZ == 0.0
+            },
+        )
+
+        scrollShellTo(SolarLabTestTags.REMOVE_BODY_ID_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.REMOVE_BODY_ID_FIELD)
+            .performTextInput("body-asteroid")
+        composeRule.waitForIdle()
+        scrollShellTo(SolarLabTestTags.REMOVE_BODY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.REMOVE_BODY_BUTTON)
+            .assertIsEnabled()
+            .performClick()
+        composeRule.waitForIdle()
+        assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.RemoveBody && it.bodyId == "body-asteroid" })
+
+        assertTrue(runtimeFacade.commands.size >= 7)
     }
 
     @Test

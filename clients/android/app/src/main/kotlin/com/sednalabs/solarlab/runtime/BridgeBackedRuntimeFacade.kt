@@ -288,24 +288,50 @@ class BridgeBackedRuntimeFacade internal constructor(
                 val packet = lease.packet
                 try {
                     val renderFrame = VulkanPacketRenderFrameDecoder.decode(lease.packet)
+                    val packetRenderIssue = packet.diagnostics.toRenderIssue()
+                    val hasRenderableScene = packet.bodyCount > 0 && (
+                        renderFrame.hasRenderableSceneContent() || packet.hasRenderablePayload()
+                    )
+                    val readyReadiness = if (hasRenderableScene) {
+                        RenderHostReadiness.Ready
+                    } else {
+                        RenderHostReadiness.Refreshing
+                    }
+                    val sceneIssue = if (hasRenderableScene) {
+                        null
+                    } else {
+                        "Waiting for non-empty render packet: bodies=${packet.bodyCount}, tracers=${packet.tracerCount}, trails=${packet.trailSpanCount}/${packet.trailVertexCount}, lights=${packet.directionalLightCount}"
+                    }
                     _uiState.update { current ->
                         val next = current.copy(
                             connectionState = SessionConnectionState.Active,
-                            statusLine = "Render host ready",
+                            statusLine = if (hasRenderableScene) "Render host ready" else "Render packet empty",
                             detailLine = "Scene revision ${lease.sceneRevision}",
-                            noticeLine = "Fresh packet decoded for the Android render host",
-                            noticeTone = ShellNoticeTone.Positive,
+                            noticeLine = if (hasRenderableScene) {
+                                "Fresh packet decoded for the Android render host"
+                            } else {
+                                "Render packet decoded but contained no renderable scene elements"
+                            },
+                            noticeTone = if (hasRenderableScene) {
+                                ShellNoticeTone.Positive
+                            } else {
+                                ShellNoticeTone.Caution
+                            },
                             pendingActionLabel = null,
                             renderPacketSummary = lease.summaryLine,
                             observerModeCode = lease.packet.observerMode,
                             cameraFacingSummary = lease.packet.camera.toFacingSummary(),
                             renderStatus = packet.toRenderStatusPresentation(
-                                readiness = RenderHostReadiness.Ready,
+                                readiness = readyReadiness,
                                 sceneRevision = lease.sceneRevision,
                                 summary = lease.summaryLine,
                                 renderedBodyCount = renderFrame.bodies.size,
                                 renderedTracerCount = renderFrame.tracers.size,
                                 renderedTrailCount = renderFrame.trails.size,
+                            ).copy(
+                                isDegraded = sceneIssue != null || packetRenderIssue != null,
+                                issue = sceneIssue ?: packetRenderIssue,
+                                degradationReason = sceneIssue ?: packetRenderIssue,
                             ),
                             renderFrame = renderFrame,
                         )
@@ -545,6 +571,12 @@ private fun Int.toTimelineSemanticsLabel(): String = when (this) {
     else -> "Timeline semantics $this"
 }
 
+private fun RenderFrame.hasRenderableSceneContent(): Boolean =
+    bodies.isNotEmpty() || tracers.isNotEmpty() || trails.isNotEmpty()
+
+private fun NativeVulkanScenePacket.hasRenderablePayload(): Boolean =
+    bodyCount > 0 || tracerCount > 0 || trailSpanCount > 0 || trailVertexCount > 0 || directionalLightCount > 0
+
 private fun NativeRenderDiagnostics.toRenderIssue(): String? {
     if (droppedFrames <= 0) {
         return null
@@ -557,6 +589,7 @@ private fun NativeRenderDiagnostics.toRenderIssue(): String? {
         append(droppedFrames)
     }
 }
+
 
 private fun NativeRenderDiagnostics.isDegraded(): Boolean = droppedFrames > 0
 

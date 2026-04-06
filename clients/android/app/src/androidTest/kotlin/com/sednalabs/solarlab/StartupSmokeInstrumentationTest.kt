@@ -28,7 +28,7 @@ class StartupSmokeInstrumentationTest {
                     it.renderPacketSummary != null &&
                     it.renderStatus.readiness == RenderHostReadiness.Ready &&
                     it.renderFrame != null &&
-                    hasRenderableSceneContent(it)
+                    hasRicherSceneContent(it)
             }
 
             scenario.onActivity { activity ->
@@ -44,22 +44,28 @@ class StartupSmokeInstrumentationTest {
                 finalState.renderFrame,
             )
             assertTrue(
-                "Startup reached Ready with non-null frame but no scene content. Need rendered body count >0 or decoded frame bodies or packet body count >0. Final state: $finalState",
-                hasRenderableSceneContent(finalState),
+                "Startup should reach a populated ready scene. Final state: $finalState",
+                hasRicherSceneContent(finalState),
             )
         }
     }
 
-    private fun hasRenderableSceneContent(state: ShellUiState): Boolean =
-        state.renderStatus.renderedBodyCount > 0 ||
-            state.renderFrame?.bodies?.isNotEmpty() == true ||
-            parsePacketBodyCount(state.renderPacketSummary) > 0
+    private fun hasRicherSceneContent(state: ShellUiState): Boolean {
+        val snapshotBodyCount = state.snapshot?.bodyCount ?: 0
+        val frameBodyCount = state.renderFrame?.bodies?.size ?: 0
+        val renderBodyCount = state.renderStatus.renderedBodyCount
+        val renderTracerCount = state.renderStatus.renderedTracerCount
+        val renderTrailCount = state.renderStatus.renderedTrailCount
+        val totalRenderableElements = renderBodyCount + renderTracerCount + renderTrailCount
 
-    private fun parsePacketBodyCount(summary: String?): Int {
-        if (summary == null) return 0
-        val match = Regex("bodies=\\s*(\\d+)").find(summary)
-        return match?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
+        return snapshotBodyCount >= 10 &&
+            frameBodyCount >= 10 &&
+            renderBodyCount >= 10 &&
+            totalRenderableElements >= 10 &&
+            totalRenderableElements >= renderBodyCount &&
+            state.renderStatus.issue == null
     }
+
 
     private fun ActivityScenario<MainActivity>.withRuntimeFacade(): RuntimeFacade {
         var facade: RuntimeFacade? = null

@@ -10,9 +10,11 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.charset.StandardCharsets
+import kotlin.math.sqrt
 
 class JniRuntimeBridgeTest {
     @Test
@@ -21,7 +23,7 @@ class JniRuntimeBridgeTest {
             refreshResults = ArrayDeque(
                 listOf(
                     snapshotSummary(bodyCount = 0),
-                    snapshotSummary(bodyCount = 3),
+                    snapshotSummary(bodyCount = 12),
                 )
             ),
         )
@@ -34,7 +36,7 @@ class JniRuntimeBridgeTest {
         val signals = collectSignalsUntil(bridge) { collected ->
             collected
                 .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
-                .any { it.summary.bodyCount == 3 }
+                .any { it.summary.bodyCount == 12 }
         }
 
         assertEquals(listOf(42L), transport.runtimeInfoHandles)
@@ -46,7 +48,42 @@ class JniRuntimeBridgeTest {
         val spawnedBodyIds = transport.appliedCommands.map { payload ->
             payload.bodyIdUtf8?.let { String(it, StandardCharsets.UTF_8) }
         }
-        assertEquals(listOf("Sun", "Earth", "Moon"), spawnedBodyIds)
+        assertEquals(listOf("sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto", "ceres"), spawnedBodyIds)
+        assertEquals(12, spawnedBodyIds.size)
+
+        val earthPayload = transport.commandForBody("earth")
+        val moonPayload = transport.commandForBody("moon")
+        assertNotNull("Expected Earth spawn payload in startup seed", earthPayload)
+        assertNotNull("Expected Moon spawn payload in startup seed", moonPayload)
+
+        earthPayload!!
+        moonPayload!!
+
+        val earthMoonDistanceMeters = distanceBetween(
+            earthPayload.bodyPositionX,
+            earthPayload.bodyPositionY,
+            earthPayload.bodyPositionZ,
+            moonPayload.bodyPositionX,
+            moonPayload.bodyPositionY,
+            moonPayload.bodyPositionZ,
+        )
+        assertTrue(
+            "Earth-Moon startup distance should be physically plausible, found $earthMoonDistanceMeters m",
+            earthMoonDistanceMeters in 3.0e8..4.5e8,
+        )
+
+        val earthMoonRelativeSpeedMetersPerSecond = distanceBetween(
+            earthPayload.bodyVelocityX,
+            earthPayload.bodyVelocityY,
+            earthPayload.bodyVelocityZ,
+            moonPayload.bodyVelocityX,
+            moonPayload.bodyVelocityY,
+            moonPayload.bodyVelocityZ,
+        )
+        assertTrue(
+            "Earth-Moon startup relative speed should be physically plausible, found $earthMoonRelativeSpeedMetersPerSecond m/s",
+            earthMoonRelativeSpeedMetersPerSecond in 500.0..1_500.0,
+        )
         assertTrue(
             signals
                 .filterIsInstance<RuntimeSignal.Notice>()
@@ -55,7 +92,7 @@ class JniRuntimeBridgeTest {
         assertTrue(
             signals
                 .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
-                .any { it.summary.bodyCount == 3 }
+                .any { it.summary.bodyCount == 12 }
         )
     }
 
@@ -171,7 +208,7 @@ class JniRuntimeBridgeTest {
         override fun refreshSession(handle: Long): NativeSnapshotSummaryResult {
             refreshedHandles += handle
             return refreshResults.removeFirstOrNull()
-                ?: snapshotSummary(bodyCount = 3)
+                ?: snapshotSummary(bodyCount = 12)
         }
 
         override fun applyCommand(
@@ -179,8 +216,13 @@ class JniRuntimeBridgeTest {
             command: NativeRuntimeCommandPayload,
         ): NativeSnapshotSummaryResult {
             appliedCommands += command
-            return snapshotSummary(bodyCount = 3)
+            return snapshotSummary(bodyCount = 12)
         }
+
+        fun commandForBody(bodyId: String): NativeRuntimeCommandPayload? =
+            appliedCommands.firstOrNull { payload ->
+                payload.bodyIdUtf8?.let { String(it, StandardCharsets.UTF_8) } == bodyId
+            }
 
         override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
             error("exportVulkanScene is unused in this test")
@@ -191,6 +233,20 @@ class JniRuntimeBridgeTest {
     }
 
     private companion object {
+        fun distanceBetween(
+            ax: Double,
+            ay: Double,
+            az: Double,
+            bx: Double,
+            by: Double,
+            bz: Double,
+        ): Double {
+            val dx = ax - bx
+            val dy = ay - by
+            val dz = az - bz
+            return sqrt(dx * dx + dy * dy + dz * dz)
+        }
+
         fun snapshotSummary(bodyCount: Int): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
             result = NativeResult(code = 0),
             scenarioId = "sol-system",

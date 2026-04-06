@@ -616,6 +616,7 @@ private fun EmptyRenderStage(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ControlDeck(
     uiState: ShellUiState,
@@ -627,6 +628,17 @@ private fun ControlDeck(
     var checkpointIdInput by mutableStateOf("")
     var branchFromCheckpointIdInput by mutableStateOf("")
     var newBranchIdInput by mutableStateOf("")
+    var spawnBodyIdInput by mutableStateOf("")
+    var spawnBodyMassInput by mutableStateOf("1.0")
+    var spawnBodyRadiusInput by mutableStateOf("1.0")
+    var setBodyKinematicsBodyIdInput by mutableStateOf("")
+    var setBodyKinematicsPositionXInput by mutableStateOf("0.0")
+    var setBodyKinematicsPositionYInput by mutableStateOf("0.0")
+    var setBodyKinematicsPositionZInput by mutableStateOf("0.0")
+    var setBodyKinematicsVelocityXInput by mutableStateOf("0.0")
+    var setBodyKinematicsVelocityYInput by mutableStateOf("0.0")
+    var setBodyKinematicsVelocityZInput by mutableStateOf("0.0")
+    var removeBodyIdInput by mutableStateOf("")
 
     LabPanel {
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -736,6 +748,194 @@ private fun ControlDeck(
                     enabled = enabled,
                     onClick = { onCommand(RuntimeCommand.AdvanceEpoch(deltaSeconds = 21_600.0)) },
                 )
+            }
+
+            ControlSection(title = "Body management") {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    OutlinedTextField(
+                        value = spawnBodyIdInput,
+                        onValueChange = { spawnBodyIdInput = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.SPAWN_BODY_ID_FIELD),
+                        enabled = enabled,
+                        label = { Text("Spawn body id") },
+                        singleLine = true,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = spawnBodyMassInput,
+                            onValueChange = { spawnBodyMassInput = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag(SolarLabTestTags.SPAWN_BODY_MASS_FIELD),
+                            enabled = enabled,
+                            label = { Text("Mass (kg)") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = spawnBodyRadiusInput,
+                            onValueChange = { spawnBodyRadiusInput = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag(SolarLabTestTags.SPAWN_BODY_RADIUS_FIELD),
+                            enabled = enabled,
+                            label = { Text("Radius (m)") },
+                            singleLine = true,
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            onCommand(
+                                RuntimeCommand.SpawnBody(
+                                    bodyId = spawnBodyIdInput.trim(),
+                                    massKg = spawnBodyMassInput.toDoubleOrNull() ?: 1.0,
+                                    radiusM = spawnBodyRadiusInput.toDoubleOrNull() ?: 1.0,
+                                ),
+                            )
+                            spawnBodyIdInput = ""
+                        },
+                        enabled = enabled && spawnBodyIdInput.trim().isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.SPAWN_BODY_BUTTON),
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text("Spawn body")
+                    }
+
+                    OutlinedTextField(
+                        value = setBodyKinematicsBodyIdInput,
+                        onValueChange = { setBodyKinematicsBodyIdInput = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_BODY_ID_FIELD),
+                        enabled = enabled,
+                        label = { Text("Kinematics body id") },
+                        singleLine = true,
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = setBodyKinematicsPositionXInput,
+                            onValueChange = { setBodyKinematicsPositionXInput = it },
+                            modifier = Modifier
+                                .widthIn(min = 120.dp)
+                                .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_POSITION_X_FIELD),
+                            enabled = enabled,
+                            label = { Text("Pos X") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = setBodyKinematicsPositionYInput,
+                            onValueChange = { setBodyKinematicsPositionYInput = it },
+                            modifier = Modifier
+                                .widthIn(min = 120.dp)
+                                .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_POSITION_Y_FIELD),
+                            enabled = enabled,
+                            label = { Text("Pos Y") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = setBodyKinematicsPositionZInput,
+                            onValueChange = { setBodyKinematicsPositionZInput = it },
+                            modifier = Modifier
+                                .widthIn(min = 120.dp)
+                                .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_POSITION_Z_FIELD),
+                            enabled = enabled,
+                            label = { Text("Pos Z") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = setBodyKinematicsVelocityXInput,
+                            onValueChange = { setBodyKinematicsVelocityXInput = it },
+                            modifier = Modifier
+                                .widthIn(min = 120.dp)
+                                .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_VELOCITY_X_FIELD),
+                            enabled = enabled,
+                            label = { Text("Vel X") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = setBodyKinematicsVelocityYInput,
+                            onValueChange = { setBodyKinematicsVelocityYInput = it },
+                            modifier = Modifier
+                                .widthIn(min = 120.dp)
+                                .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_VELOCITY_Y_FIELD),
+                            enabled = enabled,
+                            label = { Text("Vel Y") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = setBodyKinematicsVelocityZInput,
+                            onValueChange = { setBodyKinematicsVelocityZInput = it },
+                            modifier = Modifier
+                                .widthIn(min = 120.dp)
+                                .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_VELOCITY_Z_FIELD),
+                            enabled = enabled,
+                            label = { Text("Vel Z") },
+                            singleLine = true,
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            onCommand(
+                                RuntimeCommand.SetBodyKinematics(
+                                    bodyId = setBodyKinematicsBodyIdInput.trim(),
+                                    positionX = setBodyKinematicsPositionXInput.toDoubleOrNull() ?: 0.0,
+                                    positionY = setBodyKinematicsPositionYInput.toDoubleOrNull() ?: 0.0,
+                                    positionZ = setBodyKinematicsPositionZInput.toDoubleOrNull() ?: 0.0,
+                                    velocityX = setBodyKinematicsVelocityXInput.toDoubleOrNull() ?: 0.0,
+                                    velocityY = setBodyKinematicsVelocityYInput.toDoubleOrNull() ?: 0.0,
+                                    velocityZ = setBodyKinematicsVelocityZInput.toDoubleOrNull() ?: 0.0,
+                                ),
+                            )
+                        },
+                        enabled = enabled && setBodyKinematicsBodyIdInput.trim().isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.SET_BODY_KINEMATICS_BUTTON),
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text("Set body kinematics")
+                    }
+
+                    OutlinedTextField(
+                        value = removeBodyIdInput,
+                        onValueChange = { removeBodyIdInput = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.REMOVE_BODY_ID_FIELD),
+                        enabled = enabled,
+                        label = { Text("Remove body id") },
+                        singleLine = true,
+                    )
+                    Button(
+                        onClick = {
+                            onCommand(
+                                RuntimeCommand.RemoveBody(
+                                    bodyId = removeBodyIdInput.trim(),
+                                ),
+                            )
+                            removeBodyIdInput = ""
+                        },
+                        enabled = enabled && removeBodyIdInput.trim().isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.REMOVE_BODY_BUTTON),
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text("Remove body")
+                    }
+                }
             }
 
             ControlSection(title = "Playback rate") {
