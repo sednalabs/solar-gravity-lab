@@ -46,8 +46,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         private const val ACCENT_STAR_COUNT = 28
         private const val PRIMARY_BODY_EXTENT_CAP = 14
         private const val AUXILIARY_SPAN_TO_BODY_SPAN_CAP = 1.45f
-        private const val MIN_USER_SCALE_MULTIPLIER = 0.6f
-        private const val MAX_USER_SCALE_MULTIPLIER = 24f
+        private const val ASTRONOMICAL_UNIT_M = 149_597_870_700f
+        private const val DEFAULT_VIEW_RADIUS_M = 24f * ASTRONOMICAL_UNIT_M
+        private const val MIN_VIEW_RADIUS_M = 0.001f * ASTRONOMICAL_UNIT_M
+        private const val MAX_VIEW_RADIUS_M = 150_000f * ASTRONOMICAL_UNIT_M
+        private const val MIN_LOCKED_VIEW_RADIUS_M = 0.003f * ASTRONOMICAL_UNIT_M
+        private const val MAX_LOCKED_VIEW_RADIUS_M = 12f * ASTRONOMICAL_UNIT_M
+        private const val HERO_MIN_VIEW_RADIUS_M = 4.5f * ASTRONOMICAL_UNIT_M
+        private const val HERO_MAX_VIEW_RADIUS_M = 12f * ASTRONOMICAL_UNIT_M
+        private const val MIN_CAMERA_DISTANCE_EPSILON_M = 1f
         private const val MIN_TAP_SELECTION_RADIUS_PX = 18f
         private const val MAX_SCENE_LABELS = 6
         private val TEACHING_FRAME_BODY_IDS = setOf(
@@ -74,9 +81,12 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             "sun",
             "earth",
             "moon",
-            "mars",
-            "jupiter",
-            "saturn",
+        )
+        private val FOCUS_COMPANION_CANDIDATES = mapOf(
+            "earth" to listOf("moon"),
+            "moon" to listOf("earth"),
+            "jupiter" to listOf("io", "europa", "ganymede", "callisto"),
+            "saturn" to listOf("titan", "enceladus", "rhea", "dione", "iapetus"),
         )
         private val BODY_DISPLAY_NAMES = SolarLabTeachingCatalog.entries.associate { entry ->
             entry.bodyId.lowercase(Locale.US) to entry.displayName
@@ -89,9 +99,10 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private var surfaceReady: Boolean = false
     private var onBodyTapped: ((String) -> Unit)? = null
     private var activeViewportState: ViewportState? = null
-    private var userScaleMultiplier: Float = 1f
-    private var userPanX: Float = 0f
-    private var userPanY: Float = 0f
+    private var activeCameraState: StageCameraState? = null
+    private var userCameraOverrideActive: Boolean = false
+    private var lastSelectedBodyId: String? = null
+    private var cameraAnimationPosted: Boolean = false
     private var lastTouchX: Float = 0f
     private var lastTouchY: Float = 0f
 
@@ -206,6 +217,9 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         latestFrame = frame
         if (frame == null) {
             activeViewportState = null
+            activeCameraState = null
+            userCameraOverrideActive = false
+            lastSelectedBodyId = null
         }
         this.highlightedTrailSourceBodyIds = highlightedTrailSourceBodyIds
             .asSequence()
@@ -213,6 +227,11 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             .filter(String::isNotEmpty)
             .distinct()
             .toList()
+        val selectedBodyId = frame?.bodies?.firstOrNull { it.selected }?.bodyId?.lowercase(Locale.US)
+        if (selectedBodyId != lastSelectedBodyId) {
+            userCameraOverrideActive = false
+            lastSelectedBodyId = selectedBodyId
+        }
         drawNow()
     }
 
@@ -221,9 +240,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     }
 
     fun resetViewTransform() {
-        userScaleMultiplier = 1f
-        userPanX = 0f
-        userPanY = 0f
+        userCameraOverrideActive = false
         drawNow()
     }
 
@@ -231,8 +248,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         if (!scaleFactor.isFinite() || scaleFactor <= 0f) {
             return
         }
-        userScaleMultiplier = (userScaleMultiplier * scaleFactor)
-            .coerceIn(MIN_USER_SCALE_MULTIPLIER, MAX_USER_SCALE_MULTIPLIER)
+        val current = activeCameraState ?: inferBootstrapCameraState(latestFrame)
+        if (current != null) {
+            userCameraOverrideActive = true
+            activeCameraState = current.copy(
+                viewRadiusM = (current.viewRadiusM / scaleFactor)
+                    .coerceIn(MIN_VIEW_RADIUS_M, MAX_VIEW_RADIUS_M),
+                mode = StageCameraMode.FreeTouch,
+            )
+        }
         drawNow()
     }
 
@@ -271,8 +295,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                     val dx = event.x - lastTouchX
                     val dy = event.y - lastTouchY
                     if (dx != 0f || dy != 0f) {
-                        userPanX += dx
-                        userPanY += dy
+                        panByPixels(dx = dx, dy = dy)
                         drawNow()
                     }
                 }
@@ -399,16 +422,16 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         glowPaint.shader = RadialGradient(
             centerX,
             centerY,
-            minDimension * 0.18f,
+            minDimension * 0.28f,
             intArrayOf(
-                Color.argb(188, 255, 228, 156),
-                Color.argb(92, 255, 173, 92),
+                Color.argb(18, 70, 114, 188),
+                Color.argb(8, 30, 50, 92),
                 Color.TRANSPARENT,
             ),
-            floatArrayOf(0f, 0.28f, 1f),
+            floatArrayOf(0f, 0.46f, 1f),
             Shader.TileMode.CLAMP,
         )
-        canvas.drawCircle(centerX, centerY, minDimension * 0.18f, glowPaint)
+        canvas.drawCircle(centerX, centerY, minDimension * 0.28f, glowPaint)
 
         glowPaint.shader = RadialGradient(
             centerX,
@@ -441,8 +464,14 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val viewportHeight = height.toFloat().coerceAtLeast(1f)
         val projectionPlane = selectOverheadProjectionPlane(frame)
         val extent = computeExtent(frame, projectionPlane)
-        val halfWorldSpan = extent.halfWorldSpan.coerceAtLeast(1f)
-        val scale = (0.46f * min(viewportWidth, viewportHeight) / halfWorldSpan) * userScaleMultiplier
+        val targetCamera = resolveTargetCameraState(
+            frame = frame,
+            extent = extent,
+            projectionPlane = projectionPlane,
+        )
+        val effectiveCamera = resolveEffectiveCameraState(targetCamera)
+        val halfWorldSpan = effectiveCamera.viewRadiusM.coerceAtLeast(MIN_CAMERA_DISTANCE_EPSILON_M)
+        val scale = (0.46f * min(viewportWidth, viewportHeight) / halfWorldSpan)
         val highlightedBodyIds = highlightedTrailSourceBodyIds
             .asSequence()
             .map { it.lowercase(Locale.US) }
@@ -459,14 +488,26 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             viewportHeight = viewportHeight,
             halfWorldSpan = halfWorldSpan,
             scale = scale,
+            centerX = effectiveCamera.centerX,
+            centerY = effectiveCamera.centerY,
+        )
+        drawSolarKeyLight(
+            canvas = canvas,
+            frame = frame,
+            projectionPlane = projectionPlane,
+            centerX = effectiveCamera.centerX,
+            centerY = effectiveCamera.centerY,
+            scale = scale,
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight,
         )
 
         frame.trails.forEach { trail ->
             drawTrail(
                 canvas = canvas,
                 trail = trail,
-                centerX = extent.centerX,
-                centerY = extent.centerY,
+                centerX = effectiveCamera.centerX,
+                centerY = effectiveCamera.centerY,
                 projectionPlane = projectionPlane,
                 scale = scale,
                 viewportWidth = viewportWidth,
@@ -478,8 +519,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             drawTracer(
                 canvas = canvas,
                 tracer = tracer,
-                centerX = extent.centerX,
-                centerY = extent.centerY,
+                centerX = effectiveCamera.centerX,
+                centerY = effectiveCamera.centerY,
                 projectionPlane = projectionPlane,
                 scale = scale,
                 viewportWidth = viewportWidth,
@@ -490,8 +531,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             drawBody(
                 canvas = canvas,
                 body = body,
-                centerX = extent.centerX,
-                centerY = extent.centerY,
+                centerX = effectiveCamera.centerX,
+                centerY = effectiveCamera.centerY,
                 projectionPlane = projectionPlane,
                 scale = scale,
                 viewportWidth = viewportWidth,
@@ -513,6 +554,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         activeViewportState = ViewportState(
             bodyHits = bodyHits,
         )
+
+        val cameraSettled = activeCameraState?.isCloseTo(targetCamera) ?: true
+        if (!cameraSettled && !cameraAnimationPosted) {
+            cameraAnimationPosted = true
+            postOnAnimation {
+                cameraAnimationPosted = false
+                drawNow()
+            }
+        }
     }
 
     private fun drawBody(
@@ -789,9 +839,11 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         viewportHeight: Float,
         halfWorldSpan: Float,
         scale: Float,
+        centerX: Float,
+        centerY: Float,
     ) {
-        val centerX = viewportWidth * 0.5f + userPanX
-        val centerY = viewportHeight * 0.5f + userPanY
+        val screenCenterX = screenX(centerX, centerX, scale, viewportWidth)
+        val screenCenterY = screenY(centerY, centerY, scale, viewportHeight)
         val orbitGuideRadii = listOf(0.16f, 0.28f, 0.42f, 0.6f, 0.82f)
             .map { fraction -> (halfWorldSpan * fraction * scale).coerceAtLeast(0f) }
             .filter { radiusPx -> radiusPx >= 32f }
@@ -809,13 +861,13 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 1 -> 1.3f
                 else -> 1.05f
             }
-            canvas.drawCircle(centerX, centerY, radiusPx, guidePaint)
+            canvas.drawCircle(screenCenterX, screenCenterY, radiusPx, guidePaint)
         }
 
         if (orbitGuideRadii.isNotEmpty()) {
             glowPaint.shader = RadialGradient(
-                centerX,
-                centerY,
+                screenCenterX,
+                screenCenterY,
                 orbitGuideRadii.last() * 1.08f,
                 intArrayOf(
                     Color.argb(24, 65, 114, 196),
@@ -824,9 +876,170 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 floatArrayOf(0f, 1f),
                 Shader.TileMode.CLAMP,
             )
-            canvas.drawCircle(centerX, centerY, orbitGuideRadii.last() * 1.08f, glowPaint)
+            canvas.drawCircle(screenCenterX, screenCenterY, orbitGuideRadii.last() * 1.08f, glowPaint)
             glowPaint.shader = null
         }
+    }
+
+    private fun drawSolarKeyLight(
+        canvas: Canvas,
+        frame: RenderFrame,
+        projectionPlane: ProjectionPlane,
+        centerX: Float,
+        centerY: Float,
+        scale: Float,
+        viewportWidth: Float,
+        viewportHeight: Float,
+    ) {
+        val sun = frame.bodies.firstOrNull { body ->
+            body.bodyId.equals("sun", ignoreCase = true) &&
+                body.x.isFinite() &&
+                projectY(body.y, body.z, projectionPlane).isFinite()
+        } ?: return
+        val projectedY = projectY(sun.y, sun.z, projectionPlane)
+        val sunScreenX = screenX(sun.x, centerX, scale, viewportWidth)
+        val sunScreenY = screenY(projectedY, centerY, scale, viewportHeight)
+        if (!sunScreenX.isFinite() || !sunScreenY.isFinite()) {
+            return
+        }
+        val radiusPx = min(viewportWidth, viewportHeight) * 0.30f
+        glowPaint.shader = RadialGradient(
+            sunScreenX,
+            sunScreenY,
+            radiusPx,
+            intArrayOf(
+                Color.argb(46, 255, 209, 122),
+                Color.argb(18, 255, 173, 108),
+                Color.TRANSPARENT,
+            ),
+            floatArrayOf(0f, 0.38f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(sunScreenX, sunScreenY, radiusPx, glowPaint)
+        glowPaint.shader = null
+    }
+
+    private fun resolveEffectiveCameraState(target: StageCameraState): StageCameraState {
+        val current = activeCameraState
+        if (current == null) {
+            activeCameraState = target
+            return target
+        }
+        if (userCameraOverrideActive && current.mode == StageCameraMode.FreeTouch) {
+            return current
+        }
+        val interpolation = if (current.mode != target.mode) 0.28f else 0.18f
+        val next = current.blendToward(target = target, amount = interpolation)
+        activeCameraState = next
+        return next
+    }
+
+    private fun resolveTargetCameraState(
+        frame: RenderFrame,
+        extent: Extent,
+        projectionPlane: ProjectionPlane,
+    ): StageCameraState {
+        val selectedBody = frame.bodies.firstOrNull { it.selected }
+        val followMode = frame.observerModeCode == 1 || frame.observerModeCode == 2
+
+        if (selectedBody != null || followMode) {
+            val focusBody = selectedBody ?: frame.bodies.firstOrNull {
+                it.bodyId.equals(lastSelectedBodyId, ignoreCase = true)
+            } ?: frame.bodies.firstOrNull {
+                it.bodyId.equals("earth", ignoreCase = true)
+            } ?: frame.bodies.firstOrNull()
+
+            if (focusBody != null) {
+                val focusProjectedY = projectY(focusBody.y, focusBody.z, projectionPlane)
+                val companion = findCompanionBody(
+                    frame = frame,
+                    focusBodyId = focusBody.bodyId,
+                )
+                val suggestedRadius = resolveSuggestedFollowViewRadiusM(focusBody, companion)
+                return StageCameraState(
+                    centerX = focusBody.x,
+                    centerY = focusProjectedY,
+                    viewRadiusM = suggestedRadius,
+                    mode = StageCameraMode.FollowSelection,
+                )
+            }
+        }
+
+        val sunBody = frame.bodies.firstOrNull { it.bodyId.equals("sun", ignoreCase = true) }
+        val heroCenterX = sunBody?.x ?: extent.centerX
+        val heroCenterY = sunBody?.let { body ->
+            projectY(body.y, body.z, projectionPlane)
+        } ?: extent.centerY
+        val heroRadius = extent.halfWorldSpan
+            .coerceIn(HERO_MIN_VIEW_RADIUS_M, HERO_MAX_VIEW_RADIUS_M)
+        return StageCameraState(
+            centerX = heroCenterX,
+            centerY = heroCenterY,
+            viewRadiusM = heroRadius,
+            mode = StageCameraMode.HeroWideOblique,
+        )
+    }
+
+    private fun inferBootstrapCameraState(frame: RenderFrame?): StageCameraState? {
+        val safeFrame = frame ?: latestFrame ?: return null
+        val projectionPlane = selectOverheadProjectionPlane(safeFrame)
+        val extent = computeExtent(safeFrame, projectionPlane)
+        return resolveTargetCameraState(
+            frame = safeFrame,
+            extent = extent,
+            projectionPlane = projectionPlane,
+        )
+    }
+
+    private fun panByPixels(dx: Float, dy: Float) {
+        val current = activeCameraState ?: inferBootstrapCameraState(latestFrame) ?: return
+        val minDimensionPx = min(width.toFloat(), height.toFloat()).coerceAtLeast(1f)
+        val metersPerPixel = (2f * current.viewRadiusM) / minDimensionPx
+        userCameraOverrideActive = true
+        activeCameraState = current.copy(
+            centerX = current.centerX - (dx * metersPerPixel),
+            centerY = current.centerY + (dy * metersPerPixel),
+            mode = StageCameraMode.FreeTouch,
+        )
+    }
+
+    private fun findCompanionBody(
+        frame: RenderFrame,
+        focusBodyId: String,
+    ): RenderBody? {
+        val normalizedFocusId = focusBodyId.lowercase(Locale.US)
+        val candidates = FOCUS_COMPANION_CANDIDATES[normalizedFocusId].orEmpty()
+        return candidates
+            .asSequence()
+            .mapNotNull { candidateId ->
+                frame.bodies.firstOrNull { body ->
+                    body.bodyId.equals(candidateId, ignoreCase = true)
+                }
+            }
+            .firstOrNull()
+    }
+
+    private fun resolveSuggestedFollowViewRadiusM(
+        focusBody: RenderBody,
+        companionBody: RenderBody?,
+    ): Float {
+        val normalizedBodyId = focusBody.bodyId.lowercase(Locale.US)
+        val baselineRadius = when {
+            normalizedBodyId == "sun" -> 4.5f * ASTRONOMICAL_UNIT_M
+            normalizedBodyId in setOf("jupiter", "saturn", "uranus", "neptune") -> 0.12f * ASTRONOMICAL_UNIT_M
+            normalizedBodyId in setOf("earth", "venus", "mars", "mercury") -> 0.035f * ASTRONOMICAL_UNIT_M
+            normalizedBodyId == "moon" -> 0.010f * ASTRONOMICAL_UNIT_M
+            else -> 0.020f * ASTRONOMICAL_UNIT_M
+        }
+        val companionRadius = companionBody?.let { body ->
+            val dx = focusBody.x - body.x
+            val dy = focusBody.y - body.y
+            val dz = focusBody.z - body.z
+            val separationM = sqrt(dx * dx + dy * dy + dz * dz)
+            (separationM * 2.2f).coerceAtLeast(0f)
+        } ?: 0f
+        return max(baselineRadius, companionRadius)
+            .coerceIn(MIN_LOCKED_VIEW_RADIUS_M, MAX_LOCKED_VIEW_RADIUS_M)
     }
 
     private fun drawBodyLabels(
@@ -1178,11 +1391,11 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     }
 
     private fun screenX(worldX: Float, centerX: Float, scale: Float, viewportWidth: Float): Float {
-        return viewportWidth * 0.5f + ((worldX - centerX) * scale) + userPanX
+        return viewportWidth * 0.5f + ((worldX - centerX) * scale)
     }
 
     private fun screenY(worldY: Float, centerY: Float, scale: Float, viewportHeight: Float): Float {
-        return viewportHeight * 0.5f - ((worldY - centerY) * scale) + userPanY
+        return viewportHeight * 0.5f - ((worldY - centerY) * scale)
     }
 
     private data class Extent(
@@ -1190,6 +1403,41 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val centerY: Float,
         val halfWorldSpan: Float,
     )
+
+    private data class StageCameraState(
+        val centerX: Float,
+        val centerY: Float,
+        val viewRadiusM: Float,
+        val mode: StageCameraMode,
+    ) {
+        fun blendToward(target: StageCameraState, amount: Float): StageCameraState {
+            val alpha = amount.coerceIn(0f, 1f)
+            return StageCameraState(
+                centerX = centerX + (target.centerX - centerX) * alpha,
+                centerY = centerY + (target.centerY - centerY) * alpha,
+                viewRadiusM = (viewRadiusM + (target.viewRadiusM - viewRadiusM) * alpha)
+                    .coerceIn(MIN_VIEW_RADIUS_M, MAX_VIEW_RADIUS_M),
+                mode = target.mode,
+            )
+        }
+
+        fun isCloseTo(other: StageCameraState): Boolean {
+            val centerDistance = sqrt(
+                (centerX - other.centerX) * (centerX - other.centerX) +
+                    (centerY - other.centerY) * (centerY - other.centerY),
+            )
+            val radiusDelta = abs(viewRadiusM - other.viewRadiusM)
+            val centerTolerance = max(1_000_000f, other.viewRadiusM * 0.0025f)
+            val radiusTolerance = max(500_000f, other.viewRadiusM * 0.0018f)
+            return centerDistance <= centerTolerance && radiusDelta <= radiusTolerance
+        }
+    }
+
+    private enum class StageCameraMode {
+        HeroWideOblique,
+        FollowSelection,
+        FreeTouch,
+    }
 
     private data class ProjectedPoint(
         val x: Float,

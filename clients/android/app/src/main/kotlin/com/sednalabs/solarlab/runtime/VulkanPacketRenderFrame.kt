@@ -7,9 +7,30 @@ import kotlin.math.min
 
 data class RenderFrame(
     val sceneRevision: String,
+    val epochSeconds: Double,
+    val observerModeCode: Int,
+    val directionalLightCount: Int,
+    val camera: RenderCamera,
     val bodies: List<RenderBody>,
     val tracers: List<RenderTracer>,
     val trails: List<RenderTrail>,
+)
+
+data class RenderCamera(
+    val frameOriginX: Double,
+    val frameOriginY: Double,
+    val frameOriginZ: Double,
+    val positionFromOriginX: Float,
+    val positionFromOriginY: Float,
+    val positionFromOriginZ: Float,
+    val targetFromOriginX: Float,
+    val targetFromOriginY: Float,
+    val targetFromOriginZ: Float,
+    val upX: Float,
+    val upY: Float,
+    val upZ: Float,
+    val verticalFovDegrees: Float,
+    val exposure: Float,
 )
 
 data class RenderBody(
@@ -74,6 +95,25 @@ internal object VulkanPacketRenderFrameDecoder {
         val trails = decodeTrailSpans(packet.trailSpans, packet.trailSpanCount, vertices)
         return RenderFrame(
             sceneRevision = packet.sceneRevision,
+            epochSeconds = packet.epochSeconds,
+            observerModeCode = packet.observerMode,
+            directionalLightCount = packet.directionalLightCount,
+            camera = RenderCamera(
+                frameOriginX = packet.camera.frameOriginX,
+                frameOriginY = packet.camera.frameOriginY,
+                frameOriginZ = packet.camera.frameOriginZ,
+                positionFromOriginX = packet.camera.positionFromOriginX,
+                positionFromOriginY = packet.camera.positionFromOriginY,
+                positionFromOriginZ = packet.camera.positionFromOriginZ,
+                targetFromOriginX = packet.camera.targetFromOriginX,
+                targetFromOriginY = packet.camera.targetFromOriginY,
+                targetFromOriginZ = packet.camera.targetFromOriginZ,
+                upX = packet.camera.upX,
+                upY = packet.camera.upY,
+                upZ = packet.camera.upZ,
+                verticalFovDegrees = packet.camera.verticalFovDegrees,
+                exposure = packet.camera.exposure,
+            ),
             bodies = bodies,
             tracers = tracers,
             trails = trails,
