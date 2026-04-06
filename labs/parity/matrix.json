@@ -73,11 +73,36 @@
       "family": "release proof",
       "source_oracle": "prerelease + validation lane contract",
       "status": "wip",
-      "owner_item": "3492",
+      "owner_item": "3532",
       "proof_refs": [
-        "startup smoke + non-empty render checks"
+        "startup smoke + non-empty render checks",
+        "command/control smoke + authoritative changelog generation"
       ],
-      "notes": "Use matrix status gates and validator as release-time truth."
+      "notes": "Use matrix status gates and validator as release-time truth, with exhaustive changelog artifacts and always-on failure diagnostics."
+    },
+    {
+      "id": "P-008",
+      "family": "scientific correctness",
+      "source_oracle": "release-alpha-9 AccelerationKernelParityTest",
+      "status": "port",
+      "owner_item": "3490",
+      "proof_refs": [
+        "engine/physics scalar-vs-kernel parity assertions",
+        "legacy acceleration oracle cases tracked in release-alpha-9"
+      ],
+      "notes": "Keep exact kernel-equivalence semantics explicit so ISA or GPU acceleration never silently diverges from the scalar oracle."
+    },
+    {
+      "id": "P-009",
+      "family": "scientific correctness",
+      "source_oracle": "legacy LabSessionPlaybackSubstepPolicyTest",
+      "status": "port",
+      "owner_item": "3490",
+      "proof_refs": [
+        "playback substep budget policy assertions",
+        "thermal and tracer workload scheduler clamps"
+      ],
+      "notes": "High-speed playback, backlog control, and thermal-pressure clamps must stay scientifically conservative instead of drifting into visually smooth but physically misleading scheduling."
     }
   ]
 }
