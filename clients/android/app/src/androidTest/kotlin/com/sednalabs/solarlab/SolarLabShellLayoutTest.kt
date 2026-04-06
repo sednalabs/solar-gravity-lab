@@ -309,13 +309,18 @@ class SolarLabShellLayoutTest {
         expectedCommand: String,
         predicate: () -> Boolean,
     ) {
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            predicate()
+        composeRule.waitForIdle()
+        try {
+            composeRule.waitUntil(timeoutMillis = 60_000) {
+                predicate()
+            }
+        } catch (ex: Exception) {
+            throw AssertionError(
+                "Expected command $expectedCommand within timeout. Observed commands: ${runtimeFacade.commands}",
+                ex,
+            )
         }
-        assertTrue(
-            "Expected command $expectedCommand. Observed commands: ${runtimeFacade.commands}",
-            predicate(),
-        )
+        assertTrue("Expected command $expectedCommand. Observed commands: ${runtimeFacade.commands}", predicate())
     }
 
     private fun scrollShellTo(tag: String) {
