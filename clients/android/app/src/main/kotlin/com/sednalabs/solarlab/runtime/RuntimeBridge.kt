@@ -9,11 +9,14 @@ import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import kotlin.math.PI
+import kotlin.math.acos
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
  * Rust runtime boundary for Android.
@@ -342,7 +345,10 @@ internal class JniRuntimeBridge(
 
         if (signals.isEmpty()) {
             signals += RuntimeSignal.Notice(
-                message = "Seeded default startup solar system (${seedCommands.size} bodies) for session $handle",
+                message = "Seeded default startup solar system (${seedCommands.size} bodies; " +
+                    "${STARTUP_CURATED_SMALL_BODY_COUNT} curated small bodies, " +
+                    "${STARTUP_SYNTHETIC_ASTEROID_BELT_COUNT} belt tracers, " +
+                    "${STARTUP_SYNTHETIC_OORT_CLOUD_COUNT} Oort tracers) for session $handle",
                 level = RuntimeNoticeLevel.Info,
             )
         }
@@ -472,6 +478,51 @@ internal class JniRuntimeBridge(
             massKg = 1.303e22,
             radiusM = 1.1883e6,
         )
+        val haumea = spawnOrbitingBodyAroundPrimary(
+            bodyId = "haumea",
+            bodyClass = RuntimeBodyClass.DwarfPlanet,
+            primary = sun,
+            massKg = 4.006e21,
+            radiusM = 7.16e5,
+            elements = startupOrbitalElements(
+                semiMajorAxisAu = 43.13,
+                eccentricity = 0.191,
+                inclinationDeg = 28.19,
+                ascendingNodeDeg = 122.0,
+                periapsisDeg = 240.0,
+                trueAnomalyDeg = 80.0,
+            ),
+        )
+        val makemake = spawnOrbitingBodyAroundPrimary(
+            bodyId = "makemake",
+            bodyClass = RuntimeBodyClass.DwarfPlanet,
+            primary = sun,
+            massKg = 3.1e21,
+            radiusM = 7.15e5,
+            elements = startupOrbitalElements(
+                semiMajorAxisAu = 45.79,
+                eccentricity = 0.159,
+                inclinationDeg = 28.96,
+                ascendingNodeDeg = 79.6,
+                periapsisDeg = 294.0,
+                trueAnomalyDeg = 170.0,
+            ),
+        )
+        val eris = spawnOrbitingBodyAroundPrimary(
+            bodyId = "eris",
+            bodyClass = RuntimeBodyClass.DwarfPlanet,
+            primary = sun,
+            massKg = 1.6466e22,
+            radiusM = 1.163e6,
+            elements = startupOrbitalElements(
+                semiMajorAxisAu = 67.78,
+                eccentricity = 0.44,
+                inclinationDeg = 44.04,
+                ascendingNodeDeg = 35.95,
+                periapsisDeg = 151.4,
+                trueAnomalyDeg = 260.0,
+            ),
+        )
         val ceres = RuntimeCommand.SpawnBody(
             bodyId = "ceres",
             bodyClass = RuntimeBodyClass.DwarfPlanet,
@@ -484,21 +535,30 @@ internal class JniRuntimeBridge(
             massKg = 9.3835e20,
             radiusM = 4.731e5,
         )
+        val curatedSmallBodies = startupCuratedSmallBodyCommands(primary = sun)
+        val syntheticAsteroidBelt = syntheticAsteroidBeltCommands(primary = sun)
+        val syntheticOortCloud = syntheticOortCloudCommands(primary = sun)
 
-        return listOf(
-            sun,
-            mercury,
-            venus,
-            earth,
-            moon,
-            mars,
-            jupiter,
-            saturn,
-            uranus,
-            neptune,
-            pluto,
-            ceres,
-        )
+        return buildList {
+            add(sun)
+            add(mercury)
+            add(venus)
+            add(earth)
+            add(moon)
+            add(mars)
+            add(jupiter)
+            add(saturn)
+            add(uranus)
+            add(neptune)
+            add(pluto)
+            add(haumea)
+            add(makemake)
+            add(eris)
+            add(ceres)
+            addAll(curatedSmallBodies)
+            addAll(syntheticAsteroidBelt)
+            addAll(syntheticOortCloud)
+        }
     }
 
     private fun moonStartupCommand(earth: RuntimeCommand.SpawnBody): RuntimeCommand.SpawnBody {
@@ -533,6 +593,221 @@ internal class JniRuntimeBridge(
             radiusM = STARTUP_MOON_RADIUS_M,
         )
     }
+
+    private fun startupCuratedSmallBodyCommands(
+        primary: RuntimeCommand.SpawnBody,
+    ): List<RuntimeCommand.SpawnBody> = listOf(
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "vesta",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 2.59076e20,
+            radiusM = 2.626e5,
+            elements = startupOrbitalElements(2.361, 0.089, 7.14, 103.8, 150.9, 40.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "pallas",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 2.14e20,
+            radiusM = 2.56e5,
+            elements = startupOrbitalElements(2.773, 0.231, 34.84, 173.1, 310.2, 220.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "hygiea",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 8.32e19,
+            radiusM = 2.17e5,
+            elements = startupOrbitalElements(3.141, 0.117, 3.83, 283.2, 313.4, 120.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "psyche",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 2.3e19,
+            radiusM = 1.13e5,
+            elements = startupOrbitalElements(2.923, 0.140, 3.10, 150.0, 228.0, 280.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "eros",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 6.687e15,
+            radiusM = 8_420.0,
+            elements = startupOrbitalElements(1.458, 0.223, 10.83, 304.4, 178.7, 60.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "bennu",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 7.329e10,
+            radiusM = 245.0,
+            elements = startupOrbitalElements(1.1264, 0.2037, 6.03, 2.06, 66.22, 300.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "ryugu",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 4.5e11,
+            radiusM = 448.0,
+            elements = startupOrbitalElements(1.1896, 0.1902, 5.88, 251.45, 211.61, 170.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "itokawa",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 3.51e10,
+            radiusM = 165.0,
+            elements = startupOrbitalElements(1.324, 0.280, 1.62, 69.1, 162.8, 25.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "apophis",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 6.1e10,
+            radiusM = 185.0,
+            elements = startupOrbitalElements(0.9224, 0.1912, 3.34, 204.4, 126.4, 320.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "didymos",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 5.24e11,
+            radiusM = 390.0,
+            elements = startupOrbitalElements(1.644, 0.384, 3.41, 73.2, 319.6, 80.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "halley",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 2.2e14,
+            radiusM = 5_500.0,
+            elements = startupOrbitalElements(17.834, 0.967, 162.26, 58.42, 111.33, 38.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "encke",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 3.5e13,
+            radiusM = 2_400.0,
+            elements = startupOrbitalElements(2.215, 0.850, 11.78, 334.6, 186.5, 140.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "churyumov-gerasimenko",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 9.98e12,
+            radiusM = 2_000.0,
+            elements = startupOrbitalElements(3.463, 0.641, 7.04, 50.17, 12.78, 90.0),
+        ),
+        spawnOrbitingBodyAroundPrimary(
+            bodyId = "wild-2",
+            bodyClass = RuntimeBodyClass.SmallBody,
+            primary = primary,
+            massKg = 2.3e13,
+            radiusM = 2_000.0,
+            elements = startupOrbitalElements(3.447, 0.538, 3.24, 136.1, 41.0, 260.0),
+        ),
+    )
+
+    private fun syntheticAsteroidBeltCommands(
+        primary: RuntimeCommand.SpawnBody,
+        count: Int = STARTUP_SYNTHETIC_ASTEROID_BELT_COUNT,
+        seed: Long = STARTUP_SYNTHETIC_ASTEROID_BELT_SEED,
+    ): List<RuntimeCommand.SpawnBody> {
+        val random = Random(seed)
+        return List(count) { index ->
+            spawnOrbitingBodyAroundPrimary(
+                bodyId = "belt-$index",
+                bodyClass = RuntimeBodyClass.Tracer,
+                primary = primary,
+                massKg = 0.0,
+                radiusM = random.nextDouble(500.0, 50_000.0),
+                elements = startupOrbitalElements(
+                    semiMajorAxisAu = random.nextDouble(2.1, 3.3),
+                    eccentricity = random.nextDouble(0.0, 0.18),
+                    inclinationDeg = random.nextDouble(0.0, 18.0),
+                    ascendingNodeDeg = random.nextDouble(0.0, 360.0),
+                    periapsisDeg = random.nextDouble(0.0, 360.0),
+                    trueAnomalyDeg = random.nextDouble(0.0, 360.0),
+                ),
+            )
+        }
+    }
+
+    private fun syntheticOortCloudCommands(
+        primary: RuntimeCommand.SpawnBody,
+        count: Int = STARTUP_SYNTHETIC_OORT_CLOUD_COUNT,
+        seed: Long = STARTUP_SYNTHETIC_OORT_CLOUD_SEED,
+    ): List<RuntimeCommand.SpawnBody> {
+        val random = Random(seed)
+        return List(count) { index ->
+            val logSemiMajorAxisAu = random.nextDouble(3.3, 5.0)
+            val semiMajorAxisAu = 10.0.pow(logSemiMajorAxisAu)
+            val inclinationDeg = Math.toDegrees(acos(random.nextDouble(-1.0, 1.0)))
+            spawnOrbitingBodyAroundPrimary(
+                bodyId = "oort-$index",
+                bodyClass = RuntimeBodyClass.Tracer,
+                primary = primary,
+                massKg = 0.0,
+                radiusM = random.nextDouble(1_000.0, 20_000.0),
+                elements = startupOrbitalElements(
+                    semiMajorAxisAu = semiMajorAxisAu,
+                    eccentricity = random.nextDouble(0.85, 0.999),
+                    inclinationDeg = inclinationDeg,
+                    ascendingNodeDeg = random.nextDouble(0.0, 360.0),
+                    periapsisDeg = random.nextDouble(0.0, 360.0),
+                    trueAnomalyDeg = random.nextDouble(0.0, 360.0),
+                ),
+            )
+        }
+    }
+
+    private fun spawnOrbitingBodyAroundPrimary(
+        bodyId: String,
+        bodyClass: RuntimeBodyClass,
+        primary: RuntimeCommand.SpawnBody,
+        massKg: Double,
+        radiusM: Double,
+        elements: StartupOrbitalElements,
+    ): RuntimeCommand.SpawnBody {
+        val state = stateVectorAroundPrimary(
+            primaryMassKg = primary.massKg,
+            bodyMassKg = massKg,
+            elements = elements,
+            gravitationalConstant = STARTUP_GRAVITATIONAL_CONSTANT_M3_PER_KG_S2,
+        )
+
+        return RuntimeCommand.SpawnBody(
+            bodyId = bodyId,
+            bodyClass = bodyClass,
+            positionX = primary.positionX + state.positionX,
+            positionY = primary.positionY + state.positionY,
+            positionZ = primary.positionZ + state.positionZ,
+            velocityX = primary.velocityX + state.velocityX,
+            velocityY = primary.velocityY + state.velocityY,
+            velocityZ = primary.velocityZ + state.velocityZ,
+            massKg = massKg,
+            radiusM = radiusM,
+        )
+    }
+
+    private fun startupOrbitalElements(
+        semiMajorAxisAu: Double,
+        eccentricity: Double,
+        inclinationDeg: Double,
+        ascendingNodeDeg: Double,
+        periapsisDeg: Double,
+        trueAnomalyDeg: Double,
+    ): StartupOrbitalElements = StartupOrbitalElements(
+        semiMajorAxisM = semiMajorAxisAu * STARTUP_ASTRONOMICAL_UNIT_M,
+        eccentricity = eccentricity,
+        inclinationRad = inclinationDeg.degreesToRadians(),
+        longitudeOfAscendingNodeRad = ascendingNodeDeg.degreesToRadians(),
+        argumentOfPeriapsisRad = periapsisDeg.degreesToRadians(),
+        trueAnomalyRad = trueAnomalyDeg.degreesToRadians(),
+    )
 
     private fun stateVectorAroundPrimaryAtEpoch(
         primaryMassKg: Double,
@@ -683,11 +958,17 @@ internal class JniRuntimeBridge(
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 1_000L
+        private const val STARTUP_ASTRONOMICAL_UNIT_M = 1.495_978_707e11
         private const val STARTUP_SEED_JULIAN_DATE_TDB = 2_451_545.0
         private const val STARTUP_DAY_SECONDS = 86_400.0
         private const val STARTUP_GRAVITATIONAL_CONSTANT_M3_PER_KG_S2 = 6.67430e-11
         private const val STARTUP_MOON_MASS_KG = 7.342e22
         private const val STARTUP_MOON_RADIUS_M = 1.7374e6
+        private const val STARTUP_CURATED_SMALL_BODY_COUNT = 14
+        private const val STARTUP_SYNTHETIC_ASTEROID_BELT_COUNT = 240
+        private const val STARTUP_SYNTHETIC_OORT_CLOUD_COUNT = 96
+        private const val STARTUP_SYNTHETIC_ASTEROID_BELT_SEED = 42L
+        private const val STARTUP_SYNTHETIC_OORT_CLOUD_SEED = 43L
     }
 }
 
