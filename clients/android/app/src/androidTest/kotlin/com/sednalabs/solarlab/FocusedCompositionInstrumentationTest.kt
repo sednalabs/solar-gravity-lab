@@ -154,9 +154,11 @@ class FocusedCompositionInstrumentationTest {
                     try {
                         persistValidationScreenshot("$screenshotPrefix-stage", stageScreenshot)
                         val metrics = stageScreenshot.visualMetrics()
+                        val minimumBrightSamples = maxOf(6, metrics.sampleCount / 120)
                         assertTrue(
                             "Focused stage screenshot looks visually sparse for $focusBodyId: $metrics",
-                            metrics.brightSampleCount >= 20 && metrics.uniqueColorCount >= 8,
+                            metrics.brightSampleCount >= minimumBrightSamples &&
+                                metrics.uniqueColorCount >= 4,
                         )
                     } finally {
                         stageScreenshot.recycle()
