@@ -207,6 +207,7 @@ private fun ImmersiveStageShell(
     }
     var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
     var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
+    var showForecastPaths by rememberSaveable { mutableStateOf(true) }
     var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
     val stageCameraMode = VulkanPacketRenderSurfaceView.CameraPresentationMode.entries
         .firstOrNull { mode -> mode.name == stageCameraModeName }
@@ -262,6 +263,10 @@ private fun ImmersiveStageShell(
                                     uiState.recentFocusedBodyIds.take(trackedOrbitLimit)
                                 } else {
                                     emptyList()
+                                },
+                                showForecastOverlay = showForecastPaths,
+                                forecastTrailSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
+                                    uiState.recentFocusedBodyIds.take(2)
                                 },
                             )
                         },
@@ -364,6 +369,8 @@ private fun ImmersiveStageShell(
                                     stageCameraModeName = mode.name
                                     renderSurfaceView?.setCameraPresentationMode(mode)
                                 },
+                                showForecastPaths = showForecastPaths,
+                                onShowForecastPathsChange = { showForecastPaths = it },
                             )
                             TrackedOrbitHistoryPanel(
                                 trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
@@ -700,6 +707,7 @@ private fun RenderStagePanel(
     }
     var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
     var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
+    var showForecastPaths by rememberSaveable { mutableStateOf(true) }
     var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
     val stageCameraMode = VulkanPacketRenderSurfaceView.CameraPresentationMode.entries
         .firstOrNull { mode -> mode.name == stageCameraModeName }
@@ -793,6 +801,10 @@ private fun RenderStagePanel(
                             view.submitFrame(
                                 frame = uiState.renderFrame,
                                 highlightedTrailSourceBodyIds = uiState.recentFocusedBodyIds,
+                                showForecastOverlay = showForecastPaths,
+                                forecastTrailSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
+                                    uiState.recentFocusedBodyIds.take(2)
+                                },
                             )
                         },
                     )
@@ -850,6 +862,8 @@ private fun RenderStagePanel(
                         stageCameraModeName = mode.name
                         renderSurfaceView?.setCameraPresentationMode(mode)
                     },
+                    showForecastPaths = showForecastPaths,
+                    onShowForecastPathsChange = { showForecastPaths = it },
                 )
                 TrackedOrbitHistoryPanel(
                     trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
@@ -918,6 +932,8 @@ private fun StageInteractionDock(
     onResetView: () -> Unit,
     selectedCameraMode: VulkanPacketRenderSurfaceView.CameraPresentationMode,
     onCameraModeSelected: (VulkanPacketRenderSurfaceView.CameraPresentationMode) -> Unit,
+    showForecastPaths: Boolean,
+    onShowForecastPathsChange: (Boolean) -> Unit,
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -958,6 +974,13 @@ private fun StageInteractionDock(
                     selected = false,
                     enabled = true,
                     onClick = onResetView,
+                )
+                RuntimeCommandChip(
+                    label = if (showForecastPaths) "Forecast on" else "Forecast off",
+                    selected = showForecastPaths,
+                    enabled = true,
+                    onClick = { onShowForecastPathsChange(!showForecastPaths) },
+                    modifier = Modifier.testTag(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON),
                 )
                 if (focusedBodyId != null) {
                     RuntimeCommandChip(

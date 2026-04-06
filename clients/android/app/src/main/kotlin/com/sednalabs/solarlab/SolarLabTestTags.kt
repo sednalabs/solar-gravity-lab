@@ -24,6 +24,7 @@ object SolarLabTestTags {
     const val FOCUS_BODY_SET_BUTTON = "shell.focus_body_set"
     const val FOCUS_SELECTION_BUTTON = "shell.focus_selection"
     const val TRACKED_ORBIT_VISIBILITY_BUTTON = "shell.tracked_orbit_visibility"
+    const val PREDICTED_PATH_VISIBILITY_BUTTON = "shell.predicted_path_visibility"
     const val CHECKPOINT_ID_FIELD = "shell.checkpoint_id_field"
     const val CREATE_CHECKPOINT_BUTTON = "shell.create_checkpoint"
     const val BRANCH_FROM_CHECKPOINT_FIELD = "shell.branch_from_checkpoint"

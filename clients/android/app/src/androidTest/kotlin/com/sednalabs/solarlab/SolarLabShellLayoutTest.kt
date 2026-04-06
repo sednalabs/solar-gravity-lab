@@ -140,6 +140,7 @@ class SolarLabShellLayoutTest {
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_MASS_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_RADIUS_FIELD)
@@ -217,6 +218,10 @@ class SolarLabShellLayoutTest {
             .performClick()
         scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(3))
         composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(3))
+            .assertIsEnabled()
+            .performClick()
+        scrollShellTo(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
             .assertIsEnabled()
             .performClick()
 
@@ -320,6 +325,9 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(8))
         composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(8))
             .performClick()
+        scrollShellTo(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
+            .performClick()
 
         composeRule.activityRule.scenario.recreate()
         setTestContent()
@@ -337,6 +345,9 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(8))
         composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(8))
             .assertIsDisplayed()
+        scrollShellTo(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
+            .assertTextEquals("Forecast off")
     }
 
     @Test

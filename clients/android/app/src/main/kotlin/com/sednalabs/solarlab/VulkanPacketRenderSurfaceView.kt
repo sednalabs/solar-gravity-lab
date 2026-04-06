@@ -50,15 +50,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         private const val DEFAULT_VIEW_RADIUS_M = 24f * ASTRONOMICAL_UNIT_M
         private const val MIN_VIEW_RADIUS_M = 0.001f * ASTRONOMICAL_UNIT_M
         private const val MAX_VIEW_RADIUS_M = 150_000f * ASTRONOMICAL_UNIT_M
-        private const val MIN_LOCKED_VIEW_RADIUS_M = 0.003f * ASTRONOMICAL_UNIT_M
-        private const val MAX_LOCKED_VIEW_RADIUS_M = 12f * ASTRONOMICAL_UNIT_M
-        private const val HERO_MIN_VIEW_RADIUS_M = 4.5f * ASTRONOMICAL_UNIT_M
-        private const val HERO_MAX_VIEW_RADIUS_M = 12f * ASTRONOMICAL_UNIT_M
-        private const val OVERHEAD_MIN_VIEW_RADIUS_M = 6.5f * ASTRONOMICAL_UNIT_M
-        private const val OVERHEAD_MAX_VIEW_RADIUS_M = 18f * ASTRONOMICAL_UNIT_M
+        private const val MIN_LOCKED_VIEW_RADIUS_M = 0.0002f * ASTRONOMICAL_UNIT_M
+        private const val MAX_LOCKED_VIEW_RADIUS_M = 8f * ASTRONOMICAL_UNIT_M
+        private const val HERO_MIN_VIEW_RADIUS_M = 0.18f * ASTRONOMICAL_UNIT_M
+        private const val HERO_MAX_VIEW_RADIUS_M = 6f * ASTRONOMICAL_UNIT_M
+        private const val OVERHEAD_MIN_VIEW_RADIUS_M = 0.25f * ASTRONOMICAL_UNIT_M
+        private const val OVERHEAD_MAX_VIEW_RADIUS_M = 8f * ASTRONOMICAL_UNIT_M
         private const val MIN_CAMERA_DISTANCE_EPSILON_M = 1f
         private const val MIN_TAP_SELECTION_RADIUS_PX = 18f
-        private const val MAX_SCENE_LABELS = 6
+        private const val MAX_SCENE_LABELS = 10
         private val TEACHING_FRAME_BODY_IDS = setOf(
             "sun",
             "mercury",
@@ -81,8 +81,13 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         )
         private val LABELLED_BODY_IDS = setOf(
             "sun",
+            "mercury",
+            "venus",
             "earth",
             "moon",
+            "mars",
+            "jupiter",
+            "saturn",
         )
         private val FOCUS_COMPANION_CANDIDATES = mapOf(
             "earth" to listOf("moon"),
@@ -98,6 +103,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
     private var latestFrame: RenderFrame? = null
     private var highlightedTrailSourceBodyIds: List<String> = emptyList()
+    private var forecastTrailSourceBodyIds: Set<String> = emptySet()
+    private var forecastOverlayEnabled: Boolean = true
     private var surfaceReady: Boolean = false
     private var onBodyTapped: ((String) -> Unit)? = null
     private var activeViewportState: ViewportState? = null
@@ -154,6 +161,18 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         strokeWidth = 2.8f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
+    }
+    private val forecastPathPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        strokeWidth = 1.7f
+    }
+    private val forecastPathGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        strokeWidth = 3.3f
     }
     private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -217,6 +236,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     fun submitFrame(
         frame: RenderFrame?,
         highlightedTrailSourceBodyIds: List<String> = emptyList(),
+        showForecastOverlay: Boolean = true,
+        forecastTrailSourceBodyIds: List<String> = emptyList(),
     ) {
         latestFrame = frame
         if (frame == null) {
@@ -231,6 +252,13 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             .filter(String::isNotEmpty)
             .distinct()
             .toList()
+        forecastOverlayEnabled = showForecastOverlay
+        this.forecastTrailSourceBodyIds = forecastTrailSourceBodyIds
+            .asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .map { it.lowercase(Locale.US) }
+            .toSet()
         val selectedBodyId = frame?.bodies?.firstOrNull { it.selected }?.bodyId?.lowercase(Locale.US)
         if (selectedBodyId != lastSelectedBodyId) {
             userCameraOverrideActive = false
@@ -508,15 +536,26 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val bodyHits = ArrayList<BodyHitTarget>(frame.bodies.size)
         val labelAnchors = ArrayList<BodyLabelAnchor>(min(frame.bodies.size, MAX_SCENE_LABELS + 2))
 
-        drawOrbitGuides(
-            canvas = canvas,
-            viewportWidth = viewportWidth,
-            viewportHeight = viewportHeight,
-            halfWorldSpan = halfWorldSpan,
-            scale = scale,
-            centerX = effectiveCamera.centerX,
-            centerY = effectiveCamera.centerY,
-        )
+        if (cameraPresentationMode == CameraPresentationMode.Overhead) {
+            val orbitAnchorBody = frame.bodies.firstOrNull { body ->
+                body.bodyId.equals("sun", ignoreCase = true)
+            }
+            val orbitAnchorX = orbitAnchorBody?.x ?: 0f
+            val orbitAnchorY = orbitAnchorBody?.let { body ->
+                projectY(body.y, body.z, projectionPlane)
+            } ?: 0f
+            drawOrbitGuides(
+                canvas = canvas,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+                halfWorldSpan = halfWorldSpan,
+                scale = scale,
+                cameraCenterX = effectiveCamera.centerX,
+                cameraCenterY = effectiveCamera.centerY,
+                orbitAnchorX = orbitAnchorX,
+                orbitAnchorY = orbitAnchorY,
+            )
+        }
         drawSolarKeyLight(
             canvas = canvas,
             frame = frame,
@@ -540,6 +579,25 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 viewportHeight = viewportHeight,
                 highlightRank = trailHighlightRanks[trail.sourceBodyId.lowercase(Locale.US)],
             )
+            val normalizedSourceBodyId = trail.sourceBodyId.lowercase(Locale.US)
+            if (
+                forecastOverlayEnabled &&
+                (
+                    trail.headHighlighted ||
+                        forecastTrailSourceBodyIds.contains(normalizedSourceBodyId)
+                    )
+            ) {
+                drawForecastPathFromTrail(
+                    canvas = canvas,
+                    trail = trail,
+                    centerX = effectiveCamera.centerX,
+                    centerY = effectiveCamera.centerY,
+                    projectionPlane = projectionPlane,
+                    scale = scale,
+                    viewportWidth = viewportWidth,
+                    viewportHeight = viewportHeight,
+                )
+            }
         }
         frame.tracers.forEach { tracer ->
             drawTracer(
@@ -623,17 +681,22 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             isSun -> 2.95f
             body.selected -> 2.4f
             highlighted -> 2.1f
-            isProminent -> 1.85f
+            isProminent -> 2.3f
             else -> 1.32f
         }
         val radiusPx = when {
             isSun -> boostedRadiusPx.coerceIn(10f, 28f)
             body.selected -> boostedRadiusPx.coerceIn(4.6f, 15.5f)
             highlighted -> boostedRadiusPx.coerceIn(3.9f, 12.4f)
-            isProminent -> boostedRadiusPx.coerceIn(3.0f, 10.8f)
+            isProminent -> boostedRadiusPx.coerceIn(3.8f, 12.8f)
             else -> boostedRadiusPx.coerceIn(1.1f, 5.0f)
         }
-        val colorAlpha = (body.colorA.coerceIn(0f, 1f) * 255f).toInt().coerceIn(0, 255)
+        val baseAlpha = (body.colorA.coerceIn(0f, 1f) * 255f).toInt().coerceIn(0, 255)
+        val colorAlpha = when {
+            isSun -> baseAlpha.coerceAtLeast(190)
+            isProminent -> baseAlpha.coerceAtLeast(150)
+            else -> baseAlpha
+        }
         val colorRed = (body.colorR.coerceIn(0f, 1f) * 255f).toInt()
         val colorGreen = (body.colorG.coerceIn(0f, 1f) * 255f).toInt()
         val colorBlue = (body.colorB.coerceIn(0f, 1f) * 255f).toInt()
@@ -859,21 +922,89 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         }
     }
 
+    private fun drawForecastPathFromTrail(
+        canvas: Canvas,
+        trail: RenderTrail,
+        centerX: Float,
+        centerY: Float,
+        projectionPlane: ProjectionPlane,
+        scale: Float,
+        viewportWidth: Float,
+        viewportHeight: Float,
+    ) {
+        if (trail.points.size < 2) return
+        val projectedPoints = trail.points
+            .asSequence()
+            .mapNotNull { point ->
+                val projectedY = projectY(point.y, point.z, projectionPlane)
+                if (!point.x.isFinite() || !projectedY.isFinite()) {
+                    null
+                } else {
+                    ProjectedPoint(
+                        x = screenX(point.x, centerX, scale, viewportWidth),
+                        y = screenY(projectedY, centerY, scale, viewportHeight),
+                    )
+                }
+            }
+            .toList()
+        if (projectedPoints.size < 2) return
+        val head = projectedPoints.last()
+        val previous = projectedPoints[projectedPoints.lastIndex - 1]
+        val dx = head.x - previous.x
+        val dy = head.y - previous.y
+        val directionLength = sqrt(dx * dx + dy * dy)
+        if (!directionLength.isFinite() || directionLength < 1.5f) return
+
+        val extensionScale = when (cameraPresentationMode) {
+            CameraPresentationMode.Cinematic -> 2.4f
+            CameraPresentationMode.Overhead -> 1.8f
+            CameraPresentationMode.Follow -> 2.9f
+        }
+        val extensionLength = (directionLength * extensionScale)
+            .coerceIn(18f, min(viewportWidth, viewportHeight) * 0.24f)
+        val endX = head.x + (dx / directionLength) * extensionLength
+        val endY = head.y + (dy / directionLength) * extensionLength
+
+        forecastPathGlowPaint.color = Color.argb(
+            (trail.colorA.coerceIn(0f, 1f) * 0.3f * 255f).toInt().coerceIn(22, 112),
+            (trail.colorR.coerceIn(0f, 1f) * 255f).toInt(),
+            (trail.colorG.coerceIn(0f, 1f) * 255f).toInt(),
+            (trail.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+        )
+        forecastPathPaint.color = Color.argb(
+            (trail.colorA.coerceIn(0f, 1f) * 0.78f * 255f).toInt().coerceIn(92, 228),
+            (trail.colorR.coerceIn(0f, 1f) * 255f).toInt(),
+            (trail.colorG.coerceIn(0f, 1f) * 255f).toInt(),
+            (trail.colorB.coerceIn(0f, 1f) * 255f).toInt(),
+        )
+        canvas.drawLine(head.x, head.y, endX, endY, forecastPathGlowPaint)
+        canvas.drawLine(head.x, head.y, endX, endY, forecastPathPaint)
+        canvas.drawCircle(endX, endY, 1.8f, forecastPathPaint)
+    }
+
     private fun drawOrbitGuides(
         canvas: Canvas,
         viewportWidth: Float,
         viewportHeight: Float,
         halfWorldSpan: Float,
         scale: Float,
-        centerX: Float,
-        centerY: Float,
+        cameraCenterX: Float,
+        cameraCenterY: Float,
+        orbitAnchorX: Float,
+        orbitAnchorY: Float,
     ) {
-        val screenCenterX = screenX(centerX, centerX, scale, viewportWidth)
-        val screenCenterY = screenY(centerY, centerY, scale, viewportHeight)
-        val orbitGuideRadii = listOf(0.16f, 0.28f, 0.42f, 0.6f, 0.82f)
-            .map { fraction -> (halfWorldSpan * fraction * scale).coerceAtLeast(0f) }
-            .filter { radiusPx -> radiusPx >= 32f }
-            .take(5)
+        val screenCenterX = screenX(orbitAnchorX, cameraCenterX, scale, viewportWidth)
+        val screenCenterY = screenY(orbitAnchorY, cameraCenterY, scale, viewportHeight)
+        val orbitGuideRadii = listOf(0.39f, 0.72f, 1.0f, 1.52f, 2.77f, 5.2f, 9.58f)
+            .map { orbitalRadiusAu ->
+                (orbitalRadiusAu * ASTRONOMICAL_UNIT_M * scale).coerceAtLeast(0f)
+            }
+            .filter { radiusPx ->
+                radiusPx >= 26f &&
+                    radiusPx <= max(viewportWidth, viewportHeight) * 1.25f &&
+                    (radiusPx / scale) <= halfWorldSpan * 1.05f
+            }
+            .take(7)
 
         orbitGuideRadii.forEachIndexed { index, radiusPx ->
             guidePaint.color = Color.argb(
@@ -894,15 +1025,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             glowPaint.shader = RadialGradient(
                 screenCenterX,
                 screenCenterY,
-                orbitGuideRadii.last() * 1.08f,
+                orbitGuideRadii.last() * 1.02f,
                 intArrayOf(
-                    Color.argb(24, 65, 114, 196),
+                    Color.argb(18, 65, 114, 196),
                     Color.TRANSPARENT,
                 ),
                 floatArrayOf(0f, 1f),
                 Shader.TileMode.CLAMP,
             )
-            canvas.drawCircle(screenCenterX, screenCenterY, orbitGuideRadii.last() * 1.08f, glowPaint)
+            canvas.drawCircle(screenCenterX, screenCenterY, orbitGuideRadii.last() * 1.02f, glowPaint)
             glowPaint.shader = null
         }
     }
@@ -929,19 +1060,24 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             return
         }
         val radiusPx = min(viewportWidth, viewportHeight) * 0.30f
+        val primaryAlpha = when (cameraPresentationMode) {
+            CameraPresentationMode.Cinematic -> 34
+            CameraPresentationMode.Overhead -> 28
+            CameraPresentationMode.Follow -> 24
+        }
         glowPaint.shader = RadialGradient(
             sunScreenX,
             sunScreenY,
-            radiusPx,
+            radiusPx * 0.72f,
             intArrayOf(
-                Color.argb(46, 255, 209, 122),
-                Color.argb(18, 255, 173, 108),
+                Color.argb(primaryAlpha, 255, 209, 122),
+                Color.argb((primaryAlpha * 0.4f).toInt(), 255, 173, 108),
                 Color.TRANSPARENT,
             ),
-            floatArrayOf(0f, 0.38f, 1f),
+            floatArrayOf(0f, 0.34f, 1f),
             Shader.TileMode.CLAMP,
         )
-        canvas.drawCircle(sunScreenX, sunScreenY, radiusPx, glowPaint)
+        canvas.drawCircle(sunScreenX, sunScreenY, radiusPx * 0.72f, glowPaint)
         glowPaint.shader = null
     }
 
@@ -1082,7 +1218,9 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         forceFollow: Boolean,
     ): RenderBody? {
         val runtimeFollowMode = frame.observerModeCode == 1 || frame.observerModeCode == 2
-        val shouldFollow = forceFollow || runtimeFollowMode
+        val shouldFollow = forceFollow ||
+            runtimeFollowMode ||
+            cameraPresentationMode == CameraPresentationMode.Cinematic
         val selectedBody = frame.bodies.firstOrNull { it.selected }
         return selectedBody
             ?: frame.bodies.firstOrNull {
@@ -1150,21 +1288,21 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     ): Float {
         val normalizedBodyId = focusBody.bodyId.lowercase(Locale.US)
         val baselineRadius = when {
-            normalizedBodyId == "sun" -> 4.5f * ASTRONOMICAL_UNIT_M
-            normalizedBodyId in setOf("jupiter", "saturn", "uranus", "neptune") -> 0.12f * ASTRONOMICAL_UNIT_M
-            normalizedBodyId in setOf("earth", "venus", "mars", "mercury") -> 0.035f * ASTRONOMICAL_UNIT_M
-            normalizedBodyId == "moon" -> 0.010f * ASTRONOMICAL_UNIT_M
-            else -> 0.020f * ASTRONOMICAL_UNIT_M
+            normalizedBodyId == "sun" -> 0.72f * ASTRONOMICAL_UNIT_M
+            normalizedBodyId in setOf("jupiter", "saturn", "uranus", "neptune") -> 0.018f * ASTRONOMICAL_UNIT_M
+            normalizedBodyId in setOf("earth", "venus", "mars", "mercury") -> 0.0065f * ASTRONOMICAL_UNIT_M
+            normalizedBodyId == "moon" -> 0.0018f * ASTRONOMICAL_UNIT_M
+            else -> 0.0035f * ASTRONOMICAL_UNIT_M
         }
         val baselineScale = when (presentationMode) {
-            CameraPresentationMode.Cinematic -> 1.15f
+            CameraPresentationMode.Cinematic -> 1f
             CameraPresentationMode.Overhead -> 1f
-            CameraPresentationMode.Follow -> 0.82f
+            CameraPresentationMode.Follow -> 0.72f
         }
         val companionScale = when (presentationMode) {
-            CameraPresentationMode.Cinematic -> 2.45f
-            CameraPresentationMode.Overhead -> 2.2f
-            CameraPresentationMode.Follow -> 1.75f
+            CameraPresentationMode.Cinematic -> 1.9f
+            CameraPresentationMode.Overhead -> 1.7f
+            CameraPresentationMode.Follow -> 1.35f
         }
         val companionRadius = companionBody?.let { body ->
             val dx = focusBody.x - body.x
@@ -1174,7 +1312,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             (separationM * companionScale).coerceAtLeast(0f)
         } ?: 0f
         val maxRadius = when (presentationMode) {
-            CameraPresentationMode.Cinematic -> MAX_LOCKED_VIEW_RADIUS_M * 1.2f
+            CameraPresentationMode.Cinematic -> MAX_LOCKED_VIEW_RADIUS_M
             CameraPresentationMode.Overhead -> OVERHEAD_MAX_VIEW_RADIUS_M
             CameraPresentationMode.Follow -> MAX_LOCKED_VIEW_RADIUS_M
         }
