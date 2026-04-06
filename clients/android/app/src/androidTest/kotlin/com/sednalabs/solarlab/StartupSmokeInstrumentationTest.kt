@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -125,6 +126,7 @@ class StartupSmokeInstrumentationTest {
             "issue=${state.renderStatus.issue ?: "none"}"
 
     private fun assertVisualReadiness(activity: MainActivity) {
+        ensureBlockingSystemDialogsCleared()
         val renderSurface = findRenderSurfaceView(activity.window.decorView)
             ?: throw AssertionError("Unable to find VulkanPacketRenderSurfaceView for stage capture")
         assertTrue(
@@ -154,6 +156,10 @@ class StartupSmokeInstrumentationTest {
             } finally {
                 stageScreenshot.recycle()
             }
+            assertFalse(
+                "Startup screenshot is obscured by a blocking system dialog",
+                hasBlockingSystemDialog(),
+            )
             Log.i(
                 LOG_TAG,
                 "StartupSmokeInstrumentationTest.savedFullScreenshot size=${screenshot.width}x${screenshot.height}"
@@ -230,6 +236,78 @@ class StartupSmokeInstrumentationTest {
             }
         }
         return null
+    }
+
+    private fun ensureBlockingSystemDialogsCleared(timeoutMillis: Long = 3_000L) {
+        val dialogTitle = blockingSystemDialogTitle() ?: return
+        Log.w(LOG_TAG, "StartupSmokeInstrumentationTest.blockingDialog title=$dialogTitle")
+        val dismissalClicked = findBlockingSystemDialogDismissNode()
+            ?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            ?: false
+        if (!dismissalClicked) {
+            throw AssertionError(
+                "Blocking system dialog present before stage capture and could not be dismissed: $dialogTitle"
+            )
+        }
+        val cleared = waitForCondition(timeoutMillis) { !hasBlockingSystemDialog() }
+        if (!cleared) {
+            throw AssertionError(
+                "Blocking system dialog persisted after dismissal attempt: $dialogTitle"
+            )
+        }
+    }
+
+    private fun hasBlockingSystemDialog(): Boolean = blockingSystemDialogTitle() != null
+
+    private fun blockingSystemDialogTitle(): String? {
+        val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return null
+        return findFirstNode(root) { node ->
+            val text = node.text?.toString().orEmpty()
+            text.contains("isn't responding", ignoreCase = true) ||
+                text.contains("Application Not Responding", ignoreCase = true)
+        }?.text?.toString()
+    }
+
+    private fun findBlockingSystemDialogDismissNode(): AccessibilityNodeInfo? {
+        val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return null
+        return findFirstNode(root) { node ->
+            val text = node.text?.toString().orEmpty()
+            val viewId = node.viewIdResourceName.orEmpty()
+            text.equals("Wait", ignoreCase = true) ||
+                text.equals("OK", ignoreCase = true) ||
+                viewId == "android:id/aerr_wait"
+        }
+    }
+
+    private fun findFirstNode(
+        node: AccessibilityNodeInfo,
+        predicate: (AccessibilityNodeInfo) -> Boolean,
+    ): AccessibilityNodeInfo? {
+        if (predicate(node)) {
+            return node
+        }
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            val match = findFirstNode(child, predicate)
+            if (match != null) {
+                return match
+            }
+        }
+        return null
+    }
+
+    private fun waitForCondition(
+        timeoutMillis: Long,
+        predicate: () -> Boolean,
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (System.currentTimeMillis() < deadline) {
+            if (predicate()) {
+                return true
+            }
+            Thread.sleep(100)
+        }
+        return predicate()
     }
 
     private fun persistValidationScreenshot(name: String, bitmap: Bitmap) {
