@@ -19,6 +19,7 @@ LAST_LOGCAT_PID=""
 
 TEST_CLASSES=(
   "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
+  "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
   "com.sednalabs.solarlab.RotationContinuityInstrumentationTest"
   "com.sednalabs.solarlab.SolarLabShellLayoutTest"
 )
@@ -49,6 +50,7 @@ capture_device_state() {
   local screen_png="${class_dir}/screen.${phase_label}.png"
   local in_app_full_png="${class_dir}/startup-ready.in-app.png"
   local in_app_stage_png="${class_dir}/startup-ready-stage.in-app.png"
+  local in_app_screenshots_dir="${class_dir}/in-app-screenshots"
 
   run_capture "${class_dir}/logcat.txt" adb logcat -d
   run_capture "${class_dir}/dumpsys_activity.txt" adb shell dumpsys activity activities
@@ -60,6 +62,8 @@ capture_device_state() {
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull /sdcard/solarlab-window-dump.xml "${class_dir}/window_dump.xml" >/dev/null 2>&1 || true
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull "/sdcard/Download/solarlab-validation/startup-ready.png" "${in_app_full_png}" >/dev/null 2>&1 || rm -f "${in_app_full_png}"
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull "/sdcard/Download/solarlab-validation/startup-ready-stage.png" "${in_app_stage_png}" >/dev/null 2>&1 || rm -f "${in_app_stage_png}"
+  mkdir -p "${in_app_screenshots_dir}"
+  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull "/sdcard/Download/solarlab-validation/." "${in_app_screenshots_dir}" >/dev/null 2>&1 || true
   run_binary_capture "${screen_png}" adb exec-out screencap -p
   if [[ ! -s "${screen_png}" ]]; then
     rm -f "${screen_png}"
