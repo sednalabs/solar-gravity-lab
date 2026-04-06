@@ -4,6 +4,8 @@ set -euo pipefail
 REPORT_ROOT="clients/android/app/build/reports/emulator-smoke"
 APP_PACKAGE="com.sednalabs.solarlab"
 CLASS_TIMEOUT_SECONDS="${ANDROID_TEST_CLASS_TIMEOUT_SECONDS:-300}"
+ADB_CAPTURE_TIMEOUT_SECONDS="${ANDROID_TEST_ADB_CAPTURE_TIMEOUT_SECONDS:-20}"
+LOGCAT_SHUTDOWN_TIMEOUT_SECONDS="${ANDROID_TEST_LOGCAT_SHUTDOWN_TIMEOUT_SECONDS:-5}"
 LOGCAT_FILTER_SPECS=(
   "SolarLabInstrumentation:I"
   "SolarLabDevTelemetry:I"
@@ -23,18 +25,36 @@ TEST_CLASSES=(
 
 mkdir -p "${REPORT_ROOT}"
 
+run_capture() {
+  local output_path="$1"
+  shift
+
+  if ! timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" "$@" > "${output_path}" 2>&1; then
+    true
+  fi
+}
+
+run_binary_capture() {
+  local output_path="$1"
+  shift
+
+  if ! timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" "$@" > "${output_path}"; then
+    true
+  fi
+}
+
 capture_device_state() {
   local class_dir="$1"
 
-  adb logcat -d > "${class_dir}/logcat.txt" || true
-  adb shell dumpsys activity activities > "${class_dir}/dumpsys_activity.txt" || true
-  adb shell dumpsys activity top > "${class_dir}/dumpsys_activity_top.txt" || true
-  adb shell dumpsys window windows > "${class_dir}/dumpsys_window.txt" || true
-  adb shell dumpsys gfxinfo "${APP_PACKAGE}" > "${class_dir}/gfxinfo.txt" || true
-  adb shell cat /data/anr/traces.txt > "${class_dir}/anr_traces.txt" || true
-  adb shell uiautomator dump /sdcard/solarlab-window-dump.xml >/dev/null 2>&1 || true
-  adb pull /sdcard/solarlab-window-dump.xml "${class_dir}/window_dump.xml" >/dev/null 2>&1 || true
-  adb exec-out screencap -p > "${class_dir}/screen.png" || true
+  run_capture "${class_dir}/logcat.txt" adb logcat -d
+  run_capture "${class_dir}/dumpsys_activity.txt" adb shell dumpsys activity activities
+  run_capture "${class_dir}/dumpsys_activity_top.txt" adb shell dumpsys activity top
+  run_capture "${class_dir}/dumpsys_window.txt" adb shell dumpsys window windows
+  run_capture "${class_dir}/gfxinfo.txt" adb shell dumpsys gfxinfo "${APP_PACKAGE}"
+  run_capture "${class_dir}/anr_traces.txt" adb shell cat /data/anr/traces.txt
+  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb shell uiautomator dump /sdcard/solarlab-window-dump.xml >/dev/null 2>&1 || true
+  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" adb pull /sdcard/solarlab-window-dump.xml "${class_dir}/window_dump.xml" >/dev/null 2>&1 || true
+  run_binary_capture "${class_dir}/screen.png" adb exec-out screencap -p
   if [[ ! -s "${class_dir}/screen.png" ]]; then
     rm -f "${class_dir}/screen.png"
   fi
@@ -45,9 +65,7 @@ start_live_logcat() {
   local output_file="${class_dir}/live-logcat.txt"
 
   echo "Streaming filtered logcat for $(basename "${class_dir}")"
-  {
-    adb logcat -v threadtime "${LOGCAT_FILTER_SPECS[@]}"
-  } | tee "${output_file}" &
+  adb logcat -v threadtime "${LOGCAT_FILTER_SPECS[@]}" > >(tee "${output_file}") &
   LAST_LOGCAT_PID=$!
 }
 
@@ -58,6 +76,13 @@ stop_live_logcat() {
   fi
 
   kill "${logcat_pid}" >/dev/null 2>&1 || true
+  for _ in $(seq 1 $((LOGCAT_SHUTDOWN_TIMEOUT_SECONDS * 10))); do
+    if ! kill -0 "${logcat_pid}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  kill -9 "${logcat_pid}" >/dev/null 2>&1 || true
   wait "${logcat_pid}" >/dev/null 2>&1 || true
 }
 
