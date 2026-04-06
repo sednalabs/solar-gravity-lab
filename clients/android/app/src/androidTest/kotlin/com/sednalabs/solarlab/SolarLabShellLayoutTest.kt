@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasTestTag
@@ -21,6 +22,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.sednalabs.solarlab.runtime.RenderStatusPresentation
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
+import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
@@ -69,6 +71,12 @@ class SolarLabShellLayoutTest {
             observerModeCode = RuntimeObserverMode.FollowHost.nativeCode,
             backendSummary = "Runtime backend localhost",
             cameraFacingSummary = "target=(1.0,2.0,3.0), up=(0.0,1.0,0.0)",
+            renderFrame = RenderFrame(
+                sceneRevision = "scene-alpha",
+                bodies = emptyList(),
+                tracers = emptyList(),
+                trails = emptyList(),
+            ),
         )
     )
 
@@ -93,9 +101,11 @@ class SolarLabShellLayoutTest {
         assertVisibleInScrollableShell(SolarLabTestTags.DETAIL_LINE)
         assertVisibleInScrollableShell(SolarLabTestTags.SESSION_HANDLE)
         assertReachableInScrollableShell(SolarLabTestTags.RENDER_PACKET_SUMMARY)
+        assertReachableInScrollableShell(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_BODY_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
+        assertReachableInScrollableShell(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_MASS_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_RADIUS_FIELD)
@@ -133,6 +143,56 @@ class SolarLabShellLayoutTest {
     @Test
     fun shellControls_emitCommands_whenUserInteracts() {
         Log.i(LOG_TAG, "SolarLabShellLayoutTest.shellControls.begin")
+        scrollShellTo(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
+            .performTextInput("earth")
+        composeRule.waitForIdle()
+        scrollShellTo(SolarLabTestTags.focusCatalogFocusPresetTag("earth"))
+        composeRule.onNodeWithTag(SolarLabTestTags.focusCatalogFocusPresetTag("earth"))
+            .assertIsDisplayed()
+            .performClick()
+        scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD)
+            .assertTextEquals("earth")
+        scrollShellTo(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
+            .assertIsEnabled()
+            .performClick()
+        assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "earth" })
+
+        scrollShellTo(SolarLabTestTags.focusCatalogSpawnPresetTag("earth"))
+        composeRule.onNodeWithTag(SolarLabTestTags.focusCatalogSpawnPresetTag("earth"))
+            .assertIsDisplayed()
+            .performClick()
+        scrollShellTo(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
+            .assertTextEquals("earth")
+        composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_MASS_FIELD)
+            .assertTextEquals("5.97237E24")
+        composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_RADIUS_FIELD)
+            .assertTextEquals("6371000.0")
+        scrollShellTo(SolarLabTestTags.SPAWN_BODY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_BUTTON)
+            .assertIsEnabled()
+            .performClick()
+        assertTrue(
+            runtimeFacade.commands.any {
+                it is RuntimeCommand.SpawnBody &&
+                    it.bodyId == "earth" &&
+                    it.massKg == 5.97237E24 &&
+                    it.radiusM == 6_371_000.0
+            }
+        )
+
+        scrollShellTo(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
+            .assertIsEnabled()
+            .performClick()
+        scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(3))
+        composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(3))
+            .assertIsEnabled()
+            .performClick()
+
         scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD).performTextInput("body-7")
         composeRule.waitForIdle()
@@ -209,6 +269,39 @@ class SolarLabShellLayoutTest {
         sendCommand(RuntimeCommand.RemoveBody(bodyId = "body-asteroid"))
 
         assertTrue(runtimeFacade.commands.size >= 7)
+    }
+
+    @Test
+    fun teachingCatalogAndTrackedOrbitControls_surviveRotation() {
+        Log.i(LOG_TAG, "SolarLabShellLayoutTest.rotationState.begin")
+        scrollShellTo(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
+            .performTextInput("moon")
+        scrollShellTo(SolarLabTestTags.focusCatalogFocusPresetTag("moon"))
+        composeRule.onNodeWithTag(SolarLabTestTags.focusCatalogFocusPresetTag("moon"))
+            .performClick()
+        scrollShellTo(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
+            .performClick()
+        scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(8))
+        composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(8))
+            .performClick()
+
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitForIdle()
+
+        scrollShellTo(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD)
+            .assertTextEquals("moon")
+        scrollShellTo(SolarLabTestTags.FOCUS_BODY_FIELD)
+        composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_FIELD)
+            .assertTextEquals("moon")
+        scrollShellTo(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
+            .assertTextEquals("Hidden")
+        scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(8))
+        composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(8))
+            .assertIsDisplayed()
     }
 
     @Test

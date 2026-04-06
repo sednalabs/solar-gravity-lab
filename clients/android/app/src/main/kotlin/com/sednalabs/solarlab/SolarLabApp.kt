@@ -40,6 +40,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +61,7 @@ import com.sednalabs.solarlab.runtime.DeveloperTelemetryEvent
 import com.sednalabs.solarlab.runtime.DeveloperTelemetryPresentation
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
+import com.sednalabs.solarlab.runtime.RuntimeBodyClass
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.SessionConnectionState
@@ -431,6 +433,9 @@ private fun RenderStagePanel(
     onRefresh: () -> Unit,
     canRefresh: Boolean,
 ) {
+    var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
+    var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
+
     LabPanel(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(
@@ -499,14 +504,16 @@ private fun RenderStagePanel(
                         },
                     )
 
-                    if (uiState.recentFocusedBodyIds.isNotEmpty()) {
-                        TrackedOrbitHistoryPanel(
-                            trackedBodyIds = uiState.recentFocusedBodyIds,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(16.dp),
-                        )
-                    }
+                    TrackedOrbitHistoryPanel(
+                        trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
+                        showTrackedOrbits = showTrackedOrbits,
+                        trackedOrbitLimit = trackedOrbitLimit,
+                        onShowTrackedOrbitsChange = { showTrackedOrbits = it },
+                        onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(16.dp),
+                    )
 
                     Surface(
                         modifier = Modifier
@@ -561,6 +568,10 @@ private fun RenderStagePanel(
 @Composable
 private fun TrackedOrbitHistoryPanel(
     trackedBodyIds: List<String>,
+    showTrackedOrbits: Boolean,
+    trackedOrbitLimit: Int,
+    onShowTrackedOrbitsChange: (Boolean) -> Unit,
+    onTrackedOrbitLimitChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -578,9 +589,47 @@ private fun TrackedOrbitHistoryPanel(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.secondary,
             )
-            trackedBodyIds.forEachIndexed { index, bodyId ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilterChip(
+                    selected = showTrackedOrbits,
+                    onClick = { onShowTrackedOrbitsChange(!showTrackedOrbits) },
+                    label = {
+                        Text(if (showTrackedOrbits) "Visible" else "Hidden")
+                    },
+                    modifier = Modifier.testTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON),
+                )
+                listOf(3, 5, 8, 12).forEach { limit ->
+                    RuntimeCommandChip(
+                        label = limit.toString(),
+                        selected = trackedOrbitLimit == limit,
+                        enabled = true,
+                        onClick = { onTrackedOrbitLimitChange(limit) },
+                        modifier = Modifier.testTag(SolarLabTestTags.trackedOrbitLimitTag(limit)),
+                    )
+                }
+            }
+            if (showTrackedOrbits) {
+                if (trackedBodyIds.isEmpty()) {
+                    Text(
+                        text = "No tracked bodies yet.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                } else {
+                    trackedBodyIds.forEachIndexed { index, bodyId ->
+                        Text(
+                            text = "${index + 1}. $bodyId",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            } else {
                 Text(
-                    text = "${index + 1}. $bodyId",
+                    text = "Tracked orbits are hidden.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -667,21 +716,26 @@ private fun ControlDeck(
     onRefresh: () -> Unit,
     onCommand: (RuntimeCommand) -> Unit,
 ) {
-    var focusBodyInput by mutableStateOf("")
-    var checkpointIdInput by mutableStateOf("")
-    var branchFromCheckpointIdInput by mutableStateOf("")
-    var newBranchIdInput by mutableStateOf("")
-    var spawnBodyIdInput by mutableStateOf("")
-    var spawnBodyMassInput by mutableStateOf("1.0")
-    var spawnBodyRadiusInput by mutableStateOf("1.0")
-    var setBodyKinematicsBodyIdInput by mutableStateOf("")
-    var setBodyKinematicsPositionXInput by mutableStateOf("0.0")
-    var setBodyKinematicsPositionYInput by mutableStateOf("0.0")
-    var setBodyKinematicsPositionZInput by mutableStateOf("0.0")
-    var setBodyKinematicsVelocityXInput by mutableStateOf("0.0")
-    var setBodyKinematicsVelocityYInput by mutableStateOf("0.0")
-    var setBodyKinematicsVelocityZInput by mutableStateOf("0.0")
-    var removeBodyIdInput by mutableStateOf("")
+    var focusCatalogQuery by rememberSaveable { mutableStateOf("") }
+    var focusBodyInput by rememberSaveable { mutableStateOf("") }
+    var checkpointIdInput by rememberSaveable { mutableStateOf("") }
+    var branchFromCheckpointIdInput by rememberSaveable { mutableStateOf("") }
+    var newBranchIdInput by rememberSaveable { mutableStateOf("") }
+    var spawnBodyIdInput by rememberSaveable { mutableStateOf("") }
+    var spawnBodyClassName by rememberSaveable { mutableStateOf(RuntimeBodyClass.Planet.name) }
+    var spawnBodyMassInput by rememberSaveable { mutableStateOf("1.0") }
+    var spawnBodyRadiusInput by rememberSaveable { mutableStateOf("1.0") }
+    var setBodyKinematicsBodyIdInput by rememberSaveable { mutableStateOf("") }
+    var setBodyKinematicsPositionXInput by rememberSaveable { mutableStateOf("0.0") }
+    var setBodyKinematicsPositionYInput by rememberSaveable { mutableStateOf("0.0") }
+    var setBodyKinematicsPositionZInput by rememberSaveable { mutableStateOf("0.0") }
+    var setBodyKinematicsVelocityXInput by rememberSaveable { mutableStateOf("0.0") }
+    var setBodyKinematicsVelocityYInput by rememberSaveable { mutableStateOf("0.0") }
+    var setBodyKinematicsVelocityZInput by rememberSaveable { mutableStateOf("0.0") }
+    var removeBodyIdInput by rememberSaveable { mutableStateOf("") }
+
+    val spawnBodyClass = runCatching { RuntimeBodyClass.valueOf(spawnBodyClassName) }
+        .getOrDefault(RuntimeBodyClass.Planet)
 
     LabPanel {
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -695,6 +749,55 @@ private fun ControlDeck(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            ControlSection(title = "Teaching catalog") {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    OutlinedTextField(
+                        value = focusCatalogQuery,
+                        onValueChange = { focusCatalogQuery = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.FOCUS_CATALOG_SEARCH_FIELD),
+                        enabled = enabled,
+                        label = { Text("Search canonical bodies or aliases") },
+                        singleLine = true,
+                    )
+                    val matchingEntries = SolarLabTeachingCatalog.entries.filter { entry ->
+                        entry.matches(focusCatalogQuery)
+                    }
+                    if (matchingEntries.isEmpty()) {
+                        Text(
+                            text = "No teaching bodies match that search.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            matchingEntries.forEach { entry ->
+                                TeachingCatalogCard(
+                                    entry = entry,
+                                    enabled = enabled,
+                                    onLoadFocusBody = {
+                                        focusBodyInput = entry.bodyId
+                                    },
+                                    onLoadSpawnPreset = {
+                                        spawnBodyIdInput = entry.bodyId
+                                        spawnBodyClassName = entry.spawnBodyClass.name
+                                        spawnBodyMassInput = entry.spawnMassKg.toString()
+                                        spawnBodyRadiusInput = entry.spawnRadiusM.toString()
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -833,11 +936,25 @@ private fun ControlDeck(
                             singleLine = true,
                         )
                     }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        RuntimeBodyClass.entries.forEach { bodyClass ->
+                            RuntimeCommandChip(
+                                label = bodyClass.displayLabel(),
+                                selected = spawnBodyClass == bodyClass,
+                                enabled = enabled,
+                                onClick = { spawnBodyClassName = bodyClass.name },
+                            )
+                        }
+                    }
                     Button(
                         onClick = {
                             onCommand(
                                 RuntimeCommand.SpawnBody(
                                     bodyId = spawnBodyIdInput.trim(),
+                                    bodyClass = spawnBodyClass,
                                     massKg = spawnBodyMassInput.toDoubleOrNull() ?: 1.0,
                                     radiusM = spawnBodyRadiusInput.toDoubleOrNull() ?: 1.0,
                                 ),
@@ -1081,6 +1198,67 @@ private fun ControlDeck(
     }
 }
 
+@Composable
+private fun TeachingCatalogCard(
+    entry: SolarLabTeachingCatalogEntry,
+    enabled: Boolean,
+    onLoadFocusBody: () -> Unit,
+    onLoadSpawnPreset: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.44f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(min = 214.dp, max = 280.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = entry.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = entry.bodyId,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                if (entry.aliases.isNotEmpty()) {
+                    Text(
+                        text = entry.aliases.joinToString(" • "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Button(
+                onClick = onLoadFocusBody,
+                enabled = enabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(SolarLabTestTags.focusCatalogFocusPresetTag(entry.bodyId)),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Text("Load focus field")
+            }
+            FilledTonalButton(
+                onClick = onLoadSpawnPreset,
+                enabled = enabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(SolarLabTestTags.focusCatalogSpawnPresetTag(entry.bodyId)),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Text("Load spawn preset")
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ControlSection(
@@ -1108,15 +1286,28 @@ private fun RuntimeCommandChip(
     selected: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     FilterChip(
         selected = selected,
         onClick = onClick,
         enabled = enabled,
+        modifier = modifier,
         label = {
             Text(label)
         },
     )
+}
+
+private fun RuntimeBodyClass.displayLabel(): String = when (this) {
+    RuntimeBodyClass.Star -> "Star"
+    RuntimeBodyClass.Planet -> "Planet"
+    RuntimeBodyClass.DwarfPlanet -> "Dwarf"
+    RuntimeBodyClass.Moon -> "Moon"
+    RuntimeBodyClass.SmallBody -> "Small body"
+    RuntimeBodyClass.Tracer -> "Tracer"
+    RuntimeBodyClass.Spacecraft -> "Craft"
+    RuntimeBodyClass.Custom -> "Custom"
 }
 
 @Composable
