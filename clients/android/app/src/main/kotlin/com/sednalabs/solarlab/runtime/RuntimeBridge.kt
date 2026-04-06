@@ -1400,6 +1400,7 @@ internal data class NativeRuntimeInfoResult(
         1 -> "vulkan"
         2 -> "metal"
         3 -> "webgpu-class"
+        4 -> "opencl"
         else -> "unknown($gpuBackend)"
     }
 }

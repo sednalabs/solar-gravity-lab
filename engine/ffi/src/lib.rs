@@ -2311,6 +2311,24 @@ mod tests {
     }
 
     #[test]
+    fn create_session_supports_opencl_gpu_backend() {
+        let mut params = new_params("sol-system", "main");
+        params.gpu_backend = 4;
+
+        let create = sl_v2_session_create(params);
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        assert_ne!(create.handle.raw, 0);
+        assert_eq!(create.runtime_info.gpu_backend, SlGpuBackend::OpenCl);
+
+        let runtime_info = sl_v2_session_runtime_info(create.handle);
+        assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
+        assert_eq!(runtime_info.info.gpu_backend, SlGpuBackend::OpenCl);
+
+        let destroy = sl_v2_session_destroy(create.handle);
+        assert_eq!(destroy.code, SlStatusCode::Ok);
+    }
+
+    #[test]
     fn rejects_invalid_create_parameters() {
         let mut params = new_params("ok", "main");
         params.cpu_backend = 9;

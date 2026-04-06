@@ -59,7 +59,8 @@ typedef enum SlGpuBackend {
   SL_GPU_BACKEND_NONE = 0,
   SL_GPU_BACKEND_VULKAN = 1,
   SL_GPU_BACKEND_METAL = 2,
-  SL_GPU_BACKEND_WEBGPU_CLASS = 3
+  SL_GPU_BACKEND_WEBGPU_CLASS = 3,
+  SL_GPU_BACKEND_OPENCL = 4
 } SlGpuBackend;
 
 typedef enum SlTimelineSemantics {

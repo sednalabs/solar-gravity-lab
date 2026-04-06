@@ -171,6 +171,31 @@ class JniRuntimeBridgeTest {
         )
     }
 
+    @Test
+    fun connect_emitsOpenClRuntimeInfoLabel_whenNativeReportsOpenClBackend() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            refreshResults = ArrayDeque(
+                listOf(snapshotSummary(bodyCount = 1))
+            ),
+            runtimeInfoGpuBackend = 4,
+        )
+        val bridge = JniRuntimeBridge(
+            transport = transport,
+            renderHostAdapter = FakeRenderHostAdapter(),
+        )
+
+        val signals = collectSignalsUntil(bridge) { collected ->
+            collected.any { it is RuntimeSignal.RuntimeInfoAvailable }
+        }
+
+        val runtimeInfo = signals
+            .filterIsInstance<RuntimeSignal.RuntimeInfoAvailable>()
+            .last()
+
+        assertEquals("simd-arm64", runtimeInfo.cpuBackendLabel)
+        assertEquals("opencl", runtimeInfo.gpuBackendLabel)
+    }
+
     private suspend fun collectSignalsUntil(
         bridge: RuntimeBridge,
         predicate: (List<RuntimeSignal>) -> Boolean,
@@ -219,6 +244,8 @@ class JniRuntimeBridgeTest {
 
     private class FakeNativeRuntimeTransport(
         private val refreshResults: ArrayDeque<NativeSnapshotSummaryResult>,
+        private val runtimeInfoCpuBackend: Int = 1,
+        private val runtimeInfoGpuBackend: Int = 0,
     ) : NativeRuntimeTransport {
         val runtimeInfoHandles = mutableListOf<Long>()
         val refreshedHandles = mutableListOf<Long>()
@@ -233,8 +260,8 @@ class JniRuntimeBridgeTest {
             result = NativeResult(code = 0),
             handle = 42L,
             abiVersion = 2,
-            cpuBackend = 1,
-            gpuBackend = 0,
+            cpuBackend = runtimeInfoCpuBackend,
+            gpuBackend = runtimeInfoGpuBackend,
         )
 
         override fun runtimeInfo(handle: Long): NativeRuntimeInfoResult {
@@ -242,8 +269,8 @@ class JniRuntimeBridgeTest {
             return NativeRuntimeInfoResult(
                 result = NativeResult(code = 0),
                 abiVersion = 2,
-                cpuBackend = 1,
-                gpuBackend = 0,
+                cpuBackend = runtimeInfoCpuBackend,
+                gpuBackend = runtimeInfoGpuBackend,
             )
         }
 
