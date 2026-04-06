@@ -308,9 +308,13 @@ class SolarLabShellLayoutTest {
         if (tag == SolarLabTestTags.SHELL_COLUMN) {
             return
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
-            .performScrollToNode(hasTestTag(tag))
+        val targetNode = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+        try {
+            targetNode.performScrollTo()
+        } catch (_: AssertionError) {
+            composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
+                .performScrollToNode(hasTestTag(tag))
+        }
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag(tag).performScrollTo()
     }
 }
