@@ -205,9 +205,9 @@ private fun ImmersiveStageShell(
     var stageCameraModeName by rememberSaveable {
         mutableStateOf(VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic.name)
     }
-    var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
+    var showTrackedOrbits by rememberSaveable { mutableStateOf(false) }
     var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
-    var showForecastPaths by rememberSaveable { mutableStateOf(true) }
+    var showForecastPaths by rememberSaveable { mutableStateOf(false) }
     var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
     val stageCameraMode = VulkanPacketRenderSurfaceView.CameraPresentationMode.entries
         .firstOrNull { mode -> mode.name == stageCameraModeName }
@@ -706,9 +706,9 @@ private fun RenderStagePanel(
     var stageCameraModeName by rememberSaveable {
         mutableStateOf(VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic.name)
     }
-    var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
+    var showTrackedOrbits by rememberSaveable { mutableStateOf(false) }
     var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
-    var showForecastPaths by rememberSaveable { mutableStateOf(true) }
+    var showForecastPaths by rememberSaveable { mutableStateOf(false) }
     var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
     val stageCameraMode = VulkanPacketRenderSurfaceView.CameraPresentationMode.entries
         .firstOrNull { mode -> mode.name == stageCameraModeName }

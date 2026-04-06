@@ -122,11 +122,6 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         color = Color.rgb(7, 11, 19)
         style = Paint.Style.FILL
     }
-    private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(42, 110, 168, 255)
-        style = Paint.Style.STROKE
-        strokeWidth = 1.8f
-    }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -970,62 +965,6 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         canvas.drawLine(head.x, head.y, endX, endY, forecastPathGlowPaint)
         canvas.drawLine(head.x, head.y, endX, endY, forecastPathPaint)
         canvas.drawCircle(endX, endY, 1.8f, forecastPathPaint)
-    }
-
-    private fun drawOrbitGuides(
-        canvas: Canvas,
-        viewportWidth: Float,
-        viewportHeight: Float,
-        halfWorldSpan: Float,
-        scale: Float,
-        cameraCenterX: Float,
-        cameraCenterY: Float,
-        orbitAnchorX: Float,
-        orbitAnchorY: Float,
-    ) {
-        val screenCenterX = screenX(orbitAnchorX, cameraCenterX, scale, viewportWidth)
-        val screenCenterY = screenY(orbitAnchorY, cameraCenterY, scale, viewportHeight)
-        val orbitGuideRadii = listOf(0.39f, 0.72f, 1.0f, 1.52f, 2.77f, 5.2f, 9.58f)
-            .map { orbitalRadiusAu ->
-                (orbitalRadiusAu * ASTRONOMICAL_UNIT_M * scale).coerceAtLeast(0f)
-            }
-            .filter { radiusPx ->
-                radiusPx >= 26f &&
-                    radiusPx <= max(viewportWidth, viewportHeight) * 1.25f &&
-                    (radiusPx / scale) <= halfWorldSpan * 1.05f
-            }
-            .take(7)
-
-        orbitGuideRadii.forEachIndexed { index, radiusPx ->
-            guidePaint.color = Color.argb(
-                (42 - index * 5).coerceAtLeast(14),
-                94,
-                152,
-                236,
-            )
-            guidePaint.strokeWidth = when (index) {
-                0 -> 1.55f
-                1 -> 1.3f
-                else -> 1.05f
-            }
-            canvas.drawCircle(screenCenterX, screenCenterY, radiusPx, guidePaint)
-        }
-
-        if (orbitGuideRadii.isNotEmpty()) {
-            glowPaint.shader = RadialGradient(
-                screenCenterX,
-                screenCenterY,
-                orbitGuideRadii.last() * 1.02f,
-                intArrayOf(
-                    Color.argb(18, 65, 114, 196),
-                    Color.TRANSPARENT,
-                ),
-                floatArrayOf(0f, 1f),
-                Shader.TileMode.CLAMP,
-            )
-            canvas.drawCircle(screenCenterX, screenCenterY, orbitGuideRadii.last() * 1.02f, glowPaint)
-            glowPaint.shader = null
-        }
     }
 
     private fun drawSolarKeyLight(

@@ -150,9 +150,11 @@ class StartupSmokeInstrumentationTest {
                         "bright=${metrics.brightSampleCount}, unique=${metrics.uniqueColorCount}, " +
                         "stage=${stageScreenshot.width}x${stageScreenshot.height}"
                 )
+                val minimumBrightSamples = maxOf(6, metrics.sampleCount / 120)
                 assertTrue(
                     "Startup stage screenshot looks too visually empty: $metrics",
-                    metrics.brightSampleCount >= 20 && metrics.uniqueColorCount >= 8,
+                    metrics.brightSampleCount >= minimumBrightSamples &&
+                        metrics.uniqueColorCount >= 6,
                 )
             } finally {
                 stageScreenshot.recycle()

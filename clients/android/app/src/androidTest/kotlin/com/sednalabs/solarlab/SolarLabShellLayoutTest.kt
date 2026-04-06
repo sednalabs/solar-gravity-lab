@@ -341,13 +341,13 @@ class SolarLabShellLayoutTest {
             .assertTextContains("moon")
         scrollShellTo(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
-            .assertTextEquals("Hidden")
+            .assertTextEquals("Visible")
         scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(8))
         composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(8))
             .assertIsDisplayed()
         scrollShellTo(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
-            .assertTextEquals("Forecast off")
+            .assertTextEquals("Forecast on")
     }
 
     @Test
