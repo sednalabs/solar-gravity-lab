@@ -7,7 +7,6 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
-import android.graphics.RectF
 import android.graphics.Shader
 import android.util.AttributeSet
 import android.util.Log
@@ -37,6 +36,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         private const val TAG = "SolarLabRenderHost"
         private const val MAX_TRACER_POINTS_FOR_EXTENT = 512
         private const val MAX_TRAIL_POINTS_FOR_EXTENT = 1_024
+        private const val STARFIELD_POINT_COUNT = 84
     }
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
@@ -52,11 +52,6 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         color = Color.argb(42, 110, 168, 255)
         style = Paint.Style.STROKE
         strokeWidth = 1.8f
-    }
-    private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(24, 232, 238, 249)
-        style = Paint.Style.STROKE
-        strokeWidth = 1.2f
     }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -157,48 +152,67 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
 
         glowPaint.shader = RadialGradient(
             viewportWidth * 0.5f,
-            viewportHeight * 0.42f,
-            min(viewportWidth, viewportHeight) * 0.55f,
+            viewportHeight * 0.5f,
+            min(viewportWidth, viewportHeight) * 0.68f,
             intArrayOf(
-                Color.argb(62, 55, 110, 193),
-                Color.argb(22, 22, 55, 100),
+                Color.argb(84, 73, 132, 214),
+                Color.argb(26, 24, 60, 110),
                 Color.TRANSPARENT,
             ),
-            floatArrayOf(0f, 0.48f, 1f),
+            floatArrayOf(0f, 0.56f, 1f),
             Shader.TileMode.CLAMP,
         )
         canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, glowPaint)
 
-        val orbitBounds = RectF(
-            viewportWidth * 0.2f,
-            viewportHeight * 0.12f,
-            viewportWidth * 0.8f,
-            viewportHeight * 0.72f,
+        val centerX = viewportWidth * 0.5f
+        val centerY = viewportHeight * 0.5f
+
+        for (index in 0 until STARFIELD_POINT_COUNT) {
+            val normalizedX = pseudoRandomUnit(index * 37 + 11)
+            val normalizedY = pseudoRandomUnit(index * 53 + 19)
+            val starX = normalizedX * viewportWidth
+            val starY = normalizedY * viewportHeight
+            val alpha = (44 + (pseudoRandomUnit(index * 97 + 7) * 130f)).toInt().coerceIn(32, 188)
+            val radius = (0.65f + pseudoRandomUnit(index * 73 + 3) * 1.55f)
+            glowPaint.shader = null
+            glowPaint.color = Color.argb(alpha, 222, 234, 255)
+            canvas.drawCircle(starX, starY, radius, glowPaint)
+        }
+
+        guidePaint.color = Color.argb(30, 147, 183, 255)
+        guidePaint.strokeWidth = 1.4f
+        repeat(3) { ring ->
+            val radiusScale = 0.2f + ring * 0.14f
+            canvas.drawCircle(
+                centerX,
+                centerY,
+                min(viewportWidth, viewportHeight) * radiusScale,
+                guidePaint,
+            )
+        }
+
+        glowPaint.shader = RadialGradient(
+            centerX,
+            centerY,
+            min(viewportWidth, viewportHeight) * 0.08f,
+            intArrayOf(
+                Color.argb(210, 255, 215, 115),
+                Color.argb(110, 255, 157, 67),
+                Color.TRANSPARENT,
+            ),
+            floatArrayOf(0f, 0.38f, 1f),
+            Shader.TileMode.CLAMP,
         )
-        canvas.drawOval(orbitBounds, guidePaint)
-        canvas.drawCircle(
-            viewportWidth * 0.5f,
-            viewportHeight * 0.42f,
-            min(viewportWidth, viewportHeight) * 0.18f,
-            guidePaint,
-        )
-        canvas.drawLine(
-            viewportWidth * 0.12f,
-            viewportHeight * 0.42f,
-            viewportWidth * 0.88f,
-            viewportHeight * 0.42f,
-            crosshairPaint,
-        )
-        canvas.drawLine(
-            viewportWidth * 0.5f,
-            viewportHeight * 0.1f,
-            viewportWidth * 0.5f,
-            viewportHeight * 0.82f,
-            crosshairPaint,
-        )
+        canvas.drawCircle(centerX, centerY, min(viewportWidth, viewportHeight) * 0.09f, glowPaint)
 
         backgroundPaint.shader = null
         glowPaint.shader = null
+    }
+
+    private fun pseudoRandomUnit(seed: Int): Float {
+        val hashed = seed * 1_103_515_245 + 12_345
+        val value = (hashed ushr 8) and 0x00FF_FFFF
+        return value / 0x00FF_FFFF.toFloat()
     }
 
     // Decode step: convert shared world-space coordinates into screen space, apply safe

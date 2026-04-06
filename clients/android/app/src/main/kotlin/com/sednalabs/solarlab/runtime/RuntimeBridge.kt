@@ -156,10 +156,17 @@ internal class JniRuntimeBridge(
 
         val initialSignals = refreshSignalsForHandle(handle, includeSummary = true)
         initialSignals.forEach { trySend(it) }
+        var latestSummary = extractLatestSnapshotSummary(initialSignals)
 
         if (extractBodyCountFrom(initialSignals) == 0L) {
             ensureStartupSeedApplied(handle).forEach { trySend(it) }
-            refreshSignalsForHandle(handle, includeSummary = true).forEach { trySend(it) }
+            val seededSignals = refreshSignalsForHandle(handle, includeSummary = true)
+            seededSignals.forEach { trySend(it) }
+            latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
+        }
+
+        latestSummary?.let { summary ->
+            ensureStartupPlaybackConfigured(handle, summary).forEach { trySend(it) }
         }
 
         val refreshJob = launch {
@@ -354,6 +361,95 @@ internal class JniRuntimeBridge(
             ?: 0L
     }
 
+    private fun extractLatestSnapshotSummary(
+        signals: List<RuntimeSignal>,
+    ): NativeSnapshotSummaryResult? {
+        return signals
+            .asSequence()
+            .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
+            .lastOrNull()
+            ?.summary
+    }
+
+    private fun ensureStartupPlaybackConfigured(
+        handle: Long,
+        summary: NativeSnapshotSummaryResult,
+    ): List<RuntimeSignal> {
+        val signals = mutableListOf<RuntimeSignal>()
+        var shouldRefresh = false
+
+        if (summary.paused) {
+            val resumeResult = runCatching {
+                transport.applyCommand(
+                    handle,
+                    NativeRuntimeCommandPayload(
+                        kind = NATIVE_COMMAND_RESUME_PLAYBACK,
+                    ),
+                )
+            }.getOrElse { error ->
+                signals += RuntimeSignal.Notice(
+                    message = "Startup playback resume failed: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Warning,
+                )
+                null
+            }
+
+            if (resumeResult != null) {
+                if (resumeResult.result.isOk()) {
+                    shouldRefresh = true
+                    signals += RuntimeSignal.Notice(
+                        message = "Startup playback resumed to keep the solar-system view in motion",
+                        level = RuntimeNoticeLevel.Success,
+                    )
+                } else {
+                    signals += RuntimeSignal.Notice(
+                        message = "Startup playback resume rejected: ${resumeResult.result.describe()}",
+                        level = RuntimeNoticeLevel.Warning,
+                    )
+                }
+            }
+        }
+
+        if (summary.simSecondsPerRealSecond < STARTUP_MIN_VISIBLE_PLAYBACK_RATE) {
+            val rateResult = runCatching {
+                transport.applyCommand(
+                    handle,
+                    NativeRuntimeCommandPayload(
+                        kind = NATIVE_COMMAND_SET_PLAYBACK_RATE,
+                        simSecondsPerRealSecond = STARTUP_DEFAULT_PLAYBACK_RATE,
+                    ),
+                )
+            }.getOrElse { error ->
+                signals += RuntimeSignal.Notice(
+                    message = "Startup playback rate update failed: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Warning,
+                )
+                null
+            }
+
+            if (rateResult != null) {
+                if (rateResult.result.isOk()) {
+                    shouldRefresh = true
+                    signals += RuntimeSignal.Notice(
+                        message = "Startup playback rate set to ${STARTUP_DEFAULT_PLAYBACK_RATE.toLong()} sim-seconds per real-second",
+                        level = RuntimeNoticeLevel.Info,
+                    )
+                } else {
+                    signals += RuntimeSignal.Notice(
+                        message = "Startup playback rate update rejected: ${rateResult.result.describe()}",
+                        level = RuntimeNoticeLevel.Warning,
+                    )
+                }
+            }
+        }
+
+        if (shouldRefresh) {
+            signals += refreshSignalsForHandle(handle, includeSummary = true)
+        }
+
+        return signals
+    }
+
     private fun ensureStartupSeedApplied(handle: Long): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
         val commandResult = runCatching {
@@ -387,7 +483,9 @@ internal class JniRuntimeBridge(
         private const val ABI_VERSION = 2
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
-        private const val REFRESH_INTERVAL_MS = 1_000L
+        private const val REFRESH_INTERVAL_MS = 500L
+        private const val STARTUP_MIN_VISIBLE_PLAYBACK_RATE = 3_600.0
+        private const val STARTUP_DEFAULT_PLAYBACK_RATE = 21_600.0
     }
 }
 

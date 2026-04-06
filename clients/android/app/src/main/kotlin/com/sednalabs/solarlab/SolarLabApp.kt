@@ -119,17 +119,16 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                             .padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
-                        HeroPanel(
-                            uiState = uiState,
-                            onRefresh = {
-                                scope.launch {
-                                    runtimeFacade.refresh()
-                                }
-                            },
-                            canRefresh = canRefresh,
-                        )
-
                         if (isWide) {
+                            HeroPanel(
+                                uiState = uiState,
+                                onRefresh = {
+                                    scope.launch {
+                                        runtimeFacade.refresh()
+                                    }
+                                },
+                                canRefresh = canRefresh,
+                            )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -172,6 +171,15 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                 uiState = uiState,
                                 modifier = Modifier.fillMaxWidth(),
                                 compactStage = true,
+                                onRefresh = {
+                                    scope.launch {
+                                        runtimeFacade.refresh()
+                                    }
+                                },
+                                canRefresh = canRefresh,
+                            )
+                            HeroPanel(
+                                uiState = uiState,
                                 onRefresh = {
                                     scope.launch {
                                         runtimeFacade.refresh()
@@ -448,12 +456,12 @@ private fun RenderStagePanel(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "Render stage",
+                        text = "Solar system stage",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = "Overhead orbital view from Rust-authoritative scene packets.",
+                        text = "Live overhead orbital view from Rust-authoritative scene packets.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -482,8 +490,8 @@ private fun RenderStagePanel(
                     .testTag(SolarLabTestTags.RENDER_PANEL)
                     .fillMaxWidth()
                     .heightIn(
-                        min = if (compactStage) 420.dp else 320.dp,
-                        max = if (compactStage) 720.dp else 560.dp,
+                        min = if (compactStage) 500.dp else 320.dp,
+                        max = if (compactStage) 680.dp else 560.dp,
                     )
                     .clip(RoundedCornerShape(28.dp))
                     .background(
