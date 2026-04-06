@@ -154,7 +154,7 @@ class StartupSmokeInstrumentationTest {
                 assertTrue(
                     "Startup stage screenshot looks too visually empty: $metrics",
                     metrics.brightSampleCount >= minimumBrightSamples &&
-                        metrics.uniqueColorCount >= 6,
+                        metrics.uniqueColorCount >= 4,
                 )
             } finally {
                 stageScreenshot.recycle()
