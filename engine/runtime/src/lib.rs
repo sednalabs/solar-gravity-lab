@@ -2395,6 +2395,51 @@ mod tests {
     }
 
     #[test]
+    fn canonical_major_seed_propagates_moon_and_pluto_with_epoch() {
+        let mut runtime = new_runtime();
+        runtime.config.physics.max_substep_seconds = 900.0;
+        seed_major_bodies(&mut runtime);
+
+        let snapshot_t0 = runtime.snapshot();
+        let earth_t0 = body_position(&snapshot_t0, &BodyId("earth".into()));
+        let moon_t0 = body_position(&snapshot_t0, &BodyId("moon".into()));
+        let sun_t0 = body_position(&snapshot_t0, &BodyId("sun".into()));
+        let pluto_t0 = body_position(&snapshot_t0, &BodyId("pluto".into()));
+        let moon_relative_t0 = relative_position(&moon_t0, &earth_t0);
+        let pluto_relative_t0 = relative_position(&pluto_t0, &sun_t0);
+
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 86_400.0,
+                },
+                99,
+            )
+            .expect("advance epoch should succeed");
+
+        let snapshot_t1 = runtime.snapshot();
+        let earth_t1 = body_position(&snapshot_t1, &BodyId("earth".into()));
+        let moon_t1 = body_position(&snapshot_t1, &BodyId("moon".into()));
+        let sun_t1 = body_position(&snapshot_t1, &BodyId("sun".into()));
+        let pluto_t1 = body_position(&snapshot_t1, &BodyId("pluto".into()));
+        let moon_relative_t1 = relative_position(&moon_t1, &earth_t1);
+        let pluto_relative_t1 = relative_position(&pluto_t1, &sun_t1);
+
+        let moon_relative_movement_m = displacement_magnitude(&moon_relative_t1, &moon_relative_t0);
+        let pluto_relative_movement_m =
+            displacement_magnitude(&pluto_relative_t1, &pluto_relative_t0);
+
+        assert!(
+            moon_relative_movement_m > 1.0e6,
+            "Expected canonical-seed Moon orbit to propagate across epochs, movement={moon_relative_movement_m}"
+        );
+        assert!(
+            pluto_relative_movement_m > 1.0e6,
+            "Expected canonical-seed Pluto orbit to propagate across epochs, movement={pluto_relative_movement_m}"
+        );
+    }
+
+    #[test]
     fn advance_epoch_is_deterministic_for_identical_command_streams() {
         let mut runtime_a = new_runtime();
         let mut runtime_b = new_runtime();
@@ -3396,7 +3441,10 @@ mod tests {
 
         const RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX: f64 = 1.0e-6;
         const BARYCENTER_DRIFT_M_MAX: f64 = 50.0;
+        const BARYCENTER_VELOCITY_DRIFT_MPS_MAX: f64 = 1.0e-3;
+        const ANGULAR_MOMENTUM_FINE_BASELINE_ERROR_RATIO_MAX: f64 = 1.0e-3;
         const BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX: f64 = 10.0;
+        const BARYCENTER_FINE_BASELINE_VELOCITY_ERROR_MPS_MAX: f64 = 1.0e-3;
         const MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX: f64 = 1.0e-3;
 
         assert!(
@@ -3412,6 +3460,19 @@ mod tests {
             BARYCENTER_DRIFT_M_MAX
         );
         assert!(
+            metrics.barycenter_velocity_drift_mps <= BARYCENTER_VELOCITY_DRIFT_MPS_MAX,
+            "barycenter_velocity_drift_mps={} exceeded {}",
+            metrics.barycenter_velocity_drift_mps,
+            BARYCENTER_VELOCITY_DRIFT_MPS_MAX
+        );
+        assert!(
+            metrics.angular_momentum_fine_baseline_error_ratio
+                <= ANGULAR_MOMENTUM_FINE_BASELINE_ERROR_RATIO_MAX,
+            "angular_momentum_fine_baseline_error_ratio={} exceeded {}",
+            metrics.angular_momentum_fine_baseline_error_ratio,
+            ANGULAR_MOMENTUM_FINE_BASELINE_ERROR_RATIO_MAX
+        );
+        assert!(
             metrics.barycenter_fine_baseline_distance_error_m
                 <= BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX,
             "barycenter_fine_baseline_distance_error_m={} exceeded {}",
@@ -3419,11 +3480,22 @@ mod tests {
             BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX
         );
         assert!(
+            metrics.barycenter_fine_baseline_velocity_error_mps
+                <= BARYCENTER_FINE_BASELINE_VELOCITY_ERROR_MPS_MAX,
+            "barycenter_fine_baseline_velocity_error_mps={} exceeded {}",
+            metrics.barycenter_fine_baseline_velocity_error_mps,
+            BARYCENTER_FINE_BASELINE_VELOCITY_ERROR_MPS_MAX
+        );
+        assert!(
             metrics.moon_earth_fine_baseline_error_ratio
                 <= MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX,
             "moon_earth_fine_baseline_error_ratio={} exceeded {}",
             metrics.moon_earth_fine_baseline_error_ratio,
             MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX
+        );
+        assert!(
+            metrics.absolute_angular_momentum_drift_kg_m2ps.is_finite(),
+            "absolute_angular_momentum_drift_kg_m2ps should stay finite"
         );
     }
 
@@ -3640,9 +3712,13 @@ mod tests {
 
     struct TelemetryMetrics {
         relative_energy_drift: f64,
+        absolute_angular_momentum_drift_kg_m2ps: f64,
         relative_angular_momentum_drift: f64,
         barycenter_drift_m: f64,
+        barycenter_velocity_drift_mps: f64,
+        angular_momentum_fine_baseline_error_ratio: f64,
         barycenter_fine_baseline_distance_error_m: f64,
+        barycenter_fine_baseline_velocity_error_mps: f64,
         moon_earth_fine_baseline_error_ratio: f64,
     }
 
@@ -3652,6 +3728,18 @@ mod tests {
         let fine = propagate_major_bodies(fine_step, steps * 4);
         let elapsed_seconds = step_seconds * steps as f64;
         let total_mass_kg = total_mass_kg(&coarse.initial_snapshot);
+        let initial_angular_momentum =
+            vec_magnitude(coarse.initial_invariants.angular_momentum_kg_m2ps);
+        let coarse_final_angular_momentum =
+            vec_magnitude(coarse.final_invariants.angular_momentum_kg_m2ps);
+        let fine_final_angular_momentum =
+            vec_magnitude(fine.final_invariants.angular_momentum_kg_m2ps);
+        let initial_barycenter_velocity =
+            barycenter_velocity_mps(&coarse.initial_invariants, total_mass_kg);
+        let coarse_final_barycenter_velocity =
+            barycenter_velocity_mps(&coarse.final_invariants, total_mass_kg);
+        let fine_final_barycenter_velocity =
+            barycenter_velocity_mps(&fine.final_invariants, total_mass_kg);
         let expected_final_barycenter = expected_barycenter_after_seconds(
             &coarse.initial_invariants,
             total_mass_kg,
@@ -3662,15 +3750,29 @@ mod tests {
             coarse.initial_invariants.total_energy_j,
             coarse.final_invariants.total_energy_j,
         );
-        let relative_angular_momentum_drift = drift(
-            vec_magnitude(coarse.initial_invariants.angular_momentum_kg_m2ps),
-            vec_magnitude(coarse.final_invariants.angular_momentum_kg_m2ps),
+        let relative_angular_momentum_drift =
+            drift(initial_angular_momentum, coarse_final_angular_momentum);
+        let absolute_angular_momentum_drift_kg_m2ps =
+            (coarse_final_angular_momentum - initial_angular_momentum).abs();
+        let barycenter_velocity_drift_mps = displacement_magnitude(
+            &coarse_final_barycenter_velocity,
+            &initial_barycenter_velocity,
         );
+        let angular_momentum_fine_baseline_error_ratio = if fine_final_angular_momentum > 0.0 {
+            (coarse_final_angular_momentum - fine_final_angular_momentum).abs()
+                / fine_final_angular_momentum
+        } else {
+            0.0
+        };
 
         let barycenter_drift_m =
             displacement_magnitude(&expected_final_barycenter, &coarse.final_barycenter);
         let barycenter_fine_baseline_distance_error_m =
             displacement_magnitude(&coarse.final_barycenter, &fine.final_barycenter);
+        let barycenter_fine_baseline_velocity_error_mps = displacement_magnitude(
+            &coarse_final_barycenter_velocity,
+            &fine_final_barycenter_velocity,
+        );
 
         let moon_earth_fine_baseline_error_ratio = {
             let coarse_distance = moon_earth_distance_au(&coarse.final_snapshot);
@@ -3684,9 +3786,13 @@ mod tests {
 
         TelemetryMetrics {
             relative_energy_drift,
+            absolute_angular_momentum_drift_kg_m2ps,
             relative_angular_momentum_drift,
             barycenter_drift_m,
+            barycenter_velocity_drift_mps,
+            angular_momentum_fine_baseline_error_ratio,
             barycenter_fine_baseline_distance_error_m,
+            barycenter_fine_baseline_velocity_error_mps,
             moon_earth_fine_baseline_error_ratio,
         }
     }
@@ -3787,6 +3893,18 @@ mod tests {
                 + (invariants.linear_momentum_kg_mps.y / total_mass_kg) * elapsed_seconds,
             z: invariants.barycenter_m.z
                 + (invariants.linear_momentum_kg_mps.z / total_mass_kg) * elapsed_seconds,
+        }
+    }
+
+    fn barycenter_velocity_mps(invariants: &PhysicsInvariants, total_mass_kg: f64) -> Vector3d {
+        if total_mass_kg <= 0.0 {
+            return Vector3d::default();
+        }
+
+        Vector3d {
+            x: invariants.linear_momentum_kg_mps.x / total_mass_kg,
+            y: invariants.linear_momentum_kg_mps.y / total_mass_kg,
+            z: invariants.linear_momentum_kg_mps.z / total_mass_kg,
         }
     }
 

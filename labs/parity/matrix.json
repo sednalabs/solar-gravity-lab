@@ -9,7 +9,9 @@
       "status": "port",
       "owner_item": "3490",
       "proof_refs": [
-        "validation-lab parity coverage for drift and scenario checks"
+        "validation-lab parity coverage for drift and scenario checks",
+        "runtime canonical-major-seed moon/pluto epoch propagation assertions",
+        "runtime major-body telemetry thresholds for COM drift, COM velocity drift, and fine-baseline angular-momentum agreement"
       ],
       "notes": "Seed all canonical checks to confirm authoritative authority and accuracy are not regressed."
     },
