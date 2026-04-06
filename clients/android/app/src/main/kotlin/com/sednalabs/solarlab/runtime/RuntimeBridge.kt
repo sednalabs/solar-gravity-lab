@@ -954,7 +954,7 @@ internal class JniRuntimeBridge(
     }
 
     private companion object {
-        private const val ABI_VERSION = 1
+        private const val ABI_VERSION = 2
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 1_000L

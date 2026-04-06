@@ -492,9 +492,21 @@ private fun RenderStagePanel(
                             VulkanPacketRenderSurfaceView(context = context)
                         },
                         update = { view ->
-                            view.submitFrame(uiState.renderFrame)
+                            view.submitFrame(
+                                frame = uiState.renderFrame,
+                                highlightedTrailSourceBodyIds = uiState.recentFocusedBodyIds,
+                            )
                         },
                     )
+
+                    if (uiState.recentFocusedBodyIds.isNotEmpty()) {
+                        TrackedOrbitHistoryPanel(
+                            trackedBodyIds = uiState.recentFocusedBodyIds,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(16.dp),
+                        )
+                    }
 
                     Surface(
                         modifier = Modifier
@@ -541,6 +553,37 @@ private fun RenderStagePanel(
                         canRefresh = canRefresh,
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackedOrbitHistoryPanel(
+    trackedBodyIds: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "Tracked orbits",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            trackedBodyIds.forEachIndexed { index, bodyId ->
+                Text(
+                    text = "${index + 1}. $bodyId",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
     }

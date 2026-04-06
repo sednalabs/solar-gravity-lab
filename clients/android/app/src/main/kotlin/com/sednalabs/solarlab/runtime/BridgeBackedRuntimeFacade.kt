@@ -64,6 +64,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                 observerModeCode = null,
                 cameraFacingSummary = null,
                 focusedBodyId = null,
+                recentFocusedBodyIds = emptyList(),
                 activeCheckpointId = null,
                 activeCheckpointLabel = null,
                 renderFrame = null,
@@ -208,6 +209,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     activeCheckpointId = current.activeCheckpointId,
                     activeCheckpointLabel = current.activeCheckpointLabel,
                 )
+                val recentFocusedBodyIds = current.recentFocusedBodyIds
+                    .updatedRecentFocusedBodyIds(snapshot.focusTargetBodyId)
                 val next = current.copy(
                     connectionState = SessionConnectionState.Active,
                     statusLine = if (signal.summary.paused) {
@@ -221,6 +224,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                     snapshotSummary = snapshot.toSnapshotSummaryLine(),
                     observerModeCode = signal.summary.observerMode,
                     focusedBodyId = snapshot.focusTargetBodyId,
+                    recentFocusedBodyIds = recentFocusedBodyIds,
                     activeCheckpointId = snapshot.activeCheckpointId,
                     activeCheckpointLabel = snapshot.activeCheckpointLabel,
                     renderStatus = current.renderStatus.copy(
@@ -250,6 +254,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                 val focusedBodyId = signal.command.focusTargetBodyId(current.focusedBodyId)
                 val checkpointId = signal.command.activeCheckpointId(current.activeCheckpointId)
                 val checkpointLabel = signal.command.activeCheckpointLabel(current.activeCheckpointLabel)
+                val recentFocusedBodyIds = current.recentFocusedBodyIds
+                    .updatedRecentFocusedBodyIds(focusedBodyId)
                 val snapshot = signal.summary.toSnapshotPresentation(
                     focusTargetBodyId = focusedBodyId,
                     activeCheckpointId = checkpointId,
@@ -266,6 +272,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                     snapshotSummary = snapshot.toSnapshotSummaryLine(),
                     observerModeCode = signal.summary.observerMode,
                     focusedBodyId = focusedBodyId,
+                    recentFocusedBodyIds = recentFocusedBodyIds,
                     activeCheckpointId = checkpointId,
                     activeCheckpointLabel = checkpointLabel,
                     renderStatus = current.renderStatus.copy(
@@ -423,6 +430,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                     observerModeCode = null,
                     cameraFacingSummary = null,
                     focusedBodyId = null,
+                    recentFocusedBodyIds = emptyList(),
                     activeCheckpointId = null,
                     activeCheckpointLabel = null,
                     renderStatus = current.renderStatus.copy(
@@ -486,6 +494,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                 noticeLine = noticeLine,
                 noticeTone = ShellNoticeTone.Critical,
                 pendingActionLabel = null,
+                focusedBodyId = null,
+                recentFocusedBodyIds = emptyList(),
                 renderStatus = current.renderStatus.copy(
                     readiness = RenderHostReadiness.Unavailable,
                     isDegraded = true,
@@ -519,6 +529,22 @@ class BridgeBackedRuntimeFacade internal constructor(
         val category: String,
         val message: String,
     )
+}
+
+private const val RECENT_FOCUSED_BODY_HISTORY_LIMIT = 5
+
+private fun List<String>.updatedRecentFocusedBodyIds(
+    focusedBodyId: String?,
+    limit: Int = RECENT_FOCUSED_BODY_HISTORY_LIMIT,
+): List<String> {
+    val normalized = focusedBodyId?.trim().orEmpty()
+    if (normalized.isEmpty()) {
+        return this
+    }
+    return buildList {
+        add(normalized)
+        addAll(this@updatedRecentFocusedBodyIds.filterNot { it == normalized })
+    }.take(limit)
 }
 
 private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresentation {

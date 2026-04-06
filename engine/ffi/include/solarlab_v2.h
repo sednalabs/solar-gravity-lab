@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 // ABI version of the runtime/session contract.
-#define SOLARLAB_V2_ABI_VERSION 1u
+#define SOLARLAB_V2_ABI_VERSION 2u
 // Fixed-size inline capacity for identifier payloads carried by value in structs.
 #define SL_V2_ID_CAPACITY 96u
 
@@ -174,6 +174,8 @@ typedef struct SlVulkanTrailSpan {
   SlPackedColor color;
   uint32_t max_samples;
   uint32_t head_highlighted;
+  uint8_t source_body_id[SL_V2_ID_CAPACITY];
+  uint32_t source_body_id_len;
 } SlVulkanTrailSpan;
 
 typedef struct SlVulkanDirectionalLight {

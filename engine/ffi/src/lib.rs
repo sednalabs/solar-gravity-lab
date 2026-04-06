@@ -27,7 +27,7 @@ use solarlab_vulkan_adapter::{
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 1;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 2;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -232,13 +232,29 @@ pub struct SlVulkanTrailVertex {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlVulkanTrailSpan {
     pub vertex_offset: u32,
     pub vertex_count: u32,
     pub color: SlPackedColor,
     pub max_samples: u32,
     pub head_highlighted: u32,
+    pub source_body_id: [u8; SL_V2_ID_CAPACITY],
+    pub source_body_id_len: u32,
+}
+
+impl Default for SlVulkanTrailSpan {
+    fn default() -> Self {
+        Self {
+            vertex_offset: 0,
+            vertex_count: 0,
+            color: SlPackedColor::default(),
+            max_samples: 0,
+            head_highlighted: 0,
+            source_body_id: [0; SL_V2_ID_CAPACITY],
+            source_body_id_len: 0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -438,7 +454,7 @@ struct ExportedVulkanScenePacket {
 }
 
 impl ExportedVulkanScenePacket {
-    fn from_scene_packet(packet: VulkanScenePacket) -> Self {
+    fn from_scene_packet(packet: VulkanScenePacket) -> Result<Self, SlResult> {
         let provenance_source = packet
             .provenance
             .as_ref()
@@ -464,7 +480,7 @@ impl ExportedVulkanScenePacket {
                 format!("{}:{}", digest.algorithm, digest.hex_value()).into_bytes()
             });
 
-        Self {
+        Ok(Self {
             scene_revision: packet.scene_revision.into_bytes(),
             epoch_seconds: packet.epoch_seconds,
             observer_mode: encode_observer_mode(&packet.observer_mode),
@@ -502,7 +518,7 @@ impl ExportedVulkanScenePacket {
                 .trail_spans
                 .into_iter()
                 .map(encode_trail_span)
-                .collect(),
+                .collect::<Result<Vec<_>, _>>()?,
             trail_vertices: packet
                 .trail_vertices
                 .into_iter()
@@ -513,7 +529,7 @@ impl ExportedVulkanScenePacket {
                 .into_iter()
                 .map(encode_directional_light)
                 .collect(),
-        }
+        })
     }
 
     fn info(&self) -> SlVulkanScenePacketInfo {
@@ -877,7 +893,16 @@ pub extern "C" fn sl_v2_session_export_vulkan_scene(
         session.vulkan_scene_adapter.adapt(&scene)
     };
 
-    let packet = ExportedVulkanScenePacket::from_scene_packet(scene_packet);
+    let packet = match ExportedVulkanScenePacket::from_scene_packet(scene_packet) {
+        Ok(packet) => packet,
+        Err(result) => {
+            return SlVulkanScenePacketResult {
+                result,
+                handle: SlRenderPacketHandle::default(),
+                info: empty_vulkan_scene_packet_info(),
+            };
+        }
+    };
     let mut packet_registry = match render_packet_registry().lock() {
         Ok(lock) => lock,
         Err(_) => {
@@ -1062,14 +1087,16 @@ fn encode_tracer_instance(value: VulkanTracerInstance) -> SlVulkanTracerInstance
     }
 }
 
-fn encode_trail_span(value: VulkanTrailSpan) -> SlVulkanTrailSpan {
-    SlVulkanTrailSpan {
+fn encode_trail_span(value: VulkanTrailSpan) -> Result<SlVulkanTrailSpan, SlResult> {
+    Ok(SlVulkanTrailSpan {
         vertex_offset: value.vertex_offset,
         vertex_count: value.vertex_count,
         color: encode_packed_color(value.color),
         max_samples: value.max_samples,
         head_highlighted: u32::from(value.head_highlighted),
-    }
+        source_body_id: encode_identifier(&value.source_body_id.0)?,
+        source_body_id_len: string_length_to_u32(&value.source_body_id.0),
+    })
 }
 
 fn encode_trail_vertex(value: VulkanTrailVertex) -> SlVulkanTrailVertex {
@@ -2234,13 +2261,13 @@ mod tests {
     use solarlab_runtime::{BodyState, WorldCommand};
 
     use super::{
-        registry, sl_v2_abi_version, sl_v2_session_apply_command, sl_v2_session_create,
+        decode_identifier, registry, sl_v2_abi_version, sl_v2_session_apply_command, sl_v2_session_create,
         sl_v2_session_destroy, sl_v2_session_export_vulkan_scene, sl_v2_session_refresh,
         sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
         sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlBodyClass,
         SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlSessionCommand,
         SlSessionCreateParams, SlStatusCode, SlTimelineSemantics, SlVector3d,
-        SlVulkanBodyInstance, SlVulkanSceneBufferKind, SL_V2_ID_CAPACITY,
+        SlVulkanBodyInstance, SlVulkanSceneBufferKind, SlVulkanTrailSpan, SL_V2_ID_CAPACITY,
         SOLARLAB_V2_ABI_VERSION,
     };
 
@@ -2396,6 +2423,31 @@ mod tests {
             direct_packet.body_instances[1].position_from_origin_m.z
         );
         assert_eq!(exported_bodies[1].selected, 1);
+
+        let trail_view = sl_v2_vulkan_scene_packet_buffer(
+            exported.handle,
+            SlVulkanSceneBufferKind::TrailSpans,
+        );
+        assert_eq!(trail_view.result.code, SlStatusCode::Ok);
+        let exported_trails = unsafe {
+            std::slice::from_raw_parts(
+                trail_view.view.data.cast::<SlVulkanTrailSpan>(),
+                usize::try_from(trail_view.view.element_count).expect("element count fits"),
+            )
+        };
+        assert_eq!(exported_trails.len(), direct_packet.trail_spans.len());
+        assert_eq!(
+            decode_identifier(
+                &exported_trails[1].source_body_id,
+                exported_trails[1].source_body_id_len,
+            )
+            .expect("trail source body id should decode"),
+            direct_packet.trail_spans[1].source_body_id.0,
+        );
+        assert_eq!(
+            exported_trails[1].head_highlighted,
+            u32::from(direct_packet.trail_spans[1].head_highlighted),
+        );
 
         assert_eq!(
             sl_v2_vulkan_scene_packet_release(exported.handle).code,

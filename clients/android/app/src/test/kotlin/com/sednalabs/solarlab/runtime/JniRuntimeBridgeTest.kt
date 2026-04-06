@@ -232,7 +232,7 @@ class JniRuntimeBridgeTest {
         ): NativeCreateSessionResult = NativeCreateSessionResult(
             result = NativeResult(code = 0),
             handle = 42L,
-            abiVersion = 1,
+            abiVersion = 2,
             cpuBackend = 1,
             gpuBackend = 0,
         )
@@ -241,7 +241,7 @@ class JniRuntimeBridgeTest {
             runtimeInfoHandles += handle
             return NativeRuntimeInfoResult(
                 result = NativeResult(code = 0),
-                abiVersion = 1,
+                abiVersion = 2,
                 cpuBackend = 1,
                 gpuBackend = 0,
             )

@@ -1109,6 +1109,7 @@ fn extract_scene_tracers(snapshot: &WorldSnapshot) -> Vec<SceneTracer> {
 }
 
 fn extract_scene_trails(snapshot: &WorldSnapshot) -> Vec<SceneTrail> {
+    let focused_body_id = snapshot.observer.focus_body_id.as_ref();
     snapshot
         .bodies
         .iter()
@@ -1125,7 +1126,8 @@ fn extract_scene_trails(snapshot: &WorldSnapshot) -> Vec<SceneTrail> {
                 samples_m,
                 color: style.tracer_color,
                 max_samples: TRAIL_HISTORY_MAX_SAMPLES as u32,
-                head_highlighted: body.body_class == BodyClass::Tracer,
+                head_highlighted: body.body_class == BodyClass::Tracer ||
+                    focused_body_id == Some(&body.body_id),
             })
         })
         .collect()
@@ -1720,6 +1722,14 @@ mod tests {
             .iter()
             .any(|light| light.light_id == "light:sun"));
         assert!(scene.trails.iter().all(|trail| !trail.samples_m.is_empty()));
+        assert!(
+            scene
+                .trails
+                .iter()
+                .find(|trail| trail.source_body_id == moon)
+                .expect("moon trail should be present")
+                .head_highlighted
+        );
         assert!(
             scene
                 .bodies

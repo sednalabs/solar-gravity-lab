@@ -2,6 +2,7 @@ package com.sednalabs.solarlab.runtime
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
 import kotlin.math.min
 
 data class RenderFrame(
@@ -35,6 +36,7 @@ data class RenderTracer(
 )
 
 data class RenderTrail(
+    val sourceBodyId: String,
     val colorR: Float,
     val colorG: Float,
     val colorB: Float,
@@ -53,7 +55,10 @@ internal object VulkanPacketRenderFrameDecoder {
     private const val BODY_STRIDE_BYTES = 40
     private const val TRACER_STRIDE_BYTES = 32
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
-    private const val TRAIL_SPAN_STRIDE_BYTES = 32
+    private const val TRAIL_SPAN_STRIDE_BYTES = 132
+    private const val TRAIL_SOURCE_BODY_ID_OFFSET_BYTES = 32
+    private const val TRAIL_SOURCE_BODY_ID_MAX_BYTES = 96
+    private const val TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 128
 
     // Decodes native-side packet layout into immutable Kotlin domain models.
     // Stride constants and slice math are intentionally colocated with decode paths
@@ -139,6 +144,12 @@ internal object VulkanPacketRenderFrameDecoder {
                 vertices.subList(offset, min(offset + pointCount, vertices.size))
             }
             RenderTrail(
+                sourceBodyId = decodeIdentifier(
+                    ordered = ordered,
+                    bytesOffset = base + TRAIL_SOURCE_BODY_ID_OFFSET_BYTES,
+                    maxBytes = TRAIL_SOURCE_BODY_ID_MAX_BYTES,
+                    lengthOffset = base + TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES,
+                ),
                 colorR = ordered.getFloat(base + 8),
                 colorG = ordered.getFloat(base + 12),
                 colorB = ordered.getFloat(base + 16),
@@ -153,5 +164,26 @@ internal object VulkanPacketRenderFrameDecoder {
         if (buffer == null) return null
         // Duplicate keeps native order and avoids mutating caller cursor/state.
         return buffer.duplicate().order(ByteOrder.nativeOrder())
+    }
+
+    private fun decodeIdentifier(
+        ordered: ByteBuffer,
+        bytesOffset: Int,
+        maxBytes: Int,
+        lengthOffset: Int,
+    ): String {
+        val requestedLength = ordered.getInt(lengthOffset).coerceIn(0, maxBytes)
+        if (requestedLength == 0) {
+            return ""
+        }
+        val availableLength = min(requestedLength, (ordered.limit() - bytesOffset).coerceAtLeast(0))
+        if (availableLength == 0) {
+            return ""
+        }
+        val bytes = ByteArray(availableLength)
+        val view = ordered.duplicate().order(ByteOrder.nativeOrder())
+        view.position(bytesOffset)
+        view.get(bytes, 0, availableLength)
+        return String(bytes, StandardCharsets.UTF_8)
     }
 }

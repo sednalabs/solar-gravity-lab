@@ -38,6 +38,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
 
     // Frame reference is replaced atomically from Compose callbacks and read on draw.
     private var latestFrame: RenderFrame? = null
+    private var highlightedTrailSourceBodyIds: List<String> = emptyList()
     private var surfaceReady: Boolean = false
 
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -84,8 +85,17 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
      * Called by Compose on UI updates. The frame is a value snapshot; drawing is then
      * driven by the Surface lifecycle to avoid stale direct canvas calls.
      */
-    fun submitFrame(frame: RenderFrame?) {
+    fun submitFrame(
+        frame: RenderFrame?,
+        highlightedTrailSourceBodyIds: List<String> = emptyList(),
+    ) {
         latestFrame = frame
+        this.highlightedTrailSourceBodyIds = highlightedTrailSourceBodyIds
+            .asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .toList()
         drawNow()
     }
 
@@ -196,9 +206,21 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val extent = computeExtent(frame)
         val halfWorldSpan = extent.halfWorldSpan.coerceAtLeast(1f)
         val scale = 0.44f * min(viewportWidth, viewportHeight) / halfWorldSpan
+        val trailHighlightRanks = highlightedTrailSourceBodyIds
+            .withIndex()
+            .associate { (index, sourceBodyId) -> sourceBodyId to index }
 
         frame.trails.forEach { trail ->
-            drawTrail(canvas, trail, extent.centerX, extent.centerY, scale, viewportWidth, viewportHeight)
+            drawTrail(
+                canvas = canvas,
+                trail = trail,
+                centerX = extent.centerX,
+                centerY = extent.centerY,
+                scale = scale,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+                highlightRank = trailHighlightRanks[trail.sourceBodyId],
+            )
         }
         frame.tracers.forEach { tracer ->
             drawTracer(canvas, tracer, extent.centerX, extent.centerY, scale, viewportWidth, viewportHeight)
@@ -275,6 +297,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         scale: Float,
         viewportWidth: Float,
         viewportHeight: Float,
+        highlightRank: Int?,
     ) {
         if (trail.points.size < 2) return
         val path = Path()
@@ -296,14 +319,32 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             plottedPointCount++
         }
         if (plottedPointCount < 2) return
-        val alphaScale = if (trail.headHighlighted) 1f else 0.65f
+        val rankEmphasis = highlightRank?.let { rank ->
+            when (rank) {
+                0 -> 1f
+                1 -> 0.92f
+                2 -> 0.84f
+                3 -> 0.78f
+                else -> 0.72f
+            }
+        }
+        val alphaScale = when {
+            rankEmphasis != null -> rankEmphasis
+            trail.headHighlighted -> 0.92f
+            else -> 0.55f
+        }
         trailPaint.color = Color.argb(
             (trail.colorA.coerceIn(0f, 1f) * alphaScale * 255f).toInt(),
             (trail.colorR.coerceIn(0f, 1f) * 255f).toInt(),
             (trail.colorG.coerceIn(0f, 1f) * 255f).toInt(),
             (trail.colorB.coerceIn(0f, 1f) * 255f).toInt(),
         )
-        trailPaint.strokeWidth = if (trail.headHighlighted) 2.2f else 1.4f
+        trailPaint.strokeWidth = when {
+            highlightRank == 0 -> 3.4f
+            highlightRank != null -> 2.6f
+            trail.headHighlighted -> 2.1f
+            else -> 1.4f
+        }
         canvas.drawPath(path, trailPaint)
     }
 

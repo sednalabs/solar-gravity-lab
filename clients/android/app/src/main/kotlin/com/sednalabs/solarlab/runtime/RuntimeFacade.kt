@@ -93,6 +93,7 @@ data class ShellUiState(
     val observerModeCode: Int? = null,
     val cameraFacingSummary: String? = null,
     val focusedBodyId: String? = null,
+    val recentFocusedBodyIds: List<String> = emptyList(),
     val activeCheckpointId: String? = null,
     val activeCheckpointLabel: String? = null,
     val renderFrame: RenderFrame? = null,

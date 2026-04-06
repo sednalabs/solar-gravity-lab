@@ -117,6 +117,42 @@ class BridgeBackedRuntimeFacadeTest {
         assertEquals(listOf(RuntimeCommand.PausePlayback), bridge.appliedCommands)
     }
 
+    @Test
+    fun focusHistory_keepsMostRecentDistinctBodies() = runBlocking {
+        val bridge = FakeRuntimeBridge(
+            connectSignals = flowOf(
+                RuntimeSignal.Connected(handle = 11L),
+                RuntimeSignal.CommandApplied(
+                    command = RuntimeCommand.FocusBody("earth"),
+                    commandLabel = RuntimeCommand.FocusBody("earth").label,
+                    summary = snapshotSummary(bodyCount = 2),
+                ),
+                RuntimeSignal.CommandApplied(
+                    command = RuntimeCommand.FocusBody("moon"),
+                    commandLabel = RuntimeCommand.FocusBody("moon").label,
+                    summary = snapshotSummary(bodyCount = 2),
+                ),
+                RuntimeSignal.CommandApplied(
+                    command = RuntimeCommand.FocusBody("earth"),
+                    commandLabel = RuntimeCommand.FocusBody("earth").label,
+                    summary = snapshotSummary(bodyCount = 2),
+                ),
+            ),
+        )
+        val facade = BridgeBackedRuntimeFacade(
+            bridge = bridge,
+            developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                enabled = true,
+                sinks = emptyList(),
+            ),
+        )
+
+        facade.startSession()
+
+        assertEquals("earth", facade.uiState.value.focusedBodyId)
+        assertEquals(listOf("earth", "moon"), facade.uiState.value.recentFocusedBodyIds)
+    }
+
     private fun packetLease(
         bodyCount: Int,
         tracerCount: Int,
