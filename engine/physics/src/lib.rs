@@ -138,7 +138,17 @@ pub fn advance_authoritative(
     delta_seconds: f64,
 ) -> (PhysicsInvariants, SolverExecutionReport) {
     let active_cpu_features = detect_cpu_features();
-    let decision = dispatch_solver_backend(&policy.solver_backend, &active_cpu_features);
+    advance_authoritative_with_features(policy, bodies, delta_seconds, &active_cpu_features)
+}
+
+pub fn advance_authoritative_with_features(
+    policy: &PhysicsPolicy,
+    bodies: &mut [MassiveBodyState],
+    delta_seconds: f64,
+    active_cpu_features: &[String],
+) -> (PhysicsInvariants, SolverExecutionReport) {
+    let normalized_features = normalize_cpu_features(active_cpu_features);
+    let decision = dispatch_solver_backend(&policy.solver_backend, &normalized_features);
     let invariants = match decision.effective_backend {
         SolverBackend::ReferenceScalar => {
             advance_authoritative_scalar(policy, bodies, delta_seconds)
@@ -154,7 +164,7 @@ pub fn advance_authoritative(
             effective_backend: decision.effective_backend,
             path_id: decision.path_id,
             fallback_reason: decision.fallback_reason,
-            active_cpu_features,
+            active_cpu_features: normalized_features,
         },
     )
 }
@@ -165,38 +175,66 @@ pub fn detect_cpu_features() -> Vec<String> {
         return features;
     }
 
-    let tokens = cpuinfo_feature_tokens();
     let mut features = BTreeSet::new();
 
-    if cfg!(target_arch = "aarch64") {
-        if has_any_token(&tokens, &["asimd", "neon"]) {
-            features.insert("neon".to_owned());
-        }
-        if has_any_token(&tokens, &["fma", "fhm", "asimdfhm"]) {
-            features.insert("fma".to_owned());
-        }
-        if has_any_token(&tokens, &["sve2"]) {
-            features.insert("sve2".to_owned());
-        }
-        if has_any_token(&tokens, &["sme", "sme2"]) {
-            features.insert("sme".to_owned());
-        }
-    }
-
-    if cfg!(target_arch = "x86_64") {
-        if has_any_token(&tokens, &["sse2"]) {
-            features.insert("sse2".to_owned());
-        }
-        if has_any_token(&tokens, &["avx2"]) {
-            features.insert("avx2".to_owned());
-        }
-        if has_any_token(&tokens, &["fma"]) {
-            features.insert("fma".to_owned());
-        }
-    }
+    add_arm64_features(&mut features);
+    add_x64_features(&mut features);
 
     features.into_iter().collect()
 }
+
+#[cfg(target_arch = "aarch64")]
+fn add_arm64_features(features: &mut BTreeSet<String>) {
+    // Runtime feature detection gives non-Linux ARM64 hosts a truthful baseline
+    // even when /proc/cpuinfo is unavailable.
+    if std::arch::is_aarch64_feature_detected!("neon") {
+        features.insert("neon".to_owned());
+    }
+
+    let tokens = cpuinfo_feature_tokens();
+    if has_any_token(&tokens, &["asimd", "neon"]) {
+        features.insert("neon".to_owned());
+    }
+    if has_any_token(&tokens, &["fma", "fhm", "asimdfhm"]) {
+        features.insert("fma".to_owned());
+    }
+    if has_any_token(&tokens, &["sve2"]) {
+        features.insert("sve2".to_owned());
+    }
+    if has_any_token(&tokens, &["sme", "sme2"]) {
+        features.insert("sme".to_owned());
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn add_arm64_features(_features: &mut BTreeSet<String>) {}
+
+#[cfg(target_arch = "x86_64")]
+fn add_x64_features(features: &mut BTreeSet<String>) {
+    if std::arch::is_x86_feature_detected!("sse2") {
+        features.insert("sse2".to_owned());
+    }
+    if std::arch::is_x86_feature_detected!("avx2") {
+        features.insert("avx2".to_owned());
+    }
+    if std::arch::is_x86_feature_detected!("fma") {
+        features.insert("fma".to_owned());
+    }
+
+    let tokens = cpuinfo_feature_tokens();
+    if has_any_token(&tokens, &["sse2"]) {
+        features.insert("sse2".to_owned());
+    }
+    if has_any_token(&tokens, &["avx2"]) {
+        features.insert("avx2".to_owned());
+    }
+    if has_any_token(&tokens, &["fma"]) {
+        features.insert("fma".to_owned());
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn add_x64_features(_features: &mut BTreeSet<String>) {}
 
 #[must_use]
 pub fn solver_equivalence_metrics(
@@ -531,26 +569,23 @@ fn dispatch_solver_backend_for_host(
             }
         }
         SolverBackend::SimdX64 => {
-            if !is_x64_host {
-                return DispatchDecision {
-                    effective_backend: SolverBackend::ReferenceScalar,
-                    path_id: "scalar.reference".to_owned(),
-                    fallback_reason: Some(
-                        "simd-x64 requested on non-x86_64 host; using scalar oracle".to_owned(),
-                    ),
-                };
+            let x64_fallback = || {
+                DispatchDecision {
+                effective_backend: SolverBackend::ReferenceScalar,
+                path_id: "scalar.reference".to_owned(),
+                fallback_reason: Some(
+                    "simd-x64 requested but dedicated x64 kernel is not implemented; using scalar oracle".to_owned(),
+                ),
             }
-
-            let path_id = if has_feature("avx2") {
-                "simd.x64.avx2"
-            } else {
-                "simd.x64.sse2"
             };
-            DispatchDecision {
-                effective_backend: SolverBackend::SimdX64,
-                path_id: path_id.to_owned(),
-                fallback_reason: None,
+
+            if !is_x64_host {
+                return x64_fallback();
             }
+            if !has_feature("sse2") && !has_feature("avx2") {
+                return x64_fallback();
+            }
+            x64_fallback()
         }
     }
 }
@@ -610,6 +645,17 @@ fn update_equivalence_metrics(lhs: f64, rhs: f64, metrics: &mut SolverEquivalenc
     if relative_error > metrics.max_relative_error {
         metrics.max_relative_error = relative_error;
     }
+}
+
+fn normalize_cpu_features(features: &[String]) -> Vec<String> {
+    let mut dedupe = BTreeSet::new();
+    for feature in features {
+        let normalized = feature.trim().to_ascii_lowercase();
+        if !normalized.is_empty() {
+            dedupe.insert(normalized);
+        }
+    }
+    dedupe.into_iter().collect()
 }
 
 fn add(a: Vector3d, b: Vector3d) -> Vector3d {

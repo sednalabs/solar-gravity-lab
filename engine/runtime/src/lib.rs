@@ -24,8 +24,8 @@ use solarlab_history::{
     HistoryEvent,
 };
 use solarlab_physics::{
-    advance_authoritative, compute_invariants, MassiveBodyState, PhysicsInvariants, PhysicsPolicy,
-    SolverExecutionReport,
+    advance_authoritative_with_features, compute_invariants, MassiveBodyState, PhysicsInvariants,
+    PhysicsPolicy, SolverExecutionReport,
 };
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
@@ -556,10 +556,15 @@ impl WorldRuntime {
                 }
 
                 let physics_policy = self.config.physics.clone();
+                let active_cpu_features = self.hardware_profile.cpu_features.clone();
                 let branch = self.active_branch_mut();
                 let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
-                let (invariants, solver_execution) =
-                    advance_authoritative(&physics_policy, &mut solver_bodies, *delta_seconds);
+                let (invariants, solver_execution) = advance_authoritative_with_features(
+                    &physics_policy,
+                    &mut solver_bodies,
+                    *delta_seconds,
+                    &active_cpu_features,
+                );
                 apply_solver_state_to_world_bodies(&mut branch.world.bodies, &solver_bodies);
                 branch.world.invariants = invariants;
                 branch.world.solver_execution = solver_execution;
