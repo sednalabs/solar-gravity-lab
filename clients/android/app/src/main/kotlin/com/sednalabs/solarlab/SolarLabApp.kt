@@ -79,6 +79,7 @@ import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.sqrt
 
 @Composable
 fun SolarLabApp(runtimeFacade: RuntimeFacade) {
@@ -201,13 +202,23 @@ private fun ImmersiveStageShell(
     onFocusBodyRequested: (String?) -> Unit,
 ) {
     var showOverlay by rememberSaveable { mutableStateOf(false) }
+    var stageCameraModeName by rememberSaveable {
+        mutableStateOf(VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic.name)
+    }
     var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
     var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
     var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
+    val stageCameraMode = VulkanPacketRenderSurfaceView.CameraPresentationMode.entries
+        .firstOrNull { mode -> mode.name == stageCameraModeName }
+        ?: VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic
     val quickFocusEntries = SolarLabTeachingCatalog.entries.filter { entry ->
         entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
             uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
     }
+    val focusedBodyHero = deriveFocusedBodyHeroModel(
+        uiState = uiState,
+        stageCameraMode = stageCameraMode,
+    )
 
     BoxWithConstraints(
         modifier = Modifier
@@ -241,6 +252,7 @@ private fun ImmersiveStageShell(
                         },
                         update = { view ->
                             renderSurfaceView = view
+                            view.setCameraPresentationMode(stageCameraMode)
                             view.setOnBodyTapped { bodyId ->
                                 onFocusBodyRequested(bodyId)
                             }
@@ -275,6 +287,27 @@ private fun ImmersiveStageShell(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(18.dp),
+                )
+            }
+
+            if (!showOverlay && uiState.renderFrame != null) {
+                focusedBodyHero?.let { model ->
+                    FocusedBodyHeroCard(
+                        model = model,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = 18.dp, top = 18.dp),
+                    )
+                }
+                StageCameraModeDock(
+                    selectedCameraMode = stageCameraMode,
+                    onCameraModeSelected = { mode ->
+                        stageCameraModeName = mode.name
+                        renderSurfaceView?.setCameraPresentationMode(mode)
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 18.dp),
                 )
             }
 
@@ -326,6 +359,11 @@ private fun ImmersiveStageShell(
                                 onZoomIn = { renderSurfaceView?.zoomBy(1.35f) },
                                 onZoomOut = { renderSurfaceView?.zoomBy(0.74f) },
                                 onResetView = { renderSurfaceView?.resetViewTransform() },
+                                selectedCameraMode = stageCameraMode,
+                                onCameraModeSelected = { mode ->
+                                    stageCameraModeName = mode.name
+                                    renderSurfaceView?.setCameraPresentationMode(mode)
+                                },
                             )
                             TrackedOrbitHistoryPanel(
                                 trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
@@ -657,9 +695,15 @@ private fun RenderStagePanel(
     onFocusBodyRequested: (String?) -> Unit,
     canRefresh: Boolean,
 ) {
+    var stageCameraModeName by rememberSaveable {
+        mutableStateOf(VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic.name)
+    }
     var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
     var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
     var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
+    val stageCameraMode = VulkanPacketRenderSurfaceView.CameraPresentationMode.entries
+        .firstOrNull { mode -> mode.name == stageCameraModeName }
+        ?: VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic
     val quickFocusEntries = SolarLabTeachingCatalog.entries.filter { entry ->
         entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
             uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
@@ -742,6 +786,7 @@ private fun RenderStagePanel(
                         },
                         update = { view ->
                             renderSurfaceView = view
+                            view.setCameraPresentationMode(stageCameraMode)
                             view.setOnBodyTapped { bodyId ->
                                 onFocusBodyRequested(bodyId)
                             }
@@ -800,6 +845,11 @@ private fun RenderStagePanel(
                     onZoomIn = { renderSurfaceView?.zoomBy(1.35f) },
                     onZoomOut = { renderSurfaceView?.zoomBy(0.74f) },
                     onResetView = { renderSurfaceView?.resetViewTransform() },
+                    selectedCameraMode = stageCameraMode,
+                    onCameraModeSelected = { mode ->
+                        stageCameraModeName = mode.name
+                        renderSurfaceView?.setCameraPresentationMode(mode)
+                    },
                 )
                 TrackedOrbitHistoryPanel(
                     trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
@@ -866,6 +916,8 @@ private fun StageInteractionDock(
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onResetView: () -> Unit,
+    selectedCameraMode: VulkanPacketRenderSurfaceView.CameraPresentationMode,
+    onCameraModeSelected: (VulkanPacketRenderSurfaceView.CameraPresentationMode) -> Unit,
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -880,6 +932,10 @@ private fun StageInteractionDock(
                 text = focusedBodyId?.let { "Stage tools · focused on $it" } ?: "Stage tools",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.secondary,
+            )
+            StageCameraModeDock(
+                selectedCameraMode = selectedCameraMode,
+                onCameraModeSelected = onCameraModeSelected,
             )
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -927,6 +983,107 @@ private fun StageInteractionDock(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun StageCameraModeDock(
+    selectedCameraMode: VulkanPacketRenderSurfaceView.CameraPresentationMode,
+    onCameraModeSelected: (VulkanPacketRenderSurfaceView.CameraPresentationMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val options = listOf(
+        StageCameraModeOption(
+            label = "Cinematic",
+            mode = VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic,
+            testTag = SolarLabTestTags.STAGE_CAMERA_MODE_CINEMATIC,
+        ),
+        StageCameraModeOption(
+            label = "Overhead",
+            mode = VulkanPacketRenderSurfaceView.CameraPresentationMode.Overhead,
+            testTag = SolarLabTestTags.STAGE_CAMERA_MODE_OVERHEAD,
+        ),
+        StageCameraModeOption(
+            label = "Follow",
+            mode = VulkanPacketRenderSurfaceView.CameraPresentationMode.Follow,
+            testTag = SolarLabTestTags.STAGE_CAMERA_MODE_FOLLOW,
+        ),
+    )
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+    ) {
+        FlowRow(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            options.forEach { option ->
+                RuntimeCommandChip(
+                    label = option.label,
+                    selected = selectedCameraMode == option.mode,
+                    enabled = true,
+                    onClick = { onCameraModeSelected(option.mode) },
+                    modifier = Modifier.testTag(option.testTag),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FocusedBodyHeroCard(
+    model: FocusedBodyHeroModel,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .widthIn(max = 290.dp)
+            .testTag(SolarLabTestTags.FOCUSED_BODY_CARD),
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.76f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.24f)),
+        shadowElevation = 16.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.28f),
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                        )
+                    )
+                )
+                .padding(horizontal = 15.dp, vertical = 13.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = model.cameraModeLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Text(
+                text = model.displayName,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = model.detailLine,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = model.contextLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
@@ -2024,6 +2181,70 @@ private fun StatusPill(
         )
     }
 }
+
+private data class StageCameraModeOption(
+    val label: String,
+    val mode: VulkanPacketRenderSurfaceView.CameraPresentationMode,
+    val testTag: String,
+)
+
+private data class FocusedBodyHeroModel(
+    val displayName: String,
+    val detailLine: String,
+    val contextLine: String,
+    val cameraModeLabel: String,
+)
+
+private fun deriveFocusedBodyHeroModel(
+    uiState: ShellUiState,
+    stageCameraMode: VulkanPacketRenderSurfaceView.CameraPresentationMode,
+): FocusedBodyHeroModel? {
+    val frame = uiState.renderFrame ?: return null
+    val focusBody = frame.bodies.firstOrNull { body ->
+        uiState.focusedBodyId?.let { focusId ->
+            body.bodyId.equals(focusId, ignoreCase = true)
+        } == true
+    } ?: frame.bodies.firstOrNull { body ->
+        body.selected
+    } ?: return null
+
+    val catalogName = SolarLabTeachingCatalog.entries
+        .firstOrNull { entry -> entry.bodyId.equals(focusBody.bodyId, ignoreCase = true) }
+        ?.displayName
+    val displayName = catalogName ?: focusBody.bodyId.replaceFirstChar { character ->
+        if (character.isLowerCase()) character.titlecase(Locale.US) else character.toString()
+    }
+    val radiusKm = focusBody.radiusM.toDouble() / 1_000.0
+    val detailParts = mutableListOf("radius ${String.format(Locale.US, "%,.0f", radiusKm)} km")
+    val sun = frame.bodies.firstOrNull { body ->
+        body.bodyId.equals("sun", ignoreCase = true)
+    }
+    if (sun != null && !focusBody.bodyId.equals("sun", ignoreCase = true)) {
+        val dx = (focusBody.x - sun.x).toDouble()
+        val dy = (focusBody.y - sun.y).toDouble()
+        val dz = (focusBody.z - sun.z).toDouble()
+        val distanceAu = sqrt((dx * dx) + (dy * dy) + (dz * dz)) / ASTRONOMICAL_UNIT_M_DOUBLE
+        if (distanceAu.isFinite()) {
+            detailParts += "sun distance ${String.format(Locale.US, "%.3f", distanceAu)} AU"
+        }
+    }
+    val cameraLabel = when (stageCameraMode) {
+        VulkanPacketRenderSurfaceView.CameraPresentationMode.Cinematic -> "Cinematic camera"
+        VulkanPacketRenderSurfaceView.CameraPresentationMode.Overhead -> "Overhead camera"
+        VulkanPacketRenderSurfaceView.CameraPresentationMode.Follow -> "Follow camera"
+    }
+    val contextLine = "${uiState.renderStatus.renderedBodyCount} bodies · " +
+        "${uiState.renderStatus.renderedTracerCount} tracers · " +
+        "${uiState.renderStatus.renderedTrailCount} trails"
+    return FocusedBodyHeroModel(
+        displayName = displayName,
+        detailLine = detailParts.joinToString(" · "),
+        contextLine = contextLine,
+        cameraModeLabel = cameraLabel,
+    )
+}
+
+private const val ASTRONOMICAL_UNIT_M_DOUBLE = 149_597_870_700.0
 
 private fun SnapshotPresentation?.toSnapshotEntries(): List<Pair<String, String>> {
     if (this == null) {
