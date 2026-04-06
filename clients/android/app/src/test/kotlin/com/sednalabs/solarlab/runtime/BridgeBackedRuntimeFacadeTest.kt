@@ -1,5 +1,7 @@
 package com.sednalabs.solarlab.runtime
 
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -9,6 +11,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BridgeBackedRuntimeFacadeTest {
+    @Test
+    fun startSession_routesBoundaryConnectOffCallerThread() = runBlocking {
+        val callerThreadName = Thread.currentThread().name
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "runtime-boundary-test")
+        }.asCoroutineDispatcher().use { dispatcher ->
+            val bridge = FakeRuntimeBridge(
+                connectSignals = flowOf(RuntimeSignal.Connected(handle = 5L)),
+            )
+            val facade = BridgeBackedRuntimeFacade(
+                bridge = bridge,
+                developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                    enabled = false,
+                    sinks = emptyList(),
+                ),
+                boundaryDispatcher = dispatcher,
+            )
+
+            facade.startSession()
+
+            assertTrue(
+                bridge.connectThreadNames.distinct().all { it.startsWith("runtime-boundary-test") },
+            )
+            assertTrue(bridge.connectThreadNames.none { it == callerThreadName })
+        }
+    }
+
     @Test
     fun startSession_recordsDeveloperTelemetryForBoundarySignals() = runBlocking {
         val bridge = FakeRuntimeBridge(
@@ -118,6 +147,43 @@ class BridgeBackedRuntimeFacadeTest {
     }
 
     @Test
+    fun applyCommand_routesBoundaryWorkOffCallerThread() = runBlocking {
+        val callerThreadName = Thread.currentThread().name
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "runtime-command-boundary-test")
+        }.asCoroutineDispatcher().use { dispatcher ->
+            val bridge = FakeRuntimeBridge(
+                connectSignals = flowOf(RuntimeSignal.Connected(handle = 21L)),
+                applyCommandSignals = listOf(
+                    RuntimeSignal.CommandApplied(
+                        command = RuntimeCommand.PausePlayback,
+                        commandLabel = RuntimeCommand.PausePlayback.label,
+                        summary = snapshotSummary(bodyCount = 1, paused = true),
+                    ),
+                ),
+            )
+            val facade = BridgeBackedRuntimeFacade(
+                bridge = bridge,
+                developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                    enabled = false,
+                    sinks = emptyList(),
+                ),
+                boundaryDispatcher = dispatcher,
+            )
+
+            facade.startSession()
+            facade.applyCommand(RuntimeCommand.PausePlayback)
+
+            assertTrue(
+                bridge.applyCommandThreadNames.distinct().all {
+                    it.startsWith("runtime-command-boundary-test")
+                },
+            )
+            assertTrue(bridge.applyCommandThreadNames.none { it == callerThreadName })
+        }
+    }
+
+    @Test
     fun focusHistory_keepsMostRecentDistinctBodies() = runBlocking {
         val bridge = FakeRuntimeBridge(
             connectSignals = flowOf(
@@ -215,12 +281,22 @@ class BridgeBackedRuntimeFacadeTest {
         private val applyCommandSignals: List<RuntimeSignal> = emptyList(),
     ) : RuntimeBridge {
         val appliedCommands = mutableListOf<RuntimeCommand>()
+        val connectThreadNames = mutableListOf<String>()
+        val refreshThreadNames = mutableListOf<String>()
+        val applyCommandThreadNames = mutableListOf<String>()
 
-        override fun connect(): Flow<RuntimeSignal> = connectSignals
+        override fun connect(): Flow<RuntimeSignal> {
+            connectThreadNames += Thread.currentThread().name
+            return connectSignals
+        }
 
-        override suspend fun refresh(): List<RuntimeSignal> = refreshSignals
+        override suspend fun refresh(): List<RuntimeSignal> {
+            refreshThreadNames += Thread.currentThread().name
+            return refreshSignals
+        }
 
         override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> {
+            applyCommandThreadNames += Thread.currentThread().name
             appliedCommands += command
             return applyCommandSignals
         }

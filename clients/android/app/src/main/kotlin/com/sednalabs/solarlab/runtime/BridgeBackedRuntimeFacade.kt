@@ -1,10 +1,14 @@
 package com.sednalabs.solarlab.runtime
 
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -16,9 +20,11 @@ import java.util.Locale
  * This facade serves as the "source of truth" for the Android UI, transforming 
  * low-level boundary signals (handles, revision counts) into a stable ShellUiState.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class BridgeBackedRuntimeFacade internal constructor(
     private val bridge: RuntimeBridge,
     private val developerTelemetryRecorder: DeveloperTelemetryRecorder = defaultDeveloperTelemetryRecorder(),
+    private val boundaryDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
 ) : RuntimeFacade {
     constructor() : this(JniRuntimeBridge())
 
@@ -76,7 +82,9 @@ class BridgeBackedRuntimeFacade internal constructor(
             )
         }
         try {
-            bridge.connect().collect(::applySignal)
+            withContext(boundaryDispatcher) {
+                bridge.connect().collect(::applySignal)
+            }
         } catch (error: Throwable) {
             surfaceShellFailure(
                 statusLine = "Runtime startup failed",
@@ -113,7 +121,9 @@ class BridgeBackedRuntimeFacade internal constructor(
                     )
                 }
             ) {
-                bridge.refresh().forEach(::applySignal)
+                withContext(boundaryDispatcher) {
+                    bridge.refresh().forEach(::applySignal)
+                }
             }
         } catch (error: Throwable) {
             surfaceShellFailure(
@@ -144,7 +154,9 @@ class BridgeBackedRuntimeFacade internal constructor(
                     )
                 }
             ) {
-                bridge.applyCommand(command).forEach(::applySignal)
+                withContext(boundaryDispatcher) {
+                    bridge.applyCommand(command).forEach(::applySignal)
+                }
             }
         } catch (error: Throwable) {
             surfaceShellFailure(
