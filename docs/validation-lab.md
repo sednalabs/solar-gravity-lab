@@ -24,10 +24,13 @@ build or workflow behavior.
    real question.
 2. `rust-workspace`
    Runs `cargo test --workspace` for the canonical Rust crates.
-3. `ffi-abi`
+3. `rust-workspace-arm64`
+   Runs `cargo test --workspace` on an Arm64 runner to prove ISA-sensitive
+   behavior on target architecture class.
+4. `ffi-abi`
    Runs a narrower `cargo test -p solarlab-ffi` proof slice when the active seam
    is runtime/ABI/JNI-facing rather than the whole workspace.
-4. `android-shell`
+5. `android-shell`
    Installs the Android toolchain plus Rust Android targets, then builds the real
    app under `clients/android` with `:app:assembleDebug`.
 
@@ -50,6 +53,8 @@ build or workflow behavior.
   Run only wrapper generation.
 - `rust-workspace`
   Run only the canonical Rust workspace tests.
+- `rust-workspace-arm64`
+  Run only the canonical Rust workspace tests on Arm64.
 - `ffi-abi`
   Run only the focused FFI ABI test slice.
 - `android-shell`
@@ -59,13 +64,16 @@ build or workflow behavior.
 
 ## Recommended rollout
 
-1. Use `profile=targeted`, `lane_set=rust-workspace` for normal runtime changes.
-2. Use `profile=targeted`, `lane_set=ffi-abi` when the active seam is the C ABI,
+1. Use `profile=targeted`, `lane_set=rust-workspace` for fast normal runtime changes.
+2. Add `profile=targeted`, `lane_set=rust-workspace-arm64` when the seam touches
+   architecture-sensitive physics, SIMD/ISA behavior, or release gating for Arm64 devices.
+3. Use `profile=targeted`, `lane_set=ffi-abi` when the active seam is the C ABI,
    JNI, or Android bridge contract.
-3. Use `profile=frontier`, `lane_set=auto` when you want the Android shell lane
+4. Use `profile=frontier`, `lane_set=auto` when you want the Android shell lane
    alongside the Rust baseline.
-4. Reserve `profile=broad` or `profile=full` for milestone checkpoints.
-5. Use `prerelease-apk` when the real question is packaging an installable device
+5. Reserve `profile=broad` or `profile=full` for milestone checkpoints; these now
+   include Arm64 Rust workspace proof in `auto` mode.
+6. Use `prerelease-apk` when the real question is packaging an installable device
    build rather than simply proving the branch compiles.
 
 ## Cheap path for docs-only changes
