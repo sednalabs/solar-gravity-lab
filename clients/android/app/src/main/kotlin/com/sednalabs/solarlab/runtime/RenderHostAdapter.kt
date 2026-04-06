@@ -76,10 +76,21 @@ internal class NativeRenderHostAdapter(
             )
         }
 
+        if (packetResult == null) {
+            return RenderPacketRefreshResult(
+                unavailableReason = "Render export unavailable: native bridge returned no packet result"
+            )
+        }
+
         val packet = packetResult.packet
-        if (!packetResult.result.isOk() || packet == null) {
+        if (!packetResult.result.isOk()) {
             return RenderPacketRefreshResult(
                 unavailableReason = "Render export unavailable: ${packetResult.result.describe()}"
+            )
+        }
+        if (packet == null) {
+            return RenderPacketRefreshResult(
+                unavailableReason = "Render export unavailable: native bridge returned an empty packet"
             )
         }
 

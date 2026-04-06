@@ -2098,7 +2098,7 @@ mod android_jni {
     ) -> jni::errors::Result<JObject<'local>> {
         env.new_object(
             CLASS_NATIVE_VULKAN_CAMERA_PACKET,
-            "(DDDFFFFFFFF)V",
+            "(DDDFFFFFFFFFFF)V",
             &[
                 JValue::Double(camera.frame_origin_m.x),
                 JValue::Double(camera.frame_origin_m.y),

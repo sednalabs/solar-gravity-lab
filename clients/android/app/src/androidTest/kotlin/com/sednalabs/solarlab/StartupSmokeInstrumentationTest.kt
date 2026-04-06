@@ -25,11 +25,8 @@ class StartupSmokeInstrumentationTest {
                     it.sessionHandle != null &&
                     it.snapshot != null &&
                     it.renderPacketSummary != null &&
-                    when (it.renderStatus.readiness) {
-                        RenderHostReadiness.Ready -> it.renderFrame != null
-                        RenderHostReadiness.Unavailable -> it.renderStatus.degradationReason != null
-                        else -> false
-                    }
+                    it.renderStatus.readiness == RenderHostReadiness.Ready &&
+                    it.renderFrame != null
             }
 
             scenario.onActivity { activity ->
@@ -40,9 +37,10 @@ class StartupSmokeInstrumentationTest {
             val finalState = facade.uiState.value
             assertNotNull("Runtime session handle should be available after startup", finalState.sessionHandle)
             assertNotNull("Runtime snapshot should be available after startup", finalState.snapshot)
-            if (finalState.renderStatus.readiness == RenderHostReadiness.Ready) {
-                assertNotNull("A decoded render frame should be available when render host is ready", finalState.renderFrame)
-            }
+            assertNotNull(
+                "A decoded render frame should be available after startup. Final state: $finalState",
+                finalState.renderFrame,
+            )
         }
     }
 

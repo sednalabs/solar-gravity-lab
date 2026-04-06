@@ -530,7 +530,7 @@ internal interface NativeRuntimeTransport {
 
     fun applyCommand(handle: Long, command: NativeRuntimeCommandPayload): NativeSnapshotSummaryResult
 
-    fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult
+    fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult?
 
     fun releaseVulkanScene(packetHandle: Long)
 
@@ -616,7 +616,7 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         recordedAtUnixMs = command.recordedAtUnixMs,
     )
 
-    override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult =
+    override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
         nativeExportVulkanScene(handle)
 
     override fun releaseVulkanScene(packetHandle: Long) {
@@ -673,7 +673,7 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         recordedAtUnixMs: Long,
     ): NativeSnapshotSummaryResult
 
-    private external fun nativeExportVulkanScene(handle: Long): NativeVulkanScenePacketResult
+    private external fun nativeExportVulkanScene(handle: Long): NativeVulkanScenePacketResult?
 
     private external fun nativeReleaseVulkanScene(packetHandle: Long): NativeResult
 
