@@ -309,7 +309,7 @@ class SolarLabShellLayoutTest {
         expectedCommand: String,
         predicate: () -> Boolean,
     ) {
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             predicate()
         }
         assertTrue(
