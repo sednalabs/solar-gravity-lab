@@ -36,6 +36,22 @@ on:
         required: true
         type: boolean
         default: false
+      android_test_scope:
+        description: Android instrumentation suite scope
+        required: true
+        type: choice
+        options:
+          - core
+          - full
+        default: core
+      android_artifact_mode:
+        description: Android artifact capture mode
+        required: true
+        type: choice
+        options:
+          - failures-only
+          - always
+        default: failures-only
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
@@ -254,7 +270,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Validate parity matrix schema
@@ -271,7 +287,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -290,7 +306,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -309,7 +325,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -328,7 +344,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -348,8 +364,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - name: Initialize Android lane timing
+        id: android_timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v5
         with:
@@ -364,33 +387,65 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Accept Android SDK licenses and install build toolchain
+        id: android_sdk_install
         shell: bash
         run: |
           set -euo pipefail
+          phase_start="$(date +%s)"
           set +o pipefail
           yes | sdkmanager --licenses >/dev/null
           set -o pipefail
-          sdkmanager --install \
-            "emulator" \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "system-images;android-35;google_apis;x86_64" \
-            "cmake;3.22.1" \
+          required_packages=(
+            "emulator"
+            "platform-tools"
+            "platforms;android-36"
+            "build-tools;36.0.0"
+            "system-images;android-35;google_apis;x86_64"
+            "cmake;3.22.1"
             "ndk;27.2.12479018"
+          )
+          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
+          missing_packages=()
+          for pkg in "${required_packages[@]}"; do
+            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
+              echo "SDK package already installed: $pkg"
+            else
+              missing_packages+=("$pkg")
+            fi
+          done
+          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+            echo "Installing missing SDK packages: ${missing_packages[*]}"
+            sdkmanager --install "${missing_packages[@]}"
+          else
+            echo "All required SDK packages already installed."
+          fi
+          phase_end="$(date +%s)"
+          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Android toolchain
+        id: rust_android_toolchain
         shell: bash
         run: |
           set -euo pipefail
+          phase_start="$(date +%s)"
           rustup target add aarch64-linux-android x86_64-linux-android
-          cargo install cargo-ndk --locked
+          if command -v cargo-ndk >/dev/null 2>&1; then
+            echo "cargo-ndk already available."
+          else
+            cargo install cargo-ndk --locked
+          fi
+          phase_end="$(date +%s)"
+          echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
       - name: Assemble debug Android shell and androidTest
+        id: android_assemble
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew -p clients/android --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+          phase_start="$(date +%s)"
+          ./gradlew -p clients/android :app:assembleDebug :app:assembleDebugAndroidTest
+          phase_end="$(date +%s)"
+          echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
       - name: Enable KVM for Android emulator
         shell: bash
@@ -402,6 +457,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Run connected Android shell smoke and continuity tests
+        id: android_connected_tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -412,6 +468,27 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: bash .github/scripts/run_validation_android_shell_smoke.sh
+        env:
+          ANDROID_TEST_SCOPE: ${{ inputs.android_test_scope }}
+          ANDROID_ARTIFACT_MODE: ${{ inputs.android_artifact_mode }}
+
+      - name: Emit Android lane timing summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          lane_end_epoch="$(date +%s)"
+          lane_start_epoch="${{ steps.android_timing.outputs.lane_start_epoch }}"
+          lane_total="$((lane_end_epoch - lane_start_epoch))"
+          {
+            echo "## android-shell timings"
+            echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
+            echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
+            echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"
+            echo "- lane total (including emulator + instrumentation): \`${lane_total}s\`"
+            echo "- scope: \`${{ inputs.android_test_scope }}\`"
+            echo "- artifact mode: \`${{ inputs.android_artifact_mode }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts
         if: always()
@@ -455,4 +532,6 @@ jobs:
             echo "- ffi-abi: \`${{ needs['ffi-abi'].result }}\`"
             echo "- android-shell: \`${{ needs['android-shell'].result }}\`"
             echo "- runtime-scene-telemetry: \`${{ needs['runtime-scene-telemetry'].result }}\`"
+            echo "- android-test-scope: \`${{ inputs.android_test_scope }}\`"
+            echo "- android-artifact-mode: \`${{ inputs.android_artifact_mode }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
