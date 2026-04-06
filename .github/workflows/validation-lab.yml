@@ -52,6 +52,14 @@ on:
           - failures-only
           - always
         default: failures-only
+      emulator_boot_strategy:
+        description: Emulator startup strategy
+        required: true
+        type: choice
+        options:
+          - cold
+          - snapshot-cache
+        default: cold
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
@@ -383,6 +391,7 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Restore Android emulator AVD cache
+        if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
         uses: actions/cache@v4
         with:
           path: |
@@ -475,7 +484,7 @@ jobs:
           profile: pixel_7
           target: google_apis
           emulator-boot-timeout: 1200
-          force-avd-creation: false
+          force-avd-creation: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_validation_android_shell_smoke.sh
@@ -499,6 +508,7 @@ jobs:
             echo "- lane total (including emulator + instrumentation): \`${lane_total}s\`"
             echo "- scope: \`${{ inputs.android_test_scope }}\`"
             echo "- artifact mode: \`${{ inputs.android_artifact_mode }}\`"
+            echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts
@@ -545,4 +555,5 @@ jobs:
             echo "- runtime-scene-telemetry: \`${{ needs['runtime-scene-telemetry'].result }}\`"
             echo "- android-test-scope: \`${{ inputs.android_test_scope }}\`"
             echo "- android-artifact-mode: \`${{ inputs.android_artifact_mode }}\`"
+            echo "- emulator-boot-strategy: \`${{ inputs.emulator_boot_strategy }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
