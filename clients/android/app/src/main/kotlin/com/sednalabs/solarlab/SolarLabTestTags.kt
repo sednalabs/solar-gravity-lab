@@ -4,7 +4,10 @@ package com.sednalabs.solarlab
  * Stable test hooks for shell-level Android instrumentation tests.
  */
 object SolarLabTestTags {
+    const val IMMERSIVE_STAGE_ROOT = "shell.immersive_root"
     const val SHELL_COLUMN = "shell.column"
+    const val OVERLAY_TOGGLE_BUTTON = "shell.overlay_toggle"
+    const val OVERLAY_PANEL = "shell.overlay_panel"
     const val TITLE = "shell.title"
     const val STATUS_LINE = "shell.status"
     const val RENDER_PANEL = "shell.render_panel"

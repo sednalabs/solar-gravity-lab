@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -48,6 +49,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.awaitPointerEvent
+import androidx.compose.ui.input.pointer.awaitPointerEventScope
+import androidx.compose.ui.input.pointer.consume
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -80,6 +85,21 @@ import java.util.Locale
 fun SolarLabApp(runtimeFacade: RuntimeFacade) {
     val uiState by runtimeFacade.uiState.collectAsState()
     val scope = rememberCoroutineScope()
+    val onRefresh: () -> Unit = {
+        scope.launch {
+            runtimeFacade.refresh()
+        }
+    }
+    val onFocusBodyRequested: (String?) -> Unit = { bodyId ->
+        scope.launch {
+            runtimeFacade.applyCommand(RuntimeCommand.FocusBody(bodyId))
+        }
+    }
+    val onCommand: (RuntimeCommand) -> Unit = { command ->
+        scope.launch {
+            runtimeFacade.applyCommand(command)
+        }
+    }
 
     SolarLabTheme {
         Scaffold(
@@ -107,29 +127,24 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                     contentAlignment = Alignment.TopCenter,
                 ) {
                     val isWide = maxWidth >= 920.dp
-                    val compactStageViewportHeight = (maxHeight * 0.56f).coerceIn(460.dp, 760.dp)
                     val canSendCommands = uiState.connectionState == SessionConnectionState.Active &&
                         uiState.pendingActionLabel == null
                     val canRefresh = canSendCommands
 
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag(SolarLabTestTags.SHELL_COLUMN)
-                            .widthIn(max = 1320.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 18.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
-                    ) {
-                        if (isWide) {
+                    if (isWide) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag(SolarLabTestTags.SHELL_COLUMN)
+                                .widthIn(max = 1320.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(18.dp),
+                        ) {
                             HeroPanel(
                                 uiState = uiState,
                                 compact = false,
-                                onRefresh = {
-                                    scope.launch {
-                                        runtimeFacade.refresh()
-                                    }
-                                },
+                                onRefresh = onRefresh,
                                 canRefresh = canRefresh,
                             )
                             Row(
@@ -142,16 +157,8 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                     modifier = Modifier.weight(1.35f),
                                     compactStage = false,
                                     compactStageHeight = 520.dp,
-                                    onRefresh = {
-                                        scope.launch {
-                                            runtimeFacade.refresh()
-                                        }
-                                    },
-                                    onFocusBodyRequested = { bodyId ->
-                                        scope.launch {
-                                            runtimeFacade.applyCommand(RuntimeCommand.FocusBody(bodyId))
-                                        }
-                                    },
+                                    onRefresh = onRefresh,
+                                    onFocusBodyRequested = onFocusBodyRequested,
                                     canRefresh = canRefresh,
                                 )
                                 Column(
@@ -161,66 +168,265 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                     ControlDeck(
                                         uiState = uiState,
                                         enabled = canSendCommands,
-                                        onRefresh = {
-                                            scope.launch {
-                                                runtimeFacade.refresh()
-                                            }
-                                        },
-                                        onCommand = { command ->
-                                            scope.launch {
-                                                runtimeFacade.applyCommand(command)
-                                            }
-                                        },
+                                        onRefresh = onRefresh,
+                                        onCommand = onCommand,
                                     )
                                     RuntimeDetailPanel(uiState = uiState)
                                 }
                             }
-                        } else {
-                            RenderStagePanel(
-                                uiState = uiState,
-                                modifier = Modifier.fillMaxWidth(),
-                                compactStage = true,
-                                compactStageHeight = compactStageViewportHeight,
-                                onRefresh = {
-                                    scope.launch {
-                                        runtimeFacade.refresh()
-                                    }
-                                },
-                                onFocusBodyRequested = { bodyId ->
-                                    scope.launch {
-                                        runtimeFacade.applyCommand(RuntimeCommand.FocusBody(bodyId))
-                                    }
-                                },
-                                canRefresh = canRefresh,
-                            )
-                            HeroPanel(
-                                uiState = uiState,
-                                compact = true,
-                                onRefresh = {
-                                    scope.launch {
-                                        runtimeFacade.refresh()
-                                    }
-                                },
-                                canRefresh = canRefresh,
-                            )
-                            ControlDeck(
-                                uiState = uiState,
-                                enabled = canSendCommands,
-                                onRefresh = {
-                                    scope.launch {
-                                        runtimeFacade.refresh()
-                                    }
-                                },
-                                onCommand = { command ->
-                                    scope.launch {
-                                        runtimeFacade.applyCommand(command)
-                                    }
-                                },
-                            )
-                            RuntimeDetailPanel(uiState = uiState)
                         }
+                    } else {
+                        ImmersiveStageShell(
+                            uiState = uiState,
+                            canSendCommands = canSendCommands,
+                            canRefresh = canRefresh,
+                            onRefresh = onRefresh,
+                            onCommand = onCommand,
+                            onFocusBodyRequested = onFocusBodyRequested,
+                        )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImmersiveStageShell(
+    uiState: ShellUiState,
+    canSendCommands: Boolean,
+    canRefresh: Boolean,
+    onRefresh: () -> Unit,
+    onCommand: (RuntimeCommand) -> Unit,
+    onFocusBodyRequested: (String?) -> Unit,
+) {
+    var showOverlay by rememberSaveable { mutableStateOf(false) }
+    var showTrackedOrbits by rememberSaveable { mutableStateOf(true) }
+    var trackedOrbitLimit by rememberSaveable { mutableStateOf(5) }
+    var renderSurfaceView by remember { mutableStateOf<VulkanPacketRenderSurfaceView?>(null) }
+    val quickFocusEntries = SolarLabTeachingCatalog.entries.filter { entry ->
+        entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
+            uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
+    }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag(SolarLabTestTags.IMMERSIVE_STAGE_ROOT),
+    ) {
+        val overlayMaxHeight = (maxHeight * 0.74f).coerceIn(440.dp, 820.dp)
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag(SolarLabTestTags.RENDER_PANEL)
+                    .clip(RoundedCornerShape(34.dp))
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF08111C),
+                                Color(0xFF0B1827),
+                                Color(0xFF13243A),
+                            )
+                        )
+                    ),
+            ) {
+                if (uiState.renderFrame != null) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { context ->
+                            VulkanPacketRenderSurfaceView(context = context).also { view ->
+                                renderSurfaceView = view
+                            }
+                        },
+                        update = { view ->
+                            renderSurfaceView = view
+                            view.setOnBodyTapped { bodyId ->
+                                onFocusBodyRequested(bodyId)
+                            }
+                            view.submitFrame(
+                                frame = uiState.renderFrame,
+                                highlightedTrailSourceBodyIds = if (showTrackedOrbits) {
+                                    uiState.recentFocusedBodyIds.take(trackedOrbitLimit)
+                                } else {
+                                    emptyList()
+                                },
+                            )
+                        },
+                    )
+                } else {
+                    EmptyRenderStage(
+                        uiState = uiState,
+                        onRefresh = onRefresh,
+                        canRefresh = canRefresh,
+                    )
+                }
+            }
+
+            if (!showOverlay) {
+                ImmersiveStageHud(
+                    uiState = uiState,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(18.dp),
+                )
+
+                if (uiState.renderFrame != null) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 18.dp, vertical = 22.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                        ),
+                    ) {
+                        Text(
+                            text = "Tap focus · pinch to zoom · drag to pan · double-tap to reset",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            }
+
+            if (showOverlay) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0x9E040711))
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    event.changes.forEach { pointerChange ->
+                                        pointerChange.consume()
+                                    }
+                                }
+                            }
+                        },
+                )
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .heightIn(max = overlayMaxHeight)
+                        .testTag(SolarLabTestTags.OVERLAY_PANEL),
+                    shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+                    border = BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                    ),
+                    shadowElevation = 20.dp,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 18.dp, vertical = 18.dp)
+                            .testTag(SolarLabTestTags.SHELL_COLUMN),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                    ) {
+                        HeroPanel(
+                            uiState = uiState,
+                            compact = true,
+                            onRefresh = onRefresh,
+                            canRefresh = canRefresh,
+                        )
+                        if (uiState.renderFrame != null) {
+                            StageInteractionDock(
+                                focusedBodyId = uiState.focusedBodyId,
+                                quickFocusEntries = quickFocusEntries,
+                                onFocusBodyRequested = onFocusBodyRequested,
+                                onZoomIn = { renderSurfaceView?.zoomBy(1.35f) },
+                                onZoomOut = { renderSurfaceView?.zoomBy(0.74f) },
+                                onResetView = { renderSurfaceView?.resetViewTransform() },
+                            )
+                            TrackedOrbitHistoryPanel(
+                                trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
+                                showTrackedOrbits = showTrackedOrbits,
+                                trackedOrbitLimit = trackedOrbitLimit,
+                                onShowTrackedOrbitsChange = { showTrackedOrbits = it },
+                                onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
+                            )
+                            RenderStageSummaryCard(uiState = uiState)
+                        }
+                        ControlDeck(
+                            uiState = uiState,
+                            enabled = canSendCommands,
+                            onRefresh = onRefresh,
+                            onCommand = onCommand,
+                        )
+                        RuntimeDetailPanel(uiState = uiState)
+                    }
+                }
+            }
+
+            FilledTonalButton(
+                onClick = { showOverlay = !showOverlay },
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(18.dp)
+                    .testTag(SolarLabTestTags.OVERLAY_TOGGLE_BUTTON),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ),
+            ) {
+                Text(if (showOverlay) "Scene only" else "Show controls")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImmersiveStageHud(
+    uiState: ShellUiState,
+    modifier: Modifier = Modifier,
+) {
+    val readinessLabel = when (uiState.renderStatus.readiness) {
+        RenderHostReadiness.WaitingForSession -> "Waiting for first frame"
+        RenderHostReadiness.Refreshing -> "Refreshing scene"
+        RenderHostReadiness.Ready -> "Solar system live"
+        RenderHostReadiness.Unavailable -> "Render export degraded"
+        RenderHostReadiness.Failed -> "Render host failed"
+    }
+    val supportingLine = uiState.focusedBodyId?.let { "Focused on $it" }
+        ?: uiState.renderStatus.summary
+        ?: uiState.statusLine
+
+    Surface(
+        modifier = modifier.widthIn(max = 260.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        shadowElevation = 14.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = readinessLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Text(
+                text = "Stage-first solar system",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            supportingLine?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

@@ -100,6 +100,13 @@ class SolarLabShellLayoutTest {
     @Test
     fun primaryShellElements_areRenderedVisible_andTouchAccessible() {
         Log.i(LOG_TAG, "SolarLabShellLayoutTest.primaryShellElements.begin")
+        composeRule.onNodeWithTag(SolarLabTestTags.IMMERSIVE_STAGE_ROOT).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.OVERLAY_TOGGLE_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.RENDER_PANEL)
+            .performTouchInput { click() }
+            .assertIsDisplayed()
+
+        ensureShellControlsVisible()
         assertVisibleInScrollableShell(SolarLabTestTags.SHELL_COLUMN)
         assertVisibleInScrollableShell(SolarLabTestTags.TITLE)
         assertVisibleInScrollableShell(SolarLabTestTags.STATUS_LINE)
@@ -137,13 +144,6 @@ class SolarLabShellLayoutTest {
         assertReachableInScrollableShell(SolarLabTestTags.METADATA_ACTIVE_CHECKPOINT)
         assertReachableInScrollableShell(SolarLabTestTags.METADATA_PROVENANCE)
         assertReachableInScrollableShell(SolarLabTestTags.METADATA_LIGHTS)
-
-        // Touch input is accepted by the render panel layout node.
-        composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
-            .performScrollToNode(hasTestTag(SolarLabTestTags.RENDER_PANEL))
-        composeRule.onNodeWithTag(SolarLabTestTags.RENDER_PANEL)
-            .performTouchInput { click() }
-            .assertIsDisplayed()
     }
 
     @Test
@@ -399,9 +399,15 @@ class SolarLabShellLayoutTest {
     }
 
     private fun scrollShellTo(tag: String) {
-        if (tag == SolarLabTestTags.SHELL_COLUMN) {
+        if (
+            tag == SolarLabTestTags.SHELL_COLUMN ||
+            tag == SolarLabTestTags.RENDER_PANEL ||
+            tag == SolarLabTestTags.OVERLAY_TOGGLE_BUTTON ||
+            tag == SolarLabTestTags.IMMERSIVE_STAGE_ROOT
+        ) {
             return
         }
+        ensureShellControlsVisible()
         waitForShellHierarchy()
         val targetNode = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
         try {
@@ -414,14 +420,40 @@ class SolarLabShellLayoutTest {
         composeRule.waitForIdle()
     }
 
+    private fun ensureShellControlsVisible(timeoutMillis: Long = 5_000L) {
+        if (isShellControlsVisible()) {
+            return
+        }
+        if (isTagPresent(SolarLabTestTags.OVERLAY_TOGGLE_BUTTON)) {
+            composeRule.onNodeWithTag(SolarLabTestTags.OVERLAY_TOGGLE_BUTTON)
+                .assertIsDisplayed()
+                .performClick()
+        }
+        composeRule.waitUntil(timeoutMillis) { isShellControlsVisible() }
+    }
+
+    private fun isShellControlsVisible(): Boolean =
+        isTagPresent(SolarLabTestTags.OVERLAY_PANEL) || isShellHierarchyPresent()
+
+    private fun isShellHierarchyPresent(): Boolean =
+        runCatching {
+            composeRule
+                .onAllNodesWithTag(SolarLabTestTags.SHELL_COLUMN, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }.getOrDefault(false)
+
+    private fun isTagPresent(tag: String): Boolean =
+        runCatching {
+            composeRule
+                .onAllNodesWithTag(tag, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }.getOrDefault(false)
+
     private fun waitForShellHierarchy(timeoutMillis: Long = 5_000L) {
         composeRule.waitUntil(timeoutMillis) {
-            runCatching {
-                composeRule
-                    .onAllNodesWithTag(SolarLabTestTags.SHELL_COLUMN, useUnmergedTree = true)
-                    .fetchSemanticsNodes()
-                    .isNotEmpty()
-            }.getOrDefault(false)
+            isShellHierarchyPresent()
         }
     }
 
