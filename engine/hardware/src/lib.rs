@@ -27,6 +27,12 @@ pub struct BackendFamilyAssignment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct GpuBackendRoleSummary {
+    pub rendering: Option<GpuBackend>,
+    pub simulation_assist: Option<GpuBackend>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct GpuBackendReport {
     pub active: Vec<BackendFamilyAssignment>,
     pub available: Vec<BackendFamilyAssignment>,
@@ -44,6 +50,36 @@ impl GpuBackendReport {
         }
 
         true
+    }
+
+    #[must_use]
+    pub fn rendering_backend(&self) -> Option<GpuBackend> {
+        self.active
+            .iter()
+            .find(|assignment| assignment.state_family == GpuBackendStateFamily::Rendering)
+            .map(|assignment| assignment.backend.clone())
+    }
+
+    #[must_use]
+    pub fn simulation_assist_backend(&self) -> Option<GpuBackend> {
+        self.active
+            .iter()
+            .find(|assignment| assignment.state_family == GpuBackendStateFamily::Simulation)
+            .map(|assignment| assignment.backend.clone())
+    }
+
+    #[must_use]
+    pub fn role_summary(&self) -> GpuBackendRoleSummary {
+        GpuBackendRoleSummary {
+            rendering: self.rendering_backend(),
+            simulation_assist: self.simulation_assist_backend(),
+        }
+    }
+
+    #[must_use]
+    pub fn supports_vulkan_render_opencl_simulation_assist(&self) -> bool {
+        matches!(self.rendering_backend(), Some(GpuBackend::Vulkan))
+            && matches!(self.simulation_assist_backend(), Some(GpuBackend::OpenCl))
     }
 }
 
@@ -84,6 +120,17 @@ impl HardwareProfile {
     pub fn has_one_owner_per_state_family(&self) -> bool {
         self.gpu_backend_report.has_one_owner_per_state_family()
     }
+
+    #[must_use]
+    pub fn gpu_role_summary(&self) -> GpuBackendRoleSummary {
+        self.gpu_backend_report.role_summary()
+    }
+
+    #[must_use]
+    pub fn supports_vulkan_render_opencl_simulation_assist(&self) -> bool {
+        self.gpu_backend_report
+            .supports_vulkan_render_opencl_simulation_assist()
+    }
 }
 
 #[cfg(test)]
@@ -91,24 +138,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opencl_backend_support_is_encoded_in_hardware_profile() {
+    fn vulkan_render_and_opencl_simulation_assist_split_is_encoded_in_hardware_profile() {
         let profile = HardwareProfile {
             cpu_backend: CpuBackend::ReferenceScalar,
-            gpu_backend: GpuBackend::OpenCl,
+            gpu_backend: GpuBackend::Vulkan,
             gpu_backend_report: GpuBackendReport {
-                active: vec![BackendFamilyAssignment {
-                    state_family: GpuBackendStateFamily::Simulation,
-                    backend: GpuBackend::OpenCl,
-                }],
+                active: vec![
+                    BackendFamilyAssignment {
+                        state_family: GpuBackendStateFamily::Rendering,
+                        backend: GpuBackend::Vulkan,
+                    },
+                    BackendFamilyAssignment {
+                        state_family: GpuBackendStateFamily::Simulation,
+                        backend: GpuBackend::OpenCl,
+                    },
+                ],
                 available: Vec::new(),
             },
             cpu_features: vec!["sse4.2".to_string()],
-            gpu_features: Vec::new(),
-            acceleration_modes: vec!["dual-gpu".to_string()],
+            gpu_features: vec!["vk-render".to_string(), "opencl-sim".to_string()],
+            acceleration_modes: vec!["dual-gpu".to_string(), "vulkan-render".to_string()],
         };
 
-        assert_eq!(profile.gpu_backend, GpuBackend::OpenCl);
-        assert_eq!(profile.active_gpu_backends()[0].backend, GpuBackend::OpenCl);
+        assert_eq!(profile.gpu_backend, GpuBackend::Vulkan);
+        assert_eq!(
+            profile.gpu_role_summary(),
+            GpuBackendRoleSummary {
+                rendering: Some(GpuBackend::Vulkan),
+                simulation_assist: Some(GpuBackend::OpenCl),
+            }
+        );
+        assert!(profile.supports_vulkan_render_opencl_simulation_assist());
         assert!(profile.has_one_owner_per_state_family());
     }
 

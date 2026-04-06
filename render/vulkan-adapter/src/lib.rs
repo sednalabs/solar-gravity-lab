@@ -3,7 +3,7 @@
 use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-    SceneProvenanceRef, SceneTracer, SceneTrail,
+    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -119,6 +119,7 @@ pub struct VulkanScenePacket {
     pub observer_mode: ObserverMode,
     pub timeline_semantics: TimelineSemantics,
     pub provenance: Option<SceneProvenanceRef>,
+    pub packet_metadata: ScenePacketMetadata,
     pub diagnostics: RenderDiagnostics,
     pub camera: VulkanCameraPacket,
     pub body_instances: Vec<VulkanBodyInstance>,
@@ -181,6 +182,7 @@ impl VulkanSceneAdapter {
             observer_mode: scene.observer_mode.clone(),
             timeline_semantics: scene.timeline_semantics.clone(),
             provenance: scene.provenance.clone(),
+            packet_metadata: scene.packet_metadata.clone(),
             diagnostics: scene.diagnostics,
             camera,
             body_instances,
@@ -319,7 +321,8 @@ mod tests {
     use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
     use solarlab_scene::{
         CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-        SceneProvenanceRef, SceneTracer, SceneTrail,
+        SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneProvenanceRef, SceneTracer,
+        SceneTrail,
     };
 
     use super::{adapt_render_scene, FrameOriginStrategy, PackedVec3, VulkanSceneAdapter};
@@ -364,6 +367,23 @@ mod tests {
         assert_eq!(packet.trail_spans[0].vertex_offset, 0);
         assert_eq!(packet.trail_spans[0].vertex_count, 2);
         assert!(packet.trail_spans[0].head_highlighted);
+        assert_eq!(
+            packet.packet_metadata.tracer_family,
+            SceneItemFamily::Tracer
+        );
+        assert_eq!(
+            packet.packet_metadata.tracer_resolution_band,
+            SceneDetailBand::Medium
+        );
+        assert_eq!(packet.packet_metadata.trail_family, SceneItemFamily::Trail);
+        assert_eq!(
+            packet.packet_metadata.trail_horizon_band,
+            SceneDetailBand::Far
+        );
+        assert_eq!(
+            packet.packet_metadata.trail_simplification_budget_samples,
+            64
+        );
         assert_eq!(
             packet
                 .provenance
@@ -522,6 +542,7 @@ mod tests {
                 max_samples: 64,
                 head_highlighted: true,
             }],
+            packet_metadata: ScenePacketMetadata::default(),
             lights: vec![LightSource {
                 light_id: "sun".to_owned(),
                 direction_ws: Vector3d {
@@ -551,5 +572,6 @@ mod tests {
                 dropped_frames: 0,
             },
         }
+        .with_derived_counts()
     }
 }

@@ -29,7 +29,7 @@ use solarlab_physics::{
 };
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-    SceneProvenanceRef, SceneTracer, SceneTrail,
+    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -960,6 +960,7 @@ pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
         bodies,
         tracers,
         trails,
+        packet_metadata: ScenePacketMetadata::default(),
         lights,
         provenance: scene_provenance(snapshot),
         diagnostics,
@@ -1539,6 +1540,7 @@ mod tests {
     use solarlab_hardware::HardwareProfile;
     use solarlab_history::HistoryEvent;
     use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
+    use solarlab_scene::{SceneDetailBand, SceneItemFamily};
 
     use super::{
         extract_render_scene, ApplyUpdateManifestCommand, BodyState, MountPackageCommand,
@@ -1776,6 +1778,20 @@ mod tests {
         assert_eq!(scene.tracers.len(), 1);
         assert_eq!(scene.trails.len(), 4);
         assert_eq!(scene.lights.len(), 1);
+        assert_eq!(scene.packet_metadata.tracer_family, SceneItemFamily::Tracer);
+        assert_eq!(
+            scene.packet_metadata.tracer_resolution_band,
+            SceneDetailBand::Far
+        );
+        assert_eq!(scene.packet_metadata.trail_family, SceneItemFamily::Trail);
+        assert_eq!(
+            scene.packet_metadata.trail_horizon_band,
+            SceneDetailBand::Far
+        );
+        assert_eq!(
+            scene.packet_metadata.trail_simplification_budget_samples,
+            96
+        );
         assert!(scene.scene_revision.contains("branch=main"));
         assert!(scene
             .tracers

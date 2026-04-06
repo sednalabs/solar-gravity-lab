@@ -38,6 +38,19 @@ pub struct SceneTracer {
     pub size_px: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneItemFamily {
+    Tracer,
+    Trail,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SceneDetailBand {
+    Near,
+    Medium,
+    Far,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneTrail {
     pub trail_id: String,
@@ -46,6 +59,27 @@ pub struct SceneTrail {
     pub color: ColorRgba,
     pub max_samples: u32,
     pub head_highlighted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScenePacketMetadata {
+    pub tracer_family: SceneItemFamily,
+    pub tracer_resolution_band: SceneDetailBand,
+    pub trail_family: SceneItemFamily,
+    pub trail_horizon_band: SceneDetailBand,
+    pub trail_simplification_budget_samples: u32,
+}
+
+impl Default for ScenePacketMetadata {
+    fn default() -> Self {
+        Self {
+            tracer_family: SceneItemFamily::Tracer,
+            tracer_resolution_band: SceneDetailBand::Far,
+            trail_family: SceneItemFamily::Trail,
+            trail_horizon_band: SceneDetailBand::Far,
+            trail_simplification_budget_samples: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,9 +108,9 @@ pub struct SceneProvenanceRef {
 }
 
 /// Authoritative scene state published by the runtime for rendering.
-/// 
-/// This structure is backend-neutral and contains all the data required to 
-/// reconstruct a physically grounded frame, including camera, bodies, tracers, 
+///
+/// This structure is backend-neutral and contains all the data required to
+/// reconstruct a physically grounded frame, including camera, bodies, tracers,
 /// and lights.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderScene {
@@ -91,6 +125,7 @@ pub struct RenderScene {
     pub bodies: Vec<SceneBody>,
     pub tracers: Vec<SceneTracer>,
     pub trails: Vec<SceneTrail>,
+    pub packet_metadata: ScenePacketMetadata,
     pub lights: Vec<LightSource>,
     pub provenance: Option<SceneProvenanceRef>,
     pub diagnostics: RenderDiagnostics,
@@ -102,13 +137,70 @@ impl RenderScene {
         self.body_count = self.bodies.len() as u32;
         self.tracer_count = self.tracers.len() as u32;
         self.trail_count = self.trails.len() as u32;
+        self.packet_metadata = ScenePacketMetadata::from_scene(&self);
         self
     }
 }
 
+impl ScenePacketMetadata {
+    #[must_use]
+    pub fn from_scene(scene: &RenderScene) -> Self {
+        Self {
+            tracer_family: SceneItemFamily::Tracer,
+            tracer_resolution_band: tracer_resolution_band(&scene.tracers),
+            trail_family: SceneItemFamily::Trail,
+            trail_horizon_band: trail_horizon_band(&scene.trails),
+            trail_simplification_budget_samples: scene
+                .trails
+                .iter()
+                .map(|trail| trail.max_samples)
+                .max()
+                .unwrap_or_default(),
+        }
+    }
+}
+
+fn tracer_resolution_band(tracers: &[SceneTracer]) -> SceneDetailBand {
+    let max_size_px = tracers
+        .iter()
+        .map(|tracer| tracer.size_px)
+        .fold(0.0_f32, f32::max);
+
+    if max_size_px >= 4.0 {
+        SceneDetailBand::Near
+    } else if max_size_px >= 2.0 {
+        SceneDetailBand::Medium
+    } else {
+        SceneDetailBand::Far
+    }
+}
+
+fn trail_horizon_band(trails: &[SceneTrail]) -> SceneDetailBand {
+    let mut band = SceneDetailBand::Far;
+
+    for trail in trails {
+        if trail.max_samples == 0 {
+            continue;
+        }
+
+        let coverage = trail.samples_m.len() as f32 / trail.max_samples as f32;
+        let trail_band = if coverage >= 0.75 {
+            SceneDetailBand::Near
+        } else if coverage >= 0.5 {
+            SceneDetailBand::Medium
+        } else {
+            SceneDetailBand::Far
+        };
+
+        band = band.max(trail_band);
+    }
+
+    band
+}
+
 /// Represents an incremental update to a [RenderScene].
-/// 
-/// Used to avoid full scene transfers between the runtime core and 
+///
+/// Used to avoid full scene transfers between the runtime core and
 /// render adapters. The delta is anchored to a `base_revision`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderSceneDelta {
@@ -135,7 +227,8 @@ mod tests {
     use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
 
     use super::{
-        CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneTracer, SceneTrail,
+        CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
+        SceneItemFamily, ScenePacketMetadata, SceneTracer, SceneTrail,
     };
 
     #[test]
@@ -198,6 +291,7 @@ mod tests {
                 max_samples: 128,
                 head_highlighted: false,
             }],
+            packet_metadata: ScenePacketMetadata::default(),
             lights: Vec::new(),
             provenance: None,
             diagnostics: RenderDiagnostics::default(),
@@ -207,5 +301,19 @@ mod tests {
         assert_eq!(scene.body_count, 1);
         assert_eq!(scene.tracer_count, 1);
         assert_eq!(scene.trail_count, 1);
+        assert_eq!(scene.packet_metadata.tracer_family, SceneItemFamily::Tracer);
+        assert_eq!(
+            scene.packet_metadata.tracer_resolution_band,
+            SceneDetailBand::Medium
+        );
+        assert_eq!(scene.packet_metadata.trail_family, SceneItemFamily::Trail);
+        assert_eq!(
+            scene.packet_metadata.trail_horizon_band,
+            SceneDetailBand::Far
+        );
+        assert_eq!(
+            scene.packet_metadata.trail_simplification_budget_samples,
+            128
+        );
     }
 }
