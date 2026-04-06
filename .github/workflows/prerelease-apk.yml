@@ -45,6 +45,22 @@ on:
         required: false
         default: true
         type: boolean
+      android_artifact_mode:
+        description: Android launch-smoke artifact capture mode
+        required: true
+        default: failures-only
+        type: choice
+        options:
+          - failures-only
+          - always
+      emulator_boot_strategy:
+        description: Emulator startup strategy for launch smoke
+        required: true
+        default: snapshot-cache
+        type: choice
+        options:
+          - snapshot-cache
+          - cold
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
@@ -73,8 +89,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+
+      - name: Initialize prerelease timing
+        id: prerelease_timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Resolve checkout metadata
         id: git_meta
@@ -90,40 +113,83 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      - name: Restore Android emulator AVD cache
+        if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd
+            ~/.android/adb*
+          key: avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-v1
+          restore-keys: |
+            avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-
+
       - name: Accept Android SDK licenses and install build toolchain
+        id: android_sdk_install
         shell: bash
         run: |
           set -euo pipefail
+          phase_start="$(date +%s)"
           set +o pipefail
           yes | sdkmanager --licenses >/dev/null
           set -o pipefail
-          sdkmanager --install \
-            "emulator" \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "system-images;android-35;google_apis;x86_64" \
-            "cmake;3.22.1" \
+          required_packages=(
+            "emulator"
+            "platform-tools"
+            "platforms;android-36"
+            "build-tools;36.0.0"
+            "system-images;android-35;google_apis;x86_64"
+            "cmake;3.22.1"
             "ndk;27.2.12479018"
+          )
+          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
+          missing_packages=()
+          for pkg in "${required_packages[@]}"; do
+            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
+              echo "SDK package already installed: $pkg"
+            else
+              missing_packages+=("$pkg")
+            fi
+          done
+          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+            echo "Installing missing SDK packages: ${missing_packages[*]}"
+            sdkmanager --install "${missing_packages[@]}"
+          else
+            echo "All required SDK packages already installed."
+          fi
+          phase_end="$(date +%s)"
+          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Android toolchain
+        id: rust_android_toolchain
         shell: bash
         run: |
           set -euo pipefail
+          phase_start="$(date +%s)"
           rustup target add aarch64-linux-android x86_64-linux-android
-          cargo install cargo-ndk --locked
+          if command -v cargo-ndk >/dev/null 2>&1; then
+            echo "cargo-ndk already available."
+          else
+            cargo install cargo-ndk --locked
+          fi
+          phase_end="$(date +%s)"
+          echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Assemble prerelease APK
+        id: assemble_prerelease
         env:
           SOLARLAB_VERSION_NAME: ${{ inputs.version_name }}
           SOLARLAB_VERSION_CODE: ${{ inputs.version_code }}
         shell: bash
         run: |
           set -euo pipefail
+          phase_start="$(date +%s)"
           build_variant="${{ inputs.build_variant != '' && inputs.build_variant || 'prerelease' }}"
-          ./gradlew -p clients/android --no-daemon ":app:assemble${build_variant^}"
+          ./gradlew -p clients/android ":app:assemble${build_variant^}"
+          phase_end="$(date +%s)"
+          echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
       - name: Derive artifact metadata
         id: meta
@@ -216,9 +282,30 @@ jobs:
           profile: pixel_7
           target: google_apis
           emulator-boot-timeout: 1200
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          force-avd-creation: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_prerelease_android_launch_smoke.sh "${{ steps.meta.outputs.safe_version }}" "${{ steps.meta.outputs.package_label }}"
+        env:
+          ANDROID_LAUNCH_ARTIFACT_MODE: ${{ inputs.android_artifact_mode }}
+
+      - name: Emit prerelease Android timing summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          lane_end_epoch="$(date +%s)"
+          lane_start_epoch="${{ steps.prerelease_timing.outputs.lane_start_epoch }}"
+          lane_total="$((lane_end_epoch - lane_start_epoch))"
+          {
+            echo "## prerelease android timings"
+            echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
+            echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
+            echo "- assemble APK: \`${{ steps.assemble_prerelease.outputs.assemble_seconds || 'n/a' }}s\`"
+            echo "- lane total (including emulator + launch smoke): \`${lane_total}s\`"
+            echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
+            echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload prerelease APK artifact
         if: always()
@@ -380,6 +467,8 @@ jobs:
             echo "- package label: \`${{ needs.build-prerelease-apk.outputs.package_label }}\`"
             echo "- artifact: \`solar-gravity-lab-${{ needs.build-prerelease-apk.outputs.safe_version }}-${{ needs.build-prerelease-apk.outputs.package_label }}.apk\`"
             echo "- launch smoke: \`${{ needs.build-prerelease-apk.outputs.launch_smoke_outcome }}\`"
+            echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
+            echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
             echo "- arm64 ISA proof: \`${{ needs.isa-prerelease-proof.result }}\`"
             echo "- changelog baseline: \`${{ needs.build-prerelease-apk.outputs.changelog_baseline_tag }}\`"
             echo "- changelog commits: \`${{ needs.build-prerelease-apk.outputs.changelog_commit_count }}\`"
