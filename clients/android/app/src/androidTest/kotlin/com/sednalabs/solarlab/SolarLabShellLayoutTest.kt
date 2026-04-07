@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.swipeUp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -403,15 +404,79 @@ class SolarLabShellLayoutTest {
             return
         }
         waitForShellHierarchy()
-        val targetNode = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
-        try {
-            targetNode.performScrollTo()
-        } catch (_: AssertionError) {
-            Log.w(LOG_TAG, "SolarLabShellLayoutTest.scrollFallback tag=$tag")
-            composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN)
-                .performScrollToNode(hasTestTag(tag))
+        val shellNode = composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN, useUnmergedTree = true)
+        val targetTagMatcher = hasTestTag(tag)
+        val timeoutUntilVisibleMs = 5_000L
+        val deadlineMs = System.currentTimeMillis() + timeoutUntilVisibleMs
+        val scrollAttempts = 8
+
+        var lastVisibleFailure: AssertionError? = null
+        while (System.currentTimeMillis() < deadlineMs) {
+            val hasTargetNode = runCatching {
+                composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
+            }.getOrNull()?.isNotEmpty() == true
+
+            if (!hasTargetNode) {
+                Log.w(LOG_TAG, "SolarLabShellLayoutTest.scrollMissingNode tag=$tag")
+            } else {
+                try {
+                    shellNode.performScrollToNode(targetTagMatcher)
+                } catch (_: AssertionError) {
+                    Log.w(LOG_TAG, "SolarLabShellLayoutTest.scrollToNodeFailed tag=$tag")
+                }
+
+                runCatching {
+                    composeRule.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
+                }.onSuccess {
+                    return
+                }.onFailure { failure ->
+                    if (failure is AssertionError) {
+                        lastVisibleFailure = failure
+                    }
+                }
+            }
+
+            val shellVisible = runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN, useUnmergedTree = true)
+                    .performTouchInput { swipeUp() }
+            }
+            if (shellVisible.isFailure) {
+                Log.w(
+                    LOG_TAG,
+                    "SolarLabShellLayoutTest.manualScrollFallback tag=$tag",
+                    shellVisible.exceptionOrNull(),
+                )
+            }
+            composeRule.waitForIdle()
+            Thread.sleep(100)
+            if ((deadlineMs - System.currentTimeMillis()) < 150) {
+                break
+            }
         }
+
+        runCatching {
+            composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().size
+        }.onSuccess {
+            if (it == 0) {
+                throw AssertionError(
+                    "SolarLabShellLayoutTest.scrollShellTo could not find node with tag=$tag in shell hierarchy"
+                )
+            }
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN, useUnmergedTree = true).performScrollToNode(
+            targetTagMatcher,
+        )
         composeRule.waitForIdle()
+
+        runCatching {
+            composeRule.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
+        }.onFailure {
+            throw lastVisibleFailure ?: AssertionError(
+                "SolarLabShellLayoutTest.scrollShellTo unable to make tag=$tag visible after " +
+                    "$scrollAttempts attempts",
+                it,
+            )
+        }
     }
 
     private fun waitForShellHierarchy(timeoutMillis: Long = 5_000L) {

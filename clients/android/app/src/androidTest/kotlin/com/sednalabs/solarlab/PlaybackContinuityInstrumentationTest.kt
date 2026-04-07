@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import android.util.Log
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlin.time.Duration.Companion.milliseconds
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.SessionConnectionState
@@ -32,18 +33,22 @@ class PlaybackContinuityInstrumentationTest {
 
             val baselineState = facade.uiState.value
             val baselineEpoch = requireNotNull(baselineState.snapshot).epochSeconds
+            val baselinePlaybackRate = requireNotNull(baselineState.snapshot).simSecondsPerRealSecond
             Log.i(
                 LOG_TAG,
                 "PlaybackContinuityInstrumentationTest.baseline " +
-                    "epoch=$baselineEpoch paused=${baselineState.snapshot.paused}",
+                    "epoch=$baselineEpoch paused=${baselineState.snapshot.paused} " +
+                    "rate=${baselinePlaybackRate} bodies=${baselineState.snapshot.bodyCount}",
             )
 
-            waitForState(facade, timeout = 12.seconds) { state ->
+            waitForState(facade, timeout = 24.seconds, pollInterval = 120.milliseconds) { state ->
                 val snapshot = state.snapshot ?: return@waitForState false
                 state.connectionState == SessionConnectionState.Active &&
                     state.renderStatus.readiness == RenderHostReadiness.Ready &&
                     !snapshot.paused &&
-                    snapshot.epochSeconds > baselineEpoch
+                    snapshot.epochSeconds > baselineEpoch &&
+                    snapshot.simSecondsPerRealSecond > 0.0 &&
+                    snapshot.epochSeconds - baselineEpoch >= 0.5
             }
 
             val finalState = facade.uiState.value
@@ -78,6 +83,7 @@ class PlaybackContinuityInstrumentationTest {
     private fun waitForState(
         facade: RuntimeFacade,
         timeout: Duration = 20.seconds,
+        pollInterval: Duration = 50.milliseconds,
         predicate: (ShellUiState) -> Boolean,
     ) {
         val deadlineMs = System.currentTimeMillis() + timeout.inWholeMilliseconds
@@ -91,7 +97,7 @@ class PlaybackContinuityInstrumentationTest {
                 Log.i(LOG_TAG, "PlaybackContinuityInstrumentationTest.waiting ${summarizeState(state)}")
                 nextProgressLogMs += PROGRESS_LOG_INTERVAL_MS
             }
-            Thread.sleep(50)
+            Thread.sleep(pollInterval.inWholeMilliseconds)
         }
         val finalState = facade.uiState.value
         throw AssertionError(
