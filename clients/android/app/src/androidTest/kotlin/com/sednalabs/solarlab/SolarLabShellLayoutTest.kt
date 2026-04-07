@@ -17,7 +17,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.swipeUp
@@ -470,11 +469,13 @@ class SolarLabShellLayoutTest {
         composeRule.waitForIdle()
 
         val nodes = composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
-        val displayable = runCatching { nodes.onFirst().assertIsDisplayed() }.isSuccess
-        if (displayable) {
-            return
+        val semanticsNodes = nodes.fetchSemanticsNodes()
+        for (index in semanticsNodes.indices) {
+            if (runCatching { nodes[index].assertIsDisplayed() }.isSuccess) {
+                return
+            }
         }
-        val fallbackNode = nodes.fetchSemanticsNodes().firstOrNull()
+        val fallbackNode = semanticsNodes.firstOrNull()
         val failureCause = lastVisibleFailure ?: AssertionError(
             "SolarLabShellLayoutTest.scrollShellTo unable to make tag=$tag visible after " +
                 "$scrollAttempts attempts",
