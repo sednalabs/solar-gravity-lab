@@ -412,9 +412,9 @@ class SolarLabShellLayoutTest {
 
         var lastVisibleFailure: AssertionError? = null
         while (System.currentTimeMillis() < deadlineMs) {
-            val hasTargetNode = runCatching {
-                composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
-            }.getOrNull()?.isNotEmpty() == true
+            val targetNodes = composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
+            val semanticsNodes = runCatching { targetNodes.fetchSemanticsNodes() }.getOrNull()
+            val hasTargetNode = semanticsNodes?.isNotEmpty() == true
 
             if (!hasTargetNode) {
                 Log.w(LOG_TAG, "SolarLabShellLayoutTest.scrollMissingNode tag=$tag")
@@ -425,13 +425,18 @@ class SolarLabShellLayoutTest {
                     Log.w(LOG_TAG, "SolarLabShellLayoutTest.scrollToNodeFailed tag=$tag")
                 }
 
-                runCatching {
-                    composeRule.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
-                }.onSuccess {
-                    return
-                }.onFailure { failure ->
-                    if (failure is AssertionError) {
-                        lastVisibleFailure = failure
+                semanticsNodes?.let { nodesList ->
+                    for (index in nodesList.indices) {
+                        runCatching {
+                            targetNodes[index].performScrollTo()
+                            targetNodes[index].assertIsDisplayed()
+                        }.onSuccess {
+                            return
+                        }.onFailure { failure ->
+                            if (failure is AssertionError) {
+                                lastVisibleFailure = failure
+                            }
+                        }
                     }
                 }
             }
@@ -454,10 +459,14 @@ class SolarLabShellLayoutTest {
             }
         }
 
+        val fallbackNodes = runCatching {
+            composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
+        }.getOrNull()
+        val fallbackSize = fallbackNodes?.size ?: 0
         runCatching {
-            composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().size
+            fallbackSize
         }.onSuccess {
-            if (it == 0) {
+            if (fallbackSize == 0) {
                 throw AssertionError(
                     "SolarLabShellLayoutTest.scrollShellTo could not find node with tag=$tag in shell hierarchy"
                 )
@@ -468,14 +477,14 @@ class SolarLabShellLayoutTest {
         )
         composeRule.waitForIdle()
 
-        val nodes = composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
-        val semanticsNodes = nodes.fetchSemanticsNodes()
-        for (index in semanticsNodes.indices) {
-            if (runCatching { nodes[index].assertIsDisplayed() }.isSuccess) {
+        val targetNodes = composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
+        val semanticsNodesRetry = targetNodes.fetchSemanticsNodes()
+        for (index in semanticsNodesRetry.indices) {
+            if (runCatching { targetNodes[index].assertIsDisplayed() }.isSuccess) {
                 return
             }
         }
-        val fallbackNode = semanticsNodes.firstOrNull()
+        val fallbackNode = semanticsNodesRetry.firstOrNull()
         val failureCause = lastVisibleFailure ?: AssertionError(
             "SolarLabShellLayoutTest.scrollShellTo unable to make tag=$tag visible after " +
                 "$scrollAttempts attempts",
