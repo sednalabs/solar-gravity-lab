@@ -467,6 +467,8 @@ jobs:
             echo "- package label: \`${{ needs.build-prerelease-apk.outputs.package_label }}\`"
             echo "- artifact: \`solar-gravity-lab-${{ needs.build-prerelease-apk.outputs.safe_version }}-${{ needs.build-prerelease-apk.outputs.package_label }}.apk\`"
             echo "- launch smoke: \`${{ needs.build-prerelease-apk.outputs.launch_smoke_outcome }}\`"
+            echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
+            echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
             echo "- arm64 ISA proof: \`${{ needs.isa-prerelease-proof.result }}\`"
             echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"

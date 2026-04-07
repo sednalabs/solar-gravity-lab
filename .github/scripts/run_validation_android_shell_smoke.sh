@@ -21,11 +21,13 @@ LAST_LOGCAT_PID=""
 
 CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
+  "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
   "com.sednalabs.solarlab.SolarLabShellLayoutTest"
 )
 
 FULL_TEST_CLASSES=(
   "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
+  "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
   "com.sednalabs.solarlab.SolarLabShellLayoutTest"
   "com.sednalabs.solarlab.RotationContinuityInstrumentationTest"
   "com.sednalabs.solarlab.PlaybackContinuityInstrumentationTest"
@@ -165,7 +167,7 @@ run_test_batch() {
   LAST_LOGCAT_PID=""
 
   if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
-    capture_device_state "${run_dir}"
+    capture_device_state "${run_dir}" "post"
   fi
 
   {
@@ -177,9 +179,11 @@ run_test_batch() {
   } > "${run_dir}/status.txt"
 
   if [[ "${command_status}" -eq 124 ]]; then
+    capture_device_state "${run_dir}" "fail"
     echo "Timed out while running instrumentation batch" >&2
     emit_failure_summary "${run_dir}"
   elif [[ "${command_status}" -ne 0 ]]; then
+    capture_device_state "${run_dir}" "fail"
     echo "Instrumentation batch failed with exit code ${command_status}" >&2
     emit_failure_summary "${run_dir}"
   else
