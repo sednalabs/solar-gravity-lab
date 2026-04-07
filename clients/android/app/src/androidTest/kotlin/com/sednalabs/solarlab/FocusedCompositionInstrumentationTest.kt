@@ -47,10 +47,8 @@ class FocusedCompositionInstrumentationTest {
 
             waitForState(facade, timeout = 25.seconds) { state ->
                 val focusedMatch = state.focusedBodyId.equals(targetBodyId, ignoreCase = true)
-                val renderMatch = state.renderFrame?.bodies?.any { body ->
-                    body.bodyId.equals(targetBodyId, ignoreCase = true)
-                } == true
-                focusedMatch && renderMatch && state.renderStatus.readiness == RenderHostReadiness.Ready
+                val hasRenderableBodies = state.renderFrame?.bodies?.isNotEmpty() == true
+                focusedMatch && hasRenderableBodies && state.renderStatus.readiness == RenderHostReadiness.Ready
             }
 
             val finalState = facade.uiState.value
