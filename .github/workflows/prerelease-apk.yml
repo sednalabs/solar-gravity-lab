@@ -270,6 +270,17 @@ jobs:
         env:
           ANDROID_LAUNCH_ARTIFACT_MODE: ${{ inputs.android_artifact_mode }}
 
+      - name: Prepare full git history for authoritative changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+            git fetch --prune --unshallow origin
+          else
+            git fetch --prune origin
+          fi
+          git fetch --tags --force --prune origin 'refs/tags/v*'
+
       - name: Generate release changelog
         id: changelog
         shell: bash
