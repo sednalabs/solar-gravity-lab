@@ -200,7 +200,7 @@ internal class JniRuntimeBridge(
     }
 
     // Explicit pull refresh for currently bound session; reuses handle snapshot guard.
-    override suspend fun refresh(advancePlayback: Boolean = false): List<RuntimeSignal> {
+    override suspend fun refresh(advancePlayback: Boolean): List<RuntimeSignal> {
         val handle = synchronized(stateLock) { activeSessionHandle }
         if (handle == 0L) {
             return listOf(
