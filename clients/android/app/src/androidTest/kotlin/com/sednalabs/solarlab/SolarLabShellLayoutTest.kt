@@ -471,11 +471,13 @@ class SolarLabShellLayoutTest {
         runCatching {
             composeRule.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
         }.onFailure {
-            throw lastVisibleFailure ?: AssertionError(
+            val failureCause = lastVisibleFailure ?: AssertionError(
                 "SolarLabShellLayoutTest.scrollShellTo unable to make tag=$tag visible after " +
                     "$scrollAttempts attempts",
                 it,
             )
+            Log.w(LOG_TAG, "scrollShellTo final failure for tag=$tag", failureCause)
+            throw failureCause
         }
     }
 
