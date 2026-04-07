@@ -47,7 +47,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Compare origin/main against baseline release (or fallback) remote
+      - name: Compare origin/main against baseline release (or fallback) reference
         id: audit
         shell: bash
         run: |
@@ -87,13 +87,13 @@ jobs:
             args+=(--strict)
           fi
 
-          python3 .github/scripts/compare_upstream_main.py "${args[@]}"
+          python3 .github/scripts/compare_release_baseline.py "${args[@]}"
 
       - name: Upload drift artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: upstream-drift-audit
+          name: release-baseline-drift-audit
           path: |
             drift_audit.json
             drift_audit.md

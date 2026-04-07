@@ -28,7 +28,7 @@ build or workflow behavior.
 - The action writes:
   - `drift_audit.json` for machine checks and changelog automation.
   - `drift_audit.md` for human-readable diff review.
-- The default fallback path remains `origin/main` for repositories that do not expose upstream release tags yet.
+- The default fallback path remains `origin/main` for repositories that do not expose release tags yet.
 
 ## Current lane families
 

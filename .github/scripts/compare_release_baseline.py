@@ -77,8 +77,8 @@ def has_ref(ref: str) -> bool:
 
 
 def resolve_remote_ref(reference: str) -> str:
-    if reference in {"", "origin/upstream-main", "upstream/main"}:
-        raise RuntimeError("upstream-main is not configured for this repository")
+    if reference == "":
+        raise RuntimeError("Baseline reference cannot be empty")
     if reference == "auto:last-release-tag":
         # Pick the most recent local/reachable release tag as the baseline.
         return run_git(["describe", "--tags", "--abbrev=0", "--match", "v*"]).strip()
@@ -204,7 +204,8 @@ def parse_diff_raw(local_ref: str, remote_ref: str) -> list[dict]:
             "--find-renames",
             "--find-copies-harder",
             "--no-ext-diff",
-            f"{local_ref}...{remote_ref}",
+            local_ref,
+            remote_ref,
         ]
     ).splitlines()
     numstat_map = parse_numstat(
@@ -215,7 +216,8 @@ def parse_diff_raw(local_ref: str, remote_ref: str) -> list[dict]:
                 "--find-renames",
                 "--find-copies-harder",
                 "--no-ext-diff",
-                f"{local_ref}...{remote_ref}",
+                local_ref,
+                remote_ref,
             ]
         )
     )
@@ -365,8 +367,9 @@ def main() -> int:
             "--format=%H\x01%h\x01%s\x01%at",
         ]
     ).splitlines()
-    local_commits = commit_metadata(commit_log, ">")
-    remote_commits = commit_metadata(commit_log, "<")
+    # For "local_ref...remote_ref", "<" are local-only (left) and ">" are remote-only (right).
+    local_commits = commit_metadata(commit_log, "<")
+    remote_commits = commit_metadata(commit_log, ">")
     for commit in local_commits:
         commit["code_relevant"] = is_code_relevant_commit(commit)
     for commit in remote_commits:
@@ -415,7 +418,7 @@ def main() -> int:
     print(f"Wrote JSON: {json_path}")
     print(f"Wrote markdown: {args.markdown}")
 
-    if args.strict and payload["counts"]["total_file_changes"] > 0:
+    if args.strict and payload["counts"]["filtered_file_changes"] > 0:
         return 1
     return 0
 
