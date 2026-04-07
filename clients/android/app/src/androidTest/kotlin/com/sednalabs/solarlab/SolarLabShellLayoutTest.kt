@@ -469,13 +469,7 @@ class SolarLabShellLayoutTest {
         composeRule.waitForIdle()
 
         val nodes = composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
-        var displayable = false
-        for (interaction in nodes) {
-            if (runCatching { interaction.assertIsDisplayed() }.isSuccess) {
-                displayable = true
-                break
-            }
-        }
+        val displayable = runCatching { nodes.onFirst().assertIsDisplayed() }.isSuccess
         if (displayable) {
             return
         }
