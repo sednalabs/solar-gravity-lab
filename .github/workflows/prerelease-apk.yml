@@ -179,11 +179,58 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Resolve prerelease version defaults
+        id: resolved_version
+        shell: bash
+        env:
+          INPUT_VERSION_NAME: ${{ inputs.version_name }}
+          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          set -euo pipefail
+          version_name_override="${INPUT_VERSION_NAME:-}"
+          version_code_override="${INPUT_VERSION_CODE:-}"
+
+          if [[ -z "${version_name_override}" ]]; then
+            git fetch --force --prune origin '+refs/tags/v*:refs/tags/*'
+            version_name_override="$(
+              python3 - <<'PY'
+              import re
+              import subprocess
+              import sys
+
+              tags = subprocess.check_output(
+                  ["git", "tag", "--list", "v*"],
+                  text=True,
+              ).splitlines()
+              alpha_pattern = re.compile(r"^v(\d+)\.(\d+)\.(\d+)-alpha\.(\d+)$")
+              alpha_versions = []
+              for tag in tags:
+                  match = alpha_pattern.match(tag.strip())
+                  if not match:
+                      continue
+                  major, minor, patch, alpha = (int(x) for x in match.groups())
+                  alpha_versions.append((major, minor, patch, alpha))
+
+              if not alpha_versions:
+                  print("0.1.0-alpha.1")
+                  sys.exit(0)
+
+              major, minor, patch, alpha = max(alpha_versions)
+              print(f"{major}.{minor}.{patch}-alpha.{alpha + 1}")
+              PY
+            )"
+          fi
+
+          {
+            echo "version_name=${version_name_override}"
+            echo "version_code=${version_code_override}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Assemble prerelease APK
         id: assemble_prerelease
         env:
-          SOLARLAB_VERSION_NAME: ${{ inputs.version_name }}
-          SOLARLAB_VERSION_CODE: ${{ inputs.version_code }}
+          SOLARLAB_VERSION_NAME: ${{ steps.resolved_version.outputs.version_name }}
+          SOLARLAB_VERSION_CODE: ${{ steps.resolved_version.outputs.version_code }}
         shell: bash
         run: |
           set -euo pipefail
