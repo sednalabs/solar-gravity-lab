@@ -184,24 +184,23 @@ class BridgeBackedRuntimeFacade internal constructor(
                 Log.i(LOG_TAG, "applySignal RuntimeSignal.Connected handle=${signal.handle}")
                 _uiState.update { current ->
                     current.copy(
-                        connectionState = SessionConnectionState.Active,
-                        statusLine = "Runtime session connected",
-                        detailLine = "Session handle ${signal.handle} is now owned by the Rust boundary",
-                        noticeLine = "Session bridge established",
-                        noticeTone = ShellNoticeTone.Positive,
-                        pendingActionLabel = null,
-                        sessionHandle = signal.handle,
-                        renderStatus = current.renderStatus.copy(
-                            readiness = RenderHostReadiness.Refreshing,
-                            issue = null,
-                        ),
-                        developerTelemetry = recordTelemetry(
-                            level = DeveloperTelemetryLevel.Info,
-                            category = "session.connected",
-                            message = "Bound runtime session handle ${signal.handle}",
-                        ),
-                    )
-                }
+                    connectionState = SessionConnectionState.Active,
+                    statusLine = "Runtime session connected",
+                    detailLine = "Session handle ${signal.handle} is now owned by the Rust boundary",
+                    noticeLine = "Session bridge established",
+                    noticeTone = ShellNoticeTone.Positive,
+                    pendingActionLabel = null,
+                    sessionHandle = signal.handle,
+                    renderStatus = current.renderStatus.copy(
+                        readiness = RenderHostReadiness.Refreshing,
+                        issue = null,
+                    ),
+                    developerTelemetry = recordTelemetry(
+                        level = DeveloperTelemetryLevel.Info,
+                        category = "session.connected",
+                        message = "Bound runtime session handle ${signal.handle}",
+                    ),
+                )
             }
 
             is RuntimeSignal.RuntimeInfoAvailable -> _uiState.update { current ->
