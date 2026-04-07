@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab.runtime
 
+import android.util.Log
 import com.sednalabs.solarlab.BuildConfig
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -121,6 +122,7 @@ internal class JniRuntimeBridge(
         }
 
         trySend(RuntimeSignal.Connected(handle = handle))
+        Log.i(LOG_TAG, "emit RuntimeSignal.Connected handle=$handle")
 
         val runtimeInfoResult = runCatching {
             transport.runtimeInfo(handle)
@@ -280,8 +282,8 @@ internal class JniRuntimeBridge(
                 return signals
             }
 
-            if (summary.result.isOk()) {
-                if (advancePlayback && !summary.paused) {
+                if (summary.result.isOk()) {
+                    if (advancePlayback && !summary.paused) {
                     val deltaSeconds = (REFRESH_INTERVAL_MS.toDouble() / 1_000.0) *
                         summary.simSecondsPerRealSecond.coerceAtLeast(0.0)
                     if (deltaSeconds > 0.0) {
@@ -314,6 +316,7 @@ internal class JniRuntimeBridge(
                     }
                 }
                 signals += RuntimeSignal.SnapshotUpdated(summary)
+                Log.i(LOG_TAG, "emit RuntimeSignal.SnapshotUpdated epoch=${summary.epochSeconds} paused=${summary.paused}")
             } else {
                 signals += RuntimeSignal.Notice(
                     message = "Refresh failed: ${summary.result.describe()}",
@@ -503,6 +506,7 @@ internal class JniRuntimeBridge(
         private const val REFRESH_INTERVAL_MS = 500L
         private const val STARTUP_MIN_VISIBLE_PLAYBACK_RATE = 3_600.0
         private const val STARTUP_DEFAULT_PLAYBACK_RATE = 21_600.0
+        private const val LOG_TAG = "JniRuntimeBridge"
     }
 }
 
