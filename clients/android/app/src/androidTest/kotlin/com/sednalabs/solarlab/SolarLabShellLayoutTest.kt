@@ -469,18 +469,21 @@ class SolarLabShellLayoutTest {
         composeRule.waitForIdle()
 
         val nodes = composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
-        val displayableNode = nodes.firstOrNull {
-            runCatching {
-                it.assertIsDisplayed()
-            }.isSuccess
+        var displayable = false
+        for (interaction in nodes) {
+            if (runCatching { interaction.assertIsDisplayed() }.isSuccess) {
+                displayable = true
+                break
+            }
         }
-        if (displayableNode != null) {
+        if (displayable) {
             return
         }
+        val fallbackNode = nodes.fetchSemanticsNodes().firstOrNull()
         val failureCause = lastVisibleFailure ?: AssertionError(
             "SolarLabShellLayoutTest.scrollShellTo unable to make tag=$tag visible after " +
                 "$scrollAttempts attempts",
-            nodes.firstOrNull()?.fetchSemanticsNode()?.layoutInfo?.toString()?.let { Exception(it) },
+            fallbackNode?.layoutInfo?.run { Exception(this.toString()) },
         )
         Log.w(LOG_TAG, "scrollShellTo final failure for tag=$tag", failureCause)
         throw failureCause
