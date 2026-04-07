@@ -1,6 +1,5 @@
 package com.sednalabs.solarlab.runtime
 
-import android.util.Log
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -180,10 +179,8 @@ class BridgeBackedRuntimeFacade internal constructor(
 
     private fun applySignal(signal: RuntimeSignal) {
         when (signal) {
-            is RuntimeSignal.Connected -> {
-                Log.i(LOG_TAG, "applySignal RuntimeSignal.Connected handle=${signal.handle}")
-                _uiState.update { current ->
-                    current.copy(
+            is RuntimeSignal.Connected -> _uiState.update { current ->
+                current.copy(
                     connectionState = SessionConnectionState.Active,
                     statusLine = "Runtime session connected",
                     detailLine = "Session handle ${signal.handle} is now owned by the Rust boundary",
@@ -234,9 +231,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                 )
             }
 
-            is RuntimeSignal.SnapshotUpdated -> {
-                Log.i(LOG_TAG, "applySignal RuntimeSignal.SnapshotUpdated epoch=${signal.summary.epochSeconds}, paused=${signal.summary.paused}")
-                _uiState.update { current ->
+            is RuntimeSignal.SnapshotUpdated -> _uiState.update { current ->
                 val snapshot = signal.summary.toSnapshotPresentation(
                     focusTargetBodyId = current.focusedBodyId,
                     activeCheckpointId = current.activeCheckpointId,
@@ -324,7 +319,6 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
 
             is RuntimeSignal.RenderPacketReady -> {
-                Log.i(LOG_TAG, "applySignal RuntimeSignal.RenderPacketReady sceneRevision=${signal.lease.sceneRevision}")
                 val lease = signal.lease
                 val packet = lease.packet
                 try {
@@ -742,10 +736,6 @@ private fun RuntimeNoticeLevel.toDeveloperTelemetryLevel(): DeveloperTelemetryLe
     -> DeveloperTelemetryLevel.Info
     RuntimeNoticeLevel.Warning -> DeveloperTelemetryLevel.Warning
     RuntimeNoticeLevel.Error -> DeveloperTelemetryLevel.Error
-}
-
-private companion object {
-    const val LOG_TAG = "BridgeBackedRuntimeFacade"
 }
 
 private fun backendSummaryLabel(
