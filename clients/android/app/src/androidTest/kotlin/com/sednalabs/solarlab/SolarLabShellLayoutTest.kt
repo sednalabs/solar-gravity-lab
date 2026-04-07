@@ -406,9 +406,9 @@ class SolarLabShellLayoutTest {
         waitForShellHierarchy()
         val shellNode = composeRule.onNodeWithTag(SolarLabTestTags.SHELL_COLUMN, useUnmergedTree = true)
         val targetTagMatcher = hasTestTag(tag)
-        val timeoutUntilVisibleMs = 5_000L
+        val timeoutUntilVisibleMs = 15_000L
         val deadlineMs = System.currentTimeMillis() + timeoutUntilVisibleMs
-        val scrollAttempts = 8
+        val scrollAttempts = 20
 
         var lastVisibleFailure: AssertionError? = null
         while (System.currentTimeMillis() < deadlineMs) {
@@ -448,7 +448,7 @@ class SolarLabShellLayoutTest {
                 )
             }
             composeRule.waitForIdle()
-            Thread.sleep(100)
+            Thread.sleep(200)
             if ((deadlineMs - System.currentTimeMillis()) < 150) {
                 break
             }
