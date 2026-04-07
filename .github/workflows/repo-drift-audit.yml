@@ -65,7 +65,7 @@ jobs:
           ignore_paths=${ignore_paths:-}
 
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          git fetch --tags --force --prune origin 'refs/tags/v*'
+          git fetch --force --prune origin '+refs/tags/v*:refs/tags/*'
 
           args=(
             --local-ref "$local_ref"

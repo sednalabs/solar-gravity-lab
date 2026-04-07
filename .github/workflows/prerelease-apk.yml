@@ -265,7 +265,7 @@ jobs:
           else
             git fetch --prune origin
           fi
-          git fetch --tags --force --prune origin 'refs/tags/v*'
+          git fetch --force --prune origin '+refs/tags/v*:refs/tags/*'
 
       - name: Generate release changelog
         id: changelog
