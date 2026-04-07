@@ -89,7 +89,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+          fetch-tags: true
           ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
 
       - name: Initialize prerelease timing
