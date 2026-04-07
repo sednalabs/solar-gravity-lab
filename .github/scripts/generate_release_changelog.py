@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 
 def run_git(args: list[str], cwd: Path = Path(".")) -> str:
     result = subprocess.run(
@@ -114,6 +116,10 @@ def resolve_previous_tag(version: Version, tags: Iterable[str]) -> str:
                 candidates.append((idx, tag))
 
         if not candidates:
+            if version.prerelease_index == 1:
+                # The first prerelease in a line has no prior prerelease tag, so
+                # anchor it to the empty tree rather than inventing a baseline.
+                return EMPTY_TREE
             raise ValueError(
                 f"No prior prerelease tag found for line '{version.core}-{version.prerelease_line}'. "
                 "Baseline resolution is ambiguous because this is the first tag in this prerelease line."
