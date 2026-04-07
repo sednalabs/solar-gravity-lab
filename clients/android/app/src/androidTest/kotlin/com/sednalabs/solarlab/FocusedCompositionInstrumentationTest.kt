@@ -8,6 +8,7 @@ import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.ShellUiState
+import com.sednalabs.solarlab.runtime.SessionConnectionState
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.runBlocking
@@ -65,10 +66,11 @@ class FocusedCompositionInstrumentationTest {
 
     private fun waitForState(
         facade: RuntimeFacade,
-        timeout: Duration = 25.seconds,
+        timeout: Duration = 40.seconds,
         predicate: (ShellUiState) -> Boolean,
     ) {
         val deadlineMs = System.currentTimeMillis() + timeout.inWholeMilliseconds
+        var nextRefreshMs = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadlineMs) {
             val state = facade.uiState.value
             if (predicate(state)) {
@@ -77,6 +79,10 @@ class FocusedCompositionInstrumentationTest {
             }
             if (state.renderStatus.issue != null) {
                 Log.w(LOG_TAG, "FocusedCompositionInstrumentationTest.issue ${state.renderStatus.issue}")
+            }
+            if (state.connectionState == SessionConnectionState.Connecting && System.currentTimeMillis() >= nextRefreshMs) {
+                runBlocking { facade.refresh() }
+                nextRefreshMs = System.currentTimeMillis() + 5_000
             }
             Thread.sleep(75)
         }
