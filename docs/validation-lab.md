@@ -16,6 +16,19 @@ build or workflow behavior.
 - `.github/workflows/validation-lab.yml`
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 - `.github/workflows/prerelease-apk.yml` for installable internal dev previews
+- `.github/workflows/repo-drift-audit.yml` for canonical upstream-main parity evidence
+
+## Drift audit lane
+
+`repo-drift-audit` compares `origin/main` (local canonical head) to `origin/upstream-main` by default. It is the lane for authoritative "are we diverged from upstream-main?" evidence and should be used before broad milestone release gates.
+
+- For normal diffing, call the lane with default inputs.
+- For production gate, run with `strict=true`; drift then hard-fails.
+- For fast triage, set `code_only=true` and optionally `ignore_paths`.
+- The action writes:
+  - `drift_audit.json` for machine checks and changelog automation.
+  - `drift_audit.md` for human-readable diff review.
+- The default fallback path remains `upstream/main` for temporary upstream remotes that are not available under `origin/upstream-main`.
 
 ## Current lane families
 

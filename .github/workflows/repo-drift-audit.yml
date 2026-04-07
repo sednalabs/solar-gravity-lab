@@ -1,0 +1,105 @@
+name: repo-drift-audit
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      local_ref:
+        description: Local baseline reference
+        required: true
+        default: origin/main
+        type: string
+      remote_ref:
+        description: Preferred remote reference (for example origin/upstream-main)
+        required: false
+        default: origin/upstream-main
+        type: string
+      fallback_remote_ref:
+        description: Fallback reference if the preferred remote is unavailable
+        required: false
+        default: upstream/main
+        type: string
+      strict:
+        description: Treat drift as a hard failure
+        required: false
+        default: false
+        type: boolean
+      code_only:
+        description: Include only likely code paths in output/decision
+        required: false
+        default: true
+        type: boolean
+      ignore_paths:
+        description: Comma-separated paths to ignore in file delta output
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compare origin/main against origin/upstream-main
+        id: audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_ref="${{ inputs.local_ref }}"
+          remote_ref="${{ inputs.remote_ref }}"
+          fallback_remote_ref="${{ inputs.fallback_remote_ref }}"
+          strict="${{ inputs.strict }}"
+          code_only="${{ inputs.code_only }}"
+          ignore_paths="${{ inputs.ignore_paths }}"
+
+          local_ref=${local_ref:-origin/main}
+          remote_ref=${remote_ref:-origin/upstream-main}
+          fallback_remote_ref=${fallback_remote_ref:-upstream/main}
+          ignore_paths=${ignore_paths:-}
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --no-tags origin +refs/heads/upstream-main:refs/remotes/origin/upstream-main || true
+
+          args=(
+            --local-ref "$local_ref"
+            --remote-ref "$remote_ref"
+            --fallback-remote-ref "$fallback_remote_ref"
+            --json drift_audit.json
+            --markdown drift_audit.md
+          )
+
+          if [[ "$code_only" == "true" ]]; then
+            args+=(--code-only)
+          fi
+
+          if [[ -n "$ignore_paths" ]]; then
+            args+=(--ignore-paths "$ignore_paths")
+          fi
+
+          if [[ "$strict" == "true" ]]; then
+            args+=(--strict)
+          fi
+
+          python3 .github/scripts/compare_upstream_main.py "${args[@]}"
+
+      - name: Upload drift artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upstream-drift-audit
+          path: |
+            drift_audit.json
+            drift_audit.md
+
+      - name: Emit audit summary
+        if: always()
+        run: |
+          echo "## repo-drift-audit" >> "$GITHUB_STEP_SUMMARY"
+          cat drift_audit.md >> "$GITHUB_STEP_SUMMARY"
