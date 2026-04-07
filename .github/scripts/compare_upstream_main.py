@@ -76,17 +76,37 @@ def has_ref(ref: str) -> bool:
         return False
 
 
+def resolve_remote_ref(reference: str) -> str:
+    if reference in {"", "origin/upstream-main", "upstream/main"}:
+        raise RuntimeError("upstream-main is not configured for this repository")
+    if reference == "auto:last-release-tag":
+        # Pick the most recent local/reachable release tag as the baseline.
+        return run_git(["describe", "--tags", "--abbrev=0", "--match", "v*"]).strip()
+    if reference.startswith("tag:"):
+        tag = reference[len("tag:") :]
+        if not tag:
+            raise RuntimeError("tag: reference requires a non-empty tag name")
+        return tag
+    return reference
+
+
 def resolve_remote(preferred: str, fallback: str) -> str:
-    if preferred and has_ref(preferred):
-        return preferred
-    if fallback and has_ref(fallback):
-        return fallback
+    for candidate in (preferred, fallback):
+        if not candidate:
+            continue
+        try:
+            candidate = resolve_remote_ref(candidate)
+        except RuntimeError:
+            continue
+        if has_ref(candidate):
+            return candidate
     raise RuntimeError(
         "No remote base commit could be resolved.\n"
         f"  Preferred: {preferred}\n"
         f"  Fallback:  {fallback}\n"
         "Expected at least one of these refs to exist.\n"
-        "Hint: fetch origin upstream-main before rerunning."
+        "Hint: provide an explicit release tag with '--remote-ref tag:<tag>', ensure tag fetch is configured, "
+        "or use '--remote-ref origin/main'."
     )
 
 
@@ -242,7 +262,7 @@ def write_markdown(path: Path, payload: dict, code_only: bool) -> None:
         files = [item for item in files if item["code_path"]]
 
     summary = [
-        "# Upstream Drift Audit",
+        "# Release Baseline Drift Audit",
         "",
         f"- Local ref: `{local['resolved_ref']}`",
         f"- Remote ref: `{remote['resolved_ref']}`",
@@ -296,9 +316,9 @@ def write_markdown(path: Path, payload: dict, code_only: bool) -> None:
         ]
     )
     for change in files[:200]:
-        path = change["new_path"] or change["old_path"]
+        file_path = change["new_path"] or change["old_path"]
         summary.append(
-            f"| {change['status']} | `{path}` | {change['additions']} | {change['deletions']} | {change['code_path']} |"
+            f"| {change['status']} | `{file_path}` | {change['additions']} | {change['deletions']} | {change['code_path']} |"
         )
 
     path.write_text("\n".join(summary) + "\n", encoding="utf-8")
@@ -312,11 +332,11 @@ def read_json_or_str(value: str | None) -> list[str] | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compare origin/main to origin/upstream-main by default"
+        description="Compare origin/main to the canonical Rust release baseline by default."
     )
     parser.add_argument("--local-ref", default="origin/main")
-    parser.add_argument("--remote-ref", default="origin/upstream-main")
-    parser.add_argument("--fallback-remote-ref", default="upstream/main")
+    parser.add_argument("--remote-ref", default="auto:last-release-tag")
+    parser.add_argument("--fallback-remote-ref", default="origin/main")
     parser.add_argument("--code-only", action="store_true")
     parser.add_argument("--json", default="drift_audit.json")
     parser.add_argument("--markdown", default="drift_audit.md")

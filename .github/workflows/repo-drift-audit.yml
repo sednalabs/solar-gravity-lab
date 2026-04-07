@@ -11,14 +11,14 @@ on:
         default: origin/main
         type: string
       remote_ref:
-        description: Preferred remote reference (for example origin/upstream-main)
+        description: Preferred baseline reference (for example auto:last-release-tag, tag:v0.1.0-alpha.13, origin/main)
         required: false
-        default: origin/upstream-main
+        default: auto:last-release-tag
         type: string
       fallback_remote_ref:
         description: Fallback reference if the preferred remote is unavailable
         required: false
-        default: upstream/main
+        default: origin/main
         type: string
       strict:
         description: Treat drift as a hard failure
@@ -47,7 +47,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Compare origin/main against origin/upstream-main
+      - name: Compare origin/main against baseline release (or fallback) remote
         id: audit
         shell: bash
         run: |
@@ -60,12 +60,12 @@ jobs:
           ignore_paths="${{ inputs.ignore_paths }}"
 
           local_ref=${local_ref:-origin/main}
-          remote_ref=${remote_ref:-origin/upstream-main}
-          fallback_remote_ref=${fallback_remote_ref:-upstream/main}
+          remote_ref=${remote_ref:-auto:last-release-tag}
+          fallback_remote_ref=${fallback_remote_ref:-origin/main}
           ignore_paths=${ignore_paths:-}
 
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          git fetch --no-tags origin +refs/heads/upstream-main:refs/remotes/origin/upstream-main || true
+          git fetch --tags --force --prune origin 'refs/tags/v*'
 
           args=(
             --local-ref "$local_ref"
