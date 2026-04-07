@@ -111,6 +111,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - uses: android-actions/setup-android@v3
 
@@ -244,27 +245,6 @@ jobs:
             "dist/${artifact_name}"
           sha256sum "dist/${artifact_name}" > "dist/${artifact_name}.sha256"
 
-      - name: Generate release changelog
-        id: changelog
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/generate_release_changelog.py \
-            --version "${{ steps.meta.outputs.version_name }}" \
-            --to "${{ steps.git_meta.outputs.head_sha }}" \
-            --json-output "dist/changelog-${{ steps.meta.outputs.safe_version }}.json" \
-            --markdown-output "dist/changelog-${{ steps.meta.outputs.safe_version }}.md"
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          from pathlib import Path
-
-          payload = json.loads(
-              Path("dist/changelog-${{ steps.meta.outputs.safe_version }}.json").read_text()
-          )
-          print(f"baseline_tag={payload['baseline_tag']}")
-          print(f"commit_count={payload['commit_count']}")
-          PY
-
       - name: Enable KVM for Android emulator
         shell: bash
         run: |
@@ -289,6 +269,27 @@ jobs:
           script: bash .github/scripts/run_prerelease_android_launch_smoke.sh "${{ steps.meta.outputs.safe_version }}" "${{ steps.meta.outputs.package_label }}"
         env:
           ANDROID_LAUNCH_ARTIFACT_MODE: ${{ inputs.android_artifact_mode }}
+
+      - name: Generate release changelog
+        id: changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/generate_release_changelog.py \
+            --version "${{ steps.meta.outputs.version_name }}" \
+            --to "${{ steps.git_meta.outputs.head_sha }}" \
+            --json-output "dist/changelog-${{ steps.meta.outputs.safe_version }}.json" \
+            --markdown-output "dist/changelog-${{ steps.meta.outputs.safe_version }}.md"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("dist/changelog-${{ steps.meta.outputs.safe_version }}.json").read_text()
+          )
+          print(f"baseline_tag={payload['baseline_tag']}")
+          print(f"commit_count={payload['commit_count']}")
+          PY
 
       - name: Emit prerelease Android timing summary
         if: always()
