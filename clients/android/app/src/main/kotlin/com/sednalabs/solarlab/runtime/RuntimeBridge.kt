@@ -27,8 +27,9 @@ internal interface RuntimeBridge {
     // Streamed connection events from the runtime host.
     fun connect(): Flow<RuntimeSignal>
 
-    // Synchronous refresh/query path for already-bound handles.
-    suspend fun refresh(): List<RuntimeSignal>
+    // Synchronous refresh/query path for already-bound handles; optionally advance playback
+    // so the UI snapshot reports an immediately updated epoch.
+    suspend fun refresh(advancePlayback: Boolean = false): List<RuntimeSignal>
 
     // Command path: apply intent and surface resulting state deltas.
     suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal>
@@ -154,13 +155,21 @@ internal class JniRuntimeBridge(
             )
         }
 
-        val initialSignals = refreshSignalsForHandle(handle, includeSummary = true)
+        val initialSignals = refreshSignalsForHandle(
+            handle,
+            includeSummary = true,
+            advancePlayback = true,
+        )
         initialSignals.forEach { trySend(it) }
         var latestSummary = extractLatestSnapshotSummary(initialSignals)
 
         if (extractBodyCountFrom(initialSignals) == 0L) {
             ensureStartupSeedApplied(handle).forEach { trySend(it) }
-            val seededSignals = refreshSignalsForHandle(handle, includeSummary = true)
+            val seededSignals = refreshSignalsForHandle(
+                handle,
+                includeSummary = true,
+                advancePlayback = true,
+            )
             seededSignals.forEach { trySend(it) }
             latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
         }
@@ -191,7 +200,7 @@ internal class JniRuntimeBridge(
     }
 
     // Explicit pull refresh for currently bound session; reuses handle snapshot guard.
-    override suspend fun refresh(): List<RuntimeSignal> {
+    override suspend fun refresh(advancePlayback: Boolean = false): List<RuntimeSignal> {
         val handle = synchronized(stateLock) { activeSessionHandle }
         if (handle == 0L) {
             return listOf(
@@ -202,7 +211,11 @@ internal class JniRuntimeBridge(
             )
         }
 
-        return refreshSignalsForHandle(handle, includeSummary = true)
+        return refreshSignalsForHandle(
+            handle,
+            includeSummary = true,
+            advancePlayback = advancePlayback,
+        )
     }
 
     // Dispatches UI command into native runtime and returns resulting status + snapshot signals.
@@ -444,7 +457,11 @@ internal class JniRuntimeBridge(
         }
 
         if (shouldRefresh) {
-            signals += refreshSignalsForHandle(handle, includeSummary = true)
+            signals += refreshSignalsForHandle(
+                handle,
+                includeSummary = true,
+                advancePlayback = true,
+            )
         }
 
         return signals

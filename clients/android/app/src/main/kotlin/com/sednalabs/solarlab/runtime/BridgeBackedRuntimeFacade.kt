@@ -126,7 +126,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                 }
             ) {
                 withContext(boundaryDispatcher) {
-                    bridge.refresh().forEach(::applySignal)
+                    bridge.refresh(advancePlayback = true).forEach(::applySignal)
                 }
             }
         } catch (error: Throwable) {
