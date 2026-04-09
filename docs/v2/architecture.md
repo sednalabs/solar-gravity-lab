@@ -52,10 +52,10 @@ camera-relative renderer pipeline.
 
 For the current rendering/runtime seam details, start with:
 
-- `docs/rendering-architecture-current-state.md`
-- `docs/camera-and-interaction-model.md`
-- `docs/scene-world-model-contract.md`
-- `docs/frame-lifecycle.md`
+- `../rendering-architecture-current-state.md`
+- `../camera-and-interaction-model.md`
+- `../scene-world-model-contract.md`
+- `../frame-lifecycle.md`
 
 ## Why this is a reset
 

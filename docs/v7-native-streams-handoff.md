@@ -76,8 +76,8 @@ side actually uploaded.
 This is still the right historical explanation of the five-stream native split.
 For the current design target, pair it with:
 
-- `docs/rendering-architecture-current-state.md`
-- `docs/compute-compaction-reintroduction-plan.md`
+- `rendering-architecture-current-state.md`
+- `compute-compaction-reintroduction-plan.md`
 
 Those docs explain how this stream split fits into the newer 3D camera and
 compute-reentry framing.

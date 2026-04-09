@@ -17,7 +17,7 @@ SPIR-V-backed Vulkan graphics pipelines.
   into `assets/shaders/solarlab/*.spv`.
 - The native bridge now receives an `AAssetManager` at renderer creation time.
 - The native renderer loads compiled SPIR-V shader assets at runtime and creates
-  four graphics pipelines in this order:
+  the following graphics pipelines in this order:
   1. billboard pipeline for authoritative bodies
   2. billboard pipeline reuse for near tracers
   3. cheap-point pipeline for medium tracers
