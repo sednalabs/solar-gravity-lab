@@ -121,14 +121,15 @@ Read the durable architecture in this order:
 3. `docs/adr/0003-c-abi-and-opaque-handles.md`
 4. `docs/adr/0004-offline-first-data-and-updates.md`
 5. `docs/adr/0005-render-scene-and-backend-adapters.md`
-6. `docs/rendering-architecture-current-state.md`
-7. `docs/camera-and-interaction-model.md`
-8. `docs/scene-world-model-contract.md`
-9. `docs/performance-and-scaling-strategy.md`
-10. `docs/frame-lifecycle.md`
-11. `docs/compute-compaction-reintroduction-plan.md`
-12. `docs/v2/architecture.md`
-13. `docs/v2/roadmap.md`
+6. this file (`architecture.md`)
+7. `rendering-architecture-current-state.md`
+8. `camera-and-interaction-model.md`
+9. `scene-world-model-contract.md`
+10. `performance-and-scaling-strategy.md`
+11. `frame-lifecycle.md`
+12. `compute-compaction-reintroduction-plan.md`
+13. `v2/architecture.md`
+14. `v2/roadmap.md`
 
 ## Operational repo truth
 

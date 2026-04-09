@@ -3,7 +3,7 @@
 This is the operational debugging map for a single frame.
 
 ```text
-Tick (world) -> SceneFrame -> Camera/Projection -> NativeScenePacket -> Native Upload -> Vulkan Draw -> Present
+Tick (world) -> RenderSceneFrame -> Camera/Projection -> NativeScenePacket -> Native Upload -> Vulkan Draw -> Present
 ```
 
 ## 1. Tick / world step
