@@ -1,29 +1,62 @@
-# SolarLab compute compaction handoff
+# Compute compaction handoff
 
-This pass adds native Vulkan compute on top of the existing graphics/descriptor/buffer path.
+> **Historical snapshot: pre-3D-camera compaction path.**
+>
+> This document describes the earlier XY-native compaction direction.
+> The current project direction should treat that path as **paused pending a 3D
+> camera-space redesign** rather than as an automatically active next step.
+> See [`docs/compute-compaction-reintroduction-plan.md`](compute-compaction-reintroduction-plan.md)
+> for the current re-entry criteria and decision model.
 
-What is now implemented:
+## Historical context
 
-- SPIR-V compute shaders for medium and far tracer compaction.
-- Compute descriptor path with bindings:
-  - set 0 / binding 0: scene uniform buffer
-  - set 0 / binding 1: source tracer buffer (storage)
-  - set 0 / binding 2: compacted output tracer buffer (storage + vertex)
-  - set 0 / binding 3: indirect draw command buffer (storage + indirect)
-- `vkCmdUpdateBuffer` reset of medium/far `VkDrawIndirectCommand` each frame.
-- Compute dispatch before render pass.
-- Compute-to-graphics barrier before `vkCmdDrawIndirect` / vertex fetch.
-- Graphics now draws medium/far with indirect draws when compute compaction is enabled.
+This file exists because the project already did meaningful native stream
+separation and early compaction-oriented design work. That work still matters.
+What changed is the framing: once the renderer/camera migration became the live
+problem, the old XY-native compute path stopped being safe to treat as the
+obvious next implementation step.
 
-Current behavior:
+## What this older path was trying to do
 
-- Medium tracers are viewport culled and lightly downsampled as zoom increases.
-- Far tracers are viewport culled and more aggressively downsampled using density-weight-aware hash thinning with a coarse tile-biased phase (not full tile/bin compaction or true tile-local coordination).
-- Authoritative bodies, near tracers, and trails remain on the direct graphics path.
+The original direction was to reduce the cost of tracer-heavy scenes by:
 
-Next strong passes:
+- partitioning near / medium / far tracer workloads
+- introducing cheaper native representations for medium/far tiers
+- eventually adding GPU-side compaction and density aggregation
 
-1. Replace host-visible source/output buffers with device-local buffers plus staging uploads.
-2. Add GPU-side readback or timestamp/stat instrumentation for visible compacted counts.
-3. Introduce tile/bin compaction for far tracers instead of hash thinning.
-4. Only after compaction is stable, start GPU integration for medium/far tracers using ping-pong state buffers and authoritative-body influence buffers.
+That direction is still valuable as history and as groundwork.
+
+## Why the old path is paused now
+
+The older compaction direction assumed a flatter worldview in exactly the places
+that now matter most:
+
+- medium/far tracer state was XY-centric
+- culling assumptions were XY-centric
+- medium/far shader paths were 2D-centric
+- compute kernels were designed around the old top-down packet-host renderer
+
+Once the project is read as a camera/render/interaction/compute migration,
+keeping that path active without redesign would risk reintroducing hidden
+flattening underneath the newer 3D renderer direction.
+
+## What remains useful from this historical work
+
+The project still keeps the value of the earlier native direction:
+
+- stream separation
+- cheaper medium/far native representations as a design idea
+- revision-aware upload discipline
+- a clear future place where GPU-side compaction could slot back in
+
+## How to read this file now
+
+Read this file as:
+
+- a historical milestone in the native-rendering evolution
+- a reference for why tracer stream specialization existed in the first place
+- a source of ideas that may be revived **only** after they are translated into
+  a fully 3D camera-space contract
+
+Do **not** read it as current canonical guidance for the next unrestricted-agent
+implementation step.

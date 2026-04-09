@@ -68,6 +68,24 @@ telemetry can report what is actually active.
 
 The Android client must not grow its own simulation rules.
 
+## Current rendering boundary
+
+The most important live rendering seam to understand is:
+
+```text
+world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan
+```
+
+This is the boundary where the project stops being “world truth” and starts
+being “renderer truth”. It is also the seam where the current migration work is
+concentrated: camera, picking, packet shaping, native upload, and GPU-side
+optimization all need to preserve a 3D worldview without quietly collapsing back
+into the older flat XY assumptions.
+
+That means the main open migration problem on `main` is not a physics rewrite.
+It is the camera/render/interaction/compute migration that sits around this
+boundary.
+
 ## Current maturity
 
 The architecture is ahead of the product surface today.
@@ -88,9 +106,29 @@ What is intentionally still early:
   surfaces remain thin
 - the Android host currently renders exported packets in a software packet-render
   path even though the exported scene contract is Vulkan-shaped
+- medium/far compute-compaction should be treated as a deliberate re-entry
+  decision, not an automatically active next step
 
 That means this branch is strategically correct, but still in the phase where one
 real end-to-end vertical slice matters more than adding more abstract surface area.
+
+## Detailed architecture reading order
+
+Read the durable architecture in this order:
+
+1. `docs/adr/0001-rust-owned-core.md`
+2. `docs/adr/0002-versioned-protobuf-contracts.md`
+3. `docs/adr/0003-c-abi-and-opaque-handles.md`
+4. `docs/adr/0004-offline-first-data-and-updates.md`
+5. `docs/adr/0005-render-scene-and-backend-adapters.md`
+6. `docs/rendering-architecture-current-state.md`
+7. `docs/camera-and-interaction-model.md`
+8. `docs/scene-world-model-contract.md`
+9. `docs/performance-and-scaling-strategy.md`
+10. `docs/frame-lifecycle.md`
+11. `docs/compute-compaction-reintroduction-plan.md`
+12. `docs/v2/architecture.md`
+13. `docs/v2/roadmap.md`
 
 ## Operational repo truth
 
@@ -102,12 +140,5 @@ On canonical `main`:
   shipping or validated app on this branch
 
 If you need the design rationale behind this layout, read the ADR chain first and
-then the reset-era architecture docs:
-
-1. `docs/adr/0001-rust-owned-core.md`
-2. `docs/adr/0002-versioned-protobuf-contracts.md`
-3. `docs/adr/0003-c-abi-and-opaque-handles.md`
-4. `docs/adr/0004-offline-first-data-and-updates.md`
-5. `docs/adr/0005-render-scene-and-backend-adapters.md`
-6. `docs/v2/architecture.md`
-7. `docs/v2/roadmap.md`
+then the current-state docs above before going further into the historical
+handoff material.

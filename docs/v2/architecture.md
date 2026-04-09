@@ -45,6 +45,18 @@ can tell where the simulation truth came from.
 The engine emits a `RenderScene` or `RenderSceneDelta`. Backends adapt that
 scene to Vulkan, Metal, or future GPU APIs without owning scientific truth.
 
+The live rendering problem on `main` is no longer just “backend adapters over a
+scene contract”. It is specifically the migration of camera/render/interaction/
+compute seams away from older flat assumptions toward a truthful 3D
+camera-relative renderer pipeline.
+
+For the current rendering/runtime seam details, start with:
+
+- `docs/rendering-architecture-current-state.md`
+- `docs/camera-and-interaction-model.md`
+- `docs/scene-world-model-contract.md`
+- `docs/frame-lifecycle.md`
+
 ## Why this is a reset
 
 The v1 code proved useful product direction and surfaced important domain

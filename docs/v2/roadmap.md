@@ -23,14 +23,37 @@
 - renderer host adapter
 - diagnostics and update surfaces
 
-## Phase 4: accelerated rendering and heavy-scene scaling
+## Phase 4: current rendering migration
 
-- Vulkan backend adapter
-- CPU SIMD backends
-- GPU tracer and render acceleration
-- hardware lab benchmarking
+This is the live renderer-focused phase.
 
-## Phase 5: live updates and additional clients
+- stage-first restoration as the conceptual target for immersive rendering
+- runtime mirror over the Rust runtime without surrendering renderer primacy
+- orbit-camera and camera-relative packet design as the correct 3D direction
+- explicit renderer boundary: `world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan`
+- replace older flat packet-host assumptions with a truthful 3D
+  camera/render/interaction model
+
+## Phase 5: compaction and heavy-scene scaling decision
+
+This phase is now explicitly gated.
+
+- benchmark tracer-heavy scenes on the 3D renderer path
+- decide whether medium/far compute-compaction returns, is redesigned, or is
+  retired
+- if reintroduced, require a 3D camera-space compaction model rather than the
+  older XY-native path
+- continue native stream/pipeline specialization only when it preserves the new
+  rendering contract
+
+## Phase 6: deeper native ownership and performance
+
+- move further toward Rust-first authoritative world ownership
+- reduce managed/native ping-pong in live shells
+- deepen worker, SIMD, and diagnostics/checkpoint structure where justified
+- revisit heavier hardware fast paths only after the renderer contract is stable
+
+## Phase 7: live updates and additional clients
 
 - signed update manifest service
 - background content refresh
