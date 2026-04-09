@@ -40,6 +40,24 @@ What is intentionally still transitional:
   capability work
 - the offline update services are designed but not implemented yet
 
+## Current renderer migration / architectural gaps
+
+The physics/data spine is already 3D. The main open migration problem is not a
+physics rewrite; it is the render-side migration from older flat assumptions to
+an honest 3D camera/render/interaction/compute stack.
+
+The highest-value live gaps are:
+
+- camera, projection, and picking are still split across older packet-host and
+  newer immersive-render directions
+- the authoritative rendering boundary needs to be read explicitly as
+  `world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan`
+- medium/far compute-compaction is **not** an automatically active next step;
+  the older XY-native path is now best read as historical and any re-entry
+  should happen only through a 3D camera-space redesign
+- the repo now has a richer architecture corpus describing current rendering,
+  camera, scene-contract, scaling, and frame-lifecycle seams under `docs/`
+
 ## Repository layout
 
 - [`engine/`](engine)
@@ -66,8 +84,15 @@ What is intentionally still transitional:
 3. [`docs/adr/0003-c-abi-and-opaque-handles.md`](docs/adr/0003-c-abi-and-opaque-handles.md)
 4. [`docs/adr/0004-offline-first-data-and-updates.md`](docs/adr/0004-offline-first-data-and-updates.md)
 5. [`docs/adr/0005-render-scene-and-backend-adapters.md`](docs/adr/0005-render-scene-and-backend-adapters.md)
-6. [`docs/v2/architecture.md`](docs/v2/architecture.md)
-7. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
+6. [`docs/architecture.md`](docs/architecture.md)
+7. [`docs/rendering-architecture-current-state.md`](docs/rendering-architecture-current-state.md)
+8. [`docs/camera-and-interaction-model.md`](docs/camera-and-interaction-model.md)
+9. [`docs/scene-world-model-contract.md`](docs/scene-world-model-contract.md)
+10. [`docs/performance-and-scaling-strategy.md`](docs/performance-and-scaling-strategy.md)
+11. [`docs/frame-lifecycle.md`](docs/frame-lifecycle.md)
+12. [`docs/compute-compaction-reintroduction-plan.md`](docs/compute-compaction-reintroduction-plan.md)
+13. [`docs/v2/architecture.md`](docs/v2/architecture.md)
+14. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
 
 The `docs/v2/*` paths remain named that way because they were written during
 the reset, but they now describe the architecture that lives on `main`.

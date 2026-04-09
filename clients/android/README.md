@@ -10,51 +10,67 @@ Design constraints:
 - no authoritative simulation logic in the Android layer
 - Rust runtime accessed through the `engine/ffi` ABI
 - render host implemented as an Android adapter over the shared `RenderScene`
-  backend contract
+  / exported packet surface
 
-This directory is the forward path for Android. The older root-level `app` and
-`feature-lab` modules remain in the repository only as legacy reference
-material.
+## Current responsibilities
 
-One important truth boundary: the exported scene contract is Vulkan-shaped, but
-the current Android host is still a packet-render host rather than a full Vulkan
-backend. Keep the naming and responsibilities honest while the renderer adapter
-stack is still being brought up.
+The Android shell owns:
 
-## Runtime seam responsibilities
+- lifecycle and process integration
+- session creation / refresh / command application
+- presentation of runtime summaries and diagnostics
+- orchestration of the current packet-render host surface
+- user controls, forms, navigation, and shell state
 
-The Kotlin side is a host shell only. It owns:
+The Android shell must not become a second runtime or a shadow physics layer.
 
-- `RuntimeFacade` orchestration contract (`SolarLabApp`, `MainActivity`)
-- Surface rendering and layout (`VulkanPacketRenderSurfaceView`)
-- JNI/ABI transport lifecycle and packet lease management (`RuntimeBridge`, `RenderHostAdapter`)
+## Runtime seam
 
-The Rust side owns:
+The shell talks to Rust through the v2 FFI layer. In practice this means:
 
-- Simulation state updates
-- Snapshot generation
-- Vulkan packet encoding and export contract
+- session handles are opaque capabilities
+- refresh / command / snapshot / export are explicit calls
+- exported Vulkan packets are borrowed native resources and must be released
+- the shell should prefer thin transport / presentation logic over reshaping
+  runtime semantics in Kotlin
 
-## Ownership and ownership boundaries
+## Render host seam
 
-- The Android shell must not alter simulation logic; it only reacts to `RuntimeSignal`.
-- `RuntimeBridge` is the only place that knows about session handles and runtime ABI details.
-- `RenderHostAdapter` is the only owner of packet lease objects in Android, and it is responsible for releasing them before session teardown.
-- `BridgeBackedRuntimeFacade` is the only translator from runtime signal stream to immutable `ShellUiState`.
+Today the live rendering path is still a packet-host seam over the Rust runtime.
+That is intentionally real, but it is also intentionally transitional.
 
-## JNI and lease invariants
+The current architecture should be read as:
 
-- A non-zero session handle is required before packet export can run.
-- Packet leases are single-owner host objects (`PacketLease`) and are released with `close()`.
-- Lease release must happen before `destroySession`; this avoids native ByteBuffer liveness bugs.
-- `RuntimeBridge` serialises handle reads with `stateLock` to avoid races between refresh/command/connect events.
+- **Kotlin** = shell / control plane
+- **render-core style policy** = camera / projection / packet shaping direction
+- **native Vulkan** = actual renderer seam
+- **Rust** = longer-term authoritative world ownership target
 
-## Compose shell shape
+## Known renderer gap / forward direction
 
-The `SolarLabApp` Compose tree intentionally isolates rendering behind a dedicated `AndroidView` host.
-This keeps:
+Future agents should **not** treat the current packet-host behavior as the
+end-state architecture.
 
-- declarative layout/state in Compose
-- imperative drawing in a `SurfaceView` adapter
+The forward direction is:
 
-without mixing host-canvas threading concerns into app shell state logic.
+- Rust-first authoritative runtime truth
+- C++-thin Vulkan/NDK seam
+- Kotlin shell over that runtime
+- renderer logic that preserves a 3D camera / packet / picking worldview
+  instead of reintroducing older flat assumptions
+
+The most important current gap is not “make the physics 3D” — the physics/data
+spine is already 3D. The real open work is camera/render/interaction/compute
+migration around the world -> scene -> packet -> native -> Vulkan boundary.
+
+## Native ownership direction
+
+The strongest long-term split for this client is:
+
+- Kotlin keeps shell/UI/lifecycle/search/forms/debug surfaces
+- Rust owns the authoritative world, commands, checkpoints, and scene extraction
+- C++ stays thin and owns Vulkan/NDK concerns: swapchain, buffers, shader
+  pipelines, compute compaction, and frame pacing
+
+That is the direction that should guide renderer and performance work on this
+client.
