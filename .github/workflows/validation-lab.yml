@@ -842,6 +842,11 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
       - name: Build validation summary payload
         shell: bash
         run: |

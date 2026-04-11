@@ -10,6 +10,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Properties
@@ -361,8 +362,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
