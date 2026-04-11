@@ -4,7 +4,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
@@ -24,10 +23,9 @@ class StageFirstLocalStartupInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule
-                .onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-                .fetchSemanticsNodes()
-                .isNotEmpty()
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
+            }.isSuccess
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
@@ -37,12 +35,11 @@ class StageFirstLocalStartupInstrumentationTest {
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
         } else {
-            composeRule.waitUntil(timeoutMillis = 20_000) {
-                composeRule
-                    .onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-                    .fetchSemanticsNodes()
-                    .isEmpty()
-            }
+            assertTrue(
+                runCatching {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNode()
+                }.isFailure,
+            )
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
