@@ -44,6 +44,7 @@ STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES=(
 )
 
 TEST_CLASSES=()
+GRADLE_VALIDATION_PROPS=()
 
 mkdir -p "${REPORT_ROOT}"
 
@@ -136,6 +137,10 @@ resolve_test_classes() {
 
   case "${VALIDATION_MODE}" in
     shell-v2)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=false"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
       case "${TEST_SCOPE}" in
         core)
           TEST_CLASSES=("${SHELL_CORE_TEST_CLASSES[@]}")
@@ -150,9 +155,17 @@ resolve_test_classes() {
       esac
       ;;
     stage-first-mirror-off)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
       TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
       ;;
     stage-first-mirror-on)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=true"
+      )
       TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
       ;;
     *)
@@ -183,6 +196,7 @@ run_test_batch() {
   timeout --foreground "${run_timeout_seconds}s" \
     ./gradlew -p clients/android --stacktrace \
       :app:connectedDebugAndroidTest \
+      "${GRADLE_VALIDATION_PROPS[@]}" \
       "-Pandroid.testInstrumentationRunnerArguments.class=${class_arg}" \
       2>&1 | tee "${run_dir}/gradle-output.txt"
   command_status=${PIPESTATUS[0]}
@@ -198,6 +212,7 @@ run_test_batch() {
     printf 'test_classes=%s\n' "${class_arg}"
     printf 'scope=%s\n' "${TEST_SCOPE}"
     printf 'validation_mode=%s\n' "${VALIDATION_MODE}"
+    printf 'gradle_validation_props=%s\n' "${GRADLE_VALIDATION_PROPS[*]}"
     printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
     printf 'timeout_seconds=%s\n' "${run_timeout_seconds}"
     printf 'exit_code=%s\n' "${command_status}"
