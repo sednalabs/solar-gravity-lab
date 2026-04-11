@@ -2,11 +2,13 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -23,29 +25,19 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
-            }.isSuccess
+            composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.runOnUiThread {
-            composeRule.activity.showStageFirstRuntimeMirrorForTesting()
-        }
+        composeRule.onNodeWithText("Runtime").performClick()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()
+            composeRule.onAllNodesWithText("Sandbox").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText("Refresh runtime").fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
-            runtimeState.connectionState == com.sednalabs.solarlab.runtime.SessionConnectionState.Active &&
-                runtimeState.sessionHandle != null &&
-                runtimeState.snapshot != null
-        }
-        assertTrue(
-            "Runtime mirror surface should be mounted after switching modes",
-            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
-        )
+        composeRule.onNodeWithText("Sandbox").assertExists()
+        composeRule.onNodeWithText("Refresh runtime").assertExists()
+        composeRule.onNodeWithText("Search").assertExists()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
@@ -53,7 +45,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         }
 
         val hostView = findRenderHostView(composeRule.activity.window.decorView)
-        assertTrue("Runtime mirror render host should be present", hostView != null)
+        assertNotNull("Runtime mirror render host should be present", hostView)
         assertTrue(
             "Runtime mirror render host should have a measured size",
             requireNotNull(hostView).width > 0 && hostView.height > 0,

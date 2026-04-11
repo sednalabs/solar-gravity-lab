@@ -45,19 +45,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -108,7 +105,7 @@ private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalCons
  * Recovery slice two restores sandbox authoring parity on top of the stage-first client:
  * add object, place-on-scene, edit selected, and delete selected are all available again.
  */
-internal enum class StageFirstExperienceMode {
+private enum class StageFirstExperienceMode {
     LOCAL_SANDBOX,
     RUNTIME_MIRROR,
 }
@@ -117,19 +114,12 @@ internal enum class StageFirstExperienceMode {
 internal fun StageFirstSandboxApp(
     runtimeFacade: RuntimeFacade? = null,
     ensureRuntimeStarted: (() -> Unit)? = null,
-    experienceModeState: MutableState<StageFirstExperienceMode>? = null,
-    runtimeMirrorMountedState: MutableState<Boolean>? = null,
 ) {
-    val localExperienceModeState = rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
-    val resolvedExperienceModeState = experienceModeState ?: localExperienceModeState
-    var experienceMode by resolvedExperienceModeState
+    var experienceMode by rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
     val runtimeMirrorAvailable = runtimeFacade != null && ensureRuntimeStarted != null
 
     when {
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
-            SideEffect {
-                runtimeMirrorMountedState?.value = false
-            }
             StageFirstSandboxLocalExperience(
                 onEnterRuntimeMirror = if (runtimeMirrorAvailable) {
                     { experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR }
@@ -143,7 +133,6 @@ internal fun StageFirstSandboxApp(
             runtimeFacade = runtimeFacade,
             ensureRuntimeStarted = ensureRuntimeStarted,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
-            runtimeMirrorMountedState = runtimeMirrorMountedState,
         )
     }
 }
@@ -669,21 +658,18 @@ private fun BoxScope.StageOverlay(
                     StageActionButton(
                         label = label,
                         onClick = { onToggleMode?.invoke() },
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON),
                         secondary = true,
                     )
                 }
                 StageActionButton(
                     label = if (searchVisible) "Searching" else "Search",
                     onClick = onSearch,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
                     emphasized = searchVisible,
                     enabled = searchEnabled,
                 )
                 StageActionButton(
                     label = if (debugVisible) "Debugging" else "Debug",
                     onClick = onDebug,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
                     emphasized = debugVisible,
                 )
             }
@@ -719,7 +705,6 @@ private fun BoxScope.StageOverlay(
             StageActionButton(
                 label = addButtonLabel,
                 onClick = onAddObject,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON),
                 emphasized = authoringActive,
             )
             StageActionButton(
