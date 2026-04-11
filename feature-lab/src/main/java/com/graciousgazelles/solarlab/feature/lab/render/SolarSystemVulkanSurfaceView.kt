@@ -299,20 +299,18 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             val refreshRateHz = display?.mode?.refreshRate?.takeIf { it >= 60f }
                 ?: display?.refreshRate?.takeIf { it >= 60f }
                 ?: 120f
-            setFrameRate(
+            holder.surface?.takeIf(Surface::isValid)?.setFrameRate(
                 refreshRateHz,
                 Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
-                Surface.CHANGE_FRAME_RATE_ALWAYS,
             )
         }
     }
 
     override fun onHostPause() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            setFrameRate(
+            holder.surface?.takeIf(Surface::isValid)?.setFrameRate(
                 0f,
                 Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
-                Surface.CHANGE_FRAME_RATE_ALWAYS,
             )
         }
     }
