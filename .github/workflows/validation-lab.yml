@@ -114,13 +114,25 @@ jobs:
 
           checkout_ref='${{ inputs.ref }}'
           if [[ -z "$checkout_ref" ]]; then
-            checkout_ref='${{ github.ref_name }}'
+            checkout_ref='${{ github.head_ref || github.ref_name }}'
           fi
 
           profile='${{ inputs.profile }}'
+          if [[ -z "$profile" ]]; then
+            profile='targeted'
+          fi
           lane_set='${{ inputs.lane_set }}'
+          if [[ -z "$lane_set" ]]; then
+            lane_set='auto'
+          fi
           write_wrapper='${{ inputs.write_wrapper }}'
+          if [[ -z "$write_wrapper" ]]; then
+            write_wrapper='false'
+          fi
           android_validation_mode='${{ inputs.android_validation_mode }}'
+          if [[ -z "$android_validation_mode" ]]; then
+            android_validation_mode='auto'
+          fi
 
           wrapper_bootstrap='false'
           rust_workspace='false'
