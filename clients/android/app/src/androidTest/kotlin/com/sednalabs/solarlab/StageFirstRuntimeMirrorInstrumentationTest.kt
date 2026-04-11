@@ -2,7 +2,6 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -36,9 +35,9 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                 composeRule.onAllNodesWithText("Refresh runtime").fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithText("Sandbox").assertExists()
-        composeRule.onNodeWithText("Refresh runtime").assertExists()
-        composeRule.onNodeWithText("Search").assertExists()
+        assertTrue(composeRule.onAllNodesWithText("Sandbox").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Refresh runtime").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty())
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
