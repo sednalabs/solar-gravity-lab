@@ -5,6 +5,12 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/scripts/**"
+      - "clients/android/**"
+      - "feature-lab/**"
+      - "render-core/**"
+      - "core-math/**"
+      - "core-model/**"
+      - "core-simulation/**"
   workflow_dispatch:
     inputs:
       ref:
@@ -93,6 +99,12 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
+      profile: ${{ steps.plan.outputs.profile }}
+      lane_set: ${{ steps.plan.outputs.lane_set }}
+      android_test_scope: ${{ steps.plan.outputs.android_test_scope }}
+      android_validation_mode: ${{ steps.plan.outputs.android_validation_mode }}
+      android_artifact_mode: ${{ steps.plan.outputs.android_artifact_mode }}
+      emulator_boot_strategy: ${{ steps.plan.outputs.emulator_boot_strategy }}
       profile_intent: ${{ steps.plan.outputs.profile_intent }}
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
@@ -119,19 +131,39 @@ jobs:
 
           profile='${{ inputs.profile }}'
           if [[ -z "$profile" ]]; then
-            profile='targeted'
+            if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
+              profile='full'
+            else
+              profile='targeted'
+            fi
           fi
           lane_set='${{ inputs.lane_set }}'
           if [[ -z "$lane_set" ]]; then
-            lane_set='auto'
+            if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
+              lane_set='full'
+            else
+              lane_set='auto'
+            fi
           fi
           write_wrapper='${{ inputs.write_wrapper }}'
           if [[ -z "$write_wrapper" ]]; then
             write_wrapper='false'
           fi
+          android_test_scope='${{ inputs.android_test_scope }}'
+          if [[ -z "$android_test_scope" ]]; then
+            android_test_scope='core'
+          fi
           android_validation_mode='${{ inputs.android_validation_mode }}'
           if [[ -z "$android_validation_mode" ]]; then
             android_validation_mode='auto'
+          fi
+          android_artifact_mode='${{ inputs.android_artifact_mode }}'
+          if [[ -z "$android_artifact_mode" ]]; then
+            android_artifact_mode='failures-only'
+          fi
+          emulator_boot_strategy='${{ inputs.emulator_boot_strategy }}'
+          if [[ -z "$emulator_boot_strategy" ]]; then
+            emulator_boot_strategy='cold'
           fi
 
           wrapper_bootstrap='false'
@@ -260,6 +292,12 @@ jobs:
             "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+          echo "profile=${profile}" >> "$GITHUB_OUTPUT"
+          echo "lane_set=${lane_set}" >> "$GITHUB_OUTPUT"
+          echo "android_test_scope=${android_test_scope}" >> "$GITHUB_OUTPUT"
+          echo "android_validation_mode=${android_validation_mode}" >> "$GITHUB_OUTPUT"
+          echo "android_artifact_mode=${android_artifact_mode}" >> "$GITHUB_OUTPUT"
+          echo "emulator_boot_strategy=${emulator_boot_strategy}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
           echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
@@ -722,7 +760,7 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Restore Android emulator AVD cache
-        if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
+        if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
         uses: actions/cache@v4
         with:
           path: |
@@ -828,13 +866,13 @@ jobs:
           profile: pixel_7
           target: google_apis
           emulator-boot-timeout: 1200
-          force-avd-creation: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
+          force-avd-creation: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_validation_android_shell_smoke.sh
         env:
-          ANDROID_TEST_SCOPE: ${{ inputs.android_test_scope }}
-          ANDROID_ARTIFACT_MODE: ${{ inputs.android_artifact_mode }}
+          ANDROID_TEST_SCOPE: ${{ needs.metadata.outputs.android_test_scope }}
+          ANDROID_ARTIFACT_MODE: ${{ needs.metadata.outputs.android_artifact_mode }}
           ANDROID_VALIDATION_MODE: ${{ steps.android_mode.outputs.validation_mode }}
           ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
           ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
@@ -856,9 +894,9 @@ jobs:
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"
             echo "- lane total (including emulator + instrumentation): \`${lane_total}s\`"
-            echo "- scope: \`${{ inputs.android_test_scope }}\`"
-            echo "- artifact mode: \`${{ inputs.android_artifact_mode }}\`"
-            echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
+            echo "- scope: \`${{ needs.metadata.outputs.android_test_scope }}\`"
+            echo "- artifact mode: \`${{ needs.metadata.outputs.android_artifact_mode }}\`"
+            echo "- emulator boot strategy: \`${{ needs.metadata.outputs.emulator_boot_strategy }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts
@@ -907,15 +945,15 @@ jobs:
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
             --checkout-ref "${{ needs.metadata.outputs.checkout_ref }}" \
-            --profile "${{ inputs.profile }}" \
+            --profile "${{ needs.metadata.outputs.profile }}" \
             --profile-intent "${{ needs.metadata.outputs.profile_intent }}" \
             --profile-notes "${{ needs.metadata.outputs.profile_notes }}" \
-            --lane-set "${{ inputs.lane_set }}" \
+            --lane-set "${{ needs.metadata.outputs.lane_set }}" \
             --lane-summary "${{ needs.metadata.outputs.lane_summary }}" \
-            --android-test-scope "${{ inputs.android_test_scope }}" \
-            --android-validation-mode "${{ inputs.android_validation_mode }}" \
-            --android-artifact-mode "${{ inputs.android_artifact_mode }}" \
-            --emulator-boot-strategy "${{ inputs.emulator_boot_strategy }}" \
+            --android-test-scope "${{ needs.metadata.outputs.android_test_scope }}" \
+            --android-validation-mode "${{ needs.metadata.outputs.android_validation_mode }}" \
+            --android-artifact-mode "${{ needs.metadata.outputs.android_artifact_mode }}" \
+            --emulator-boot-strategy "${{ needs.metadata.outputs.emulator_boot_strategy }}" \
             --job parity-matrix=${{ needs.parity-matrix.result }} \
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
             --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
