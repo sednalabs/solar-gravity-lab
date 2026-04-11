@@ -16,10 +16,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Android entrypoint for the v2 shell.
+ * Android entrypoint for the current client surface.
  *
- * Composition and runtime orchestration start here: the activity only creates and injects
- * the runtime facade, then hands full control to composable UI.
+ * The app can boot either the Rust-authoritative shell or the restored stage-first sandbox,
+ * depending on the build variant / build flag.
  */
 class MainActivity : ComponentActivity() {
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
@@ -32,8 +32,27 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        if (!BuildConfig.STAGE_FIRST_CLIENT) {
+            runtimeViewModel.ensureStarted()
+        }
+
         setContent {
-            SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
+            if (BuildConfig.STAGE_FIRST_CLIENT) {
+                StageFirstSandboxApp(
+                    runtimeFacade = if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
+                        runtimeViewModel.runtimeFacade
+                    } else {
+                        null
+                    },
+                    ensureRuntimeStarted = if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
+                        runtimeViewModel::ensureStarted
+                    } else {
+                        null
+                    },
+                )
+            } else {
+                SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
+            }
         }
     }
 }
@@ -41,8 +60,13 @@ class MainActivity : ComponentActivity() {
 internal class RuntimeSessionViewModel : ViewModel() {
     val runtimeFacade: RuntimeFacade = BridgeBackedRuntimeFacade()
     private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var sessionStarted: Boolean = false
 
-    init {
+    fun ensureStarted() {
+        if (sessionStarted) {
+            return
+        }
+        sessionStarted = true
         runtimeScope.launch {
             runtimeFacade.startSession()
         }

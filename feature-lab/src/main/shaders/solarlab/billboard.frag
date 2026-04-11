@@ -10,8 +10,14 @@ void main() {
         discard;
     }
 
-    float edgeFade = 1.0 - smoothstep(0.72, 1.0, distanceFromCenter);
-    float coreBoost = 1.0 - smoothstep(0.0, 0.34, distanceFromCenter);
-    vec3 boosted = min(vColor.rgb * (0.84 + 0.36 * coreBoost), vec3(1.0));
-    outColor = vec4(boosted, vColor.a * edgeFade);
+    float disc = 1.0 - smoothstep(0.74, 1.0, distanceFromCenter);
+    float core = 1.0 - smoothstep(0.0, 0.32, distanceFromCenter);
+    float halo = (1.0 - smoothstep(0.42, 1.0, distanceFromCenter)) * (1.0 - core);
+
+    vec3 boosted = min(
+        vColor.rgb * (0.82 + 0.42 * core) + vec3(0.08) * halo,
+        vec3(1.0)
+    );
+    float alpha = vColor.a * max(disc, halo * 0.22);
+    outColor = vec4(boosted, alpha);
 }

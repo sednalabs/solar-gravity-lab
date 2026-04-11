@@ -17,7 +17,7 @@ android {
             }
         }
         shaders {
-            glslcArgs += listOf("-c")
+            glslcArgs += listOf("-c", "-O")
         }
     }
 
