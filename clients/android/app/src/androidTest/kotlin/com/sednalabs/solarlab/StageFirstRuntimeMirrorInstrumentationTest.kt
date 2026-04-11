@@ -4,7 +4,9 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import org.junit.Assert.assertTrue
@@ -23,18 +25,10 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
-            }.isSuccess
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.runOnUiThread {
-            composeRule.activity.showStageFirstRuntimeMirrorForTesting()
-        }
-
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()
-        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).performClick()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
@@ -42,9 +36,21 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                 runtimeState.sessionHandle != null &&
                 runtimeState.snapshot != null
         }
+
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        }
+
         assertTrue(
-            "Runtime mirror surface should be mounted after switching modes",
-            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        )
+        assertTrue(
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        )
+        assertTrue(
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
         )
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
