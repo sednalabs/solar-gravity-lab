@@ -10,6 +10,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Properties
@@ -134,15 +135,28 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
             return envSdkRoot
         }
 
-        val localPropertiesFile = project.rootProject.file("local.properties")
-        if (!localPropertiesFile.isFile) {
-            return null
+        val candidateLocalPropertiesFiles = buildList {
+            add(project.rootProject.file("local.properties"))
+            val workspaceRootFile = workspaceRootPath.orNull?.let(::File)
+            if (workspaceRootFile != null) {
+                add(workspaceRootFile.resolve("local.properties"))
+            }
         }
 
-        val properties = Properties()
-        localPropertiesFile.inputStream().use(properties::load)
-        val sdkDir = properties.getProperty("sdk.dir")?.takeIf(String::isNotBlank) ?: return null
-        return File(sdkDir).takeIf(File::isDirectory)
+        candidateLocalPropertiesFiles.forEach { localPropertiesFile ->
+            if (!localPropertiesFile.isFile) {
+                return@forEach
+            }
+            val properties = Properties()
+            localPropertiesFile.inputStream().use(properties::load)
+            val sdkDir = properties.getProperty("sdk.dir")?.takeIf(String::isNotBlank) ?: return@forEach
+            val sdkRoot = File(sdkDir)
+            if (sdkRoot.isDirectory) {
+                return sdkRoot
+            }
+        }
+
+        return null
     }
 
     private fun ensureCommandWorks(command: List<String>, failureHint: String) {
@@ -229,6 +243,14 @@ fun Project.stringPropertyOrEnv(propertyName: String, envName: String): String? 
     return envValue.ifEmpty { null }
 }
 
+fun Project.booleanPropertyOrEnv(propertyName: String, envName: String): Boolean? =
+    when (stringPropertyOrEnv(propertyName, envName)?.lowercase()) {
+        "1", "true", "yes", "on" -> true
+        "0", "false", "no", "off" -> false
+        null -> null
+        else -> null
+    }
+
 fun String.toBuildConfigStringLiteral(): String = buildString {
     append('"')
     this@toBuildConfigStringLiteral.forEach { character ->
@@ -263,6 +285,14 @@ val solarlabPreferredGpuBackend = project.stringPropertyOrEnv(
     "solarlab.preferredGpuBackend",
     "SOLARLAB_PREFERRED_GPU_BACKEND",
 ) ?: "none"
+val solarlabDebugStageFirstClient = project.booleanPropertyOrEnv(
+    "solarlab.debugStageFirstClient",
+    "SOLARLAB_STAGE_FIRST_CLIENT",
+) ?: true
+val solarlabStageFirstRuntimeMirror = project.booleanPropertyOrEnv(
+    "solarlab.stageFirstRuntimeMirror",
+    "SOLARLAB_STAGE_FIRST_RUNTIME_MIRROR",
+) ?: true
 
 val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
     group = "build"
@@ -284,18 +314,19 @@ val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
 
 android {
     namespace = "com.sednalabs.solarlab"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.sednalabs.solarlab"
         minSdk = 31
-        targetSdk = 35
+        targetSdk = 36
         versionCode = solarlabVersionCode
         versionName = solarlabVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DEV_TELEMETRY_ENDPOINT", solarlabDevTelemetryEndpoint.toBuildConfigStringLiteral())
         buildConfigField("String", "DEV_TELEMETRY_TOKEN", solarlabDevTelemetryToken.toBuildConfigStringLiteral())
         buildConfigField("String", "PREFERRED_GPU_BACKEND", solarlabPreferredGpuBackend.toBuildConfigStringLiteral())
+        buildConfigField("boolean", "STAGE_FIRST_RUNTIME_MIRROR", solarlabStageFirstRuntimeMirror.toString())
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -303,12 +334,17 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "STAGE_FIRST_CLIENT", solarlabDebugStageFirstClient.toString())
+        }
+
         create("prerelease") {
             initWith(getByName("release"))
             matchingFallbacks += listOf("release")
             applicationIdSuffix = ".internal"
             signingConfig = signingConfigs.getByName("debug")
             resValue("string", "app_name", "Solar Gravity Lab Dev Preview")
+            buildConfigField("boolean", "STAGE_FIRST_CLIENT", "true")
         }
 
         release {
@@ -317,6 +353,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            buildConfigField("boolean", "STAGE_FIRST_CLIENT", "true")
         }
     }
 
@@ -325,8 +362,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
@@ -337,16 +376,40 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDir(solarlabGeneratedJniLibsDir)
+            assets.srcDir(workspaceRootDir.resolve("app/src/main/assets"))
         }
     }
 }
 
-tasks.named("preBuild") {
-    dependsOn(buildSolarlabNative)
+val debugVariantNeedsRustRuntime = !solarlabDebugStageFirstClient || solarlabStageFirstRuntimeMirror
+val stageFirstReleaseVariantsNeedRustRuntime = solarlabStageFirstRuntimeMirror
+
+if (debugVariantNeedsRustRuntime) {
+    tasks.matching { task ->
+        task.name == "preDebugBuild" ||
+            task.name == "preDebugAndroidTestBuild"
+    }.configureEach {
+        dependsOn(buildSolarlabNative)
+    }
+}
+
+if (stageFirstReleaseVariantsNeedRustRuntime) {
+    tasks.matching { task ->
+        task.name == "prePrereleaseBuild" ||
+            task.name == "preReleaseBuild"
+    }.configureEach {
+        dependsOn(buildSolarlabNative)
+    }
 }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+
+    implementation(project(":core-math"))
+    implementation(project(":core-model"))
+    implementation(project(":core-simulation"))
+    implementation(project(":render-core"))
+    implementation(project(":feature-lab"))
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")

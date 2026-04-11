@@ -3,6 +3,7 @@ package com.graciousgazelles.solarlab.feature.lab.render
 import android.content.res.AssetManager
 import android.view.Surface
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
+import com.graciousgazelles.solarlab.render.core.ObserverMode
 
 internal object SolarLabVulkanBridge {
     private const val LIBRARY_NAME = "solarlab_vulkan"
@@ -59,6 +60,9 @@ internal object SolarLabVulkanBridge {
         nativeSubmitScene(
             handle = handle,
             sourceRevision = packet.sourceRevision,
+            sceneOriginXM = packet.sceneOriginXM,
+            sceneOriginYM = packet.sceneOriginYM,
+            sceneOriginZM = packet.sceneOriginZM,
             authoritativePositionsM = packet.authoritativePositionsM,
             authoritativeRadiiM = packet.authoritativeRadiiM,
             authoritativeColorsArgb = packet.authoritativeColorsArgb,
@@ -83,10 +87,89 @@ internal object SolarLabVulkanBridge {
         lastSubmittedPacket = packet
     }
 
-    fun setCamera(handle: Long, centerX: Double, centerY: Double, centerZ: Double, viewRadiusM: Double) {
+    fun setCamera(
+        handle: Long,
+        centerX: Double,
+        centerY: Double,
+        centerZ: Double,
+        viewRadiusM: Double,
+        yawRadians: Double,
+        pitchRadians: Double,
+    ) {
         if (isLibraryLoaded && handle != 0L) {
-            nativeSetCamera(handle, centerX, centerY, centerZ, viewRadiusM)
+            nativeSetCamera(handle, centerX, centerY, centerZ, viewRadiusM, yawRadians, pitchRadians)
         }
+    }
+
+    fun bindRuntimeSession(handle: Long, runtimeSessionHandle: Long) {
+        if (!isLibraryLoaded || handle == 0L) return
+        clearSubmissionCache(handle)
+        nativeBindRuntimeSession(handle, runtimeSessionHandle)
+    }
+
+    fun unbindRuntimeSession(handle: Long) {
+        if (!isLibraryLoaded || handle == 0L) return
+        clearSubmissionCache(handle)
+        nativeUnbindRuntimeSession(handle)
+    }
+
+    fun setRuntimeProcessingMode(handle: Long, mode: RenderProcessingMode) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativeSetRuntimeProcessingMode(handle, mode.toNativeCode())
+        }
+    }
+
+    fun setRuntimeObserverMode(handle: Long, mode: ObserverMode) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativeSetRuntimeObserverMode(handle, mode.toNativeCode())
+        }
+    }
+
+    fun setRuntimeSelectedBodyId(handle: Long, bodyId: String?) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativeSetRuntimeSelectedBodyId(handle, bodyId)
+        }
+    }
+
+    fun resetRuntimeCamera(handle: Long) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativeResetRuntimeCamera(handle)
+        }
+    }
+
+    fun panRuntimeCamera(
+        handle: Long,
+        distanceXPx: Float,
+        distanceYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativePanRuntimeCamera(handle, distanceXPx, distanceYPx, viewportWidthPx, viewportHeightPx)
+        }
+    }
+
+    fun zoomRuntimeCamera(handle: Long, scaleFactor: Float) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativeZoomRuntimeCamera(handle, scaleFactor)
+        }
+    }
+
+    fun orbitRuntimeCamera(handle: Long, deltaXPx: Float, deltaYPx: Float) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativeOrbitRuntimeCamera(handle, deltaXPx, deltaYPx)
+        }
+    }
+
+    fun pickRuntimeBodyId(
+        handle: Long,
+        screenXPx: Float,
+        screenYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ): String? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return nativePickRuntimeBodyId(handle, screenXPx, screenYPx, viewportWidthPx, viewportHeightPx)?.takeIf { it.isNotBlank() }
     }
 
     fun render(handle: Long): Boolean = isLibraryLoaded && handle != 0L && nativeRender(handle)
@@ -107,17 +190,20 @@ internal object SolarLabVulkanBridge {
     }
 
     /**
-     * Heuristic to avoid redundant native scene uploads when the visual state is 
+     * Heuristic to avoid redundant native scene uploads when the visual state is
      * functionally identical to the previous frame.
-     * 
-     * Because `sourceRevision` increments on every assembled snapshot (even if only 
-     * the camera moved), we perform a deep comparison of the primitive arrays to 
+     *
+     * Because `sourceRevision` increments on every assembled snapshot (even if only
+     * the camera moved), we perform a deep comparison of the primitive arrays to
      * distinguish between "camera-only" changes and "material simulation" changes.
      */
     private fun NativeScenePacket.contentMatches(other: NativeScenePacket?): Boolean {
         if (other == null) return false
         if (this === other) return true
-        return authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
+        return sceneOriginXM == other.sceneOriginXM &&
+            sceneOriginYM == other.sceneOriginYM &&
+            sceneOriginZM == other.sceneOriginZM &&
+            authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
             authoritativeRadiiM.contentEquals(other.authoritativeRadiiM) &&
             authoritativeColorsArgb.contentEquals(other.authoritativeColorsArgb) &&
             authoritativeKinds.contentEquals(other.authoritativeKinds) &&
@@ -138,6 +224,17 @@ internal object SolarLabVulkanBridge {
             trailVertexCounts.contentEquals(other.trailVertexCounts)
     }
 
+    private fun RenderProcessingMode.toNativeCode(): Int = when (this) {
+        RenderProcessingMode.DEFAULT -> 0
+        RenderProcessingMode.LOW -> 1
+    }
+
+    private fun ObserverMode.toNativeCode(): Int = when (this) {
+        ObserverMode.FREE -> 0
+        ObserverMode.FOLLOW_SELECTED -> 1
+        ObserverMode.FOLLOW_SELECTED_HOST -> 2
+    }
+
     private external fun nativeIsVulkanRuntimeAvailable(): Boolean
     private external fun nativeCreateRenderer(assetManager: AssetManager): Long
     private external fun nativeDestroyRenderer(handle: Long)
@@ -147,6 +244,9 @@ internal object SolarLabVulkanBridge {
     private external fun nativeSubmitScene(
         handle: Long,
         sourceRevision: Long,
+        sceneOriginXM: Double,
+        sceneOriginYM: Double,
+        sceneOriginZM: Double,
         authoritativePositionsM: DoubleArray,
         authoritativeRadiiM: FloatArray,
         authoritativeColorsArgb: IntArray,
@@ -167,7 +267,37 @@ internal object SolarLabVulkanBridge {
         trailColorsArgb: IntArray,
         trailVertexCounts: IntArray,
     )
-    private external fun nativeSetCamera(handle: Long, centerX: Double, centerY: Double, centerZ: Double, viewRadiusM: Double)
+    private external fun nativeSetCamera(
+        handle: Long,
+        centerX: Double,
+        centerY: Double,
+        centerZ: Double,
+        viewRadiusM: Double,
+        yawRadians: Double,
+        pitchRadians: Double,
+    )
+    private external fun nativeBindRuntimeSession(handle: Long, runtimeSessionHandle: Long)
+    private external fun nativeUnbindRuntimeSession(handle: Long)
+    private external fun nativeSetRuntimeProcessingMode(handle: Long, processingModeCode: Int)
+    private external fun nativeSetRuntimeObserverMode(handle: Long, observerModeCode: Int)
+    private external fun nativeSetRuntimeSelectedBodyId(handle: Long, bodyId: String?)
+    private external fun nativeResetRuntimeCamera(handle: Long)
+    private external fun nativePanRuntimeCamera(
+        handle: Long,
+        distanceXPx: Float,
+        distanceYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    )
+    private external fun nativeZoomRuntimeCamera(handle: Long, scaleFactor: Float)
+    private external fun nativeOrbitRuntimeCamera(handle: Long, deltaXPx: Float, deltaYPx: Float)
+    private external fun nativePickRuntimeBodyId(
+        handle: Long,
+        screenXPx: Float,
+        screenYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ): String?
     private external fun nativeRender(handle: Long): Boolean
     private external fun nativeGetLastError(handle: Long): String
     private external fun nativeGetBackendLabel(handle: Long): String

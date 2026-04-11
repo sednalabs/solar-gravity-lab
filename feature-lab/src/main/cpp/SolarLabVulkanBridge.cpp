@@ -1,4 +1,4 @@
-#include "SolarLabVulkanRenderer.h"
+#include "SolarLabStageController.h"
 
 #include <android/asset_manager_jni.h>
 #include <jni.h>
@@ -9,8 +9,8 @@
 #include <vector>
 
 namespace {
-SolarLabVulkanRenderer* FromHandle(jlong handle) {
-    return reinterpret_cast<SolarLabVulkanRenderer*>(handle);
+SolarLabStageController* FromHandle(jlong handle) {
+    return reinterpret_cast<SolarLabStageController*>(handle);
 }
 
 std::vector<double> CopyDoubles(JNIEnv* env, jdoubleArray array) {
@@ -54,20 +54,33 @@ std::vector<int32_t> CopyInts(JNIEnv* env, jintArray array) {
     }
     return out;
 }
+
+std::string CopyUtf8String(JNIEnv* env, jstring value) {
+    if (value == nullptr) {
+        return {};
+    }
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (chars == nullptr) {
+        return {};
+    }
+    std::string out(chars);
+    env->ReleaseStringUTFChars(value, chars);
+    return out;
+}
 }  // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeIsVulkanRuntimeAvailable(
     JNIEnv*, jclass) {
-    return SolarLabVulkanRenderer::IsRuntimeAvailable() ? JNI_TRUE : JNI_FALSE;
+    return SolarLabStageController::IsVulkanRuntimeAvailable() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeCreateRenderer(
     JNIEnv* env, jclass, jobject assetManager) {
-    auto* renderer = new SolarLabVulkanRenderer();
-    renderer->SetAssetManager(AAssetManager_fromJava(env, assetManager));
-    return reinterpret_cast<jlong>(renderer);
+    auto* controller = new SolarLabStageController();
+    controller->SetAssetManager(AAssetManager_fromJava(env, assetManager));
+    return reinterpret_cast<jlong>(controller);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -79,23 +92,23 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOnSurfaceCreated(
     JNIEnv* env, jclass, jlong handle, jobject surface, jint width, jint height) {
-    auto* renderer = FromHandle(handle);
-    return renderer != nullptr && renderer->Initialize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
+    auto* controller = FromHandle(handle);
+    return controller != nullptr && controller->Initialize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOnSurfaceChanged(
     JNIEnv* env, jclass, jlong handle, jobject surface, jint width, jint height) {
-    auto* renderer = FromHandle(handle);
-    return renderer != nullptr && renderer->Resize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
+    auto* controller = FromHandle(handle);
+    return controller != nullptr && controller->Resize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOnSurfaceDestroyed(
     JNIEnv*, jclass, jlong handle) {
-    auto* renderer = FromHandle(handle);
-    if (renderer != nullptr) {
-        renderer->DestroySurface();
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->DestroySurface();
     }
 }
 
@@ -105,6 +118,9 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     jclass,
     jlong handle,
     jlong sourceRevision,
+    jdouble sceneOriginX,
+    jdouble sceneOriginY,
+    jdouble sceneOriginZ,
     jdoubleArray authoritativePositionsM,
     jfloatArray authoritativeRadiiM,
     jintArray authoritativeColorsArgb,
@@ -124,13 +140,16 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     jdoubleArray trailPositionsM,
     jintArray trailColorsArgb,
     jintArray trailVertexCounts) {
-    auto* renderer = FromHandle(handle);
-    if (renderer == nullptr) {
+    auto* controller = FromHandle(handle);
+    if (controller == nullptr) {
         return;
     }
 
-    renderer->SubmitScene(
+    controller->SubmitScene(
         static_cast<int64_t>(sourceRevision),
+        static_cast<double>(sceneOriginX),
+        static_cast<double>(sceneOriginY),
+        static_cast<double>(sceneOriginZ),
         CopyDoubles(env, authoritativePositionsM),
         CopyFloats(env, authoritativeRadiiM),
         CopyInts(env, authoritativeColorsArgb),
@@ -154,40 +173,178 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetCamera(
-    JNIEnv*, jclass, jlong handle, jdouble centerX, jdouble centerY, jdouble centerZ, jdouble viewRadiusM) {
-    auto* renderer = FromHandle(handle);
-    if (renderer != nullptr) {
-        renderer->SetCamera(centerX, centerY, centerZ, viewRadiusM);
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jdouble centerX,
+    jdouble centerY,
+    jdouble centerZ,
+    jdouble viewRadiusM,
+    jdouble yawRadians,
+    jdouble pitchRadians) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->SetCamera(centerX, centerY, centerZ, viewRadiusM, yawRadians, pitchRadians);
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeBindRuntimeSession(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jlong runtimeSessionHandle) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->BindRuntimeSession(static_cast<uint64_t>(runtimeSessionHandle));
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeUnbindRuntimeSession(
+    JNIEnv*,
+    jclass,
+    jlong handle) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->UnbindRuntimeSession();
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeProcessingMode(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jint processingModeCode) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->SetRuntimeProcessingMode(static_cast<int>(processingModeCode));
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeObserverMode(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jint observerModeCode) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->SetRuntimeObserverMode(static_cast<int>(observerModeCode));
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeSelectedBodyId(
+    JNIEnv* env,
+    jclass,
+    jlong handle,
+    jstring bodyId) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->SetRuntimeSelectedBodyId(CopyUtf8String(env, bodyId));
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeResetRuntimeCamera(
+    JNIEnv*,
+    jclass,
+    jlong handle) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->ResetRuntimeCamera();
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativePanRuntimeCamera(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jfloat distanceXPx,
+    jfloat distanceYPx,
+    jint viewportWidthPx,
+    jint viewportHeightPx) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->PanRuntimeCamera(distanceXPx, distanceYPx, viewportWidthPx, viewportHeightPx);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeZoomRuntimeCamera(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jfloat scaleFactor) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->ZoomRuntimeCamera(scaleFactor);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOrbitRuntimeCamera(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jfloat deltaXPx,
+    jfloat deltaYPx) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->OrbitRuntimeCamera(deltaXPx, deltaYPx);
+    }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativePickRuntimeBodyId(
+    JNIEnv* env,
+    jclass,
+    jlong handle,
+    jfloat screenXPx,
+    jfloat screenYPx,
+    jint viewportWidthPx,
+    jint viewportHeightPx) {
+    auto* controller = FromHandle(handle);
+    if (controller == nullptr) {
+        return nullptr;
+    }
+    const std::string bodyId = controller->PickRuntimeBodyId(screenXPx, screenYPx, viewportWidthPx, viewportHeightPx);
+    if (bodyId.empty()) {
+        return nullptr;
+    }
+    return env->NewStringUTF(bodyId.c_str());
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeRender(
     JNIEnv*, jclass, jlong handle) {
-    auto* renderer = FromHandle(handle);
-    return renderer != nullptr && renderer->Render() ? JNI_TRUE : JNI_FALSE;
+    auto* controller = FromHandle(handle);
+    return controller != nullptr && controller->Render() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetLastError(
     JNIEnv* env, jclass, jlong handle) {
-    auto* renderer = FromHandle(handle);
-    const std::string value = renderer != nullptr ? renderer->LastError() : std::string("Renderer handle is null.");
+    auto* controller = FromHandle(handle);
+    const std::string value = controller != nullptr ? controller->LastError() : std::string("Renderer handle is null.");
     return env->NewStringUTF(value.c_str());
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetBackendLabel(
     JNIEnv* env, jclass, jlong handle) {
-    auto* renderer = FromHandle(handle);
-    const std::string value = renderer != nullptr ? renderer->BackendLabel() : std::string("Renderer handle is null.");
+    auto* controller = FromHandle(handle);
+    const std::string value = controller != nullptr ? controller->BackendLabel() : std::string("Renderer handle is null.");
     return env->NewStringUTF(value.c_str());
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetSceneSummary(
     JNIEnv* env, jclass, jlong handle) {
-    auto* renderer = FromHandle(handle);
-    const std::string value = renderer != nullptr ? renderer->SceneSummary() : std::string("Renderer handle is null.");
+    auto* controller = FromHandle(handle);
+    const std::string value = controller != nullptr ? controller->SceneSummary() : std::string("Renderer handle is null.");
     return env->NewStringUTF(value.c_str());
 }
