@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -658,18 +659,21 @@ private fun BoxScope.StageOverlay(
                     StageActionButton(
                         label = label,
                         onClick = { onToggleMode?.invoke() },
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON),
                         secondary = true,
                     )
                 }
                 StageActionButton(
                     label = if (searchVisible) "Searching" else "Search",
                     onClick = onSearch,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
                     emphasized = searchVisible,
                     enabled = searchEnabled,
                 )
                 StageActionButton(
                     label = if (debugVisible) "Debugging" else "Debug",
                     onClick = onDebug,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
                     emphasized = debugVisible,
                 )
             }
@@ -705,6 +709,7 @@ private fun BoxScope.StageOverlay(
             StageActionButton(
                 label = addButtonLabel,
                 onClick = onAddObject,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON),
                 emphasized = authoringActive,
             )
             StageActionButton(
