@@ -83,6 +83,10 @@ delete_snapshot() {
     usage >&2
     exit 2
   fi
+  if [[ "$snapshot_ref" != validation/snapshot-* ]]; then
+    echo "Delete mode only accepts validation/snapshot-* refs." >&2
+    exit 2
+  fi
   git push "$remote" ":refs/heads/${snapshot_ref}"
   printf 'deleted_snapshot_ref=%s\n' "$snapshot_ref"
   printf 'snapshot_remote=%s\n' "$remote"

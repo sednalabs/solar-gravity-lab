@@ -155,6 +155,10 @@ resolve_test_classes() {
       esac
       ;;
     stage-first-mirror-off)
+      if [[ "${TEST_SCOPE}" != "core" ]]; then
+        echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
+        exit 2
+      fi
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.stageFirstRuntimeMirror=false"
@@ -162,6 +166,10 @@ resolve_test_classes() {
       TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
       ;;
     stage-first-mirror-on)
+      if [[ "${TEST_SCOPE}" != "core" ]]; then
+        echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
+        exit 2
+      fi
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.stageFirstRuntimeMirror=true"
