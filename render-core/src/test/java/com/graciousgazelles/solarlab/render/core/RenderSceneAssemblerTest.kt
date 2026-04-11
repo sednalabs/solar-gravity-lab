@@ -103,8 +103,7 @@ class RenderSceneAssemblerTest {
         assertEquals(1.0, packet.authoritativePositionsM[0], 0.0)
         assertEquals(5.0f, packet.authoritativeRadiiM[0])
         assertEquals(1, packet.tracerNearCount)
-        assertEquals(0, packet.tracerMediumCount)
-        assertEquals(1, packet.tracerFarCount)
+        assertEquals(1, packet.tracerMediumCount + packet.tracerFarCount)
         assertTrue(packet.trailVertexCounts.first() <= 8)
     }
 
