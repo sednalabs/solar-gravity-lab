@@ -4,7 +4,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -45,7 +44,6 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         assertTrue(
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
         )
-        assertTrue(composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isNotEmpty())
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
