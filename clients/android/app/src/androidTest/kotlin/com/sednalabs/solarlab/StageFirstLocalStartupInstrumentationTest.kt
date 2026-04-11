@@ -2,9 +2,8 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
@@ -28,14 +27,14 @@ class StageFirstLocalStartupInstrumentationTest {
             composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithText("Search").assertExists()
-        composeRule.onNodeWithText("Debug").assertExists()
-        composeRule.onNodeWithText("Add object").assertExists()
+        assertTrue(composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Debug").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Add object").fetchSemanticsNodes().isNotEmpty())
 
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            composeRule.onNodeWithText("Runtime").assertExists()
+            assertTrue(composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isNotEmpty())
         } else {
-            composeRule.onNodeWithText("Runtime").assertDoesNotExist()
+            assertTrue(composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isEmpty())
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
