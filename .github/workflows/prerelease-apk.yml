@@ -43,7 +43,7 @@ on:
       publish_release:
         description: Publish or update the GitHub Release page from this run
         required: false
-        default: true
+        default: false
         type: boolean
       android_artifact_mode:
         description: Android launch-smoke artifact capture mode
@@ -515,3 +515,55 @@ jobs:
             echo "- changelog (markdown): \`${{ steps.release_artifacts.outputs.changelog_md }}\`"
             echo "- artifact metadata: \`${{ steps.release_artifacts.outputs.metadata_path }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  summary:
+    name: Publish prerelease summary
+    needs:
+      - build-prerelease-apk
+      - isa-prerelease-proof
+      - publish-prerelease-apk
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+
+      - name: Build prerelease summary payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/prerelease-summary
+          python3 .github/scripts/write_validation_summary.py \
+            --workflow prerelease-apk \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --repository "${{ github.repository }}" \
+            --checkout-ref "${{ inputs.ref != '' && inputs.ref || github.ref_name }}" \
+            --profile "prerelease" \
+            --profile-intent "checkpoint" \
+            --profile-notes "Packages installable artifacts and launch-smoke evidence for remote validation." \
+            --lane-set "prerelease-apk" \
+            --lane-summary "build_variant=${{ needs.build-prerelease-apk.outputs.build_variant || 'n/a' }}, release_channel=${{ needs.build-prerelease-apk.outputs.release_channel || 'n/a' }}, publish_release=${{ github.event_name == 'push' || inputs.publish_release == true }}" \
+            --android-test-scope "launch-smoke" \
+            --android-validation-mode "${{ needs.build-prerelease-apk.outputs.build_variant || 'prerelease' }}" \
+            --android-artifact-mode "${{ inputs.android_artifact_mode }}" \
+            --emulator-boot-strategy "${{ inputs.emulator_boot_strategy }}" \
+            --job build-prerelease-apk=${{ needs.build-prerelease-apk.result }} \
+            --job isa-prerelease-proof=${{ needs.isa-prerelease-proof.result }} \
+            --job publish-prerelease-apk=${{ needs.publish-prerelease-apk.result }} \
+            --output-json dist/prerelease-summary/prerelease-summary.json \
+            --output-md dist/prerelease-summary/prerelease-summary.md
+
+      - name: Emit prerelease summary
+        shell: bash
+        run: cat dist/prerelease-summary/prerelease-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload prerelease summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prerelease-summary
+          if-no-files-found: error
+          path: dist/prerelease-summary/**

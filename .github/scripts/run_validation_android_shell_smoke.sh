@@ -6,6 +6,7 @@ APP_PACKAGE="com.sednalabs.solarlab"
 CLASS_TIMEOUT_SECONDS="${ANDROID_TEST_CLASS_TIMEOUT_SECONDS:-300}"
 TEST_SCOPE="${ANDROID_TEST_SCOPE:-core}"
 ARTIFACT_MODE="${ANDROID_ARTIFACT_MODE:-failures-only}"
+VALIDATION_MODE="${ANDROID_VALIDATION_MODE:-shell-v2}"
 ADB_CAPTURE_TIMEOUT_SECONDS="${ANDROID_TEST_ADB_CAPTURE_TIMEOUT_SECONDS:-20}"
 LOGCAT_SHUTDOWN_TIMEOUT_SECONDS="${ANDROID_TEST_LOGCAT_SHUTDOWN_TIMEOUT_SECONDS:-5}"
 LOGCAT_FILTER_SPECS=(
@@ -19,13 +20,13 @@ LOGCAT_FILTER_SPECS=(
 )
 LAST_LOGCAT_PID=""
 
-CORE_TEST_CLASSES=(
+SHELL_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
   "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
   "com.sednalabs.solarlab.SolarLabShellLayoutTest"
 )
 
-FULL_TEST_CLASSES=(
+SHELL_FULL_TEST_CLASSES=(
   "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
   "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
   "com.sednalabs.solarlab.SolarLabShellLayoutTest"
@@ -33,7 +34,17 @@ FULL_TEST_CLASSES=(
   "com.sednalabs.solarlab.PlaybackContinuityInstrumentationTest"
 )
 
+STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES=(
+  "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
+)
+
+STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES=(
+  "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstRuntimeMirrorInstrumentationTest"
+)
+
 TEST_CLASSES=()
+GRADLE_VALIDATION_PROPS=()
 
 mkdir -p "${REPORT_ROOT}"
 
@@ -124,15 +135,41 @@ resolve_test_classes() {
     return
   fi
 
-  case "${TEST_SCOPE}" in
-    core)
-      TEST_CLASSES=("${CORE_TEST_CLASSES[@]}")
+  case "${VALIDATION_MODE}" in
+    shell-v2)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=false"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
+      case "${TEST_SCOPE}" in
+        core)
+          TEST_CLASSES=("${SHELL_CORE_TEST_CLASSES[@]}")
+          ;;
+        full)
+          TEST_CLASSES=("${SHELL_FULL_TEST_CLASSES[@]}")
+          ;;
+        *)
+          echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
+          exit 2
+          ;;
+      esac
       ;;
-    full)
-      TEST_CLASSES=("${FULL_TEST_CLASSES[@]}")
+    stage-first-mirror-off)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
+      TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
+      ;;
+    stage-first-mirror-on)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=true"
+      )
+      TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
       ;;
     *)
-      echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}'" >&2
+      echo "Unsupported ANDROID_VALIDATION_MODE='${VALIDATION_MODE}'" >&2
       exit 2
       ;;
   esac
@@ -159,6 +196,7 @@ run_test_batch() {
   timeout --foreground "${run_timeout_seconds}s" \
     ./gradlew -p clients/android --stacktrace \
       :app:connectedDebugAndroidTest \
+      "${GRADLE_VALIDATION_PROPS[@]}" \
       "-Pandroid.testInstrumentationRunnerArguments.class=${class_arg}" \
       2>&1 | tee "${run_dir}/gradle-output.txt"
   command_status=${PIPESTATUS[0]}
@@ -173,6 +211,8 @@ run_test_batch() {
   {
     printf 'test_classes=%s\n' "${class_arg}"
     printf 'scope=%s\n' "${TEST_SCOPE}"
+    printf 'validation_mode=%s\n' "${VALIDATION_MODE}"
+    printf 'gradle_validation_props=%s\n' "${GRADLE_VALIDATION_PROPS[*]}"
     printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
     printf 'timeout_seconds=%s\n' "${run_timeout_seconds}"
     printf 'exit_code=%s\n' "${command_status}"
