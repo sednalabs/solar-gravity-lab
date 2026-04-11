@@ -109,6 +109,11 @@ float ClampFloat(float value, float lower, float upper) {
     return std::max(lower, std::min(value, upper));
 }
 
+bool ApproximatelyEqual(double lhs, double rhs) {
+    const double scale = std::max({1.0, std::abs(lhs), std::abs(rhs)});
+    return std::abs(lhs - rhs) <= (scale * 1e-12);
+}
+
 float KindMinimumBillboardDiameterPx(uint32_t kind) {
     switch (kind) {
         case kKindStar:
@@ -509,6 +514,7 @@ void SolarLabStageController::BindRuntimeSession(uint64_t runtimeSessionHandle) 
     boundRuntimeSessionHandle_ = runtimeSessionHandle;
     runtimeCameraInitialized_ = false;
     runtimeScene_ = RuntimeSceneState{};
+    inferredBodyKinds_.clear();
     ++cameraRevisionCounter_;
 }
 
@@ -519,6 +525,7 @@ void SolarLabStageController::UnbindRuntimeSession() {
     }
     boundRuntimeSessionHandle_ = 0;
     runtimeScene_ = RuntimeSceneState{};
+    inferredBodyKinds_.clear();
     ++cameraRevisionCounter_;
 }
 
@@ -737,14 +744,33 @@ void SolarLabStageController::InitializeFreeCameraFromRuntimePacketLocked(
         sceneOriginZ + cameraTargetFromOriginZ);
     const Float3 viewDirection = Normalize(cameraTarget - cameraPosition);
     const double horizontalMagnitude = std::sqrt((viewDirection.x * viewDirection.x) + (viewDirection.y * viewDirection.y));
-    cameraYawRadians_ = std::atan2(viewDirection.y, viewDirection.x) - (kPi * 0.5);
-    cameraPitchRadians_ = Clamp(std::atan2(-viewDirection.z, horizontalMagnitude), kMinPitchRadians, kMaxPitchRadians);
-    cameraCenterX_ = cameraTarget.x;
-    cameraCenterY_ = cameraTarget.y;
-    cameraCenterZ_ = cameraTarget.z;
+    const double nextCameraYawRadians = std::atan2(viewDirection.y, viewDirection.x) - (kPi * 0.5);
+    const double nextCameraPitchRadians =
+        Clamp(std::atan2(-viewDirection.z, horizontalMagnitude), kMinPitchRadians, kMaxPitchRadians);
+    const double nextCameraCenterX = cameraTarget.x;
+    const double nextCameraCenterY = cameraTarget.y;
+    const double nextCameraCenterZ = cameraTarget.z;
     const double cameraDistance = Magnitude(cameraPosition - cameraTarget);
     const double halfFovRadians = std::max(0.1, (verticalFovDegrees * kPi / 180.0) * 0.5);
-    cameraViewRadiusM_ = Clamp(std::max(cameraDistance * std::tan(halfFovRadians), 1000.0), kMinViewRadiusM, kMaxViewRadiusM);
+    const double nextCameraViewRadiusM =
+        Clamp(std::max(cameraDistance * std::tan(halfFovRadians), 1000.0), kMinViewRadiusM, kMaxViewRadiusM);
+
+    if (runtimeCameraInitialized_ &&
+        ApproximatelyEqual(cameraYawRadians_, nextCameraYawRadians) &&
+        ApproximatelyEqual(cameraPitchRadians_, nextCameraPitchRadians) &&
+        ApproximatelyEqual(cameraCenterX_, nextCameraCenterX) &&
+        ApproximatelyEqual(cameraCenterY_, nextCameraCenterY) &&
+        ApproximatelyEqual(cameraCenterZ_, nextCameraCenterZ) &&
+        ApproximatelyEqual(cameraViewRadiusM_, nextCameraViewRadiusM)) {
+        return;
+    }
+
+    cameraYawRadians_ = nextCameraYawRadians;
+    cameraPitchRadians_ = nextCameraPitchRadians;
+    cameraCenterX_ = nextCameraCenterX;
+    cameraCenterY_ = nextCameraCenterY;
+    cameraCenterZ_ = nextCameraCenterZ;
+    cameraViewRadiusM_ = nextCameraViewRadiusM;
     runtimeCameraInitialized_ = true;
     ++cameraRevisionCounter_;
 }
