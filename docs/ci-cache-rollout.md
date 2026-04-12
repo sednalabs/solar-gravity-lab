@@ -176,6 +176,44 @@ That means a build-first / test-many split only makes sense if we also increase 
 2. preserve the simple one-job-per-mode shape while the suite is small
 3. revisit a build artifact split if instrumentation gets sharded more aggressively
 
+### Android SDK package cache checkpoint
+
+The next remaining bootstrap seam after the Rust/native cache wins was repeated installation of the Android emulator package and the API 35 Google APIs system image. Both workflows now restore those directories from a dedicated GitHub Actions cache before invoking `sdkmanager`.
+
+Measured proof on `acaf8f1`:
+
+- `prerelease-apk` run `24301470488` was the first population run:
+  - build lane total: about `3m29s`
+  - AVD cache hit: yes
+  - Android SDK component cache key: `android-sdk-components-Linux-X64-v1`
+  - Android SDK component cache: miss
+  - SDK install step still had to install:
+    - `emulator`
+    - `system-images;android-35;google_apis;x86_64`
+  - post-job cache save uploaded about `1.97 GB` in about `16s`
+
+- `prerelease-apk` run `24301554955` was the second warm run on the same head:
+  - build lane total: about `2m58s`
+  - AVD cache hit: yes
+  - Android SDK component cache: hit on `android-sdk-components-Linux-X64-v1`
+  - SDK component restore step: about `18s`
+  - SDK verification step: about `11s`
+  - `sdkmanager` reported all required packages already installed, including:
+    - `emulator`
+    - `system-images;android-35;google_apis;x86_64`
+  - assemble prerelease step remained warm at about `52s`
+
+Interpretation:
+
+1. the emulator + system-image install seam is now cached rather than re-downloaded on every warm run
+2. the first population cost is acceptable relative to the repeated savings
+3. the remaining hosted-runner Android bootstrap tax is now mostly:
+   - AVD restore: about `12-13s`
+   - SDK package restore: about `18s`
+   - SDK verification: about `11s`
+   - then the actual assemble + emulator smoke work
+4. this makes a build-first / test-many split less urgent than it looked before the SDK package cache existed
+
 ## Cloudflare and R2 layout
 
 - hostname: `cache.sednalabs.io`
