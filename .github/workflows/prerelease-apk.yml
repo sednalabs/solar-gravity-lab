@@ -136,7 +136,7 @@ jobs:
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Enable KVM for Android emulator
         shell: bash
@@ -150,7 +150,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.android/avd/*
@@ -212,10 +212,9 @@ jobs:
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: prerelease_sccache
@@ -410,7 +409,7 @@ jobs:
 
       - name: Upload prerelease APK artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-${{ steps.meta.outputs.package_label }}-${{ github.run_id }}
           if-no-files-found: error
@@ -443,10 +442,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: isa_proof_sccache
@@ -473,7 +471,7 @@ jobs:
 
       - name: Upload ARM64 ISA proof artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: arm64-isa-proof-${{ github.run_id }}
           if-no-files-found: warn
@@ -494,7 +492,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: solar-gravity-lab-${{ needs.build-prerelease-apk.outputs.safe_version }}-${{ needs.build-prerelease-apk.outputs.package_label }}-${{ github.run_id }}
           path: dist
@@ -656,7 +654,7 @@ jobs:
         run: cat dist/prerelease-summary/prerelease-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload prerelease summary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prerelease-summary
           if-no-files-found: error

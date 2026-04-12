@@ -80,7 +80,9 @@ Optional R2 backing:
 - `validation-lab` and `prerelease-apk` use AVD snapshot caching with generation `v3`
 - KVM must be enabled before any emulator boot, including snapshot seeding
 - Gradle jobs use `gradle/actions/setup-gradle@v5` plus the remote cache at `cache.sednalabs.io`
-- Rust-heavy jobs install `sccache`, configure it from repo vars and secrets, and emit per-job stats into the workflow summary
+- Workflow helper actions were refreshed to current Node 24 builds where upstreams already provide them
+- Rust-heavy jobs install `sccache` through the in-repo `.github/actions/install-sccache` action so we avoid the stale Node 20 runtime in `mozilla-actions/sccache-action` while keeping the same pinned `v0.10.0` binary
+- Rust-heavy jobs configure `sccache` from repo vars and secrets and emit per-job stats into the workflow summary
 - `configure_sccache.sh` also exports `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` so AGP-driven CMake builds can reuse the same R2-backed `sccache` backend without module-specific workflow branching
 - Android/native jobs use shared `Swatinem/rust-cache` keys so helper binaries such as `cargo-ndk` do not get reinstalled independently in each lane
 
