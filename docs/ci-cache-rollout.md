@@ -88,7 +88,7 @@ Optional R2 backing:
 
 ## Current measured result
 
-The first two green targeted `validation-lab` runs on `validation/cache-acceleration-20260412` already show the hosted-runner gains are real:
+The first two green targeted `validation-lab` runs on `validation/cache-acceleration-20260412` already showed the hosted-runner gains were real:
 
 - cold cache-backed Android shell job: about `6m13s`
 - warm cache-backed Android shell job: about `4m41s`
@@ -100,7 +100,39 @@ What changed across that pair:
 - Gradle remote cache reused more Android tasks on the warm run
 - `:app:buildSolarlabNative` hit `FROM-CACHE` on the warm run
 
-The next hotspot after those wins is repeated `feature-lab` CMake work, so the current rollout routes CMake compiler invocations through `sccache` and preserves per-job stats in both logs and uploaded artifacts for the next comparison run.
+The next hotspot after those wins was repeated `feature-lab` CMake work, so the rollout now routes CMake compiler invocations through `sccache`, preserves per-job stats in both logs and uploaded artifacts, and installs `sccache` through an in-repo composite action instead of the stale Node 20 upstream action wrapper.
+
+### Prerelease + ARM64 proof checkpoint
+
+Comparing `prerelease-apk` run `24300220776` on `c007d6f` with run `24300530788` on `6fc8c95`:
+
+- prerelease build lane total: about `6m29s` -> about `3m31s`
+- prerelease assemble step: `149s` -> `47s`
+- Rust/Android toolchain step: `79s` -> `5s`
+- prerelease `sccache` stats: `103` misses (`91` Rust) -> `0` misses
+- prerelease `sccache` hits: `4` total -> `16` total, all C/C++ hits
+- ARM64 ISA proof `sccache` stats: `6` Rust misses -> `6` Rust hits
+
+The `6fc8c95` run was still the first run to populate the new per-arch `sccache` binary cache keys:
+
+- `sccache-bin-Linux-X64-v0.10.0`
+- `sccache-bin-Linux-ARM64-v0.10.0`
+
+So the next warm run should avoid both the older Node 20 action wrapper and the initial `sccache` binary download path.
+
+### Build-first / test-many direction
+
+After these gains, the dominant hosted-runner tax is shifting away from repeated native compiles and toward runner bring-up:
+
+- Android SDK/toolchain setup
+- emulator startup / launch smoke
+- workflow bootstrap around already-cached build inputs
+
+That means a build-first / test-many split only makes sense if we also increase test fan-out per validation mode. With the current one-batch-per-mode shape, shuffling large Android artifacts between jobs is likely to add more moving parts than it saves. The current recommendation is:
+
+1. keep leaning on remote Gradle cache plus `sccache`
+2. preserve the simple one-job-per-mode shape while the suite is small
+3. revisit a build artifact split if instrumentation gets sharded more aggressively
 
 ## Cloudflare and R2 layout
 
