@@ -13,8 +13,8 @@ struct MediumTracerState {
     vec2 velocityMps;
     uint colorArgb;
     float sizePx;
-    float reserved0;
-    float reserved1;
+    uint stableId;
+    uint reserved;
 };
 
 struct CheapPointVertex {

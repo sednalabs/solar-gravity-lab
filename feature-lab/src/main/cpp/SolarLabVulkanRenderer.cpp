@@ -1457,7 +1457,8 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneBuffers_.tracerMediumPositionsM.size(),
         sceneBuffers_.tracerMediumVelocitiesMps.size() / 3U,
         sceneBuffers_.tracerMediumRadiiM.size(),
-        sceneBuffers_.tracerMediumColorsArgb.size());
+        sceneBuffers_.tracerMediumColorsArgb.size(),
+        sceneBuffers_.tracerMediumStableIds.size());
     std::vector<MediumTracerState> tracerMediumStates;
     tracerMediumVertices.reserve(tracerMediumCount);
     tracerMediumStates.reserve(tracerMediumCount);
@@ -1480,8 +1481,8 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .vy = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base + 1U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerMediumColorsArgb[index]), kMediumTracerAlpha),
             .sizePx = sizePx,
-            .reserved0 = 0.0f,
-            .reserved1 = 0.0f,
+            .stableId = static_cast<uint32_t>(sceneBuffers_.tracerMediumStableIds[index]),
+            .reserved = 0U,
         });
     }
 
