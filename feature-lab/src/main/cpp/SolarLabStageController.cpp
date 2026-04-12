@@ -382,7 +382,8 @@ struct SolarLabStageController::RuntimeAbi {
         if (libraryHandle == nullptr) {
             libraryHandle = dlopen("libsolarlab_v2.so", RTLD_NOW | RTLD_LOCAL);
             if (libraryHandle == nullptr) {
-                error = dlerror() != nullptr ? dlerror() : "dlopen(libsolarlab_v2.so) failed";
+                const char* dlError = dlerror();
+                error = dlError != nullptr ? dlError : "dlopen(libsolarlab_v2.so) failed";
                 return false;
             }
         }
@@ -390,7 +391,8 @@ struct SolarLabStageController::RuntimeAbi {
         packet_buffer = reinterpret_cast<decltype(packet_buffer)>(dlsym(libraryHandle, "sl_v2_vulkan_scene_packet_buffer"));
         packet_release = reinterpret_cast<decltype(packet_release)>(dlsym(libraryHandle, "sl_v2_vulkan_scene_packet_release"));
         if (session_export_vulkan_scene == nullptr || packet_buffer == nullptr || packet_release == nullptr) {
-            error = dlerror() != nullptr ? dlerror() : "Failed to resolve solarlab_v2 runtime ABI symbols";
+            const char* dlError = dlerror();
+            error = dlError != nullptr ? dlError : "Failed to resolve solarlab_v2 runtime ABI symbols";
             return false;
         }
         return true;
