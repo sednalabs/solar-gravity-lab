@@ -114,6 +114,22 @@ class RenderSceneAssemblerTest {
                 trailSimplificationTolerancePx = 5.0,
             ),
         )
+        val repeatedPacket = NativeScenePacket.fromScene(
+            frame = frame,
+            cameraState = CameraState(
+                centerM = Vector3d.ZERO,
+                viewRadiusM = PhysicalConstants.ASTRONOMICAL_UNIT_M,
+            ),
+            viewportWidthPx = 1920,
+            viewportHeightPx = 1080,
+            policy = ScenePacketBuildPolicy(
+                nearTracerBudget = 10,
+                mediumTracerBudget = 10,
+                farTracerBudget = 10,
+                maxTrailVerticesPerTrail = 8,
+                trailSimplificationTolerancePx = 5.0,
+            ),
+        )
         assertEquals(7L, packet.sourceRevision)
         assertEquals(3, packet.authoritativePositionsM.size)
         assertEquals(1.0, packet.authoritativePositionsM[0], 0.0)
@@ -124,6 +140,12 @@ class RenderSceneAssemblerTest {
         assertEquals(1, packet.tracerFarCount)
         assertEquals(listOf(30.0, 40.0, 0.0), packet.tracerMediumVelocitiesMps.toList())
         assertEquals(listOf(50.0, 60.0, 0.0), packet.tracerFarVelocitiesMps.toList())
+        assertEquals(1, packet.tracerMediumStableIds.size)
+        assertEquals(1, packet.tracerFarStableIds.size)
+        assertTrue(packet.tracerMediumStableIds[0] != 0)
+        assertTrue(packet.tracerFarStableIds[0] != 0)
+        assertEquals(packet.tracerMediumStableIds.toList(), repeatedPacket.tracerMediumStableIds.toList())
+        assertEquals(packet.tracerFarStableIds.toList(), repeatedPacket.tracerFarStableIds.toList())
         assertTrue(packet.trailVertexCounts.first() <= 8)
     }
 

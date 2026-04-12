@@ -73,11 +73,13 @@ internal object SolarLabVulkanBridge {
             tracerNearKinds = packet.tracerNearKinds,
             tracerMediumPositionsM = packet.tracerMediumPositionsM,
             tracerMediumVelocitiesMps = packet.tracerMediumVelocitiesMps,
+            tracerMediumStableIds = packet.tracerMediumStableIds,
             tracerMediumRadiiM = packet.tracerMediumRadiiM,
             tracerMediumColorsArgb = packet.tracerMediumColorsArgb,
             tracerMediumKinds = packet.tracerMediumKinds,
             tracerFarPositionsM = packet.tracerFarPositionsM,
             tracerFarVelocitiesMps = packet.tracerFarVelocitiesMps,
+            tracerFarStableIds = packet.tracerFarStableIds,
             tracerFarRadiiM = packet.tracerFarRadiiM,
             tracerFarColorsArgb = packet.tracerFarColorsArgb,
             tracerFarKinds = packet.tracerFarKinds,
@@ -131,11 +133,13 @@ internal object SolarLabVulkanBridge {
             tracerNearKinds.contentEquals(other.tracerNearKinds) &&
             tracerMediumPositionsM.contentEquals(other.tracerMediumPositionsM) &&
             tracerMediumVelocitiesMps.contentEquals(other.tracerMediumVelocitiesMps) &&
+            tracerMediumStableIds.contentEquals(other.tracerMediumStableIds) &&
             tracerMediumRadiiM.contentEquals(other.tracerMediumRadiiM) &&
             tracerMediumColorsArgb.contentEquals(other.tracerMediumColorsArgb) &&
             tracerMediumKinds.contentEquals(other.tracerMediumKinds) &&
             tracerFarPositionsM.contentEquals(other.tracerFarPositionsM) &&
             tracerFarVelocitiesMps.contentEquals(other.tracerFarVelocitiesMps) &&
+            tracerFarStableIds.contentEquals(other.tracerFarStableIds) &&
             tracerFarRadiiM.contentEquals(other.tracerFarRadiiM) &&
             tracerFarColorsArgb.contentEquals(other.tracerFarColorsArgb) &&
             tracerFarKinds.contentEquals(other.tracerFarKinds) &&
@@ -165,11 +169,13 @@ internal object SolarLabVulkanBridge {
         tracerNearKinds: IntArray,
         tracerMediumPositionsM: DoubleArray,
         tracerMediumVelocitiesMps: DoubleArray,
+        tracerMediumStableIds: IntArray,
         tracerMediumRadiiM: FloatArray,
         tracerMediumColorsArgb: IntArray,
         tracerMediumKinds: IntArray,
         tracerFarPositionsM: DoubleArray,
         tracerFarVelocitiesMps: DoubleArray,
+        tracerFarStableIds: IntArray,
         tracerFarRadiiM: FloatArray,
         tracerFarColorsArgb: IntArray,
         tracerFarKinds: IntArray,
