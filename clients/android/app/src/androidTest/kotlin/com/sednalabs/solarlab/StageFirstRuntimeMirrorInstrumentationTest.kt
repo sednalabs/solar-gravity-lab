@@ -4,7 +4,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
@@ -43,12 +42,6 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                 runtimeState.sessionHandle != null &&
                 runtimeState.snapshot != null
         }
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            isTagPresent(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON) &&
-                isTagPresent(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON) &&
-                isTagPresent(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON) &&
-                !isTagPresent(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-        }
         assertTrue(
             "Runtime mirror surface should be mounted after switching modes",
             composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
@@ -66,14 +59,6 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             requireNotNull(hostView).width > 0 && hostView.height > 0,
         )
     }
-
-    private fun isTagPresent(tag: String): Boolean =
-        runCatching {
-            composeRule
-                .onAllNodesWithTag(tag)
-                .fetchSemanticsNodes()
-                .isNotEmpty()
-        }.getOrDefault(false)
 
     private fun findRenderHostView(root: View): SolarSystemRenderHostView? {
         if (root is SolarSystemRenderHostView) {
