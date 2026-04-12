@@ -217,9 +217,13 @@ private:
         GpuBuffer indirectCommandBuffer;
         GpuBuffer indirectReadbackBuffer;
         GpuBuffer tileCounterBuffer;
+        GpuBuffer tileCounterReadbackBuffer;
         uint32_t sourceVertexCount = 0;
         uint32_t dispatchGroupCountX = 0;
         uint32_t tileCounterCount = 0;
+        uint32_t activeTileCount = 0;
+        uint32_t peakTileOccupancy = 0;
+        bool tileStatsValid = false;
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;
         const char* label = nullptr;
