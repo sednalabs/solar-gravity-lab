@@ -148,8 +148,8 @@ private:
         float vy = 0.0f;
         uint32_t colorArgb = 0;
         uint32_t densityWeight = 1;
-        float reserved0 = 0.0f;
-        float reserved1 = 0.0f;
+        uint32_t stableId = 0;
+        uint32_t reserved = 0;
     };
 
     struct TrailVertex {
