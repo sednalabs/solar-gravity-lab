@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
         outState.putString(STATE_STAGE_FIRST_EXPERIENCE_MODE, stageFirstExperienceModeState.value.name)
         super.onSaveInstanceState(outState)
     }
+
 }
 
 internal class RuntimeSessionViewModel : ViewModel() {
@@ -101,7 +102,11 @@ internal class RuntimeSessionViewModel : ViewModel() {
         }
     }
 
-    override fun onCleared() {
+    fun shutdown() {
         runtimeScope.cancel()
+    }
+
+    override fun onCleared() {
+        shutdown()
     }
 }
