@@ -41,11 +41,13 @@ public:
         std::vector<int32_t> tracerNearKinds,
         std::vector<double> tracerMediumPositionsM,
         std::vector<double> tracerMediumVelocitiesMps,
+        std::vector<int32_t> tracerMediumStableIds,
         std::vector<float> tracerMediumRadiiM,
         std::vector<int32_t> tracerMediumColorsArgb,
         std::vector<int32_t> tracerMediumKinds,
         std::vector<double> tracerFarPositionsM,
         std::vector<double> tracerFarVelocitiesMps,
+        std::vector<int32_t> tracerFarStableIds,
         std::vector<float> tracerFarRadiiM,
         std::vector<int32_t> tracerFarColorsArgb,
         std::vector<int32_t> tracerFarKinds,
@@ -78,11 +80,13 @@ private:
         std::vector<int32_t> tracerNearKinds;
         std::vector<double> tracerMediumPositionsM;
         std::vector<double> tracerMediumVelocitiesMps;
+        std::vector<int32_t> tracerMediumStableIds;
         std::vector<float> tracerMediumRadiiM;
         std::vector<int32_t> tracerMediumColorsArgb;
         std::vector<int32_t> tracerMediumKinds;
         std::vector<double> tracerFarPositionsM;
         std::vector<double> tracerFarVelocitiesMps;
+        std::vector<int32_t> tracerFarStableIds;
         std::vector<float> tracerFarRadiiM;
         std::vector<int32_t> tracerFarColorsArgb;
         std::vector<int32_t> tracerFarKinds;

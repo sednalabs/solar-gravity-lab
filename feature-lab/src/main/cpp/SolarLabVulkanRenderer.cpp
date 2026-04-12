@@ -331,11 +331,13 @@ void SolarLabVulkanRenderer::SubmitScene(
     std::vector<int32_t> tracerNearKinds,
     std::vector<double> tracerMediumPositionsM,
     std::vector<double> tracerMediumVelocitiesMps,
+    std::vector<int32_t> tracerMediumStableIds,
     std::vector<float> tracerMediumRadiiM,
     std::vector<int32_t> tracerMediumColorsArgb,
     std::vector<int32_t> tracerMediumKinds,
     std::vector<double> tracerFarPositionsM,
     std::vector<double> tracerFarVelocitiesMps,
+    std::vector<int32_t> tracerFarStableIds,
     std::vector<float> tracerFarRadiiM,
     std::vector<int32_t> tracerFarColorsArgb,
     std::vector<int32_t> tracerFarKinds,
@@ -358,11 +360,13 @@ void SolarLabVulkanRenderer::SubmitScene(
     sceneBuffers_.tracerNearKinds = std::move(tracerNearKinds);
     sceneBuffers_.tracerMediumPositionsM = std::move(tracerMediumPositionsM);
     sceneBuffers_.tracerMediumVelocitiesMps = std::move(tracerMediumVelocitiesMps);
+    sceneBuffers_.tracerMediumStableIds = std::move(tracerMediumStableIds);
     sceneBuffers_.tracerMediumRadiiM = std::move(tracerMediumRadiiM);
     sceneBuffers_.tracerMediumColorsArgb = std::move(tracerMediumColorsArgb);
     sceneBuffers_.tracerMediumKinds = std::move(tracerMediumKinds);
     sceneBuffers_.tracerFarPositionsM = std::move(tracerFarPositionsM);
     sceneBuffers_.tracerFarVelocitiesMps = std::move(tracerFarVelocitiesMps);
+    sceneBuffers_.tracerFarStableIds = std::move(tracerFarStableIds);
     sceneBuffers_.tracerFarRadiiM = std::move(tracerFarRadiiM);
     sceneBuffers_.tracerFarColorsArgb = std::move(tracerFarColorsArgb);
     sceneBuffers_.tracerFarKinds = std::move(tracerFarKinds);
