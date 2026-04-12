@@ -81,7 +81,24 @@ Optional R2 backing:
 - KVM must be enabled before any emulator boot, including snapshot seeding
 - Gradle jobs use `gradle/actions/setup-gradle@v5` plus the remote cache at `cache.sednalabs.io`
 - Rust-heavy jobs install `sccache`, configure it from repo vars and secrets, and emit per-job stats into the workflow summary
+- `configure_sccache.sh` also exports `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` so AGP-driven CMake builds can reuse the same R2-backed `sccache` backend without module-specific workflow branching
 - Android/native jobs use shared `Swatinem/rust-cache` keys so helper binaries such as `cargo-ndk` do not get reinstalled independently in each lane
+
+## Current measured result
+
+The first two green targeted `validation-lab` runs on `validation/cache-acceleration-20260412` already show the hosted-runner gains are real:
+
+- cold cache-backed Android shell job: about `6m13s`
+- warm cache-backed Android shell job: about `4m41s`
+- improvement: about `1m32s`, roughly `25%` faster end to end
+
+What changed across that pair:
+
+- AVD snapshot cache hit replaced a fresh seed
+- Gradle remote cache reused more Android tasks on the warm run
+- `:app:buildSolarlabNative` hit `FROM-CACHE` on the warm run
+
+The next hotspot after those wins is repeated `feature-lab` CMake work, so the current rollout routes CMake compiler invocations through `sccache` and preserves per-job stats in both logs and uploaded artifacts for the next comparison run.
 
 ## Cloudflare and R2 layout
 
