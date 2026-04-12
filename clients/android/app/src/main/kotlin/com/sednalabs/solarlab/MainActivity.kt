@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
     private val stageFirstExperienceModeState = mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX)
+    private val stageFirstRuntimeMirrorMountedState = mutableStateOf(false)
 
     @VisibleForTesting
     internal val runtimeFacadeForTesting: RuntimeFacade
@@ -36,6 +37,9 @@ class MainActivity : ComponentActivity() {
             stageFirstExperienceModeState.value = StageFirstExperienceMode.RUNTIME_MIRROR
         }
     }
+
+    @VisibleForTesting
+    internal fun isStageFirstRuntimeMirrorMountedForTesting(): Boolean = stageFirstRuntimeMirrorMountedState.value
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +63,7 @@ class MainActivity : ComponentActivity() {
                         null
                     },
                     experienceModeState = stageFirstExperienceModeState,
+                    runtimeMirrorMountedState = stageFirstRuntimeMirrorMountedState,
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)

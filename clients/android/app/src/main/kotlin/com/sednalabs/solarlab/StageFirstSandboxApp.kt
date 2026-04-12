@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -117,6 +118,7 @@ internal fun StageFirstSandboxApp(
     runtimeFacade: RuntimeFacade? = null,
     ensureRuntimeStarted: (() -> Unit)? = null,
     experienceModeState: MutableState<StageFirstExperienceMode>? = null,
+    runtimeMirrorMountedState: MutableState<Boolean>? = null,
 ) {
     val localExperienceModeState = rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
     val resolvedExperienceModeState = experienceModeState ?: localExperienceModeState
@@ -125,6 +127,9 @@ internal fun StageFirstSandboxApp(
 
     when {
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
+            SideEffect {
+                runtimeMirrorMountedState?.value = false
+            }
             StageFirstSandboxLocalExperience(
                 onEnterRuntimeMirror = if (runtimeMirrorAvailable) {
                     { experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR }
@@ -138,6 +143,7 @@ internal fun StageFirstSandboxApp(
             runtimeFacade = runtimeFacade,
             ensureRuntimeStarted = ensureRuntimeStarted,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
+            runtimeMirrorMountedState = runtimeMirrorMountedState,
         )
     }
 }

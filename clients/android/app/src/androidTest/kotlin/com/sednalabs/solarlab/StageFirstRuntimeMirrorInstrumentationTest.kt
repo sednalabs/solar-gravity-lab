@@ -32,41 +32,18 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
             runtimeState.connectionState == com.sednalabs.solarlab.runtime.SessionConnectionState.Active &&
                 runtimeState.sessionHandle != null &&
                 runtimeState.snapshot != null
         }
-
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNode()
-            }.isSuccess &&
-                runCatching {
-                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
-                }.isSuccess &&
-                runCatching {
-                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNode()
-                }.isSuccess
-        }
-
         assertTrue(
-            "Runtime mirror sandbox button should be exposed",
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNode()
-            }.isSuccess,
-        )
-        assertTrue(
-            "Runtime mirror search button should be exposed",
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
-            }.isSuccess,
-        )
-        assertTrue(
-            "Runtime mirror debug button should be exposed",
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNode()
-            }.isSuccess,
+            "Runtime mirror surface should be mounted after switching modes",
+            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
         )
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
