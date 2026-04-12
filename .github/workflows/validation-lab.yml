@@ -1,6 +1,21 @@
 name: validation-lab
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/scripts/**"
+      - "clients/android/**"
+      - "engine/**"
+      - "feature-lab/**"
+      - "labs/**"
+      - "proto/**"
+      - "render/**"
+      - "render-core/**"
+      - "core-math/**"
+      - "core-model/**"
+      - "core-simulation/**"
+      - "services/**"
   workflow_dispatch:
     inputs:
       ref:
@@ -27,6 +42,8 @@ on:
           - rust-workspace
           - rust-workspace-arm64
           - ffi-abi
+          - android-unit
+          - android-lint
           - android-shell
           - runtime-scene-telemetry
           - full
@@ -44,6 +61,16 @@ on:
           - core
           - full
         default: core
+      android_validation_mode:
+        description: Android validation mode or matrix selection
+        required: true
+        type: choice
+        options:
+          - auto
+          - shell-v2
+          - stage-first-mirror-off
+          - stage-first-mirror-on
+        default: auto
       android_artifact_mode:
         description: Android artifact capture mode
         required: true
@@ -76,14 +103,24 @@ jobs:
     name: Resolve validation plan
     runs-on: ubuntu-24.04
     outputs:
+      checkout_repository: ${{ steps.plan.outputs.checkout_repository }}
       checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
+      profile: ${{ steps.plan.outputs.profile }}
+      lane_set: ${{ steps.plan.outputs.lane_set }}
+      android_test_scope: ${{ steps.plan.outputs.android_test_scope }}
+      android_validation_mode: ${{ steps.plan.outputs.android_validation_mode }}
+      android_artifact_mode: ${{ steps.plan.outputs.android_artifact_mode }}
+      emulator_boot_strategy: ${{ steps.plan.outputs.emulator_boot_strategy }}
       profile_intent: ${{ steps.plan.outputs.profile_intent }}
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       rust_workspace: ${{ steps.plan.outputs.rust_workspace }}
       rust_workspace_arm64: ${{ steps.plan.outputs.rust_workspace_arm64 }}
       ffi_abi: ${{ steps.plan.outputs.ffi_abi }}
+      android_unit: ${{ steps.plan.outputs.android_unit }}
+      android_lint: ${{ steps.plan.outputs.android_lint }}
       android_shell: ${{ steps.plan.outputs.android_shell }}
+      android_shell_matrix: ${{ steps.plan.outputs.android_shell_matrix }}
       runtime_scene_telemetry: ${{ steps.plan.outputs.runtime_scene_telemetry }}
       lane_summary: ${{ steps.plan.outputs.lane_summary }}
     steps:
@@ -94,22 +131,62 @@ jobs:
           set -euo pipefail
 
           checkout_ref='${{ inputs.ref }}'
-          if [[ -z "$checkout_ref" ]]; then
+          checkout_repository='${{ github.repository }}'
+          if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
+            checkout_ref='${{ github.event.pull_request.head.sha }}'
+            checkout_repository='${{ github.event.pull_request.head.repo.full_name }}'
+          elif [[ -z "$checkout_ref" ]]; then
             checkout_ref='${{ github.ref_name }}'
           fi
 
           profile='${{ inputs.profile }}'
+          if [[ -z "$profile" ]]; then
+            if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
+              profile='full'
+            else
+              profile='targeted'
+            fi
+          fi
           lane_set='${{ inputs.lane_set }}'
+          if [[ -z "$lane_set" ]]; then
+            if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
+              lane_set='full'
+            else
+              lane_set='auto'
+            fi
+          fi
           write_wrapper='${{ inputs.write_wrapper }}'
+          if [[ -z "$write_wrapper" ]]; then
+            write_wrapper='false'
+          fi
+          android_test_scope='${{ inputs.android_test_scope }}'
+          if [[ -z "$android_test_scope" ]]; then
+            android_test_scope='core'
+          fi
+          android_validation_mode='${{ inputs.android_validation_mode }}'
+          if [[ -z "$android_validation_mode" ]]; then
+            android_validation_mode='auto'
+          fi
+          android_artifact_mode='${{ inputs.android_artifact_mode }}'
+          if [[ -z "$android_artifact_mode" ]]; then
+            android_artifact_mode='failures-only'
+          fi
+          emulator_boot_strategy='${{ inputs.emulator_boot_strategy }}'
+          if [[ -z "$emulator_boot_strategy" ]]; then
+            emulator_boot_strategy='cold'
+          fi
 
           wrapper_bootstrap='false'
           rust_workspace='false'
           rust_workspace_arm64='false'
           ffi_abi='false'
+          android_unit='false'
+          android_lint='false'
           android_shell='false'
           runtime_scene_telemetry='false'
           profile_intent='targeted'
           profile_notes='One active slice only; use this to prove the current canonical seam before widening.'
+          android_shell_matrix='[]'
 
           case "$profile" in
             targeted)
@@ -139,6 +216,8 @@ jobs:
               if [[ "$profile" == 'broad' || "$profile" == 'full' ]]; then
                 ffi_abi='true'
                 rust_workspace_arm64='true'
+                android_unit='true'
+                android_lint='true'
               fi
               ;;
             bootstrap)
@@ -153,6 +232,12 @@ jobs:
             ffi-abi)
               ffi_abi='true'
               ;;
+            android-unit)
+              android_unit='true'
+              ;;
+            android-lint)
+              android_lint='true'
+              ;;
             android-shell)
               android_shell='true'
               ;;
@@ -163,6 +248,8 @@ jobs:
               rust_workspace='true'
               rust_workspace_arm64='true'
               ffi_abi='true'
+              android_unit='true'
+              android_lint='true'
               android_shell='true'
               runtime_scene_telemetry='true'
               ;;
@@ -176,17 +263,66 @@ jobs:
             wrapper_bootstrap='true'
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_shell=%s, runtime_scene_telemetry=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_shell" "$runtime_scene_telemetry")"
+          if [[ "$android_shell" == 'true' ]]; then
+            case "$android_validation_mode" in
+              shell-v2)
+                android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"}]'
+                ;;
+              stage-first-mirror-off)
+                android_shell_matrix='[{"validation_mode":"stage-first-mirror-off","debug_stage_first_client":"true","stage_first_runtime_mirror":"false"}]'
+                ;;
+              stage-first-mirror-on)
+                android_shell_matrix='[{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
+                ;;
+              auto)
+                if [[ "$android_test_scope" == 'full' ]]; then
+                  android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"}]'
+                else
+                  case "$profile" in
+                    targeted)
+                      android_shell_matrix='[{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
+                      ;;
+                    frontier)
+                      android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
+                      ;;
+                    broad|full)
+                      android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-off","debug_stage_first_client":"true","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
+                      ;;
+                    *)
+                      echo "Unknown profile for android shell matrix: ${profile}" >&2
+                      exit 1
+                      ;;
+                  esac
+                fi
+                ;;
+              *)
+                echo "Unknown android_validation_mode: ${android_validation_mode}" >&2
+                exit 1
+                ;;
+            esac
+          fi
 
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode")"
+
+          echo "checkout_repository=${checkout_repository}" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+          echo "profile=${profile}" >> "$GITHUB_OUTPUT"
+          echo "lane_set=${lane_set}" >> "$GITHUB_OUTPUT"
+          echo "android_test_scope=${android_test_scope}" >> "$GITHUB_OUTPUT"
+          echo "android_validation_mode=${android_validation_mode}" >> "$GITHUB_OUTPUT"
+          echo "android_artifact_mode=${android_artifact_mode}" >> "$GITHUB_OUTPUT"
+          echo "emulator_boot_strategy=${emulator_boot_strategy}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
           echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "rust_workspace=${rust_workspace}" >> "$GITHUB_OUTPUT"
           echo "rust_workspace_arm64=${rust_workspace_arm64}" >> "$GITHUB_OUTPUT"
           echo "ffi_abi=${ffi_abi}" >> "$GITHUB_OUTPUT"
+          echo "android_unit=${android_unit}" >> "$GITHUB_OUTPUT"
+          echo "android_lint=${android_lint}" >> "$GITHUB_OUTPUT"
           echo "android_shell=${android_shell}" >> "$GITHUB_OUTPUT"
+          echo "android_shell_matrix=${android_shell_matrix}" >> "$GITHUB_OUTPUT"
           echo "runtime_scene_telemetry=${runtime_scene_telemetry}" >> "$GITHUB_OUTPUT"
           echo "lane_summary=${lane_summary}" >> "$GITHUB_OUTPUT"
 
@@ -201,6 +337,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: actions/setup-java@v5
@@ -279,6 +416,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Validate parity matrix schema
@@ -296,6 +434,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -315,6 +454,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -334,6 +474,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -353,6 +494,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -364,15 +506,266 @@ jobs:
           cargo test -p solarlab-runtime --lib render_scene
           cargo test -p solarlab-runtime --lib telemetry
 
-  android-shell:
-    name: Android shell emulator smoke
+  android-unit:
+    name: Android JVM and host-side unit tests
     needs: metadata
-    if: ${{ needs.metadata.outputs.android_shell == 'true' }}
+    if: ${{ needs.metadata.outputs.android_unit == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - name: Initialize Android unit lane timing
+        id: android_unit_timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses and install build toolchain
+        id: android_unit_sdk_install
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase_start="$(date +%s)"
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          required_packages=(
+            "platform-tools"
+            "platforms;android-36"
+            "build-tools;36.0.0"
+            "cmake;3.22.1"
+            "ndk;27.2.12479018"
+          )
+          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
+          missing_packages=()
+          for pkg in "${required_packages[@]}"; do
+            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
+              echo "SDK package already installed: $pkg"
+            else
+              missing_packages+=("$pkg")
+            fi
+          done
+          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+            echo "Installing missing SDK packages: ${missing_packages[*]}"
+            sdkmanager --install "${missing_packages[@]}"
+          else
+            echo "All required SDK packages already installed."
+          fi
+          phase_end="$(date +%s)"
+          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Rust Android toolchain
+        id: android_unit_rust_android_toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android x86_64-linux-android
+          if command -v cargo-ndk >/dev/null 2>&1; then
+            echo "cargo-ndk already available."
+          else
+            cargo install cargo-ndk --locked
+          fi
+
+      - name: Run Android host-side unit suites
+        id: android_unit_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase_start="$(date +%s)"
+          ./gradlew -p clients/android \
+            :app:testDebugUnitTest \
+            :feature-lab:testDebugUnitTest \
+            :render-core:test \
+            :core-math:test \
+            :core-model:test \
+            :core-simulation:test
+          phase_end="$(date +%s)"
+          echo "unit_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+
+      - name: Emit Android unit timing summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          lane_end_epoch="$(date +%s)"
+          lane_start_epoch="${{ steps.android_unit_timing.outputs.lane_start_epoch }}"
+          lane_total="$((lane_end_epoch - lane_start_epoch))"
+          {
+            echo "## android-unit timings"
+            echo "- sdk setup: \`${{ steps.android_unit_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
+            echo "- unit suites: \`${{ steps.android_unit_tests.outputs.unit_seconds || 'n/a' }}s\`"
+            echo "- lane total: \`${lane_total}s\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Android unit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            clients/android/app/build/reports/tests/**
+            feature-lab/build/reports/tests/**
+            render-core/build/reports/tests/**
+            core-math/build/reports/tests/**
+            core-model/build/reports/tests/**
+            core-simulation/build/reports/tests/**
+            clients/android/app/build/test-results/**
+            feature-lab/build/test-results/**
+            render-core/build/test-results/**
+            core-math/build/test-results/**
+            core-model/build/test-results/**
+            core-simulation/build/test-results/**
+
+  android-lint:
+    name: Android lint
+    needs: metadata
+    if: ${{ needs.metadata.outputs.android_lint == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - name: Initialize Android lint lane timing
+        id: android_lint_timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses and install build toolchain
+        id: android_lint_sdk_install
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase_start="$(date +%s)"
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          required_packages=(
+            "platform-tools"
+            "platforms;android-36"
+            "build-tools;36.0.0"
+            "cmake;3.22.1"
+            "ndk;27.2.12479018"
+          )
+          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
+          missing_packages=()
+          for pkg in "${required_packages[@]}"; do
+            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
+              echo "SDK package already installed: $pkg"
+            else
+              missing_packages+=("$pkg")
+            fi
+          done
+          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+            echo "Installing missing SDK packages: ${missing_packages[*]}"
+            sdkmanager --install "${missing_packages[@]}"
+          else
+            echo "All required SDK packages already installed."
+          fi
+          phase_end="$(date +%s)"
+          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Rust Android toolchain
+        id: android_lint_rust_android_toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android x86_64-linux-android
+          if command -v cargo-ndk >/dev/null 2>&1; then
+            echo "cargo-ndk already available."
+          else
+            cargo install cargo-ndk --locked
+          fi
+
+      - name: Run Android lint suites
+        id: android_lint_checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase_start="$(date +%s)"
+          ./gradlew -p clients/android :app:lintDebug :feature-lab:lintDebug
+          phase_end="$(date +%s)"
+          echo "lint_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+
+      - name: Emit Android lint timing summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          lane_end_epoch="$(date +%s)"
+          lane_start_epoch="${{ steps.android_lint_timing.outputs.lane_start_epoch }}"
+          lane_total="$((lane_end_epoch - lane_start_epoch))"
+          {
+            echo "## android-lint timings"
+            echo "- sdk setup: \`${{ steps.android_lint_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
+            echo "- lint suites: \`${{ steps.android_lint_checks.outputs.lint_seconds || 'n/a' }}s\`"
+            echo "- lane total: \`${lane_total}s\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Android lint artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            clients/android/app/build/reports/lint-results-*.html
+            clients/android/app/build/reports/lint-results-*.xml
+            clients/android/app/build/reports/lint-results-*.txt
+            clients/android/app/build/intermediates/lint_intermediate_text_report/**
+            feature-lab/build/reports/lint-results-*.html
+            feature-lab/build/reports/lint-results-*.xml
+            feature-lab/build/reports/lint-results-*.txt
+            feature-lab/build/intermediates/lint_intermediate_text_report/**
+
+  android-shell:
+    name: Android shell emulator smoke (${{ matrix.validation_mode }})
+    needs: metadata
+    if: ${{ needs.metadata.outputs.android_shell == 'true' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.metadata.outputs.android_shell_matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Initialize Android lane timing
@@ -391,7 +784,7 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Restore Android emulator AVD cache
-        if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
+        if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
         uses: actions/cache@v4
         with:
           path: |
@@ -456,13 +849,26 @@ jobs:
           phase_end="$(date +%s)"
           echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve Android validation mode props
+        id: android_mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "validation_mode=${{ matrix.validation_mode }}" >> "$GITHUB_OUTPUT"
+          echo "debug_stage_first_client=${{ matrix.debug_stage_first_client }}" >> "$GITHUB_OUTPUT"
+          echo "stage_first_runtime_mirror=${{ matrix.stage_first_runtime_mirror }}" >> "$GITHUB_OUTPUT"
+
       - name: Assemble debug Android shell and androidTest
         id: android_assemble
         shell: bash
         run: |
           set -euo pipefail
           phase_start="$(date +%s)"
-          ./gradlew -p clients/android :app:assembleDebug :app:assembleDebugAndroidTest
+          ./gradlew -p clients/android \
+            :app:assembleDebug \
+            :app:assembleDebugAndroidTest \
+            -Psolarlab.debugStageFirstClient=${{ steps.android_mode.outputs.debug_stage_first_client }} \
+            -Psolarlab.stageFirstRuntimeMirror=${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
           phase_end="$(date +%s)"
           echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
@@ -484,13 +890,16 @@ jobs:
           profile: pixel_7
           target: google_apis
           emulator-boot-timeout: 1200
-          force-avd-creation: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
+          force-avd-creation: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_validation_android_shell_smoke.sh
         env:
-          ANDROID_TEST_SCOPE: ${{ inputs.android_test_scope }}
-          ANDROID_ARTIFACT_MODE: ${{ inputs.android_artifact_mode }}
+          ANDROID_TEST_SCOPE: ${{ needs.metadata.outputs.android_test_scope }}
+          ANDROID_ARTIFACT_MODE: ${{ needs.metadata.outputs.android_artifact_mode }}
+          ANDROID_VALIDATION_MODE: ${{ steps.android_mode.outputs.validation_mode }}
+          ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
+          ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
 
       - name: Emit Android lane timing summary
         if: always()
@@ -502,58 +911,93 @@ jobs:
           lane_total="$((lane_end_epoch - lane_start_epoch))"
           {
             echo "## android-shell timings"
+            echo "- validation mode: \`${{ steps.android_mode.outputs.validation_mode }}\`"
+            echo "- stage-first client: \`${{ steps.android_mode.outputs.debug_stage_first_client }}\`"
+            echo "- stage-first runtime mirror: \`${{ steps.android_mode.outputs.stage_first_runtime_mirror }}\`"
             echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"
             echo "- lane total (including emulator + instrumentation): \`${lane_total}s\`"
-            echo "- scope: \`${{ inputs.android_test_scope }}\`"
-            echo "- artifact mode: \`${{ inputs.android_artifact_mode }}\`"
-            echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
+            echo "- scope: \`${{ needs.metadata.outputs.android_test_scope }}\`"
+            echo "- artifact mode: \`${{ needs.metadata.outputs.android_artifact_mode }}\`"
+            echo "- emulator boot strategy: \`${{ needs.metadata.outputs.emulator_boot_strategy }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-shell-${{ github.run_id }}
+          name: android-shell-${{ matrix.validation_mode }}-${{ github.run_id }}
           if-no-files-found: warn
           path: |
-            clients/android/app/build/outputs/**
-            clients/android/**/build/reports/**
+            clients/android/app/build/reports/androidTests/**
+            clients/android/app/build/reports/emulator-smoke/**
+            clients/android/app/build/outputs/androidTest-results/**
+            clients/android/app/build/outputs/apk/debug/**
+            clients/android/app/build/outputs/apk/androidTest/**
 
   summary:
-    name: Validation summary
+    name: Publish validation summary
     needs:
       - metadata
-      - wrapper-bootstrap
       - parity-matrix
+      - wrapper-bootstrap
       - rust-workspace
       - rust-workspace-arm64
       - ffi-abi
+      - android-unit
+      - android-lint
       - android-shell
       - runtime-scene-telemetry
-    if: ${{ always() }}
+    if: always()
     runs-on: ubuntu-24.04
     steps:
-      - name: Emit summary
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - name: Build validation summary payload
         shell: bash
         run: |
-          {
-            echo "## validation-lab"
-            echo
-            echo "- ref: \`${{ needs.metadata.outputs.checkout_ref }}\`"
-            echo "- profile: \`${{ inputs.profile }}\`"
-            echo "- intent: \`${{ needs.metadata.outputs.profile_intent }}\`"
-            echo "- lanes: \`${{ needs.metadata.outputs.lane_summary }}\`"
-            echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
-            echo "- parity-matrix: \`${{ needs['parity-matrix'].result }}\`"
-            echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
-            echo "- rust-workspace: \`${{ needs['rust-workspace'].result }}\`"
-            echo "- rust-workspace-arm64: \`${{ needs['rust-workspace-arm64'].result }}\`"
-            echo "- ffi-abi: \`${{ needs['ffi-abi'].result }}\`"
-            echo "- android-shell: \`${{ needs['android-shell'].result }}\`"
-            echo "- runtime-scene-telemetry: \`${{ needs['runtime-scene-telemetry'].result }}\`"
-            echo "- android-test-scope: \`${{ inputs.android_test_scope }}\`"
-            echo "- android-artifact-mode: \`${{ inputs.android_artifact_mode }}\`"
-            echo "- emulator-boot-strategy: \`${{ inputs.emulator_boot_strategy }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          mkdir -p dist/validation-summary
+          python3 .github/scripts/write_validation_summary.py \
+            --workflow validation-lab \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --repository "${{ github.repository }}" \
+            --checkout-ref "${{ needs.metadata.outputs.checkout_ref }}" \
+            --profile "${{ needs.metadata.outputs.profile }}" \
+            --profile-intent "${{ needs.metadata.outputs.profile_intent }}" \
+            --profile-notes "${{ needs.metadata.outputs.profile_notes }}" \
+            --lane-set "${{ needs.metadata.outputs.lane_set }}" \
+            --lane-summary "${{ needs.metadata.outputs.lane_summary }}" \
+            --android-test-scope "${{ needs.metadata.outputs.android_test_scope }}" \
+            --android-validation-mode "${{ needs.metadata.outputs.android_validation_mode }}" \
+            --android-artifact-mode "${{ needs.metadata.outputs.android_artifact_mode }}" \
+            --emulator-boot-strategy "${{ needs.metadata.outputs.emulator_boot_strategy }}" \
+            --job parity-matrix=${{ needs.parity-matrix.result }} \
+            --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
+            --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
+            --job rust-workspace-arm64=${{ needs.rust-workspace-arm64.result || 'skipped' }} \
+            --job ffi-abi=${{ needs.ffi-abi.result || 'skipped' }} \
+            --job android-unit=${{ needs.android-unit.result || 'skipped' }} \
+            --job android-lint=${{ needs.android-lint.result || 'skipped' }} \
+            --job android-shell=${{ needs.android-shell.result || 'skipped' }} \
+            --job runtime-scene-telemetry=${{ needs.runtime-scene-telemetry.result || 'skipped' }} \
+            --output-json dist/validation-summary/validation-summary.json \
+            --output-md dist/validation-summary/validation-summary.md
+
+      - name: Emit validation summary
+        shell: bash
+        run: cat dist/validation-summary/validation-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload validation summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-summary
+          if-no-files-found: error
+          path: dist/validation-summary/**

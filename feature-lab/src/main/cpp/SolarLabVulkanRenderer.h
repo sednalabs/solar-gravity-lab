@@ -27,6 +27,9 @@ public:
 
     void SubmitScene(
         int64_t sourceRevision,
+        double sceneOriginX,
+        double sceneOriginY,
+        double sceneOriginZ,
         std::vector<double> authoritativePositionsM,
         std::vector<float> authoritativeRadiiM,
         std::vector<int32_t> authoritativeColorsArgb,
@@ -47,7 +50,7 @@ public:
         std::vector<int32_t> trailColorsArgb,
         std::vector<int32_t> trailVertexCounts);
 
-    void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM);
+    void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians);
     bool Render();
 
     std::string LastError() const;
@@ -57,6 +60,9 @@ public:
 private:
     struct SceneBuffers {
         int64_t sourceRevision = 0;
+        double sceneOriginX = 0.0;
+        double sceneOriginY = 0.0;
+        double sceneOriginZ = 0.0;
         std::vector<double> authoritativePositionsM;
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
@@ -100,6 +106,7 @@ private:
     struct CheapPointVertex {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
         uint32_t colorArgb = 0;
         float sizePx = 1.0f;
     };
@@ -107,6 +114,7 @@ private:
     struct DensityPointVertex {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
         uint32_t colorArgb = 0;
         uint32_t densityWeight = 1;
     };
@@ -114,13 +122,16 @@ private:
     struct TrailVertex {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
         uint32_t colorArgb = 0;
         float alpha = 1.0f;
     };
 
     struct alignas(16) SceneUniformData {
-        std::array<float, 4> centerSpan{};
-        std::array<float, 4> metrics{};
+        std::array<float, 4> centerRelativeAndMetrics{};
+        std::array<float, 4> rightAndSpan{};
+        std::array<float, 4> upAndSpan{};
+        std::array<float, 4> forwardAndDepth{};
         std::array<float, 4> viewport{};
     };
 
@@ -136,6 +147,16 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkDeviceSize sizeBytes = 0;
         VkBufferUsageFlags usage = 0;
+        const char* debugLabel = nullptr;
+    };
+
+    struct GpuImage {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        uint32_t width = 0;
+        uint32_t height = 0;
         const char* debugLabel = nullptr;
     };
 
@@ -189,8 +210,10 @@ private:
     bool CreateSurface(JNIEnv* env, jobject surface);
     bool PickPhysicalDevice();
     bool CreateDevice();
+    bool CreatePipelineCache();
     bool CreateSwapchain(int width, int height);
     bool CreateRenderPass();
+    bool CreateDepthResources();
     bool CreateFramebuffers();
     bool CreateCommandPool();
     bool CreateDescriptorResources();
@@ -199,6 +222,7 @@ private:
     bool AllocateAndRecordCommandBuffers();
     bool CreateSyncObjects();
     void DestroySurfaceResources();
+    void DestroyDepthResources();
     void Cleanup();
     void SetError(const std::string& message);
 
@@ -215,6 +239,7 @@ private:
     void RefreshCompactionVisibleCountsFromReadbackLocked();
 
     void DestroyGpuBuffer(GpuBuffer& buffer);
+    void DestroyGpuImage(GpuImage& image);
     void DestroySceneGpuStreams();
     void DestroyGraphicsPipelines();
     void DestroyComputePipelines();
@@ -233,6 +258,8 @@ private:
     bool UploadBytesInternal(const void* data, size_t sizeBytes, const GpuBuffer& buffer, bool reportErrors);
     bool UploadBytes(const void* data, size_t sizeBytes, GpuBuffer& buffer);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
+    VkFormat PickDepthFormat() const;
+    bool CreateDepthImage(uint32_t width, uint32_t height, VkFormat format, const char* label, GpuImage& image);
     std::string BuildSceneSummaryLocked() const;
     static const char* DrawPathName(DrawPath path);
 
@@ -260,6 +287,8 @@ private:
     double cameraCenterY_ = 0.0;
     double cameraCenterZ_ = 0.0;
     double cameraViewRadiusM_ = 0.0;
+    double cameraYawRadians_ = 0.0;
+    double cameraPitchRadians_ = 0.0;
 
     std::string lastError_;
     std::string backendLabelCache_;
@@ -275,6 +304,7 @@ private:
     VkPhysicalDeviceFeatures enabledFeatures_{};
     VkPhysicalDeviceProperties physicalDeviceProperties_{};
     VkDevice device_ = VK_NULL_HANDLE;
+    VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     uint32_t graphicsQueueFamilyIndex_ = UINT32_MAX;
     uint32_t presentQueueFamilyIndex_ = UINT32_MAX;
     bool graphicsQueueSupportsCompute_ = false;
@@ -289,6 +319,8 @@ private:
     std::vector<VkImageView> swapchainImageViews_;
 
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
+    GpuImage depthImage_;
     std::vector<VkFramebuffer> framebuffers_;
 
     GpuBuffer sceneUniformBuffer_;

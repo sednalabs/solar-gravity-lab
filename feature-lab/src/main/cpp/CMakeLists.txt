@@ -5,6 +5,7 @@ add_library(
     solarlab_vulkan
     SHARED
     SolarLabVulkanBridge.cpp
+    SolarLabStageController.cpp
     SolarLabVulkanRenderer.cpp
 )
 
@@ -14,6 +15,14 @@ target_compile_options(solarlab_vulkan PRIVATE -Wall -Wextra)
 find_library(log-lib log)
 find_library(android-lib android)
 find_library(vulkan-lib vulkan)
+find_library(dl-lib dl)
+
+target_include_directories(
+    solarlab_vulkan
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../engine/ffi/include
+)
 
 target_link_libraries(
     solarlab_vulkan
@@ -21,4 +30,5 @@ target_link_libraries(
     ${log-lib}
     ${android-lib}
     ${vulkan-lib}
+    ${dl-lib}
 )

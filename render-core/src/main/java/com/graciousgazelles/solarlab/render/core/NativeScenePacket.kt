@@ -10,9 +10,15 @@ import kotlin.math.min
  *
  * Authoritative bodies stay unthinned. Tracers are camera-aware and partitioned into deterministic
  * LOD tiers so the native renderer can scale up without having to own first-pass visibility logic.
+ *
+ * Positions are packed relative to a quantized scene origin so the native renderer can keep float
+ * precision stable while the camera pans and orbits across AU-scale scenes.
  */
 data class NativeScenePacket(
     val sourceRevision: Long,
+    val sceneOriginXM: Double,
+    val sceneOriginYM: Double,
+    val sceneOriginZM: Double,
     val authoritativePositionsM: DoubleArray,
     val authoritativeRadiiM: FloatArray,
     val authoritativeColorsArgb: IntArray,
@@ -49,10 +55,11 @@ data class NativeScenePacket(
             policy: ScenePacketBuildPolicy = ScenePacketBuildPolicy(),
             selectedBodyId: String? = null,
         ): NativeScenePacket {
-            val view = cameraState?.let {
+            val safeCameraState = cameraState?.sanitized()
+            val sceneOriginM = safeCameraState?.let(OrbitCameraMath::quantizedSceneOriginM) ?: Vector3d.ZERO
+            val view = safeCameraState?.let {
                 SceneView(
-                    centerM = it.centerM,
-                    viewRadiusM = it.viewRadiusM,
+                    cameraState = it,
                     viewportWidthPx = viewportWidthPx.coerceAtLeast(1),
                     viewportHeightPx = viewportHeightPx.coerceAtLeast(1),
                     policy = policy,
@@ -63,10 +70,10 @@ data class NativeScenePacket(
                 frame.authoritativeBodies
             } else {
                 frame.authoritativeBodies.filter { body ->
-                    view.classify(body.positionM) != null
+                    body.id == selectedBodyId || view.classify(body.positionM) != null
                 }
             }
-            val authoritativePack = packBodies(authoritativeBodies, selectedBodyId)
+            val authoritativePack = packBodies(authoritativeBodies, selectedBodyId, sceneOriginM)
 
             val tracerSelection = if (view == null) {
                 TracerSelection(
@@ -75,12 +82,12 @@ data class NativeScenePacket(
                     far = emptyList(),
                 )
             } else {
-                selectTracerTiers(frame.tracerBodies, view, policy)
+                selectTracerTiers(frame.tracerBodies, view, policy, selectedBodyId)
             }
 
-            val nearPack = packBodies(tracerSelection.near, selectedBodyId)
-            val mediumPack = packBodies(tracerSelection.medium, selectedBodyId)
-            val farPack = packBodies(tracerSelection.far, selectedBodyId)
+            val nearPack = packBodies(tracerSelection.near, selectedBodyId, sceneOriginM)
+            val mediumPack = packBodies(tracerSelection.medium, selectedBodyId, sceneOriginM)
+            val farPack = packBodies(tracerSelection.far, selectedBodyId, sceneOriginM)
 
             val simplifiedTrails = if (view == null) {
                 frame.trails.map { trail ->
@@ -91,10 +98,13 @@ data class NativeScenePacket(
                     simplifyTrail(trail, view, policy)
                 }
             }
-            val trailPack = packTrails(simplifiedTrails, selectedBodyId, policy)
+            val trailPack = packTrails(simplifiedTrails, selectedBodyId, policy, sceneOriginM)
 
             return NativeScenePacket(
                 sourceRevision = frame.sourceRevision,
+                sceneOriginXM = sceneOriginM.x,
+                sceneOriginYM = sceneOriginM.y,
+                sceneOriginZM = sceneOriginM.z,
                 authoritativePositionsM = authoritativePack.positionsM,
                 authoritativeRadiiM = authoritativePack.radiiM,
                 authoritativeColorsArgb = authoritativePack.colorsArgb,
@@ -121,6 +131,7 @@ data class NativeScenePacket(
             tracers: List<RenderBody>,
             view: SceneView,
             policy: ScenePacketBuildPolicy,
+            selectedBodyId: String?,
         ): TracerSelection {
             if (tracers.isEmpty()) {
                 return TracerSelection(emptyList(), emptyList(), emptyList())
@@ -130,12 +141,14 @@ data class NativeScenePacket(
             val medium = ArrayList<ScoredBody>()
             val far = ArrayList<ScoredBody>()
             for (body in tracers) {
-                val tier = view.classify(body.positionM) ?: continue
+                val tier = view.classify(body.positionM)
                 val score = tracerScore(body, view)
-                when (tier) {
-                    TracerLodTier.NEAR -> near += ScoredBody(body, score)
-                    TracerLodTier.MEDIUM -> medium += ScoredBody(body, score)
-                    TracerLodTier.FAR -> far += ScoredBody(body, score)
+                when {
+                    body.id == selectedBodyId -> near += ScoredBody(body, score + 10_000.0)
+                    tier == null -> Unit
+                    tier == TracerLodTier.NEAR -> near += ScoredBody(body, score)
+                    tier == TracerLodTier.MEDIUM -> medium += ScoredBody(body, score)
+                    tier == TracerLodTier.FAR -> far += ScoredBody(body, score)
                 }
             }
 
@@ -147,16 +160,16 @@ data class NativeScenePacket(
         }
 
         private fun tracerScore(body: RenderBody, view: SceneView): Double {
-            val relative = body.positionM - view.centerM
+            val relative = body.positionM - view.frame.centerM
             val distance = max(relative.magnitude(), 1.0)
-            val projected = body.radiusM / view.metersPerPixel
+            val projected = body.radiusM / view.frame.metersPerPixel
             val kindBias = when (body.kind) {
                 RenderBodyKind.COMET -> 3.0
                 RenderBodyKind.PROBE -> 2.0
                 RenderBodyKind.TEST_OBJECT -> 2.5
                 else -> 1.0
             }
-            return projected * kindBias + (view.viewRadiusM / distance)
+            return projected * kindBias + (view.cameraState.viewRadiusM / distance)
         }
 
         private fun downsampleTier(bodies: List<ScoredBody>, budget: Int): List<RenderBody> {
@@ -193,7 +206,7 @@ data class NativeScenePacket(
         ): RenderTrail? {
             if (trail.pointsM.size < 2) return null
             val clipped = trail.pointsM.mapNotNull { point ->
-                val screen = view.toScreen(point)
+                val screen = view.toScreen(point) ?: return@mapNotNull null
                 if (screen.x < -0.35 * view.viewportWidthPx || screen.x > 1.35 * view.viewportWidthPx ||
                     screen.y < -0.35 * view.viewportHeightPx || screen.y > 1.35 * view.viewportHeightPx
                 ) {
@@ -240,6 +253,7 @@ data class NativeScenePacket(
         private fun packBodies(
             bodies: List<RenderBody>,
             selectedBodyId: String?,
+            sceneOriginM: Vector3d,
         ): PackedBodies {
             val positions = DoubleArray(bodies.size * 3)
             val radii = FloatArray(bodies.size)
@@ -247,9 +261,9 @@ data class NativeScenePacket(
             val kinds = IntArray(bodies.size)
             bodies.forEachIndexed { index, body ->
                 val offset = index * 3
-                positions[offset] = body.positionM.x
-                positions[offset + 1] = body.positionM.y
-                positions[offset + 2] = body.positionM.z
+                positions[offset] = body.positionM.x - sceneOriginM.x
+                positions[offset + 1] = body.positionM.y - sceneOriginM.y
+                positions[offset + 2] = body.positionM.z - sceneOriginM.z
                 val isSelected = body.id == selectedBodyId
                 radii[index] = (body.radiusM * if (isSelected) selectedRadiusBoost(body.kind) else 1.0).toFloat()
                 colors[index] = if (isSelected) brightenArgb(body.colorArgb) else body.colorArgb
@@ -262,6 +276,7 @@ data class NativeScenePacket(
             trails: List<RenderTrail>,
             selectedBodyId: String?,
             policy: ScenePacketBuildPolicy,
+            sceneOriginM: Vector3d,
         ): PackedTrails {
             val trailVertexCount = trails.sumOf { it.pointsM.size }
             val trailPositions = DoubleArray(trailVertexCount * 3)
@@ -285,9 +300,9 @@ data class NativeScenePacket(
                 )
                 trailVertexCounts[trailIndex] = trail.pointsM.size
                 trail.pointsM.forEach { point ->
-                    trailPositions[trailOffset * 3] = point.x
-                    trailPositions[trailOffset * 3 + 1] = point.y
-                    trailPositions[trailOffset * 3 + 2] = point.z
+                    trailPositions[trailOffset * 3] = point.x - sceneOriginM.x
+                    trailPositions[trailOffset * 3 + 1] = point.y - sceneOriginM.y
+                    trailPositions[trailOffset * 3 + 2] = point.z - sceneOriginM.z
                     trailColors[trailOffset] = trailColor
                     trailOffset += 1
                 }
@@ -361,22 +376,21 @@ private data class ScreenPoint3(
 )
 
 private data class SceneView(
-    val centerM: Vector3d,
-    val viewRadiusM: Double,
+    val cameraState: CameraState,
     val viewportWidthPx: Int,
     val viewportHeightPx: Int,
     val policy: ScenePacketBuildPolicy = ScenePacketBuildPolicy(),
 ) {
-    private val minDimensionPx: Double = min(viewportWidthPx, viewportHeightPx).coerceAtLeast(1).toDouble()
-    private val halfSpanX: Double = viewRadiusM * (viewportWidthPx.toDouble() / minDimensionPx)
-    private val halfSpanY: Double = viewRadiusM * (viewportHeightPx.toDouble() / minDimensionPx)
-    val metersPerPixel: Double = (2.0 * viewRadiusM) / minDimensionPx
+    val frame: OrbitCameraFrame = OrbitCameraMath.frame(cameraState, viewportWidthPx, viewportHeightPx)
 
     fun classify(positionM: Vector3d): TracerLodTier? {
-        val relative = positionM - centerM
+        val delta = positionM - frame.centerM
         val normalized = max(
-            abs(relative.x) / max(halfSpanX, 1.0),
-            abs(relative.y) / max(halfSpanY, 1.0),
+            max(
+                abs(delta.dot(frame.rightM)) / max(frame.halfSpanXM, 1.0),
+                abs(delta.dot(frame.upM)) / max(frame.halfSpanYM, 1.0),
+            ),
+            abs(delta.dot(frame.forwardM)) / max(frame.halfDepthM, 1.0),
         )
         return when {
             normalized <= policy.nearTracerExtentFactor -> TracerLodTier.NEAR
@@ -386,13 +400,12 @@ private data class SceneView(
         }
     }
 
-    fun toScreen(positionM: Vector3d): ScreenPoint {
-        val relative = positionM - centerM
-        val clipX = relative.x / max(halfSpanX, 1.0)
-        val clipY = relative.y / max(halfSpanY, 1.0)
+    fun toScreen(positionM: Vector3d): ScreenPoint? {
+        val projected = OrbitCameraMath.projectToViewport(positionM, frame, viewportWidthPx, viewportHeightPx)
+            ?: return null
         return ScreenPoint(
-            x = (clipX * 0.5 + 0.5) * viewportWidthPx,
-            y = (1.0 - (clipY * 0.5 + 0.5)) * viewportHeightPx,
+            x = projected.xPx,
+            y = projected.yPx,
         )
     }
 }

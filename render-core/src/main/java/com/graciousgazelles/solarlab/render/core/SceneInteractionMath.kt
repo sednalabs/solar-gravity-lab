@@ -1,8 +1,8 @@
 package com.graciousgazelles.solarlab.render.core
 
 import com.graciousgazelles.solarlab.core.math.Vector3d
-import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.sqrt
 
 object SceneInteractionMath {
     const val DEFAULT_BODY_RADIUS_EXAGGERATION: Double = 6_000.0
@@ -38,11 +38,11 @@ object SceneInteractionMath {
 
             val dx = screenXPx - projected.centerXPx
             val dy = screenYPx - projected.centerYPx
-            val distancePx = kotlin.math.sqrt((dx * dx) + (dy * dy).toDouble())
+            val distancePx = sqrt((dx * dx) + (dy * dy).toDouble())
             val allowedRadius = max(DEFAULT_MIN_PICK_RADIUS_PX, projected.visualRadiusPx + DEFAULT_SELECTION_PADDING_PX)
             if (distancePx > allowedRadius) continue
 
-            val score = distancePx / max(1f, projected.visualRadiusPx)
+            val score = (distancePx / max(1f, projected.visualRadiusPx)) + projected.depth01 * 0.12
             if (score < bestScore) {
                 bestScore = score
                 bestId = body.id
@@ -59,21 +59,37 @@ object SceneInteractionMath {
         viewportWidthPx: Int,
         viewportHeightPx: Int,
         worldZ: Double,
-    ): Vector3d {
-        val width = viewportWidthPx.coerceAtLeast(1)
-        val height = viewportHeightPx.coerceAtLeast(1)
-        val minDimension = minOf(width, height).coerceAtLeast(1).toDouble()
-        val halfSpanX = cameraState.viewRadiusM * (width.toDouble() / minDimension)
-        val halfSpanY = cameraState.viewRadiusM * (height.toDouble() / minDimension)
+    ): Vector3d = screenToWorldOnPlane(
+        screenXPx = screenXPx,
+        screenYPx = screenYPx,
+        cameraState = cameraState,
+        viewportWidthPx = viewportWidthPx,
+        viewportHeightPx = viewportHeightPx,
+        planePointM = Vector3d(cameraState.centerM.x, cameraState.centerM.y, worldZ),
+        planeNormalM = Vector3d(0.0, 0.0, 1.0),
+    ) ?: Vector3d(
+        x = cameraState.centerM.x,
+        y = cameraState.centerM.y,
+        z = worldZ,
+    )
 
-        val normalizedX = ((screenXPx / width.toFloat()) * 2.0) - 1.0
-        val normalizedY = 1.0 - ((screenYPx / height.toFloat()) * 2.0)
-
-        return Vector3d(
-            x = cameraState.centerM.x + (normalizedX * halfSpanX),
-            y = cameraState.centerM.y + (normalizedY * halfSpanY),
-            z = worldZ,
+    fun screenToWorldOnPlane(
+        screenXPx: Float,
+        screenYPx: Float,
+        cameraState: CameraState,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+        planePointM: Vector3d,
+        planeNormalM: Vector3d,
+    ): Vector3d? {
+        val ray = OrbitCameraMath.viewportRay(
+            screenXPx = screenXPx,
+            screenYPx = screenYPx,
+            cameraState = cameraState,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
         )
+        return OrbitCameraMath.intersectRayWithPlane(ray, planePointM, planeNormalM)
     }
 
     private fun projectBodyToScreen(
@@ -83,22 +99,15 @@ object SceneInteractionMath {
         viewportHeightPx: Int,
         bodyRadiusExaggeration: Double,
     ): ProjectedBody? {
-        val width = viewportWidthPx.coerceAtLeast(1)
-        val height = viewportHeightPx.coerceAtLeast(1)
-        val minDimension = minOf(width, height).coerceAtLeast(1).toDouble()
-        val halfSpanX = cameraState.viewRadiusM * (width.toDouble() / minDimension)
-        val halfSpanY = cameraState.viewRadiusM * (height.toDouble() / minDimension)
-        if (halfSpanX == 0.0 || halfSpanY == 0.0) return null
+        val frame = OrbitCameraMath.frame(cameraState, viewportWidthPx, viewportHeightPx)
+        val projected = OrbitCameraMath.projectToViewport(
+            positionM = body.positionM,
+            frame = frame,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+        ) ?: return null
 
-        val relative = body.positionM - cameraState.centerM
-        val clipX = relative.x / halfSpanX
-        val clipY = relative.y / halfSpanY
-        if (abs(clipX) > 1.25 || abs(clipY) > 1.25) return null
-
-        val centerXPx = (((clipX + 1.0) * 0.5) * width).toFloat()
-        val centerYPx = (((1.0 - (clipY + 1.0) * 0.5)) * height).toFloat()
-        val metersPerPixel = (2.0 * cameraState.viewRadiusM) / minDimension
-        val baseRadiusPx = body.radiusM / metersPerPixel
+        val baseRadiusPx = body.radiusM / frame.metersPerPixel
         val minimumPx = when {
             body.isMassive -> 3.0
             body.kind == RenderBodyKind.DWARF_PLANET -> 2.5
@@ -107,9 +116,10 @@ object SceneInteractionMath {
         val visualRadiusPx = max(minimumPx, baseRadiusPx * bodyRadiusExaggeration).coerceIn(1.5, 96.0).toFloat()
 
         return ProjectedBody(
-            centerXPx = centerXPx,
-            centerYPx = centerYPx,
+            centerXPx = projected.xPx.toFloat(),
+            centerYPx = projected.yPx.toFloat(),
             visualRadiusPx = visualRadiusPx,
+            depth01 = projected.depth01,
         )
     }
 
@@ -117,5 +127,6 @@ object SceneInteractionMath {
         val centerXPx: Float,
         val centerYPx: Float,
         val visualRadiusPx: Float,
+        val depth01: Double,
     )
 }

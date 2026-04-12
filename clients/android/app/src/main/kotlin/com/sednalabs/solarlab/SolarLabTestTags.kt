@@ -18,6 +18,12 @@ object SolarLabTestTags {
     const val DETAIL_LINE = "shell.detail"
     const val SESSION_HANDLE = "shell.session_handle"
     const val RENDER_PACKET_SUMMARY = "shell.render_packet_summary"
+    const val STAGE_FIRST_MODE_BUTTON = "stage_first.mode_button"
+    const val STAGE_FIRST_SEARCH_BUTTON = "stage_first.search_button"
+    const val STAGE_FIRST_DEBUG_BUTTON = "stage_first.debug_button"
+    const val STAGE_FIRST_ADD_OBJECT_BUTTON = "stage_first.add_object_button"
+    const val STAGE_FIRST_RUNTIME_SANDBOX_BUTTON = "stage_first.runtime.sandbox_button"
+    const val STAGE_FIRST_RUNTIME_REFRESH_BUTTON = "stage_first.runtime.refresh_button"
 
     const val FOCUS_CATALOG_SEARCH_FIELD = "shell.focus_catalog_search_field"
     const val FOCUS_BODY_FIELD = "shell.focus_body_field"
