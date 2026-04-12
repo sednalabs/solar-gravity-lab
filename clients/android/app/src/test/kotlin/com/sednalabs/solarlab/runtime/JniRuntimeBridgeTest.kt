@@ -50,15 +50,15 @@ class JniRuntimeBridgeTest {
 
         assertTrue(
             "Expected startup to seed canonical world",
-            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM },
+            transport.appliedCommands.any { hasCommandKind(it, NativeRuntimeCommandKind.SEED_CANONICAL_SOLAR_SYSTEM) },
         )
         assertTrue(
             "Expected startup to resume playback for visible motion",
-            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_RESUME_PLAYBACK },
+            transport.appliedCommands.any { hasCommandKind(it, NativeRuntimeCommandKind.RESUME_PLAYBACK) },
         )
         assertTrue(
             "Expected startup to set visible playback rate",
-            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SET_PLAYBACK_RATE },
+            transport.appliedCommands.any { hasCommandKind(it, NativeRuntimeCommandKind.SET_PLAYBACK_RATE) },
         )
         assertTrue(
             signals
@@ -97,15 +97,15 @@ class JniRuntimeBridgeTest {
 
         assertFalse(
             "Seed should not be issued when snapshot already has bodies",
-            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM },
+            transport.appliedCommands.any { hasCommandKind(it, NativeRuntimeCommandKind.SEED_CANONICAL_SOLAR_SYSTEM) },
         )
         assertTrue(
             "Expected startup to resume playback for visible motion",
-            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_RESUME_PLAYBACK },
+            transport.appliedCommands.any { hasCommandKind(it, NativeRuntimeCommandKind.RESUME_PLAYBACK) },
         )
         assertTrue(
             "Expected startup to set visible playback rate",
-            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SET_PLAYBACK_RATE },
+            transport.appliedCommands.any { hasCommandKind(it, NativeRuntimeCommandKind.SET_PLAYBACK_RATE) },
         )
         assertEquals(listOf(42L, 42L), transport.refreshedHandles)
         assertEquals(2, renderHostAdapter.refreshCount)
@@ -170,9 +170,7 @@ class JniRuntimeBridgeTest {
         withTimeout(2_500) {
             while (
                 transport.refreshedHandles.size < 3 ||
-                transport.appliedCommands.none { command ->
-                    command.kind == NATIVE_COMMAND_ADVANCE_EPOCH && command.deltaSeconds > 0.0
-                }
+                transport.appliedCommands.none { isProgressingAdvanceEpochCommand(it) }
             ) {
                 delay(25)
             }
@@ -187,9 +185,7 @@ class JniRuntimeBridgeTest {
         )
         assertTrue(
             "Expected live playback to keep emitting advance-epoch commands",
-            transport.appliedCommands.any { command ->
-                command.kind == NATIVE_COMMAND_ADVANCE_EPOCH && command.deltaSeconds > 0.0
-            },
+            transport.appliedCommands.any { isProgressingAdvanceEpochCommand(it) },
         )
     }
 
@@ -297,10 +293,19 @@ class JniRuntimeBridgeTest {
     }
 
     private companion object {
-        const val NATIVE_COMMAND_ADVANCE_EPOCH = 0
-        const val NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM = 11
-        const val NATIVE_COMMAND_RESUME_PLAYBACK = 2
-        const val NATIVE_COMMAND_SET_PLAYBACK_RATE = 3
+        fun hasCommandKind(command: NativeRuntimeCommandPayload, kind: NativeRuntimeCommandKind): Boolean =
+            command.kind == kind.code
+
+        fun isProgressingAdvanceEpochCommand(command: NativeRuntimeCommandPayload): Boolean =
+            command.kind == NativeRuntimeCommandKind.ADVANCE_EPOCH.code && command.deltaSeconds > 0.0
+
+        enum class NativeRuntimeCommandKind(val code: Int) {
+            ADVANCE_EPOCH(0),
+            SEED_CANONICAL_SOLAR_SYSTEM(11),
+            RESUME_PLAYBACK(2),
+            SET_PLAYBACK_RATE(3),
+        }
+
         const val STARTUP_EXPECTED_BODY_COUNT = 365
 
         fun snapshotSummary(
