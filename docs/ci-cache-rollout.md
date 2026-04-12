@@ -254,7 +254,8 @@ Behavior:
 
 1. if the variable is unset, the workflows keep using the current GitHub-hosted default:
    - `"ubuntu-24.04"`
-2. if the variable is set, the workflows use that `runs-on` JSON value directly
+2. if the variable is set, non-PR runs use that `runs-on` JSON value directly
+3. pull requests still stay on `"ubuntu-24.04"` even if the variable is set, so untrusted PR code is not redirected onto a self-hosted runner by mistake
 
 Example values:
 
