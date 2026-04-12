@@ -13,6 +13,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
+
 class JniRuntimeBridgeTest {
     @Test
     fun connect_seedsDefaultSolarSystem_whenInitialSnapshotIsEmpty() = runBlocking {
@@ -143,7 +145,7 @@ class JniRuntimeBridgeTest {
     }
 
     @Test
-    fun connect_autoAdvancesEpoch_whenPlaybackIsLive() = runBlocking {
+    fun connect_keepsRefreshing_whenPlaybackIsLive() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
                 listOf(
@@ -163,7 +165,7 @@ class JniRuntimeBridgeTest {
         }
 
         withTimeout(2_500) {
-            while (transport.appliedCommands.none { it.kind == 0 }) {
+            while (transport.refreshedHandles.size < 3) {
                 delay(25)
             }
         }
@@ -172,8 +174,8 @@ class JniRuntimeBridgeTest {
         scope.cancel()
 
         assertTrue(
-            "Expected periodic live playback to issue advance-epoch command",
-            transport.appliedCommands.any { it.kind == 0 && it.deltaSeconds > 0.0 },
+            "Expected live playback to keep issuing periodic refreshes",
+            transport.refreshedHandles.size >= 3,
         )
     }
 
@@ -228,9 +230,9 @@ class JniRuntimeBridgeTest {
         private val runtimeInfoCpuBackend: Int = 1,
         private val runtimeInfoGpuBackend: Int = 0,
     ) : NativeRuntimeTransport {
-        val runtimeInfoHandles = mutableListOf<Long>()
-        val refreshedHandles = mutableListOf<Long>()
-        val appliedCommands = mutableListOf<NativeRuntimeCommandPayload>()
+        val runtimeInfoHandles = CopyOnWriteArrayList<Long>()
+        val refreshedHandles = CopyOnWriteArrayList<Long>()
+        val appliedCommands = CopyOnWriteArrayList<NativeRuntimeCommandPayload>()
 
         override fun ensureLibraryLoaded(): NativeLibraryLoadOutcome = NativeLibraryLoadOutcome.Success
 
