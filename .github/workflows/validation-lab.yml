@@ -99,6 +99,13 @@ env:
   STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
   ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
   ANDROID_AVD_CACHE_VERSION: v3
+  ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
+  ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
+  ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
+  ANDROID_SYSTEM_IMAGE_PACKAGE: "system-images;android-35;google_apis;x86_64"
+  ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
+  ANDROID_NDK_VERSION: "27.3.13750724"
+  ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
   SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
   SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
   SCCACHE_REGION: auto
@@ -653,41 +660,22 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - uses: android-actions/setup-android@v4
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_unit_sdk_install
         shell: bash
         run: |
           set -euo pipefail
-          phase_start="$(date +%s)"
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          required_packages=(
-            "platform-tools"
-            "platforms;android-36"
-            "build-tools;36.0.0"
-            "cmake;3.22.1"
-            "ndk;27.2.12479018"
-          )
-          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
-          missing_packages=()
-          for pkg in "${required_packages[@]}"; do
-            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
-              echo "SDK package already installed: $pkg"
-            else
-              missing_packages+=("$pkg")
-            fi
-          done
-          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
-            echo "Installing missing SDK packages: ${missing_packages[*]}"
-            sdkmanager --install "${missing_packages[@]}"
-          else
-            echo "All required SDK packages already installed."
-          fi
-          phase_end="$(date +%s)"
-          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -808,41 +796,22 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - uses: android-actions/setup-android@v4
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_lint_sdk_install
         shell: bash
         run: |
           set -euo pipefail
-          phase_start="$(date +%s)"
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          required_packages=(
-            "platform-tools"
-            "platforms;android-36"
-            "build-tools;36.0.0"
-            "cmake;3.22.1"
-            "ndk;27.2.12479018"
-          )
-          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
-          missing_packages=()
-          for pkg in "${required_packages[@]}"; do
-            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
-              echo "SDK package already installed: $pkg"
-            else
-              missing_packages+=("$pkg")
-            fi
-          done
-          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
-            echo "Installing missing SDK packages: ${missing_packages[*]}"
-            sdkmanager --install "${missing_packages[@]}"
-          else
-            echo "All required SDK packages already installed."
-          fi
-          phase_end="$(date +%s)"
-          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -957,7 +926,10 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - uses: android-actions/setup-android@v4
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Enable KVM for Android emulator
         shell: bash
@@ -999,36 +971,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          phase_start="$(date +%s)"
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          required_packages=(
-            "emulator"
-            "platform-tools"
-            "platforms;android-36"
-            "build-tools;36.0.0"
-            "system-images;android-35;google_apis;x86_64"
-            "cmake;3.22.1"
-            "ndk;27.2.12479018"
-          )
-          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
-          missing_packages=()
-          for pkg in "${required_packages[@]}"; do
-            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
-              echo "SDK package already installed: $pkg"
-            else
-              missing_packages+=("$pkg")
-            fi
-          done
-          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
-            echo "Installing missing SDK packages: ${missing_packages[*]}"
-            sdkmanager --install "${missing_packages[@]}"
-          else
-            echo "All required SDK packages already installed."
-          fi
-          phase_end="$(date +%s)"
-          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "emulator" \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_SYSTEM_IMAGE_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
 
       - name: Install Rust Android toolchain
         id: rust_android_toolchain
