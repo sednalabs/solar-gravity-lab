@@ -239,6 +239,32 @@ Interpretation:
    - reduce artifact duplication further, or
    - move heavy Android lanes onto a prewarmed self-hosted runner when hosted-runner bootstrap latency becomes the dominant cost
 
+### Self-hosted adoption seam
+
+The heavy Android jobs are now ready for a controlled self-hosted migration without another workflow refactor.
+
+- `validation-lab` Android shell
+- `prerelease-apk` build / launch-smoke lane
+
+Both jobs now read the optional repository variable:
+
+- `SGL_ANDROID_HEAVY_RUNS_ON_JSON`
+
+Behavior:
+
+1. if the variable is unset, the workflows keep using the current GitHub-hosted default:
+   - `"ubuntu-24.04"`
+2. if the variable is set, the workflows use that `runs-on` JSON value directly
+
+Example values:
+
+- current hosted default:
+  - `"ubuntu-24.04"`
+- dedicated self-hosted Linux x64 runner:
+  - `["self-hosted","linux","x64","sgl-android"]`
+
+This keeps the current validated hosted-runner behavior unchanged while giving the next self-hosted runner evaluation a small, reversible control surface.
+
 ## Cloudflare and R2 layout
 
 - hostname: `cache.sednalabs.io`
