@@ -171,7 +171,7 @@ class JniRuntimeBridgeTest {
             while (
                 transport.refreshedHandles.size < 3 ||
                 transport.appliedCommands.none { command ->
-                    command.kind == 0 && command.deltaSeconds > 0.0
+                    command.kind == NATIVE_COMMAND_ADVANCE_EPOCH && command.deltaSeconds > 0.0
                 }
             ) {
                 delay(25)
@@ -188,7 +188,7 @@ class JniRuntimeBridgeTest {
         assertTrue(
             "Expected live playback to keep emitting advance-epoch commands",
             transport.appliedCommands.any { command ->
-                command.kind == 0 && command.deltaSeconds > 0.0
+                command.kind == NATIVE_COMMAND_ADVANCE_EPOCH && command.deltaSeconds > 0.0
             },
         )
     }
@@ -297,6 +297,7 @@ class JniRuntimeBridgeTest {
     }
 
     private companion object {
+        const val NATIVE_COMMAND_ADVANCE_EPOCH = 0
         const val STARTUP_EXPECTED_BODY_COUNT = 365
 
         fun snapshotSummary(

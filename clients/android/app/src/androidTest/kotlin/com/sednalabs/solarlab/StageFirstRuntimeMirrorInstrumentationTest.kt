@@ -2,8 +2,9 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
@@ -24,7 +25,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNode()
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
             }.isSuccess
         }
 
@@ -44,13 +45,16 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         }
         composeRule.waitUntil(timeoutMillis = 20_000) {
             runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNode()
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).assertIsDisplayed()
             }.isSuccess
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNode()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNode()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertDoesNotExist()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertIsDisplayed()
+        assertTrue(
+            "Runtime mirror should replace the mode button with the sandbox return button",
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isEmpty(),
+        )
         assertTrue(
             "Runtime mirror surface should be mounted after switching modes",
             composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
