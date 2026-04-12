@@ -11,7 +11,9 @@
       "proof_refs": [
         "validation-lab parity coverage for drift and scenario checks",
         "runtime canonical-major-seed moon/pluto epoch propagation assertions",
-        "runtime major-body telemetry thresholds for COM drift, COM velocity drift, and fine-baseline angular-momentum agreement"
+        "runtime major-body telemetry thresholds for COM drift, COM velocity drift, and fine-baseline angular-momentum agreement",
+        "solarlab-conformance major-body-orbit-telemetry",
+        "solarlab-conformance added-body-repeatability"
       ],
       "notes": "Seed all canonical checks to confirm authoritative authority and accuracy are not regressed."
     },
@@ -104,6 +106,7 @@
       "owner_item": "3490",
       "proof_refs": [
         "playback substep budget policy assertions",
+        "solarlab-conformance collision-playback-cap",
         "thermal and tracer workload scheduler clamps"
       ],
       "notes": "High-speed playback, backlog control, and thermal-pressure clamps must stay scientifically conservative instead of drifting into visually smooth but physically misleading scheduling."
