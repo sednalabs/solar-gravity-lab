@@ -23,6 +23,10 @@ import kotlinx.coroutines.launch
  * depending on the build variant / build flag.
  */
 class MainActivity : ComponentActivity() {
+    private companion object {
+        const val STATE_STAGE_FIRST_EXPERIENCE_MODE = "stage_first_experience_mode"
+    }
+
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
     private val stageFirstExperienceModeState = mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX)
     private val stageFirstRuntimeMirrorMountedState = mutableStateOf(false)
@@ -42,6 +46,11 @@ class MainActivity : ComponentActivity() {
     internal fun isStageFirstRuntimeMirrorMountedForTesting(): Boolean = stageFirstRuntimeMirrorMountedState.value
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        stageFirstExperienceModeState.value = savedInstanceState
+            ?.getString(STATE_STAGE_FIRST_EXPERIENCE_MODE)
+            ?.let(StageFirstExperienceMode::valueOf)
+            ?: StageFirstExperienceMode.LOCAL_SANDBOX
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -69,6 +78,11 @@ class MainActivity : ComponentActivity() {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_STAGE_FIRST_EXPERIENCE_MODE, stageFirstExperienceModeState.value.name)
+        super.onSaveInstanceState(outState)
     }
 }
 
