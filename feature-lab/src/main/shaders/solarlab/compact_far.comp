@@ -49,6 +49,8 @@ layout(push_constant) uniform PushConstants {
     uint reserved2;
 } uPush;
 
+const uint kFarTileMaxCapacity = 8u;
+
 bool isInsideExtendedView(vec2 positionM) {
     vec2 delta = abs(positionM - uScene.centerSpan.xy);
     vec2 span = max(uScene.centerSpan.zw, vec2(1e-6)) * 1.08;
@@ -97,10 +99,11 @@ void main() {
 
     candidate.densityWeight = max(candidate.densityWeight, stride);
 
-    uint outputIndex = atomicAdd(uDraw.vertexCount, 1u);
+    uint outputIndex = tileIndex * kFarTileMaxCapacity + slot;
     uOutput.dst[outputIndex] = DensityPointVertex(
         candidate.positionM,
         candidate.colorArgb,
         candidate.densityWeight
     );
+    atomicAdd(uDraw.vertexCount, 1u);
 }

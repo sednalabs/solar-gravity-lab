@@ -29,6 +29,13 @@ vec2 worldToClip(vec2 worldPositionM) {
 }
 
 void main() {
+    if (inDensityWeight == 0u) {
+        gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+        gl_PointSize = 1.0;
+        vColor = vec4(0.0);
+        return;
+    }
+
     gl_Position = vec4(worldToClip(inPositionM), 0.0, 1.0);
     float weight = float(max(inDensityWeight, 1u));
     gl_PointSize = clamp(weight, 1.0, max(uScene.metrics.z, 1.0));
