@@ -142,6 +142,7 @@ fn scenario_registry() -> Vec<ScenarioDefinition> {
 fn run_major_body_orbit_telemetry() -> ScenarioReport {
     let metrics = compute_major_body_telemetry(900.0, 32);
 
+    const RELATIVE_ENERGY_DRIFT_MAX: f64 = 1.0e-6;
     const RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX: f64 = 1.0e-6;
     const BARYCENTER_DRIFT_M_MAX: f64 = 50.0;
     const BARYCENTER_VELOCITY_DRIFT_MPS_MAX: f64 = 1.0e-3;
@@ -150,7 +151,8 @@ fn run_major_body_orbit_telemetry() -> ScenarioReport {
     const BARYCENTER_FINE_BASELINE_VELOCITY_ERROR_MPS_MAX: f64 = 1.0e-3;
     const MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX: f64 = 1.0e-3;
 
-    let passed = metrics.relative_angular_momentum_drift <= RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX
+    let passed = metrics.relative_energy_drift <= RELATIVE_ENERGY_DRIFT_MAX
+        && metrics.relative_angular_momentum_drift <= RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX
         && metrics.barycenter_drift_m <= BARYCENTER_DRIFT_M_MAX
         && metrics.barycenter_velocity_drift_mps <= BARYCENTER_VELOCITY_DRIFT_MPS_MAX
         && metrics.angular_momentum_fine_baseline_error_ratio
@@ -181,6 +183,7 @@ fn run_major_body_orbit_telemetry() -> ScenarioReport {
             "moon_earth_fine_baseline_error_ratio": metrics.moon_earth_fine_baseline_error_ratio,
         }),
         thresholds: json!({
+            "relative_energy_drift_max": RELATIVE_ENERGY_DRIFT_MAX,
             "relative_angular_momentum_drift_max": RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX,
             "barycenter_drift_m_max": BARYCENTER_DRIFT_M_MAX,
             "barycenter_velocity_drift_mps_max": BARYCENTER_VELOCITY_DRIFT_MPS_MAX,
@@ -325,13 +328,15 @@ fn run_arm64_kernel_equivalence() -> ScenarioReport {
 fn run_physics_accuracy_telemetry() -> ScenarioReport {
     const STEP_SECONDS: f64 = 3_600.0;
     const STEPS: usize = 6;
+    const RELATIVE_ENERGY_DRIFT_MAX: f64 = 1.0e-6;
     const RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX: f64 = 1.0e-6;
     const BARYCENTER_DRIFT_M_MAX: f64 = 50.0;
     const BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX: f64 = 10.0;
     const MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX: f64 = 1.0e-3;
 
     let metrics = compute_major_body_telemetry(STEP_SECONDS, STEPS);
-    let passed = metrics.relative_angular_momentum_drift <= RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX
+    let passed = metrics.relative_energy_drift <= RELATIVE_ENERGY_DRIFT_MAX
+        && metrics.relative_angular_momentum_drift <= RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX
         && metrics.barycenter_drift_m <= BARYCENTER_DRIFT_M_MAX
         && metrics.barycenter_fine_baseline_distance_error_m
             <= BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX
@@ -365,6 +370,7 @@ fn run_physics_accuracy_telemetry() -> ScenarioReport {
             "moon_earth_distance_fine_baseline_error_ratio": metrics.moon_earth_fine_baseline_error_ratio,
         }),
         thresholds: json!({
+            "relative_energy_drift_max": RELATIVE_ENERGY_DRIFT_MAX,
             "relative_angular_momentum_drift_max": RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX,
             "barycenter_drift_m_max": BARYCENTER_DRIFT_M_MAX,
             "barycenter_fine_baseline_distance_error_m_max": BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX,
@@ -795,7 +801,7 @@ fn body_velocity_delta(first: &WorldSnapshot, second: &WorldSnapshot, body_id: &
 
 fn drift(initial: f64, final_value: f64) -> f64 {
     if initial.abs() <= f64::EPSILON {
-        0.0
+        final_value.abs()
     } else {
         (final_value - initial).abs() / initial.abs()
     }
@@ -858,7 +864,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        report_exit_code, run_report, scenario_ids, ConformanceReport, ConformanceSummary,
+        drift, report_exit_code, run_report, scenario_ids, ConformanceReport, ConformanceSummary,
         ScenarioReport,
     };
 
@@ -875,6 +881,12 @@ mod tests {
                 "host-relative-playback-policy",
             ]
         );
+    }
+
+    #[test]
+    fn drift_uses_absolute_error_when_baseline_is_zero() {
+        assert_eq!(drift(0.0, 0.0), 0.0);
+        assert_eq!(drift(0.0, 2.5), 2.5);
     }
 
     #[test]
