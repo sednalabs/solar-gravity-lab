@@ -818,6 +818,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
 
     const SimplificationPolicy policy = PolicyForCamera(cameraViewRadiusM_, runtimeProcessingModeCode_);
     const bool cameraLocked = runtimeObserverModeCode_ != kObserverModeFree;
+    inferredBodyKinds_.clear();
     if (cameraLocked) {
         InitializeFreeCameraFromRuntimePacketLocked(
             packetResult.info.camera.frame_origin_m.x,
