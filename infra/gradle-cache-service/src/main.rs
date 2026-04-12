@@ -1,6 +1,7 @@
 use std::env;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use aws_config::BehaviorVersion;
@@ -24,6 +25,7 @@ use tracing::{error, info, warn};
 struct AppState {
     cfg: Arc<Config>,
     mirror_tx: Option<mpsc::Sender<MirrorRequest>>,
+    stats: Arc<CacheStats>,
 }
 
 #[derive(Clone)]
@@ -50,6 +52,78 @@ struct MirrorRequest {
     bytes: Bytes,
 }
 
+#[derive(Default)]
+struct CacheStats {
+    auth_failures: AtomicU64,
+    puts: AtomicU64,
+    get_local_hits: AtomicU64,
+    get_r2_hits: AtomicU64,
+    head_local_hits: AtomicU64,
+    head_r2_hits: AtomicU64,
+    misses: AtomicU64,
+    mirror_enqueued: AtomicU64,
+    mirror_successes: AtomicU64,
+    mirror_enqueue_failures: AtomicU64,
+    mirror_put_failures: AtomicU64,
+    r2_read_errors: AtomicU64,
+    local_read_errors: AtomicU64,
+    local_write_errors: AtomicU64,
+}
+
+enum CacheReadSource {
+    Local,
+    R2,
+}
+
+impl CacheStats {
+    fn record_hit(&self, head_only: bool, source: CacheReadSource) {
+        let counter = match (head_only, source) {
+            (false, CacheReadSource::Local) => &self.get_local_hits,
+            (false, CacheReadSource::R2) => &self.get_r2_hits,
+            (true, CacheReadSource::Local) => &self.head_local_hits,
+            (true, CacheReadSource::R2) => &self.head_r2_hits,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn render(&self, r2_enabled: bool) -> String {
+        format!(
+            concat!(
+                "r2_enabled {}\n",
+                "auth_failures {}\n",
+                "puts {}\n",
+                "get_local_hits {}\n",
+                "get_r2_hits {}\n",
+                "head_local_hits {}\n",
+                "head_r2_hits {}\n",
+                "misses {}\n",
+                "mirror_enqueued {}\n",
+                "mirror_successes {}\n",
+                "mirror_enqueue_failures {}\n",
+                "mirror_put_failures {}\n",
+                "r2_read_errors {}\n",
+                "local_read_errors {}\n",
+                "local_write_errors {}\n"
+            ),
+            if r2_enabled { 1 } else { 0 },
+            self.auth_failures.load(Ordering::Relaxed),
+            self.puts.load(Ordering::Relaxed),
+            self.get_local_hits.load(Ordering::Relaxed),
+            self.get_r2_hits.load(Ordering::Relaxed),
+            self.head_local_hits.load(Ordering::Relaxed),
+            self.head_r2_hits.load(Ordering::Relaxed),
+            self.misses.load(Ordering::Relaxed),
+            self.mirror_enqueued.load(Ordering::Relaxed),
+            self.mirror_successes.load(Ordering::Relaxed),
+            self.mirror_enqueue_failures.load(Ordering::Relaxed),
+            self.mirror_put_failures.load(Ordering::Relaxed),
+            self.r2_read_errors.load(Ordering::Relaxed),
+            self.local_read_errors.load(Ordering::Relaxed),
+            self.local_write_errors.load(Ordering::Relaxed),
+        )
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -58,14 +132,20 @@ async fn main() {
         )
         .init();
 
-    let cfg = Arc::new(load_config().await.expect("failed to load cache service config"));
+    let cfg = Arc::new(
+        load_config()
+            .await
+            .expect("failed to load cache service config"),
+    );
     tokio::fs::create_dir_all(&cfg.cache_root)
         .await
         .expect("failed to create cache root");
 
+    let stats = Arc::new(CacheStats::default());
+
     let mirror_tx = if let Some(r2) = cfg.r2.clone() {
         let (tx, rx) = mpsc::channel::<MirrorRequest>(64);
-        tokio::spawn(mirror_worker(r2, rx));
+        tokio::spawn(mirror_worker(r2, rx, stats.clone()));
         Some(tx)
     } else {
         None
@@ -74,11 +154,18 @@ async fn main() {
     let state = AppState {
         cfg: cfg.clone(),
         mirror_tx,
+        stats,
     };
 
     let app = Router::new()
         .route("/healthz", get(healthz))
-        .route("/cache/{*key}", get(get_cache_entry).head(head_cache_entry).put(put_cache_entry))
+        .route("/statsz", get(statsz))
+        .route(
+            "/cache/{*key}",
+            get(get_cache_entry)
+                .head(head_cache_entry)
+                .put(put_cache_entry),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(cfg.bind_addr)
@@ -104,12 +191,26 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
+async fn statsz(
+    State(state): State<AppState>,
+    request: Request,
+) -> Result<Response<Body>, Response<Body>> {
+    require_basic_auth(&request, &state.cfg, &state.stats)?;
+
+    let mut response = Response::new(Body::from(state.stats.render(state.cfg.r2.is_some())));
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    Ok(response)
+}
+
 async fn head_cache_entry(
     State(state): State<AppState>,
     AxumPath(key): AxumPath<String>,
     request: Request,
 ) -> Result<Response<Body>, Response<Body>> {
-    require_basic_auth(&request, &state.cfg)?;
+    require_basic_auth(&request, &state.cfg, &state.stats)?;
     respond_with_cache_entry(state, key, true).await
 }
 
@@ -118,7 +219,7 @@ async fn get_cache_entry(
     AxumPath(key): AxumPath<String>,
     request: Request,
 ) -> Result<Response<Body>, Response<Body>> {
-    require_basic_auth(&request, &state.cfg)?;
+    require_basic_auth(&request, &state.cfg, &state.stats)?;
     respond_with_cache_entry(state, key, false).await
 }
 
@@ -127,7 +228,7 @@ async fn put_cache_entry(
     AxumPath(key): AxumPath<String>,
     request: Request,
 ) -> Result<Response<Body>, Response<Body>> {
-    require_basic_auth(&request, &state.cfg)?;
+    require_basic_auth(&request, &state.cfg, &state.stats)?;
 
     let logical_key = sanitize_key(&key).map_err(error_response)?;
     let body = axum::body::to_bytes(request.into_body(), state.cfg.max_object_bytes)
@@ -138,9 +239,19 @@ async fn put_cache_entry(
     write_local_cache_entry(&local_path, &body)
         .await
         .map_err(|err| {
+            state
+                .stats
+                .local_write_errors
+                .fetch_add(1, Ordering::Relaxed);
             error!(error = %err, path = %local_path.display(), "failed to write local cache entry");
-            simple_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to store cache entry")
+            simple_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to store cache entry",
+            )
         })?;
+
+    state.stats.puts.fetch_add(1, Ordering::Relaxed);
+    info!(cache_key = %logical_key, bytes = body.len(), "cache put stored");
 
     if let (Some(mirror_tx), Some(r2)) = (&state.mirror_tx, &state.cfg.r2) {
         let request = MirrorRequest {
@@ -148,7 +259,13 @@ async fn put_cache_entry(
             bytes: body.clone(),
         };
         if let Err(err) = mirror_tx.send(request).await {
-            warn!(error = %err, "failed to queue R2 mirror request");
+            state
+                .stats
+                .mirror_enqueue_failures
+                .fetch_add(1, Ordering::Relaxed);
+            warn!(error = %err, cache_key = %logical_key, "failed to queue R2 mirror request");
+        } else {
+            state.stats.mirror_enqueued.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -164,33 +281,75 @@ async fn respond_with_cache_entry(
     let local_path = local_path_for_key(&state.cfg.cache_root, &logical_key);
 
     if let Some(bytes) = read_local_cache_entry(&local_path).await.map_err(|err| {
+        state
+            .stats
+            .local_read_errors
+            .fetch_add(1, Ordering::Relaxed);
         error!(error = %err, path = %local_path.display(), "failed to read local cache entry");
-        simple_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read local cache entry")
+        simple_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to read local cache entry",
+        )
     })? {
+        state.stats.record_hit(head_only, CacheReadSource::Local);
+        info!(
+            method = request_method(head_only),
+            cache_key = %logical_key,
+            source = "local",
+            bytes = bytes.len(),
+            "cache hit"
+        );
         return Ok(cache_hit_response(bytes, head_only));
     }
 
     if let Some(r2) = &state.cfg.r2 {
         match read_from_r2(r2, &logical_key).await {
             Ok(Some(bytes)) => {
+                state.stats.record_hit(head_only, CacheReadSource::R2);
                 if let Err(err) = write_local_cache_entry(&local_path, &bytes).await {
+                    state
+                        .stats
+                        .local_write_errors
+                        .fetch_add(1, Ordering::Relaxed);
                     warn!(error = %err, path = %local_path.display(), "failed to rehydrate local cache entry from R2");
                 }
+                info!(
+                    method = request_method(head_only),
+                    cache_key = %logical_key,
+                    source = "r2",
+                    bytes = bytes.len(),
+                    "cache hit"
+                );
                 return Ok(cache_hit_response(bytes, head_only));
             }
             Ok(None) => {}
-            Err(err) => warn!(error = %err, key = logical_key, "failed to read cache entry from R2"),
+            Err(err) => {
+                state.stats.r2_read_errors.fetch_add(1, Ordering::Relaxed);
+                warn!(error = %err, key = %logical_key, "failed to read cache entry from R2");
+            }
         }
     }
 
+    state.stats.misses.fetch_add(1, Ordering::Relaxed);
+    info!(method = request_method(head_only), cache_key = %logical_key, "cache miss");
     Err(simple_response(StatusCode::NOT_FOUND, "Not Found"))
 }
 
-fn require_basic_auth(request: &Request, cfg: &Config) -> Result<(), Response<Body>> {
+fn require_basic_auth(
+    request: &Request,
+    cfg: &Config,
+    stats: &CacheStats,
+) -> Result<(), Response<Body>> {
     if basic_auth_valid(request.headers(), cfg) {
         return Ok(());
     }
 
+    stats.auth_failures.fetch_add(1, Ordering::Relaxed);
+    warn!(
+        method = %request.method(),
+        path = %request.uri().path(),
+        "rejected unauthorized cache request"
+    );
     let mut response = simple_response(StatusCode::UNAUTHORIZED, "Unauthorized");
     let challenge = format!("Basic realm=\"{}\"", cfg.auth_realm);
     if let Ok(challenge) = HeaderValue::from_str(&challenge) {
@@ -200,7 +359,10 @@ fn require_basic_auth(request: &Request, cfg: &Config) -> Result<(), Response<Bo
 }
 
 fn basic_auth_valid(headers: &HeaderMap, cfg: &Config) -> bool {
-    let Some(raw) = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()) else {
+    let Some(raw) = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    else {
         return false;
     };
     let Some(encoded) = raw.strip_prefix("Basic ") else {
@@ -219,16 +381,33 @@ fn basic_auth_valid(headers: &HeaderMap, cfg: &Config) -> bool {
 }
 
 fn cache_hit_response(bytes: Bytes, head_only: bool) -> Response<Body> {
-    let mut response = Response::new(if head_only { Body::empty() } else { Body::from(bytes.clone()) });
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    let mut response = Response::new(if head_only {
+        Body::empty()
+    } else {
+        Body::from(bytes.clone())
+    });
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
     response.headers_mut().insert(
         CONTENT_LENGTH,
-        HeaderValue::from_str(&bytes.len().to_string()).unwrap_or_else(|_| HeaderValue::from_static("0")),
+        HeaderValue::from_str(&bytes.len().to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("0")),
     );
-    response.headers_mut().insert(ETAG, HeaderValue::from_static("W/\"solarlab-gradle-cache\""));
+    response.headers_mut().insert(
+        ETAG,
+        HeaderValue::from_static("W/\"solarlab-gradle-cache\""),
+    );
     response
+}
+
+fn request_method(head_only: bool) -> &'static str {
+    if head_only {
+        "HEAD"
+    } else {
+        "GET"
+    }
 }
 
 fn sanitize_key(input: &str) -> Result<String, &'static str> {
@@ -280,7 +459,11 @@ async fn write_local_cache_entry(path: &Path, bytes: &[u8]) -> Result<(), std::i
     tokio::fs::rename(temp_path, path).await
 }
 
-async fn mirror_worker(r2: R2Config, mut rx: mpsc::Receiver<MirrorRequest>) {
+async fn mirror_worker(
+    r2: R2Config,
+    mut rx: mpsc::Receiver<MirrorRequest>,
+    stats: Arc<CacheStats>,
+) {
     while let Some(request) = rx.recv().await {
         let put_result = r2
             .client
@@ -293,14 +476,24 @@ async fn mirror_worker(r2: R2Config, mut rx: mpsc::Receiver<MirrorRequest>) {
             .await;
 
         if let Err(err) = put_result {
+            stats.mirror_put_failures.fetch_add(1, Ordering::Relaxed);
             warn!(error = %err, "failed to mirror cache entry to R2");
+        } else {
+            stats.mirror_successes.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
 
 async fn read_from_r2(r2: &R2Config, logical_key: &str) -> Result<Option<Bytes>, String> {
     let key = r2_object_key(r2, logical_key);
-    let object = match r2.client.get_object().bucket(&r2.bucket).key(key).send().await {
+    let object = match r2
+        .client
+        .get_object()
+        .bucket(&r2.bucket)
+        .key(key)
+        .send()
+        .await
+    {
         Ok(object) => object,
         Err(err) => {
             let missing = err
@@ -345,7 +538,8 @@ async fn load_config() -> Result<Config, String> {
     let cache_root = if let Ok(value) = env::var("GRADLE_CACHE_ROOT") {
         PathBuf::from(value)
     } else {
-        let home = env::var("HOME").map_err(|_| "HOME or GRADLE_CACHE_ROOT must be set".to_string())?;
+        let home =
+            env::var("HOME").map_err(|_| "HOME or GRADLE_CACHE_ROOT must be set".to_string())?;
         PathBuf::from(home).join(".cache/solarlab-gradle-cache")
     };
 
@@ -354,8 +548,8 @@ async fn load_config() -> Result<Config, String> {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(268_435_456);
 
-    let auth_username =
-        env::var("GRADLE_CACHE_BASIC_AUTH_USER").map_err(|_| "GRADLE_CACHE_BASIC_AUTH_USER is required".to_string())?;
+    let auth_username = env::var("GRADLE_CACHE_BASIC_AUTH_USER")
+        .map_err(|_| "GRADLE_CACHE_BASIC_AUTH_USER is required".to_string())?;
     let auth_password = env::var("GRADLE_CACHE_BASIC_AUTH_PASS")
         .map_err(|_| "GRADLE_CACHE_BASIC_AUTH_PASS is required".to_string())?;
     let auth_realm = env::var("GRADLE_CACHE_BASIC_AUTH_REALM")
@@ -380,14 +574,20 @@ async fn load_r2_config() -> Result<Option<R2Config>, String> {
     let access_key_id = env::var("GRADLE_CACHE_R2_ACCESS_KEY_ID").ok();
     let secret_access_key = env::var("GRADLE_CACHE_R2_SECRET_ACCESS_KEY").ok();
 
-    if endpoint.is_none() && bucket.is_none() && access_key_id.is_none() && secret_access_key.is_none() {
+    if endpoint.is_none()
+        && bucket.is_none()
+        && access_key_id.is_none()
+        && secret_access_key.is_none()
+    {
         return Ok(None);
     }
 
-    let endpoint =
-        endpoint.ok_or_else(|| "GRADLE_CACHE_R2_ENDPOINT is required when R2 mirroring is enabled".to_string())?;
-    let bucket =
-        bucket.ok_or_else(|| "GRADLE_CACHE_R2_BUCKET is required when R2 mirroring is enabled".to_string())?;
+    let endpoint = endpoint.ok_or_else(|| {
+        "GRADLE_CACHE_R2_ENDPOINT is required when R2 mirroring is enabled".to_string()
+    })?;
+    let bucket = bucket.ok_or_else(|| {
+        "GRADLE_CACHE_R2_BUCKET is required when R2 mirroring is enabled".to_string()
+    })?;
     let access_key_id = access_key_id.ok_or_else(|| {
         "GRADLE_CACHE_R2_ACCESS_KEY_ID is required when R2 mirroring is enabled".to_string()
     })?;
@@ -395,8 +595,8 @@ async fn load_r2_config() -> Result<Option<R2Config>, String> {
         "GRADLE_CACHE_R2_SECRET_ACCESS_KEY is required when R2 mirroring is enabled".to_string()
     })?;
     let region = env::var("GRADLE_CACHE_R2_REGION").unwrap_or_else(|_| "auto".to_string());
-    let key_prefix =
-        env::var("GRADLE_CACHE_R2_KEY_PREFIX").unwrap_or_else(|_| "solar-gravity-lab/gradle/v1".to_string());
+    let key_prefix = env::var("GRADLE_CACHE_R2_KEY_PREFIX")
+        .unwrap_or_else(|_| "solar-gravity-lab/gradle/v1".to_string());
 
     let shared_config = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(Credentials::new(

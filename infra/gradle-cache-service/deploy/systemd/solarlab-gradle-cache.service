@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-%h/.config/solarlab-gradle-cache.env
 WorkingDirectory=%h/mmm/solar-gravity-lab-orchard/main/infra/gradle-cache-service
-ExecStart=/usr/bin/env cargo run --release
+ExecStart=%h/mmm/solar-gravity-lab-orchard/main/infra/gradle-cache-service/target/release/solarlab-gradle-cache-service
 Restart=on-failure
 RestartSec=5s
 
