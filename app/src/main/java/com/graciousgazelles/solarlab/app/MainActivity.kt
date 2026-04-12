@@ -35,7 +35,6 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     private var resumeSimulationAfterModalInteraction: Boolean = false
     private var infoPanelVisible: Boolean = false
     private var renderProcessingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
-    private var latestBackendStatus: RenderBackendStatus? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -215,9 +214,7 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
     }
 
     private fun onBackendStatusChanged(status: RenderBackendStatus) {
-        latestBackendStatus = status
         binding.textBackend.text = status.message
-        latestFrame?.let { binding.textDiagnostics.text = buildDiagnosticsText(it) }
         if (!status.isHardwareAccelerated && !infoPanelVisible) {
             infoPanelVisible = true
             updateInfoPanelVisibility()
@@ -388,11 +385,6 @@ class MainActivity : AppCompatActivity(), LabFrameListener {
 
     private fun buildDiagnosticsText(frame: LabFrame): String {
         val diagnosticsText = buildString {
-            latestBackendStatus?.hardwareSummary?.let { hardwareSummary ->
-                append("Acceleration: ")
-                append(hardwareSummary)
-                append('\n')
-            }
             if (!frame.diagnosticsFresh) {
                 append(getString(R.string.diagnostics_cached_notice))
                 append('\n')
