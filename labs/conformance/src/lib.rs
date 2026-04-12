@@ -133,6 +133,10 @@ fn scenario_registry() -> Vec<ScenarioDefinition> {
             run: run_physics_accuracy_telemetry,
         },
         ScenarioDefinition {
+            id: "one-year-earth-orbit-stability",
+            run: run_one_year_earth_orbit_stability,
+        },
+        ScenarioDefinition {
             id: "host-relative-playback-policy",
             run: run_host_relative_playback_policy,
         },
@@ -379,6 +383,59 @@ fn run_physics_accuracy_telemetry() -> ScenarioReport {
         notes: vec![
             "This pulls the older physics-accuracy telemetry seam into the Rust-native conformance harness instead of leaving it stranded in the legacy Kotlin generator.".to_owned(),
             "The scenario intentionally keeps the metric names familiar so parity-matrix references can move without forcing humans to relearn the diagnostic vocabulary.".to_owned(),
+        ],
+    }
+}
+
+fn run_one_year_earth_orbit_stability() -> ScenarioReport {
+    const STEP_SECONDS: f64 = 6.0 * 3_600.0;
+    const STEPS: usize = 365 * 4;
+    const MIN_FINAL_DISTANCE_AU: f64 = 0.97;
+    const MAX_FINAL_DISTANCE_AU: f64 = 1.03;
+    const MAX_RELATIVE_ENERGY_DRIFT: f64 = 5.0e-3;
+
+    let policy = PhysicsPolicy {
+        solver_backend: SolverBackend::ReferenceScalar,
+        integrator: IntegratorKind::LeapfrogKickDriftKick,
+        collision_model: CollisionModel::None,
+        max_substep_seconds: STEP_SECONDS,
+    };
+    let mut bodies = simple_sun_earth_two_body();
+    let starting_invariants = solarlab_physics::compute_invariants(&bodies);
+
+    for _ in 0..STEPS {
+        solarlab_physics::advance_authoritative_scalar(&policy, &mut bodies, STEP_SECONDS);
+    }
+
+    let final_invariants = solarlab_physics::compute_invariants(&bodies);
+    let earth_distance_au = vec_magnitude(bodies[1].position_m) / ASTRONOMICAL_UNIT_M;
+    let relative_energy_drift = drift(
+        starting_invariants.total_energy_j,
+        final_invariants.total_energy_j,
+    );
+    let passed = (MIN_FINAL_DISTANCE_AU..=MAX_FINAL_DISTANCE_AU).contains(&earth_distance_au)
+        && relative_energy_drift < MAX_RELATIVE_ENERGY_DRIFT;
+
+    ScenarioReport {
+        id: "one-year-earth-orbit-stability",
+        family: "scientific correctness",
+        description: "Advance a barycenter-recentered Sun/Earth two-body system for one Julian year and require both orbital radius stability and low energy drift.",
+        passed,
+        metrics: json!({
+            "step_seconds": STEP_SECONDS,
+            "steps": STEPS,
+            "simulated_seconds": STEP_SECONDS * STEPS as f64,
+            "earth_distance_au": earth_distance_au,
+            "relative_energy_drift": relative_energy_drift,
+        }),
+        thresholds: json!({
+            "earth_distance_au_min": MIN_FINAL_DISTANCE_AU,
+            "earth_distance_au_max": MAX_FINAL_DISTANCE_AU,
+            "relative_energy_drift_max": MAX_RELATIVE_ENERGY_DRIFT,
+        }),
+        notes: vec![
+            "This ports the older one-year Sun/Earth stability proof into the Rust-native harness so long-horizon orbital behavior is no longer trapped in the legacy Kotlin simulation tests.".to_owned(),
+            "The scenario stays intentionally simple and cheap by using the two-body circular-orbit baseline rather than the full canonical solar-system seed.".to_owned(),
         ],
     }
 }
@@ -699,6 +756,46 @@ fn host_relative_turning_angles(
         .collect()
 }
 
+fn simple_sun_earth_two_body() -> Vec<MassiveBodyState> {
+    const G_M3_PER_KG_S2: f64 = 6.674_30e-11;
+    let sun_mass_kg = 1.988_47e30;
+    let earth_mass_kg = 5.972_37e24;
+    let earth_orbital_radius_m = ASTRONOMICAL_UNIT_M;
+    let earth_speed_mps = (G_M3_PER_KG_S2 * sun_mass_kg / earth_orbital_radius_m).sqrt();
+    let total_mass_kg = sun_mass_kg + earth_mass_kg;
+    let barycenter_x_m = earth_mass_kg * earth_orbital_radius_m / total_mass_kg;
+    let sun_velocity_y_mps = -(earth_mass_kg * earth_speed_mps) / sun_mass_kg;
+
+    vec![
+        MassiveBodyState {
+            mass_kg: sun_mass_kg,
+            position_m: Vector3d {
+                x: -barycenter_x_m,
+                y: 0.0,
+                z: 0.0,
+            },
+            velocity_mps: Vector3d {
+                x: 0.0,
+                y: sun_velocity_y_mps,
+                z: 0.0,
+            },
+        },
+        MassiveBodyState {
+            mass_kg: earth_mass_kg,
+            position_m: Vector3d {
+                x: earth_orbital_radius_m - barycenter_x_m,
+                y: 0.0,
+                z: 0.0,
+            },
+            velocity_mps: Vector3d {
+                x: 0.0,
+                y: earth_speed_mps,
+                z: 0.0,
+            },
+        },
+    ]
+}
+
 fn moon_from_earth(snapshot: &WorldSnapshot) -> Vector3d {
     let moon = body_position(snapshot, "moon");
     let earth = body_position(snapshot, "earth");
@@ -878,6 +975,7 @@ mod tests {
                 "collision-playback-cap",
                 "arm64-kernel-equivalence",
                 "physics-accuracy-telemetry",
+                "one-year-earth-orbit-stability",
                 "host-relative-playback-policy",
             ]
         );

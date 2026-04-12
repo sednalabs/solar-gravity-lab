@@ -15,6 +15,9 @@ It intentionally starts small and deterministic:
 - `physics-accuracy-telemetry` lifts the older moon-host and barycenter drift
   diagnostics into the Rust-native harness so telemetry guardrails are emitted
   in the same machine-readable report as the other scientific checks.
+- `one-year-earth-orbit-stability` ports the older one-year Sun/Earth
+  stability proof into the Rust-native harness so long-horizon orbital drift is
+  checked in the same report surface.
 - `host-relative-playback-policy` checks that the newer host-relative
   short-window playback cap stays more conservative than the coarse legacy path.
 

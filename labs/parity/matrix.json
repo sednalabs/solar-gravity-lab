@@ -13,9 +13,10 @@
         "runtime canonical-major-seed moon/pluto epoch propagation assertions",
         "runtime major-body telemetry thresholds for COM drift, COM velocity drift, and fine-baseline angular-momentum agreement",
         "solarlab-conformance major-body-orbit-telemetry",
-        "solarlab-conformance added-body-repeatability"
+        "solarlab-conformance added-body-repeatability",
+        "solarlab-conformance one-year-earth-orbit-stability"
       ],
-      "notes": "Seed all canonical checks to confirm authoritative authority and accuracy are not regressed."
+      "notes": "Seed all canonical checks to confirm authoritative authority and accuracy are not regressed, including a cheap long-horizon Sun/Earth year-stability line that stays in the Rust-native harness."
     },
     {
       "id": "P-002",

@@ -27,4 +27,5 @@ slice:
 - `collision-playback-cap`
 - `arm64-kernel-equivalence`
 - `physics-accuracy-telemetry`
+- `one-year-earth-orbit-stability`
 - `host-relative-playback-policy`
