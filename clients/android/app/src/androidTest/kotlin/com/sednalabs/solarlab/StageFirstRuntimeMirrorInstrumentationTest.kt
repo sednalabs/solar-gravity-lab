@@ -41,10 +41,20 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                 runtimeState.sessionHandle != null &&
                 runtimeState.snapshot != null
         }
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNode()
+            }.isSuccess
+        }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNode()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNode()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNode()
+        assertTrue(
+            "Runtime mirror should replace the mode button with the sandbox return button",
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNode()
+            }.isFailure,
+        )
         assertTrue(
             "Runtime mirror surface should be mounted after switching modes",
             composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
