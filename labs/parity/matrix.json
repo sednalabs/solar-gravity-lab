@@ -94,6 +94,7 @@
       "owner_item": "3490",
       "proof_refs": [
         "engine/physics scalar-vs-kernel parity assertions",
+        "solarlab-conformance arm64-kernel-equivalence",
         "legacy acceleration oracle cases tracked in release-alpha-9"
       ],
       "notes": "Keep exact kernel-equivalence semantics explicit so ISA or GPU acceleration never silently diverges from the scalar oracle."

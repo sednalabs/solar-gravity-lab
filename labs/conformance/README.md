@@ -10,6 +10,8 @@ It intentionally starts small and deterministic:
   deterministic when a custom body is introduced.
 - `collision-playback-cap` checks the conservative playback guard that keeps
   collision-enabled modes from silently stretching solver substeps.
+- `arm64-kernel-equivalence` checks the dedicated arm64 fused-step kernel
+  against the scalar oracle on the moon/earth playback scenario.
 
 Run it with:
 

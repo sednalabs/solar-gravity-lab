@@ -6,8 +6,8 @@ use solarlab_data::canonical_startup_seed;
 use solarlab_domain::{BodyClass, BodyId, BranchId, ScenarioId, TimelineSemantics, Vector3d};
 use solarlab_hardware::HardwareProfile;
 use solarlab_physics::{
-    playback_substep_plan, CollisionModel, IntegratorKind, PhysicsInvariants, PhysicsPolicy,
-    SolverBackend,
+    compare_arm64_kernel_to_scalar, playback_substep_plan, CollisionModel, IntegratorKind,
+    MassiveBodyState, PhysicsInvariants, PhysicsPolicy, SolverBackend,
 };
 use solarlab_runtime::{BodyState, RuntimeConfig, WorldCommand, WorldRuntime, WorldSnapshot};
 
@@ -113,6 +113,10 @@ fn scenario_registry() -> Vec<ScenarioDefinition> {
         ScenarioDefinition {
             id: "collision-playback-cap",
             run: run_collision_playback_cap,
+        },
+        ScenarioDefinition {
+            id: "arm64-kernel-equivalence",
+            run: run_arm64_kernel_equivalence,
         },
     ]
 }
@@ -252,6 +256,50 @@ fn run_collision_playback_cap() -> ScenarioReport {
         }),
         notes: vec![
             "V2 does not yet expose a dedicated collision-resolution harness, so this first conformance slice checks the conservative playback guard that protects collision-enabled modes today.".to_owned(),
+        ],
+    }
+}
+
+fn run_arm64_kernel_equivalence() -> ScenarioReport {
+    let policy = PhysicsPolicy {
+        solver_backend: SolverBackend::ReferenceScalar,
+        integrator: IntegratorKind::LeapfrogKickDriftKick,
+        collision_model: CollisionModel::None,
+        max_substep_seconds: 1.0,
+    };
+    let bodies = moon_earth_playback_solver_scenario();
+    let report = compare_arm64_kernel_to_scalar(&policy, &bodies, 86_400.0);
+
+    const MAX_ABS_ERROR: f64 = 1.0e-3;
+    const MAX_RELATIVE_ERROR: f64 = 1.0e-12;
+    const MAX_ENERGY_RELATIVE_ERROR: f64 = 1.0e-12;
+    let passed = report.metrics.compared_components > 0
+        && report.metrics.bitwise_equal_components > 0
+        && report.metrics.max_abs_error <= MAX_ABS_ERROR
+        && report.metrics.max_relative_error <= MAX_RELATIVE_ERROR
+        && report.energy_relative_error <= MAX_ENERGY_RELATIVE_ERROR;
+
+    ScenarioReport {
+        id: "arm64-kernel-equivalence",
+        family: "scientific correctness",
+        description: "Compare the dedicated arm64 fused-step kernel against the scalar oracle on the canonical moon-earth playback scenario.",
+        passed,
+        metrics: json!({
+            "delta_seconds": 86_400.0,
+            "compared_components": report.metrics.compared_components,
+            "bitwise_equal_components": report.metrics.bitwise_equal_components,
+            "max_abs_error": report.metrics.max_abs_error,
+            "max_relative_error": report.metrics.max_relative_error,
+            "energy_relative_error": report.energy_relative_error,
+        }),
+        thresholds: json!({
+            "max_abs_error": MAX_ABS_ERROR,
+            "max_relative_error": MAX_RELATIVE_ERROR,
+            "max_energy_relative_error": MAX_ENERGY_RELATIVE_ERROR,
+        }),
+        notes: vec![
+            "This scenario is host-independent because the harness compares the scalar and arm64 fused kernels directly instead of relying on live runtime dispatch.".to_owned(),
+            "It lifts an existing strict parity assertion into the machine-readable conformance surface so ISA checks are no longer trapped in unit-test output.".to_owned(),
         ],
     }
 }
@@ -423,6 +471,42 @@ fn propagate_with_added_body() -> WorldSnapshot {
     }
 
     runtime.snapshot()
+}
+
+fn moon_earth_playback_solver_scenario() -> Vec<MassiveBodyState> {
+    vec![
+        MassiveBodyState {
+            mass_kg: 1.98847e30,
+            position_m: Vector3d::default(),
+            velocity_mps: Vector3d::default(),
+        },
+        MassiveBodyState {
+            mass_kg: 5.972168e24,
+            position_m: Vector3d {
+                x: 1.496e11,
+                y: 0.0,
+                z: 0.0,
+            },
+            velocity_mps: Vector3d {
+                x: 0.0,
+                y: 29_780.0,
+                z: 0.0,
+            },
+        },
+        MassiveBodyState {
+            mass_kg: 7.342e22,
+            position_m: Vector3d {
+                x: 1.496e11 + 384_400_000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            velocity_mps: Vector3d {
+                x: 0.0,
+                y: 30_802.0,
+                z: 0.0,
+            },
+        },
+    ]
 }
 
 fn new_runtime(max_substep_seconds: f64) -> WorldRuntime {

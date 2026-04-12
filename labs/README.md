@@ -25,3 +25,4 @@ slice:
 - `major-body-orbit-telemetry`
 - `added-body-repeatability`
 - `collision-playback-cap`
+- `arm64-kernel-equivalence`
