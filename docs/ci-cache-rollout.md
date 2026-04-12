@@ -84,7 +84,7 @@ Optional R2 backing:
 - Rust-heavy jobs install `sccache` through the in-repo `.github/actions/install-sccache` action so we avoid the stale Node 20 runtime in `mozilla-actions/sccache-action` while keeping the same pinned `v0.10.0` binary
 - Rust-heavy jobs configure `sccache` from repo vars and secrets and emit per-job stats into the workflow summary
 - `configure_sccache.sh` also exports `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` so AGP-driven CMake builds can reuse the same R2-backed `sccache` backend without module-specific workflow branching
-- Android/native jobs use shared `Swatinem/rust-cache` keys so helper binaries such as `cargo-ndk` do not get reinstalled independently in each lane
+- Android/native jobs use the in-repo `.github/actions/rust-shared-cache` action so cargo registry, cargo git, cargo binaries, and workspace `target/` contents can be reused without carrying the upstream `punycode` deprecation warning
 
 ## Current measured result
 
@@ -119,6 +119,48 @@ The `6fc8c95` run was still the first run to populate the new per-arch `sccache`
 - `sccache-bin-Linux-ARM64-v0.10.0`
 
 So the next warm run should avoid both the older Node 20 action wrapper and the initial `sccache` binary download path.
+
+### Warning-free rust cache transition checkpoint
+
+The last remaining deprecation warning in this workflow came from `Swatinem/rust-cache@v2`, not from any Node 20 runtime in our own workflow helpers. That warning is now removed by replacing the upstream action with the in-repo `.github/actions/rust-shared-cache` composite action.
+
+Measured proof:
+
+- run `24300758591` on `0ce642b` kept the previous cache shape warm:
+  - prerelease build lane: about `3m35s`
+  - `sccache-bin-Linux-X64-v0.10.0`: cache hit
+  - `sccache-bin-Linux-ARM64-v0.10.0`: cache hit
+  - prerelease `sccache`: `16/16` C/C++ hits, `0` misses
+  - ARM64 ISA proof `sccache`: `6/6` Rust hits, `0` misses
+  - logs still contained the `Swatinem/rust-cache` `punycode` deprecation warning
+
+- run `24300835664` on `d6415b5` was the first run after the in-repo rust-cache replacement:
+  - prerelease build lane: about `4m22s`
+  - no `punycode`, `DeprecationWarning`, or `Swatinem/rust-cache` text in either the prerelease or ARM64 logs
+  - the new rust-shared-cache keys missed once and were saved:
+    - `v0-rust-solarlab-rust-android-Linux-X64-Linux-x64-4e52fb97-5c4d0e2c`
+    - `v0-rust-solarlab-rust-native-Linux-ARM64-Linux-arm64-5846ecfe-5c4d0e2c`
+  - prerelease `sccache`: `106` hits, `1` miss, including `90` Rust hits
+  - ARM64 ISA proof `sccache`: `6/6` Rust hits, `0` misses
+
+- run `24300939970` on `d6415b5` was the second warm run on the replacement action:
+  - prerelease build lane: about `3m42s`
+  - prerelease assemble step: `41s`
+  - second-run rust shared-cache exact hits on both architectures:
+    - `Cache hit for: v0-rust-solarlab-rust-android-Linux-X64-Linux-x64-4e52fb97-5c4d0e2c`
+    - `Cache hit for: v0-rust-solarlab-rust-native-Linux-ARM64-Linux-arm64-5846ecfe-5c4d0e2c`
+  - `sccache-bin-Linux-X64-v0.10.0`: cache hit
+  - `sccache-bin-Linux-ARM64-v0.10.0`: cache hit
+  - prerelease `sccache`: `16/16` C/C++ hits, `0` misses
+  - ARM64 ISA proof `sccache`: `6/6` Rust hits, `0` misses
+  - logs remained free of `punycode`, `DeprecationWarning`, and `Swatinem/rust-cache`
+
+Interpretation:
+
+1. the warning removal is real, not cosmetic log filtering
+2. the first run after the cache-key change paid a one-time repopulation cost
+3. the second run on the same head returned to the warm-path behavior we wanted
+4. the remaining hosted-runner cost is now dominated more by Android SDK + emulator bootstrap than by repeated Rust/native compilation
 
 ### Build-first / test-many direction
 
