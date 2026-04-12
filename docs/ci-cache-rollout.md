@@ -7,7 +7,7 @@ This document captures the current Solar Gravity Lab hosted-runner cache rollout
 - reduce repeated Android emulator cold-start cost on GitHub-hosted runners
 - reduce repeated Gradle task execution across trusted CI branches
 - keep Gradle remote-cache access stable while the backend is hosted on our own infrastructure
-- prepare a separate R2-backed `sccache` path for later Rust/native compiler reuse
+- reuse Rust/native compiler work across trusted CI runs with R2-backed `sccache`
 
 ## Current direction
 
@@ -75,6 +75,14 @@ Optional R2 backing:
 - tunnel service: `infra/gradle-cache-service/deploy/systemd/cloudflared-solarlab-gradle-cache.service`
 - tunnel ingress template: `infra/gradle-cache-service/deploy/cloudflared/solarlab-gradle-cache.yml`
 
+## Workflow-side cache layers
+
+- `validation-lab` and `prerelease-apk` use AVD snapshot caching with generation `v3`
+- KVM must be enabled before any emulator boot, including snapshot seeding
+- Gradle jobs use `gradle/actions/setup-gradle@v5` plus the remote cache at `cache.sednalabs.io`
+- Rust-heavy jobs install `sccache`, configure it from repo vars and secrets, and emit per-job stats into the workflow summary
+- Android/native jobs use shared `Swatinem/rust-cache` keys so helper binaries such as `cargo-ndk` do not get reinstalled independently in each lane
+
 ## Cloudflare and R2 layout
 
 - hostname: `cache.sednalabs.io`
@@ -100,5 +108,6 @@ Do not use a public bucket custom domain or `r2.dev` as the Gradle cache front d
 
 - second-run `validation-lab` and `prerelease-apk` with `snapshot-cache` should show an AVD cache hit and skip snapshot seeding
 - second-run trusted Gradle jobs should show more task reuse than the first run
+- second-run Rust/native jobs should show non-zero `sccache` hits in the workflow summary
 - the native Android build task must stop forcing itself dirty so remote cache hits are possible
 - when the self-hosted cache backend is down, Gradle builds must still succeed with the remote cache disabled for that build
