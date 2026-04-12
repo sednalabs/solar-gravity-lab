@@ -1230,6 +1230,13 @@ jobs:
           repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
+      - name: Download Android shell artifacts for summary enrichment
+        if: ${{ needs.android-shell.result != 'skipped' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: android-shell-*-${{ github.run_id }}
+          path: dist/android-shell-artifacts
+
       - name: Build validation summary payload
         shell: bash
         run: |
@@ -1251,6 +1258,7 @@ jobs:
             --android-validation-mode "${{ needs.metadata.outputs.android_validation_mode }}" \
             --android-artifact-mode "${{ needs.metadata.outputs.android_artifact_mode }}" \
             --emulator-boot-strategy "${{ needs.metadata.outputs.emulator_boot_strategy }}" \
+            --android-shell-artifacts-dir dist/android-shell-artifacts \
             --job parity-matrix=${{ needs.parity-matrix.result }} \
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
             --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
