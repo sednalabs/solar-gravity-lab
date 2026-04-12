@@ -99,6 +99,7 @@ env:
   STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
   ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
   ANDROID_AVD_CACHE_VERSION: v3
+  ANDROID_SDK_COMPONENT_CACHE_VERSION: v1
   ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
   ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
   ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -941,15 +942,38 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Restore Android emulator AVD cache
+        id: avd-cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
         uses: actions/cache@v5
         with:
           path: |
             ~/.android/avd
             ~/.android/adb*
-          key: avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-v1
-          restore-keys: |
-            avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-
+          key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
+
+      - name: Restore Android SDK emulator packages cache
+        id: android-sdk-components-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            /usr/local/lib/android/sdk/emulator
+            /usr/local/lib/android/sdk/system-images/android-35/google_apis
+          key: android-sdk-components-${{ runner.os }}-${{ runner.arch }}-${{ env.ANDROID_SDK_COMPONENT_CACHE_VERSION }}
+
+      - name: Seed Android emulator snapshot
+        if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
+          emulator-boot-timeout: 1200
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: false
+          script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
       - uses: dtolnay/rust-toolchain@stable
 
