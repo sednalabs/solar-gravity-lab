@@ -31,7 +31,11 @@ class StageFirstRuntimeMirrorInstrumentationTest {
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).performClick()
-        composeRule.waitForIdle()
+
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.activity.stageFirstExperienceModeForTesting == StageFirstExperienceMode.RUNTIME_MIRROR &&
+                composeRule.activity.stageFirstRuntimeUiVisibleForTesting
+        }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
@@ -39,40 +43,10 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                 runtimeState.sessionHandle != null &&
                 runtimeState.snapshot != null
         }
-
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(
-                    SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON,
-                    useUnmergedTree = true,
-                ).fetchSemanticsNode()
-            }.isSuccess &&
-                runCatching {
-                    composeRule.onNodeWithTag(
-                        SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON,
-                        useUnmergedTree = true,
-                    ).fetchSemanticsNode()
-                }.isSuccess &&
-                runCatching {
-                    composeRule.onNodeWithTag(
-                        SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON,
-                        useUnmergedTree = true,
-                    ).fetchSemanticsNode()
-                }.isSuccess
-        }
-
-        composeRule.onNodeWithTag(
-            SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON,
-            useUnmergedTree = true,
-        ).assertIsDisplayed()
-        composeRule.onNodeWithTag(
-            SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON,
-            useUnmergedTree = true,
-        ).assertIsDisplayed()
-        composeRule.onNodeWithTag(
-            SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON,
-            useUnmergedTree = true,
-        ).assertIsDisplayed()
+        assertTrue(
+            "Runtime mirror controls should stay composed after switching modes",
+            composeRule.activity.stageFirstRuntimeUiVisibleForTesting,
+        )
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)

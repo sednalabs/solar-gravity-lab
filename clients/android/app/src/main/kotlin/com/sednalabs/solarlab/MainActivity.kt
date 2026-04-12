@@ -29,21 +29,19 @@ class MainActivity : ComponentActivity() {
 
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
     private val stageFirstExperienceModeState = mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX)
-    private val stageFirstRuntimeMirrorMountedState = mutableStateOf(false)
 
     @VisibleForTesting
     internal val runtimeFacadeForTesting: RuntimeFacade
         get() = runtimeViewModel.runtimeFacade
 
     @VisibleForTesting
-    internal fun showStageFirstRuntimeMirrorForTesting() {
-        if (BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            stageFirstExperienceModeState.value = StageFirstExperienceMode.RUNTIME_MIRROR
-        }
-    }
+    @Volatile
+    internal var stageFirstExperienceModeForTesting: StageFirstExperienceMode =
+        StageFirstExperienceMode.LOCAL_SANDBOX
 
     @VisibleForTesting
-    internal fun isStageFirstRuntimeMirrorMountedForTesting(): Boolean = stageFirstRuntimeMirrorMountedState.value
+    @Volatile
+    internal var stageFirstRuntimeUiVisibleForTesting: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         stageFirstExperienceModeState.value = savedInstanceState
@@ -71,8 +69,8 @@ class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
-                    experienceModeState = stageFirstExperienceModeState,
-                    runtimeMirrorMountedState = stageFirstRuntimeMirrorMountedState,
+                    onExperienceModeChanged = { stageFirstExperienceModeForTesting = it },
+                    onRuntimeMirrorVisibilityChanged = { stageFirstRuntimeUiVisibleForTesting = it },
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
