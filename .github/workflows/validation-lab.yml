@@ -354,7 +354,7 @@ jobs:
           cache: gradle
 
       - name: Restore standalone Gradle cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
@@ -453,10 +453,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: rust_workspace_sccache
@@ -502,10 +501,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: rust_workspace_arm64_sccache
@@ -551,10 +549,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: ffi_abi_sccache
@@ -600,10 +597,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: runtime_scene_telemetry_sccache
@@ -657,7 +653,7 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_unit_sdk_install
@@ -699,10 +695,9 @@ jobs:
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: android_unit_sccache
@@ -812,7 +807,7 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_lint_sdk_install
@@ -854,10 +849,9 @@ jobs:
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: android_lint_sccache
@@ -961,7 +955,7 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Enable KVM for Android emulator
         shell: bash
@@ -974,7 +968,7 @@ jobs:
 
       - name: Restore Android emulator AVD cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.android/avd
@@ -989,10 +983,9 @@ jobs:
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: android_shell_sccache
