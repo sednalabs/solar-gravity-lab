@@ -85,12 +85,6 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
-    override fun onDestroy() {
-        if (!isChangingConfigurations) {
-            runtimeViewModel.shutdown()
-        }
-        super.onDestroy()
-    }
 }
 
 internal class RuntimeSessionViewModel : ViewModel() {

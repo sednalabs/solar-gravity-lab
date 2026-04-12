@@ -24,9 +24,10 @@ class StageFirstLocalStartupInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
-            }.isSuccess
+            composeRule
+                .onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
