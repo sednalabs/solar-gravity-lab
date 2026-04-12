@@ -897,7 +897,7 @@ jobs:
     name: Android shell emulator smoke (${{ matrix.validation_mode }})
     needs: metadata
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"') }}
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
