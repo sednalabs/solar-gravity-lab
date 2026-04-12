@@ -14,6 +14,12 @@ The service implements the Gradle HTTP cache contract:
 - `GET /cache/<key>`
 - `HEAD /cache/<key>`
 - `PUT /cache/<key>`
+- `GET /statsz` for authenticated plain-text counters
+
+Operational visibility:
+
+- per-request logs for cache hits, misses, and writes
+- authenticated `/statsz` counters for local hits, R2 hits, misses, mirror success/failures, and auth failures
 
 Authentication is HTTP Basic auth because Gradle natively supports it.
 
@@ -38,3 +44,10 @@ Optional R2 backing:
 - app service: `deploy/systemd/solarlab-gradle-cache.service`
 - tunnel service: `deploy/systemd/cloudflared-solarlab-gradle-cache.service`
 - tunnel config: `deploy/cloudflared/solarlab-gradle-cache.yml`
+
+Build the release binary before (re)starting the app service:
+
+```bash
+cargo build --release --manifest-path infra/gradle-cache-service/Cargo.toml
+systemctl --user restart solarlab-gradle-cache.service
+```
