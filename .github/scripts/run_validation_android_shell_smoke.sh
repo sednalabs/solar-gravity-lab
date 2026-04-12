@@ -176,18 +176,34 @@ resolve_test_classes() {
       esac
       ;;
     stage-first-mirror-off)
-      if [[ "${TEST_SCOPE}" != "core" ]]; then
-        echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
-        exit 2
-      fi
-      TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
+      case "${TEST_SCOPE}" in
+        core)
+          TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
+          ;;
+        full)
+          echo "ANDROID_TEST_SCOPE='full' is not yet supported for mode '${VALIDATION_MODE}'. Use 'core' or extend the stage-first class set explicitly first." >&2
+          exit 2
+          ;;
+        *)
+          echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
+          exit 2
+          ;;
+      esac
       ;;
     stage-first-mirror-on)
-      if [[ "${TEST_SCOPE}" != "core" ]]; then
-        echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
-        exit 2
-      fi
-      TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
+      case "${TEST_SCOPE}" in
+        core)
+          TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
+          ;;
+        full)
+          echo "ANDROID_TEST_SCOPE='full' is not yet supported for mode '${VALIDATION_MODE}'. Use 'core' or extend the stage-first class set explicitly first." >&2
+          exit 2
+          ;;
+        *)
+          echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
+          exit 2
+          ;;
+      esac
       ;;
   esac
 }

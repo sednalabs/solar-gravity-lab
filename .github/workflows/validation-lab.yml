@@ -434,8 +434,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          repository: ${{ github.repository }}
-          ref: ${{ github.sha }}
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
 
