@@ -29,6 +29,8 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
+    private var placementPlaneZ: Double = 0.0
+    private var runtimeSessionHandle: Long = 0L
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
         requested = requestedBackend,
@@ -42,9 +44,12 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     }
 
     fun submitSnapshot(snapshot: SimulationSnapshot) {
-        val scene = sceneAssembler.assemble(snapshot)
-        latestScene = scene
-        activeSurface?.submitScene(scene)
+        submitSceneFrame(sceneAssembler.assemble(snapshot))
+    }
+
+    fun submitSceneFrame(frame: RenderSceneFrame) {
+        latestScene = frame
+        activeSurface?.submitScene(frame)
     }
 
     fun resetScene() {
@@ -73,6 +78,11 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setProcessingMode(mode)
     }
 
+    fun bindRuntimeSessionHandle(sessionHandle: Long) {
+        runtimeSessionHandle = sessionHandle
+        activeSurface?.bindRuntimeSessionHandle(sessionHandle)
+    }
+
     fun processingMode(): RenderProcessingMode = processingMode
 
     fun setSelectedBodyId(bodyId: String?) {
@@ -85,6 +95,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     fun setObserverMode(mode: ObserverMode) {
         observerMode = mode
         activeSurface?.setObserverMode(mode)
+    }
+    fun setPlacementPlaneZ(worldZ: Double) {
+        placementPlaneZ = worldZ
+        activeSurface?.setPlacementPlaneZ(worldZ)
     }
 
     fun observerMode(): ObserverMode = observerMode
@@ -160,9 +174,11 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface = view as SolarRenderSurface
         activeSurface?.setInteractionListener(interactionListener)
         activeSurface?.setInteractionMode(interactionMode)
+        activeSurface?.bindRuntimeSessionHandle(runtimeSessionHandle)
         activeSurface?.setProcessingMode(processingMode)
         activeSurface?.setSelectedBodyId(selectedBodyId)
         activeSurface?.setObserverMode(observerMode)
+        activeSurface?.setPlacementPlaneZ(placementPlaneZ)
         addView(
             view,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),

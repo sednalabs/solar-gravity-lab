@@ -107,6 +107,55 @@ VkVertexInputAttributeDescription MakeAttributeDescription(uint32_t location, ui
     };
 }
 
+struct Float3 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
+Float3 MakeFloat3(float x, float y, float z) {
+    return Float3{.x = x, .y = y, .z = z};
+}
+
+Float3 Add(Float3 a, Float3 b) {
+    return MakeFloat3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+Float3 Subtract(Float3 a, Float3 b) {
+    return MakeFloat3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+Float3 Scale(Float3 value, float scalar) {
+    return MakeFloat3(value.x * scalar, value.y * scalar, value.z * scalar);
+}
+
+float Dot(Float3 a, Float3 b) {
+    return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+}
+
+Float3 Cross(Float3 a, Float3 b) {
+    return MakeFloat3(
+        (a.y * b.z) - (a.z * b.y),
+        (a.z * b.x) - (a.x * b.z),
+        (a.x * b.y) - (a.y * b.x));
+}
+
+float Length(Float3 value) {
+    return std::sqrt(Dot(value, value));
+}
+
+Float3 Normalize(Float3 value, Float3 fallback) {
+    const float magnitude = Length(value);
+    if (magnitude <= 1.0e-6f) {
+        return fallback;
+    }
+    return Scale(value, 1.0f / magnitude);
+}
+
+constexpr float kOrbitMinPitchRadians = 12.0f * 0.017453292519943295769f;
+constexpr float kOrbitMaxPitchRadians = 88.0f * 0.017453292519943295769f;
+constexpr float kDefaultDepthExtentFactor = 48.0f;
+
 }  // namespace
 
 SolarLabVulkanRenderer::SolarLabVulkanRenderer() {
@@ -153,6 +202,9 @@ bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width,
     if (!CreateDevice()) {
         return false;
     }
+    if (!CreatePipelineCache()) {
+        return false;
+    }
 
     // --- Phase 3: Global Resources (Descriptors & Compute) ---
     if (!CreateDescriptorResources()) {
@@ -167,6 +219,9 @@ bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width,
         return false;
     }
     if (!CreateRenderPass()) {
+        return false;
+    }
+    if (!CreateDepthResources()) {
         return false;
     }
     if (!CreateFramebuffers()) {
@@ -216,6 +271,9 @@ bool SolarLabVulkanRenderer::Resize(JNIEnv* env, jobject surface, int width, int
     if (!CreateRenderPass()) {
         return false;
     }
+    if (!CreateDepthResources()) {
+        return false;
+    }
     if (!CreateFramebuffers()) {
         return false;
     }
@@ -248,6 +306,9 @@ void SolarLabVulkanRenderer::DestroySurface() {
 
 void SolarLabVulkanRenderer::SubmitScene(
     int64_t sourceRevision,
+    double sceneOriginX,
+    double sceneOriginY,
+    double sceneOriginZ,
     std::vector<double> authoritativePositionsM,
     std::vector<float> authoritativeRadiiM,
     std::vector<int32_t> authoritativeColorsArgb,
@@ -269,6 +330,9 @@ void SolarLabVulkanRenderer::SubmitScene(
     std::vector<int32_t> trailVertexCounts) {
     std::scoped_lock lock(stateMutex_);
     sceneBuffers_.sourceRevision = sourceRevision;
+    sceneBuffers_.sceneOriginX = sceneOriginX;
+    sceneBuffers_.sceneOriginY = sceneOriginY;
+    sceneBuffers_.sceneOriginZ = sceneOriginZ;
     sceneBuffers_.authoritativePositionsM = std::move(authoritativePositionsM);
     sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
     sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
@@ -296,12 +360,14 @@ void SolarLabVulkanRenderer::SubmitScene(
     }
 }
 
-void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM) {
+void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians) {
     std::scoped_lock lock(stateMutex_);
     cameraCenterX_ = centerX;
     cameraCenterY_ = centerY;
     cameraCenterZ_ = centerZ;
     cameraViewRadiusM_ = viewRadiusM;
+    cameraYawRadians_ = yawRadians;
+    cameraPitchRadians_ = pitchRadians;
 }
 
 bool SolarLabVulkanRenderer::Render() {
@@ -567,6 +633,29 @@ bool SolarLabVulkanRenderer::CreateDevice() {
     return true;
 }
 
+bool SolarLabVulkanRenderer::CreatePipelineCache() {
+    if (device_ == VK_NULL_HANDLE) {
+        SetError("Cannot create a pipeline cache before the Vulkan device exists.");
+        return false;
+    }
+    if (pipelineCache_ != VK_NULL_HANDLE) {
+        return true;
+    }
+
+    const VkPipelineCacheCreateInfo createInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .initialDataSize = 0,
+        .pInitialData = nullptr,
+    };
+    if (vkCreatePipelineCache(device_, &createInfo, nullptr, &pipelineCache_) != VK_SUCCESS) {
+        SetError("vkCreatePipelineCache failed.");
+        return false;
+    }
+    return true;
+}
+
 bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
     VkSurfaceCapabilitiesKHR capabilities{};
     if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice_, surface_, &capabilities) != VK_SUCCESS) {
@@ -667,6 +756,22 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
 }
 
 bool SolarLabVulkanRenderer::CreateRenderPass() {
+    if (physicalDevice_ == VK_NULL_HANDLE) {
+        SetError("Cannot create a render pass before a physical device has been selected.");
+        return false;
+    }
+
+    if (renderPass_ != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device_, renderPass_, nullptr);
+        renderPass_ = VK_NULL_HANDLE;
+    }
+
+    depthFormat_ = PickDepthFormat();
+    if (depthFormat_ == VK_FORMAT_UNDEFINED) {
+        SetError("Failed to find a supported depth attachment format.");
+        return false;
+    }
+
     const VkAttachmentDescription colorAttachment{
         .flags = 0,
         .format = swapchainImageFormat_,
@@ -678,10 +783,25 @@ bool SolarLabVulkanRenderer::CreateRenderPass() {
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
     };
+    const VkAttachmentDescription depthAttachment{
+        .flags = 0,
+        .format = depthFormat_,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
 
     const VkAttachmentReference colorAttachmentReference{
         .attachment = 0,
         .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+    const VkAttachmentReference depthAttachmentReference{
+        .attachment = 1,
+        .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
 
     const VkSubpassDescription subpassDescription{
@@ -692,31 +812,43 @@ bool SolarLabVulkanRenderer::CreateRenderPass() {
         .colorAttachmentCount = 1,
         .pColorAttachments = &colorAttachmentReference,
         .pResolveAttachments = nullptr,
-        .pDepthStencilAttachment = nullptr,
+        .pDepthStencilAttachment = &depthAttachmentReference,
         .preserveAttachmentCount = 0,
         .pPreserveAttachments = nullptr,
     };
 
-    const VkSubpassDependency dependency{
-        .srcSubpass = VK_SUBPASS_EXTERNAL,
-        .dstSubpass = 0,
-        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = 0,
-        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dependencyFlags = 0,
-    };
+    const std::array<VkSubpassDependency, 2> dependencies = {{
+        {
+            .srcSubpass = VK_SUBPASS_EXTERNAL,
+            .dstSubpass = 0,
+            .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dependencyFlags = 0,
+        },
+        {
+            .srcSubpass = 0,
+            .dstSubpass = VK_SUBPASS_EXTERNAL,
+            .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dstAccessMask = 0,
+            .dependencyFlags = 0,
+        },
+    }};
 
+    const std::array<VkAttachmentDescription, 2> attachments = {{colorAttachment, depthAttachment}};
     const VkRenderPassCreateInfo renderPassCreateInfo{
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .attachmentCount = 1,
-        .pAttachments = &colorAttachment,
+        .attachmentCount = static_cast<uint32_t>(attachments.size()),
+        .pAttachments = attachments.data(),
         .subpassCount = 1,
         .pSubpasses = &subpassDescription,
-        .dependencyCount = 1,
-        .pDependencies = &dependency,
+        .dependencyCount = static_cast<uint32_t>(dependencies.size()),
+        .pDependencies = dependencies.data(),
     };
 
     if (vkCreateRenderPass(device_, &renderPassCreateInfo, nullptr, &renderPass_) != VK_SUCCESS) {
@@ -727,16 +859,20 @@ bool SolarLabVulkanRenderer::CreateRenderPass() {
 }
 
 bool SolarLabVulkanRenderer::CreateFramebuffers() {
+    if (depthImage_.view == VK_NULL_HANDLE) {
+        SetError("Depth resources must exist before creating framebuffers.");
+        return false;
+    }
     framebuffers_.resize(swapchainImageViews_.size());
     for (size_t index = 0; index < swapchainImageViews_.size(); ++index) {
-        VkImageView attachments[] = {swapchainImageViews_[index]};
+        std::array<VkImageView, 2> attachments = {swapchainImageViews_[index], depthImage_.view};
         const VkFramebufferCreateInfo framebufferCreateInfo{
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
             .renderPass = renderPass_,
-            .attachmentCount = 1,
-            .pAttachments = attachments,
+            .attachmentCount = static_cast<uint32_t>(attachments.size()),
+            .pAttachments = attachments.data(),
             .width = swapchainExtent_.width,
             .height = swapchainExtent_.height,
             .layers = 1,
@@ -746,6 +882,155 @@ bool SolarLabVulkanRenderer::CreateFramebuffers() {
             return false;
         }
     }
+    return true;
+}
+
+bool SolarLabVulkanRenderer::CreateDepthResources() {
+    if (swapchainExtent_.width == 0 || swapchainExtent_.height == 0) {
+        SetError("Cannot create depth resources before the swapchain extent is valid.");
+        return false;
+    }
+    DestroyDepthResources();
+    if (depthFormat_ == VK_FORMAT_UNDEFINED) {
+        depthFormat_ = PickDepthFormat();
+    }
+    if (depthFormat_ == VK_FORMAT_UNDEFINED) {
+        SetError("Failed to choose a supported depth format.");
+        return false;
+    }
+    return CreateDepthImage(swapchainExtent_.width, swapchainExtent_.height, depthFormat_, "depth-image", depthImage_);
+}
+
+void SolarLabVulkanRenderer::DestroyDepthResources() {
+    DestroyGpuImage(depthImage_);
+    depthFormat_ = VK_FORMAT_UNDEFINED;
+}
+
+void SolarLabVulkanRenderer::DestroyGpuImage(GpuImage& image) {
+    if (device_ == VK_NULL_HANDLE) {
+        image = GpuImage{};
+        return;
+    }
+    if (image.view != VK_NULL_HANDLE) {
+        vkDestroyImageView(device_, image.view, nullptr);
+    }
+    if (image.image != VK_NULL_HANDLE) {
+        vkDestroyImage(device_, image.image, nullptr);
+    }
+    if (image.memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, image.memory, nullptr);
+    }
+    image = GpuImage{};
+}
+
+VkFormat SolarLabVulkanRenderer::PickDepthFormat() const {
+    if (physicalDevice_ == VK_NULL_HANDLE) {
+        return VK_FORMAT_UNDEFINED;
+    }
+    const std::array<VkFormat, 3> candidates = {
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D32_SFLOAT_S8_UINT,
+        VK_FORMAT_D24_UNORM_S8_UINT,
+    };
+    for (VkFormat candidate : candidates) {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(physicalDevice_, candidate, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0) {
+            return candidate;
+        }
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+bool SolarLabVulkanRenderer::CreateDepthImage(uint32_t width, uint32_t height, VkFormat format, const char* label, GpuImage& image) {
+    if (device_ == VK_NULL_HANDLE || physicalDevice_ == VK_NULL_HANDLE) {
+        SetError("Cannot create depth images before the Vulkan device is ready.");
+        return false;
+    }
+
+    const VkImageCreateInfo imageCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = format,
+        .extent = {
+            .width = width,
+            .height = height,
+            .depth = 1,
+        },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (vkCreateImage(device_, &imageCreateInfo, nullptr, &image.image) != VK_SUCCESS) {
+        SetError(std::string("vkCreateImage failed for ") + (label != nullptr ? label : "depth-image") + ".");
+        return false;
+    }
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device_, image.image, &requirements);
+    const uint32_t memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (memoryTypeIndex == UINT32_MAX) {
+        SetError(std::string("Failed to find device-local memory for ") + (label != nullptr ? label : "depth-image") + ".");
+        DestroyGpuImage(image);
+        return false;
+    }
+
+    const VkMemoryAllocateInfo allocateInfo{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = memoryTypeIndex,
+    };
+    if (vkAllocateMemory(device_, &allocateInfo, nullptr, &image.memory) != VK_SUCCESS) {
+        SetError(std::string("vkAllocateMemory failed for ") + (label != nullptr ? label : "depth-image") + ".");
+        DestroyGpuImage(image);
+        return false;
+    }
+    if (vkBindImageMemory(device_, image.image, image.memory, 0) != VK_SUCCESS) {
+        SetError(std::string("vkBindImageMemory failed for ") + (label != nullptr ? label : "depth-image") + ".");
+        DestroyGpuImage(image);
+        return false;
+    }
+
+    const VkImageViewCreateInfo viewCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .image = image.image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .components = {
+            .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    };
+    if (vkCreateImageView(device_, &viewCreateInfo, nullptr, &image.view) != VK_SUCCESS) {
+        SetError(std::string("vkCreateImageView failed for ") + (label != nullptr ? label : "depth-image") + ".");
+        DestroyGpuImage(image);
+        return false;
+    }
+
+    image.format = format;
+    image.width = width;
+    image.height = height;
+    image.debugLabel = label;
     return true;
 }
 
@@ -1019,7 +1304,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
         MakeBindingDescription(0, sizeof(CheapPointVertex)),
     };
     const std::vector<VkVertexInputAttributeDescription> mediumAttributes = {
-        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(CheapPointVertex, x)),
+        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CheapPointVertex, x)),
         MakeAttributeDescription(1, 0, VK_FORMAT_R32_UINT, offsetof(CheapPointVertex, colorArgb)),
         MakeAttributeDescription(2, 0, VK_FORMAT_R32_SFLOAT, offsetof(CheapPointVertex, sizePx)),
     };
@@ -1040,7 +1325,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
         MakeBindingDescription(0, sizeof(DensityPointVertex)),
     };
     const std::vector<VkVertexInputAttributeDescription> densityAttributes = {
-        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(DensityPointVertex, x)),
+        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(DensityPointVertex, x)),
         MakeAttributeDescription(1, 0, VK_FORMAT_R32_UINT, offsetof(DensityPointVertex, colorArgb)),
         MakeAttributeDescription(2, 0, VK_FORMAT_R32_UINT, offsetof(DensityPointVertex, densityWeight)),
     };
@@ -1061,7 +1346,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
         MakeBindingDescription(0, sizeof(TrailVertex)),
     };
     const std::vector<VkVertexInputAttributeDescription> trailAttributes = {
-        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(TrailVertex, x)),
+        MakeAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(TrailVertex, x)),
         MakeAttributeDescription(1, 0, VK_FORMAT_R32_UINT, offsetof(TrailVertex, colorArgb)),
         MakeAttributeDescription(2, 0, VK_FORMAT_R32_SFLOAT, offsetof(TrailVertex, alpha)),
     };
@@ -1165,7 +1450,10 @@ bool SolarLabVulkanRenderer::AllocateAndRecordCommandBuffers() {
             0,
             nullptr);
 
-        const VkClearValue clearColor = {{{0.0f, 0.0f, 0.03f, 1.0f}}};
+        const std::array<VkClearValue, 2> clearValues = {{
+            {{{0.0f, 0.0f, 0.03f, 1.0f}}},
+            {.depthStencil = {1.0f, 0U}},
+        }};
         const VkRenderPassBeginInfo renderPassBeginInfo{
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .pNext = nullptr,
@@ -1175,8 +1463,8 @@ bool SolarLabVulkanRenderer::AllocateAndRecordCommandBuffers() {
                 .offset = {0, 0},
                 .extent = swapchainExtent_,
             },
-            .clearValueCount = 1,
-            .pClearValues = &clearColor,
+            .clearValueCount = static_cast<uint32_t>(clearValues.size()),
+            .pClearValues = clearValues.data(),
         };
         vkCmdBeginRenderPass(commandBuffers_[index], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         if (!RecordSceneBindingsLocked(commandBuffers_[index])) {
@@ -1237,6 +1525,8 @@ void SolarLabVulkanRenderer::DestroySurfaceResources() {
     }
     framebuffers_.clear();
 
+    DestroyDepthResources();
+
     if (renderPass_ != VK_NULL_HANDLE) {
         vkDestroyRenderPass(device_, renderPass_, nullptr);
         renderPass_ = VK_NULL_HANDLE;
@@ -1264,6 +1554,10 @@ void SolarLabVulkanRenderer::Cleanup() {
     DestroyDescriptorResources();
 
     if (device_ != VK_NULL_HANDLE) {
+        if (pipelineCache_ != VK_NULL_HANDLE) {
+            vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
+            pipelineCache_ = VK_NULL_HANDLE;
+        }
         if (imageAvailableSemaphore_ != VK_NULL_HANDLE) {
             vkDestroySemaphore(device_, imageAvailableSemaphore_, nullptr);
             imageAvailableSemaphore_ = VK_NULL_HANDLE;
@@ -1295,6 +1589,7 @@ void SolarLabVulkanRenderer::Cleanup() {
         vkDestroyDevice(device_, nullptr);
         device_ = VK_NULL_HANDLE;
     }
+    pipelineCache_ = VK_NULL_HANDLE;
 
     if (instance_ != VK_NULL_HANDLE) {
         vkDestroyInstance(instance_, nullptr);
@@ -1421,6 +1716,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         tracerMediumVertices.push_back(CheapPointVertex{
             .x = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 2U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerMediumColorsArgb[index]), kMediumTracerAlpha),
             .sizePx = sizePx,
         });
@@ -1439,6 +1735,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         tracerFarVertices.push_back(DensityPointVertex{
             .x = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 2U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerFarColorsArgb[index]), kFarTracerAlpha),
             .densityWeight = densityWeight,
         });
@@ -1455,6 +1752,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         trailVertices.push_back(TrailVertex{
             .x = static_cast<float>(sceneBuffers_.trailPositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.trailPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.trailPositionsM[base + 2U]),
             .colorArgb = static_cast<uint32_t>(sceneBuffers_.trailColorsArgb[index]),
             .alpha = kTrailAlpha,
         });
@@ -1693,31 +1991,63 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
     const float heightPx = static_cast<float>(std::max<uint32_t>(swapchainExtent_.height, 1U));
     const float minDimensionPx = std::max(1.0f, std::min(widthPx, heightPx));
     const float viewRadiusM = static_cast<float>(std::max(cameraViewRadiusM_, 1.0));
-    const float halfSpanX = viewRadiusM * (widthPx / minDimensionPx);
-    const float halfSpanY = viewRadiusM * (heightPx / minDimensionPx);
-    const float metersPerPixel = (2.0f * viewRadiusM) / minDimensionPx;
+    const float halfSpanX = std::max(viewRadiusM * (widthPx / minDimensionPx), 1.0e-6f);
+    const float halfSpanY = std::max(viewRadiusM * (heightPx / minDimensionPx), 1.0e-6f);
+    const float halfDepth = std::max(viewRadiusM * kDefaultDepthExtentFactor, 1.0e-3f);
+    const float metersPerPixel = std::max((2.0f * viewRadiusM) / minDimensionPx, 1.0e-6f);
     const float maxPointSizePx = enabledFeatures_.largePoints
         ? std::max(1.0f, std::min(physicalDeviceProperties_.limits.pointSizeRange[1], kDefaultMaxPointSizePx))
         : 1.0f;
 
+    const float yawRadians = static_cast<float>(cameraYawRadians_);
+    const float pitchRadians = std::clamp(static_cast<float>(cameraPitchRadians_), kOrbitMinPitchRadians, kOrbitMaxPitchRadians);
+    const float cosYaw = std::cos(yawRadians);
+    const float sinYaw = std::sin(yawRadians);
+    const float cosPitch = std::cos(pitchRadians);
+    const float sinPitch = std::sin(pitchRadians);
+
+    const Float3 right = Normalize(MakeFloat3(cosYaw, sinYaw, 0.0f), MakeFloat3(1.0f, 0.0f, 0.0f));
+    const Float3 screenUpHorizontal = Normalize(MakeFloat3(-sinYaw, cosYaw, 0.0f), MakeFloat3(0.0f, 1.0f, 0.0f));
+    const Float3 forward = Normalize(
+        Add(Scale(screenUpHorizontal, cosPitch), MakeFloat3(0.0f, 0.0f, -sinPitch)),
+        MakeFloat3(0.0f, 0.0f, -1.0f));
+    const Float3 up = Normalize(Cross(right, forward), MakeFloat3(0.0f, 0.0f, 1.0f));
+
+    const Float3 centerRelative = MakeFloat3(
+        static_cast<float>(cameraCenterX_ - sceneBuffers_.sceneOriginX),
+        static_cast<float>(cameraCenterY_ - sceneBuffers_.sceneOriginY),
+        static_cast<float>(cameraCenterZ_ - sceneBuffers_.sceneOriginZ));
+
     const SceneUniformData uniformData{
-        .centerSpan = {
-            static_cast<float>(cameraCenterX_),
-            static_cast<float>(cameraCenterY_),
-            std::max(halfSpanX, 1.0e-6f),
-            std::max(halfSpanY, 1.0e-6f),
+        .centerRelativeAndMetrics = {
+            centerRelative.x,
+            centerRelative.y,
+            centerRelative.z,
+            metersPerPixel,
         },
-        .metrics = {
-            std::max(metersPerPixel, 1.0e-6f),
-            minDimensionPx,
-            maxPointSizePx,
-            enabledFeatures_.largePoints ? 1.0f : 0.0f,
+        .rightAndSpan = {
+            right.x,
+            right.y,
+            right.z,
+            halfSpanX,
+        },
+        .upAndSpan = {
+            up.x,
+            up.y,
+            up.z,
+            halfSpanY,
+        },
+        .forwardAndDepth = {
+            forward.x,
+            forward.y,
+            forward.z,
+            halfDepth,
         },
         .viewport = {
             widthPx,
             heightPx,
-            0.0f,
-            0.0f,
+            maxPointSizePx,
+            enabledFeatures_.largePoints ? 1.0f : 0.0f,
         },
     };
 
@@ -2144,18 +2474,18 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
         vkCmdDrawIndirect(commandBuffer, stream.indirectCommandBuffer.buffer, 0, 1, sizeof(VkDrawIndirectCommand));
     };
 
-    bindAndDraw(billboardPipeline_, sceneGpuStreams_.authoritative);
-    bindAndDraw(billboardPipeline_, sceneGpuStreams_.tracerNear);
-    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
-        bindAndDrawIndirect(mediumPointPipeline_, sceneGpuStreams_.tracerMediumCompute);
-    } else {
-        bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
-    }
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
         bindAndDrawIndirect(farDensityPipeline_, sceneGpuStreams_.tracerFarCompute);
     } else {
         bindAndDraw(farDensityPipeline_, sceneGpuStreams_.tracerFar);
     }
+    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
+        bindAndDrawIndirect(mediumPointPipeline_, sceneGpuStreams_.tracerMediumCompute);
+    } else {
+        bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
+    }
+    bindAndDraw(billboardPipeline_, sceneGpuStreams_.tracerNear);
+    bindAndDraw(billboardPipeline_, sceneGpuStreams_.authoritative);
 
     if (trailPipeline_ != VK_NULL_HANDLE && sceneGpuStreams_.trails.vertexCount > 1 && sceneGpuStreams_.trails.vertexBuffer.buffer != VK_NULL_HANDLE) {
         const VkBuffer trailBuffer = sceneGpuStreams_.trails.vertexBuffer.buffer;
@@ -2634,7 +2964,14 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << (trailPipeline_ != VK_NULL_HANDLE ? "tr" : "--") << ']'
         << " cp=["
         << (mediumComputePipeline_ != VK_NULL_HANDLE ? "mc" : "--") << ','
-        << (farComputePipeline_ != VK_NULL_HANDLE ? "fc" : "--") << ']';
+        << (farComputePipeline_ != VK_NULL_HANDLE ? "fc" : "--") << ']'
+        << " cam=[r=" << cameraViewRadiusM_
+        << " yaw=" << cameraYawRadians_
+        << " pitch=" << cameraPitchRadians_
+        << "] origin=["
+        << sceneBuffers_.sceneOriginX << ','
+        << sceneBuffers_.sceneOriginY << ','
+        << sceneBuffers_.sceneOriginZ << ']';
     return out.str();
 }
 
@@ -2813,13 +3150,14 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
     };
 
     const VkStencilOpState emptyStencil{};
+    const VkBool32 depthWritesEnabled = topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ? VK_FALSE : VK_TRUE;
     const VkPipelineDepthStencilStateCreateInfo depthStencilState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .depthTestEnable = VK_FALSE,
-        .depthWriteEnable = VK_FALSE,
-        .depthCompareOp = VK_COMPARE_OP_ALWAYS,
+        .depthTestEnable = VK_TRUE,
+        .depthWriteEnable = depthWritesEnabled,
+        .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
         .depthBoundsTestEnable = VK_FALSE,
         .stencilTestEnable = VK_FALSE,
         .front = emptyStencil,
@@ -2884,7 +3222,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
         .basePipelineIndex = -1,
     };
 
-    const VkResult createResult = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline);
+    const VkResult createResult = vkCreateGraphicsPipelines(device_, pipelineCache_, 1, &pipelineCreateInfo, nullptr, &pipeline);
     vkDestroyShaderModule(device_, fragmentShader, nullptr);
     vkDestroyShaderModule(device_, vertexShader, nullptr);
 
@@ -2926,7 +3264,7 @@ bool SolarLabVulkanRenderer::CreateComputePipeline(
         .basePipelineIndex = -1,
     };
 
-    const VkResult createResult = vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &createInfo, nullptr, &pipeline);
+    const VkResult createResult = vkCreateComputePipelines(device_, pipelineCache_, 1, &createInfo, nullptr, &pipeline);
     vkDestroyShaderModule(device_, computeShader, nullptr);
     if (createResult != VK_SUCCESS) {
         SetError(std::string("vkCreateComputePipelines failed for ") + label + ".");
