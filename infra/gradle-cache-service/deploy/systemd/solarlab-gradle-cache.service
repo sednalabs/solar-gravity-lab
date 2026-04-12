@@ -1,0 +1,15 @@
+[Unit]
+Description=Solar Lab Gradle cache service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/solarlab-gradle-cache.env
+WorkingDirectory=%h/mmm/solar-gravity-lab-orchard/main/infra/gradle-cache-service
+ExecStart=/usr/bin/env cargo run --release
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

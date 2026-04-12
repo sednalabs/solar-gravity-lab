@@ -1,0 +1,4 @@
+ingress:
+  - hostname: cache.sednalabs.io
+    service: http://127.0.0.1:8789
+  - service: http_status:404
