@@ -15,6 +15,7 @@ solarlab-domain = { path = "../domain" }
 solarlab-hardware = { path = "../hardware" }
 solarlab-physics = { path = "../physics" }
 solarlab-runtime = { path = "../runtime" }
+solarlab-scene = { path = "../scene" }
 solarlab-vulkan-adapter = { path = "../../render/vulkan-adapter" }
 
 [target.'cfg(target_os = "android")'.dependencies]

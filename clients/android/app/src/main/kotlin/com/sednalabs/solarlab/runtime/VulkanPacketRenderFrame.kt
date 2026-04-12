@@ -59,6 +59,7 @@ data class RenderTracer(
 
 data class RenderTrail(
     val sourceBodyId: String,
+    val family: RenderTrailFamily,
     val colorR: Float,
     val colorG: Float,
     val colorB: Float,
@@ -66,6 +67,20 @@ data class RenderTrail(
     val points: List<RenderPoint>,
     val headHighlighted: Boolean,
 )
+
+enum class RenderTrailFamily(val code: Int) {
+    Trajectory(0),
+    HistoricalOrbit(1),
+    Prediction(2);
+
+    companion object {
+        fun fromCode(code: Int): RenderTrailFamily = when (code) {
+            1 -> HistoricalOrbit
+            2 -> Prediction
+            else -> Trajectory
+        }
+    }
+}
 
 data class RenderPoint(
     val x: Float,
@@ -77,13 +92,14 @@ internal object VulkanPacketRenderFrameDecoder {
     private const val BODY_STRIDE_BYTES = 140
     private const val TRACER_STRIDE_BYTES = 32
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
-    private const val TRAIL_SPAN_STRIDE_BYTES = 132
+    private const val TRAIL_SPAN_STRIDE_BYTES = 136
     private const val BODY_ID_OFFSET_BYTES = 40
     private const val BODY_ID_MAX_BYTES = 96
     private const val BODY_ID_LENGTH_OFFSET_BYTES = 136
-    private const val TRAIL_SOURCE_BODY_ID_OFFSET_BYTES = 32
+    private const val TRAIL_FAMILY_OFFSET_BYTES = 32
+    private const val TRAIL_SOURCE_BODY_ID_OFFSET_BYTES = 36
     private const val TRAIL_SOURCE_BODY_ID_MAX_BYTES = 96
-    private const val TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 128
+    private const val TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 132
 
     // Decodes native-side packet layout into immutable Kotlin domain models.
     // Stride constants and slice math are intentionally colocated with decode paths
@@ -200,6 +216,7 @@ internal object VulkanPacketRenderFrameDecoder {
                     maxBytes = TRAIL_SOURCE_BODY_ID_MAX_BYTES,
                     lengthOffset = base + TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES,
                 ),
+                family = RenderTrailFamily.fromCode(ordered.getInt(base + TRAIL_FAMILY_OFFSET_BYTES)),
                 colorR = ordered.getFloat(base + 8),
                 colorG = ordered.getFloat(base + 12),
                 colorB = ordered.getFloat(base + 16),

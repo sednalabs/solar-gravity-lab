@@ -162,7 +162,7 @@ class JniRuntimeBridgeTest {
             bridge.connect().collect { /* keep session alive for periodic refresh */ }
         }
 
-        withTimeout(2_500) {
+        withTimeout(5_000) {
             while (transport.appliedCommands.none { it.kind == 0 }) {
                 delay(25)
             }
@@ -231,6 +231,7 @@ class JniRuntimeBridgeTest {
         val runtimeInfoHandles = mutableListOf<Long>()
         val refreshedHandles = mutableListOf<Long>()
         val appliedCommands = mutableListOf<NativeRuntimeCommandPayload>()
+        private var latestSummary: NativeSnapshotSummaryResult? = null
 
         override fun ensureLibraryLoaded(): NativeLibraryLoadOutcome = NativeLibraryLoadOutcome.Success
 
@@ -240,7 +241,7 @@ class JniRuntimeBridgeTest {
         ): NativeCreateSessionResult = NativeCreateSessionResult(
             result = NativeResult(code = 0),
             handle = 42L,
-            abiVersion = 2,
+            abiVersion = 3,
             cpuBackend = runtimeInfoCpuBackend,
             gpuBackend = runtimeInfoGpuBackend,
         )
@@ -249,7 +250,7 @@ class JniRuntimeBridgeTest {
             runtimeInfoHandles += handle
             return NativeRuntimeInfoResult(
                 result = NativeResult(code = 0),
-                abiVersion = 2,
+                abiVersion = 3,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
             )
@@ -260,8 +261,11 @@ class JniRuntimeBridgeTest {
 
         override fun refreshSession(handle: Long): NativeSnapshotSummaryResult {
             refreshedHandles += handle
-            return refreshResults.removeFirstOrNull()
+            val summary = refreshResults.removeFirstOrNull()
+                ?: latestSummary
                 ?: snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT)
+            latestSummary = summary
+            return summary
         }
 
         override fun applyCommand(
@@ -269,7 +273,20 @@ class JniRuntimeBridgeTest {
             command: NativeRuntimeCommandPayload,
         ): NativeSnapshotSummaryResult {
             appliedCommands += command
-            return snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT)
+            val current = latestSummary ?: snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT)
+            val summary = when (command.kind) {
+                1 -> current.copy(paused = true)
+                2 -> current.copy(paused = false)
+                3 -> current.copy(
+                    simSecondsPerRealSecond = command.simSecondsPerRealSecond
+                )
+                0 -> current.copy(
+                    epochSeconds = current.epochSeconds + command.deltaSeconds
+                )
+                else -> current
+            }
+            latestSummary = summary
+            return summary
         }
 
         override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =

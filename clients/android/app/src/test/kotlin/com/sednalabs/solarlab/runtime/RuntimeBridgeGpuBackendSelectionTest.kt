@@ -38,7 +38,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesOpenClWorkloadsAndInteropPolicy() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 2,
+            abiVersion = 3,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_OPENCL,
         )
@@ -51,7 +51,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_returnsNoInteropPolicy_forNonOpenClBackends() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 2,
+            abiVersion = 3,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
         )

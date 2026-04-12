@@ -115,6 +115,7 @@ class VulkanPacketRenderFrameDecoderTest {
                 putFloat(1.0f)
                 putInt(256)
                 putInt(1)
+                putInt(2)
                 position(TRAIL_SOURCE_BODY_ID_OFFSET_BYTES)
                 put(sourceBodyId)
                 position(TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES)
@@ -171,6 +172,7 @@ class VulkanPacketRenderFrameDecoderTest {
 
         val trail = frame.trails.single()
         assertEquals("moon", trail.sourceBodyId)
+        assertEquals(RenderTrailFamily.Prediction, trail.family)
         assertTrue(trail.headHighlighted)
         assertEquals(2, trail.points.size)
         assertEquals(4f, trail.points.last().x)
@@ -181,8 +183,8 @@ class VulkanPacketRenderFrameDecoderTest {
         private const val BODY_ID_OFFSET_BYTES = 40
         private const val BODY_ID_LENGTH_OFFSET_BYTES = 136
         private const val TRAIL_VERTEX_STRIDE_BYTES = 20
-        private const val TRAIL_SPAN_STRIDE_BYTES = 132
-        private const val TRAIL_SOURCE_BODY_ID_OFFSET_BYTES = 32
-        private const val TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 128
+        private const val TRAIL_SPAN_STRIDE_BYTES = 136
+        private const val TRAIL_SOURCE_BODY_ID_OFFSET_BYTES = 36
+        private const val TRAIL_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 132
     }
 }

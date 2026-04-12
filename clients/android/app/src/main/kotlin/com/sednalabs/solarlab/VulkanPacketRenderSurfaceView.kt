@@ -20,6 +20,7 @@ import android.view.SurfaceView
 import com.sednalabs.solarlab.runtime.RenderBody
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RenderTrail
+import com.sednalabs.solarlab.runtime.RenderTrailFamily
 import com.sednalabs.solarlab.runtime.RenderTracer
 import java.util.Locale
 import kotlin.math.abs
@@ -547,7 +548,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         frame.trails.forEach { trail ->
             val normalizedSourceBodyId = trail.sourceBodyId.lowercase(Locale.US)
             val highlightRank = trailHighlightRanks[normalizedSourceBodyId]
-            val shouldDrawHistoricalTrail = historicalTrailsEnabled && (
+            val shouldDrawHistoricalTrail = trail.family != RenderTrailFamily.Prediction &&
+                historicalTrailsEnabled && (
                 historicalTrailSourceBodyIds.isEmpty() ||
                     highlightRank != null ||
                     trail.headHighlighted
@@ -566,6 +568,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
                 )
             }
             if (
+                trail.family == RenderTrailFamily.Prediction &&
                 forecastOverlayEnabled &&
                 (
                     trail.headHighlighted ||
@@ -1414,7 +1417,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             .asSequence()
             .filter { trail ->
                 val normalizedSourceId = trail.sourceBodyId.lowercase(Locale.US)
-                historicalTrailsEnabled &&
+                trail.family != RenderTrailFamily.Prediction &&
+                    historicalTrailsEnabled &&
                     (
                         historicalTrailSourceBodyIds.isEmpty() ||
                             trail.headHighlighted ||
@@ -1435,8 +1439,11 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val forecastTrailPoints = frame.trails
             .asSequence()
             .filter { trail ->
-                trail.headHighlighted ||
-                    forecastSourceBodyIds.contains(trail.sourceBodyId.lowercase(Locale.US))
+                trail.family == RenderTrailFamily.Prediction &&
+                    (
+                        trail.headHighlighted ||
+                            forecastSourceBodyIds.contains(trail.sourceBodyId.lowercase(Locale.US))
+                        )
             }
             .flatMap { trail ->
                 trail.points.asSequence().mapNotNull { point ->
