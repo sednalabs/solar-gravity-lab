@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab.runtime
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,6 +86,8 @@ class BridgeBackedRuntimeFacade internal constructor(
             withContext(boundaryDispatcher) {
                 bridge.connect().collect(::applySignal)
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
             surfaceShellFailure(
                 statusLine = "Runtime startup failed",
