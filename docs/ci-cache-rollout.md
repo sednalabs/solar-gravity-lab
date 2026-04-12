@@ -265,6 +265,10 @@ Example values:
 
 This keeps the current validated hosted-runner behavior unchanged while giving the next self-hosted runner evaluation a small, reversible control surface.
 
+For the detailed pilot recommendation, preload surface, migration plan, and rollback path, see:
+
+- `docs/self-hosted-android-runner-evaluation.md`
+
 ## Cloudflare and R2 layout
 
 - hostname: `cache.sednalabs.io`
