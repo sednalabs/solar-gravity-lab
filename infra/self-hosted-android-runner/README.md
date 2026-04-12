@@ -61,4 +61,5 @@ The scripts assume the runner installation lives there unless overridden by env.
 ## Related docs
 
 - `docs/self-hosted-android-runner-evaluation.md`
+- `docs/self-hosted-android-runner-operator-checklist.md`
 - `docs/ci-cache-rollout.md`
