@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -96,6 +97,7 @@ internal fun StageFirstRuntimeMirrorExperience(
     runtimeFacade: RuntimeFacade?,
     ensureRuntimeStarted: (() -> Unit)?,
     onReturnToSandbox: () -> Unit,
+    runtimeMirrorMountedState: androidx.compose.runtime.MutableState<Boolean>? = null,
 ) {
     SolarLabTheme {
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -243,7 +245,9 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         DisposableEffect(Unit) {
+            runtimeMirrorMountedState?.value = true
             onDispose {
+                runtimeMirrorMountedState?.value = false
                 renderHostView?.release()
             }
         }
@@ -337,6 +341,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         StageActionButton(
                             label = "Refresh runtime",
                             onClick = refreshRuntime,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_REFRESH_BUTTON),
                             enabled = runtimeFacade != null,
                         )
                     }
@@ -380,17 +385,20 @@ internal fun StageFirstRuntimeMirrorExperience(
                         StageActionButton(
                             label = "Sandbox",
                             onClick = onReturnToSandbox,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON),
                             secondary = true,
                         )
                         StageActionButton(
                             label = if (searchVisible) "Searching" else "Search",
                             onClick = { searchVisible = true },
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
                             emphasized = searchVisible,
                             enabled = searchableBodies.isNotEmpty(),
                         )
                         StageActionButton(
                             label = if (debugVisible) "Debugging" else "Debug",
                             onClick = { debugVisible = true },
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
                             emphasized = debugVisible,
                         )
                     }
