@@ -337,7 +337,7 @@ jobs:
           java-version: "17"
 
       - name: Restore standalone Gradle cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
@@ -354,7 +354,7 @@ jobs:
           git status --short
 
       - name: Upload wrapper artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gradle-wrapper-${{ github.run_id }}
           if-no-files-found: error
@@ -434,10 +434,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: rust_workspace_sccache
@@ -482,10 +481,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: rust_workspace_arm64_sccache
@@ -530,10 +528,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: ffi_abi_sccache
@@ -578,10 +575,9 @@ jobs:
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: runtime_scene_telemetry_sccache
@@ -645,7 +641,7 @@ jobs:
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_unit_sdk_install
@@ -687,10 +683,9 @@ jobs:
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: android_unit_sccache
@@ -754,7 +749,7 @@ jobs:
 
       - name: Upload Android unit artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-unit-${{ github.run_id }}
           if-no-files-found: warn
@@ -811,7 +806,7 @@ jobs:
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_lint_sdk_install
@@ -853,10 +848,9 @@ jobs:
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: android_lint_sccache
@@ -914,7 +908,7 @@ jobs:
 
       - name: Upload Android lint artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-lint-${{ github.run_id }}
           if-no-files-found: warn
@@ -971,7 +965,7 @@ jobs:
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Enable KVM for Android emulator
         shell: bash
@@ -985,7 +979,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.android/avd/*
@@ -1013,10 +1007,9 @@ jobs:
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: ./.github/actions/install-sccache
         with:
           version: v0.10.0
-          disable_annotations: true
 
       - name: Configure sccache
         id: android_shell_sccache
@@ -1157,7 +1150,7 @@ jobs:
 
       - name: Upload Android shell artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-shell-${{ matrix.validation_mode }}-${{ github.run_id }}
           if-no-files-found: warn
@@ -1228,7 +1221,7 @@ jobs:
         run: cat dist/validation-summary/validation-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload validation summary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: validation-summary
           if-no-files-found: error
