@@ -56,6 +56,7 @@ public:
     std::string LastError() const;
     std::string BackendLabel() const;
     std::string SceneSummary() const;
+    std::string HardwareSummary() const;
 
 private:
     struct SceneBuffers {

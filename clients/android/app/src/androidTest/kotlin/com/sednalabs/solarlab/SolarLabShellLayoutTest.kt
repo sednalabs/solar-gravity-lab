@@ -189,7 +189,9 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.FOCUS_BODY_SET_BUTTON)
             .assertIsEnabled()
             .performClick()
-        assertTrue(runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "earth" })
+        assertCommandEventually("FocusBody(earth)") {
+            runtimeFacade.commands.any { it is RuntimeCommand.FocusBody && it.bodyId == "earth" }
+        }
 
         scrollShellTo(SolarLabTestTags.focusCatalogSpawnPresetTag("earth"))
         composeRule.onNodeWithTag(SolarLabTestTags.focusCatalogSpawnPresetTag("earth"))
@@ -206,14 +208,14 @@ class SolarLabShellLayoutTest {
         composeRule.onNodeWithTag(SolarLabTestTags.SPAWN_BODY_BUTTON)
             .assertIsEnabled()
             .performClick()
-        assertTrue(
+        assertCommandEventually("SpawnBody(earth)") {
             runtimeFacade.commands.any {
                 it is RuntimeCommand.SpawnBody &&
                     it.bodyId == "earth" &&
                     it.massKg == 5.97237E24 &&
                     it.radiusM == 6_371_000.0
             }
-        )
+        }
 
         scrollShellTo(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
@@ -433,7 +435,10 @@ class SolarLabShellLayoutTest {
         expectedCommand: String,
         predicate: () -> Boolean,
     ) {
-        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.waitForIdle()
+            predicate()
+        }
         assertTrue(
             "Expected command $expectedCommand. Observed commands: ${runtimeFacade.commands}",
             predicate(),

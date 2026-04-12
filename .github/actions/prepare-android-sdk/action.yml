@@ -1,0 +1,76 @@
+name: Prepare Android SDK
+description: Prefer the GitHub runner's preinstalled Android SDK and export stable tool paths.
+
+inputs:
+  sdk-root:
+    description: Preferred Android SDK root to use on GitHub-hosted runners.
+    required: false
+    default: /usr/local/lib/android/sdk
+  ndk-version:
+    description: Preferred Android NDK version to export when already present under the SDK root.
+    required: false
+    default: ""
+
+outputs:
+  sdk-root:
+    description: Resolved Android SDK root.
+    value: ${{ steps.prepare.outputs.sdk-root }}
+  sdkmanager-path:
+    description: Resolved sdkmanager executable path.
+    value: ${{ steps.prepare.outputs.sdkmanager-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Export Android SDK environment
+      id: prepare
+      shell: bash
+      env:
+        INPUT_SDK_ROOT: ${{ inputs.sdk-root }}
+        INPUT_NDK_VERSION: ${{ inputs.ndk-version }}
+      run: |
+        set -euo pipefail
+
+        sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${INPUT_SDK_ROOT}}}"
+        if [[ ! -d "${sdk_root}" ]]; then
+          echo "Android SDK root does not exist: ${sdk_root}" >&2
+          exit 1
+        fi
+
+        sdkmanager_path=""
+        candidate_paths=(
+          "${sdk_root}/cmdline-tools/latest/bin"
+          "${sdk_root}/platform-tools"
+          "${sdk_root}/emulator"
+        )
+
+        for candidate in "${candidate_paths[@]}"; do
+          if [[ -d "${candidate}" ]]; then
+            echo "${candidate}" >> "${GITHUB_PATH}"
+            if [[ -z "${sdkmanager_path}" && -x "${candidate}/sdkmanager" ]]; then
+              sdkmanager_path="${candidate}/sdkmanager"
+            fi
+          fi
+        done
+
+        if [[ -z "${sdkmanager_path}" && -x "${sdk_root}/cmdline-tools/latest/bin/sdkmanager" ]]; then
+          sdkmanager_path="${sdk_root}/cmdline-tools/latest/bin/sdkmanager"
+        fi
+
+        if [[ -z "${sdkmanager_path}" ]]; then
+          echo "Unable to locate sdkmanager under ${sdk_root}" >&2
+          exit 1
+        fi
+
+        echo "ANDROID_HOME=${sdk_root}" >> "${GITHUB_ENV}"
+        echo "ANDROID_SDK_ROOT=${sdk_root}" >> "${GITHUB_ENV}"
+
+        if [[ -n "${INPUT_NDK_VERSION}" && -d "${sdk_root}/ndk/${INPUT_NDK_VERSION}" ]]; then
+          ndk_root="${sdk_root}/ndk/${INPUT_NDK_VERSION}"
+          echo "ANDROID_NDK=${ndk_root}" >> "${GITHUB_ENV}"
+          echo "ANDROID_NDK_HOME=${ndk_root}" >> "${GITHUB_ENV}"
+          echo "ANDROID_NDK_ROOT=${ndk_root}" >> "${GITHUB_ENV}"
+        fi
+
+        echo "sdk-root=${sdk_root}" >> "${GITHUB_OUTPUT}"
+        echo "sdkmanager-path=${sdkmanager_path}" >> "${GITHUB_OUTPUT}"

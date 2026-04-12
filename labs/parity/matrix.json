@@ -11,9 +11,12 @@
       "proof_refs": [
         "validation-lab parity coverage for drift and scenario checks",
         "runtime canonical-major-seed moon/pluto epoch propagation assertions",
-        "runtime major-body telemetry thresholds for COM drift, COM velocity drift, and fine-baseline angular-momentum agreement"
+        "runtime major-body telemetry thresholds for COM drift, COM velocity drift, and fine-baseline angular-momentum agreement",
+        "solarlab-conformance major-body-orbit-telemetry",
+        "solarlab-conformance added-body-repeatability",
+        "solarlab-conformance one-year-earth-orbit-stability"
       ],
-      "notes": "Seed all canonical checks to confirm authoritative authority and accuracy are not regressed."
+      "notes": "Seed all canonical checks to confirm authoritative authority and accuracy are not regressed, including a cheap long-horizon Sun/Earth year-stability line that stays in the Rust-native harness."
     },
     {
       "id": "P-002",
@@ -55,9 +58,10 @@
       "status": "port",
       "owner_item": "3496",
       "proof_refs": [
-        "PhysicsAccuracyTelemetryReportGeneratorTest"
+        "PhysicsAccuracyTelemetryReportGeneratorTest",
+        "solarlab-conformance physics-accuracy-telemetry"
       ],
-      "notes": "Rust-native surface should become source of truth before legacy assertion backport."
+      "notes": "The Rust-native conformance harness now carries the diagnostic guardrails; the legacy telemetry generator remains only as historical reference while the new surface becomes the long-term truth gate."
     },
     {
       "id": "P-006",
@@ -92,6 +96,7 @@
       "owner_item": "3490",
       "proof_refs": [
         "engine/physics scalar-vs-kernel parity assertions",
+        "solarlab-conformance arm64-kernel-equivalence",
         "legacy acceleration oracle cases tracked in release-alpha-9"
       ],
       "notes": "Keep exact kernel-equivalence semantics explicit so ISA or GPU acceleration never silently diverges from the scalar oracle."
@@ -104,6 +109,8 @@
       "owner_item": "3490",
       "proof_refs": [
         "playback substep budget policy assertions",
+        "solarlab-conformance collision-playback-cap",
+        "solarlab-conformance host-relative-playback-policy",
         "thermal and tracer workload scheduler clamps"
       ],
       "notes": "High-speed playback, backlog control, and thermal-pressure clamps must stay scientifically conservative instead of drifting into visually smooth but physically misleading scheduling."

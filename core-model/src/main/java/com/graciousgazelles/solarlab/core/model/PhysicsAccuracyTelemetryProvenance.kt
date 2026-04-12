@@ -5,4 +5,5 @@ data class PhysicsAccuracyTelemetryProvenance(
     val seedEpochJulianDateTdb: Double?,
     val datasetLabel: String?,
     val datasetSource: String?,
+    val hardwareAccelerationProfile: HardwareAccelerationProfile? = null,
 )

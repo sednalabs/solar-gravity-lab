@@ -51,8 +51,11 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         )
 
         val json = generator.toJson(report)
-        assertTrue(json.contains("\"schemaVersion\": \"physics-accuracy-telemetry.v1\""))
+        assertTrue(json.contains("\"schemaVersion\": \"physics-accuracy-telemetry.v2\""))
         assertTrue(json.contains("\"scenarioId\": \"major-bodies-with-starter-moons\""))
+        assertTrue(json.contains("\"hardwareAccelerationProfile\": {"))
+        assertTrue(json.contains("\"authoritativeSolverBackend\": \"kotlin-reference\""))
+        assertTrue(json.contains("\"tracerIntegrationBackend\": \"cpu-direct\""))
         assertTrue(json.contains("\"metrics\": ["))
         assertTrue(json.contains("\"relative_energy_drift\""))
         assertTrue(json.contains("\"relative_angular_momentum_drift\""))
@@ -74,6 +77,9 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         val second = generator.generate(config)
         assertEquals(first, second)
         assertEquals(generator.toJson(first), generator.toJson(second))
+        assertEquals("host-jvm", first.provenance.hardwareAccelerationProfile?.target)
+        assertEquals("kotlin-reference", first.provenance.hardwareAccelerationProfile?.authoritativeSolverBackend)
+        assertEquals("cpu-direct", first.provenance.hardwareAccelerationProfile?.tracerIntegrationBackend)
 
         val metrics = first.metrics.associateBy { it.name }
         assertTrue(metrics.containsKey("moon_earth_distance_au"))
@@ -177,6 +183,8 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
         assertTrue(Files.exists(jsonPath))
         assertTrue(Files.exists(markdownPath))
         assertTrue(Files.readString(jsonPath).contains("\"runLabel\": \"cli-test\""))
+        assertTrue(Files.readString(jsonPath).contains("\"hardwareAccelerationProfile\": {"))
+        assertTrue(Files.readString(markdownPath).contains("- authoritative_solver_backend: `kotlin-reference`"))
         assertTrue(Files.readString(markdownPath).contains("# Physics Accuracy Telemetry"))
     }
 
