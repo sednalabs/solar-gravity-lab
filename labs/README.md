@@ -14,3 +14,14 @@ Planned labs:
 
 Each lab should emit machine-readable evidence and human-readable summaries tied
 to the exact commit being validated.
+
+Current runnable lab surface:
+
+- `cargo run -p solarlab-conformance -- --pretty`
+
+The conformance lab emits deterministic JSON for the current scientific-harness
+slice:
+
+- `major-body-orbit-telemetry`
+- `added-body-repeatability`
+- `collision-playback-cap`
