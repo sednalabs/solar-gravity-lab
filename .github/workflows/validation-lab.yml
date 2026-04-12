@@ -449,7 +449,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
@@ -497,7 +497,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
@@ -545,7 +545,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
@@ -593,7 +593,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
@@ -691,7 +691,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
@@ -845,7 +845,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
@@ -979,7 +979,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 

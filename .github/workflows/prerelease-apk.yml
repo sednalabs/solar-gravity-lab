@@ -182,7 +182,7 @@ jobs:
           phase_end="$(date +%s)"
           echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
@@ -407,7 +407,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
 
