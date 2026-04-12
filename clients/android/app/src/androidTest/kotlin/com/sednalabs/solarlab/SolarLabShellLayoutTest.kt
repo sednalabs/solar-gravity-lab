@@ -350,7 +350,7 @@ class SolarLabShellLayoutTest {
             .assertIsDisplayed()
         scrollShellTo(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY)
         composeRule.onNodeWithTag(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY)
-            .assertTextContains("History trails · last 8 focused bodies")
+            .assertTextContains("History trails · last 8 focused bodies stay visible behind the stage.")
         scrollShellTo(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
             .assertTextEquals("Forecast on")

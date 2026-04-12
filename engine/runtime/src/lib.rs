@@ -721,9 +721,12 @@ impl WorldRuntime {
     /// This method is a pure projection: it does not mutate runtime state.
     #[must_use]
     pub fn snapshot(&self) -> WorldSnapshot {
+        self.snapshot_with_orbit_archives(Vec::new())
+    }
+
+    fn snapshot_with_orbit_archives(&self, orbit_archives: Vec<OrbitArchive>) -> WorldSnapshot {
         let active = self.active_branch();
         let checkpoint = active.last_checkpoint.clone();
-        let orbit_archives = self.orbit_archives(&OrbitArchiveQuery::default());
         let mounted_manifest = mounted_manifest_from_state(
             &active.world.local_data_state,
             &active.world.mounted_package_ids,
@@ -767,7 +770,8 @@ impl WorldRuntime {
     /// Project authoritative runtime state into a compact telemetry surface.
     #[must_use]
     pub fn telemetry_report(&self) -> RuntimeTelemetryReport {
-        let snapshot = self.snapshot();
+        let snapshot =
+            self.snapshot_with_orbit_archives(self.orbit_archives(&OrbitArchiveQuery::default()));
         let scene = extract_render_scene(&snapshot);
         let trail_history_counts = runtime_trail_history_counts(&snapshot.trail_history_by_body);
         let total_trail_samples = trail_history_counts
@@ -806,7 +810,9 @@ impl WorldRuntime {
     /// scene export.
     #[must_use]
     pub fn render_scene(&self) -> RenderScene {
-        extract_render_scene(&self.snapshot())
+        let snapshot =
+            self.snapshot_with_orbit_archives(self.orbit_archives(&OrbitArchiveQuery::default()));
+        extract_render_scene(&snapshot)
     }
 
     fn new_command_header(

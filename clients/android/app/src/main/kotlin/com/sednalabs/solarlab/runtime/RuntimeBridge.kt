@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab.runtime
 
+import android.util.Log
 import com.sednalabs.solarlab.BuildConfig
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -46,12 +47,15 @@ internal class JniRuntimeBridge(
     // Creates the native session and starts the periodic snapshot refresh loop.
     // Emitted signals are boundary-only; all rendering state remains host-owned.
     override fun connect(): Flow<RuntimeSignal> = callbackFlow {
+        logInfo("connect.ensureLibraryLoaded.begin")
         val loadOutcome = transport.ensureLibraryLoaded()
         if (loadOutcome is NativeLibraryLoadOutcome.Failure) {
+            logError("connect.ensureLibraryLoaded.failure reason=${loadOutcome.reason}")
             trySend(RuntimeSignal.Unavailable(loadOutcome.reason))
             close()
             return@callbackFlow
         }
+        logInfo("connect.ensureLibraryLoaded.success")
 
         trySend(
             RuntimeSignal.Notice(
@@ -60,12 +64,19 @@ internal class JniRuntimeBridge(
             )
         )
 
+        logInfo(
+            "connect.createSession.begin scenario=$DEFAULT_SCENARIO_ID branch=$DEFAULT_ROOT_BRANCH_ID abi=$ABI_VERSION gpu=${BuildConfig.PREFERRED_GPU_BACKEND}"
+        )
         val createResult = runCatching {
             transport.createSession(
                 scenarioId = DEFAULT_SCENARIO_ID,
                 rootBranchId = DEFAULT_ROOT_BRANCH_ID,
             )
         }.getOrElse { error ->
+            logError(
+                "connect.createSession.failure error=${error.message ?: error::class.java.simpleName}",
+                error,
+            )
             trySend(
                 RuntimeSignal.Unavailable(
                     message = "Native runtime session adapter is unavailable",
@@ -75,6 +86,9 @@ internal class JniRuntimeBridge(
             close()
             return@callbackFlow
         }
+        logInfo(
+            "connect.createSession.result handle=${createResult.handle} status=${createResult.result.describe()} abi=${createResult.abiVersion}"
+        )
 
         if (!createResult.result.isOk()) {
             if (createResult.handle != 0L) {
@@ -480,12 +494,26 @@ internal class JniRuntimeBridge(
 
 
     private companion object {
+        private const val LOG_TAG = "SolarLabRuntimeBridge"
         private const val ABI_VERSION = 3
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val STARTUP_MIN_VISIBLE_PLAYBACK_RATE = 3_600.0
         private const val STARTUP_DEFAULT_PLAYBACK_RATE = 21_600.0
+
+        private fun logInfo(message: String) {
+            if (runCatching { Log.i(LOG_TAG, message) }.isFailure) {
+                println("$LOG_TAG I $message")
+            }
+        }
+
+        private fun logError(message: String, error: Throwable? = null) {
+            if (runCatching { Log.e(LOG_TAG, message, error) }.isFailure) {
+                println("$LOG_TAG E $message")
+                error?.printStackTrace()
+            }
+        }
     }
 }
 
