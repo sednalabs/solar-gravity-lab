@@ -168,7 +168,12 @@ class JniRuntimeBridgeTest {
         }
 
         withTimeout(2_500) {
-            while (transport.refreshedHandles.size < 3) {
+            while (
+                transport.refreshedHandles.size < 3 ||
+                transport.appliedCommands.none { command ->
+                    command.kind == 0 && command.deltaSeconds > 0.0
+                }
+            ) {
                 delay(25)
             }
         }
