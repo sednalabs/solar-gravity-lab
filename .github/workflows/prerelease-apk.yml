@@ -69,6 +69,14 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
+  ANDROID_AVD_CACHE_VERSION: v3
+  SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+  SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+  SCCACHE_REGION: auto
+  SCCACHE_S3_USE_SSL: "true"
+  SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
 jobs:
   build-prerelease-apk:
     name: Build internal dev preview APK
@@ -86,6 +94,9 @@ jobs:
       changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
       changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -114,6 +125,15 @@ jobs:
           cache: gradle
 
       - uses: android-actions/setup-android@v3
+
+      - name: Enable KVM for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Restore Android emulator AVD cache
         if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
@@ -162,6 +182,20 @@ jobs:
           phase_end="$(date +%s)"
           echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: prerelease_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
+
       - name: Install Rust Android toolchain
         id: rust_android_toolchain
         shell: bash
@@ -176,8 +210,6 @@ jobs:
           fi
           phase_end="$(date +%s)"
           echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
-
-      - uses: Swatinem/rust-cache@v2
 
       - name: Resolve prerelease version defaults
         id: resolved_version
@@ -268,15 +300,6 @@ jobs:
             "dist/${artifact_name}"
           sha256sum "dist/${artifact_name}" > "dist/${artifact_name}.sha256"
 
-      - name: Enable KVM for Android emulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
       - name: Emulator launch smoke for packaged APK
         id: launch_smoke
         uses: reactivecircus/android-emulator-runner@v2
@@ -343,6 +366,18 @@ jobs:
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Emit prerelease sccache stats
+        if: always() && steps.prerelease_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/prerelease-build.txt
+          {
+            echo "## prerelease-build sccache"
+            cat dist/sccache/prerelease-build.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload prerelease APK artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -362,6 +397,9 @@ jobs:
     needs: build-prerelease-apk
     if: needs.build-prerelease-apk.result == 'success'
     runs-on: ubuntu-24.04-arm
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -371,12 +409,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: isa_proof_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run ARM64 ISA activation + scalar oracle proof
         shell: bash
         run: |
           set -euo pipefail
           bash .github/scripts/run_arm64_isa_proof.sh
+
+      - name: Emit ISA proof sccache stats
+        if: always() && steps.isa_proof_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/isa-prerelease-proof.txt
+          {
+            echo "## isa-prerelease-proof sccache"
+            cat dist/sccache/isa-prerelease-proof.txt
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload ARM64 ISA proof artifacts
         if: always()

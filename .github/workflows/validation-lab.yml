@@ -97,6 +97,13 @@ permissions:
 
 env:
   STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
+  ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
+  ANDROID_AVD_CACHE_VERSION: v3
+  SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+  SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+  SCCACHE_REGION: auto
+  SCCACHE_S3_USE_SSL: "true"
+  SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
 
 jobs:
   metadata:
@@ -430,6 +437,9 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.rust_workspace == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -438,6 +448,20 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: rust_workspace_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run canonical workspace tests
         shell: bash
@@ -445,11 +469,26 @@ jobs:
           set -euo pipefail
           cargo test --workspace
 
+      - name: Emit rust workspace sccache stats
+        if: always() && steps.rust_workspace_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/rust-workspace.txt
+          {
+            echo "## rust-workspace sccache"
+            cat dist/sccache/rust-workspace.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   rust-workspace-arm64:
     name: Rust workspace tests (Arm64)
     needs: metadata
     if: ${{ needs.metadata.outputs.rust_workspace_arm64 == 'true' }}
     runs-on: ubuntu-24.04-arm
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -458,6 +497,20 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: rust_workspace_arm64_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run canonical workspace tests on Arm64
         shell: bash
@@ -465,11 +518,26 @@ jobs:
           set -euo pipefail
           cargo test --workspace
 
+      - name: Emit rust workspace arm64 sccache stats
+        if: always() && steps.rust_workspace_arm64_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/rust-workspace-arm64.txt
+          {
+            echo "## rust-workspace-arm64 sccache"
+            cat dist/sccache/rust-workspace-arm64.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   ffi-abi:
     name: FFI ABI tests
     needs: metadata
     if: ${{ needs.metadata.outputs.ffi_abi == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -478,6 +546,20 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: ffi_abi_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run focused FFI ABI tests
         shell: bash
@@ -485,11 +567,26 @@ jobs:
           set -euo pipefail
           cargo test -p solarlab-ffi
 
+      - name: Emit FFI ABI sccache stats
+        if: always() && steps.ffi_abi_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/ffi-abi.txt
+          {
+            echo "## ffi-abi sccache"
+            cat dist/sccache/ffi-abi.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   runtime-scene-telemetry:
     name: Runtime scene + telemetry tests
     needs: metadata
     if: ${{ needs.metadata.outputs.runtime_scene_telemetry == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -498,6 +595,20 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: runtime_scene_telemetry_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run focused runtime scene + telemetry tests
         shell: bash
@@ -506,11 +617,26 @@ jobs:
           cargo test -p solarlab-runtime --lib render_scene
           cargo test -p solarlab-runtime --lib telemetry
 
+      - name: Emit runtime scene sccache stats
+        if: always() && steps.runtime_scene_telemetry_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/runtime-scene-telemetry.txt
+          {
+            echo "## runtime-scene-telemetry sccache"
+            cat dist/sccache/runtime-scene-telemetry.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   android-unit:
     name: Android JVM and host-side unit tests
     needs: metadata
     if: ${{ needs.metadata.outputs.android_unit == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -570,6 +696,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: android_unit_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Install Rust Android toolchain
         id: android_unit_rust_android_toolchain
@@ -614,6 +752,18 @@ jobs:
             echo "- lane total: \`${lane_total}s\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Emit Android unit sccache stats
+        if: always() && steps.android_unit_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/android-unit.txt
+          {
+            echo "## android-unit sccache"
+            cat dist/sccache/android-unit.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Android unit artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -639,6 +789,9 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.android_lint == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -698,6 +851,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: android_lint_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Install Rust Android toolchain
         id: android_lint_rust_android_toolchain
@@ -736,6 +901,18 @@ jobs:
             echo "- lane total: \`${lane_total}s\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Emit Android lint sccache stats
+        if: always() && steps.android_lint_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/android-lint.txt
+          {
+            echo "## android-lint sccache"
+            cat dist/sccache/android-lint.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Android lint artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -757,6 +934,9 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     strategy:
       fail-fast: false
       matrix:
@@ -783,6 +963,15 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      - name: Enable KVM for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Restore Android emulator AVD cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
         uses: actions/cache@v4
@@ -797,6 +986,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.10.0
+          disable_annotations: true
+
+      - name: Configure sccache
+        id: android_shell_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_sdk_install
@@ -871,15 +1072,6 @@ jobs:
             -Psolarlab.stageFirstRuntimeMirror=${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
           phase_end="$(date +%s)"
           echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
-
-      - name: Enable KVM for Android emulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
 
       - name: Run connected Android shell smoke and continuity tests
         id: android_connected_tests
@@ -968,6 +1160,18 @@ jobs:
             echo "- test class count: \`${test_class_count}\`"
             echo "- instrumentation timeout: \`${timeout_seconds}s\`"
             echo "- instrumentation exit code: \`${exit_code}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Emit Android shell sccache stats
+        if: always() && steps.android_shell_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/android-shell-${{ matrix.validation_mode }}.txt
+          {
+            echo "## android-shell sccache"
+            cat dist/sccache/android-shell-${{ matrix.validation_mode }}.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts
