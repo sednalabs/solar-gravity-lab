@@ -98,6 +98,7 @@ jobs:
     name: Resolve validation plan
     runs-on: ubuntu-24.04
     outputs:
+      checkout_repository: ${{ steps.plan.outputs.checkout_repository }}
       checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
       profile: ${{ steps.plan.outputs.profile }}
       lane_set: ${{ steps.plan.outputs.lane_set }}
@@ -125,8 +126,12 @@ jobs:
           set -euo pipefail
 
           checkout_ref='${{ inputs.ref }}'
-          if [[ -z "$checkout_ref" ]]; then
-            checkout_ref='${{ github.head_ref || github.ref_name }}'
+          checkout_repository='${{ github.repository }}'
+          if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
+            checkout_ref='${{ github.event.pull_request.head.sha }}'
+            checkout_repository='${{ github.event.pull_request.head.repo.full_name }}'
+          elif [[ -z "$checkout_ref" ]]; then
+            checkout_ref='${{ github.ref_name }}'
           fi
 
           profile='${{ inputs.profile }}'
@@ -265,21 +270,25 @@ jobs:
                 android_shell_matrix='[{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
                 ;;
               auto)
-                case "$profile" in
-                  targeted)
-                    android_shell_matrix='[{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
-                    ;;
-                  frontier)
-                    android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
-                    ;;
-                  broad|full)
-                    android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-off","debug_stage_first_client":"true","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
-                    ;;
-                  *)
-                    echo "Unknown profile for android shell matrix: ${profile}" >&2
-                    exit 1
-                    ;;
-                esac
+                if [[ "$android_test_scope" == 'full' ]]; then
+                  android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"}]'
+                else
+                  case "$profile" in
+                    targeted)
+                      android_shell_matrix='[{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
+                      ;;
+                    frontier)
+                      android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
+                      ;;
+                    broad|full)
+                      android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-off","debug_stage_first_client":"true","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
+                      ;;
+                    *)
+                      echo "Unknown profile for android shell matrix: ${profile}" >&2
+                      exit 1
+                      ;;
+                  esac
+                fi
                 ;;
               *)
                 echo "Unknown android_validation_mode: ${android_validation_mode}" >&2
@@ -291,6 +300,7 @@ jobs:
           lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s' \
             "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode")"
 
+          echo "checkout_repository=${checkout_repository}" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile=${profile}" >> "$GITHUB_OUTPUT"
           echo "lane_set=${lane_set}" >> "$GITHUB_OUTPUT"
@@ -322,6 +332,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: actions/setup-java@v5
@@ -400,6 +411,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Validate parity matrix schema
@@ -417,6 +429,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -436,6 +449,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -455,6 +469,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -474,6 +489,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -494,6 +510,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Initialize Android unit lane timing
@@ -621,6 +638,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Initialize Android lint lane timing
@@ -742,6 +760,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Initialize Android lane timing
@@ -931,6 +950,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - name: Build validation summary payload

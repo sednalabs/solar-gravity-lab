@@ -130,6 +130,31 @@ emit_failure_summary() {
 }
 
 resolve_test_classes() {
+  case "${VALIDATION_MODE}" in
+    shell-v2)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=false"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
+      ;;
+    stage-first-mirror-off)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
+      ;;
+    stage-first-mirror-on)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=true"
+      )
+      ;;
+    *)
+      echo "Unsupported ANDROID_VALIDATION_MODE='${VALIDATION_MODE}'" >&2
+      exit 2
+      ;;
+  esac
+
   if [[ -n "${ANDROID_TEST_CLASSES:-}" ]]; then
     IFS=',' read -r -a TEST_CLASSES <<< "${ANDROID_TEST_CLASSES}"
     return
@@ -137,10 +162,6 @@ resolve_test_classes() {
 
   case "${VALIDATION_MODE}" in
     shell-v2)
-      GRADLE_VALIDATION_PROPS=(
-        "-Psolarlab.debugStageFirstClient=false"
-        "-Psolarlab.stageFirstRuntimeMirror=false"
-      )
       case "${TEST_SCOPE}" in
         core)
           TEST_CLASSES=("${SHELL_CORE_TEST_CLASSES[@]}")
@@ -159,10 +180,6 @@ resolve_test_classes() {
         echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
         exit 2
       fi
-      GRADLE_VALIDATION_PROPS=(
-        "-Psolarlab.debugStageFirstClient=true"
-        "-Psolarlab.stageFirstRuntimeMirror=false"
-      )
       TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
       ;;
     stage-first-mirror-on)
@@ -170,15 +187,7 @@ resolve_test_classes() {
         echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
         exit 2
       fi
-      GRADLE_VALIDATION_PROPS=(
-        "-Psolarlab.debugStageFirstClient=true"
-        "-Psolarlab.stageFirstRuntimeMirror=true"
-      )
       TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
-      ;;
-    *)
-      echo "Unsupported ANDROID_VALIDATION_MODE='${VALIDATION_MODE}'" >&2
-      exit 2
       ;;
   esac
 }
