@@ -220,6 +220,7 @@ private:
         GpuBuffer tileCounterReadbackBuffer;
         uint32_t sourceVertexCount = 0;
         uint32_t dispatchGroupCountX = 0;
+        uint32_t outputVertexCapacity = 0;
         uint32_t tileCounterCount = 0;
         uint32_t activeTileCount = 0;
         uint32_t peakTileOccupancy = 0;
