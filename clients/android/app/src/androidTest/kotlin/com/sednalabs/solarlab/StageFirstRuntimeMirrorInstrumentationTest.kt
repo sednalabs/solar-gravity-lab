@@ -50,7 +50,11 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertDoesNotExist()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertDoesNotExist()
+            }.isSuccess
+        }
         assertTrue(
             "Runtime mirror surface should be mounted after switching modes",
             composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),

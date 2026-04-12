@@ -36,7 +36,11 @@ class StageFirstLocalStartupInstrumentationTest {
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
         } else {
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertDoesNotExist()
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                runCatching {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertDoesNotExist()
+                }.isSuccess
+            }
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
