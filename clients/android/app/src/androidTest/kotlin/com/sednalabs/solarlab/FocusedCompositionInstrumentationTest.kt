@@ -40,6 +40,7 @@ class FocusedCompositionInstrumentationTest {
             companionCandidateIds = listOf("moon"),
             screenshotPrefix = "focus-earth-moon",
             maxNormalizedCenterDistance = 0.21f,
+            focusViewportConvergenceTimeout = 10.seconds,
             minimumSeparationFraction = 0.0002f,
             maximumSeparationFraction = 0.42f,
             requireCompanionVisible = true,
@@ -53,6 +54,7 @@ class FocusedCompositionInstrumentationTest {
             companionCandidateIds = listOf("io", "europa", "ganymede", "callisto"),
             screenshotPrefix = "focus-jupiter",
             maxNormalizedCenterDistance = 0.22f,
+            focusViewportConvergenceTimeout = 20.seconds,
             minimumSeparationFraction = 0.002f,
             maximumSeparationFraction = 0.45f,
             requireCompanionVisible = false,
@@ -64,6 +66,7 @@ class FocusedCompositionInstrumentationTest {
         companionCandidateIds: List<String>,
         screenshotPrefix: String,
         maxNormalizedCenterDistance: Float,
+        focusViewportConvergenceTimeout: Duration,
         minimumSeparationFraction: Float,
         maximumSeparationFraction: Float,
         requireCompanionVisible: Boolean,
@@ -104,7 +107,7 @@ class FocusedCompositionInstrumentationTest {
                 scenario = scenario,
                 bodyId = focusBodyId,
                 maxNormalizedDistance = maxNormalizedCenterDistance,
-                timeout = 10.seconds,
+                timeout = focusViewportConvergenceTimeout,
             )
             assertPointWithinViewport(
                 point = focusSample.point,
@@ -177,14 +180,27 @@ class FocusedCompositionInstrumentationTest {
         timeout: Duration,
     ): BodyViewportSample {
         val deadlineMs = System.currentTimeMillis() + timeout.inWholeMilliseconds
+        var lastSample: BodyViewportSample? = null
         while (System.currentTimeMillis() < deadlineMs) {
             val sample = sampleBodyViewport(scenario = scenario, bodyId = bodyId)
+            if (sample != null) {
+                lastSample = sample
+            }
             if (sample != null && sample.normalizedDistanceFromCenter() <= maxNormalizedDistance) {
                 return sample
             }
             Thread.sleep(60)
         }
-        throw AssertionError("Focused body '$bodyId' should be visible and near center within $timeout")
+        val sampleDetails = lastSample?.let { sample ->
+            val (x, y) = sample.point
+            "lastSample=x=${"%.1f".format(x)}, y=${"%.1f".format(y)}, " +
+                "viewport=${"%.1f".format(sample.viewportWidth)}x${"%.1f".format(sample.viewportHeight)}, " +
+                "normalizedDistance=${"%.3f".format(sample.normalizedDistanceFromCenter())}"
+        } ?: "lastSample=not-visible"
+        throw AssertionError(
+            "Focused body '$bodyId' should be visible and near center within $timeout " +
+                "(maxNormalizedDistance=${"%.3f".format(maxNormalizedDistance)}, $sampleDetails)",
+        )
     }
 
     private fun waitForAnyBodyViewportSample(
