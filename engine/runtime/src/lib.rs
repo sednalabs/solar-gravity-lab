@@ -282,6 +282,7 @@ struct BranchState {
 }
 
 const TRAIL_HISTORY_MAX_SAMPLES: usize = 96;
+const RENDER_SCENE_ORBIT_BODY_LIMIT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct WorldRuntime {
@@ -810,9 +811,24 @@ impl WorldRuntime {
     /// scene export.
     #[must_use]
     pub fn render_scene(&self) -> RenderScene {
-        let snapshot =
-            self.snapshot_with_orbit_archives(self.orbit_archives(&OrbitArchiveQuery::default()));
+        let snapshot = self
+            .snapshot_with_orbit_archives(self.orbit_archives(&self.render_scene_orbit_query()));
         extract_render_scene(&snapshot)
+    }
+
+    fn render_scene_orbit_query(&self) -> OrbitArchiveQuery {
+        let active = self.active_branch();
+        let full_history = active.world.bodies.len() <= RENDER_SCENE_ORBIT_BODY_LIMIT;
+        OrbitArchiveQuery {
+            body_ids: render_scene_orbit_body_ids(
+                &active.world.bodies,
+                active.world.observer.focus_body_id.as_ref(),
+            ),
+            include_trajectory: true,
+            include_historical_orbits: full_history,
+            include_prediction: full_history,
+            ..OrbitArchiveQuery::default()
+        }
     }
 
     fn new_command_header(
@@ -1547,6 +1563,55 @@ fn orbit_archive_body_ids(query: &OrbitArchiveQuery, bodies: &[BodyState]) -> Ve
     body_ids
 }
 
+fn render_scene_orbit_body_ids(
+    bodies: &[BodyState],
+    focused_body_id: Option<&BodyId>,
+) -> Vec<BodyId> {
+    if bodies.len() <= RENDER_SCENE_ORBIT_BODY_LIMIT {
+        return orbit_archive_body_ids(&OrbitArchiveQuery::default(), bodies);
+    }
+
+    let mut ranked = bodies.iter().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        let left_is_focused = focused_body_id == Some(&left.body_id);
+        let right_is_focused = focused_body_id == Some(&right.body_id);
+
+        right_is_focused
+            .cmp(&left_is_focused)
+            .then_with(|| {
+                body_class_priority(&left.body_class).cmp(&body_class_priority(&right.body_class))
+            })
+            .then_with(|| {
+                right
+                    .mass_kg
+                    .partial_cmp(&left.mass_kg)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| left.body_id.0.cmp(&right.body_id.0))
+    });
+
+    let mut body_ids = ranked
+        .into_iter()
+        .take(RENDER_SCENE_ORBIT_BODY_LIMIT)
+        .map(|body| body.body_id.clone())
+        .collect::<Vec<_>>();
+    body_ids.sort_by(|left, right| left.0.cmp(&right.0));
+    body_ids
+}
+
+fn body_class_priority(body_class: &BodyClass) -> u8 {
+    match body_class {
+        BodyClass::Star => 0,
+        BodyClass::Planet => 1,
+        BodyClass::DwarfPlanet => 2,
+        BodyClass::Moon => 3,
+        BodyClass::SmallBody => 4,
+        BodyClass::Spacecraft => 5,
+        BodyClass::Tracer => 6,
+        BodyClass::Custom => 7,
+    }
+}
+
 fn build_trajectory_archives(
     body_ids: &[BodyId],
     trail_history_by_body: &HashMap<BodyId, Vec<TrailSample>>,
@@ -1830,7 +1895,7 @@ fn compute_world_invariants(bodies: &[BodyState]) -> PhysicsInvariants {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
 
     use solarlab_data::{
         CompatibilityTarget, Digest, PackageCompatibility, PackageKind, PackageLocator, SemVer,
@@ -1974,6 +2039,51 @@ mod tests {
 
         assert_eq!(first_count, 365);
         assert_eq!(second_count, 365);
+    }
+
+    #[test]
+    fn render_scene_limits_large_catalog_orbit_archives_to_scene_budget() {
+        let mut runtime = new_runtime();
+        let moon = BodyId("moon".into());
+
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .expect("seed command should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SetObserverMode {
+                    mode: ObserverMode::FollowSelected,
+                },
+                2,
+            )
+            .expect("setting observer mode should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(moon.clone()),
+                },
+                3,
+            )
+            .expect("focusing moon should succeed");
+
+        let scene = runtime.render_scene();
+        let trail_body_ids = scene
+            .trails
+            .iter()
+            .map(|trail| trail.source_body_id.clone())
+            .collect::<HashSet<_>>();
+
+        assert!(trail_body_ids.len() <= super::RENDER_SCENE_ORBIT_BODY_LIMIT);
+        assert!(trail_body_ids.contains(&moon));
+        assert!(scene
+            .trails
+            .iter()
+            .any(|trail| trail.source_body_id == moon
+                && trail.family == SceneTrailFamily::Trajectory));
+        assert!(scene
+            .trails
+            .iter()
+            .all(|trail| trail.family == SceneTrailFamily::Trajectory));
     }
 
     #[test]
