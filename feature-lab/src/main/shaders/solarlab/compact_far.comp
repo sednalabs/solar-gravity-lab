@@ -13,8 +13,8 @@ struct FarTracerState {
     vec2 velocityMps;
     uint colorArgb;
     uint densityWeight;
-    float reserved0;
-    float reserved1;
+    uint stableId;
+    uint reserved;
 };
 
 struct DensityPointVertex {
