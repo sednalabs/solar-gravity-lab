@@ -73,12 +73,29 @@ Current behavior:
 
 - if unset, the workflows use:
   - `"ubuntu-24.04"`
+- if the workflow is running on `pull_request`, the heavy Android jobs stay on `"ubuntu-24.04"` even if the self-hosted variable is set
+- only non-PR runs are allowed to switch to a self-hosted label set through the repo variable
 
 Self-hosted pilot value:
 
 - `["self-hosted","linux","x64","sgl-android"]`
 
 This means the pilot migration and rollback are both one repo-variable edit, not another workflow refactor.
+
+## Public-repo safety rule
+
+Solar Gravity Lab is a public repository, so the self-hosted pilot should not run untrusted pull-request code from forks on the self-hosted runner.
+
+The workflow seam is already hardened for that:
+
+- `pull_request` keeps the heavy Android jobs on GitHub-hosted runners
+- only non-PR runs can switch to a self-hosted runner through `SGL_ANDROID_HEAVY_RUNS_ON_JSON`
+
+Operationally, that means the pilot should start with:
+
+- `workflow_dispatch`
+- validation branches
+- trusted maintainer-triggered runs
 
 ## What the self-hosted runner should preload
 

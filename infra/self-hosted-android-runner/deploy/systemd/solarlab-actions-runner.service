@@ -1,0 +1,15 @@
+[Unit]
+Description=Solar Gravity Lab GitHub Actions self-hosted runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/solarlab-actions-runner.env
+WorkingDirectory=%h/actions-runner/solar-gravity-lab-android
+ExecStart=%h/actions-runner/solar-gravity-lab-android/runsvc.sh
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
