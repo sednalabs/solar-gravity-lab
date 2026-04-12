@@ -18,6 +18,9 @@ internal object SolarLabVulkanBridge {
 
     fun isRuntimeAvailable(): Boolean = isLibraryLoaded && nativeIsVulkanRuntimeAvailable()
 
+    fun cpuCapabilitySummary(): String =
+        if (isLibraryLoaded) nativeGetCpuCapabilitySummary() else "cpu=native-library-unavailable"
+
     fun createRenderer(assetManager: AssetManager): Long = if (isLibraryLoaded) nativeCreateRenderer(assetManager) else 0L
 
     fun destroyRenderer(handle: Long) {
@@ -183,6 +186,9 @@ internal object SolarLabVulkanBridge {
     fun sceneSummary(handle: Long): String =
         if (isLibraryLoaded && handle != 0L) nativeGetSceneSummary(handle) else "Scene summary unavailable"
 
+    fun hardwareSummary(handle: Long): String =
+        if (isLibraryLoaded && handle != 0L) nativeGetHardwareSummary(handle) else "gpu=vulkan-runtime-unavailable"
+
     private fun clearSubmissionCache(handle: Long) {
         if (lastSubmittedHandle != handle) return
         lastSubmittedHandle = 0L
@@ -236,6 +242,7 @@ internal object SolarLabVulkanBridge {
     }
 
     private external fun nativeIsVulkanRuntimeAvailable(): Boolean
+    private external fun nativeGetCpuCapabilitySummary(): String
     private external fun nativeCreateRenderer(assetManager: AssetManager): Long
     private external fun nativeDestroyRenderer(handle: Long)
     private external fun nativeOnSurfaceCreated(handle: Long, surface: Surface, width: Int, height: Int): Boolean
@@ -302,4 +309,5 @@ internal object SolarLabVulkanBridge {
     private external fun nativeGetLastError(handle: Long): String
     private external fun nativeGetBackendLabel(handle: Long): String
     private external fun nativeGetSceneSummary(handle: Long): String
+    private external fun nativeGetHardwareSummary(handle: Long): String
 }
