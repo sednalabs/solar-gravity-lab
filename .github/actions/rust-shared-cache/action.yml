@@ -1,0 +1,45 @@
+name: Rust shared cache
+description: Restore and save the shared cargo and target cache surface without the Swatinem runtime warning.
+
+inputs:
+  shared-key:
+    description: Stable cache namespace shared across equivalent jobs.
+    required: true
+
+outputs:
+  cache-hit:
+    description: Whether an exact cache key match was restored.
+    value: ${{ steps.cache.outputs.cache-hit }}
+  primary-key:
+    description: The computed primary cache key.
+    value: ${{ steps.keys.outputs.primary-key }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute Rust cache keys
+      id: keys
+      shell: bash
+      env:
+        RUST_CACHE_SHARED_KEY: ${{ inputs.shared-key }}
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        bash "${{ github.workspace }}/.github/scripts/compute_rust_cache_key.sh"
+
+    - name: Restore Rust shared cache
+      id: cache
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/bin
+          ~/.cargo/.crates.toml
+          ~/.cargo/.crates2.json
+          ~/.cargo/registry
+          ~/.cargo/git
+          ${{ github.workspace }}/target
+        key: ${{ steps.keys.outputs.primary-key }}
+        restore-keys: |
+          ${{ steps.keys.outputs.restore-key-1 }}
+          ${{ steps.keys.outputs.restore-key-2 }}
