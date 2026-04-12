@@ -9,10 +9,33 @@ emit_output() {
   fi
 }
 
+emit_summary() {
+  local enabled="$1"
+  local reason="$2"
+  local missing="${3:-}"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+      echo "## sccache configuration"
+      echo "- enabled: \`${enabled}\`"
+      echo "- reason: \`${reason}\`"
+      if [[ -n "${missing}" ]]; then
+        echo "- missing vars: \`${missing}\`"
+      fi
+      if [[ "${enabled}" == "true" ]]; then
+        echo "- path: \`${sccache_path}\`"
+        echo "- bucket: \`${SCCACHE_BUCKET}\`"
+        echo "- endpoint: \`${SCCACHE_ENDPOINT}\`"
+        echo "- key prefix: \`${SCCACHE_S3_KEY_PREFIX:-}\`"
+      fi
+    } >> "${GITHUB_STEP_SUMMARY}"
+  fi
+}
+
 sccache_path="${SCCACHE_PATH:-$(command -v sccache || true)}"
 if [[ -z "${sccache_path}" ]]; then
   emit_output "enabled" "false"
   emit_output "reason" "missing-binary"
+  emit_summary "false" "missing-binary"
   exit 0
 fi
 
@@ -31,9 +54,11 @@ for var_name in "${required_vars[@]}"; do
 done
 
 if [[ "${#missing_vars[@]}" -gt 0 ]]; then
+  missing_csv="$(IFS=,; echo "${missing_vars[*]}")"
   emit_output "enabled" "false"
   emit_output "reason" "missing-config"
-  emit_output "missing" "$(IFS=,; echo "${missing_vars[*]}")"
+  emit_output "missing" "${missing_csv}"
+  emit_summary "false" "missing-config" "${missing_csv}"
   exit 0
 fi
 
@@ -61,3 +86,4 @@ emit_output "path" "${sccache_path}"
 emit_output "bucket" "${SCCACHE_BUCKET}"
 emit_output "endpoint" "${SCCACHE_ENDPOINT}"
 emit_output "key_prefix" "${SCCACHE_S3_KEY_PREFIX:-}"
+emit_summary "true" "configured"

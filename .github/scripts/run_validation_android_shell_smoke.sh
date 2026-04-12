@@ -225,6 +225,17 @@ run_test_batch() {
     printf 'timeout_seconds=%s\n' "${run_timeout_seconds}"
     printf 'exit_code=%s\n' "${command_status}"
   } > "${run_dir}/status.txt"
+  cat > "${run_dir}/status.json" <<EOF
+{
+  "test_classes": $(printf '%s\n' "${TEST_CLASSES[@]}" | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))'),
+  "scope": $(printf '%s' "${TEST_SCOPE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "validation_mode": $(printf '%s' "${VALIDATION_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "gradle_validation_props": $(printf '%s\n' "${GRADLE_VALIDATION_PROPS[@]}" | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))'),
+  "artifact_mode": $(printf '%s' "${ARTIFACT_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "timeout_seconds": ${run_timeout_seconds},
+  "exit_code": ${command_status}
+}
+EOF
 
   if [[ "${command_status}" -eq 124 ]]; then
     capture_device_state "${run_dir}" "fail"

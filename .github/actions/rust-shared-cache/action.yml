@@ -43,3 +43,17 @@ runs:
         restore-keys: |
           ${{ steps.keys.outputs.restore-key-1 }}
           ${{ steps.keys.outputs.restore-key-2 }}
+
+    - name: Emit Rust shared cache summary
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            echo "## rust-shared-cache"
+            echo "- exact cache hit: \`${{ steps.cache.outputs.cache-hit || 'false' }}\`"
+            echo "- primary key: \`${{ steps.keys.outputs.primary-key }}\`"
+            echo "- restore key 1: \`${{ steps.keys.outputs.restore-key-1 }}\`"
+            echo "- restore key 2: \`${{ steps.keys.outputs.restore-key-2 }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+        fi
