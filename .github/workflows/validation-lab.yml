@@ -92,6 +92,8 @@ permissions:
 
 env:
   STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
+  ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
+  ANDROID_AVD_CACHE_VERSION: v2
 
 jobs:
   metadata:
@@ -328,7 +330,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
       - name: Restore standalone Gradle cache
         uses: actions/cache@v4
@@ -490,6 +491,11 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.android_unit == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -507,7 +513,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: android-actions/setup-android@v3
 
@@ -617,6 +630,11 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.android_lint == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -634,7 +652,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: android-actions/setup-android@v3
 
@@ -734,6 +759,11 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -755,20 +785,41 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: android-actions/setup-android@v3
 
       - name: Restore Android emulator AVD cache
+        id: avd-cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
         uses: actions/cache@v4
         with:
           path: |
-            ~/.android/avd
+            ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-v1
-          restore-keys: |
-            avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-
+          key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
+
+      - name: Seed Android emulator snapshot
+        if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
+          emulator-boot-timeout: 1200
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: false
+          script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -865,9 +916,10 @@ jobs:
           arch: x86_64
           profile: pixel_7
           target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
           emulator-boot-timeout: 1200
           force-avd-creation: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_validation_android_shell_smoke.sh
         env:
@@ -897,6 +949,9 @@ jobs:
             echo "- scope: \`${{ needs.metadata.outputs.android_test_scope }}\`"
             echo "- artifact mode: \`${{ needs.metadata.outputs.android_artifact_mode }}\`"
             echo "- emulator boot strategy: \`${{ needs.metadata.outputs.emulator_boot_strategy }}\`"
+            echo "- avd cache key: \`avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}\`"
+            echo "- avd cache result: \`${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && (steps.avd-cache.outputs.cache-hit == 'true' && 'hit' || 'miss') || 'skipped' }}\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts

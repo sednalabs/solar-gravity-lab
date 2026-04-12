@@ -3,6 +3,8 @@ import org.gradle.api.GradleException
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.Provider
+import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
@@ -17,6 +19,7 @@ import java.util.Properties
 import kotlin.math.max
 import javax.inject.Inject
 
+@CacheableTask
 abstract class BuildSolarlabNativeTask : DefaultTask() {
     @get:Inject
     abstract val execOps: ExecOperations
@@ -30,6 +33,15 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val rustWorkspaceInputs: ConfigurableFileCollection
+
+    @get:Input
+    abstract val rustcVersion: Property<String>
+
+    @get:Input
+    abstract val cargoNdkVersion: Property<String>
+
+    @get:Input
+    abstract val ndkIdentity: Property<String>
 
     @get:OutputDirectory
     abstract val generatedJniLibsDir: DirectoryProperty
@@ -266,6 +278,60 @@ fun String.toBuildConfigStringLiteral(): String = buildString {
     append('"')
 }
 
+fun Project.commandOutput(vararg args: String): Provider<String> =
+    providers.exec {
+        commandLine(*args)
+    }.standardOutput.asText.map { it.trim() }
+
+fun Project.resolvedNdkIdentity(workspaceRootDir: File): Provider<String> =
+    providers.provider {
+        fun envPath(name: String): File? = System.getenv(name)?.takeIf(String::isNotBlank)?.let(::File)
+
+        val envNdk = listOf("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "NDK_HOME")
+            .asSequence()
+            .mapNotNull(::envPath)
+            .firstOrNull(File::isDirectory)
+        if (envNdk != null) {
+            return@provider "env:${envNdk.name}"
+        }
+
+        val envSdk = listOf("ANDROID_SDK_ROOT", "ANDROID_HOME")
+            .asSequence()
+            .mapNotNull(::envPath)
+            .firstOrNull(File::isDirectory)
+        if (envSdk != null) {
+            val sdkNdk = envSdk.resolve("ndk")
+            val latest = sdkNdk.listFiles()
+                ?.filter(File::isDirectory)
+                ?.maxByOrNull(File::getName)
+            if (latest != null) {
+                return@provider "sdk:${latest.name}"
+            }
+        }
+
+        val localPropertiesCandidates = listOf(
+            project.rootProject.file("local.properties"),
+            workspaceRootDir.resolve("local.properties"),
+        )
+        localPropertiesCandidates.forEach { localPropertiesFile ->
+            if (!localPropertiesFile.isFile) {
+                return@forEach
+            }
+            val properties = Properties()
+            localPropertiesFile.inputStream().use(properties::load)
+            val sdkDir = properties.getProperty("sdk.dir")?.takeIf(String::isNotBlank) ?: return@forEach
+            val ndkRoot = File(sdkDir).resolve("ndk")
+            val latest = ndkRoot.listFiles()
+                ?.filter(File::isDirectory)
+                ?.maxByOrNull(File::getName)
+            if (latest != null) {
+                return@provider "local-properties:${latest.name}"
+            }
+        }
+
+        "unknown"
+    }
+
 val workspaceRootDir = rootProject.projectDir.resolve("../..").canonicalFile
 val solarlabGeneratedJniLibsDir = layout.buildDirectory.dir("generated/jniLibs/solarlab_v2")
 val solarlabVersionCode = project.stringPropertyOrEnv("solarlab.versionCode", "SOLARLAB_VERSION_CODE")
@@ -309,7 +375,9 @@ val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
             include("engine/ffi/include/**/*.h")
         }
     )
-    outputs.upToDateWhen { false }
+    rustcVersion.set(project.commandOutput("rustc", "-V"))
+    cargoNdkVersion.set(project.commandOutput("cargo", "ndk", "--version"))
+    ndkIdentity.set(project.resolvedNdkIdentity(workspaceRootDir))
 }
 
 android {

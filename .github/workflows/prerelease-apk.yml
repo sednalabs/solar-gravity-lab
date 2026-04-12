@@ -69,6 +69,10 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
+  ANDROID_AVD_CACHE_VERSION: v2
+
 jobs:
   build-prerelease-apk:
     name: Build internal dev preview APK
@@ -86,6 +90,11 @@ jobs:
       changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
       changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
     runs-on: ubuntu-24.04
+    env:
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -111,20 +120,41 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: android-actions/setup-android@v3
 
       - name: Restore Android emulator AVD cache
+        id: avd-cache
         if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
         uses: actions/cache@v4
         with:
           path: |
-            ~/.android/avd
+            ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-v1
-          restore-keys: |
-            avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-
+          key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
+
+      - name: Seed Android emulator snapshot
+        if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
+          emulator-boot-timeout: 1200
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: false
+          script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_sdk_install
@@ -285,9 +315,10 @@ jobs:
           arch: x86_64
           profile: pixel_7
           target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
           emulator-boot-timeout: 1200
           force-avd-creation: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_prerelease_android_launch_smoke.sh "${{ steps.meta.outputs.safe_version }}" "${{ steps.meta.outputs.package_label }}"
         env:
@@ -341,6 +372,9 @@ jobs:
             echo "- lane total (including emulator + launch smoke): \`${lane_total}s\`"
             echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
+            echo "- avd cache key: \`avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}\`"
+            echo "- avd cache result: \`${{ inputs.emulator_boot_strategy == 'snapshot-cache' && (steps.avd-cache.outputs.cache-hit == 'true' && 'hit' || 'miss') || 'skipped' }}\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload prerelease APK artifact
