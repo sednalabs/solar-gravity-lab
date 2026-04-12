@@ -46,11 +46,11 @@ enum SceneTrailFamily {
 message SceneTrail {
   string trail_id = 1;
   string source_body_id = 2;
-  SceneTrailFamily family = 3;
-  repeated Vector3d samples_m = 4;
-  ColorRgba color = 5;
-  uint32 max_samples = 6;
-  bool head_highlighted = 7;
+  repeated Vector3d samples_m = 3;
+  ColorRgba color = 4;
+  uint32 max_samples = 5;
+  bool head_highlighted = 6;
+  SceneTrailFamily family = 7;
 }
 
 message LightSource {
