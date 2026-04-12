@@ -3,8 +3,8 @@ package com.sednalabs.solarlab
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
@@ -36,9 +36,13 @@ class StageFirstLocalStartupInstrumentationTest {
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
         } else {
-            composeRule
-                .onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-                .assertDoesNotExist()
+            assertTrue(
+                "Mode button should be absent when runtime mirror is disabled",
+                composeRule
+                    .onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
+                    .fetchSemanticsNodes()
+                    .isEmpty(),
+            )
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
