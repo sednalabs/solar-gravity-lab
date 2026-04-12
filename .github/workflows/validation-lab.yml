@@ -35,6 +35,14 @@ on:
         required: true
         type: boolean
         default: false
+      emulator_boot_strategy:
+        description: Reserved Android emulator boot strategy input for cross-branch dispatch compatibility
+        required: false
+        type: choice
+        options:
+          - default
+          - snapshot-cache
+        default: default
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
@@ -193,7 +201,7 @@ jobs:
       - name: Upload wrapper artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gradle-wrapper-${{ github.run_id }}
+          name: gradle-wrapper-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}
           if-no-files-found: error
           path: |
             gradlew
@@ -276,7 +284,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: core-jvm-reports-${{ github.run_id }}
+          name: core-jvm-reports-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}
           if-no-files-found: warn
           path: |
             **/build/reports/tests/test/**
@@ -347,7 +355,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: feature-lab-unit-${{ github.run_id }}
+          name: feature-lab-unit-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}
           if-no-files-found: warn
           path: |
             feature-lab/build/reports/tests/**
@@ -392,7 +400,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: physics-accuracy-telemetry-${{ github.run_id }}
+          name: physics-accuracy-telemetry-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}
           if-no-files-found: warn
           path: |
             core-simulation/build/reports/physics-accuracy/**
@@ -467,7 +475,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-assemble-${{ github.run_id }}
+          name: android-assemble-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}
           if-no-files-found: warn
           path: |
             app/build/outputs/**
@@ -488,17 +496,44 @@ jobs:
       - name: Emit summary
         shell: bash
         run: |
+          set -euo pipefail
+
+          lane_reason() {
+            local enabled="$1"
+            if [[ "$enabled" == 'true' ]]; then
+              printf 'selected by profile/lane_set'
+            else
+              printf 'skipped by profile/lane_set'
+            fi
+          }
+
+          artifact_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts"
+          wrapper_reason="$(lane_reason '${{ needs.metadata.outputs.wrapper_bootstrap }}')"
+          core_reason="$(lane_reason '${{ needs.metadata.outputs.core_jvm }}')"
+          feature_reason="$(lane_reason '${{ needs.metadata.outputs.feature_lab_unit }}')"
+          physics_reason="$(lane_reason '${{ needs.metadata.outputs.physics_accuracy_telemetry }}')"
+          android_reason="$(lane_reason '${{ needs.metadata.outputs.android_assemble }}')"
+
           {
             echo "## validation-lab"
             echo
             echo "- ref: \`${{ needs.metadata.outputs.checkout_ref }}\`"
             echo "- profile: \`${{ inputs.profile }}\`"
+            echo "- lane_set: \`${{ inputs.lane_set }}\`"
+            echo "- emulator_boot_strategy: \`${{ inputs.emulator_boot_strategy }}\`"
             echo "- intent: \`${{ needs.metadata.outputs.profile_intent }}\`"
             echo "- lanes: \`${{ needs.metadata.outputs.lane_summary }}\`"
             echo "- notes: ${{ needs.metadata.outputs.profile_notes }}"
-            echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\`"
-            echo "- core-jvm: \`${{ needs['core-jvm'].result }}\`"
-            echo "- feature-lab-unit: \`${{ needs['feature-lab-unit'].result }}\`"
-            echo "- physics-accuracy-telemetry: \`${{ needs['physics-accuracy-telemetry'].result }}\`"
-            echo "- android-assemble: \`${{ needs['android-assemble'].result }}\`"
+            echo "- artifacts: [run artifacts](${artifact_url})"
+            echo "- expected artifacts:"
+            echo "  - \`gradle-wrapper-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}\` when wrapper bootstrap runs"
+            echo "  - \`core-jvm-reports-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}\` when core-jvm runs"
+            echo "  - \`feature-lab-unit-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}\` when feature-lab-unit runs"
+            echo "  - \`physics-accuracy-telemetry-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}\` when physics-accuracy-telemetry runs"
+            echo "  - \`android-assemble-${{ github.run_id }}-${{ inputs.profile }}-${{ inputs.lane_set }}\` when android-assemble runs"
+            echo "- wrapper-bootstrap: \`${{ needs['wrapper-bootstrap'].result }}\` (${wrapper_reason})"
+            echo "- core-jvm: \`${{ needs['core-jvm'].result }}\` (${core_reason})"
+            echo "- feature-lab-unit: \`${{ needs['feature-lab-unit'].result }}\` (${feature_reason})"
+            echo "- physics-accuracy-telemetry: \`${{ needs['physics-accuracy-telemetry'].result }}\` (${physics_reason})"
+            echo "- android-assemble: \`${{ needs['android-assemble'].result }}\` (${android_reason})"
           } >> "$GITHUB_STEP_SUMMARY"
