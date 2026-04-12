@@ -364,7 +364,7 @@ jobs:
           git status --short
 
       - name: Upload wrapper artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gradle-wrapper-${{ github.run_id }}
           if-no-files-found: error
@@ -616,7 +616,7 @@ jobs:
 
       - name: Upload Android unit artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-unit-${{ github.run_id }}
           if-no-files-found: warn
@@ -738,7 +738,7 @@ jobs:
 
       - name: Upload Android lint artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-lint-${{ github.run_id }}
           if-no-files-found: warn
@@ -901,6 +901,41 @@ jobs:
           ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
           ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
 
+      - name: Emit Android shell batch status
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_dir="clients/android/app/build/reports/emulator-smoke/instrumentation-batch"
+          status_file="${run_dir}/status.txt"
+          if [[ ! -f "${status_file}" ]]; then
+            echo "No instrumentation status file captured."
+            exit 0
+          fi
+
+          echo "::group::AndroidShellBatchStatus"
+          cat "${status_file}"
+
+          exit_code="$(awk -F= '/^exit_code=/{print $2}' "${status_file}")"
+          if [[ "${exit_code}" != "0" ]]; then
+            if [[ -f "${run_dir}/gradle-output.txt" ]]; then
+              echo
+              echo "Recent gradle output:"
+              tail -n 120 "${run_dir}/gradle-output.txt" || true
+            fi
+            if [[ -f "${run_dir}/live-logcat.txt" ]]; then
+              echo
+              echo "Recent live logcat:"
+              tail -n 160 "${run_dir}/live-logcat.txt" || true
+            fi
+            if [[ -d "${run_dir}/host-emulator" ]]; then
+              echo
+              echo "Captured host-emulator logs:"
+              find "${run_dir}/host-emulator" -maxdepth 1 -type f | sort || true
+            fi
+          fi
+          echo "::endgroup::"
+
       - name: Emit Android lane timing summary
         if: always()
         shell: bash
@@ -909,6 +944,15 @@ jobs:
           lane_end_epoch="$(date +%s)"
           lane_start_epoch="${{ steps.android_timing.outputs.lane_start_epoch }}"
           lane_total="$((lane_end_epoch - lane_start_epoch))"
+          status_file="clients/android/app/build/reports/emulator-smoke/instrumentation-batch/status.txt"
+          test_class_count='n/a'
+          timeout_seconds='n/a'
+          exit_code='n/a'
+          if [[ -f "${status_file}" ]]; then
+            test_class_count="$(awk -F= '/^test_class_count=/{print $2}' "${status_file}")"
+            timeout_seconds="$(awk -F= '/^timeout_seconds=/{print $2}' "${status_file}")"
+            exit_code="$(awk -F= '/^exit_code=/{print $2}' "${status_file}")"
+          fi
           {
             echo "## android-shell timings"
             echo "- validation mode: \`${{ steps.android_mode.outputs.validation_mode }}\`"
@@ -921,13 +965,16 @@ jobs:
             echo "- scope: \`${{ needs.metadata.outputs.android_test_scope }}\`"
             echo "- artifact mode: \`${{ needs.metadata.outputs.android_artifact_mode }}\`"
             echo "- emulator boot strategy: \`${{ needs.metadata.outputs.emulator_boot_strategy }}\`"
+            echo "- test class count: \`${test_class_count}\`"
+            echo "- instrumentation timeout: \`${timeout_seconds}s\`"
+            echo "- instrumentation exit code: \`${exit_code}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: android-shell-${{ matrix.validation_mode }}-${{ github.run_id }}
+          name: android-shell-${{ matrix.validation_mode }}-${{ needs.metadata.outputs.android_test_scope }}-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
           path: |
             clients/android/app/build/reports/androidTests/**
@@ -996,7 +1043,7 @@ jobs:
         run: cat dist/validation-summary/validation-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload validation summary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: validation-summary
           if-no-files-found: error
