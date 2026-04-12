@@ -1234,7 +1234,7 @@ jobs:
         if: ${{ needs.android-shell.result != 'skipped' }}
         uses: actions/download-artifact@v8
         with:
-          pattern: android-shell-*-${{ github.run_id }}
+          pattern: android-shell-*-${{ github.run_id }}*
           path: dist/android-shell-artifacts
 
       - name: Build validation summary payload
