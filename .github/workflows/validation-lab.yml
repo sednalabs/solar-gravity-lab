@@ -97,6 +97,21 @@ permissions:
 
 env:
   STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
+  ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
+  ANDROID_AVD_CACHE_VERSION: v3
+  ANDROID_SDK_COMPONENT_CACHE_VERSION: v1
+  ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
+  ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
+  ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
+  ANDROID_SYSTEM_IMAGE_PACKAGE: "system-images;android-35;google_apis;x86_64"
+  ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
+  ANDROID_NDK_VERSION: "27.3.13750724"
+  ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+  SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+  SCCACHE_REGION: auto
+  SCCACHE_S3_USE_SSL: "true"
+  SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
 
 jobs:
   metadata:
@@ -111,6 +126,8 @@ jobs:
       android_validation_mode: ${{ steps.plan.outputs.android_validation_mode }}
       android_artifact_mode: ${{ steps.plan.outputs.android_artifact_mode }}
       emulator_boot_strategy: ${{ steps.plan.outputs.emulator_boot_strategy }}
+      gradle_cache_push: ${{ steps.plan.outputs.gradle_cache_push }}
+      gradle_cache_read_only: ${{ steps.plan.outputs.gradle_cache_read_only }}
       profile_intent: ${{ steps.plan.outputs.profile_intent }}
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
@@ -174,6 +191,17 @@ jobs:
           emulator_boot_strategy='${{ inputs.emulator_boot_strategy }}'
           if [[ -z "$emulator_boot_strategy" ]]; then
             emulator_boot_strategy='cold'
+          fi
+
+          gradle_cache_push='false'
+          gradle_cache_read_only='true'
+          if [[ '${{ github.event_name }}' != 'pull_request' ]]; then
+            case "$checkout_ref" in
+              main|refs/heads/main|release/*|refs/heads/release/*|validation/*|refs/heads/validation/*)
+                gradle_cache_push='true'
+                gradle_cache_read_only='false'
+                ;;
+            esac
           fi
 
           wrapper_bootstrap='false'
@@ -313,6 +341,8 @@ jobs:
           echo "android_validation_mode=${android_validation_mode}" >> "$GITHUB_OUTPUT"
           echo "android_artifact_mode=${android_artifact_mode}" >> "$GITHUB_OUTPUT"
           echo "emulator_boot_strategy=${emulator_boot_strategy}" >> "$GITHUB_OUTPUT"
+          echo "gradle_cache_push=${gradle_cache_push}" >> "$GITHUB_OUTPUT"
+          echo "gradle_cache_read_only=${gradle_cache_read_only}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
           echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
@@ -347,7 +377,7 @@ jobs:
           cache: gradle
 
       - name: Restore standalone Gradle cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
@@ -364,7 +394,7 @@ jobs:
           git status --short
 
       - name: Upload wrapper artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gradle-wrapper-${{ github.run_id }}
           if-no-files-found: error
@@ -430,6 +460,9 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.rust_workspace == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -438,6 +471,19 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: rust_workspace_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run canonical workspace tests
         shell: bash
@@ -445,11 +491,26 @@ jobs:
           set -euo pipefail
           cargo test --workspace
 
+      - name: Emit rust workspace sccache stats
+        if: always() && steps.rust_workspace_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/rust-workspace.txt
+          {
+            echo "## rust-workspace sccache"
+            cat dist/sccache/rust-workspace.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   rust-workspace-arm64:
     name: Rust workspace tests (Arm64)
     needs: metadata
     if: ${{ needs.metadata.outputs.rust_workspace_arm64 == 'true' }}
     runs-on: ubuntu-24.04-arm
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -458,6 +519,19 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: rust_workspace_arm64_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run canonical workspace tests on Arm64
         shell: bash
@@ -465,11 +539,26 @@ jobs:
           set -euo pipefail
           cargo test --workspace
 
+      - name: Emit rust workspace arm64 sccache stats
+        if: always() && steps.rust_workspace_arm64_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/rust-workspace-arm64.txt
+          {
+            echo "## rust-workspace-arm64 sccache"
+            cat dist/sccache/rust-workspace-arm64.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   ffi-abi:
     name: FFI ABI tests
     needs: metadata
     if: ${{ needs.metadata.outputs.ffi_abi == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -478,6 +567,19 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: ffi_abi_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run focused FFI ABI tests
         shell: bash
@@ -485,11 +587,26 @@ jobs:
           set -euo pipefail
           cargo test -p solarlab-ffi
 
+      - name: Emit FFI ABI sccache stats
+        if: always() && steps.ffi_abi_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/ffi-abi.txt
+          {
+            echo "## ffi-abi sccache"
+            cat dist/sccache/ffi-abi.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   runtime-scene-telemetry:
     name: Runtime scene + telemetry tests
     needs: metadata
     if: ${{ needs.metadata.outputs.runtime_scene_telemetry == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -498,6 +615,19 @@ jobs:
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: runtime_scene_telemetry_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run focused runtime scene + telemetry tests
         shell: bash
@@ -506,11 +636,30 @@ jobs:
           cargo test -p solarlab-runtime --lib render_scene
           cargo test -p solarlab-runtime --lib telemetry
 
+      - name: Emit runtime scene sccache stats
+        if: always() && steps.runtime_scene_telemetry_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/runtime-scene-telemetry.txt
+          {
+            echo "## runtime-scene-telemetry sccache"
+            cat dist/sccache/runtime-scene-telemetry.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
   android-unit:
     name: Android JVM and host-side unit tests
     needs: metadata
     if: ${{ needs.metadata.outputs.android_unit == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ needs.metadata.outputs.gradle_cache_push }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -529,47 +678,46 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ needs.metadata.outputs.gradle_cache_read_only == 'true' }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_unit_sdk_install
         shell: bash
         run: |
           set -euo pipefail
-          phase_start="$(date +%s)"
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          required_packages=(
-            "platform-tools"
-            "platforms;android-36"
-            "build-tools;36.0.0"
-            "cmake;3.22.1"
-            "ndk;27.2.12479018"
-          )
-          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
-          missing_packages=()
-          for pkg in "${required_packages[@]}"; do
-            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
-              echo "SDK package already installed: $pkg"
-            else
-              missing_packages+=("$pkg")
-            fi
-          done
-          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
-            echo "Installing missing SDK packages: ${missing_packages[*]}"
-            sdkmanager --install "${missing_packages[@]}"
-          else
-            echo "All required SDK packages already installed."
-          fi
-          phase_end="$(date +%s)"
-          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: android_unit_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Install Rust Android toolchain
         id: android_unit_rust_android_toolchain
@@ -612,11 +760,24 @@ jobs:
             echo "- sdk setup: \`${{ steps.android_unit_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- unit suites: \`${{ steps.android_unit_tests.outputs.unit_seconds || 'n/a' }}s\`"
             echo "- lane total: \`${lane_total}s\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Emit Android unit sccache stats
+        if: always() && steps.android_unit_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/android-unit.txt
+          {
+            echo "## android-unit sccache"
+            cat dist/sccache/android-unit.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android unit artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-unit-${{ github.run_id }}
           if-no-files-found: warn
@@ -633,12 +794,20 @@ jobs:
             core-math/build/test-results/**
             core-model/build/test-results/**
             core-simulation/build/test-results/**
+            dist/sccache/**
 
   android-lint:
     name: Android lint
     needs: metadata
     if: ${{ needs.metadata.outputs.android_lint == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ needs.metadata.outputs.gradle_cache_push }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -657,47 +826,46 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ needs.metadata.outputs.gradle_cache_read_only == 'true' }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_lint_sdk_install
         shell: bash
         run: |
           set -euo pipefail
-          phase_start="$(date +%s)"
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          required_packages=(
-            "platform-tools"
-            "platforms;android-36"
-            "build-tools;36.0.0"
-            "cmake;3.22.1"
-            "ndk;27.2.12479018"
-          )
-          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
-          missing_packages=()
-          for pkg in "${required_packages[@]}"; do
-            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
-              echo "SDK package already installed: $pkg"
-            else
-              missing_packages+=("$pkg")
-            fi
-          done
-          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
-            echo "Installing missing SDK packages: ${missing_packages[*]}"
-            sdkmanager --install "${missing_packages[@]}"
-          else
-            echo "All required SDK packages already installed."
-          fi
-          phase_end="$(date +%s)"
-          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: android_lint_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Install Rust Android toolchain
         id: android_lint_rust_android_toolchain
@@ -734,11 +902,24 @@ jobs:
             echo "- sdk setup: \`${{ steps.android_lint_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- lint suites: \`${{ steps.android_lint_checks.outputs.lint_seconds || 'n/a' }}s\`"
             echo "- lane total: \`${lane_total}s\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Emit Android lint sccache stats
+        if: always() && steps.android_lint_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/android-lint.txt
+          {
+            echo "## android-lint sccache"
+            cat dist/sccache/android-lint.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android lint artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-lint-${{ github.run_id }}
           if-no-files-found: warn
@@ -751,12 +932,20 @@ jobs:
             feature-lab/build/reports/lint-results-*.xml
             feature-lab/build/reports/lint-results-*.txt
             feature-lab/build/intermediates/lint_intermediate_text_report/**
+            dist/sccache/**
 
   android-shell:
     name: Android shell emulator smoke (${{ matrix.validation_mode }})
     needs: metadata
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ needs.metadata.outputs.gradle_cache_push }}
     strategy:
       fail-fast: false
       matrix:
@@ -779,60 +968,91 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ needs.metadata.outputs.gradle_cache_read_only == 'true' }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Enable KVM for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Restore Android emulator AVD cache
+        id: avd-cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.android/avd
             ~/.android/adb*
-          key: avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-v1
-          restore-keys: |
-            avd-${{ runner.os }}-api35-google_apis-x86_64-pixel7-
+          key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
+
+      - name: Restore Android SDK emulator packages cache
+        id: android-sdk-components-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            /usr/local/lib/android/sdk/emulator
+            /usr/local/lib/android/sdk/system-images/android-35/google_apis
+          key: android-sdk-components-${{ runner.os }}-${{ runner.arch }}-${{ env.ANDROID_SDK_COMPONENT_CACHE_VERSION }}
+
+      - name: Seed Android emulator snapshot
+        if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
+          emulator-boot-timeout: 1200
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: false
+          script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: android_shell_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
 
       - name: Accept Android SDK licenses and install build toolchain
         id: android_sdk_install
         shell: bash
         run: |
           set -euo pipefail
-          phase_start="$(date +%s)"
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          required_packages=(
-            "emulator"
-            "platform-tools"
-            "platforms;android-36"
-            "build-tools;36.0.0"
-            "system-images;android-35;google_apis;x86_64"
-            "cmake;3.22.1"
-            "ndk;27.2.12479018"
-          )
-          mapfile -t installed_packages < <(sdkmanager --list_installed | awk '{print $1}')
-          missing_packages=()
-          for pkg in "${required_packages[@]}"; do
-            if printf '%s\n' "${installed_packages[@]}" | grep -Fxq "$pkg"; then
-              echo "SDK package already installed: $pkg"
-            else
-              missing_packages+=("$pkg")
-            fi
-          done
-          if [[ "${#missing_packages[@]}" -gt 0 ]]; then
-            echo "Installing missing SDK packages: ${missing_packages[*]}"
-            sdkmanager --install "${missing_packages[@]}"
-          else
-            echo "All required SDK packages already installed."
-          fi
-          phase_end="$(date +%s)"
-          echo "sdk_setup_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "emulator" \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_SYSTEM_IMAGE_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
 
       - name: Install Rust Android toolchain
         id: rust_android_toolchain
@@ -872,15 +1092,6 @@ jobs:
           phase_end="$(date +%s)"
           echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
 
-      - name: Enable KVM for Android emulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
       - name: Run connected Android shell smoke and continuity tests
         id: android_connected_tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -901,6 +1112,41 @@ jobs:
           ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
           ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
 
+      - name: Emit Android shell batch status
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_dir="clients/android/app/build/reports/emulator-smoke/instrumentation-batch"
+          status_file="${run_dir}/status.txt"
+          if [[ ! -f "${status_file}" ]]; then
+            echo "No instrumentation status file captured."
+            exit 0
+          fi
+
+          echo "::group::AndroidShellBatchStatus"
+          cat "${status_file}"
+
+          exit_code="$(awk -F= '/^exit_code=/{print $2}' "${status_file}")"
+          if [[ "${exit_code}" != "0" ]]; then
+            if [[ -f "${run_dir}/gradle-output.txt" ]]; then
+              echo
+              echo "Recent gradle output:"
+              tail -n 120 "${run_dir}/gradle-output.txt" || true
+            fi
+            if [[ -f "${run_dir}/live-logcat.txt" ]]; then
+              echo
+              echo "Recent live logcat:"
+              tail -n 160 "${run_dir}/live-logcat.txt" || true
+            fi
+            if [[ -d "${run_dir}/host-emulator" ]]; then
+              echo
+              echo "Captured host-emulator logs:"
+              find "${run_dir}/host-emulator" -maxdepth 1 -type f | sort || true
+            fi
+          fi
+          echo "::endgroup::"
+
       - name: Emit Android lane timing summary
         if: always()
         shell: bash
@@ -909,6 +1155,15 @@ jobs:
           lane_end_epoch="$(date +%s)"
           lane_start_epoch="${{ steps.android_timing.outputs.lane_start_epoch }}"
           lane_total="$((lane_end_epoch - lane_start_epoch))"
+          status_file="clients/android/app/build/reports/emulator-smoke/instrumentation-batch/status.txt"
+          test_class_count='n/a'
+          timeout_seconds='n/a'
+          exit_code='n/a'
+          if [[ -f "${status_file}" ]]; then
+            test_class_count="$(awk -F= '/^test_class_count=/{print $2}' "${status_file}")"
+            timeout_seconds="$(awk -F= '/^timeout_seconds=/{print $2}' "${status_file}")"
+            exit_code="$(awk -F= '/^exit_code=/{print $2}' "${status_file}")"
+          fi
           {
             echo "## android-shell timings"
             echo "- validation mode: \`${{ steps.android_mode.outputs.validation_mode }}\`"
@@ -918,16 +1173,32 @@ jobs:
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"
             echo "- lane total (including emulator + instrumentation): \`${lane_total}s\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
             echo "- scope: \`${{ needs.metadata.outputs.android_test_scope }}\`"
             echo "- artifact mode: \`${{ needs.metadata.outputs.android_artifact_mode }}\`"
             echo "- emulator boot strategy: \`${{ needs.metadata.outputs.emulator_boot_strategy }}\`"
+            echo "- test class count: \`${test_class_count}\`"
+            echo "- instrumentation timeout: \`${timeout_seconds}s\`"
+            echo "- instrumentation exit code: \`${exit_code}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Emit Android shell sccache stats
+        if: always() && steps.android_shell_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/android-shell-${{ matrix.validation_mode }}.txt
+          {
+            echo "## android-shell sccache"
+            cat dist/sccache/android-shell-${{ matrix.validation_mode }}.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Android shell artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: android-shell-${{ matrix.validation_mode }}-${{ github.run_id }}
+          name: android-shell-${{ matrix.validation_mode }}-${{ needs.metadata.outputs.android_test_scope }}-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
           path: |
             clients/android/app/build/reports/androidTests/**
@@ -935,6 +1206,7 @@ jobs:
             clients/android/app/build/outputs/androidTest-results/**
             clients/android/app/build/outputs/apk/debug/**
             clients/android/app/build/outputs/apk/androidTest/**
+            dist/sccache/**
 
   summary:
     name: Publish validation summary
@@ -958,6 +1230,13 @@ jobs:
           repository: ${{ needs.metadata.outputs.checkout_repository }}
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
+      - name: Download Android shell artifacts for summary enrichment
+        if: ${{ needs.android-shell.result != 'skipped' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: android-shell-*-${{ github.run_id }}*
+          path: dist/android-shell-artifacts
+
       - name: Build validation summary payload
         shell: bash
         run: |
@@ -979,6 +1258,7 @@ jobs:
             --android-validation-mode "${{ needs.metadata.outputs.android_validation_mode }}" \
             --android-artifact-mode "${{ needs.metadata.outputs.android_artifact_mode }}" \
             --emulator-boot-strategy "${{ needs.metadata.outputs.emulator_boot_strategy }}" \
+            --android-shell-artifacts-dir dist/android-shell-artifacts \
             --job parity-matrix=${{ needs.parity-matrix.result }} \
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
             --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
@@ -996,7 +1276,7 @@ jobs:
         run: cat dist/validation-summary/validation-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload validation summary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: validation-summary
           if-no-files-found: error
