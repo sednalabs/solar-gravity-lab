@@ -13,3 +13,5 @@ fi
 if ! "${sccache_path}" --show-stats > "${output_path}" 2>&1; then
   "${sccache_path}" --show-stats > "${output_path}" 2>&1 || true
 fi
+
+cat "${output_path}"

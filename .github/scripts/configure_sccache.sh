@@ -42,10 +42,13 @@ export CARGO_INCREMENTAL=0
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   {
+    echo "SCCACHE_PATH=${sccache_path}"
     echo "RUSTC_WRAPPER=${sccache_path}"
     echo "CARGO_INCREMENTAL=0"
     echo "SCCACHE_REGION=${SCCACHE_REGION}"
     echo "SCCACHE_S3_USE_SSL=${SCCACHE_S3_USE_SSL:-true}"
+    echo "CMAKE_C_COMPILER_LAUNCHER=${sccache_path}"
+    echo "CMAKE_CXX_COMPILER_LAUNCHER=${sccache_path}"
   } >> "${GITHUB_ENV}"
 fi
 

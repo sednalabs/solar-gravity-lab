@@ -778,6 +778,7 @@ jobs:
             core-math/build/test-results/**
             core-model/build/test-results/**
             core-simulation/build/test-results/**
+            dist/sccache/**
 
   android-lint:
     name: Android lint
@@ -922,6 +923,7 @@ jobs:
             feature-lab/build/reports/lint-results-*.xml
             feature-lab/build/reports/lint-results-*.txt
             feature-lab/build/intermediates/lint_intermediate_text_report/**
+            dist/sccache/**
 
   android-shell:
     name: Android shell emulator smoke (${{ matrix.validation_mode }})
@@ -1179,6 +1181,7 @@ jobs:
             clients/android/app/build/outputs/androidTest-results/**
             clients/android/app/build/outputs/apk/debug/**
             clients/android/app/build/outputs/apk/androidTest/**
+            dist/sccache/**
 
   summary:
     name: Publish validation summary

@@ -389,6 +389,7 @@ jobs:
             dist/*.json
             dist/*.md
             dist/startup-smoke/**
+            dist/sccache/**
             clients/android/app/build/outputs/apk/${{ steps.meta.outputs.build_variant }}/output-metadata.json
 
   isa-prerelease-proof:
@@ -446,6 +447,7 @@ jobs:
           if-no-files-found: warn
           path: |
             dist/arm64-isa-proof/**
+            dist/sccache/**
 
   publish-prerelease-apk:
     name: Publish GitHub release
