@@ -151,6 +151,9 @@ class JniRuntimeBridgeTest {
                 listOf(
                     snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
                     snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
+                    // Startup playback configuration performs one extra refresh before the
+                    // periodic live-refresh loop starts issuing advance-epoch commands.
+                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
                 )
             ),
         )
