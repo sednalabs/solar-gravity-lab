@@ -1592,6 +1592,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         stream.sourceVertexCount = 0U;
         stream.dispatchGroupCountX = 0U;
         stream.tileCounterCount = 0U;
+        stream.activeTileCount = 0U;
+        stream.peakTileOccupancy = 0U;
+        stream.tileStatsValid = false;
         stream.visibleVertexCount = 0U;
         stream.visibleVertexCountValid = false;
         DestroyGpuBuffer(stream.sourceStateBuffer);
@@ -1599,6 +1602,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         DestroyGpuBuffer(stream.indirectCommandBuffer);
         DestroyGpuBuffer(stream.indirectReadbackBuffer);
         DestroyGpuBuffer(stream.tileCounterBuffer);
+        DestroyGpuBuffer(stream.tileCounterReadbackBuffer);
     };
     auto ensureDeviceLocalComputeBuffer = [this](VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
         if (sizeBytes == 0) {
@@ -1742,7 +1746,16 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
                     "tracer-far-tile-counters",
                     sceneGpuStreams_.tracerFarCompute.tileCounterBuffer)) {
                 disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter buffer allocation failed");
+            } else if (!EnsureHostVisibleBuffer(
+                    static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount) * sizeof(uint32_t),
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    "tracer-far-tile-counter-readback",
+                    sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer)) {
+                disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter readback buffer allocation failed");
             } else {
+                sceneGpuStreams_.tracerFarCompute.activeTileCount = 0;
+                sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = 0;
+                sceneGpuStreams_.tracerFarCompute.tileStatsValid = false;
                 sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
                 sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
             }
@@ -1750,7 +1763,11 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     } else {
         DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
         DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterBuffer);
+        DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer);
         sceneGpuStreams_.tracerFarCompute.tileCounterCount = 0U;
+        sceneGpuStreams_.tracerFarCompute.activeTileCount = 0;
+        sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = 0;
+        sceneGpuStreams_.tracerFarCompute.tileStatsValid = false;
         sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
         sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
     }
@@ -1776,7 +1793,8 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.tracerFarCompute.outputVertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.sizeBytes +
-        sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.sizeBytes;
+        sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.sizeBytes +
+        sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.sizeBytes;
 
     uploadStats_.sourceRevision = sceneBuffers_.sourceRevision;
     uploadStats_.bytesUploaded = sceneGpuStreams_.totalBytes;
@@ -2206,6 +2224,32 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
             .size = sizeof(VkDrawIndirectCommand),
         });
     }
+    if (runFar &&
+        sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.buffer != VK_NULL_HANDLE &&
+        sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.buffer != VK_NULL_HANDLE) {
+        const VkBufferCopy copyRegion{
+            .srcOffset = 0,
+            .dstOffset = 0,
+            .size = sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.sizeBytes,
+        };
+        vkCmdCopyBuffer(
+            commandBuffer,
+            sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.buffer,
+            sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.buffer,
+            1,
+            &copyRegion);
+        transferToHostBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.buffer,
+            .offset = 0,
+            .size = sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.sizeBytes,
+        });
+    }
     if (!transferToHostBarriers.empty()) {
         vkCmdPipelineBarrier(
             commandBuffer,
@@ -2333,6 +2377,7 @@ void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterBuffer);
+    DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer);
     sceneGpuStreams_ = SceneGpuStreams{};
     commandBuffersRevision_ = -1;
 }
@@ -2361,6 +2406,37 @@ void SolarLabVulkanRenderer::RefreshCompactionVisibleCountsFromReadbackLocked() 
 
     refreshStream(sceneGpuStreams_.tracerMediumCompute);
     refreshStream(sceneGpuStreams_.tracerFarCompute);
+
+    sceneGpuStreams_.tracerFarCompute.activeTileCount = 0;
+    sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = 0;
+    sceneGpuStreams_.tracerFarCompute.tileStatsValid = false;
+    if (sceneGpuStreams_.tracerFarCompute.enabled &&
+        sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.memory != VK_NULL_HANDLE &&
+        sceneGpuStreams_.tracerFarCompute.tileCounterCount > 0 &&
+        device_ != VK_NULL_HANDLE) {
+        const size_t tileCount = static_cast<size_t>(sceneGpuStreams_.tracerFarCompute.tileCounterCount);
+        const size_t readbackBytes = tileCount * sizeof(uint32_t);
+        if (sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.sizeBytes >= readbackBytes) {
+            void* mapped = nullptr;
+            if (vkMapMemory(device_, sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.memory, 0, readbackBytes, 0, &mapped) == VK_SUCCESS && mapped != nullptr) {
+                const auto* counters = static_cast<const uint32_t*>(mapped);
+                uint32_t activeTileCount = 0;
+                uint32_t peakTileOccupancy = 0;
+                for (size_t index = 0; index < tileCount; ++index) {
+                    const uint32_t counter = counters[index];
+                    if (counter > 0U) {
+                        ++activeTileCount;
+                        peakTileOccupancy = std::max(peakTileOccupancy, counter);
+                    }
+                }
+                vkUnmapMemory(device_, sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.memory);
+                sceneGpuStreams_.tracerFarCompute.activeTileCount = activeTileCount;
+                sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = peakTileOccupancy;
+                sceneGpuStreams_.tracerFarCompute.tileStatsValid = true;
+            }
+        }
+    }
+
     sceneSummaryCache_ = BuildSceneSummaryLocked();
 }
 
@@ -2763,6 +2839,10 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << (sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.buffer != VK_NULL_HANDLE ? "state" : "none")
         << "/tiles="
         << sceneGpuStreams_.tracerFarCompute.tileCounterCount
+        << "/active="
+        << (sceneGpuStreams_.tracerFarCompute.tileStatsValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.activeTileCount) : std::string("-"))
+        << "/peak="
+        << (sceneGpuStreams_.tracerFarCompute.tileStatsValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.peakTileOccupancy) : std::string("-"))
         << "/vis="
         << (sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.visibleVertexCount) : std::string("-"))
         << ']'
