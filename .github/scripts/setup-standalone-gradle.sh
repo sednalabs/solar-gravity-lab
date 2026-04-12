@@ -38,13 +38,17 @@ extract_root="${install_root}/extract"
 
 mkdir -p "$install_root" "$extract_root"
 
+archive_hit='true'
 if [[ ! -f "$archive_path" ]]; then
+  archive_hit='false'
   echo "Downloading ${dist_url}" >&2
   curl -fsSL --retry 3 --retry-connrefused "$dist_url" -o "$archive_path"
 fi
 
 gradle_home="$(find "$extract_root" -maxdepth 1 -mindepth 1 -type d -name 'gradle-*' | sort | tail -n 1 || true)"
+extract_hit='true'
 if [[ -z "$gradle_home" || ! -x "$gradle_home/bin/gradle" ]]; then
+  extract_hit='false'
   rm -rf "$extract_root"
   mkdir -p "$extract_root"
   unzip -q -o "$archive_path" -d "$extract_root"
@@ -57,6 +61,12 @@ if [[ -z "$gradle_home" || ! -x "$gradle_home/bin/gradle" ]]; then
 fi
 
 gradle_bin="${gradle_home}/bin/gradle"
+echo "standalone-gradle distribution_url=${dist_url}" >&2
+echo "standalone-gradle cache_root=${cache_root}" >&2
+echo "standalone-gradle archive_path=${archive_path}" >&2
+echo "standalone-gradle archive_hit=${archive_hit}" >&2
+echo "standalone-gradle extract_hit=${extract_hit}" >&2
+echo "standalone-gradle gradle_home=${gradle_home}" >&2
 echo "Prepared standalone Gradle at ${gradle_bin}" >&2
 
 if [[ -n "${GITHUB_PATH:-}" ]]; then
