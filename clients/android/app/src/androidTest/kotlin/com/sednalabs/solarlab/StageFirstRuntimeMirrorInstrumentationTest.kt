@@ -2,6 +2,7 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -41,6 +42,10 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                 runtimeState.sessionHandle != null &&
                 runtimeState.snapshot != null
         }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).assertExists()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertExists()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertExists()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertExists()
         assertTrue(
             "Runtime mirror surface should be mounted after switching modes",
             composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),

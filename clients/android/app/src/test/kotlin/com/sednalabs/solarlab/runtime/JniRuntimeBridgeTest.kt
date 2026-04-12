@@ -177,6 +177,12 @@ class JniRuntimeBridgeTest {
             "Expected live playback to keep issuing periodic refreshes",
             transport.refreshedHandles.size >= 3,
         )
+        assertTrue(
+            "Expected live playback to keep emitting advance-epoch commands",
+            transport.appliedCommands.any { command ->
+                command.kind == 0 && command.deltaSeconds > 0.0
+            },
+        )
     }
 
     private suspend fun collectSignalsUntil(
