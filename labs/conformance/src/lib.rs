@@ -565,12 +565,8 @@ fn compute_major_body_telemetry(step_seconds: f64, steps: usize) -> TelemetryMet
         &coarse_final_barycenter_velocity,
         &initial_barycenter_velocity,
     );
-    let angular_momentum_fine_baseline_error_ratio = if fine_final_angular_momentum > 0.0 {
-        (coarse_final_angular_momentum - fine_final_angular_momentum).abs()
-            / fine_final_angular_momentum
-    } else {
-        0.0
-    };
+    let angular_momentum_fine_baseline_error_ratio =
+        drift(fine_final_angular_momentum, coarse_final_angular_momentum);
 
     let coarse_final_barycenter = coarse.final_invariants.barycenter_m;
     let fine_final_barycenter = fine.final_invariants.barycenter_m;
@@ -587,18 +583,12 @@ fn compute_major_body_telemetry(step_seconds: f64, steps: usize) -> TelemetryMet
     let coarse_moon_earth_distance_m = moon_earth_distance_m(&coarse.final_snapshot);
     let fine_moon_earth_distance_m = moon_earth_distance_m(&fine.final_snapshot);
     let moon_earth_distance_change_m = coarse_moon_earth_distance_m - initial_moon_earth_distance_m;
-    let moon_earth_distance_change_ratio = if initial_moon_earth_distance_m > 0.0 {
-        moon_earth_distance_change_m / initial_moon_earth_distance_m
-    } else {
-        0.0
-    };
+    let moon_earth_distance_change_ratio =
+        drift(initial_moon_earth_distance_m, coarse_moon_earth_distance_m);
     let moon_earth_fine_baseline_error_m =
         (coarse_moon_earth_distance_m - fine_moon_earth_distance_m).abs();
-    let moon_earth_fine_baseline_error_ratio = if fine_moon_earth_distance_m > 0.0 {
-        moon_earth_fine_baseline_error_m / fine_moon_earth_distance_m
-    } else {
-        0.0
-    };
+    let moon_earth_fine_baseline_error_ratio =
+        drift(fine_moon_earth_distance_m, coarse_moon_earth_distance_m);
 
     TelemetryMetrics {
         relative_energy_drift,
@@ -897,7 +887,7 @@ fn body_velocity_delta(first: &WorldSnapshot, second: &WorldSnapshot, body_id: &
 }
 
 fn drift(initial: f64, final_value: f64) -> f64 {
-    if initial.abs() <= f64::EPSILON {
+    if initial == 0.0 {
         final_value.abs()
     } else {
         (final_value - initial).abs() / initial.abs()
@@ -985,6 +975,13 @@ mod tests {
     fn drift_uses_absolute_error_when_baseline_is_zero() {
         assert_eq!(drift(0.0, 0.0), 0.0);
         assert_eq!(drift(0.0, 2.5), 2.5);
+    }
+
+    #[test]
+    fn drift_does_not_mask_tiny_nonzero_baselines() {
+        let tiny = f64::EPSILON / 2.0;
+        assert!(drift(tiny, 2.5).is_finite());
+        assert!(drift(tiny, 2.5) > 1.0);
     }
 
     #[test]
