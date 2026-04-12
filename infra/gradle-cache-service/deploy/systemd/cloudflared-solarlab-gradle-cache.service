@@ -1,0 +1,14 @@
+[Unit]
+Description=cloudflared tunnel for Solar Lab Gradle cache
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/solarlab-gradle-cache-tunnel.env
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate tunnel --config %h/.cloudflared/solarlab-gradle-cache.yml run --token ${TUNNEL_TOKEN}
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

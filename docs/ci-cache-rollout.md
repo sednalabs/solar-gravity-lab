@@ -1,12 +1,25 @@
 # CI Cache Rollout
 
-This document captures the hosted-runner cache rollout for Solar Gravity Lab.
+This document captures the current Solar Gravity Lab hosted-runner cache rollout.
 
 ## Goals
 
 - reduce repeated Android emulator cold-start cost on GitHub-hosted runners
 - reduce repeated Gradle task execution across trusted CI branches
+- keep Gradle remote-cache access stable while the backend is hosted on our own infrastructure
 - prepare a separate R2-backed `sccache` path for later Rust/native compiler reuse
+
+## Current direction
+
+The GitHub Actions-side contract is stable, but the backend design has pivoted.
+
+- GitHub Actions talks to `https://cache.sednalabs.io/cache/`
+- that hostname should be exposed through a dedicated Cloudflare Tunnel
+- the cache service behind it is a self-hosted Rust HTTP service under `infra/gradle-cache-service/`
+- local disk is the hot cache authority
+- R2 is a backing store for mirror and read-through behavior, not the primary Gradle request path
+
+This intentionally replaces the earlier Worker-fronted cache concept.
 
 ## GitHub Actions contract
 
@@ -28,41 +41,64 @@ Optional later:
 
 - `GRADLE_CONFIGURATION_CACHE_KEY`
 
-## Cloudflare layout
+## Host-side cache service
 
-- custom hostname: `cache.sednalabs.io`
-- Worker: `infra/cloudflare/gradle-cache-worker`
-- private R2 bucket for Gradle HTTP cache: `solarlab-gradle-cache`
-- private R2 bucket for `sccache`: `solarlab-sccache`
+The Rust service implements:
 
-The Gradle cache is intentionally Worker-backed with HTTP Basic auth because
-Gradle natively supports HTTP cache credentials. `sccache` stays on the direct
-R2 S3-compatible endpoint rather than sharing the custom hostname.
+- `GET /cache/<key>`
+- `HEAD /cache/<key>`
+- `PUT /cache/<key>`
+
+Authentication is HTTP Basic auth because Gradle already supports it cleanly.
+
+### Service environment
+
+Required:
+
+- `GRADLE_CACHE_BIND`
+- `GRADLE_CACHE_ROOT`
+- `GRADLE_CACHE_BASIC_AUTH_USER`
+- `GRADLE_CACHE_BASIC_AUTH_PASS`
+
+Optional R2 backing:
+
+- `GRADLE_CACHE_R2_ENDPOINT`
+- `GRADLE_CACHE_R2_BUCKET`
+- `GRADLE_CACHE_R2_ACCESS_KEY_ID`
+- `GRADLE_CACHE_R2_SECRET_ACCESS_KEY`
+- `GRADLE_CACHE_R2_REGION`
+- `GRADLE_CACHE_R2_KEY_PREFIX`
+
+### Deployment split
+
+- app service: `infra/gradle-cache-service/deploy/systemd/solarlab-gradle-cache.service`
+- tunnel service: `infra/gradle-cache-service/deploy/systemd/cloudflared-solarlab-gradle-cache.service`
+- tunnel ingress template: `infra/gradle-cache-service/deploy/cloudflared/solarlab-gradle-cache.yml`
+
+## Cloudflare and R2 layout
+
+- hostname: `cache.sednalabs.io`
+- dedicated tunnel for the cache service
+- private R2 bucket for Gradle cache backing store
+- private R2 bucket for `sccache`
+
+The Gradle cache hostname should terminate at the tunnel and local Rust service.
+Do not use a public bucket custom domain or `r2.dev` as the Gradle cache front door.
 
 ## Grant operator checklist
 
-1. Open the Cloudflare dashboard for the account that owns `sednalabs.io`.
-2. Create private R2 bucket `solarlab-gradle-cache`.
-3. Create private R2 bucket `solarlab-sccache`.
-4. Create an R2 access-key pair for CI and record:
-   - access key id
-   - secret access key
-   - account id
-5. Create Worker `solarlab-gradle-cache`.
-6. Add Worker secrets:
-   - `CACHE_BASIC_AUTH_USER`
-   - `CACHE_BASIC_AUTH_PASS`
-7. Add Worker R2 binding:
-   - binding: `GRADLE_CACHE_BUCKET`
-   - bucket: `solarlab-gradle-cache`
-8. Attach custom domain `cache.sednalabs.io`.
-9. Copy the resulting values into GitHub secrets and vars.
+1. Create private R2 bucket `solarlab-gradle-cache`.
+2. Create private R2 bucket `solarlab-sccache`.
+3. Create an R2 access-key pair for the cache service and later `sccache`.
+4. Create a dedicated Cloudflare Tunnel for the Gradle cache service.
+5. Attach `cache.sednalabs.io` to that tunnel.
+6. Install the Rust service and `cloudflared` systemd user units.
+7. Populate the host env files with Basic auth credentials, local cache root, R2 settings, and tunnel token.
+8. Copy the resulting GitHub-side values into repo or org secrets and vars.
 
 ## Validation expectations
 
-- second-run `validation-lab` and `prerelease-apk` with `snapshot-cache` should
-  show an AVD cache hit and skip snapshot seeding
-- second-run `android-unit` and `android-lint` on trusted refs should show more
-  Gradle task reuse than the first run
-- the native Android build task must stop forcing itself dirty so remote cache
-  hits are actually possible
+- second-run `validation-lab` and `prerelease-apk` with `snapshot-cache` should show an AVD cache hit and skip snapshot seeding
+- second-run trusted Gradle jobs should show more task reuse than the first run
+- the native Android build task must stop forcing itself dirty so remote cache hits are possible
+- when the self-hosted cache backend is down, Gradle builds must still succeed with the remote cache disabled for that build
