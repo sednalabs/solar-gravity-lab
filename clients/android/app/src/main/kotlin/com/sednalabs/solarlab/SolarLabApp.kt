@@ -216,9 +216,7 @@ private fun ImmersiveStageShell(
         entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
             uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
     }
-    val forecastSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
-        uiState.recentFocusedBodyIds.take(2)
-    }
+    val forecastSourceBodyIds = uiState.forecastSourceBodyIds
     val focusedBodyHero = deriveFocusedBodyHeroModel(
         uiState = uiState,
         stageCameraMode = stageCameraMode,
@@ -720,9 +718,7 @@ private fun RenderStagePanel(
         entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
             uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
     }
-    val forecastSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
-        uiState.recentFocusedBodyIds.take(2)
-    }
+    val forecastSourceBodyIds = uiState.forecastSourceBodyIds
 
     LabPanel(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -1237,6 +1233,11 @@ private fun overlayBodySummary(
 } else {
     "Bodies: ${bodyIds.joinToString(separator = ", ")}"
 }
+
+private val ShellUiState.forecastSourceBodyIds: List<String>
+    get() = listOfNotNull(focusedBodyId).ifEmpty {
+        recentFocusedBodyIds.take(2)
+    }
 
 @Composable
 private fun EmptyRenderStage(

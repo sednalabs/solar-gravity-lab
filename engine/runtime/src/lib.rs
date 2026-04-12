@@ -1646,13 +1646,11 @@ fn build_historical_orbit_archives(
     body_ids: &[BodyId],
     checkpoint_sample_limit: usize,
 ) -> Vec<OrbitArchive> {
-    let mut checkpoint_records = active
+    let start_index = active
         .checkpoints
-        .iter()
-        .rev()
-        .take(checkpoint_sample_limit)
-        .collect::<Vec<_>>();
-    checkpoint_records.reverse();
+        .len()
+        .saturating_sub(checkpoint_sample_limit);
+    let checkpoint_records = &active.checkpoints[start_index..];
 
     body_ids
         .iter()
