@@ -205,6 +205,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         surfaceReady = false
         rendererHardwareSummary = "gpu=vulkan-surface-destroyed"
         SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
+        reportStatus("Vulkan surface destroyed.")
     }
 
     override fun surfaceRedrawNeeded(holder: SurfaceHolder) {
@@ -301,6 +302,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
         SolarLabVulkanBridge.destroyRenderer(rendererHandle)
         rendererHandle = 0L
+        reportStatus("Vulkan renderer released.")
     }
 
     override fun onHostResume() {
