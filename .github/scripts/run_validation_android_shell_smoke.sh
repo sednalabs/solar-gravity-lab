@@ -48,6 +48,26 @@ GRADLE_VALIDATION_PROPS=()
 
 mkdir -p "${REPORT_ROOT}"
 
+collect_host_emulator_logs() {
+  local destination_root="$1"
+  local host_dir="${destination_root}/host-emulator"
+
+  mkdir -p "${host_dir}"
+
+  if compgen -G "${HOME}/.android/adb*" >/dev/null; then
+    cp -f ${HOME}/.android/adb* "${host_dir}/" 2>/dev/null || true
+  fi
+
+  if [[ -d "${HOME}/.android/avd" ]]; then
+    find "${HOME}/.android/avd" -maxdepth 2 -type f \( -name 'emu-*.log' -o -name 'emulator*.log' \) -print0 |
+      while IFS= read -r -d '' log_path; do
+        local relative_name
+        relative_name="$(basename "$(dirname "${log_path}")")-$(basename "${log_path}")"
+        cp -f "${log_path}" "${host_dir}/${relative_name}" 2>/dev/null || true
+      done
+  fi
+}
+
 run_capture() {
   local output_path="$1"
   shift
@@ -74,9 +94,15 @@ capture_device_state() {
   local in_app_stage_png="${class_dir}/startup-ready-stage.in-app.png"
   local in_app_screenshots_dir="${class_dir}/in-app-screenshots"
 
+  run_capture "${class_dir}/adb-devices.${phase_label}.txt" adb devices -l
+  run_capture "${class_dir}/logcat-buffer.${phase_label}.txt" adb logcat -g
+  run_capture "${class_dir}/getprop.${phase_label}.txt" adb shell getprop
+  run_capture "${class_dir}/package-path.${phase_label}.txt" adb shell pm path "${APP_PACKAGE}"
+  run_capture "${class_dir}/pidof.${phase_label}.txt" adb shell pidof "${APP_PACKAGE}"
   run_capture "${class_dir}/logcat.txt" adb logcat -d
   run_capture "${class_dir}/dumpsys_activity.txt" adb shell dumpsys activity activities
   run_capture "${class_dir}/dumpsys_activity_top.txt" adb shell dumpsys activity top
+  run_capture "${class_dir}/dumpsys_services.${phase_label}.txt" adb shell dumpsys activity services
   run_capture "${class_dir}/dumpsys_window.txt" adb shell dumpsys window windows
   run_capture "${class_dir}/gfxinfo.txt" adb shell dumpsys gfxinfo "${APP_PACKAGE}"
   run_capture "${class_dir}/anr_traces.txt" adb shell cat /data/anr/traces.txt
@@ -92,6 +118,8 @@ capture_device_state() {
   elif [[ "${phase_label}" == "post" ]]; then
     cp "${screen_png}" "${class_dir}/screen.png"
   fi
+
+  collect_host_emulator_logs "${class_dir}"
 }
 
 start_live_logcat() {
@@ -99,6 +127,7 @@ start_live_logcat() {
   local output_file="${class_dir}/live-logcat.txt"
 
   echo "Streaming filtered logcat for $(basename "${class_dir}")"
+  adb logcat -G 32M >/dev/null 2>&1 || true
   adb logcat -v threadtime "${LOGCAT_FILTER_SPECS[@]}" > >(tee "${output_file}") &
   LAST_LOGCAT_PID=$!
 }
@@ -220,6 +249,8 @@ run_test_batch() {
   class_arg="$(IFS=,; echo "${TEST_CLASSES[*]}")"
   run_timeout_seconds="${ANDROID_TEST_RUN_TIMEOUT_SECONDS:-$((CLASS_TIMEOUT_SECONDS * ${#TEST_CLASSES[@]}))}"
 
+  capture_device_state "${run_dir}" "pre"
+
   echo "::group::InstrumentationBatch"
   echo "Running ${#TEST_CLASSES[@]} instrumentation classes with timeout ${run_timeout_seconds}s"
   printf 'Classes:\n%s\n' "${class_arg//,/$'\n'}"
@@ -243,6 +274,7 @@ run_test_batch() {
 
   {
     printf 'test_classes=%s\n' "${class_arg}"
+    printf 'test_class_count=%s\n' "${#TEST_CLASSES[@]}"
     printf 'scope=%s\n' "${TEST_SCOPE}"
     printf 'validation_mode=%s\n' "${VALIDATION_MODE}"
     printf 'gradle_validation_props=%s\n' "${GRADLE_VALIDATION_PROPS[*]}"

@@ -1,0 +1,59 @@
+name: Install sccache
+description: Install a pinned sccache release with cache-aware reuse on GitHub runners.
+
+inputs:
+  version:
+    description: sccache release tag to install
+    required: false
+    default: v0.10.0
+
+outputs:
+  path:
+    description: Absolute path to the installed sccache binary
+    value: ${{ steps.export.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore sccache binary cache
+      id: restore
+      uses: actions/cache@v5
+      with:
+        path: ~/.local/share/solarlab-sccache/${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+        key: sccache-bin-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+
+    - name: Install sccache binary
+      shell: bash
+      env:
+        SCCACHE_VERSION: ${{ inputs.version }}
+        SCCACHE_INSTALL_SUFFIX: ${{ format('{0}-{1}-{2}', runner.os, runner.arch, inputs.version) }}
+      run: |
+        set -euo pipefail
+        SCCACHE_INSTALL_DIR="$HOME/.local/share/solarlab-sccache/${SCCACHE_INSTALL_SUFFIX}"
+
+        if [[ -x "${SCCACHE_INSTALL_DIR}/sccache" ]]; then
+          exit 0
+        fi
+
+        bash "${{ github.workspace }}/.github/scripts/install_sccache.sh" \
+          "${SCCACHE_VERSION}" \
+          "${SCCACHE_INSTALL_DIR}"
+
+    - name: Add sccache to PATH
+      shell: bash
+      env:
+        SCCACHE_INSTALL_SUFFIX: ${{ format('{0}-{1}-{2}', runner.os, runner.arch, inputs.version) }}
+      run: |
+        set -euo pipefail
+        SCCACHE_INSTALL_DIR="$HOME/.local/share/solarlab-sccache/${SCCACHE_INSTALL_SUFFIX}"
+        echo "${SCCACHE_INSTALL_DIR}" >> "${GITHUB_PATH}"
+
+    - name: Export sccache path
+      id: export
+      shell: bash
+      env:
+        SCCACHE_INSTALL_SUFFIX: ${{ format('{0}-{1}-{2}', runner.os, runner.arch, inputs.version) }}
+      run: |
+        set -euo pipefail
+        SCCACHE_INSTALL_DIR="$HOME/.local/share/solarlab-sccache/${SCCACHE_INSTALL_SUFFIX}"
+        echo "path=${SCCACHE_INSTALL_DIR}/sccache" >> "${GITHUB_OUTPUT}"
