@@ -216,6 +216,9 @@ private fun ImmersiveStageShell(
         entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
             uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
     }
+    val forecastSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
+        uiState.recentFocusedBodyIds.take(2)
+    }
     val focusedBodyHero = deriveFocusedBodyHeroModel(
         uiState = uiState,
         stageCameraMode = stageCameraMode,
@@ -266,9 +269,7 @@ private fun ImmersiveStageShell(
                                 },
                                 showHistoricalTrails = showTrackedOrbits,
                                 showForecastOverlay = showForecastPaths,
-                                forecastTrailSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
-                                    uiState.recentFocusedBodyIds.take(2)
-                                },
+                                forecastTrailSourceBodyIds = forecastSourceBodyIds,
                             )
                         },
                     )
@@ -379,6 +380,8 @@ private fun ImmersiveStageShell(
                                 trackedOrbitLimit = trackedOrbitLimit,
                                 onShowTrackedOrbitsChange = { showTrackedOrbits = it },
                                 onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
+                                showForecastPaths = showForecastPaths,
+                                forecastSourceBodyIds = forecastSourceBodyIds,
                             )
                             RenderStageSummaryCard(uiState = uiState)
                         }
@@ -717,6 +720,9 @@ private fun RenderStagePanel(
         entry.bodyId in setOf("sun", "earth", "moon", "mars", "jupiter") &&
             uiState.renderFrame?.bodies?.any { body -> body.bodyId == entry.bodyId } == true
     }
+    val forecastSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
+        uiState.recentFocusedBodyIds.take(2)
+    }
 
     LabPanel(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -804,9 +810,7 @@ private fun RenderStagePanel(
                                 historicalTrailSourceBodyIds = uiState.recentFocusedBodyIds,
                                 showHistoricalTrails = showTrackedOrbits,
                                 showForecastOverlay = showForecastPaths,
-                                forecastTrailSourceBodyIds = listOfNotNull(uiState.focusedBodyId).ifEmpty {
-                                    uiState.recentFocusedBodyIds.take(2)
-                                },
+                                forecastTrailSourceBodyIds = forecastSourceBodyIds,
                             )
                         },
                     )
@@ -830,6 +834,8 @@ private fun RenderStagePanel(
                             trackedOrbitLimit = trackedOrbitLimit,
                             onShowTrackedOrbitsChange = { showTrackedOrbits = it },
                             onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
+                            showForecastPaths = showForecastPaths,
+                            forecastSourceBodyIds = forecastSourceBodyIds,
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(16.dp),
@@ -873,6 +879,8 @@ private fun RenderStagePanel(
                     trackedOrbitLimit = trackedOrbitLimit,
                     onShowTrackedOrbitsChange = { showTrackedOrbits = it },
                     onTrackedOrbitLimitChange = { trackedOrbitLimit = it },
+                    showForecastPaths = showForecastPaths,
+                    forecastSourceBodyIds = forecastSourceBodyIds,
                 )
                 RenderStageSummaryCard(uiState = uiState)
             }
@@ -1120,10 +1128,12 @@ private fun TrackedOrbitHistoryPanel(
     trackedOrbitLimit: Int,
     onShowTrackedOrbitsChange: (Boolean) -> Unit,
     onTrackedOrbitLimitChange: (Int) -> Unit,
+    showForecastPaths: Boolean,
+    forecastSourceBodyIds: List<String>,
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier,
+        modifier = modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_LEGEND_PANEL),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
@@ -1178,12 +1188,54 @@ private fun TrackedOrbitHistoryPanel(
             } else {
                 Text(
                     text = "Tracked orbits are hidden.",
+                    modifier = Modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
+            if (showTrackedOrbits) {
+                Text(
+                    text = "History trails · last $trackedOrbitLimit focused bodies stay visible behind the stage.",
+                    modifier = Modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Forecast paths",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Text(
+                text = if (showForecastPaths) {
+                    "Forecast paths · short-horizon projection from the focused body."
+                } else {
+                    "Forecast paths are hidden."
+                },
+                modifier = Modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = overlayBodySummary(
+                    bodyIds = forecastSourceBodyIds,
+                    emptyText = "Forecast follows the current focus when one is selected.",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
+}
+
+private fun overlayBodySummary(
+    bodyIds: List<String>,
+    emptyText: String,
+): String = if (bodyIds.isEmpty()) {
+    emptyText
+} else {
+    "Bodies: ${bodyIds.joinToString(separator = ", ")}"
 }
 
 @Composable
