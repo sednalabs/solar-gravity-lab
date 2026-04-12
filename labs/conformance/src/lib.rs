@@ -100,6 +100,15 @@ pub fn run_report(
     })
 }
 
+#[must_use]
+pub fn report_exit_code(report: &ConformanceReport) -> u8 {
+    if report.passed {
+        0
+    } else {
+        1
+    }
+}
+
 fn scenario_registry() -> Vec<ScenarioDefinition> {
     vec![
         ScenarioDefinition {
@@ -771,7 +780,12 @@ fn moon_earth_distance_m(snapshot: &WorldSnapshot) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_report, scenario_ids};
+    use serde_json::json;
+
+    use super::{
+        report_exit_code, run_report, scenario_ids, ConformanceReport, ConformanceSummary,
+        ScenarioReport,
+    };
 
     #[test]
     fn scenario_registry_lists_expected_ids() {
@@ -800,5 +814,44 @@ mod tests {
         let error =
             run_report(&["unknown".into()], None).expect_err("unknown scenario should fail");
         assert!(error.contains("unknown scenario ids"));
+    }
+
+    #[test]
+    fn report_exit_code_tracks_pass_state() {
+        let passing = ConformanceReport {
+            schema_version: "1.0.0",
+            commit_sha: None,
+            selected_scenarios: vec!["example".into()],
+            passed: true,
+            summary: ConformanceSummary {
+                total: 1,
+                passed: 1,
+                failed: 0,
+            },
+            scenarios: vec![],
+        };
+        let failing = ConformanceReport {
+            schema_version: "1.0.0",
+            commit_sha: None,
+            selected_scenarios: vec!["example".into()],
+            passed: false,
+            summary: ConformanceSummary {
+                total: 1,
+                passed: 0,
+                failed: 1,
+            },
+            scenarios: vec![ScenarioReport {
+                id: "example",
+                family: "scientific correctness",
+                description: "example",
+                passed: false,
+                metrics: json!({}),
+                thresholds: json!({}),
+                notes: vec![],
+            }],
+        };
+
+        assert_eq!(report_exit_code(&passing), 0);
+        assert_eq!(report_exit_code(&failing), 1);
     }
 }

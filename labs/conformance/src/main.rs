@@ -1,7 +1,7 @@
 use std::env;
 use std::process::ExitCode;
 
-use solarlab_conformance::{run_report, scenario_ids};
+use solarlab_conformance::{report_exit_code, run_report, scenario_ids};
 
 fn main() -> ExitCode {
     match run() {
@@ -58,7 +58,11 @@ fn run() -> Result<(), String> {
     .map_err(|error| format!("failed to serialize conformance report: {error}"))?;
 
     println!("{rendered}");
-    Ok(())
+    if report_exit_code(&report) == 0 {
+        Ok(())
+    } else {
+        Err("one or more conformance scenarios failed".to_owned())
+    }
 }
 
 fn print_help() {
