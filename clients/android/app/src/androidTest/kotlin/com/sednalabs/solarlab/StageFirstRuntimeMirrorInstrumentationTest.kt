@@ -8,7 +8,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -31,13 +30,21 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         composeRule.onNodeWithText("Runtime").performClick()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
+            val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
+            runtimeState.connectionState == com.sednalabs.solarlab.runtime.SessionConnectionState.Active &&
+                runtimeState.sessionHandle != null &&
+                runtimeState.renderFrame != null
+        }
+
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithText("Sandbox").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithText("Refresh runtime").fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText("Debug").fetchSemanticsNodes().isNotEmpty()
         }
 
         assertTrue(composeRule.onAllNodesWithText("Sandbox").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(composeRule.onAllNodesWithText("Refresh runtime").fetchSemanticsNodes().isNotEmpty())
         assertTrue(composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Debug").fetchSemanticsNodes().isNotEmpty())
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
@@ -45,7 +52,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         }
 
         val hostView = findRenderHostView(composeRule.activity.window.decorView)
-        assertNotNull("Runtime mirror render host should be present", hostView)
+        assertTrue("Runtime mirror render host should be present", hostView != null)
         assertTrue(
             "Runtime mirror render host should have a measured size",
             requireNotNull(hostView).width > 0 && hostView.height > 0,

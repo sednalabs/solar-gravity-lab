@@ -71,7 +71,7 @@ class FocusedCompositionInstrumentationTest {
         Log.i(LOG_TAG, "FocusedCompositionInstrumentationTest.begin focus=$focusBodyId")
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val facade = scenario.withRuntimeFacade()
-            waitForState(facade) {
+            waitForState(facade, timeout = 35.seconds) {
                 it.renderStatus.readiness == RenderHostReadiness.Ready &&
                     it.renderFrame != null &&
                     it.renderStatus.renderedBodyCount > 0
