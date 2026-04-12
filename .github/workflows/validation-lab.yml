@@ -641,6 +641,10 @@ jobs:
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -659,7 +663,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: ./.github/actions/prepare-android-sdk
         with:
@@ -734,6 +745,7 @@ jobs:
             echo "- sdk setup: \`${{ steps.android_unit_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- unit suites: \`${{ steps.android_unit_tests.outputs.unit_seconds || 'n/a' }}s\`"
             echo "- lane total: \`${lane_total}s\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Emit Android unit sccache stats
@@ -777,6 +789,10 @@ jobs:
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -795,7 +811,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: ./.github/actions/prepare-android-sdk
         with:
@@ -864,6 +887,7 @@ jobs:
             echo "- sdk setup: \`${{ steps.android_lint_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- lint suites: \`${{ steps.android_lint_checks.outputs.lint_seconds || 'n/a' }}s\`"
             echo "- lane total: \`${lane_total}s\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Emit Android lint sccache stats
@@ -903,6 +927,10 @@ jobs:
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -925,7 +953,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: ./.github/actions/prepare-android-sdk
         with:
@@ -1123,6 +1158,7 @@ jobs:
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"
             echo "- lane total (including emulator + instrumentation): \`${lane_total}s\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
             echo "- scope: \`${{ needs.metadata.outputs.android_test_scope }}\`"
             echo "- artifact mode: \`${{ needs.metadata.outputs.android_artifact_mode }}\`"
             echo "- emulator boot strategy: \`${{ needs.metadata.outputs.emulator_boot_strategy }}\`"

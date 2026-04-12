@@ -105,6 +105,10 @@ jobs:
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -130,7 +134,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       - uses: ./.github/actions/prepare-android-sdk
         with:
@@ -373,6 +384,7 @@ jobs:
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble APK: \`${{ steps.assemble_prerelease.outputs.assemble_seconds || 'n/a' }}s\`"
             echo "- lane total (including emulator + launch smoke): \`${lane_total}s\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
             echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
