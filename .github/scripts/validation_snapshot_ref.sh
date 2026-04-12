@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SNAPSHOT_TEMP_INDEX=""
+SNAPSHOT_PREVIOUS_GIT_INDEX_FILE=""
+SNAPSHOT_HAD_GIT_INDEX_FILE="false"
+
+cleanup_snapshot_temp_index() {
+  if [[ -n "${SNAPSHOT_TEMP_INDEX}" ]]; then
+    rm -f "${SNAPSHOT_TEMP_INDEX}"
+    SNAPSHOT_TEMP_INDEX=""
+  fi
+
+  if [[ "${SNAPSHOT_HAD_GIT_INDEX_FILE}" == "true" ]]; then
+    export GIT_INDEX_FILE="${SNAPSHOT_PREVIOUS_GIT_INDEX_FILE}"
+  else
+    unset GIT_INDEX_FILE || true
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -34,7 +51,6 @@ create_snapshot() {
   local remote="${2:-origin}"
   local timestamp
   local branch_name
-  local temp_index
   local commit_message
   local tree_id
   local commit_id
@@ -43,10 +59,17 @@ create_snapshot() {
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   branch_name="$(sanitize_name "${requested_name:-$(basename "$(pwd)")}")"
   branch_name="validation/snapshot-${branch_name}-${timestamp}"
-  temp_index="$(mktemp)"
-  trap 'rm -f "$temp_index"' EXIT
+  SNAPSHOT_TEMP_INDEX="$(mktemp)"
+  if [[ -v GIT_INDEX_FILE ]]; then
+    SNAPSHOT_PREVIOUS_GIT_INDEX_FILE="${GIT_INDEX_FILE}"
+    SNAPSHOT_HAD_GIT_INDEX_FILE="true"
+  else
+    SNAPSHOT_PREVIOUS_GIT_INDEX_FILE=""
+    SNAPSHOT_HAD_GIT_INDEX_FILE="false"
+  fi
+  trap cleanup_snapshot_temp_index EXIT
 
-  export GIT_INDEX_FILE="$temp_index"
+  export GIT_INDEX_FILE="${SNAPSHOT_TEMP_INDEX}"
   git read-tree --empty
   git add -A
   tree_id="$(git write-tree)"
@@ -69,6 +92,9 @@ EOF
   fi
 
   git push "$remote" "${commit_id}:refs/heads/${branch_name}"
+
+  cleanup_snapshot_temp_index
+  trap - EXIT
 
   printf 'snapshot_ref=%s\n' "$branch_name"
   printf 'snapshot_commit=%s\n' "$commit_id"

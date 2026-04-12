@@ -6,11 +6,16 @@ on:
       - ".github/workflows/**"
       - ".github/scripts/**"
       - "clients/android/**"
+      - "engine/**"
       - "feature-lab/**"
+      - "labs/**"
+      - "proto/**"
+      - "render/**"
       - "render-core/**"
       - "core-math/**"
       - "core-model/**"
       - "core-simulation/**"
+      - "services/**"
   workflow_dispatch:
     inputs:
       ref:
@@ -429,8 +434,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          repository: ${{ needs.metadata.outputs.checkout_repository }}
-          ref: ${{ needs.metadata.outputs.checkout_ref }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
