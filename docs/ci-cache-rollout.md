@@ -214,6 +214,31 @@ Interpretation:
    - then the actual assemble + emulator smoke work
 4. this makes a build-first / test-many split less urgent than it looked before the SDK package cache existed
 
+### Cross-workflow Android shell proof
+
+The same SDK package cache is now proved on the targeted `validation-lab` Android shell lane, not just on `prerelease-apk`.
+
+- `validation-lab` run `24301670464` on `5ae574e`:
+  - Android shell job total: about `4m01s`
+  - AVD cache hit: `avd-Linux-pixel_7_api35_google_apis_x86_64-v3`
+  - Android SDK component cache hit: `android-sdk-components-Linux-X64-v1`
+  - SDK package restore step: about `25s`
+  - SDK verification step: about `8s`
+  - `sdkmanager` reported all required packages already installed, including:
+    - `emulator`
+    - `system-images;android-35;google_apis;x86_64`
+  - assemble debug Android shell + androidTest: about `53s`
+  - connected Android shell smoke + continuity tests: about `1m24s`
+  - Android shell `sccache`: `16/16` C/C++ hits, `0` misses
+
+Interpretation:
+
+1. the SDK package cache is genuinely shared across both workflows
+2. the remaining warm-path Android setup tax is now mostly cache restore bandwidth and emulator execution, not repeated package installation
+3. the strongest remaining case for more speed is no longer "cache the Android packages" but either:
+   - reduce artifact duplication further, or
+   - move heavy Android lanes onto a prewarmed self-hosted runner when hosted-runner bootstrap latency becomes the dominant cost
+
 ## Cloudflare and R2 layout
 
 - hostname: `cache.sednalabs.io`
