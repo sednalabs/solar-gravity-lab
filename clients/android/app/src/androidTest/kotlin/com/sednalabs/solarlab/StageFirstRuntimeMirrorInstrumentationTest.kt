@@ -35,7 +35,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
             runtimeState.connectionState == com.sednalabs.solarlab.runtime.SessionConnectionState.Active &&
                 runtimeState.sessionHandle != null &&
-                runtimeState.renderFrame != null
+                runtimeState.snapshot != null
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
