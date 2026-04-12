@@ -2,8 +2,6 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.assertions.assertDoesNotExist
-import androidx.compose.ui.test.assertions.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,14 +27,17 @@ class StageFirstLocalStartupInstrumentationTest {
             }.isSuccess
         }
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertExists()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertExists()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON).assertExists()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNode()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON).fetchSemanticsNode()
 
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertExists()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNode()
         } else {
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertDoesNotExist()
+            runCatching { composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNode() }
+                .onSuccess {
+                    assertTrue("Expected mode button to not exist", false)
+                }
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
