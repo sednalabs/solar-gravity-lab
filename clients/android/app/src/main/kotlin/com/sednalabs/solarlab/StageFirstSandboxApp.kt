@@ -45,6 +45,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -106,7 +107,7 @@ private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalCons
  * Recovery slice two restores sandbox authoring parity on top of the stage-first client:
  * add object, place-on-scene, edit selected, and delete selected are all available again.
  */
-private enum class StageFirstExperienceMode {
+internal enum class StageFirstExperienceMode {
     LOCAL_SANDBOX,
     RUNTIME_MIRROR,
 }
@@ -115,8 +116,11 @@ private enum class StageFirstExperienceMode {
 internal fun StageFirstSandboxApp(
     runtimeFacade: RuntimeFacade? = null,
     ensureRuntimeStarted: (() -> Unit)? = null,
+    experienceModeState: MutableState<StageFirstExperienceMode>? = null,
 ) {
-    var experienceMode by rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
+    val localExperienceModeState = rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
+    val resolvedExperienceModeState = experienceModeState ?: localExperienceModeState
+    var experienceMode by resolvedExperienceModeState
     val runtimeMirrorAvailable = runtimeFacade != null && ensureRuntimeStarted != null
 
     when {

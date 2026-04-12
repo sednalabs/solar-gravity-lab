@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeFacade
@@ -23,10 +24,18 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
+    private val stageFirstExperienceModeState = mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX)
 
     @VisibleForTesting
     internal val runtimeFacadeForTesting: RuntimeFacade
         get() = runtimeViewModel.runtimeFacade
+
+    @VisibleForTesting
+    internal fun showStageFirstRuntimeMirrorForTesting() {
+        if (BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
+            stageFirstExperienceModeState.value = StageFirstExperienceMode.RUNTIME_MIRROR
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,6 +58,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
+                    experienceModeState = stageFirstExperienceModeState,
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
