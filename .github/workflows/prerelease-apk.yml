@@ -108,7 +108,6 @@ jobs:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -128,7 +127,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          checkout_ref='${{ inputs.ref != '' && inputs.ref || github.ref_name }}'
+          gradle_cache_push='false'
+          gradle_cache_read_only='true'
+          case "$checkout_ref" in
+            main|refs/heads/main|release/*|refs/heads/release/*|validation/*|refs/heads/validation/*)
+              gradle_cache_push='true'
+              gradle_cache_read_only='false'
+              ;;
+          esac
           echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "gradle_cache_push=${gradle_cache_push}" >> "$GITHUB_OUTPUT"
+          echo "gradle_cache_read_only=${gradle_cache_read_only}" >> "$GITHUB_OUTPUT"
+          echo "GRADLE_REMOTE_CACHE_PUSH=${gradle_cache_push}" >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v5
         with:
@@ -137,7 +148,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-read-only: ${{ steps.git_meta.outputs.gradle_cache_read_only == 'true' }}
           cache-cleanup: on-success
           add-job-summary: on-failure
           gradle-home-cache-excludes: |
@@ -384,7 +395,7 @@ jobs:
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble APK: \`${{ steps.assemble_prerelease.outputs.assemble_seconds || 'n/a' }}s\`"
             echo "- lane total (including emulator + launch smoke): \`${lane_total}s\`"
-            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+            echo "- remote gradle cache push: \`${{ steps.git_meta.outputs.gradle_cache_push }}\`"
             echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
