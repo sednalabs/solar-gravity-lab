@@ -1042,10 +1042,10 @@ internal data class NativeVulkanScenePacket(
     }
 }
 
-private const val NATIVE_COMMAND_ADVANCE_EPOCH = 0
+internal const val NATIVE_COMMAND_ADVANCE_EPOCH = 0
 private const val NATIVE_COMMAND_PAUSE_PLAYBACK = 1
-private const val NATIVE_COMMAND_RESUME_PLAYBACK = 2
-private const val NATIVE_COMMAND_SET_PLAYBACK_RATE = 3
+internal const val NATIVE_COMMAND_RESUME_PLAYBACK = 2
+internal const val NATIVE_COMMAND_SET_PLAYBACK_RATE = 3
 private const val NATIVE_COMMAND_SET_OBSERVER_MODE = 4
 private const val NATIVE_COMMAND_FOCUS_BODY = 5
 private const val NATIVE_COMMAND_SPAWN_BODY = 6
@@ -1053,7 +1053,7 @@ private const val NATIVE_COMMAND_REMOVE_BODY = 7
 private const val NATIVE_COMMAND_SET_BODY_KINEMATICS = 8
 private const val NATIVE_COMMAND_CREATE_CHECKPOINT = 9
 private const val NATIVE_COMMAND_CREATE_BRANCH_FROM_CHECKPOINT = 10
-private const val NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM = 11
+internal const val NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM = 11
 private const val NATIVE_BODY_CLASS_STAR = 0
 private const val NATIVE_BODY_CLASS_PLANET = 1
 private const val NATIVE_BODY_CLASS_DWARF_PLANET = 2
