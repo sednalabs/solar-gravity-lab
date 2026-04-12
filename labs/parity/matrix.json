@@ -108,6 +108,7 @@
       "proof_refs": [
         "playback substep budget policy assertions",
         "solarlab-conformance collision-playback-cap",
+        "solarlab-conformance host-relative-playback-policy",
         "thermal and tracer workload scheduler clamps"
       ],
       "notes": "High-speed playback, backlog control, and thermal-pressure clamps must stay scientifically conservative instead of drifting into visually smooth but physically misleading scheduling."

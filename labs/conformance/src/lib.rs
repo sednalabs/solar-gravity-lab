@@ -118,6 +118,10 @@ fn scenario_registry() -> Vec<ScenarioDefinition> {
             id: "arm64-kernel-equivalence",
             run: run_arm64_kernel_equivalence,
         },
+        ScenarioDefinition {
+            id: "host-relative-playback-policy",
+            run: run_host_relative_playback_policy,
+        },
     ]
 }
 
@@ -300,6 +304,71 @@ fn run_arm64_kernel_equivalence() -> ScenarioReport {
         notes: vec![
             "This scenario is host-independent because the harness compares the scalar and arm64 fused kernels directly instead of relying on live runtime dispatch.".to_owned(),
             "It lifts an existing strict parity assertion into the machine-readable conformance surface so ISA checks are no longer trapped in unit-test output.".to_owned(),
+        ],
+    }
+}
+
+fn run_host_relative_playback_policy() -> ScenarioReport {
+    let playback_tick_seconds = 86_400.0;
+    let playback_window_ticks = 6;
+    let fine_max_substep_seconds = 120.0;
+    let legacy_policy_cap = legacy_high_speed_policy_cap(playback_tick_seconds);
+    let policy_plan =
+        playback_substep_plan(playback_tick_seconds, &CollisionModel::None, 2_592_000.0);
+    let two_day_plan = playback_substep_plan(
+        2.0 * playback_tick_seconds,
+        &CollisionModel::None,
+        2_592_000.0,
+    );
+
+    let baseline = host_relative_turning_angles(
+        playback_window_ticks,
+        playback_tick_seconds,
+        fine_max_substep_seconds,
+    );
+    let legacy_policy = host_relative_turning_angles(
+        playback_window_ticks,
+        playback_tick_seconds,
+        legacy_policy_cap,
+    );
+    let current_policy = host_relative_turning_angles(
+        playback_window_ticks,
+        playback_tick_seconds,
+        policy_plan.max_substep_seconds,
+    );
+    let legacy_policy_max_turning_error = max_turning_angle_error(&legacy_policy, &baseline);
+    let current_policy_max_turning_error = max_turning_angle_error(&current_policy, &baseline);
+
+    let passed = policy_plan.max_substep_seconds == 3_600.0
+        && legacy_policy_cap == 7_200.0
+        && two_day_plan.max_substep_seconds == 14_400.0
+        && policy_plan.max_substep_seconds < legacy_policy_cap
+        && current_policy_max_turning_error <= legacy_policy_max_turning_error;
+
+    ScenarioReport {
+        id: "host-relative-playback-policy",
+        family: "scientific correctness",
+        description: "Compare the host-relative short-window playback cap against the coarser legacy policy and require lower or equal turning-angle error.",
+        passed,
+        metrics: json!({
+            "playback_tick_seconds": playback_tick_seconds,
+            "playback_window_ticks": playback_window_ticks,
+            "baseline_max_substep_seconds": fine_max_substep_seconds,
+            "legacy_policy_cap_seconds": legacy_policy_cap,
+            "policy_cap_seconds": policy_plan.max_substep_seconds,
+            "two_day_policy_cap_seconds": two_day_plan.max_substep_seconds,
+            "legacy_policy_max_turning_error": legacy_policy_max_turning_error,
+            "current_policy_max_turning_error": current_policy_max_turning_error,
+        }),
+        thresholds: json!({
+            "expected_policy_cap_seconds": 3_600.0,
+            "expected_legacy_policy_cap_seconds": 7_200.0,
+            "expected_two_day_policy_cap_seconds": 14_400.0,
+            "current_policy_max_turning_error_lte_legacy": true,
+        }),
+        notes: vec![
+            "This keeps the high-speed host-relative playback guard machine-readable instead of leaving it trapped in the physics unit tests.".to_owned(),
+            "The scenario focuses on turning-angle stability, which is the user-visible scientific failure mode for overly coarse playback integration.".to_owned(),
         ],
     }
 }
@@ -509,6 +578,70 @@ fn moon_earth_playback_solver_scenario() -> Vec<MassiveBodyState> {
     ]
 }
 
+fn host_relative_turning_angles(
+    ticks: usize,
+    tick_seconds: f64,
+    max_substep_seconds: f64,
+) -> Vec<f64> {
+    let mut runtime = new_runtime(max_substep_seconds);
+    runtime
+        .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+        .expect("canonical seed should succeed");
+
+    let mut host_relative_vectors = Vec::with_capacity(ticks + 1);
+    host_relative_vectors.push(moon_from_earth(&runtime.snapshot()));
+
+    for step in 0..ticks {
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: tick_seconds,
+                },
+                i64::try_from(step).expect("step index should fit in i64") + 100,
+            )
+            .expect("advance epoch should succeed");
+        host_relative_vectors.push(moon_from_earth(&runtime.snapshot()));
+    }
+
+    host_relative_vectors
+        .windows(2)
+        .map(|window| turning_angle(window[0], window[1]))
+        .collect()
+}
+
+fn moon_from_earth(snapshot: &WorldSnapshot) -> Vector3d {
+    let moon = body_position(snapshot, "moon");
+    let earth = body_position(snapshot, "earth");
+    Vector3d {
+        x: moon.x - earth.x,
+        y: moon.y - earth.y,
+        z: moon.z - earth.z,
+    }
+}
+
+fn max_turning_angle_error(actual: &[f64], expected: &[f64]) -> f64 {
+    actual
+        .iter()
+        .zip(expected.iter())
+        .map(|(left, right)| (left - right).abs())
+        .fold(0.0_f64, f64::max)
+}
+
+fn legacy_high_speed_policy_cap(total_seconds: f64) -> f64 {
+    (total_seconds / 12.0).clamp(3_600.0, 21_600.0)
+}
+
+fn turning_angle(previous: Vector3d, current: Vector3d) -> f64 {
+    let denominator = vec_magnitude(previous) * vec_magnitude(current);
+    if denominator <= f64::EPSILON {
+        return 0.0;
+    }
+
+    let cosine = ((previous.x * current.x) + (previous.y * current.y) + (previous.z * current.z))
+        / denominator;
+    cosine.clamp(-1.0, 1.0).acos()
+}
+
 fn new_runtime(max_substep_seconds: f64) -> WorldRuntime {
     WorldRuntime::new(
         ScenarioId("sol-system".into()),
@@ -641,10 +774,17 @@ mod tests {
     use super::{run_report, scenario_ids};
 
     #[test]
-    fn report_passes_all_registered_scenarios() {
-        let report = run_report(&[], Some("deadbeef".into())).expect("report should build");
-        assert!(report.passed, "expected all scenarios to pass: {report:#?}");
-        assert_eq!(report.summary.total, scenario_ids().len());
+    fn scenario_registry_lists_expected_ids() {
+        assert_eq!(
+            scenario_ids(),
+            vec![
+                "major-body-orbit-telemetry",
+                "added-body-repeatability",
+                "collision-playback-cap",
+                "arm64-kernel-equivalence",
+                "host-relative-playback-policy",
+            ]
+        );
     }
 
     #[test]

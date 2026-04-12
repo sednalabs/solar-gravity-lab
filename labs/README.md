@@ -26,3 +26,4 @@ slice:
 - `added-body-repeatability`
 - `collision-playback-cap`
 - `arm64-kernel-equivalence`
+- `host-relative-playback-policy`

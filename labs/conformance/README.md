@@ -12,6 +12,8 @@ It intentionally starts small and deterministic:
   collision-enabled modes from silently stretching solver substeps.
 - `arm64-kernel-equivalence` checks the dedicated arm64 fused-step kernel
   against the scalar oracle on the moon/earth playback scenario.
+- `host-relative-playback-policy` checks that the newer host-relative
+  short-window playback cap stays more conservative than the coarse legacy path.
 
 Run it with:
 
