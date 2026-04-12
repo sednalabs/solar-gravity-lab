@@ -88,6 +88,12 @@ pub struct SolverEquivalenceMetrics {
     pub max_relative_error: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BackendEquivalenceReport {
+    pub metrics: SolverEquivalenceMetrics,
+    pub energy_relative_error: f64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DispatchDecision {
     effective_backend: SolverBackend,
@@ -258,6 +264,29 @@ pub fn solver_equivalence_metrics(
         }
     }
     metrics
+}
+
+#[must_use]
+pub fn compare_arm64_kernel_to_scalar(
+    policy: &PhysicsPolicy,
+    initial_bodies: &[MassiveBodyState],
+    delta_seconds: f64,
+) -> BackendEquivalenceReport {
+    let mut scalar_bodies = initial_bodies.to_vec();
+    let mut arm64_bodies = initial_bodies.to_vec();
+
+    let scalar_invariants = advance_authoritative_scalar(policy, &mut scalar_bodies, delta_seconds);
+    let arm64_invariants = advance_authoritative_arm64(policy, &mut arm64_bodies, delta_seconds);
+    let metrics = solver_equivalence_metrics(&arm64_bodies, &scalar_bodies);
+
+    let energy_scale = scalar_invariants.total_energy_j.abs().max(1.0);
+    let energy_relative_error =
+        (arm64_invariants.total_energy_j - scalar_invariants.total_energy_j).abs() / energy_scale;
+
+    BackendEquivalenceReport {
+        metrics,
+        energy_relative_error,
+    }
 }
 
 #[must_use]
@@ -701,12 +730,11 @@ fn norm_squared(v: Vector3d) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_authoritative, advance_authoritative_arm64, advance_authoritative_scalar,
+        advance_authoritative, advance_authoritative_scalar, compare_arm64_kernel_to_scalar,
         compute_invariants, detect_cpu_features, dispatch_solver_backend_for_host,
         effective_playback_max_substep_seconds, norm, pairwise_gravity_accelerations,
-        playback_substep_plan, solver_equivalence_metrics, subtract, CollisionModel,
-        IntegratorKind, MassiveBodyState, PhysicsPolicy, SolverBackend, G_M3_PER_KG_S2,
-        MIN_DISTANCE_M2,
+        playback_substep_plan, subtract, CollisionModel, IntegratorKind, MassiveBodyState,
+        PhysicsPolicy, SolverBackend, G_M3_PER_KG_S2, MIN_DISTANCE_M2,
     };
     use solarlab_domain::Vector3d;
 
@@ -1160,13 +1188,10 @@ mod tests {
 
     #[test]
     fn arm64_solver_kernel_is_scalar_oracle_equivalent_with_strict_tolerance() {
-        let mut scalar_bodies = moon_earth_playback_scenario();
-        let mut arm64_bodies = moon_earth_playback_scenario();
         let policy = test_policy();
-
-        let scalar_invariants = advance_authoritative_scalar(&policy, &mut scalar_bodies, 86_400.0);
-        let arm64_invariants = advance_authoritative_arm64(&policy, &mut arm64_bodies, 86_400.0);
-        let metrics = solver_equivalence_metrics(&arm64_bodies, &scalar_bodies);
+        let report =
+            compare_arm64_kernel_to_scalar(&policy, &moon_earth_playback_scenario(), 86_400.0);
+        let metrics = report.metrics;
 
         assert!(metrics.compared_components > 0);
         assert!(metrics.bitwise_equal_components > 0);
@@ -1180,14 +1205,10 @@ mod tests {
             "max_relative_error {} exceeded tolerance",
             metrics.max_relative_error
         );
-        let energy_scale = scalar_invariants.total_energy_j.abs().max(1.0);
-        let energy_relative_error =
-            (arm64_invariants.total_energy_j - scalar_invariants.total_energy_j).abs()
-                / energy_scale;
         assert!(
-            energy_relative_error <= 1.0e-12,
+            report.energy_relative_error <= 1.0e-12,
             "relative total energy error {} exceeded tolerance",
-            energy_relative_error
+            report.energy_relative_error
         );
     }
 
