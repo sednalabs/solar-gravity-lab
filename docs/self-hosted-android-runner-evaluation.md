@@ -207,3 +207,7 @@ At this point, the hosted-runner side is good enough that further gains are more
 - less repeated runner bootstrap
 
 than from another round of cache plumbing.
+
+For the concrete operator sequence, see:
+
+- `docs/self-hosted-android-runner-operator-checklist.md`
