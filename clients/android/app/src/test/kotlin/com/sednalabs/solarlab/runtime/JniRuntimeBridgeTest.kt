@@ -50,15 +50,15 @@ class JniRuntimeBridgeTest {
 
         assertTrue(
             "Expected startup to seed canonical world",
-            transport.appliedCommands.any { it.kind == 11 },
+            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM },
         )
         assertTrue(
             "Expected startup to resume playback for visible motion",
-            transport.appliedCommands.any { it.kind == 2 },
+            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_RESUME_PLAYBACK },
         )
         assertTrue(
             "Expected startup to set visible playback rate",
-            transport.appliedCommands.any { it.kind == 3 },
+            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SET_PLAYBACK_RATE },
         )
         assertTrue(
             signals
@@ -97,15 +97,15 @@ class JniRuntimeBridgeTest {
 
         assertFalse(
             "Seed should not be issued when snapshot already has bodies",
-            transport.appliedCommands.any { it.kind == 11 },
+            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM },
         )
         assertTrue(
             "Expected startup to resume playback for visible motion",
-            transport.appliedCommands.any { it.kind == 2 },
+            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_RESUME_PLAYBACK },
         )
         assertTrue(
             "Expected startup to set visible playback rate",
-            transport.appliedCommands.any { it.kind == 3 },
+            transport.appliedCommands.any { it.kind == NATIVE_COMMAND_SET_PLAYBACK_RATE },
         )
         assertEquals(listOf(42L, 42L), transport.refreshedHandles)
         assertEquals(2, renderHostAdapter.refreshCount)
@@ -298,6 +298,9 @@ class JniRuntimeBridgeTest {
 
     private companion object {
         const val NATIVE_COMMAND_ADVANCE_EPOCH = 0
+        const val NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM = 11
+        const val NATIVE_COMMAND_RESUME_PLAYBACK = 2
+        const val NATIVE_COMMAND_SET_PLAYBACK_RATE = 3
         const val STARTUP_EXPECTED_BODY_COUNT = 365
 
         fun snapshotSummary(
