@@ -31,6 +31,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).performClick()
+        composeRule.waitForIdle()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
@@ -41,19 +42,37 @@ class StageFirstRuntimeMirrorInstrumentationTest {
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNode()
+                composeRule.onNodeWithTag(
+                    SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON,
+                    useUnmergedTree = true,
+                ).fetchSemanticsNode()
             }.isSuccess &&
                 runCatching {
-                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
+                    composeRule.onNodeWithTag(
+                        SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON,
+                        useUnmergedTree = true,
+                    ).fetchSemanticsNode()
                 }.isSuccess &&
                 runCatching {
-                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNode()
+                    composeRule.onNodeWithTag(
+                        SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON,
+                        useUnmergedTree = true,
+                    ).fetchSemanticsNode()
                 }.isSuccess
         }
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(
+            SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON,
+            useUnmergedTree = true,
+        ).assertIsDisplayed()
+        composeRule.onNodeWithTag(
+            SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON,
+            useUnmergedTree = true,
+        ).assertIsDisplayed()
+        composeRule.onNodeWithTag(
+            SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON,
+            useUnmergedTree = true,
+        ).assertIsDisplayed()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
