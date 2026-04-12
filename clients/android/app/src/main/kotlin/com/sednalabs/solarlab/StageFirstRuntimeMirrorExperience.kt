@@ -97,6 +97,7 @@ internal fun StageFirstRuntimeMirrorExperience(
     runtimeFacade: RuntimeFacade?,
     ensureRuntimeStarted: (() -> Unit)?,
     onReturnToSandbox: () -> Unit,
+    onVisibleForTesting: ((Boolean) -> Unit)? = null,
 ) {
     SolarLabTheme {
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -214,6 +215,13 @@ internal fun StageFirstRuntimeMirrorExperience(
             when {
                 searchVisible -> searchVisible = false
                 debugVisible -> debugVisible = false
+            }
+        }
+
+        DisposableEffect(onVisibleForTesting) {
+            onVisibleForTesting?.invoke(true)
+            onDispose {
+                onVisibleForTesting?.invoke(false)
             }
         }
 

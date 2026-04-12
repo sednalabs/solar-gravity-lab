@@ -28,6 +28,15 @@ class MainActivity : ComponentActivity() {
     internal val runtimeFacadeForTesting: RuntimeFacade
         get() = runtimeViewModel.runtimeFacade
 
+    @VisibleForTesting
+    @Volatile
+    internal var stageFirstExperienceModeForTesting: StageFirstExperienceMode =
+        StageFirstExperienceMode.LOCAL_SANDBOX
+
+    @VisibleForTesting
+    @Volatile
+    internal var stageFirstRuntimeUiVisibleForTesting: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -49,6 +58,8 @@ class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
+                    onExperienceModeChanged = { stageFirstExperienceModeForTesting = it },
+                    onRuntimeMirrorVisibilityChanged = { stageFirstRuntimeUiVisibleForTesting = it },
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)

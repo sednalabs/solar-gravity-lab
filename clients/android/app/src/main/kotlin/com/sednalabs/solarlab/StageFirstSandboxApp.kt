@@ -49,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,7 +107,7 @@ private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalCons
  * Recovery slice two restores sandbox authoring parity on top of the stage-first client:
  * add object, place-on-scene, edit selected, and delete selected are all available again.
  */
-private enum class StageFirstExperienceMode {
+internal enum class StageFirstExperienceMode {
     LOCAL_SANDBOX,
     RUNTIME_MIRROR,
 }
@@ -115,12 +116,21 @@ private enum class StageFirstExperienceMode {
 internal fun StageFirstSandboxApp(
     runtimeFacade: RuntimeFacade? = null,
     ensureRuntimeStarted: (() -> Unit)? = null,
+    onExperienceModeChanged: (StageFirstExperienceMode) -> Unit = {},
+    onRuntimeMirrorVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     var experienceMode by rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
     val runtimeMirrorAvailable = runtimeFacade != null && ensureRuntimeStarted != null
 
+    SideEffect {
+        onExperienceModeChanged(experienceMode)
+    }
+
     when {
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
+            SideEffect {
+                onRuntimeMirrorVisibilityChanged(false)
+            }
             StageFirstSandboxLocalExperience(
                 onEnterRuntimeMirror = if (runtimeMirrorAvailable) {
                     { experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR }
@@ -134,6 +144,7 @@ internal fun StageFirstSandboxApp(
             runtimeFacade = runtimeFacade,
             ensureRuntimeStarted = ensureRuntimeStarted,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
+            onVisibleForTesting = onRuntimeMirrorVisibilityChanged,
         )
     }
 }
