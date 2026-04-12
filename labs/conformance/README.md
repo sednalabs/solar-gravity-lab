@@ -12,6 +12,9 @@ It intentionally starts small and deterministic:
   collision-enabled modes from silently stretching solver substeps.
 - `arm64-kernel-equivalence` checks the dedicated arm64 fused-step kernel
   against the scalar oracle on the moon/earth playback scenario.
+- `physics-accuracy-telemetry` lifts the older moon-host and barycenter drift
+  diagnostics into the Rust-native harness so telemetry guardrails are emitted
+  in the same machine-readable report as the other scientific checks.
 - `host-relative-playback-policy` checks that the newer host-relative
   short-window playback cap stays more conservative than the coarse legacy path.
 

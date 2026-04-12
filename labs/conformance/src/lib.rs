@@ -12,6 +12,7 @@ use solarlab_physics::{
 use solarlab_runtime::{BodyState, RuntimeConfig, WorldCommand, WorldRuntime, WorldSnapshot};
 
 pub const REPORT_SCHEMA_VERSION: &str = "1.0.0";
+const ASTRONOMICAL_UNIT_M: f64 = 1.495_978_707e11;
 
 #[derive(Debug, Serialize)]
 pub struct ConformanceReport {
@@ -126,6 +127,10 @@ fn scenario_registry() -> Vec<ScenarioDefinition> {
         ScenarioDefinition {
             id: "arm64-kernel-equivalence",
             run: run_arm64_kernel_equivalence,
+        },
+        ScenarioDefinition {
+            id: "physics-accuracy-telemetry",
+            run: run_physics_accuracy_telemetry,
         },
         ScenarioDefinition {
             id: "host-relative-playback-policy",
@@ -317,6 +322,61 @@ fn run_arm64_kernel_equivalence() -> ScenarioReport {
     }
 }
 
+fn run_physics_accuracy_telemetry() -> ScenarioReport {
+    const STEP_SECONDS: f64 = 3_600.0;
+    const STEPS: usize = 6;
+    const RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX: f64 = 1.0e-6;
+    const BARYCENTER_DRIFT_M_MAX: f64 = 50.0;
+    const BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX: f64 = 10.0;
+    const MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX: f64 = 1.0e-3;
+
+    let metrics = compute_major_body_telemetry(STEP_SECONDS, STEPS);
+    let passed = metrics.relative_angular_momentum_drift <= RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX
+        && metrics.barycenter_drift_m <= BARYCENTER_DRIFT_M_MAX
+        && metrics.barycenter_fine_baseline_distance_error_m
+            <= BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX
+        && metrics.moon_earth_fine_baseline_error_ratio <= MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX
+        && metrics.absolute_angular_momentum_drift_kg_m2ps.is_finite()
+        && metrics.moon_earth_distance_m.is_finite()
+        && metrics.moon_earth_distance_change_m.is_finite()
+        && metrics.moon_earth_distance_change_ratio.is_finite()
+        && metrics.moon_earth_fine_baseline_error_m.is_finite();
+
+    ScenarioReport {
+        id: "physics-accuracy-telemetry",
+        family: "telemetry diagnostics",
+        description: "Emit the older physics-accuracy telemetry metric family from the Rust-native harness and keep its conservative drift guardrails green.",
+        passed,
+        metrics: json!({
+            "step_seconds": STEP_SECONDS,
+            "steps": STEPS,
+            "relative_energy_drift": metrics.relative_energy_drift,
+            "relative_angular_momentum_drift": metrics.relative_angular_momentum_drift,
+            "absolute_angular_momentum_drift_kg_m2_per_s": metrics.absolute_angular_momentum_drift_kg_m2ps,
+            "barycenter_drift_m": metrics.barycenter_drift_m,
+            "barycenter_velocity_drift_mps": metrics.barycenter_velocity_drift_mps,
+            "angular_momentum_fine_baseline_error_ratio": metrics.angular_momentum_fine_baseline_error_ratio,
+            "barycenter_fine_baseline_distance_error_m": metrics.barycenter_fine_baseline_distance_error_m,
+            "barycenter_fine_baseline_velocity_error_mps": metrics.barycenter_fine_baseline_velocity_error_mps,
+            "moon_earth_distance_au": metrics.moon_earth_distance_m / ASTRONOMICAL_UNIT_M,
+            "moon_earth_distance_change_au": metrics.moon_earth_distance_change_m / ASTRONOMICAL_UNIT_M,
+            "moon_earth_distance_change_ratio": metrics.moon_earth_distance_change_ratio,
+            "moon_earth_distance_fine_baseline_error_au": metrics.moon_earth_fine_baseline_error_m / ASTRONOMICAL_UNIT_M,
+            "moon_earth_distance_fine_baseline_error_ratio": metrics.moon_earth_fine_baseline_error_ratio,
+        }),
+        thresholds: json!({
+            "relative_angular_momentum_drift_max": RELATIVE_ANGULAR_MOMENTUM_DRIFT_MAX,
+            "barycenter_drift_m_max": BARYCENTER_DRIFT_M_MAX,
+            "barycenter_fine_baseline_distance_error_m_max": BARYCENTER_FINE_BASELINE_DISTANCE_ERROR_M_MAX,
+            "moon_earth_distance_fine_baseline_error_ratio_max": MOON_EARTH_FINE_BASELINE_ERROR_RATIO_MAX,
+        }),
+        notes: vec![
+            "This pulls the older physics-accuracy telemetry seam into the Rust-native conformance harness instead of leaving it stranded in the legacy Kotlin generator.".to_owned(),
+            "The scenario intentionally keeps the metric names familiar so parity-matrix references can move without forcing humans to relearn the diagnostic vocabulary.".to_owned(),
+        ],
+    }
+}
+
 fn run_host_relative_playback_policy() -> ScenarioReport {
     let playback_tick_seconds = 86_400.0;
     let playback_window_ticks = 6;
@@ -392,6 +452,10 @@ struct TelemetryMetrics {
     angular_momentum_fine_baseline_error_ratio: f64,
     barycenter_fine_baseline_distance_error_m: f64,
     barycenter_fine_baseline_velocity_error_mps: f64,
+    moon_earth_distance_m: f64,
+    moon_earth_distance_change_m: f64,
+    moon_earth_distance_change_ratio: f64,
+    moon_earth_fine_baseline_error_m: f64,
     moon_earth_fine_baseline_error_ratio: f64,
 }
 
@@ -456,14 +520,21 @@ fn compute_major_body_telemetry(step_seconds: f64, steps: usize) -> TelemetryMet
         &fine_final_barycenter_velocity,
     );
 
-    let moon_earth_fine_baseline_error_ratio = {
-        let coarse_distance = moon_earth_distance_m(&coarse.final_snapshot);
-        let fine_distance = moon_earth_distance_m(&fine.final_snapshot);
-        if fine_distance > 0.0 {
-            (coarse_distance - fine_distance).abs() / fine_distance
-        } else {
-            0.0
-        }
+    let initial_moon_earth_distance_m = moon_earth_distance_m(&coarse.initial_snapshot);
+    let coarse_moon_earth_distance_m = moon_earth_distance_m(&coarse.final_snapshot);
+    let fine_moon_earth_distance_m = moon_earth_distance_m(&fine.final_snapshot);
+    let moon_earth_distance_change_m = coarse_moon_earth_distance_m - initial_moon_earth_distance_m;
+    let moon_earth_distance_change_ratio = if initial_moon_earth_distance_m > 0.0 {
+        moon_earth_distance_change_m / initial_moon_earth_distance_m
+    } else {
+        0.0
+    };
+    let moon_earth_fine_baseline_error_m =
+        (coarse_moon_earth_distance_m - fine_moon_earth_distance_m).abs();
+    let moon_earth_fine_baseline_error_ratio = if fine_moon_earth_distance_m > 0.0 {
+        moon_earth_fine_baseline_error_m / fine_moon_earth_distance_m
+    } else {
+        0.0
     };
 
     TelemetryMetrics {
@@ -475,6 +546,10 @@ fn compute_major_body_telemetry(step_seconds: f64, steps: usize) -> TelemetryMet
         angular_momentum_fine_baseline_error_ratio,
         barycenter_fine_baseline_distance_error_m,
         barycenter_fine_baseline_velocity_error_mps,
+        moon_earth_distance_m: coarse_moon_earth_distance_m,
+        moon_earth_distance_change_m,
+        moon_earth_distance_change_ratio,
+        moon_earth_fine_baseline_error_m,
         moon_earth_fine_baseline_error_ratio,
     }
 }
@@ -796,6 +871,7 @@ mod tests {
                 "added-body-repeatability",
                 "collision-playback-cap",
                 "arm64-kernel-equivalence",
+                "physics-accuracy-telemetry",
                 "host-relative-playback-policy",
             ]
         );

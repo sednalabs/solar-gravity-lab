@@ -57,9 +57,10 @@
       "status": "port",
       "owner_item": "3496",
       "proof_refs": [
-        "PhysicsAccuracyTelemetryReportGeneratorTest"
+        "PhysicsAccuracyTelemetryReportGeneratorTest",
+        "solarlab-conformance physics-accuracy-telemetry"
       ],
-      "notes": "Rust-native surface should become source of truth before legacy assertion backport."
+      "notes": "The Rust-native conformance harness now carries the diagnostic guardrails; the legacy telemetry generator remains only as historical reference while the new surface becomes the long-term truth gate."
     },
     {
       "id": "P-006",

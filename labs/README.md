@@ -26,4 +26,5 @@ slice:
 - `added-body-repeatability`
 - `collision-playback-cap`
 - `arm64-kernel-equivalence`
+- `physics-accuracy-telemetry`
 - `host-relative-playback-policy`
