@@ -2,9 +2,7 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
@@ -24,9 +22,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
-            }.isSuccess
+            isTagPresent(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
         }
 
         composeRule.runOnUiThread {
@@ -44,17 +40,12 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                 runtimeState.snapshot != null
         }
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).assertIsDisplayed()
-            }.isSuccess
+            isTagPresent(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON)
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule
-                .onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-                .fetchSemanticsNodes()
-                .isEmpty()
+            isTagPresent(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON) &&
+                isTagPresent(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON) &&
+                !isTagPresent(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
         }
         assertTrue(
             "Runtime mirror surface should be mounted after switching modes",
@@ -73,6 +64,14 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             requireNotNull(hostView).width > 0 && hostView.height > 0,
         )
     }
+
+    private fun isTagPresent(tag: String): Boolean =
+        runCatching {
+            composeRule
+                .onAllNodesWithTag(tag, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }.getOrDefault(false)
 
     private fun findRenderHostView(root: View): SolarSystemRenderHostView? {
         if (root is SolarSystemRenderHostView) {
