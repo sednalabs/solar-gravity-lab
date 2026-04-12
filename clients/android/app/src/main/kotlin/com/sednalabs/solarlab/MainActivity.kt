@@ -36,6 +36,13 @@ class MainActivity : ComponentActivity() {
             SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
         }
     }
+
+    override fun onDestroy() {
+        if (!isChangingConfigurations) {
+            runtimeViewModel.shutdown()
+        }
+        super.onDestroy()
+    }
 }
 
 internal class RuntimeSessionViewModel : ViewModel() {
@@ -48,7 +55,11 @@ internal class RuntimeSessionViewModel : ViewModel() {
         }
     }
 
-    override fun onCleared() {
+    fun shutdown() {
         runtimeScope.cancel()
+    }
+
+    override fun onCleared() {
+        shutdown()
     }
 }

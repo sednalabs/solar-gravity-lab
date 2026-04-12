@@ -356,7 +356,7 @@ class SolarLabShellLayoutTest {
             .assertTextEquals("Forecast on")
         scrollShellTo(SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY)
         composeRule.onNodeWithTag(SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY)
-            .assertTextContains("Forecast paths · short-horizon projection")
+            .assertTextContains("Forecast paths · short-horizon projection from the focused body.")
     }
 
     @Test
