@@ -2,12 +2,11 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -24,17 +23,23 @@ class StageFirstLocalStartupInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNode()
+            }.isSuccess
         }
 
-        assertTrue(composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(composeRule.onAllNodesWithText("Debug").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(composeRule.onAllNodesWithText("Add object").fetchSemanticsNodes().isNotEmpty())
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON).assertIsDisplayed()
 
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            assertTrue(composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isNotEmpty())
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
         } else {
-            assertTrue(composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isEmpty())
+            assertTrue(
+                runCatching {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNode()
+                }.isFailure,
+            )
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
@@ -43,7 +48,7 @@ class StageFirstLocalStartupInstrumentationTest {
         }
 
         val hostView = findRenderHostView(composeRule.activity.window.decorView)
-        assertNotNull("Stage-first render host should be present", hostView)
+        assertTrue("Stage-first render host should be present", hostView != null)
         assertTrue(
             "Stage-first render host should have a measured size",
             requireNotNull(hostView).width > 0 && hostView.height > 0,
