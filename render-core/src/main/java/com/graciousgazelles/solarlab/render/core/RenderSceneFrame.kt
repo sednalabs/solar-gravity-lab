@@ -16,10 +16,12 @@ data class RenderBody(
     val id: String,
     val name: String,
     val positionM: Vector3d,
+    val velocityMps: Vector3d = Vector3d.ZERO,
     val radiusM: Double,
     val colorArgb: Int,
     val kind: RenderBodyKind,
     val isMassive: Boolean,
+    val sourceMassKg: Double = 0.0,
     val hostBodyId: String? = null,
 )
 

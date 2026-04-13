@@ -31,6 +31,7 @@ public:
         double sceneOriginY,
         double sceneOriginZ,
         std::vector<double> authoritativePositionsM,
+        std::vector<double> authoritativeSourceMassesKg,
         std::vector<float> authoritativeRadiiM,
         std::vector<int32_t> authoritativeColorsArgb,
         std::vector<int32_t> authoritativeKinds,
@@ -39,10 +40,14 @@ public:
         std::vector<int32_t> tracerNearColorsArgb,
         std::vector<int32_t> tracerNearKinds,
         std::vector<double> tracerMediumPositionsM,
+        std::vector<double> tracerMediumVelocitiesMps,
+        std::vector<int32_t> tracerMediumStableIds,
         std::vector<float> tracerMediumRadiiM,
         std::vector<int32_t> tracerMediumColorsArgb,
         std::vector<int32_t> tracerMediumKinds,
         std::vector<double> tracerFarPositionsM,
+        std::vector<double> tracerFarVelocitiesMps,
+        std::vector<int32_t> tracerFarStableIds,
         std::vector<float> tracerFarRadiiM,
         std::vector<int32_t> tracerFarColorsArgb,
         std::vector<int32_t> tracerFarKinds,
@@ -65,6 +70,7 @@ private:
         double sceneOriginY = 0.0;
         double sceneOriginZ = 0.0;
         std::vector<double> authoritativePositionsM;
+        std::vector<double> authoritativeSourceMassesKg;
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
         std::vector<int32_t> authoritativeKinds;
@@ -73,10 +79,14 @@ private:
         std::vector<int32_t> tracerNearColorsArgb;
         std::vector<int32_t> tracerNearKinds;
         std::vector<double> tracerMediumPositionsM;
+        std::vector<double> tracerMediumVelocitiesMps;
+        std::vector<int32_t> tracerMediumStableIds;
         std::vector<float> tracerMediumRadiiM;
         std::vector<int32_t> tracerMediumColorsArgb;
         std::vector<int32_t> tracerMediumKinds;
         std::vector<double> tracerFarPositionsM;
+        std::vector<double> tracerFarVelocitiesMps;
+        std::vector<int32_t> tracerFarStableIds;
         std::vector<float> tracerFarRadiiM;
         std::vector<int32_t> tracerFarColorsArgb;
         std::vector<int32_t> tracerFarKinds;
@@ -112,6 +122,17 @@ private:
         float sizePx = 1.0f;
     };
 
+    struct MediumTracerState {
+        float x = 0.0f;
+        float y = 0.0f;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        uint32_t colorArgb = 0;
+        float sizePx = 1.0f;
+        uint32_t stableId = 0;
+        uint32_t reserved = 0;
+    };
+
     struct DensityPointVertex {
         float x = 0.0f;
         float y = 0.0f;
@@ -120,12 +141,30 @@ private:
         uint32_t densityWeight = 1;
     };
 
+    struct FarTracerState {
+        float x = 0.0f;
+        float y = 0.0f;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        uint32_t colorArgb = 0;
+        uint32_t densityWeight = 1;
+        uint32_t stableId = 0;
+        uint32_t reserved = 0;
+    };
+
     struct TrailVertex {
         float x = 0.0f;
         float y = 0.0f;
         float z = 0.0f;
         uint32_t colorArgb = 0;
         float alpha = 1.0f;
+    };
+
+    struct AuthoritativeInfluenceBody {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        float sourceMassKg = 0.0f;
     };
 
     struct alignas(16) SceneUniformData {
@@ -138,7 +177,7 @@ private:
 
     struct ComputePushConstants {
         uint32_t sourceCount = 0;
-        uint32_t reserved0 = 0;
+        uint32_t tileCounterCount = 0;
         uint32_t reserved1 = 0;
         uint32_t reserved2 = 0;
     };
@@ -173,11 +212,20 @@ private:
     struct ComputeDrawStreamBuffers {
         bool enabled = false;
         DrawPath path = DrawPath::None;
+        GpuBuffer sourceStateBuffer;
         GpuBuffer outputVertexBuffer;
         GpuBuffer indirectCommandBuffer;
         GpuBuffer indirectReadbackBuffer;
+        GpuBuffer tileCounterBuffer;
+        GpuBuffer tileCounterReadbackBuffer;
         uint32_t sourceVertexCount = 0;
         uint32_t dispatchGroupCountX = 0;
+        uint32_t outputVertexCapacity = 0;
+        uint32_t tileCounterCount = 0;
+        uint32_t activeTileCount = 0;
+        uint32_t peakTileOccupancy = 0;
+        uint32_t overflowVertexCount = 0;
+        bool tileStatsValid = false;
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;
         const char* label = nullptr;
@@ -186,6 +234,8 @@ private:
     struct SceneGpuStreams {
         int64_t uploadedRevision = -1;
         size_t totalBytes = 0;
+        GpuBuffer authoritativeInfluenceBuffer;
+        uint32_t authoritativeInfluenceCount = 0;
         DrawStreamBuffers authoritative;
         DrawStreamBuffers tracerNear;
         DrawStreamBuffers tracerMedium;

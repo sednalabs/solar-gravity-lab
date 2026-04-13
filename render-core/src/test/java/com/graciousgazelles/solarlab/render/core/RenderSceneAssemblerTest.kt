@@ -27,6 +27,8 @@ class RenderSceneAssemblerTest {
         val frame = assembler.assemble(snapshot)
         assertEquals(1, frame.authoritativeBodies.size)
         assertEquals(1, frame.tracerBodies.size)
+        assertEquals(1.0, frame.authoritativeBodies.single().sourceMassKg, 0.0)
+        assertEquals(Vector3d.ZERO, frame.tracerBodies.single().velocityMps)
         assertTrue(frame.trails.isEmpty())
         assertTrue(frame.sourceRevision > 0)
 
@@ -43,10 +45,12 @@ class RenderSceneAssemblerTest {
                     id = "sun",
                     name = "Sun",
                     positionM = Vector3d(1.0, 2.0, 3.0),
+                    velocityMps = Vector3d(0.0, 0.0, 0.0),
                     radiusM = 5.0,
                     colorArgb = 0xFFFFFFFF.toInt(),
                     kind = RenderBodyKind.STAR,
                     isMassive = true,
+                    sourceMassKg = 1.989e30,
                 ),
             ),
             tracerBodies = listOf(
@@ -54,8 +58,19 @@ class RenderSceneAssemblerTest {
                     id = "asteroid-near",
                     name = "Asteroid Near",
                     positionM = Vector3d(0.5 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    velocityMps = Vector3d(10.0, 20.0, 0.0),
                     radiusM = 10.0,
                     colorArgb = 0xFF00FF00.toInt(),
+                    kind = RenderBodyKind.ASTEROID,
+                    isMassive = false,
+                ),
+                RenderBody(
+                    id = "asteroid-medium",
+                    name = "Asteroid Medium",
+                    positionM = Vector3d(4.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    velocityMps = Vector3d(30.0, 40.0, 0.0),
+                    radiusM = 7.5,
+                    colorArgb = 0xFF0088FF.toInt(),
                     kind = RenderBodyKind.ASTEROID,
                     isMassive = false,
                 ),
@@ -63,6 +78,7 @@ class RenderSceneAssemblerTest {
                     id = "asteroid-far",
                     name = "Asteroid Far",
                     positionM = Vector3d(12.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    velocityMps = Vector3d(50.0, 60.0, 0.0),
                     radiusM = 5.0,
                     colorArgb = 0xFF00AA00.toInt(),
                     kind = RenderBodyKind.ASTEROID,
@@ -98,13 +114,38 @@ class RenderSceneAssemblerTest {
                 trailSimplificationTolerancePx = 5.0,
             ),
         )
+        val repeatedPacket = NativeScenePacket.fromScene(
+            frame = frame,
+            cameraState = CameraState(
+                centerM = Vector3d.ZERO,
+                viewRadiusM = PhysicalConstants.ASTRONOMICAL_UNIT_M,
+            ),
+            viewportWidthPx = 1920,
+            viewportHeightPx = 1080,
+            policy = ScenePacketBuildPolicy(
+                nearTracerBudget = 10,
+                mediumTracerBudget = 10,
+                farTracerBudget = 10,
+                maxTrailVerticesPerTrail = 8,
+                trailSimplificationTolerancePx = 5.0,
+            ),
+        )
         assertEquals(7L, packet.sourceRevision)
         assertEquals(3, packet.authoritativePositionsM.size)
         assertEquals(1.0, packet.authoritativePositionsM[0], 0.0)
+        assertEquals(1.989e30, packet.authoritativeSourceMassesKg[0], 0.0)
         assertEquals(5.0f, packet.authoritativeRadiiM[0])
         assertEquals(1, packet.tracerNearCount)
         assertEquals(1, packet.tracerMediumCount)
-        assertEquals(0, packet.tracerFarCount)
+        assertEquals(1, packet.tracerFarCount)
+        assertEquals(listOf(30.0, 40.0, 0.0), packet.tracerMediumVelocitiesMps.toList())
+        assertEquals(listOf(50.0, 60.0, 0.0), packet.tracerFarVelocitiesMps.toList())
+        assertEquals(1, packet.tracerMediumStableIds.size)
+        assertEquals(1, packet.tracerFarStableIds.size)
+        assertTrue(packet.tracerMediumStableIds[0] != 0)
+        assertTrue(packet.tracerFarStableIds[0] != 0)
+        assertEquals(packet.tracerMediumStableIds.toList(), repeatedPacket.tracerMediumStableIds.toList())
+        assertEquals(packet.tracerFarStableIds.toList(), repeatedPacket.tracerFarStableIds.toList())
         assertTrue(packet.trailVertexCounts.first() <= 8)
     }
 

@@ -67,6 +67,7 @@ internal object SolarLabVulkanBridge {
             sceneOriginYM = packet.sceneOriginYM,
             sceneOriginZM = packet.sceneOriginZM,
             authoritativePositionsM = packet.authoritativePositionsM,
+            authoritativeSourceMassesKg = packet.authoritativeSourceMassesKg,
             authoritativeRadiiM = packet.authoritativeRadiiM,
             authoritativeColorsArgb = packet.authoritativeColorsArgb,
             authoritativeKinds = packet.authoritativeKinds,
@@ -75,10 +76,14 @@ internal object SolarLabVulkanBridge {
             tracerNearColorsArgb = packet.tracerNearColorsArgb,
             tracerNearKinds = packet.tracerNearKinds,
             tracerMediumPositionsM = packet.tracerMediumPositionsM,
+            tracerMediumVelocitiesMps = packet.tracerMediumVelocitiesMps,
+            tracerMediumStableIds = packet.tracerMediumStableIds,
             tracerMediumRadiiM = packet.tracerMediumRadiiM,
             tracerMediumColorsArgb = packet.tracerMediumColorsArgb,
             tracerMediumKinds = packet.tracerMediumKinds,
             tracerFarPositionsM = packet.tracerFarPositionsM,
+            tracerFarVelocitiesMps = packet.tracerFarVelocitiesMps,
+            tracerFarStableIds = packet.tracerFarStableIds,
             tracerFarRadiiM = packet.tracerFarRadiiM,
             tracerFarColorsArgb = packet.tracerFarColorsArgb,
             tracerFarKinds = packet.tracerFarKinds,
@@ -206,10 +211,10 @@ internal object SolarLabVulkanBridge {
     private fun NativeScenePacket.contentMatches(other: NativeScenePacket?): Boolean {
         if (other == null) return false
         if (this === other) return true
-        return sceneOriginXM == other.sceneOriginXM &&
-            sceneOriginYM == other.sceneOriginYM &&
-            sceneOriginZM == other.sceneOriginZM &&
-            authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
+        // `sourceRevision` changes on every assembled snapshot, so dedupe must
+        // compare the rendered packet content rather than the revision counter.
+        return authoritativePositionsM.contentEquals(other.authoritativePositionsM) &&
+            authoritativeSourceMassesKg.contentEquals(other.authoritativeSourceMassesKg) &&
             authoritativeRadiiM.contentEquals(other.authoritativeRadiiM) &&
             authoritativeColorsArgb.contentEquals(other.authoritativeColorsArgb) &&
             authoritativeKinds.contentEquals(other.authoritativeKinds) &&
@@ -218,10 +223,14 @@ internal object SolarLabVulkanBridge {
             tracerNearColorsArgb.contentEquals(other.tracerNearColorsArgb) &&
             tracerNearKinds.contentEquals(other.tracerNearKinds) &&
             tracerMediumPositionsM.contentEquals(other.tracerMediumPositionsM) &&
+            tracerMediumVelocitiesMps.contentEquals(other.tracerMediumVelocitiesMps) &&
+            tracerMediumStableIds.contentEquals(other.tracerMediumStableIds) &&
             tracerMediumRadiiM.contentEquals(other.tracerMediumRadiiM) &&
             tracerMediumColorsArgb.contentEquals(other.tracerMediumColorsArgb) &&
             tracerMediumKinds.contentEquals(other.tracerMediumKinds) &&
             tracerFarPositionsM.contentEquals(other.tracerFarPositionsM) &&
+            tracerFarVelocitiesMps.contentEquals(other.tracerFarVelocitiesMps) &&
+            tracerFarStableIds.contentEquals(other.tracerFarStableIds) &&
             tracerFarRadiiM.contentEquals(other.tracerFarRadiiM) &&
             tracerFarColorsArgb.contentEquals(other.tracerFarColorsArgb) &&
             tracerFarKinds.contentEquals(other.tracerFarKinds) &&
@@ -255,6 +264,7 @@ internal object SolarLabVulkanBridge {
         sceneOriginYM: Double,
         sceneOriginZM: Double,
         authoritativePositionsM: DoubleArray,
+        authoritativeSourceMassesKg: DoubleArray,
         authoritativeRadiiM: FloatArray,
         authoritativeColorsArgb: IntArray,
         authoritativeKinds: IntArray,
@@ -263,10 +273,14 @@ internal object SolarLabVulkanBridge {
         tracerNearColorsArgb: IntArray,
         tracerNearKinds: IntArray,
         tracerMediumPositionsM: DoubleArray,
+        tracerMediumVelocitiesMps: DoubleArray,
+        tracerMediumStableIds: IntArray,
         tracerMediumRadiiM: FloatArray,
         tracerMediumColorsArgb: IntArray,
         tracerMediumKinds: IntArray,
         tracerFarPositionsM: DoubleArray,
+        tracerFarVelocitiesMps: DoubleArray,
+        tracerFarStableIds: IntArray,
         tracerFarRadiiM: FloatArray,
         tracerFarColorsArgb: IntArray,
         tracerFarKinds: IntArray,

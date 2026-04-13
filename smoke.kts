@@ -5,10 +5,10 @@ import com.graciousgazelles.solarlab.render.core.*
 val frame = RenderSceneFrame(
   epochSeconds = 0.0,
   authoritativeBodies = listOf(
-    RenderBody("sun","Sun",Vector3d.ZERO,1.0,0xFFFFFFFF.toInt(),RenderBodyKind.STAR,true)
+    RenderBody("sun","Sun",Vector3d.ZERO, radiusM = 1.0, colorArgb = 0xFFFFFFFF.toInt(), kind = RenderBodyKind.STAR, isMassive = true)
   ),
   tracerBodies = (0 until 100).map {
-    RenderBody("t$it","t$it",Vector3d(0.1*PhysicalConstants.ASTRONOMICAL_UNIT_M,it*1000.0,0.0),1.0,0xFFFFFFFF.toInt(),RenderBodyKind.ASTEROID,false)
+    RenderBody("t$it","t$it",Vector3d(0.1*PhysicalConstants.ASTRONOMICAL_UNIT_M,it*1000.0,0.0), radiusM = 1.0, colorArgb = 0xFFFFFFFF.toInt(), kind = RenderBodyKind.ASTEROID, isMassive = false)
   },
   trails = listOf(RenderTrail("sun",0xFFFFFFFF.toInt(),0.25f,List(50){ Vector3d(it*1000.0,0.0,0.0)})),
   sourceRevision = 42L,
