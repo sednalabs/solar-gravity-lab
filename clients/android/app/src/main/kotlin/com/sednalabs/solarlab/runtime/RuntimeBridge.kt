@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab.runtime
 
+import android.util.Log
 import com.sednalabs.solarlab.BuildConfig
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -46,12 +47,15 @@ internal class JniRuntimeBridge(
     // Creates the native session and starts the periodic snapshot refresh loop.
     // Emitted signals are boundary-only; all rendering state remains host-owned.
     override fun connect(): Flow<RuntimeSignal> = callbackFlow {
+        logInfo("connect.ensureLibraryLoaded.begin")
         val loadOutcome = transport.ensureLibraryLoaded()
         if (loadOutcome is NativeLibraryLoadOutcome.Failure) {
+            logError("connect.ensureLibraryLoaded.failure reason=${loadOutcome.reason}")
             trySend(RuntimeSignal.Unavailable(loadOutcome.reason))
             close()
             return@callbackFlow
         }
+        logInfo("connect.ensureLibraryLoaded.success")
 
         trySend(
             RuntimeSignal.Notice(
@@ -60,12 +64,19 @@ internal class JniRuntimeBridge(
             )
         )
 
+        logInfo(
+            "connect.createSession.begin scenario=$DEFAULT_SCENARIO_ID branch=$DEFAULT_ROOT_BRANCH_ID abi=$ABI_VERSION gpu=${BuildConfig.PREFERRED_GPU_BACKEND}"
+        )
         val createResult = runCatching {
             transport.createSession(
                 scenarioId = DEFAULT_SCENARIO_ID,
                 rootBranchId = DEFAULT_ROOT_BRANCH_ID,
             )
         }.getOrElse { error ->
+            logError(
+                "connect.createSession.failure error=${error.message ?: error::class.java.simpleName}",
+                error,
+            )
             trySend(
                 RuntimeSignal.Unavailable(
                     message = "Native runtime session adapter is unavailable",
@@ -75,6 +86,9 @@ internal class JniRuntimeBridge(
             close()
             return@callbackFlow
         }
+        logInfo(
+            "connect.createSession.result handle=${createResult.handle} status=${createResult.result.describe()} abi=${createResult.abiVersion}"
+        )
 
         if (!createResult.result.isOk()) {
             if (createResult.handle != 0L) {
@@ -121,9 +135,14 @@ internal class JniRuntimeBridge(
 
         trySend(RuntimeSignal.Connected(handle = handle))
 
+        logInfo("connect.runtimeInfo.begin handle=$handle")
         val runtimeInfoResult = runCatching {
             transport.runtimeInfo(handle)
         }.getOrElse { error ->
+            logError(
+                "connect.runtimeInfo.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
+                error,
+            )
             trySend(
                 RuntimeSignal.Notice(
                     message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
@@ -135,6 +154,9 @@ internal class JniRuntimeBridge(
             }
             return@callbackFlow
         }
+        logInfo(
+            "connect.runtimeInfo.result handle=$handle status=${runtimeInfoResult.result.describe()} cpu=${runtimeInfoResult.cpuBackendLabel()} gpu=${runtimeInfoResult.gpuBackendLabel()}"
+        )
 
         if (runtimeInfoResult.result.isOk()) {
             trySend(
@@ -154,18 +176,31 @@ internal class JniRuntimeBridge(
             )
         }
 
-        val initialSignals = refreshSignalsForHandle(handle, includeSummary = true)
+        val initialSignals = refreshSignalsForHandle(
+            handle,
+            includeSummary = true,
+            traceLabel = "connect.initial-refresh",
+        )
         initialSignals.forEach { trySend(it) }
         var latestSummary = extractLatestSnapshotSummary(initialSignals)
 
         if (extractBodyCountFrom(initialSignals) == 0L) {
+            logInfo("connect.seed.begin handle=$handle")
             ensureStartupSeedApplied(handle).forEach { trySend(it) }
-            val seededSignals = refreshSignalsForHandle(handle, includeSummary = true)
+            logInfo("connect.seed.refresh.begin handle=$handle")
+            val seededSignals = refreshSignalsForHandle(
+                handle,
+                includeSummary = true,
+                traceLabel = "connect.seeded-refresh",
+            )
             seededSignals.forEach { trySend(it) }
             latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
         }
 
         latestSummary?.let { summary ->
+            logInfo(
+                "connect.playback-config.begin handle=$handle paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
+            )
             ensureStartupPlaybackConfigured(handle, summary).forEach { trySend(it) }
         }
 
@@ -253,18 +288,38 @@ internal class JniRuntimeBridge(
         handle: Long,
         includeSummary: Boolean,
         advancePlayback: Boolean = false,
+        traceLabel: String? = null,
     ): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
+        traceLabel?.let { label ->
+            logInfo(
+                "$label.begin handle=$handle includeSummary=$includeSummary advancePlayback=$advancePlayback"
+            )
+        }
 
         if (includeSummary) {
+            traceLabel?.let { label ->
+                logInfo("$label.refreshSession.begin handle=$handle")
+            }
             var summary = runCatching {
                 transport.refreshSession(handle)
             }.getOrElse { error ->
+                traceLabel?.let { label ->
+                    logError(
+                        "$label.refreshSession.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
+                        error,
+                    )
+                }
                 signals += RuntimeSignal.Notice(
                     message = "Refresh unavailable: ${error.message ?: error::class.java.simpleName}",
                     level = RuntimeNoticeLevel.Error,
                 )
                 return signals
+            }
+            traceLabel?.let { label ->
+                logInfo(
+                    "$label.refreshSession.result handle=$handle status=${summary.result.describe()} paused=${summary.paused} bodyCount=${summary.bodyCount} rate=${summary.simSecondsPerRealSecond}"
+                )
             }
 
             if (summary.result.isOk()) {
@@ -311,25 +366,51 @@ internal class JniRuntimeBridge(
 
         synchronized(stateLock) {
             if (activeSessionHandle != handle) {
+                traceLabel?.let { label ->
+                    logInfo(
+                        "$label.render.refresh.skipped handle=$handle activeHandle=$activeSessionHandle"
+                    )
+                }
                 return signals
             }
             // Render packets are refreshed only for the current active handle; stale handle
             // refresh is intentionally dropped to avoid cross-session packet aliasing.
+            traceLabel?.let { label ->
+                logInfo("$label.render.refresh.begin handle=$handle")
+            }
             val refreshResult = runCatching {
                 renderHostAdapter.refreshPacket()
             }.getOrElse { error ->
+                traceLabel?.let { label ->
+                    logError(
+                        "$label.render.refresh.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
+                        error,
+                    )
+                }
                 signals += RuntimeSignal.RenderUnavailable(
                     reason = "Render export unavailable: ${error.message ?: error::class.java.simpleName}"
                 )
                 return signals
             }
             if (refreshResult.lease != null) {
+                traceLabel?.let { label ->
+                    logInfo("$label.render.refresh.result handle=$handle lease=ready")
+                }
                 signals += RuntimeSignal.RenderPacketReady(refreshResult.lease)
             } else {
+                traceLabel?.let { label ->
+                    logInfo(
+                        "$label.render.refresh.result handle=$handle lease=missing reason=${refreshResult.unavailableReason ?: "unknown"}"
+                    )
+                }
                 signals += RuntimeSignal.RenderUnavailable(
                     reason = refreshResult.unavailableReason ?: "Render export unavailable"
                 )
             }
+        }
+
+        traceLabel?.let { label ->
+            logInfo("$label.end handle=$handle signalCount=${signals.size}")
         }
 
         return signals
@@ -375,6 +456,9 @@ internal class JniRuntimeBridge(
         handle: Long,
         summary: NativeSnapshotSummaryResult,
     ): List<RuntimeSignal> {
+        logInfo(
+            "ensureStartupPlaybackConfigured.begin handle=$handle paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
+        )
         val signals = mutableListOf<RuntimeSignal>()
         var shouldRefresh = false
 
@@ -444,23 +528,39 @@ internal class JniRuntimeBridge(
         }
 
         if (shouldRefresh) {
-            signals += refreshSignalsForHandle(handle, includeSummary = true)
+            signals += refreshSignalsForHandle(
+                handle,
+                includeSummary = true,
+                traceLabel = "connect.playback-refresh",
+            )
         }
+
+        logInfo(
+            "ensureStartupPlaybackConfigured.end handle=$handle shouldRefresh=$shouldRefresh signalCount=${signals.size}"
+        )
 
         return signals
     }
 
     private fun ensureStartupSeedApplied(handle: Long): List<RuntimeSignal> {
+        logInfo("ensureStartupSeedApplied.begin handle=$handle")
         val signals = mutableListOf<RuntimeSignal>()
         val commandResult = runCatching {
             transport.applyCommand(handle, RuntimeCommand.SeedCanonicalSolarSystem.toNativePayload())
         }.getOrElse { error ->
+            logError(
+                "ensureStartupSeedApplied.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
+                error,
+            )
             signals += RuntimeSignal.Notice(
                 message = "Startup canonical seed command failed: ${error.message ?: error::class.java.simpleName}",
                 level = RuntimeNoticeLevel.Error,
             )
             return signals
         }
+        logInfo(
+            "ensureStartupSeedApplied.result handle=$handle status=${commandResult.result.describe()}"
+        )
 
         if (!commandResult.result.isOk()) {
             signals += RuntimeSignal.Notice(
@@ -475,17 +575,32 @@ internal class JniRuntimeBridge(
             level = RuntimeNoticeLevel.Info,
         )
 
+        logInfo("ensureStartupSeedApplied.end handle=$handle signalCount=${signals.size}")
         return signals
     }
 
 
     private companion object {
-        private const val ABI_VERSION = 2
+        private const val LOG_TAG = "SolarLabRuntimeBridge"
+        private const val ABI_VERSION = 3
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val STARTUP_MIN_VISIBLE_PLAYBACK_RATE = 3_600.0
         private const val STARTUP_DEFAULT_PLAYBACK_RATE = 21_600.0
+
+        private fun logInfo(message: String) {
+            if (runCatching { Log.i(LOG_TAG, message) }.isFailure) {
+                println("$LOG_TAG I $message")
+            }
+        }
+
+        private fun logError(message: String, error: Throwable? = null) {
+            if (runCatching { Log.e(LOG_TAG, message, error) }.isFailure) {
+                println("$LOG_TAG E $message")
+                error?.printStackTrace()
+            }
+        }
     }
 }
 

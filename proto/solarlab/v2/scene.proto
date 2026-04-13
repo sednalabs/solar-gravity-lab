@@ -37,6 +37,12 @@ message SceneTracer {
   float size_px = 5;
 }
 
+enum SceneTrailFamily {
+  SCENE_TRAIL_FAMILY_TRAJECTORY = 0;
+  SCENE_TRAIL_FAMILY_HISTORICAL_ORBIT = 1;
+  SCENE_TRAIL_FAMILY_PREDICTION = 2;
+}
+
 message SceneTrail {
   string trail_id = 1;
   string source_body_id = 2;
@@ -44,6 +50,7 @@ message SceneTrail {
   ColorRgba color = 4;
   uint32 max_samples = 5;
   bool head_highlighted = 6;
+  SceneTrailFamily family = 7;
 }
 
 message LightSource {

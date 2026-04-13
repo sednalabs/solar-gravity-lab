@@ -141,6 +141,9 @@ class SolarLabShellLayoutTest {
         assertReachableInScrollableShell(SolarLabTestTags.FOCUS_SELECTION_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.TRACKED_ORBIT_VISIBILITY_BUTTON)
         assertReachableInScrollableShell(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
+        assertVisibleInScrollableShell(SolarLabTestTags.ORBIT_OVERLAY_LEGEND_PANEL)
+        assertReachableInScrollableShell(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY)
+        assertReachableInScrollableShell(SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_ID_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_MASS_FIELD)
         assertReachableInScrollableShell(SolarLabTestTags.SPAWN_BODY_RADIUS_FIELD)
@@ -347,9 +350,15 @@ class SolarLabShellLayoutTest {
         scrollShellTo(SolarLabTestTags.trackedOrbitLimitTag(8))
         composeRule.onNodeWithTag(SolarLabTestTags.trackedOrbitLimitTag(8))
             .assertIsDisplayed()
+        scrollShellTo(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY)
+        composeRule.onNodeWithTag(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY)
+            .assertTextContains("History trails · last 8 focused bodies stay visible behind the stage.")
         scrollShellTo(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
         composeRule.onNodeWithTag(SolarLabTestTags.PREDICTED_PATH_VISIBILITY_BUTTON)
             .assertTextEquals("Forecast on")
+        scrollShellTo(SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY)
+        composeRule.onNodeWithTag(SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY)
+            .assertTextContains("Forecast paths · short-horizon projection from the focused body.")
     }
 
     @Test
@@ -447,7 +456,10 @@ class SolarLabShellLayoutTest {
             tag == SolarLabTestTags.SHELL_COLUMN ||
             tag == SolarLabTestTags.RENDER_PANEL ||
             tag == SolarLabTestTags.OVERLAY_TOGGLE_BUTTON ||
-            tag == SolarLabTestTags.IMMERSIVE_STAGE_ROOT
+            tag == SolarLabTestTags.IMMERSIVE_STAGE_ROOT ||
+            tag == SolarLabTestTags.ORBIT_OVERLAY_LEGEND_PANEL ||
+            tag == SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY ||
+            tag == SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY
         ) {
             return
         }

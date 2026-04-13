@@ -30,12 +30,13 @@ use solarlab_physics::{
     detect_cpu_features, CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend,
 };
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
+use solarlab_scene::SceneTrailFamily;
 use solarlab_vulkan_adapter::{
     PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight, VulkanSceneAdapter,
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 2;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 3;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -129,6 +130,14 @@ pub enum SlVulkanSceneBufferKind {
     TrailSpans = 2,
     TrailVertices = 3,
     DirectionalLights = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlVulkanTrailFamily {
+    Trajectory = 0,
+    HistoricalOrbit = 1,
+    Prediction = 2,
 }
 
 #[repr(C)]
@@ -264,6 +273,7 @@ pub struct SlVulkanTrailSpan {
     pub color: SlPackedColor,
     pub max_samples: u32,
     pub head_highlighted: u32,
+    pub family: SlVulkanTrailFamily,
     pub source_body_id: [u8; SL_V2_ID_CAPACITY],
     pub source_body_id_len: u32,
 }
@@ -276,6 +286,7 @@ impl Default for SlVulkanTrailSpan {
             color: SlPackedColor::default(),
             max_samples: 0,
             head_highlighted: 0,
+            family: SlVulkanTrailFamily::Trajectory,
             source_body_id: [0; SL_V2_ID_CAPACITY],
             source_body_id_len: 0,
         }
@@ -1232,9 +1243,18 @@ fn encode_trail_span(value: VulkanTrailSpan) -> Result<SlVulkanTrailSpan, SlResu
         color: encode_packed_color(value.color),
         max_samples: value.max_samples,
         head_highlighted: u32::from(value.head_highlighted),
+        family: encode_trail_family(value.family),
         source_body_id: encode_identifier(&value.source_body_id.0)?,
         source_body_id_len: string_length_to_u32(&value.source_body_id.0),
     })
+}
+
+fn encode_trail_family(value: SceneTrailFamily) -> SlVulkanTrailFamily {
+    match value {
+        SceneTrailFamily::Trajectory => SlVulkanTrailFamily::Trajectory,
+        SceneTrailFamily::HistoricalOrbit => SlVulkanTrailFamily::HistoricalOrbit,
+        SceneTrailFamily::Prediction => SlVulkanTrailFamily::Prediction,
+    }
 }
 
 fn encode_trail_vertex(value: VulkanTrailVertex) -> SlVulkanTrailVertex {
@@ -2662,6 +2682,10 @@ mod tests {
         assert_eq!(
             exported_trails[1].head_highlighted,
             u32::from(direct_packet.trail_spans[1].head_highlighted),
+        );
+        assert_eq!(
+            exported_trails[1].family as u32,
+            direct_packet.trail_spans[1].family as u32,
         );
 
         assert_eq!(

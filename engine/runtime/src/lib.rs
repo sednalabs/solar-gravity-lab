@@ -4,7 +4,7 @@
 //! runtime architecture. All external integrations (FFI, JNI, adapters,
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem::size_of;
 use std::time::Instant;
 
@@ -21,7 +21,7 @@ use solarlab_domain::{
 use solarlab_hardware::HardwareProfile;
 use solarlab_history::{
     BranchDescriptor, CheckpointDescriptor, CommandId, CommandRecord, CommandRecordHeader,
-    HistoryEvent,
+    HistoryEvent, OrbitArchive, OrbitArchiveFamily, OrbitArchiveQuery, OrbitSample,
 };
 use solarlab_physics::{
     advance_authoritative_with_features, compute_invariants, MassiveBodyState, PhysicsInvariants,
@@ -29,7 +29,7 @@ use solarlab_physics::{
 };
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
+    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail, SceneTrailFamily,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +89,12 @@ pub struct MountedManifestState {
     pub mounted_packages: Vec<MountedPackageState>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrailSample {
+    pub epoch_seconds: f64,
+    pub position_m: Vector3d,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorldSnapshot {
     /// Copy-based snapshot boundary: external callers only get immutable
@@ -108,7 +114,8 @@ pub struct WorldSnapshot {
     pub observer: ObserverState,
     pub playback: PlaybackState,
     pub mounted_manifest: Option<MountedManifestState>,
-    pub trail_history_by_body: HashMap<BodyId, Vec<Vector3d>>,
+    pub trail_history_by_body: HashMap<BodyId, Vec<TrailSample>>,
+    pub orbit_archives: Vec<OrbitArchive>,
     pub solver_execution: SolverExecutionReport,
 }
 
@@ -255,7 +262,7 @@ struct BranchWorldState {
     invariants: PhysicsInvariants,
     local_data_state: LocalDataState,
     mounted_package_ids: BTreeSet<String>,
-    trail_history_by_body: HashMap<BodyId, Vec<Vector3d>>,
+    trail_history_by_body: HashMap<BodyId, Vec<TrailSample>>,
     solver_execution: SolverExecutionReport,
 }
 
@@ -275,6 +282,7 @@ struct BranchState {
 }
 
 const TRAIL_HISTORY_MAX_SAMPLES: usize = 96;
+const RENDER_SCENE_ORBIT_BODY_LIMIT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct WorldRuntime {
@@ -493,6 +501,7 @@ impl WorldRuntime {
                     record_trail_samples_from_bodies(
                         &branch.world.bodies,
                         &mut branch.world.trail_history_by_body,
+                        branch.world.epoch_seconds,
                     );
                 }
             }
@@ -511,6 +520,7 @@ impl WorldRuntime {
                 push_trail_sample(
                     &mut branch.world.trail_history_by_body,
                     &body.body_id,
+                    branch.world.epoch_seconds,
                     body.position_m,
                 );
             }
@@ -547,6 +557,7 @@ impl WorldRuntime {
                 push_trail_sample(
                     &mut branch.world.trail_history_by_body,
                     body_id,
+                    branch.world.epoch_seconds,
                     *position_m,
                 );
             }
@@ -572,6 +583,7 @@ impl WorldRuntime {
                 record_trail_samples_from_bodies(
                     &branch.world.bodies,
                     &mut branch.world.trail_history_by_body,
+                    branch.world.epoch_seconds,
                 );
             }
             WorldCommand::PausePlayback => {
@@ -710,6 +722,10 @@ impl WorldRuntime {
     /// This method is a pure projection: it does not mutate runtime state.
     #[must_use]
     pub fn snapshot(&self) -> WorldSnapshot {
+        self.snapshot_with_orbit_archives(Vec::new())
+    }
+
+    fn snapshot_with_orbit_archives(&self, orbit_archives: Vec<OrbitArchive>) -> WorldSnapshot {
         let active = self.active_branch();
         let checkpoint = active.last_checkpoint.clone();
         let mounted_manifest = mounted_manifest_from_state(
@@ -731,14 +747,32 @@ impl WorldRuntime {
             playback: active.world.playback.clone(),
             mounted_manifest,
             trail_history_by_body: active.world.trail_history_by_body.clone(),
+            orbit_archives,
             solver_execution: active.world.solver_execution.clone(),
         }
+    }
+
+    /// Query the authoritative orbit archive surface for the active branch.
+    ///
+    /// This keeps trajectory, historical checkpoint orbit passes, and future
+    /// prediction overlays in the Rust-owned history/runtime seam instead of
+    /// leaving the client to infer them from one generic trail family.
+    #[must_use]
+    pub fn orbit_archives(&self, query: &OrbitArchiveQuery) -> Vec<OrbitArchive> {
+        let active = self.active_branch();
+        build_orbit_archives(
+            active,
+            query,
+            &self.config.physics,
+            &self.hardware_profile.cpu_features,
+        )
     }
 
     /// Project authoritative runtime state into a compact telemetry surface.
     #[must_use]
     pub fn telemetry_report(&self) -> RuntimeTelemetryReport {
-        let snapshot = self.snapshot();
+        let snapshot =
+            self.snapshot_with_orbit_archives(self.orbit_archives(&OrbitArchiveQuery::default()));
         let scene = extract_render_scene(&snapshot);
         let trail_history_counts = runtime_trail_history_counts(&snapshot.trail_history_by_body);
         let total_trail_samples = trail_history_counts
@@ -777,7 +811,24 @@ impl WorldRuntime {
     /// scene export.
     #[must_use]
     pub fn render_scene(&self) -> RenderScene {
-        extract_render_scene(&self.snapshot())
+        let snapshot = self
+            .snapshot_with_orbit_archives(self.orbit_archives(&self.render_scene_orbit_query()));
+        extract_render_scene(&snapshot)
+    }
+
+    fn render_scene_orbit_query(&self) -> OrbitArchiveQuery {
+        let active = self.active_branch();
+        let full_history = active.world.bodies.len() <= RENDER_SCENE_ORBIT_BODY_LIMIT;
+        OrbitArchiveQuery {
+            body_ids: render_scene_orbit_body_ids(
+                &active.world.bodies,
+                active.world.observer.focus_body_id.as_ref(),
+            ),
+            include_trajectory: true,
+            include_historical_orbits: full_history,
+            include_prediction: full_history,
+            ..OrbitArchiveQuery::default()
+        }
     }
 
     fn new_command_header(
@@ -1138,27 +1189,50 @@ fn extract_scene_tracers(snapshot: &WorldSnapshot) -> Vec<SceneTracer> {
 
 fn extract_scene_trails(snapshot: &WorldSnapshot) -> Vec<SceneTrail> {
     let focused_body_id = snapshot.observer.focus_body_id.as_ref();
-    snapshot
+    let body_index = snapshot
         .bodies
         .iter()
-        .filter_map(|body| {
-            let samples_m = snapshot
-                .trail_history_by_body
-                .get(&body.body_id)
-                .filter(|samples| !samples.is_empty())?
-                .clone();
-            let style = body_style(body.body_class.clone());
+        .map(|body| (body.body_id.clone(), body))
+        .collect::<HashMap<_, _>>();
+
+    snapshot
+        .orbit_archives
+        .iter()
+        .filter_map(|archive| {
+            let samples_m = archive
+                .samples
+                .iter()
+                .map(|sample| sample.position_m)
+                .collect::<Vec<_>>();
+            if samples_m.is_empty() {
+                return None;
+            }
+
+            let body_class = body_index
+                .get(&archive.source_body_id)
+                .map(|body| body.body_class.clone())
+                .unwrap_or(BodyClass::Custom);
+            let style = body_style(body_class.clone());
             Some(SceneTrail {
-                trail_id: format!("trail:{}", body.body_id.0),
-                source_body_id: body.body_id.clone(),
+                trail_id: archive.archive_id.clone(),
+                source_body_id: archive.source_body_id.clone(),
+                family: scene_trail_family(archive.family),
                 samples_m,
                 color: style.tracer_color,
-                max_samples: TRAIL_HISTORY_MAX_SAMPLES as u32,
-                head_highlighted: body.body_class == BodyClass::Tracer
-                    || focused_body_id == Some(&body.body_id),
+                max_samples: archive.max_samples,
+                head_highlighted: body_class == BodyClass::Tracer
+                    || focused_body_id == Some(&archive.source_body_id),
             })
         })
         .collect()
+}
+
+fn scene_trail_family(family: OrbitArchiveFamily) -> SceneTrailFamily {
+    match family {
+        OrbitArchiveFamily::Trajectory => SceneTrailFamily::Trajectory,
+        OrbitArchiveFamily::HistoricalOrbit => SceneTrailFamily::HistoricalOrbit,
+        OrbitArchiveFamily::Prediction => SceneTrailFamily::Prediction,
+    }
 }
 
 fn extract_lights(snapshot: &WorldSnapshot) -> Vec<LightSource> {
@@ -1273,7 +1347,7 @@ fn mounted_manifest_telemetry_from_state(
 }
 
 fn runtime_trail_history_counts(
-    trail_history_by_body: &HashMap<BodyId, Vec<Vector3d>>,
+    trail_history_by_body: &HashMap<BodyId, Vec<TrailSample>>,
 ) -> Vec<RuntimeTrailHistoryCount> {
     let mut counts: Vec<RuntimeTrailHistoryCount> = trail_history_by_body
         .iter()
@@ -1394,8 +1468,13 @@ fn scene_revision_from_snapshot(
         let last_sample = trail.samples_m.last().copied().unwrap_or_default();
         let _ = write!(
             &mut revision,
-            "|trail:{}:{}@({:.6},{:.6},{:.6})",
-            trail.source_body_id.0, sample_count, last_sample.x, last_sample.y, last_sample.z
+            "|trail:{:?}:{}:{}@({:.6},{:.6},{:.6})",
+            trail.family,
+            trail.source_body_id.0,
+            sample_count,
+            last_sample.x,
+            last_sample.y,
+            last_sample.z
         );
     }
     for light in lights {
@@ -1425,13 +1504,285 @@ fn vec_magnitude(vector: Vector3d) -> f64 {
     (vector.x * vector.x + vector.y * vector.y + vector.z * vector.z).sqrt()
 }
 
+fn build_orbit_archives(
+    active: &BranchState,
+    query: &OrbitArchiveQuery,
+    physics_policy: &PhysicsPolicy,
+    active_cpu_features: &[String],
+) -> Vec<OrbitArchive> {
+    let selected_body_ids = orbit_archive_body_ids(query, &active.world.bodies);
+    let mut archives = Vec::new();
+
+    if query.include_trajectory {
+        archives.extend(build_trajectory_archives(
+            &selected_body_ids,
+            &active.world.trail_history_by_body,
+        ));
+    }
+    if query.include_historical_orbits {
+        archives.extend(build_historical_orbit_archives(
+            active,
+            &selected_body_ids,
+            query.checkpoint_sample_limit,
+        ));
+    }
+    if query.include_prediction {
+        archives.extend(build_prediction_archives(
+            &active.world.bodies,
+            active.world.epoch_seconds,
+            &selected_body_ids,
+            query.prediction_step_seconds,
+            query.prediction_sample_count,
+            physics_policy,
+            active_cpu_features,
+        ));
+    }
+
+    archives
+}
+
+fn orbit_archive_body_ids(query: &OrbitArchiveQuery, bodies: &[BodyState]) -> Vec<BodyId> {
+    let mut body_ids = if query.body_ids.is_empty() {
+        bodies
+            .iter()
+            .map(|body| body.body_id.clone())
+            .collect::<Vec<_>>()
+    } else {
+        let available = bodies
+            .iter()
+            .map(|body| body.body_id.clone())
+            .collect::<HashSet<_>>();
+        query
+            .body_ids
+            .iter()
+            .filter(|body_id| available.contains(*body_id))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    body_ids.sort_by(|left, right| left.0.cmp(&right.0));
+    body_ids
+}
+
+fn render_scene_orbit_body_ids(
+    bodies: &[BodyState],
+    focused_body_id: Option<&BodyId>,
+) -> Vec<BodyId> {
+    if bodies.len() <= RENDER_SCENE_ORBIT_BODY_LIMIT {
+        return orbit_archive_body_ids(&OrbitArchiveQuery::default(), bodies);
+    }
+
+    let mut ranked = bodies.iter().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        let left_is_focused = focused_body_id == Some(&left.body_id);
+        let right_is_focused = focused_body_id == Some(&right.body_id);
+
+        right_is_focused
+            .cmp(&left_is_focused)
+            .then_with(|| {
+                body_class_priority(&left.body_class).cmp(&body_class_priority(&right.body_class))
+            })
+            .then_with(|| {
+                right
+                    .mass_kg
+                    .partial_cmp(&left.mass_kg)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| left.body_id.0.cmp(&right.body_id.0))
+    });
+
+    let mut body_ids = ranked
+        .into_iter()
+        .take(RENDER_SCENE_ORBIT_BODY_LIMIT)
+        .map(|body| body.body_id.clone())
+        .collect::<Vec<_>>();
+    body_ids.sort_by(|left, right| left.0.cmp(&right.0));
+    body_ids
+}
+
+fn body_class_priority(body_class: &BodyClass) -> u8 {
+    match body_class {
+        BodyClass::Star => 0,
+        BodyClass::Planet => 1,
+        BodyClass::DwarfPlanet => 2,
+        BodyClass::Moon => 3,
+        BodyClass::SmallBody => 4,
+        BodyClass::Spacecraft => 5,
+        BodyClass::Tracer => 6,
+        BodyClass::Custom => 7,
+    }
+}
+
+fn build_trajectory_archives(
+    body_ids: &[BodyId],
+    trail_history_by_body: &HashMap<BodyId, Vec<TrailSample>>,
+) -> Vec<OrbitArchive> {
+    body_ids
+        .iter()
+        .filter_map(|body_id| {
+            let samples = trail_history_by_body
+                .get(body_id)?
+                .iter()
+                .map(|sample| OrbitSample {
+                    epoch_seconds: sample.epoch_seconds,
+                    position_m: sample.position_m,
+                })
+                .collect::<Vec<_>>();
+            if samples.is_empty() {
+                return None;
+            }
+            Some(OrbitArchive {
+                archive_id: format!("trajectory:{}", body_id.0),
+                source_body_id: body_id.clone(),
+                family: OrbitArchiveFamily::Trajectory,
+                max_samples: TRAIL_HISTORY_MAX_SAMPLES as u32,
+                samples,
+            })
+        })
+        .collect()
+}
+
+fn build_historical_orbit_archives(
+    active: &BranchState,
+    body_ids: &[BodyId],
+    checkpoint_sample_limit: usize,
+) -> Vec<OrbitArchive> {
+    let start_index = active
+        .checkpoints
+        .len()
+        .saturating_sub(checkpoint_sample_limit);
+    let checkpoint_records = &active.checkpoints[start_index..];
+
+    body_ids
+        .iter()
+        .filter_map(|body_id| {
+            let mut samples = checkpoint_records
+                .iter()
+                .filter_map(|record| {
+                    record
+                        .state
+                        .bodies
+                        .iter()
+                        .find(|body| body.body_id == *body_id)
+                        .map(|body| OrbitSample {
+                            epoch_seconds: record.descriptor.epoch_seconds,
+                            position_m: body.position_m,
+                        })
+                })
+                .collect::<Vec<_>>();
+
+            if let Some(current_body) = active
+                .world
+                .bodies
+                .iter()
+                .find(|body| body.body_id == *body_id)
+            {
+                let current_sample = OrbitSample {
+                    epoch_seconds: active.world.epoch_seconds,
+                    position_m: current_body.position_m,
+                };
+                let should_append_current = samples
+                    .last()
+                    .map(|sample| {
+                        sample.epoch_seconds != current_sample.epoch_seconds
+                            || sample.position_m != current_sample.position_m
+                    })
+                    .unwrap_or(true);
+                if should_append_current {
+                    samples.push(current_sample);
+                }
+            }
+
+            if samples.len() < 2 {
+                return None;
+            }
+
+            Some(OrbitArchive {
+                archive_id: format!("archive:{}:{}", active.descriptor.branch_id.0, body_id.0),
+                source_body_id: body_id.clone(),
+                family: OrbitArchiveFamily::HistoricalOrbit,
+                max_samples: samples.len() as u32,
+                samples,
+            })
+        })
+        .collect()
+}
+
+fn build_prediction_archives(
+    bodies: &[BodyState],
+    starting_epoch_seconds: f64,
+    body_ids: &[BodyId],
+    prediction_step_seconds: f64,
+    prediction_sample_count: usize,
+    physics_policy: &PhysicsPolicy,
+    active_cpu_features: &[String],
+) -> Vec<OrbitArchive> {
+    if prediction_step_seconds <= 0.0 || prediction_sample_count == 0 || body_ids.is_empty() {
+        return Vec::new();
+    }
+
+    let tracked_body_ids = body_ids.iter().cloned().collect::<HashSet<_>>();
+    let mut projected_bodies = bodies.to_vec();
+    let mut solver_bodies = world_bodies_to_solver_state(&projected_bodies);
+    let mut epoch_seconds = starting_epoch_seconds;
+    let mut samples_by_body = body_ids
+        .iter()
+        .cloned()
+        .map(|body_id| (body_id, Vec::with_capacity(prediction_sample_count)))
+        .collect::<HashMap<_, _>>();
+
+    for _ in 0..prediction_sample_count {
+        let _ = advance_authoritative_with_features(
+            physics_policy,
+            &mut solver_bodies,
+            prediction_step_seconds,
+            active_cpu_features,
+        );
+        apply_solver_state_to_world_bodies(&mut projected_bodies, &solver_bodies);
+        epoch_seconds += prediction_step_seconds;
+
+        for body in projected_bodies
+            .iter()
+            .filter(|body| tracked_body_ids.contains(&body.body_id))
+        {
+            samples_by_body
+                .entry(body.body_id.clone())
+                .or_default()
+                .push(OrbitSample {
+                    epoch_seconds,
+                    position_m: body.position_m,
+                });
+        }
+    }
+
+    body_ids
+        .iter()
+        .filter_map(|body_id| {
+            let samples = samples_by_body.remove(body_id)?;
+            if samples.is_empty() {
+                return None;
+            }
+            Some(OrbitArchive {
+                archive_id: format!("prediction:{}", body_id.0),
+                source_body_id: body_id.clone(),
+                family: OrbitArchiveFamily::Prediction,
+                max_samples: prediction_sample_count as u32,
+                samples,
+            })
+        })
+        .collect()
+}
+
 fn push_trail_sample(
-    trail_history_by_body: &mut HashMap<BodyId, Vec<Vector3d>>,
+    trail_history_by_body: &mut HashMap<BodyId, Vec<TrailSample>>,
     body_id: &BodyId,
+    epoch_seconds: f64,
     sample: Vector3d,
 ) {
     let history = trail_history_by_body.entry(body_id.clone()).or_default();
-    history.push(sample);
+    history.push(TrailSample {
+        epoch_seconds,
+        position_m: sample,
+    });
     if history.len() > TRAIL_HISTORY_MAX_SAMPLES {
         let trim_count = history.len() - TRAIL_HISTORY_MAX_SAMPLES;
         history.drain(0..trim_count);
@@ -1440,10 +1791,16 @@ fn push_trail_sample(
 
 fn record_trail_samples_from_bodies(
     bodies: &[BodyState],
-    trail_history_by_body: &mut HashMap<BodyId, Vec<Vector3d>>,
+    trail_history_by_body: &mut HashMap<BodyId, Vec<TrailSample>>,
+    epoch_seconds: f64,
 ) {
     for body in bodies {
-        push_trail_sample(trail_history_by_body, &body.body_id, body.position_m);
+        push_trail_sample(
+            trail_history_by_body,
+            &body.body_id,
+            epoch_seconds,
+            body.position_m,
+        );
     }
 }
 
@@ -1536,7 +1893,7 @@ fn compute_world_invariants(bodies: &[BodyState]) -> PhysicsInvariants {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
 
     use solarlab_data::{
         CompatibilityTarget, Digest, PackageCompatibility, PackageKind, PackageLocator, SemVer,
@@ -1547,11 +1904,11 @@ mod tests {
         Vector3d,
     };
     use solarlab_hardware::HardwareProfile;
-    use solarlab_history::HistoryEvent;
+    use solarlab_history::{HistoryEvent, OrbitArchiveFamily, OrbitArchiveQuery};
     use solarlab_physics::{
         CollisionModel, IntegratorKind, PhysicsInvariants, PhysicsPolicy, SolverBackend,
     };
-    use solarlab_scene::{SceneDetailBand, SceneItemFamily};
+    use solarlab_scene::{SceneDetailBand, SceneItemFamily, SceneTrailFamily};
 
     use super::{
         compute_world_invariants, extract_render_scene, record_trail_samples_from_bodies,
@@ -1683,6 +2040,51 @@ mod tests {
     }
 
     #[test]
+    fn render_scene_limits_large_catalog_orbit_archives_to_scene_budget() {
+        let mut runtime = new_runtime();
+        let moon = BodyId("moon".into());
+
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .expect("seed command should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::SetObserverMode {
+                    mode: ObserverMode::FollowSelected,
+                },
+                2,
+            )
+            .expect("setting observer mode should succeed");
+        runtime
+            .apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(moon.clone()),
+                },
+                3,
+            )
+            .expect("focusing moon should succeed");
+
+        let scene = runtime.render_scene();
+        let trail_body_ids = scene
+            .trails
+            .iter()
+            .map(|trail| trail.source_body_id.clone())
+            .collect::<HashSet<_>>();
+
+        assert!(trail_body_ids.len() <= super::RENDER_SCENE_ORBIT_BODY_LIMIT);
+        assert!(trail_body_ids.contains(&moon));
+        assert!(scene
+            .trails
+            .iter()
+            .any(|trail| trail.source_body_id == moon
+                && trail.family == SceneTrailFamily::Trajectory));
+        assert!(scene
+            .trails
+            .iter()
+            .all(|trail| trail.family == SceneTrailFamily::Trajectory));
+    }
+
+    #[test]
     fn render_scene_extracts_selected_body_counts_and_camera_from_runtime() {
         let mut runtime = new_runtime();
         let earth = BodyId("earth".into());
@@ -1784,11 +2186,11 @@ mod tests {
         let scene = runtime.render_scene();
         assert_eq!(scene.body_count, 4);
         assert_eq!(scene.tracer_count, 1);
-        assert_eq!(scene.trail_count, 4);
+        assert_eq!(scene.trail_count, 8);
         assert_eq!(scene.observer_mode, ObserverMode::FollowSelected);
         assert_eq!(scene.bodies.len(), 4);
         assert_eq!(scene.tracers.len(), 1);
-        assert_eq!(scene.trails.len(), 4);
+        assert_eq!(scene.trails.len(), 8);
         assert_eq!(scene.lights.len(), 1);
         assert_eq!(scene.packet_metadata.tracer_family, SceneItemFamily::Tracer);
         assert_eq!(
@@ -1814,14 +2216,18 @@ mod tests {
             .iter()
             .any(|light| light.light_id == "light:sun"));
         assert!(scene.trails.iter().all(|trail| !trail.samples_m.is_empty()));
-        assert!(
-            scene
-                .trails
-                .iter()
-                .find(|trail| trail.source_body_id == moon)
-                .expect("moon trail should be present")
-                .head_highlighted
-        );
+        assert!(scene
+            .trails
+            .iter()
+            .any(|trail| trail.family == SceneTrailFamily::Trajectory));
+        assert!(scene
+            .trails
+            .iter()
+            .any(|trail| trail.family == SceneTrailFamily::Prediction));
+        assert!(scene
+            .trails
+            .iter()
+            .any(|trail| trail.source_body_id == moon && trail.head_highlighted));
         assert!(
             scene
                 .bodies
@@ -1835,6 +2241,74 @@ mod tests {
         assert_eq!(scene.diagnostics.frame_number, 0);
         assert!(scene.diagnostics.gpu_upload_ms > 0.0);
         assert!(scene.scene_revision.contains("|diag:frame=0"));
+    }
+
+    #[test]
+    fn orbit_archives_and_scene_trails_separate_history_prediction_and_live_trajectory() {
+        let mut runtime = new_runtime();
+        let earth = BodyId("earth".into());
+
+        runtime
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: earth.clone(),
+                        body_class: BodyClass::Planet,
+                        mass_kg: 5.972e24,
+                        radius_m: 6_371_000.0,
+                        position_m: Vector3d::default(),
+                        velocity_mps: Vector3d {
+                            x: 0.0,
+                            y: 1_000.0,
+                            z: 0.0,
+                        },
+                    },
+                },
+                1,
+            )
+            .expect("spawn earth should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::CreateCheckpoint {
+                    checkpoint_id: None,
+                    label: Some("baseline".into()),
+                },
+                2,
+            )
+            .expect("checkpoint should succeed");
+
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 60.0,
+                },
+                3,
+            )
+            .expect("advance epoch should succeed");
+
+        let archives = runtime.orbit_archives(&OrbitArchiveQuery::default());
+        let earth_families = archives
+            .iter()
+            .filter(|archive| archive.source_body_id == earth)
+            .map(|archive| archive.family)
+            .collect::<Vec<_>>();
+
+        assert!(earth_families.contains(&OrbitArchiveFamily::Trajectory));
+        assert!(earth_families.contains(&OrbitArchiveFamily::HistoricalOrbit));
+        assert!(earth_families.contains(&OrbitArchiveFamily::Prediction));
+
+        let scene = runtime.render_scene();
+        let scene_families = scene
+            .trails
+            .iter()
+            .filter(|trail| trail.source_body_id == earth)
+            .map(|trail| trail.family)
+            .collect::<Vec<_>>();
+
+        assert!(scene_families.contains(&SceneTrailFamily::Trajectory));
+        assert!(scene_families.contains(&SceneTrailFamily::HistoricalOrbit));
+        assert!(scene_families.contains(&SceneTrailFamily::Prediction));
     }
 
     #[test]
@@ -3862,6 +4336,7 @@ mod tests {
         record_trail_samples_from_bodies(
             &branch.world.bodies,
             &mut branch.world.trail_history_by_body,
+            branch.world.epoch_seconds,
         );
     }
 

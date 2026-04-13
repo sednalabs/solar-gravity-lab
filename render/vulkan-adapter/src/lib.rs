@@ -3,7 +3,7 @@
 use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
-    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
+    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail, SceneTrailFamily,
 };
 use std::collections::HashSet;
 
@@ -103,6 +103,7 @@ pub struct VulkanTrailVertex {
 pub struct VulkanTrailSpan {
     pub trail_id: String,
     pub source_body_id: BodyId,
+    pub family: SceneTrailFamily,
     pub vertex_offset: u32,
     pub vertex_count: u32,
     pub color: PackedColor,
@@ -192,8 +193,12 @@ impl VulkanSceneAdapter {
 
         let mut trail_refs = scene.trails.iter().collect::<Vec<_>>();
         trail_refs.sort_by(|left, right| {
-            trail_detail_tier(left, &selected_source_body_ids)
-                .cmp(&trail_detail_tier(right, &selected_source_body_ids))
+            trail_family_rank(left.family)
+                .cmp(&trail_family_rank(right.family))
+                .then_with(|| {
+                    trail_detail_tier(left, &selected_source_body_ids)
+                        .cmp(&trail_detail_tier(right, &selected_source_body_ids))
+                })
                 .then_with(|| left.source_body_id.0.cmp(&right.source_body_id.0))
                 .then_with(|| left.trail_id.cmp(&right.trail_id))
         });
@@ -408,6 +413,7 @@ fn adapt_trails(
         spans.push(VulkanTrailSpan {
             trail_id: trail.trail_id.clone(),
             source_body_id: trail.source_body_id.clone(),
+            family: trail.family,
             vertex_offset,
             vertex_count: (vertices.len() as u32) - vertex_offset,
             color: pack_color(trail.color),
@@ -417,6 +423,14 @@ fn adapt_trails(
     }
 
     (spans, vertices)
+}
+
+fn trail_family_rank(family: SceneTrailFamily) -> u8 {
+    match family {
+        SceneTrailFamily::HistoricalOrbit => 0,
+        SceneTrailFamily::Trajectory => 1,
+        SceneTrailFamily::Prediction => 2,
+    }
 }
 
 fn adapt_light(light: &LightSource) -> VulkanDirectionalLight {
@@ -459,7 +473,7 @@ mod tests {
     use solarlab_scene::{
         CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
         SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneProvenanceRef, SceneTracer,
-        SceneTrail,
+        SceneTrail, SceneTrailFamily,
     };
 
     use super::{
@@ -692,6 +706,7 @@ mod tests {
             SceneTrail {
                 trail_id: "selected-trail-4".to_owned(),
                 source_body_id: BodyId("earth".to_owned()),
+                family: SceneTrailFamily::Trajectory,
                 samples_m: trail_samples(8, 100.0),
                 color: ColorRgba {
                     r: 1.0,
@@ -705,6 +720,7 @@ mod tests {
             SceneTrail {
                 trail_id: "near-trail-3".to_owned(),
                 source_body_id: BodyId("mars".to_owned()),
+                family: SceneTrailFamily::Trajectory,
                 samples_m: trail_samples(90, 100.0),
                 color: ColorRgba {
                     r: 0.6,
@@ -718,6 +734,7 @@ mod tests {
             SceneTrail {
                 trail_id: "far-trail-1".to_owned(),
                 source_body_id: BodyId("mars".to_owned()),
+                family: SceneTrailFamily::Trajectory,
                 samples_m: trail_samples(12, 100.0),
                 color: ColorRgba {
                     r: 0.3,
@@ -731,6 +748,7 @@ mod tests {
             SceneTrail {
                 trail_id: "medium-trail-2".to_owned(),
                 source_body_id: BodyId("mars".to_owned()),
+                family: SceneTrailFamily::Trajectory,
                 samples_m: trail_samples(65, 100.0),
                 color: ColorRgba {
                     r: 0.5,
@@ -779,6 +797,7 @@ mod tests {
         scene.trails = vec![SceneTrail {
             trail_id: "long-horizon-trail".to_owned(),
             source_body_id: BodyId("earth".to_owned()),
+            family: SceneTrailFamily::Trajectory,
             samples_m: trail_samples(1_200, 100.0),
             color: ColorRgba {
                 r: 0.8,
@@ -878,6 +897,7 @@ mod tests {
             trails: vec![SceneTrail {
                 trail_id: "trail-1".to_owned(),
                 source_body_id: BodyId("earth".to_owned()),
+                family: SceneTrailFamily::Trajectory,
                 samples_m: vec![
                     Vector3d {
                         x: 100.0,

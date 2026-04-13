@@ -1,4 +1,4 @@
-use solarlab_domain::{BranchId, CheckpointId, ScenarioId, TimelineSemantics};
+use solarlab_domain::{BodyId, BranchId, CheckpointId, ScenarioId, TimelineSemantics, Vector3d};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CommandId(pub String);
@@ -45,12 +45,60 @@ pub enum HistoryEvent {
     BranchCreated(BranchDescriptor),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrbitArchiveFamily {
+    Trajectory,
+    HistoricalOrbit,
+    Prediction,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrbitSample {
+    pub epoch_seconds: f64,
+    pub position_m: Vector3d,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrbitArchive {
+    pub archive_id: String,
+    pub source_body_id: BodyId,
+    pub family: OrbitArchiveFamily,
+    pub max_samples: u32,
+    pub samples: Vec<OrbitSample>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrbitArchiveQuery {
+    pub body_ids: Vec<BodyId>,
+    pub include_trajectory: bool,
+    pub include_historical_orbits: bool,
+    pub include_prediction: bool,
+    pub checkpoint_sample_limit: usize,
+    pub prediction_step_seconds: f64,
+    pub prediction_sample_count: usize,
+}
+
+impl Default for OrbitArchiveQuery {
+    fn default() -> Self {
+        Self {
+            body_ids: Vec::new(),
+            include_trajectory: true,
+            include_historical_orbits: true,
+            include_prediction: true,
+            checkpoint_sample_limit: 24,
+            prediction_step_seconds: 3_600.0,
+            prediction_sample_count: 12,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        BranchDescriptor, BranchId, CheckpointDescriptor, CheckpointId, HistoryEvent, ScenarioId,
-        TimelineSemantics,
+        BranchDescriptor, BranchId, CheckpointDescriptor, CheckpointId, HistoryEvent,
+        OrbitArchiveFamily, OrbitArchiveQuery, OrbitSample, ScenarioId, TimelineSemantics,
     };
+    use solarlab_domain::{BodyId, Vector3d};
 
     #[test]
     fn branch_descriptor_captures_lineage() {
@@ -84,5 +132,40 @@ mod tests {
         let event = HistoryEvent::CheckpointCreated(checkpoint.clone());
 
         assert_eq!(event, HistoryEvent::CheckpointCreated(checkpoint));
+    }
+
+    #[test]
+    fn default_orbit_archive_query_enables_all_overlay_families() {
+        let query = OrbitArchiveQuery::default();
+
+        assert!(query.include_trajectory);
+        assert!(query.include_historical_orbits);
+        assert!(query.include_prediction);
+        assert_eq!(query.checkpoint_sample_limit, 24);
+        assert_eq!(query.prediction_step_seconds, 3_600.0);
+        assert_eq!(query.prediction_sample_count, 12);
+    }
+
+    #[test]
+    fn orbit_archive_family_preserves_authoritative_samples() {
+        let sample = OrbitSample {
+            epoch_seconds: 10.0,
+            position_m: Vector3d {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+        };
+
+        let archive = super::OrbitArchive {
+            archive_id: "prediction:moon".into(),
+            source_body_id: BodyId("moon".into()),
+            family: OrbitArchiveFamily::Prediction,
+            max_samples: 12,
+            samples: vec![sample.clone()],
+        };
+
+        assert_eq!(archive.family, OrbitArchiveFamily::Prediction);
+        assert_eq!(archive.samples, vec![sample]);
     }
 }

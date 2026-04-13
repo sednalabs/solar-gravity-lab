@@ -51,10 +51,18 @@ pub enum SceneDetailBand {
     Far,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneTrailFamily {
+    Trajectory,
+    HistoricalOrbit,
+    Prediction,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneTrail {
     pub trail_id: String,
     pub source_body_id: BodyId,
+    pub family: SceneTrailFamily,
     pub samples_m: Vec<Vector3d>,
     pub color: ColorRgba,
     pub max_samples: u32,
@@ -228,7 +236,7 @@ mod tests {
 
     use super::{
         CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
-        SceneItemFamily, ScenePacketMetadata, SceneTracer, SceneTrail,
+        SceneItemFamily, ScenePacketMetadata, SceneTracer, SceneTrail, SceneTrailFamily,
     };
 
     #[test]
@@ -281,6 +289,7 @@ mod tests {
             trails: vec![SceneTrail {
                 trail_id: "trail-1".to_owned(),
                 source_body_id: BodyId("earth".to_owned()),
+                family: SceneTrailFamily::Trajectory,
                 samples_m: vec![Vector3d::default()],
                 color: ColorRgba {
                     r: 1.0,
@@ -315,5 +324,6 @@ mod tests {
             scene.packet_metadata.trail_simplification_budget_samples,
             128
         );
+        assert_eq!(scene.trails[0].family, SceneTrailFamily::Trajectory);
     }
 }

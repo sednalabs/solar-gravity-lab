@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 // ABI version of the runtime/session contract.
-#define SOLARLAB_V2_ABI_VERSION 2u
+#define SOLARLAB_V2_ABI_VERSION 3u
 // Fixed-size inline capacity for identifier payloads carried by value in structs.
 #define SL_V2_ID_CAPACITY 96u
 
@@ -82,6 +82,12 @@ typedef enum SlVulkanSceneBufferKind {
   SL_VULKAN_SCENE_TRAIL_VERTICES = 3,
   SL_VULKAN_SCENE_DIRECTIONAL_LIGHTS = 4
 } SlVulkanSceneBufferKind;
+
+typedef enum SlVulkanTrailFamily {
+  SL_VULKAN_TRAIL_FAMILY_TRAJECTORY = 0,
+  SL_VULKAN_TRAIL_FAMILY_HISTORICAL_ORBIT = 1,
+  SL_VULKAN_TRAIL_FAMILY_PREDICTION = 2
+} SlVulkanTrailFamily;
 
 typedef enum SlCommandKind {
   SL_COMMAND_ADVANCE_EPOCH = 0,
@@ -178,6 +184,7 @@ typedef struct SlVulkanTrailSpan {
   SlPackedColor color;
   uint32_t max_samples;
   uint32_t head_highlighted;
+  SlVulkanTrailFamily family;
   uint8_t source_body_id[SL_V2_ID_CAPACITY];
   uint32_t source_body_id_len;
 } SlVulkanTrailSpan;
