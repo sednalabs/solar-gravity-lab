@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
@@ -29,6 +30,11 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON).assertIsDisplayed()
+        assertTrue(
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isEmpty()
+        )
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON).performClick()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
@@ -55,6 +61,16 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         assertTrue(
             "Runtime mirror render host should have a measured size",
             requireNotNull(hostView).width > 0 && hostView.height > 0,
+        )
+
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
+        assertTrue(
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
         )
     }
 

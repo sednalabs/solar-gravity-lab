@@ -4,10 +4,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -91,6 +94,10 @@ private data class RuntimeSelectionCard(
     val title: String,
     val detail: String,
 )
+
+private val RuntimeMirrorCompactWidthBreakpoint = 720.dp
+private const val RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR
 
 @Composable
 internal fun StageFirstRuntimeMirrorExperience(
@@ -184,6 +191,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
         val canSendCommands = runtimeFacade != null && uiState.connectionState == SessionConnectionState.Active
         val isRunning = uiState.snapshot?.paused == false
+        val cameraControlsEnabled = runtimeSessionHandle != 0L || mirrorScene?.scene != null
         val refreshRuntime = {
             if (runtimeFacade != null) {
                 coroutineScope.launch {
@@ -208,6 +216,13 @@ internal fun StageFirstRuntimeMirrorExperience(
                 runtimeFacade.applyCommand(RuntimeCommand.FocusBody(bodyId))
                 runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(mode.toRuntimeObserverMode()))
             }
+        }
+
+        fun focusAndFrameRuntimeBody(bodyId: String) {
+            selectedBodyId = bodyId
+            observerMode = ObserverMode.FOLLOW_SELECTED
+            renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
+            syncObserver(bodyId, ObserverMode.FOLLOW_SELECTED)
         }
 
         BackHandler(enabled = searchVisible || debugVisible) {
@@ -263,7 +278,7 @@ internal fun StageFirstRuntimeMirrorExperience(
             }
         }
 
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
@@ -276,6 +291,130 @@ internal fun StageFirstRuntimeMirrorExperience(
                     )
                 ),
         ) {
+            val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
+            val actionButtons: @Composable RowScope.() -> Unit = {
+                StageActionButton(
+                    label = "Sandbox",
+                    onClick = onReturnToSandbox,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON),
+                    secondary = true,
+                )
+                StageActionButton(
+                    label = if (searchVisible) "Searching" else "Search",
+                    onClick = { searchVisible = true },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
+                    emphasized = searchVisible,
+                    enabled = searchableBodies.isNotEmpty(),
+                )
+                StageActionButton(
+                    label = if (debugVisible) "Debugging" else "Debug",
+                    onClick = { debugVisible = true },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
+                    emphasized = debugVisible,
+                )
+            }
+            val primaryControls: @Composable RowScope.() -> Unit = {
+                StageActionButton(
+                    label = if (isRunning) "Pause" else "Start",
+                    onClick = {
+                        if (isRunning) {
+                            sendRuntimeCommand(RuntimeCommand.PausePlayback)
+                        } else {
+                            sendRuntimeCommand(RuntimeCommand.ResumePlayback)
+                        }
+                    },
+                    emphasized = isRunning,
+                    enabled = canSendCommands,
+                )
+                StageActionButton(
+                    label = "Step once",
+                    onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
+                    enabled = canSendCommands && !isRunning,
+                )
+                StageActionButton(
+                    label = "Forward step",
+                    onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
+                    enabled = canSendCommands && !isRunning,
+                )
+                StageActionButton(
+                    label = observerMode.runtimeDisplayLabel(),
+                    onClick = {
+                        observerMode = when (observerMode) {
+                            ObserverMode.FREE -> ObserverMode.FOLLOW_SELECTED
+                            ObserverMode.FOLLOW_SELECTED -> ObserverMode.FOLLOW_SELECTED_HOST
+                            ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
+                        }
+                        syncObserver(selectedBodyId, observerMode)
+                    },
+                    enabled = selectedBodyId != null || observerMode != ObserverMode.FREE,
+                )
+                StageActionButton(
+                    label = "Zoom +",
+                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
+                    enabled = cameraControlsEnabled,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
+                )
+                StageActionButton(
+                    label = "Zoom -",
+                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR) },
+                    enabled = cameraControlsEnabled,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
+                )
+                StageActionButton(
+                    label = "Frame selected",
+                    onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
+                    enabled = cameraControlsEnabled && selectedBodyId != null,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                )
+                StageActionButton(
+                    label = "Refresh",
+                    onClick = {
+                        selectedBodyId = null
+                        observerMode = ObserverMode.FREE
+                        renderHostView?.resetCamera()
+                        refreshRuntime()
+                    },
+                    enabled = runtimeFacade != null,
+                )
+            }
+            val secondaryControls: @Composable RowScope.() -> Unit = {
+                StageActionButton(
+                    label = "Step ${stepQuantumPreset.label}",
+                    onClick = { stepQuantumPreset = stepQuantumPreset.shifted(1) },
+                )
+                StageActionButton(
+                    label = "Slower",
+                    onClick = {
+                        val nextPreset = playbackSpeedPreset.shifted(-1)
+                        playbackSpeedPreset = nextPreset
+                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
+                    },
+                    enabled = canSendCommands,
+                )
+                StageActionButton(
+                    label = "Faster · ${playbackSpeedPreset.label}",
+                    onClick = {
+                        val nextPreset = playbackSpeedPreset.shifted(1)
+                        playbackSpeedPreset = nextPreset
+                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
+                    },
+                    enabled = canSendCommands,
+                )
+                StageActionButton(
+                    label = when (renderProcessingMode) {
+                        RenderProcessingMode.DEFAULT -> "Rendering: Standard"
+                        RenderProcessingMode.LOW -> "Rendering: Simplified"
+                    },
+                    onClick = {
+                        renderProcessingMode = when (renderProcessingMode) {
+                            RenderProcessingMode.DEFAULT -> RenderProcessingMode.LOW
+                            RenderProcessingMode.LOW -> RenderProcessingMode.DEFAULT
+                        }
+                    },
+                    secondary = true,
+                )
+            }
+
             if (runtimeSessionHandle != 0L || mirrorScene?.scene != null) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -353,12 +492,12 @@ internal fun StageFirstRuntimeMirrorExperience(
                     .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    StagePanel(modifier = Modifier.weight(1f)) {
+                if (compactLayout) {
+                    StagePanel(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                    ) {
                         Text(
                             text = timelineText,
                             color = MaterialTheme.colorScheme.secondary,
@@ -367,6 +506,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = selectionCard.title,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.titleLarge,
                         )
@@ -377,26 +517,48 @@ internal fun StageFirstRuntimeMirrorExperience(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        content = actionButtons,
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        StagePanel(
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                        ) {
+                            Text(
+                                text = timelineText,
+                                color = MaterialTheme.colorScheme.secondary,
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = selectionCard.title,
+                                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = selectionCard.detail,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StageActionButton(
-                            label = "Sandbox",
-                            onClick = onReturnToSandbox,
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON),
-                            secondary = true,
-                        )
-                        StageActionButton(
-                            label = if (searchVisible) "Searching" else "Search",
-                            onClick = { searchVisible = true },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
-                            emphasized = searchVisible,
-                            enabled = searchableBodies.isNotEmpty(),
-                        )
-                        StageActionButton(
-                            label = if (debugVisible) "Debugging" else "Debug",
-                            onClick = { debugVisible = true },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
-                            emphasized = debugVisible,
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            content = actionButtons,
                         )
                     }
                 }
@@ -410,90 +572,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                     .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                StageControlRail {
-                    StageActionButton(
-                        label = if (isRunning) "Pause" else "Start",
-                        onClick = {
-                            if (isRunning) {
-                                sendRuntimeCommand(RuntimeCommand.PausePlayback)
-                            } else {
-                                sendRuntimeCommand(RuntimeCommand.ResumePlayback)
-                            }
-                        },
-                        emphasized = isRunning,
-                        enabled = canSendCommands,
-                    )
-                    StageActionButton(
-                        label = "Step once",
-                        onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
-                        enabled = canSendCommands && !isRunning,
-                    )
-                    StageActionButton(
-                        label = "Forward step",
-                        onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
-                        enabled = canSendCommands && !isRunning,
-                    )
-                    StageActionButton(
-                        label = observerMode.runtimeDisplayLabel(),
-                        onClick = {
-                            observerMode = when (observerMode) {
-                                ObserverMode.FREE -> ObserverMode.FOLLOW_SELECTED
-                                ObserverMode.FOLLOW_SELECTED -> ObserverMode.FOLLOW_SELECTED_HOST
-                                ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
-                            }
-                            syncObserver(selectedBodyId, observerMode)
-                        },
-                        enabled = selectedBodyId != null || observerMode != ObserverMode.FREE,
-                    )
-                    StageActionButton(
-                        label = "Refresh",
-                        onClick = {
-                            selectedBodyId = null
-                            observerMode = ObserverMode.FREE
-                            renderHostView?.resetCamera()
-                            refreshRuntime()
-                        },
-                        enabled = runtimeFacade != null,
-                    )
-                }
-                StageControlRail {
-                    StageActionButton(
-                        label = "Step ${stepQuantumPreset.label}",
-                        onClick = { stepQuantumPreset = stepQuantumPreset.shifted(1) },
-                    )
-                    StageActionButton(
-                        label = "Slower",
-                        onClick = {
-                            val nextPreset = playbackSpeedPreset.shifted(-1)
-                            playbackSpeedPreset = nextPreset
-                            sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
-                        },
-                        enabled = canSendCommands,
-                    )
-                    StageActionButton(
-                        label = "Faster · ${playbackSpeedPreset.label}",
-                        onClick = {
-                            val nextPreset = playbackSpeedPreset.shifted(1)
-                            playbackSpeedPreset = nextPreset
-                            sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
-                        },
-                        enabled = canSendCommands,
-                    )
-                    StageActionButton(
-                        label = when (renderProcessingMode) {
-                            RenderProcessingMode.DEFAULT -> "Rendering: Standard"
-                            RenderProcessingMode.LOW -> "Rendering: Simplified"
-                        },
-                        onClick = {
-                            renderProcessingMode = when (renderProcessingMode) {
-                                RenderProcessingMode.DEFAULT -> RenderProcessingMode.LOW
-                                RenderProcessingMode.LOW -> RenderProcessingMode.DEFAULT
-                            }
-                        },
-                        secondary = true,
-                    )
-                }
-                StagePanel {
+                StageControlRail(compact = compactLayout, content = primaryControls)
+                StageControlRail(compact = compactLayout, content = secondaryControls)
+                StagePanel(
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+                ) {
                     Text(
                         text = backendStatus,
                         color = MaterialTheme.colorScheme.secondary,
@@ -515,10 +598,8 @@ internal fun StageFirstRuntimeMirrorExperience(
                 selectedBodyId = selectedBodyId,
                 onDismiss = { searchVisible = false },
                 onSelectBody = { bodyId ->
-                    selectedBodyId = bodyId
-                    observerMode = ObserverMode.FOLLOW_SELECTED
                     searchVisible = false
-                    syncObserver(bodyId, observerMode)
+                    focusAndFrameRuntimeBody(bodyId)
                 },
             )
         }
@@ -572,7 +653,9 @@ private fun RuntimeMirrorSearchDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD),
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )

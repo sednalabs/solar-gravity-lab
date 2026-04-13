@@ -77,7 +77,7 @@ class RenderSceneAssemblerTest {
                 RenderBody(
                     id = "asteroid-far",
                     name = "Asteroid Far",
-                    positionM = Vector3d(12.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
+                    positionM = Vector3d(20.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M, 0.0, 0.0),
                     velocityMps = Vector3d(50.0, 60.0, 0.0),
                     radiusM = 5.0,
                     colorArgb = 0xFF00AA00.toInt(),

@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -96,8 +97,12 @@ private val HintText = Color(0xC2D8E4F5)
 private val BodyText = Color(0xD9F3F8FF)
 private val SurfaceText = Color(0xFFF4FBFF)
 
+private val StageCompactWidthBreakpoint = 720.dp
+
 private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
 private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
+private const val CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val CAMERA_ZOOM_OUT_FACTOR: Float = 1f / CAMERA_ZOOM_IN_FACTOR
 
 /**
  * Restored stage-first client that brings the interactive feature-lab surface back into the
@@ -164,6 +169,7 @@ private fun StageFirstSandboxLocalExperience(
         var resumeSimulationAfterModalInteraction by remember { mutableStateOf(false) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
+        var immersivePromptVisible by rememberSaveable { mutableStateOf(false) }
         var pendingAddDraft by remember { mutableStateOf<EditableBodyDraft?>(null) }
         var bodyEditorState by remember { mutableStateOf<BodyEditorDialogState?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
@@ -214,7 +220,7 @@ private fun StageFirstSandboxLocalExperience(
             )
         }
 
-        BackHandler(enabled = searchVisible || debugVisible || pendingAddDraft != null || bodyEditorState != null) {
+        BackHandler(enabled = searchVisible || debugVisible || immersivePromptVisible || pendingAddDraft != null || bodyEditorState != null) {
             when {
                 bodyEditorState != null -> {
                     bodyEditorState = null
@@ -225,8 +231,15 @@ private fun StageFirstSandboxLocalExperience(
 
                 searchVisible -> searchVisible = false
                 pendingAddDraft != null -> cancelPendingPlacement(true)
+                immersivePromptVisible -> immersivePromptVisible = false
                 debugVisible -> debugVisible = false
             }
+        }
+
+        fun focusAndFrameBody(bodyId: String) {
+            selectedBodyId = bodyId
+            observerMode = ObserverMode.FOLLOW_SELECTED
+            renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
         }
 
         DisposableEffect(session) {
@@ -310,9 +323,18 @@ private fun StageFirstSandboxLocalExperience(
         }
         val timelineText = remember(frame) { buildTimelineText(frame?.timeline) }
         val diagnosticsText = remember(frame) { buildDiagnosticsText(frame) }
-        val interactionHintText = remember(pendingAddDraft) {
+        val interactionHintText = remember(pendingAddDraft, observerMode, selectedBodyId) {
             if (pendingAddDraft == null) {
-                "Pinch through Close→Deep scale bands, drag to pan, and use two fingers to orbit/tilt the stage. Tap a body to select it."
+                if (observerMode == ObserverMode.FREE) {
+                    "Pinch or use Zoom +/- to change scale, drag to pan, two-finger drag to orbit/tilt, and double-tap to reset. Tap a body to select it."
+                } else {
+                    val focusHint = if (selectedBodyId != null) {
+                        "Use Frame selected to recenter, or Observer to return to Free camera."
+                    } else {
+                        "Use Observer to return to Free camera."
+                    }
+                    "Pinch or use Zoom +/- to change scale. Follow mode keeps pan locked to the selected body or host while two-finger drag still orbits/tilts. $focusHint"
+                }
             } else {
                 "Placement armed at the draft Z plane. Tap to place the new body, or drag to seed initial velocity."
             }
@@ -403,6 +425,7 @@ private fun StageFirstSandboxLocalExperience(
                 canStepBackward = pendingAddDraft == null && !isRunning && (frame?.timeline?.canStepBackward == true),
                 canStepForward = pendingAddDraft == null && !isRunning,
                 canStepOnce = pendingAddDraft == null && !isRunning,
+                selectedBodyId = selectedBodyId,
                 observerMode = observerMode,
                 observerButtonEnabled = pendingAddDraft == null && (selectedBodyId != null || observerMode != ObserverMode.FREE),
                 searchVisible = searchVisible,
@@ -411,8 +434,17 @@ private fun StageFirstSandboxLocalExperience(
                 addButtonLabel = if (pendingAddDraft == null) "Add object" else "Cancel add",
                 editButtonEnabled = selectedBodyId != null && pendingAddDraft == null,
                 authoringActive = pendingAddDraft != null,
-                modeButtonLabel = "Runtime",
-                onToggleMode = onEnterRuntimeMirror,
+                cameraControlsEnabled = pendingAddDraft == null,
+                modeButtonLabel = "Immersive",
+                onToggleMode = if (onEnterRuntimeMirror != null) {
+                    {
+                        searchVisible = false
+                        debugVisible = false
+                        immersivePromptVisible = true
+                    }
+                } else {
+                    null
+                },
                 onSearch = { searchVisible = true },
                 onDebug = { debugVisible = true },
                 onAddObject = {
@@ -450,6 +482,13 @@ private fun StageFirstSandboxLocalExperience(
                         ObserverMode.FREE -> ObserverMode.FOLLOW_SELECTED
                         ObserverMode.FOLLOW_SELECTED -> ObserverMode.FOLLOW_SELECTED_HOST
                         ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
+                    }
+                },
+                onZoomIn = { renderHostView?.zoomBy(CAMERA_ZOOM_IN_FACTOR) },
+                onZoomOut = { renderHostView?.zoomBy(CAMERA_ZOOM_OUT_FACTOR) },
+                onFrameSelected = selectedBodyId?.let { bodyId ->
+                    {
+                        focusAndFrameBody(bodyId)
                     }
                 },
                 onCycleStepQuantum = { session.cycleStepQuantum(+1) },
@@ -495,9 +534,39 @@ private fun StageFirstSandboxLocalExperience(
                 selectedBodyId = selectedBodyId,
                 onDismiss = { searchVisible = false },
                 onSelectBody = { bodyId ->
-                    selectedBodyId = bodyId
-                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    focusAndFrameBody(bodyId)
                     searchVisible = false
+                },
+            )
+        }
+
+        if (immersivePromptVisible) {
+            AlertDialog(
+                onDismissRequest = { immersivePromptVisible = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            immersivePromptVisible = false
+                            onEnterRuntimeMirror?.invoke()
+                        },
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON),
+                    ) {
+                        Text("Open immersive view")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { immersivePromptVisible = false },
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CANCEL_BUTTON),
+                    ) {
+                        Text("Stay in sandbox")
+                    }
+                },
+                title = { Text("Open immersive view?") },
+                text = {
+                    Text(
+                        "Immersive view switches from the sandbox authoring surface into the Rust-authoritative stage renderer. Sandbox remains the place for editing and quick object authoring.",
+                    )
                 },
             )
         }
@@ -591,6 +660,7 @@ private fun BoxScope.StageOverlay(
     canStepBackward: Boolean,
     canStepForward: Boolean,
     canStepOnce: Boolean,
+    selectedBodyId: String?,
     observerMode: ObserverMode,
     observerButtonEnabled: Boolean,
     searchVisible: Boolean,
@@ -599,6 +669,7 @@ private fun BoxScope.StageOverlay(
     addButtonLabel: String,
     editButtonEnabled: Boolean,
     authoringActive: Boolean,
+    cameraControlsEnabled: Boolean,
     modeButtonLabel: String? = null,
     onToggleMode: (() -> Unit)? = null,
     onSearch: () -> Unit,
@@ -610,6 +681,9 @@ private fun BoxScope.StageOverlay(
     onBackStep: () -> Unit,
     onForwardStep: () -> Unit,
     onCycleObserver: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onFrameSelected: (() -> Unit)?,
     onCycleStepQuantum: () -> Unit,
     onSlower: () -> Unit,
     onFaster: () -> Unit,
@@ -619,76 +693,32 @@ private fun BoxScope.StageOverlay(
     stepQuantumLabel: String,
     speedLabel: String,
 ) {
-    Column(
-        modifier = Modifier
-            .align(Alignment.TopStart)
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            StagePanel(
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(
-                    text = timelineText,
-                    color = TimelineText,
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = selectionCard.title,
-                    color = SelectionText,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = selectionCard.detail,
-                    color = HintText,
-                    style = MaterialTheme.typography.bodyMedium,
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compactLayout = maxWidth < StageCompactWidthBreakpoint
+        val actionButtons: @Composable RowScope.() -> Unit = {
+            modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
+                StageActionButton(
+                    label = label,
+                    onClick = { onToggleMode?.invoke() },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON),
+                    secondary = true,
                 )
             }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
-                    StageActionButton(
-                        label = label,
-                        onClick = { onToggleMode?.invoke() },
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON),
-                        secondary = true,
-                    )
-                }
-                StageActionButton(
-                    label = if (searchVisible) "Searching" else "Search",
-                    onClick = onSearch,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
-                    emphasized = searchVisible,
-                    enabled = searchEnabled,
-                )
-                StageActionButton(
-                    label = if (debugVisible) "Debugging" else "Debug",
-                    onClick = onDebug,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
-                    emphasized = debugVisible,
-                )
-            }
+            StageActionButton(
+                label = if (searchVisible) "Searching" else "Search",
+                onClick = onSearch,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
+                emphasized = searchVisible,
+                enabled = searchEnabled,
+            )
+            StageActionButton(
+                label = if (debugVisible) "Debugging" else "Debug",
+                onClick = onDebug,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
+                emphasized = debugVisible,
+            )
         }
-    }
-
-    Column(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        StageControlRail {
+        val primaryControls: @Composable RowScope.() -> Unit = {
             StageActionButton(
                 label = if (isRunning) "Pause" else "Start",
                 onClick = onStartPause,
@@ -703,9 +733,27 @@ private fun BoxScope.StageOverlay(
                 onClick = onCycleObserver,
                 enabled = observerButtonEnabled,
             )
+            StageActionButton(
+                label = "Zoom +",
+                onClick = onZoomIn,
+                enabled = cameraControlsEnabled,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
+            )
+            StageActionButton(
+                label = "Zoom -",
+                onClick = onZoomOut,
+                enabled = cameraControlsEnabled,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
+            )
+            StageActionButton(
+                label = "Frame selected",
+                onClick = { onFrameSelected?.invoke() },
+                enabled = cameraControlsEnabled && selectedBodyId != null && onFrameSelected != null,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+            )
             StageActionButton(label = "Reset", onClick = onReset)
         }
-        StageControlRail {
+        val secondaryControls: @Composable RowScope.() -> Unit = {
             StageActionButton(
                 label = addButtonLabel,
                 onClick = onAddObject,
@@ -732,34 +780,141 @@ private fun BoxScope.StageOverlay(
                 enabled = !authoringActive,
             )
         }
-        StagePanel {
-            Text(
-                text = backendStatus,
-                color = TimelineText,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = interactionHintText,
-                color = HintText,
-                style = MaterialTheme.typography.bodySmall,
-            )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (compactLayout) {
+                StagePanel(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                ) {
+                    Text(
+                        text = timelineText,
+                        color = TimelineText,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = selectionCard.title,
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                        color = SelectionText,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = selectionCard.detail,
+                        color = HintText,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = actionButtons,
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    StagePanel(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                    ) {
+                        Text(
+                            text = timelineText,
+                            color = TimelineText,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = selectionCard.title,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                            color = SelectionText,
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = selectionCard.detail,
+                            color = HintText,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        content = actionButtons,
+                    )
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (compactLayout) {
+                StageControlRail(compact = true) {
+                    primaryControls()
+                    secondaryControls()
+                }
+            } else {
+                StageControlRail(content = primaryControls)
+                StageControlRail(content = secondaryControls)
+            }
+            StagePanel(
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+            ) {
+                Text(
+                    text = backendStatus,
+                    color = TimelineText,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = interactionHintText,
+                    color = HintText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
 
 @Composable
-internal fun StageControlRail(content: @Composable RowScope.() -> Unit) {
+internal fun StageControlRail(
+    compact: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
     Surface(
         color = ControlRail,
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(if (compact) 18.dp else 22.dp),
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp, vertical = 10.dp),
+                .padding(
+                    horizontal = if (compact) 8.dp else 10.dp,
+                    vertical = if (compact) 8.dp else 10.dp,
+                ),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content,
@@ -861,7 +1016,9 @@ private fun SearchDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD),
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
@@ -917,7 +1074,10 @@ private fun SearchDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                TextButton(onClick = { onSelectBody(body.id) }) {
+                                TextButton(
+                                    onClick = { onSelectBody(body.id) },
+                                    modifier = Modifier.testTag(SolarLabTestTags.stageFirstSearchFocusTag(body.id)),
+                                ) {
                                     Text("Focus")
                                 }
                             }
