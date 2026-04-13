@@ -177,7 +177,7 @@ private:
 
     struct ComputePushConstants {
         uint32_t sourceCount = 0;
-        uint32_t reserved0 = 0;
+        uint32_t tileCounterCount = 0;
         uint32_t reserved1 = 0;
         uint32_t reserved2 = 0;
     };
@@ -224,6 +224,7 @@ private:
         uint32_t tileCounterCount = 0;
         uint32_t activeTileCount = 0;
         uint32_t peakTileOccupancy = 0;
+        uint32_t overflowVertexCount = 0;
         bool tileStatsValid = false;
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;

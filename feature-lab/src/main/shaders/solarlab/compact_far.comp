@@ -44,7 +44,7 @@ layout(set = 0, binding = 4, std430) buffer TileCounterBuffer {
 
 layout(push_constant) uniform PushConstants {
     uint sourceCount;
-    uint reserved0;
+    uint tileCounterCount;
     uint reserved1;
     uint reserved2;
 } uPush;
@@ -94,6 +94,7 @@ void main() {
     uint tileCapacity = farTileCapacity(stride);
     uint slot = atomicAdd(uTiles.counts[tileIndex], 1u);
     if (slot >= tileCapacity) {
+        atomicAdd(uTiles.counts[uPush.tileCounterCount], 1u);
         return;
     }
 

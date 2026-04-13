@@ -2064,13 +2064,13 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             sceneGpuStreams_.tracerFarCompute.tileCounterCount = farTileCounterCount;
             sceneGpuStreams_.tracerFarCompute.outputVertexCapacity = farOutputVertexCapacity;
             if (!ensureDeviceLocalComputeBuffer(
-                    static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount) * sizeof(uint32_t),
+                    static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     "tracer-far-tile-counters",
                     sceneGpuStreams_.tracerFarCompute.tileCounterBuffer)) {
                 disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter buffer allocation failed");
             } else if (!EnsureHostVisibleBuffer(
-                    static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount) * sizeof(uint32_t),
+                    static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     "tracer-far-tile-counter-readback",
                     sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer)) {
@@ -2078,6 +2078,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             } else {
                 sceneGpuStreams_.tracerFarCompute.activeTileCount = 0;
                 sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = 0;
+                sceneGpuStreams_.tracerFarCompute.overflowVertexCount = 0;
                 sceneGpuStreams_.tracerFarCompute.tileStatsValid = false;
                 sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
                 sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
@@ -2091,6 +2092,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.tracerFarCompute.tileCounterCount = 0U;
         sceneGpuStreams_.tracerFarCompute.activeTileCount = 0;
         sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = 0;
+        sceneGpuStreams_.tracerFarCompute.overflowVertexCount = 0;
         sceneGpuStreams_.tracerFarCompute.tileStatsValid = false;
         sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
         sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
@@ -2486,18 +2488,10 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         vkCmdDispatch(commandBuffer, sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX, 1, 1);
     }
     if (runFar) {
-        /**
-         * --- Far Tracer Spatial Thinning ---
-         * 
-         * To maintain performance in dense asteroid belts or Oort clouds, the far compute
-         * shader performs viewport-relative spatial thinning. It uses a 3D hash of the
-         * screen-space tile coordinates and the current zoom level to deterministically
-         * drop tracers while preserving a statistically uniform distribution.
-         * 
-         * This avoids the "aliasing" or flickering that simple modular subsampling would
-         * cause when panning the camera across high-density regions.
-         */
-        const ComputePushConstants pushConstants{.sourceCount = sceneGpuStreams_.tracerFarCompute.sourceVertexCount};
+        const ComputePushConstants pushConstants{
+            .sourceCount = sceneGpuStreams_.tracerFarCompute.sourceVertexCount,
+            .tileCounterCount = sceneGpuStreams_.tracerFarCompute.tileCounterCount,
+        };
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, farComputePipeline_);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_, 0, 1, &tracerFarComputeDescriptorSet_, 0, nullptr);
         vkCmdPushConstants(commandBuffer, computePipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
@@ -2829,13 +2823,15 @@ void SolarLabVulkanRenderer::RefreshCompactionVisibleCountsFromReadbackLocked() 
 
     sceneGpuStreams_.tracerFarCompute.activeTileCount = 0;
     sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = 0;
+    sceneGpuStreams_.tracerFarCompute.overflowVertexCount = 0;
     sceneGpuStreams_.tracerFarCompute.tileStatsValid = false;
     if (sceneGpuStreams_.tracerFarCompute.enabled &&
         sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.memory != VK_NULL_HANDLE &&
         sceneGpuStreams_.tracerFarCompute.tileCounterCount > 0 &&
         device_ != VK_NULL_HANDLE) {
         const size_t tileCount = static_cast<size_t>(sceneGpuStreams_.tracerFarCompute.tileCounterCount);
-        const size_t readbackBytes = tileCount * sizeof(uint32_t);
+        const size_t readbackWords = tileCount + 1U;
+        const size_t readbackBytes = readbackWords * sizeof(uint32_t);
         if (sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.sizeBytes >= readbackBytes) {
             void* mapped = nullptr;
             if (vkMapMemory(device_, sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.memory, 0, readbackBytes, 0, &mapped) == VK_SUCCESS && mapped != nullptr) {
@@ -2849,9 +2845,11 @@ void SolarLabVulkanRenderer::RefreshCompactionVisibleCountsFromReadbackLocked() 
                         peakTileOccupancy = std::max(peakTileOccupancy, counter);
                     }
                 }
+                const uint32_t overflowVertexCount = counters[tileCount];
                 vkUnmapMemory(device_, sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.memory);
                 sceneGpuStreams_.tracerFarCompute.activeTileCount = activeTileCount;
                 sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = peakTileOccupancy;
+                sceneGpuStreams_.tracerFarCompute.overflowVertexCount = overflowVertexCount;
                 sceneGpuStreams_.tracerFarCompute.tileStatsValid = true;
             }
         }
@@ -3265,6 +3263,8 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << (sceneGpuStreams_.tracerFarCompute.tileStatsValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.activeTileCount) : std::string("-"))
         << "/peak="
         << (sceneGpuStreams_.tracerFarCompute.tileStatsValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.peakTileOccupancy) : std::string("-"))
+        << "/drop="
+        << (sceneGpuStreams_.tracerFarCompute.tileStatsValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.overflowVertexCount) : std::string("-"))
         << "/vis="
         << (sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid ? std::to_string(sceneGpuStreams_.tracerFarCompute.visibleVertexCount) : std::string("-"))
         << ']'
