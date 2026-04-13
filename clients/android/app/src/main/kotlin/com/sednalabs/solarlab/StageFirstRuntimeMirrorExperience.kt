@@ -96,6 +96,8 @@ private data class RuntimeSelectionCard(
 )
 
 private val RuntimeMirrorCompactWidthBreakpoint = 720.dp
+private const val RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR
 
 @Composable
 internal fun StageFirstRuntimeMirrorExperience(
@@ -191,6 +193,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
         val canSendCommands = runtimeFacade != null && uiState.connectionState == SessionConnectionState.Active
         val isRunning = uiState.snapshot?.paused == false
+        val cameraControlsEnabled = runtimeSessionHandle != 0L || mirrorScene?.scene != null
         val refreshRuntime = {
             if (runtimeFacade != null) {
                 coroutineScope.launch {
@@ -376,6 +379,24 @@ internal fun StageFirstRuntimeMirrorExperience(
                     enabled = selectedBodyId != null || observerMode != ObserverMode.FREE,
                 )
                 StageActionButton(
+                    label = "Zoom +",
+                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
+                    enabled = cameraControlsEnabled,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
+                )
+                StageActionButton(
+                    label = "Zoom -",
+                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR) },
+                    enabled = cameraControlsEnabled,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
+                )
+                StageActionButton(
+                    label = "Frame selected",
+                    onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
+                    enabled = cameraControlsEnabled && selectedBodyId != null,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                )
+                StageActionButton(
                     label = "Refresh",
                     onClick = {
                         selectedBodyId = null
@@ -502,7 +523,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (compactLayout) {
-                    StagePanel(modifier = Modifier.fillMaxWidth()) {
+                    StagePanel(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                    ) {
                         Text(
                             text = timelineText,
                             color = MaterialTheme.colorScheme.secondary,
@@ -511,6 +536,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = selectionCard.title,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.titleLarge,
                         )
@@ -535,7 +561,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.Top,
                     ) {
-                        StagePanel(modifier = Modifier.weight(1f)) {
+                        StagePanel(
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                        ) {
                             Text(
                                 text = timelineText,
                                 color = MaterialTheme.colorScheme.secondary,
@@ -544,6 +574,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = selectionCard.title,
+                                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.titleLarge,
                             )
@@ -573,7 +604,9 @@ internal fun StageFirstRuntimeMirrorExperience(
             ) {
                 StageControlRail(compact = compactLayout, content = primaryControls)
                 StageControlRail(compact = compactLayout, content = secondaryControls)
-                StagePanel {
+                StagePanel(
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+                ) {
                     Text(
                         text = backendStatus,
                         color = MaterialTheme.colorScheme.secondary,
@@ -650,7 +683,9 @@ private fun RuntimeMirrorSearchDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD),
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
