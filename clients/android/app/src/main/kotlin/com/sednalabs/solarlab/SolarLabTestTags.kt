@@ -28,6 +28,9 @@ object SolarLabTestTags {
     const val STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON = "stage_first.immersive.confirm_button"
     const val STAGE_FIRST_IMMERSIVE_CANCEL_BUTTON = "stage_first.immersive.cancel_button"
     const val STAGE_FIRST_SEARCH_FIELD = "stage_first.search.field"
+    const val STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON = "stage_first.camera.zoom_in"
+    const val STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON = "stage_first.camera.zoom_out"
+    const val STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON = "stage_first.camera.frame_selected"
     const val STAGE_FIRST_RUNTIME_SANDBOX_BUTTON = "stage_first.runtime.sandbox_button"
     const val STAGE_FIRST_RUNTIME_REFRESH_BUTTON = "stage_first.runtime.refresh_button"
 

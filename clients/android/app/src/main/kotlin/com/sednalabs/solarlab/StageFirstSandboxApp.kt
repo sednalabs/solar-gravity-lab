@@ -101,6 +101,8 @@ private val StageCompactWidthBreakpoint = 720.dp
 
 private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
 private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
+private const val CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val CAMERA_ZOOM_OUT_FACTOR: Float = 1f / CAMERA_ZOOM_IN_FACTOR
 
 /**
  * Restored stage-first client that brings the interactive feature-lab surface back into the
@@ -321,9 +323,18 @@ private fun StageFirstSandboxLocalExperience(
         }
         val timelineText = remember(frame) { buildTimelineText(frame?.timeline) }
         val diagnosticsText = remember(frame) { buildDiagnosticsText(frame) }
-        val interactionHintText = remember(pendingAddDraft) {
+        val interactionHintText = remember(pendingAddDraft, observerMode, selectedBodyId) {
             if (pendingAddDraft == null) {
-                "Pinch through Close→Deep scale bands, drag to pan, and use two fingers to orbit/tilt the stage. Tap a body to select it."
+                if (observerMode == ObserverMode.FREE) {
+                    "Pinch or use Zoom +/- to change scale, drag to pan, two-finger drag to orbit/tilt, and double-tap to reset. Tap a body to select it."
+                } else {
+                    val focusHint = if (selectedBodyId != null) {
+                        "Use Frame selected to recenter, or Observer to return to Free camera."
+                    } else {
+                        "Use Observer to return to Free camera."
+                    }
+                    "Pinch or use Zoom +/- to change scale. Follow mode keeps pan locked to the selected body or host while two-finger drag still orbits/tilts. $focusHint"
+                }
             } else {
                 "Placement armed at the draft Z plane. Tap to place the new body, or drag to seed initial velocity."
             }
@@ -414,6 +425,7 @@ private fun StageFirstSandboxLocalExperience(
                 canStepBackward = pendingAddDraft == null && !isRunning && (frame?.timeline?.canStepBackward == true),
                 canStepForward = pendingAddDraft == null && !isRunning,
                 canStepOnce = pendingAddDraft == null && !isRunning,
+                selectedBodyId = selectedBodyId,
                 observerMode = observerMode,
                 observerButtonEnabled = pendingAddDraft == null && (selectedBodyId != null || observerMode != ObserverMode.FREE),
                 searchVisible = searchVisible,
@@ -422,6 +434,7 @@ private fun StageFirstSandboxLocalExperience(
                 addButtonLabel = if (pendingAddDraft == null) "Add object" else "Cancel add",
                 editButtonEnabled = selectedBodyId != null && pendingAddDraft == null,
                 authoringActive = pendingAddDraft != null,
+                cameraControlsEnabled = pendingAddDraft == null,
                 modeButtonLabel = "Immersive",
                 onToggleMode = if (onEnterRuntimeMirror != null) {
                     {
@@ -469,6 +482,13 @@ private fun StageFirstSandboxLocalExperience(
                         ObserverMode.FREE -> ObserverMode.FOLLOW_SELECTED
                         ObserverMode.FOLLOW_SELECTED -> ObserverMode.FOLLOW_SELECTED_HOST
                         ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
+                    }
+                },
+                onZoomIn = { renderHostView?.zoomBy(CAMERA_ZOOM_IN_FACTOR) },
+                onZoomOut = { renderHostView?.zoomBy(CAMERA_ZOOM_OUT_FACTOR) },
+                onFrameSelected = selectedBodyId?.let { bodyId ->
+                    {
+                        focusAndFrameBody(bodyId)
                     }
                 },
                 onCycleStepQuantum = { session.cycleStepQuantum(+1) },
@@ -640,6 +660,7 @@ private fun BoxScope.StageOverlay(
     canStepBackward: Boolean,
     canStepForward: Boolean,
     canStepOnce: Boolean,
+    selectedBodyId: String?,
     observerMode: ObserverMode,
     observerButtonEnabled: Boolean,
     searchVisible: Boolean,
@@ -648,6 +669,7 @@ private fun BoxScope.StageOverlay(
     addButtonLabel: String,
     editButtonEnabled: Boolean,
     authoringActive: Boolean,
+    cameraControlsEnabled: Boolean,
     modeButtonLabel: String? = null,
     onToggleMode: (() -> Unit)? = null,
     onSearch: () -> Unit,
@@ -659,6 +681,9 @@ private fun BoxScope.StageOverlay(
     onBackStep: () -> Unit,
     onForwardStep: () -> Unit,
     onCycleObserver: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onFrameSelected: (() -> Unit)?,
     onCycleStepQuantum: () -> Unit,
     onSlower: () -> Unit,
     onFaster: () -> Unit,
@@ -707,6 +732,24 @@ private fun BoxScope.StageOverlay(
                 label = observerMode.displayLabel(),
                 onClick = onCycleObserver,
                 enabled = observerButtonEnabled,
+            )
+            StageActionButton(
+                label = "Zoom +",
+                onClick = onZoomIn,
+                enabled = cameraControlsEnabled,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
+            )
+            StageActionButton(
+                label = "Zoom -",
+                onClick = onZoomOut,
+                enabled = cameraControlsEnabled,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
+            )
+            StageActionButton(
+                label = "Frame selected",
+                onClick = { onFrameSelected?.invoke() },
+                enabled = cameraControlsEnabled && selectedBodyId != null && onFrameSelected != null,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
             )
             StageActionButton(label = "Reset", onClick = onReset)
         }
