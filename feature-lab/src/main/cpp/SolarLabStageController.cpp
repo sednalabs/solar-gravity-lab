@@ -14,7 +14,6 @@
 #include <optional>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -33,8 +32,6 @@ constexpr double kMinPitchRadians = 0.20943951023931956;      // 12 degrees.
 constexpr double kMaxPitchRadians = 1.53588974175501;         // 88 degrees.
 constexpr double kOrbitYawRadiansPerPixel = 0.0075;
 constexpr double kOrbitPitchRadiansPerPixel = 0.0050;
-constexpr double kDefaultDepthExtentFactor = 48.0;
-constexpr double kPickDepthBias = 0.12;
 constexpr uint32_t kKindStar = 0U;
 constexpr uint32_t kKindPlanet = 1U;
 constexpr uint32_t kKindDwarfPlanet = 2U;
@@ -107,11 +104,6 @@ double Clamp(double value, double lower, double upper) {
 
 float ClampFloat(float value, float lower, float upper) {
     return std::max(lower, std::min(value, upper));
-}
-
-bool ApproximatelyEqual(double lhs, double rhs) {
-    const double scale = std::max({1.0, std::abs(lhs), std::abs(rhs)});
-    return std::abs(lhs - rhs) <= (scale * 1e-12);
 }
 
 float KindMinimumBillboardDiameterPx(uint32_t kind) {
@@ -193,7 +185,6 @@ struct CameraFrame {
     Float3 forward;
     double halfSpanX = kDefaultViewRadiusM;
     double halfSpanY = kDefaultViewRadiusM;
-    double halfDepth = std::max(kDefaultViewRadiusM * kDefaultDepthExtentFactor, 1'000'000.0);
     double metersPerPixel = 1.0;
 };
 
@@ -211,7 +202,6 @@ CameraFrame BuildCameraFrame(
     CameraFrame frame;
     frame.halfSpanY = safeRadius;
     frame.halfSpanX = safeRadius * (static_cast<double>(width) / static_cast<double>(minDimension));
-    frame.halfDepth = std::max(safeRadius * kDefaultDepthExtentFactor, 1'000'000.0);
     frame.metersPerPixel = (2.0 * safeRadius) / static_cast<double>(minDimension);
     frame.right = Normalize(MakeFloat3(std::cos(yawRadians), std::sin(yawRadians), 0.0));
     const Float3 screenUpHorizontal = Normalize(MakeFloat3(-std::sin(yawRadians), std::cos(yawRadians), 0.0));
@@ -223,33 +213,41 @@ CameraFrame BuildCameraFrame(
 struct ProjectedBody {
     double screenX = 0.0;
     double screenY = 0.0;
-    double depth01 = 0.0;
     float radiusPx = 0.0f;
     bool visible = false;
 };
 
 ProjectedBody ProjectBody(
     const SolarLabStageController::RuntimeBodyProxy& body,
-    const CameraFrame& frame,
-    Float3 cameraCenterRelative,
+    double sceneOriginX,
+    double sceneOriginY,
+    double sceneOriginZ,
+    double cameraCenterX,
+    double cameraCenterY,
+    double cameraCenterZ,
+    double viewRadiusM,
+    double yawRadians,
+    double pitchRadians,
     int viewportWidthPx,
     int viewportHeightPx) {
     const int width = std::max(viewportWidthPx, 1);
     const int height = std::max(viewportHeightPx, 1);
+    const CameraFrame frame = BuildCameraFrame(viewRadiusM, yawRadians, pitchRadians, width, height);
+    const Float3 cameraCenterRelative = MakeFloat3(
+        cameraCenterX - sceneOriginX,
+        cameraCenterY - sceneOriginY,
+        cameraCenterZ - sceneOriginZ);
     const Float3 positionRelative = MakeFloat3(body.positionRelativeX, body.positionRelativeY, body.positionRelativeZ);
     const Float3 delta = positionRelative - cameraCenterRelative;
     const double clipX = Dot(delta, frame.right) / std::max(frame.halfSpanX, 1.0);
     const double clipY = Dot(delta, frame.up) / std::max(frame.halfSpanY, 1.0);
-    const double depth = Dot(delta, frame.forward);
-    const double depthClip = depth / std::max(frame.halfDepth, 1.0);
-    if (std::abs(clipX) > 1.25 || std::abs(clipY) > 1.25 || std::abs(depthClip) > 1.25) {
+    if (std::abs(clipX) > 1.25 || std::abs(clipY) > 1.25) {
         return {};
     }
 
     ProjectedBody result;
     result.screenX = ((clipX * 0.5) + 0.5) * static_cast<double>(width);
     result.screenY = (1.0 - ((clipY * 0.5) + 0.5)) * static_cast<double>(height);
-    result.depth01 = std::clamp((depthClip * 0.5) + 0.5, 0.0, 1.0);
     result.radiusPx = std::max(
         static_cast<float>(body.radiusM / std::max(frame.metersPerPixel, 1e-3)),
         KindMinimumBillboardDiameterPx(body.kind) * 0.5f);
@@ -382,8 +380,7 @@ struct SolarLabStageController::RuntimeAbi {
         if (libraryHandle == nullptr) {
             libraryHandle = dlopen("libsolarlab_v2.so", RTLD_NOW | RTLD_LOCAL);
             if (libraryHandle == nullptr) {
-                const char* dlError = dlerror();
-                error = dlError != nullptr ? dlError : "dlopen(libsolarlab_v2.so) failed";
+                error = dlerror() != nullptr ? dlerror() : "dlopen(libsolarlab_v2.so) failed";
                 return false;
             }
         }
@@ -391,8 +388,7 @@ struct SolarLabStageController::RuntimeAbi {
         packet_buffer = reinterpret_cast<decltype(packet_buffer)>(dlsym(libraryHandle, "sl_v2_vulkan_scene_packet_buffer"));
         packet_release = reinterpret_cast<decltype(packet_release)>(dlsym(libraryHandle, "sl_v2_vulkan_scene_packet_release"));
         if (session_export_vulkan_scene == nullptr || packet_buffer == nullptr || packet_release == nullptr) {
-            const char* dlError = dlerror();
-            error = dlError != nullptr ? dlError : "Failed to resolve solarlab_v2 runtime ABI symbols";
+            error = dlerror() != nullptr ? dlerror() : "Failed to resolve solarlab_v2 runtime ABI symbols";
             return false;
         }
         return true;
@@ -516,7 +512,6 @@ void SolarLabStageController::BindRuntimeSession(uint64_t runtimeSessionHandle) 
     boundRuntimeSessionHandle_ = runtimeSessionHandle;
     runtimeCameraInitialized_ = false;
     runtimeScene_ = RuntimeSceneState{};
-    inferredBodyKinds_.clear();
     ++cameraRevisionCounter_;
 }
 
@@ -527,7 +522,6 @@ void SolarLabStageController::UnbindRuntimeSession() {
     }
     boundRuntimeSessionHandle_ = 0;
     runtimeScene_ = RuntimeSceneState{};
-    inferredBodyKinds_.clear();
     ++cameraRevisionCounter_;
 }
 
@@ -624,24 +618,20 @@ std::string SolarLabStageController::PickRuntimeBodyId(float screenXPx, float sc
         return {};
     }
 
-    const CameraFrame frame = BuildCameraFrame(
-        cameraViewRadiusM_,
-        cameraYawRadians_,
-        cameraPitchRadians_,
-        viewportWidthPx,
-        viewportHeightPx);
-    const Float3 cameraCenterRelative = MakeFloat3(
-        cameraCenterX_ - runtimeScene_.sceneOriginX,
-        cameraCenterY_ - runtimeScene_.sceneOriginY,
-        cameraCenterZ_ - runtimeScene_.sceneOriginZ);
-
-    double bestScore = std::numeric_limits<double>::max();
+    double bestDistanceSquared = std::numeric_limits<double>::max();
     std::string bestBodyId;
     for (const RuntimeBodyProxy& body : runtimeScene_.pickBodies) {
         const ProjectedBody projected = ProjectBody(
             body,
-            frame,
-            cameraCenterRelative,
+            runtimeScene_.sceneOriginX,
+            runtimeScene_.sceneOriginY,
+            runtimeScene_.sceneOriginZ,
+            cameraCenterX_,
+            cameraCenterY_,
+            cameraCenterZ_,
+            cameraViewRadiusM_,
+            cameraYawRadians_,
+            cameraPitchRadians_,
             viewportWidthPx,
             viewportHeightPx);
         if (!projected.visible) {
@@ -649,14 +639,11 @@ std::string SolarLabStageController::PickRuntimeBodyId(float screenXPx, float sc
         }
         const double dx = static_cast<double>(screenXPx) - projected.screenX;
         const double dy = static_cast<double>(screenYPx) - projected.screenY;
-        const double distancePx = std::sqrt((dx * dx) + (dy * dy));
-        const double selectionRadiusPx = std::max<double>(projected.radiusPx + 8.0f, 18.0f);
-        if (distancePx <= selectionRadiusPx) {
-            const double score = (distancePx / std::max<double>(projected.radiusPx, 1.0)) + (projected.depth01 * kPickDepthBias);
-            if (score < bestScore) {
-                bestScore = score;
-                bestBodyId = body.bodyId;
-            }
+        const double selectionRadiusPx = std::max<double>(projected.radiusPx * 1.45f, 18.0f);
+        const double distanceSquared = (dx * dx) + (dy * dy);
+        if (distanceSquared <= selectionRadiusPx * selectionRadiusPx && distanceSquared < bestDistanceSquared) {
+            bestDistanceSquared = distanceSquared;
+            bestBodyId = body.bodyId;
         }
     }
     return bestBodyId;
@@ -700,11 +687,6 @@ std::string SolarLabStageController::SceneSummary() const {
         }
     }
     return out.str();
-}
-
-std::string SolarLabStageController::HardwareSummary() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return renderer_.HardwareSummary();
 }
 
 void SolarLabStageController::SetErrorLocked(const std::string& message) {
@@ -751,33 +733,14 @@ void SolarLabStageController::InitializeFreeCameraFromRuntimePacketLocked(
         sceneOriginZ + cameraTargetFromOriginZ);
     const Float3 viewDirection = Normalize(cameraTarget - cameraPosition);
     const double horizontalMagnitude = std::sqrt((viewDirection.x * viewDirection.x) + (viewDirection.y * viewDirection.y));
-    const double nextCameraYawRadians = std::atan2(viewDirection.y, viewDirection.x) - (kPi * 0.5);
-    const double nextCameraPitchRadians =
-        Clamp(std::atan2(-viewDirection.z, horizontalMagnitude), kMinPitchRadians, kMaxPitchRadians);
-    const double nextCameraCenterX = cameraTarget.x;
-    const double nextCameraCenterY = cameraTarget.y;
-    const double nextCameraCenterZ = cameraTarget.z;
+    cameraYawRadians_ = std::atan2(viewDirection.y, viewDirection.x) - (kPi * 0.5);
+    cameraPitchRadians_ = Clamp(std::atan2(-viewDirection.z, horizontalMagnitude), kMinPitchRadians, kMaxPitchRadians);
+    cameraCenterX_ = cameraTarget.x;
+    cameraCenterY_ = cameraTarget.y;
+    cameraCenterZ_ = cameraTarget.z;
     const double cameraDistance = Magnitude(cameraPosition - cameraTarget);
     const double halfFovRadians = std::max(0.1, (verticalFovDegrees * kPi / 180.0) * 0.5);
-    const double nextCameraViewRadiusM =
-        Clamp(std::max(cameraDistance * std::tan(halfFovRadians), 1000.0), kMinViewRadiusM, kMaxViewRadiusM);
-
-    if (runtimeCameraInitialized_ &&
-        ApproximatelyEqual(cameraYawRadians_, nextCameraYawRadians) &&
-        ApproximatelyEqual(cameraPitchRadians_, nextCameraPitchRadians) &&
-        ApproximatelyEqual(cameraCenterX_, nextCameraCenterX) &&
-        ApproximatelyEqual(cameraCenterY_, nextCameraCenterY) &&
-        ApproximatelyEqual(cameraCenterZ_, nextCameraCenterZ) &&
-        ApproximatelyEqual(cameraViewRadiusM_, nextCameraViewRadiusM)) {
-        return;
-    }
-
-    cameraYawRadians_ = nextCameraYawRadians;
-    cameraPitchRadians_ = nextCameraPitchRadians;
-    cameraCenterX_ = nextCameraCenterX;
-    cameraCenterY_ = nextCameraCenterY;
-    cameraCenterZ_ = nextCameraCenterZ;
-    cameraViewRadiusM_ = nextCameraViewRadiusM;
+    cameraViewRadiusM_ = Clamp(std::max(cameraDistance * std::tan(halfFovRadians), 1000.0), kMinViewRadiusM, kMaxViewRadiusM);
     runtimeCameraInitialized_ = true;
     ++cameraRevisionCounter_;
 }
@@ -823,7 +786,6 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
 
     const SimplificationPolicy policy = PolicyForCamera(cameraViewRadiusM_, runtimeProcessingModeCode_);
     const bool cameraLocked = runtimeObserverModeCode_ != kObserverModeFree;
-    inferredBodyKinds_.clear();
     if (cameraLocked) {
         InitializeFreeCameraFromRuntimePacketLocked(
             packetResult.info.camera.frame_origin_m.x,
@@ -884,21 +846,11 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         const uint8_t* raw = reinterpret_cast<const uint8_t*>(bodiesView->data);
         const uint32_t bodyCount = bodiesView->element_count;
         const uint32_t stride = bodiesView->stride_bytes == 0 ? sizeof(SlVulkanBodyInstance) : bodiesView->stride_bytes;
-        authoritativePositionsM.reserve(bodyCount * 3U);
-        authoritativeRadiiM.reserve(bodyCount);
-        authoritativeColorsArgb.reserve(bodyCount);
-        authoritativeKinds.reserve(bodyCount);
         pickBodies.reserve(bodyCount);
         for (uint32_t index = 0; index < bodyCount; ++index) {
             const auto* body = reinterpret_cast<const SlVulkanBodyInstance*>(raw + (stride * index));
             const std::string bodyId = DecodeInlineUtf8(body->body_id, body->body_id_len);
-            const auto cachedKind = inferredBodyKinds_.find(bodyId);
-            const uint32_t kind =
-                cachedKind != inferredBodyKinds_.end()
-                    ? cachedKind->second
-                    : inferredBodyKinds_
-                          .emplace(bodyId, InferBodyKind(bodyId, body->radius_m, body->emissive_luminance))
-                          .first->second;
+            const uint32_t kind = InferBodyKind(bodyId, body->radius_m, body->emissive_luminance);
             const bool selected = body->selected != 0;
             pickBodies.push_back(RuntimeBodyProxy{
                 .bodyId = bodyId,
@@ -924,18 +876,6 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         const uint8_t* raw = reinterpret_cast<const uint8_t*>(tracersView->data);
         const uint32_t tracerCount = tracersView->element_count;
         const uint32_t stride = tracersView->stride_bytes == 0 ? sizeof(SlVulkanTracerInstance) : tracersView->stride_bytes;
-        tracerNearPositionsM.reserve(std::min<size_t>(tracerCount, policy.nearTracerBudget) * 3U);
-        tracerNearRadiiM.reserve(std::min<size_t>(tracerCount, policy.nearTracerBudget));
-        tracerNearColorsArgb.reserve(std::min<size_t>(tracerCount, policy.nearTracerBudget));
-        tracerNearKinds.reserve(std::min<size_t>(tracerCount, policy.nearTracerBudget));
-        tracerMediumPositionsM.reserve(std::min<size_t>(tracerCount, policy.mediumTracerBudget) * 3U);
-        tracerMediumRadiiM.reserve(std::min<size_t>(tracerCount, policy.mediumTracerBudget));
-        tracerMediumColorsArgb.reserve(std::min<size_t>(tracerCount, policy.mediumTracerBudget));
-        tracerMediumKinds.reserve(std::min<size_t>(tracerCount, policy.mediumTracerBudget));
-        tracerFarPositionsM.reserve(std::min<size_t>(tracerCount, policy.farTracerBudget) * 3U);
-        tracerFarRadiiM.reserve(std::min<size_t>(tracerCount, policy.farTracerBudget));
-        tracerFarColorsArgb.reserve(std::min<size_t>(tracerCount, policy.farTracerBudget));
-        tracerFarKinds.reserve(std::min<size_t>(tracerCount, policy.farTracerBudget));
         const CameraFrame frame = BuildCameraFrame(cameraViewRadiusM_, cameraYawRadians_, cameraPitchRadians_, surfaceWidthPx_, surfaceHeightPx_);
         const Float3 cameraCenterRelative = MakeFloat3(
             cameraCenterX_ - runtimeScene_.sceneOriginX,
@@ -990,7 +930,6 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         const uint32_t spanStride = trailSpansView->stride_bytes == 0 ? sizeof(SlVulkanTrailSpan) : trailSpansView->stride_bytes;
         const uint32_t vertexStride = trailVerticesView->stride_bytes == 0 ? sizeof(SlVulkanTrailVertex) : trailVerticesView->stride_bytes;
         const uint32_t totalVertexCount = trailVerticesView->element_count;
-        trailVertexCounts.reserve(spanCount);
         for (uint32_t spanIndex = 0; spanIndex < spanCount; ++spanIndex) {
             const auto* span = reinterpret_cast<const SlVulkanTrailSpan*>(spansRaw + (spanStride * spanIndex));
             const uint32_t start = std::min(span->vertex_offset, totalVertexCount);

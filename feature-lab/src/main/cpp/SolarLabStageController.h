@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 class SolarLabStageController {
@@ -73,7 +72,6 @@ public:
     std::string LastError() const;
     std::string BackendLabel() const;
     std::string SceneSummary() const;
-    std::string HardwareSummary() const;
 
     struct RuntimeBodyProxy {
         std::string bodyId;
@@ -136,5 +134,4 @@ private:
     int surfaceHeightPx_ = 1;
 
     RuntimeSceneState runtimeScene_;
-    std::unordered_map<std::string, uint32_t> inferredBodyKinds_;
 };

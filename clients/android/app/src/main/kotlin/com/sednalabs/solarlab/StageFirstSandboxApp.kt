@@ -45,13 +45,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,7 +106,7 @@ private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalCons
  * Recovery slice two restores sandbox authoring parity on top of the stage-first client:
  * add object, place-on-scene, edit selected, and delete selected are all available again.
  */
-internal enum class StageFirstExperienceMode {
+private enum class StageFirstExperienceMode {
     LOCAL_SANDBOX,
     RUNTIME_MIRROR,
 }
@@ -118,26 +115,12 @@ internal enum class StageFirstExperienceMode {
 internal fun StageFirstSandboxApp(
     runtimeFacade: RuntimeFacade? = null,
     ensureRuntimeStarted: (() -> Unit)? = null,
-    experienceModeState: MutableState<StageFirstExperienceMode>? = null,
-    runtimeMirrorMountedState: MutableState<Boolean>? = null,
-    onExperienceModeChanged: (StageFirstExperienceMode) -> Unit = {},
-    onRuntimeMirrorVisibilityChanged: (Boolean) -> Unit = {},
 ) {
-    val localExperienceModeState = rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
-    val resolvedExperienceModeState = experienceModeState ?: localExperienceModeState
-    var experienceMode by resolvedExperienceModeState
+    var experienceMode by rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
     val runtimeMirrorAvailable = runtimeFacade != null && ensureRuntimeStarted != null
-
-    SideEffect {
-        onExperienceModeChanged(experienceMode)
-    }
 
     when {
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
-            SideEffect {
-                runtimeMirrorMountedState?.value = false
-                onRuntimeMirrorVisibilityChanged(false)
-            }
             StageFirstSandboxLocalExperience(
                 onEnterRuntimeMirror = if (runtimeMirrorAvailable) {
                     { experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR }
@@ -151,8 +134,6 @@ internal fun StageFirstSandboxApp(
             runtimeFacade = runtimeFacade,
             ensureRuntimeStarted = ensureRuntimeStarted,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
-            runtimeMirrorMountedState = runtimeMirrorMountedState,
-            onVisibleForTesting = onRuntimeMirrorVisibilityChanged,
         )
     }
 }

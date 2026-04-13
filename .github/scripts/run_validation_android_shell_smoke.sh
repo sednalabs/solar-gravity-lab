@@ -191,6 +191,10 @@ resolve_test_classes() {
 
   case "${VALIDATION_MODE}" in
     shell-v2)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=false"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
       case "${TEST_SCOPE}" in
         core)
           TEST_CLASSES=("${SHELL_CORE_TEST_CLASSES[@]}")
@@ -205,6 +209,10 @@ resolve_test_classes() {
       esac
       ;;
     stage-first-mirror-off)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=false"
+      )
       case "${TEST_SCOPE}" in
         core)
           TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
@@ -220,6 +228,10 @@ resolve_test_classes() {
       esac
       ;;
     stage-first-mirror-on)
+      GRADLE_VALIDATION_PROPS=(
+        "-Psolarlab.debugStageFirstClient=true"
+        "-Psolarlab.stageFirstRuntimeMirror=true"
+      )
       case "${TEST_SCOPE}" in
         core)
           TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
@@ -233,6 +245,10 @@ resolve_test_classes() {
           exit 2
           ;;
       esac
+      ;;
+    *)
+      echo "Unsupported ANDROID_VALIDATION_MODE='${VALIDATION_MODE}'" >&2
+      exit 2
       ;;
   esac
 }
