@@ -699,6 +699,11 @@ std::string SolarLabStageController::SceneSummary() const {
     return out.str();
 }
 
+std::string SolarLabStageController::HardwareSummary() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return renderer_.HardwareSummary();
+}
+
 void SolarLabStageController::SetErrorLocked(const std::string& message) {
     lastError_ = message;
 }

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -67,12 +68,37 @@ std::string CopyUtf8String(JNIEnv* env, jstring value) {
     env->ReleaseStringUTFChars(value, chars);
     return out;
 }
+
+std::string NativeCpuCapabilitySummary() {
+#if defined(__aarch64__)
+    constexpr const char* architecture = "arm64";
+#elif defined(__arm__)
+    constexpr const char* architecture = "arm";
+#elif defined(__x86_64__)
+    constexpr const char* architecture = "x86_64";
+#elif defined(__i386__)
+    constexpr const char* architecture = "x86";
+#else
+    constexpr const char* architecture = "unknown";
+#endif
+
+    std::ostringstream out;
+    out << "cpu=" << architecture << " bits=" << (sizeof(void*) * 8);
+    return out.str();
+}
 }  // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeIsVulkanRuntimeAvailable(
     JNIEnv*, jclass) {
     return SolarLabStageController::IsVulkanRuntimeAvailable() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetCpuCapabilitySummary(
+    JNIEnv* env, jclass) {
+    const std::string value = NativeCpuCapabilitySummary();
+    return env->NewStringUTF(value.c_str());
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -356,5 +382,14 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     JNIEnv* env, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
     const std::string value = controller != nullptr ? controller->SceneSummary() : std::string("Renderer handle is null.");
+    return env->NewStringUTF(value.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetHardwareSummary(
+    JNIEnv* env, jclass, jlong handle) {
+    auto* controller = FromHandle(handle);
+    const std::string value =
+        controller != nullptr ? controller->HardwareSummary() : std::string("Renderer handle is null.");
     return env->NewStringUTF(value.c_str());
 }
