@@ -65,6 +65,12 @@ capture_smoke_artifacts() {
   adb exec-out screencap -p > "$screen_png" || true
 }
 
+pidof_or_empty() {
+  adb shell pidof "$package_id" 2>/dev/null || true
+}
+
+trap 'status=$?; if [[ "$status" -ne 0 ]]; then capture_smoke_artifacts; fi' EXIT
+
 adb wait-for-device
 adb logcat -c || true
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
@@ -86,7 +92,7 @@ echo "am_start_status=${launch_status}" >> "$process_log"
 deadline=$((SECONDS + 20))
 pid=""
 while (( SECONDS < deadline )); do
-  pid="$(adb shell pidof "$package_id" 2>/dev/null | tr -d '\r' | tr -d '\n')"
+  pid="$(pidof_or_empty | tr -d '\r' | tr -d '\n')"
   if [[ -n "$pid" ]]; then
     break
   fi
@@ -105,7 +111,7 @@ if [[ -z "$pid" ]]; then
 fi
 
 sleep "$startup_grace_seconds"
-post_grace_pid="$(adb shell pidof "$package_id" 2>/dev/null | tr -d '\r' | tr -d '\n')"
+post_grace_pid="$(pidof_or_empty | tr -d '\r' | tr -d '\n')"
 echo "pid_after_grace=${post_grace_pid:-<none>}" >> "$process_log"
 
 if [[ "${artifact_mode}" == "always" ]]; then
