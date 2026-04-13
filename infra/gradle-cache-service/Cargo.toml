@@ -1,0 +1,18 @@
+[package]
+name = "solarlab-gradle-cache-service"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+aws-config = { version = "1.8.8", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+aws-credential-types = "1.2.8"
+aws-sdk-s3 = { version = "1.102.0", default-features = false, features = ["rt-tokio", "rustls"] }
+axum = { version = "0.8.6", default-features = false, features = ["http1", "tokio", "tracing"] }
+base64 = "0.22.1"
+bytes = "1.10.1"
+http = "1.3.1"
+tokio = { version = "1.48.0", features = ["fs", "macros", "rt-multi-thread", "signal", "sync"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }

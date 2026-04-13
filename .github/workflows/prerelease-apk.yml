@@ -85,6 +85,7 @@ env:
   SCCACHE_REGION: auto
   SCCACHE_S3_USE_SSL: "true"
   SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
+
 jobs:
   build-prerelease-apk:
     name: Build internal dev preview APK
@@ -101,13 +102,14 @@ jobs:
       launch_smoke_outcome: ${{ steps.launch_smoke.outcome }}
       changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
       changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || (vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"')) }}
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -127,19 +129,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          checkout_ref='${{ inputs.ref != '' && inputs.ref || github.ref_name }}'
-          gradle_cache_push='false'
-          gradle_cache_read_only='true'
-          case "$checkout_ref" in
-            main|refs/heads/main|release/*|refs/heads/release/*|validation/*|refs/heads/validation/*)
-              gradle_cache_push='true'
-              gradle_cache_read_only='false'
-              ;;
-          esac
           echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "gradle_cache_push=${gradle_cache_push}" >> "$GITHUB_OUTPUT"
-          echo "gradle_cache_read_only=${gradle_cache_read_only}" >> "$GITHUB_OUTPUT"
-          echo "GRADLE_REMOTE_CACHE_PUSH=${gradle_cache_push}" >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v5
         with:
@@ -148,7 +138,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: ${{ steps.git_meta.outputs.gradle_cache_read_only == 'true' }}
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
           add-job-summary: on-failure
           gradle-home-cache-excludes: |
@@ -174,7 +164,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            ~/.android/avd
+            ~/.android/avd/*
             ~/.android/adb*
           key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
 
@@ -341,9 +331,10 @@ jobs:
           arch: x86_64
           profile: pixel_7
           target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
           emulator-boot-timeout: 1200
           force-avd-creation: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_prerelease_android_launch_smoke.sh "${{ steps.meta.outputs.safe_version }}" "${{ steps.meta.outputs.package_label }}"
         env:
@@ -395,9 +386,11 @@ jobs:
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble APK: \`${{ steps.assemble_prerelease.outputs.assemble_seconds || 'n/a' }}s\`"
             echo "- lane total (including emulator + launch smoke): \`${lane_total}s\`"
-            echo "- remote gradle cache push: \`${{ steps.git_meta.outputs.gradle_cache_push }}\`"
             echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
+            echo "- avd cache key: \`avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}\`"
+            echo "- avd cache result: \`${{ inputs.emulator_boot_strategy == 'snapshot-cache' && (steps.avd-cache.outputs.cache-hit == 'true' && 'hit' || 'miss') || 'skipped' }}\`"
+            echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Emit prerelease sccache stats
@@ -625,8 +618,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          repository: ${{ github.repository }}
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
 
       - name: Build prerelease summary payload
         shell: bash
