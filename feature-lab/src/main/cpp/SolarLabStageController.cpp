@@ -436,6 +436,7 @@ void SolarLabStageController::SubmitScene(
     double sceneOriginY,
     double sceneOriginZ,
     std::vector<double> authoritativePositionsM,
+    std::vector<double> authoritativeSourceMassesKg,
     std::vector<float> authoritativeRadiiM,
     std::vector<int32_t> authoritativeColorsArgb,
     std::vector<int32_t> authoritativeKinds,
@@ -444,10 +445,14 @@ void SolarLabStageController::SubmitScene(
     std::vector<int32_t> tracerNearColorsArgb,
     std::vector<int32_t> tracerNearKinds,
     std::vector<double> tracerMediumPositionsM,
+    std::vector<double> tracerMediumVelocitiesMps,
+    std::vector<int32_t> tracerMediumStableIds,
     std::vector<float> tracerMediumRadiiM,
     std::vector<int32_t> tracerMediumColorsArgb,
     std::vector<int32_t> tracerMediumKinds,
     std::vector<double> tracerFarPositionsM,
+    std::vector<double> tracerFarVelocitiesMps,
+    std::vector<int32_t> tracerFarStableIds,
     std::vector<float> tracerFarRadiiM,
     std::vector<int32_t> tracerFarColorsArgb,
     std::vector<int32_t> tracerFarKinds,
@@ -463,6 +468,7 @@ void SolarLabStageController::SubmitScene(
         sceneOriginY,
         sceneOriginZ,
         std::move(authoritativePositionsM),
+        std::move(authoritativeSourceMassesKg),
         std::move(authoritativeRadiiM),
         std::move(authoritativeColorsArgb),
         std::move(authoritativeKinds),
@@ -471,10 +477,14 @@ void SolarLabStageController::SubmitScene(
         std::move(tracerNearColorsArgb),
         std::move(tracerNearKinds),
         std::move(tracerMediumPositionsM),
+        std::move(tracerMediumVelocitiesMps),
+        std::move(tracerMediumStableIds),
         std::move(tracerMediumRadiiM),
         std::move(tracerMediumColorsArgb),
         std::move(tracerMediumKinds),
         std::move(tracerFarPositionsM),
+        std::move(tracerFarVelocitiesMps),
+        std::move(tracerFarStableIds),
         std::move(tracerFarRadiiM),
         std::move(tracerFarColorsArgb),
         std::move(tracerFarKinds),
@@ -818,6 +828,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     }
 
     std::vector<double> authoritativePositionsM;
+    std::vector<double> authoritativeSourceMassesKg;
     std::vector<float> authoritativeRadiiM;
     std::vector<int32_t> authoritativeColorsArgb;
     std::vector<int32_t> authoritativeKinds;
@@ -826,10 +837,14 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::vector<int32_t> tracerNearColorsArgb;
     std::vector<int32_t> tracerNearKinds;
     std::vector<double> tracerMediumPositionsM;
+    std::vector<double> tracerMediumVelocitiesMps;
+    std::vector<int32_t> tracerMediumStableIds;
     std::vector<float> tracerMediumRadiiM;
     std::vector<int32_t> tracerMediumColorsArgb;
     std::vector<int32_t> tracerMediumKinds;
     std::vector<double> tracerFarPositionsM;
+    std::vector<double> tracerFarVelocitiesMps;
+    std::vector<int32_t> tracerFarStableIds;
     std::vector<float> tracerFarRadiiM;
     std::vector<int32_t> tracerFarColorsArgb;
     std::vector<int32_t> tracerFarKinds;
@@ -866,6 +881,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             authoritativePositionsM.push_back(body->position_from_origin_m.x);
             authoritativePositionsM.push_back(body->position_from_origin_m.y);
             authoritativePositionsM.push_back(body->position_from_origin_m.z);
+            authoritativeSourceMassesKg.push_back(0.0);
             authoritativeRadiiM.push_back(body->radius_m * (selected ? 1.18f : 1.0f));
             authoritativeColorsArgb.push_back(static_cast<int32_t>(PackArgb(body->albedo)));
             authoritativeKinds.push_back(static_cast<int32_t>(kind));
@@ -902,12 +918,16 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             };
             auto appendMedium = [&]() {
                 tracerMediumPositionsM.insert(tracerMediumPositionsM.end(), {position.x, position.y, position.z});
+                tracerMediumVelocitiesMps.insert(tracerMediumVelocitiesMps.end(), {0.0, 0.0, 0.0});
+                tracerMediumStableIds.push_back(static_cast<int32_t>(index + 1U));
                 tracerMediumRadiiM.push_back(static_cast<float>(tracer->size_px));
                 tracerMediumColorsArgb.push_back(colorArgb);
                 tracerMediumKinds.push_back(static_cast<int32_t>(kKindProbe));
             };
             auto appendFar = [&]() {
                 tracerFarPositionsM.insert(tracerFarPositionsM.end(), {position.x, position.y, position.z});
+                tracerFarVelocitiesMps.insert(tracerFarVelocitiesMps.end(), {0.0, 0.0, 0.0});
+                tracerFarStableIds.push_back(static_cast<int32_t>(index + 1U));
                 tracerFarRadiiM.push_back(static_cast<float>(std::max(1.0f, tracer->size_px * 0.75f)));
                 tracerFarColorsArgb.push_back(colorArgb);
                 tracerFarKinds.push_back(static_cast<int32_t>(kKindProbe));
@@ -978,6 +998,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         runtimeScene_.sceneOriginY,
         runtimeScene_.sceneOriginZ,
         std::move(authoritativePositionsM),
+        std::move(authoritativeSourceMassesKg),
         std::move(authoritativeRadiiM),
         std::move(authoritativeColorsArgb),
         std::move(authoritativeKinds),
@@ -986,10 +1007,14 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         std::move(tracerNearColorsArgb),
         std::move(tracerNearKinds),
         std::move(tracerMediumPositionsM),
+        std::move(tracerMediumVelocitiesMps),
+        std::move(tracerMediumStableIds),
         std::move(tracerMediumRadiiM),
         std::move(tracerMediumColorsArgb),
         std::move(tracerMediumKinds),
         std::move(tracerFarPositionsM),
+        std::move(tracerFarVelocitiesMps),
+        std::move(tracerFarStableIds),
         std::move(tracerFarRadiiM),
         std::move(tracerFarColorsArgb),
         std::move(tracerFarKinds),
