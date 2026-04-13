@@ -210,6 +210,13 @@ internal fun StageFirstRuntimeMirrorExperience(
             }
         }
 
+        fun focusAndFrameRuntimeBody(bodyId: String) {
+            selectedBodyId = bodyId
+            observerMode = ObserverMode.FOLLOW_SELECTED
+            renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
+            syncObserver(bodyId, ObserverMode.FOLLOW_SELECTED)
+        }
+
         BackHandler(enabled = searchVisible || debugVisible) {
             when {
                 searchVisible -> searchVisible = false
@@ -515,10 +522,8 @@ internal fun StageFirstRuntimeMirrorExperience(
                 selectedBodyId = selectedBodyId,
                 onDismiss = { searchVisible = false },
                 onSelectBody = { bodyId ->
-                    selectedBodyId = bodyId
-                    observerMode = ObserverMode.FOLLOW_SELECTED
                     searchVisible = false
-                    syncObserver(bodyId, observerMode)
+                    focusAndFrameRuntimeBody(bodyId)
                 },
             )
         }

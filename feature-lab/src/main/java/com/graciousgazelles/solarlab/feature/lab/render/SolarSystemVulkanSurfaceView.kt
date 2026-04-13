@@ -254,6 +254,22 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         orbitGestureState = null
     }
 
+    override fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {
+        selectedBodyId = bodyId
+        this.observerMode = observerMode
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
+            SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, observerMode)
+            renderLatestScene()
+            return
+        }
+        latestScene?.let { frame ->
+            applyObserverTargetIfNeeded(frame, snapToSuggestedRadius = observerMode != ObserverMode.FREE)
+            packetDirty = true
+            renderLatestScene()
+        }
+    }
+
     override fun setSelectedBodyId(bodyId: String?) {
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
