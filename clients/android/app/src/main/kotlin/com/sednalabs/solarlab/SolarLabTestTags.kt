@@ -30,6 +30,9 @@ object SolarLabTestTags {
     const val STAGE_FIRST_SEARCH_FIELD = "stage_first.search.field"
     const val STAGE_FIRST_RUNTIME_SANDBOX_BUTTON = "stage_first.runtime.sandbox_button"
     const val STAGE_FIRST_RUNTIME_REFRESH_BUTTON = "stage_first.runtime.refresh_button"
+    const val STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON = "stage_first.camera.zoom_in_button"
+    const val STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON = "stage_first.camera.zoom_out_button"
+    const val STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON = "stage_first.camera.frame_selected_button"
 
     const val FOCUS_CATALOG_SEARCH_FIELD = "shell.focus_catalog_search_field"
     const val FOCUS_BODY_FIELD = "shell.focus_body_field"

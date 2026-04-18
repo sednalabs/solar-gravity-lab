@@ -62,6 +62,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.resetCamera()
     }
 
+    fun zoomBy(scaleFactor: Float) {
+        activeSurface?.zoomBy(scaleFactor)
+    }
+
     fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {
         selectedBodyId = bodyId
         this.observerMode = observerMode

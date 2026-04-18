@@ -30,9 +30,13 @@ class StageFirstSearchFocusInstrumentationTest {
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("earth")
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
         }
         composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
 

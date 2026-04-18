@@ -2,11 +2,13 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import org.junit.Assert.assertNotNull
@@ -50,6 +52,8 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         assertTrue(
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
         )
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
@@ -62,6 +66,32 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             "Runtime mirror render host should have a measured size",
             requireNotNull(hostView).width > 0 && hostView.height > 0,
         )
+
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("earth")
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                    .assertTextContains("Earth")
+            }.isSuccess
+        }
+
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
