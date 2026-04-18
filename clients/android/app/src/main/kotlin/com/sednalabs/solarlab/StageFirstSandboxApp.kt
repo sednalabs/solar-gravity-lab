@@ -83,6 +83,7 @@ import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostVie
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.sqrt
 
@@ -118,6 +119,11 @@ private enum class StageFirstExperienceMode {
 internal data class PendingSemanticAction(
     val token: Long,
     val action: SolarLabSemanticAction,
+)
+
+internal data class SearchFocusFeedback(
+    val token: Long,
+    val message: String,
 )
 
 @Composable
@@ -211,6 +217,16 @@ private fun StageFirstSandboxLocalExperience(
         var bodyEditorState by remember { mutableStateOf<BodyEditorDialogState?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
+        var nextSearchFocusFeedbackToken by remember { mutableStateOf(0L) }
+        var searchFocusFeedback by remember { mutableStateOf<SearchFocusFeedback?>(null) }
+
+        fun showSearchFocusFeedback(bodyLabel: String) {
+            nextSearchFocusFeedbackToken += 1L
+            searchFocusFeedback = SearchFocusFeedback(
+                token = nextSearchFocusFeedbackToken,
+                message = "Framed $bodyLabel",
+            )
+        }
 
         val frameListener = remember {
             object : LabFrameListener {
@@ -344,6 +360,14 @@ private fun StageFirstSandboxLocalExperience(
             )
         }
 
+        LaunchedEffect(searchFocusFeedback?.token) {
+            val feedback = searchFocusFeedback ?: return@LaunchedEffect
+            delay(2200)
+            if (searchFocusFeedback?.token == feedback.token) {
+                searchFocusFeedback = null
+            }
+        }
+
         LaunchedEffect(latestFrame, selectedBodyId) {
             if (selectedBodyId != null && latestFrame?.snapshot?.bodies?.none { it.id == selectedBodyId } == true) {
                 selectedBodyId = null
@@ -365,6 +389,10 @@ private fun StageFirstSandboxLocalExperience(
                     observerMode = ObserverMode.FOLLOW_SELECTED
                     searchVisible = false
                     debugVisible = false
+                    latestFrame?.snapshot?.bodies
+                        ?.firstOrNull { it.id == resolvedBodyId }
+                        ?.name
+                        ?.let(::showSearchFocusFeedback)
                     appliedSemanticActionToken = pendingSemanticAction.token
                 }
 
@@ -473,6 +501,7 @@ private fun StageFirstSandboxLocalExperience(
             StageOverlay(
                 timelineText = timelineText,
                 selectionCard = selectionCard,
+                focusFeedbackMessage = searchFocusFeedback?.message,
                 backendStatus = backendStatus,
                 interactionHintText = interactionHintText,
                 collisionMode = collisionMode,
@@ -580,8 +609,9 @@ private fun StageFirstSandboxLocalExperience(
                 frame = frame,
                 selectedBodyId = selectedBodyId,
                 onDismiss = { searchVisible = false },
-                onSelectBody = { bodyId ->
+                onSelectBody = { bodyId, bodyName ->
                     focusAndFrameBody(bodyId)
+                    showSearchFocusFeedback(bodyName)
                     searchVisible = false
                 },
             )
@@ -699,6 +729,7 @@ private fun StageFirstSandboxLocalExperience(
 private fun BoxScope.StageOverlay(
     timelineText: String,
     selectionCard: SelectionCardText,
+    focusFeedbackMessage: String?,
     backendStatus: String,
     interactionHintText: String,
     collisionMode: CollisionMode,
@@ -824,6 +855,10 @@ private fun BoxScope.StageOverlay(
                         color = TimelineText,
                         style = MaterialTheme.typography.labelLarge,
                     )
+                    focusFeedbackMessage?.let { message ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SearchFocusFeedbackChip(message = message)
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = selectionCard.title,
@@ -862,6 +897,10 @@ private fun BoxScope.StageOverlay(
                             color = TimelineText,
                             style = MaterialTheme.typography.labelLarge,
                         )
+                        focusFeedbackMessage?.let { message ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SearchFocusFeedbackChip(message = message)
+                        }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = selectionCard.title,
@@ -1011,7 +1050,7 @@ private fun SearchDialog(
     frame: LabFrame?,
     selectedBodyId: String?,
     onDismiss: () -> Unit,
-    onSelectBody: (String) -> Unit,
+    onSelectBody: (String, String) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val bodies = remember(frame, query) {
@@ -1099,7 +1138,7 @@ private fun SearchDialog(
                                     )
                                 }
                                 TextButton(
-                                    onClick = { onSelectBody(body.id) },
+                                    onClick = { onSelectBody(body.id, body.name) },
                                     modifier = Modifier.testTag(SolarLabTestTags.stageFirstSearchFocusTag(body.id)),
                                 ) {
                                     Text("Focus")
@@ -1111,6 +1150,28 @@ private fun SearchDialog(
             }
         },
     )
+}
+
+@Composable
+internal fun SearchFocusFeedbackChip(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FOCUS_FEEDBACK),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Text(
+            text = message,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
 }
 
 @Composable

@@ -46,6 +46,8 @@ class StageFirstSearchFocusInstrumentationTest {
                     .assertTextContains("Earth")
             }.isSuccess
         }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FOCUS_FEEDBACK).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FOCUS_FEEDBACK).assertTextContains("Earth")
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL).assertIsDisplayed()
