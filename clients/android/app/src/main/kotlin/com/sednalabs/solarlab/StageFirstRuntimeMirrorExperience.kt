@@ -96,6 +96,7 @@ private data class RuntimeSelectionCard(
 internal fun StageFirstRuntimeMirrorExperience(
     runtimeFacade: RuntimeFacade?,
     ensureRuntimeStarted: (() -> Unit)?,
+    pendingSemanticAction: PendingSemanticAction?,
     onReturnToSandbox: () -> Unit,
 ) {
     SolarLabTheme {
@@ -129,6 +130,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         var debugVisible by rememberSaveable { mutableStateOf(false) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive runtime mirror.") }
+        var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
 
         val mirrorScene = remember(uiState.renderFrame) {
             uiState.renderFrame?.toRuntimeMirrorScene()
@@ -240,6 +242,34 @@ internal fun StageFirstRuntimeMirrorExperience(
             if (selectedBodyId != null && searchableBodies.none { body -> body.id == selectedBodyId }) {
                 selectedBodyId = null
                 observerMode = ObserverMode.FREE
+            }
+        }
+
+        LaunchedEffect(pendingSemanticAction?.token, searchableBodies, renderHostView) {
+            if (pendingSemanticAction?.token == appliedSemanticActionToken) {
+                return@LaunchedEffect
+            }
+            when (val action = pendingSemanticAction?.action) {
+                is SolarLabSemanticAction.FocusBody -> {
+                    val resolvedBodyId = resolveRuntimeSemanticBodyId(
+                        bodies = searchableBodies,
+                        bodyQuery = action.bodyQuery,
+                    ) ?: return@LaunchedEffect
+                    selectedBodyId = resolvedBodyId
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    searchVisible = false
+                    debugVisible = false
+                    syncObserver(resolvedBodyId, observerMode)
+                    appliedSemanticActionToken = pendingSemanticAction.token
+                }
+
+                SolarLabSemanticAction.ResetCamera -> {
+                    renderHostView ?: return@LaunchedEffect
+                    renderHostView?.resetCamera()
+                    appliedSemanticActionToken = pendingSemanticAction.token
+                }
+
+                else -> Unit
             }
         }
 
@@ -935,6 +965,20 @@ private fun inferRuntimeHostBodyId(bodyId: String): String? = when (bodyId.lower
     "io", "europa", "ganymede", "callisto" -> "jupiter"
     "titan", "enceladus", "rhea", "dione", "iapetus", "mimas", "tethys" -> "saturn"
     else -> null
+}
+
+private fun resolveRuntimeSemanticBodyId(
+    bodies: List<RuntimeMirrorBody>,
+    bodyQuery: String,
+): String? {
+    val normalizedQuery = bodyQuery.trim().lowercase(Locale.US)
+    if (normalizedQuery.isEmpty()) {
+        return null
+    }
+    return bodies.firstOrNull { body ->
+        body.id.lowercase(Locale.US) == normalizedQuery ||
+            body.displayName.lowercase(Locale.US) == normalizedQuery
+    }?.id
 }
 
 private fun argbFrom(

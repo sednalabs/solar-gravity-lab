@@ -82,6 +82,7 @@ import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostVie
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
+import kotlinx.coroutines.flow.Flow
 import kotlin.math.sqrt
 
 private val StageBackdrop = Color(0xFF02070D)
@@ -111,17 +112,53 @@ private enum class StageFirstExperienceMode {
     RUNTIME_MIRROR,
 }
 
+internal data class PendingSemanticAction(
+    val token: Long,
+    val action: SolarLabSemanticAction,
+)
+
 @Composable
 internal fun StageFirstSandboxApp(
     runtimeFacade: RuntimeFacade? = null,
     ensureRuntimeStarted: (() -> Unit)? = null,
+    semanticActions: Flow<SolarLabSemanticAction> = SolarLabSemanticActionBridge.commands,
 ) {
     var experienceMode by rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
+    var nextSemanticToken by remember { mutableStateOf(0L) }
+    var pendingSemanticAction by remember { mutableStateOf<PendingSemanticAction?>(null) }
     val runtimeMirrorAvailable = runtimeFacade != null && ensureRuntimeStarted != null
+
+    LaunchedEffect(semanticActions, runtimeMirrorAvailable) {
+        semanticActions.collect { action ->
+            when (action) {
+                SolarLabSemanticAction.OpenImmersive -> {
+                    if (runtimeMirrorAvailable) {
+                        experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR
+                    }
+                    SolarLabSemanticActionBridge.clearPendingReplay()
+                }
+
+                SolarLabSemanticAction.ReturnToSandbox -> {
+                    experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX
+                    SolarLabSemanticActionBridge.clearPendingReplay()
+                }
+
+                else -> {
+                    nextSemanticToken += 1L
+                    pendingSemanticAction = PendingSemanticAction(
+                        token = nextSemanticToken,
+                        action = action,
+                    )
+                    SolarLabSemanticActionBridge.clearPendingReplay()
+                }
+            }
+        }
+    }
 
     when {
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
             StageFirstSandboxLocalExperience(
+                pendingSemanticAction = pendingSemanticAction,
                 onEnterRuntimeMirror = if (runtimeMirrorAvailable) {
                     { experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR }
                 } else {
@@ -133,6 +170,7 @@ internal fun StageFirstSandboxApp(
         else -> StageFirstRuntimeMirrorExperience(
             runtimeFacade = runtimeFacade,
             ensureRuntimeStarted = ensureRuntimeStarted,
+            pendingSemanticAction = pendingSemanticAction,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
         )
     }
@@ -147,6 +185,7 @@ internal fun StageFirstSandboxApp(
  */
 @Composable
 private fun StageFirstSandboxLocalExperience(
+    pendingSemanticAction: PendingSemanticAction?,
     onEnterRuntimeMirror: (() -> Unit)?,
 ) {
     SolarLabTheme {
@@ -167,6 +206,7 @@ private fun StageFirstSandboxLocalExperience(
         var pendingAddDraft by remember { mutableStateOf<EditableBodyDraft?>(null) }
         var bodyEditorState by remember { mutableStateOf<BodyEditorDialogState?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
+        var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
 
         val frameListener = remember {
             object : LabFrameListener {
@@ -297,6 +337,33 @@ private fun StageFirstSandboxLocalExperience(
             if (selectedBodyId != null && latestFrame?.snapshot?.bodies?.none { it.id == selectedBodyId } == true) {
                 selectedBodyId = null
                 observerMode = ObserverMode.FREE
+            }
+        }
+
+        LaunchedEffect(pendingSemanticAction?.token, latestFrame, renderHostView) {
+            if (pendingSemanticAction?.token == appliedSemanticActionToken) {
+                return@LaunchedEffect
+            }
+            when (val action = pendingSemanticAction?.action) {
+                is SolarLabSemanticAction.FocusBody -> {
+                    val resolvedBodyId = resolveSandboxSemanticBodyId(
+                        frame = latestFrame,
+                        bodyQuery = action.bodyQuery,
+                    ) ?: return@LaunchedEffect
+                    selectedBodyId = resolvedBodyId
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    searchVisible = false
+                    debugVisible = false
+                    appliedSemanticActionToken = pendingSemanticAction.token
+                }
+
+                SolarLabSemanticAction.ResetCamera -> {
+                    renderHostView ?: return@LaunchedEffect
+                    renderHostView?.resetCamera()
+                    appliedSemanticActionToken = pendingSemanticAction.token
+                }
+
+                else -> Unit
             }
         }
 
@@ -1546,6 +1613,16 @@ private fun BodyCategory.prettyCategoryLabel(): String = when (this) {
     BodyCategory.COMET -> "Comet"
     BodyCategory.TEST_OBJECT -> "Test object"
     BodyCategory.PROBE -> "Probe"
+}
+
+private fun resolveSandboxSemanticBodyId(frame: LabFrame?, bodyQuery: String): String? {
+    val normalizedQuery = bodyQuery.trim().lowercase()
+    if (normalizedQuery.isEmpty()) {
+        return null
+    }
+    return frame?.snapshot?.bodies?.firstOrNull { body ->
+        body.id.lowercase() == normalizedQuery || body.name.lowercase() == normalizedQuery
+    }?.id
 }
 
 private fun BodyState.prettyRoleLabel(): String = gravitationalRole.prettyRoleLabel()
