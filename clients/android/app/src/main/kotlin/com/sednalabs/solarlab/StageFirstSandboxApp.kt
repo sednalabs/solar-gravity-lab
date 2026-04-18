@@ -1738,7 +1738,7 @@ private fun resolveSandboxSemanticBodyId(frame: LabFrame?, bodyQuery: String): S
         return null
     }
     return frame?.snapshot?.bodies?.firstOrNull { body ->
-        body.id.lowercase() == normalizedQuery || body.name.lowercase() == normalizedQuery
+        body.id.lowercase(java.util.Locale.US) == normalizedQuery || body.name.lowercase(java.util.Locale.US) == normalizedQuery
     }?.id
 }
 
