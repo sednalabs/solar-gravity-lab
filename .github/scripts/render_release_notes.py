@@ -119,7 +119,7 @@ def classify_commit(paths: tuple[str, ...]) -> str:
 
     if has_product:
         return "product"
-    if has_automation and not any(path_matches(path, PRODUCT_PREFIXES) for path in non_docs_paths):
+    if has_automation:
         return "automation"
     if has_docs and not non_docs_paths:
         return "docs"
