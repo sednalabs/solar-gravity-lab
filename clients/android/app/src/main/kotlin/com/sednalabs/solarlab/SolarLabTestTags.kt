@@ -22,8 +22,17 @@ object SolarLabTestTags {
     const val STAGE_FIRST_SEARCH_BUTTON = "stage_first.search_button"
     const val STAGE_FIRST_DEBUG_BUTTON = "stage_first.debug_button"
     const val STAGE_FIRST_ADD_OBJECT_BUTTON = "stage_first.add_object_button"
+    const val STAGE_FIRST_SELECTION_PANEL = "stage_first.selection_panel"
+    const val STAGE_FIRST_SELECTION_TITLE = "stage_first.selection.title"
+    const val STAGE_FIRST_STATUS_PANEL = "stage_first.status_panel"
+    const val STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON = "stage_first.immersive.confirm_button"
+    const val STAGE_FIRST_IMMERSIVE_CANCEL_BUTTON = "stage_first.immersive.cancel_button"
+    const val STAGE_FIRST_SEARCH_FIELD = "stage_first.search.field"
     const val STAGE_FIRST_RUNTIME_SANDBOX_BUTTON = "stage_first.runtime.sandbox_button"
     const val STAGE_FIRST_RUNTIME_REFRESH_BUTTON = "stage_first.runtime.refresh_button"
+    const val STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON = "stage_first.camera.zoom_in_button"
+    const val STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON = "stage_first.camera.zoom_out_button"
+    const val STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON = "stage_first.camera.frame_selected_button"
 
     const val FOCUS_CATALOG_SEARCH_FIELD = "shell.focus_catalog_search_field"
     const val FOCUS_BODY_FIELD = "shell.focus_body_field"
@@ -64,6 +73,8 @@ object SolarLabTestTags {
     fun focusCatalogFocusPresetTag(bodyId: String): String = "shell.focus_catalog_focus_preset.$bodyId"
 
     fun focusCatalogSpawnPresetTag(bodyId: String): String = "shell.focus_catalog_spawn_preset.$bodyId"
+
+    fun stageFirstSearchFocusTag(bodyId: String): String = "stage_first.search.focus.$bodyId"
 
     fun trackedOrbitLimitTag(limit: Int): String = "shell.tracked_orbit_limit.$limit"
 }

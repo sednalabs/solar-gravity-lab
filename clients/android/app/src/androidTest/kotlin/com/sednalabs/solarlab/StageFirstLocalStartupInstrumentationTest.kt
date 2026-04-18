@@ -31,9 +31,9 @@ class StageFirstLocalStartupInstrumentationTest {
         assertTrue(composeRule.onAllNodesWithText("Add object").fetchSemanticsNodes().isNotEmpty())
 
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            assertTrue(composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isNotEmpty())
+            assertTrue(composeRule.onAllNodesWithText("Immersive").fetchSemanticsNodes().isNotEmpty())
         } else {
-            assertTrue(composeRule.onAllNodesWithText("Runtime").fetchSemanticsNodes().isEmpty())
+            assertTrue(composeRule.onAllNodesWithText("Immersive").fetchSemanticsNodes().isEmpty())
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {

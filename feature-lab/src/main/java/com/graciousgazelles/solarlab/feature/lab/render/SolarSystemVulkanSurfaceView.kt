@@ -66,20 +66,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 if (interactionMode == SceneInteractionMode.PLACE_BODY) {
                     return false
                 }
-                val scaleFactor = detector.scaleFactor
-                if (scaleFactor <= 0f) {
-                    return false
-                }
-                if (isRuntimeBound()) {
-                    SolarLabVulkanBridge.zoomRuntimeCamera(rendererHandle, scaleFactor)
-                    renderLatestScene()
-                    return true
-                }
-                cameraState = cameraState.copy(
-                    viewRadiusM = (cameraState.viewRadiusM / scaleFactor.toDouble()).coerceIn(minViewRadiusM, maxViewRadiusM),
-                ).sanitized()
-                onCameraChanged()
-                return true
+                return zoomByInternal(detector.scaleFactor)
             }
         },
     )
@@ -222,6 +209,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         onCameraChanged()
     }
 
+    override fun zoomBy(scaleFactor: Float) {
+        zoomByInternal(scaleFactor)
+    }
+
     override fun bindRuntimeSessionHandle(sessionHandle: Long) {
         if (runtimeSessionHandle == sessionHandle) return
         runtimeSessionHandle = sessionHandle
@@ -252,6 +243,22 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         interactionMode = mode
         placementStartScreen = null
         orbitGestureState = null
+    }
+
+    override fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {
+        selectedBodyId = bodyId
+        this.observerMode = observerMode
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
+            SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, observerMode)
+            renderLatestScene()
+            return
+        }
+        latestScene?.let { frame ->
+            applyObserverTargetIfNeeded(frame, snapToSuggestedRadius = observerMode != ObserverMode.FREE)
+            packetDirty = true
+            renderLatestScene()
+        }
     }
 
     override fun setSelectedBodyId(bodyId: String?) {
@@ -408,6 +415,22 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             }
         }
         return false
+    }
+
+    private fun zoomByInternal(scaleFactor: Float): Boolean {
+        if (scaleFactor <= 0f) {
+            return false
+        }
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.zoomRuntimeCamera(rendererHandle, scaleFactor)
+            renderLatestScene()
+            return true
+        }
+        cameraState = cameraState.copy(
+            viewRadiusM = (cameraState.viewRadiusM / scaleFactor.toDouble()).coerceIn(minViewRadiusM, maxViewRadiusM),
+        ).sanitized()
+        onCameraChanged()
+        return true
     }
 
     private fun applyObserverTargetIfNeeded(

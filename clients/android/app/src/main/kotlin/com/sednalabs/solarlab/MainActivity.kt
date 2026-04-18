@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,6 +55,18 @@ class MainActivity : ComponentActivity() {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
             }
         }
+
+        handleSemanticIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSemanticIntent(intent)
+    }
+
+    private fun handleSemanticIntent(intent: Intent?) {
+        SolarLabSemanticActionBridge.parseIntent(intent)?.let(SolarLabSemanticActionBridge::submit)
     }
 }
 

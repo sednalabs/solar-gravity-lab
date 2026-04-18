@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -82,6 +83,7 @@ import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostVie
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
+import kotlinx.coroutines.flow.Flow
 import kotlin.math.sqrt
 
 private val StageBackdrop = Color(0xFF02070D)
@@ -95,6 +97,8 @@ private val SelectionText = Color(0xFFFFE8A6)
 private val HintText = Color(0xC2D8E4F5)
 private val BodyText = Color(0xD9F3F8FF)
 private val SurfaceText = Color(0xFFF4FBFF)
+
+private val StageCompactWidthBreakpoint = 720.dp
 
 private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
 private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
@@ -111,17 +115,53 @@ private enum class StageFirstExperienceMode {
     RUNTIME_MIRROR,
 }
 
+internal data class PendingSemanticAction(
+    val token: Long,
+    val action: SolarLabSemanticAction,
+)
+
 @Composable
 internal fun StageFirstSandboxApp(
     runtimeFacade: RuntimeFacade? = null,
     ensureRuntimeStarted: (() -> Unit)? = null,
+    semanticActions: Flow<SolarLabSemanticAction> = SolarLabSemanticActionBridge.commands,
 ) {
     var experienceMode by rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
+    var nextSemanticToken by remember { mutableStateOf(0L) }
+    var pendingSemanticAction by remember { mutableStateOf<PendingSemanticAction?>(null) }
     val runtimeMirrorAvailable = runtimeFacade != null && ensureRuntimeStarted != null
+
+    LaunchedEffect(semanticActions, runtimeMirrorAvailable) {
+        semanticActions.collect { action ->
+            when (action) {
+                SolarLabSemanticAction.OpenImmersive -> {
+                    if (runtimeMirrorAvailable) {
+                        experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR
+                    }
+                    SolarLabSemanticActionBridge.clearPendingReplay()
+                }
+
+                SolarLabSemanticAction.ReturnToSandbox -> {
+                    experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX
+                    SolarLabSemanticActionBridge.clearPendingReplay()
+                }
+
+                else -> {
+                    nextSemanticToken += 1L
+                    pendingSemanticAction = PendingSemanticAction(
+                        token = nextSemanticToken,
+                        action = action,
+                    )
+                    SolarLabSemanticActionBridge.clearPendingReplay()
+                }
+            }
+        }
+    }
 
     when {
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
             StageFirstSandboxLocalExperience(
+                pendingSemanticAction = pendingSemanticAction,
                 onEnterRuntimeMirror = if (runtimeMirrorAvailable) {
                     { experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR }
                 } else {
@@ -133,6 +173,7 @@ internal fun StageFirstSandboxApp(
         else -> StageFirstRuntimeMirrorExperience(
             runtimeFacade = runtimeFacade,
             ensureRuntimeStarted = ensureRuntimeStarted,
+            pendingSemanticAction = pendingSemanticAction,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
         )
     }
@@ -147,6 +188,7 @@ internal fun StageFirstSandboxApp(
  */
 @Composable
 private fun StageFirstSandboxLocalExperience(
+    pendingSemanticAction: PendingSemanticAction?,
     onEnterRuntimeMirror: (() -> Unit)?,
 ) {
     SolarLabTheme {
@@ -164,9 +206,11 @@ private fun StageFirstSandboxLocalExperience(
         var resumeSimulationAfterModalInteraction by remember { mutableStateOf(false) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
+        var immersivePromptVisible by rememberSaveable { mutableStateOf(false) }
         var pendingAddDraft by remember { mutableStateOf<EditableBodyDraft?>(null) }
         var bodyEditorState by remember { mutableStateOf<BodyEditorDialogState?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
+        var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
 
         val frameListener = remember {
             object : LabFrameListener {
@@ -214,7 +258,7 @@ private fun StageFirstSandboxLocalExperience(
             )
         }
 
-        BackHandler(enabled = searchVisible || debugVisible || pendingAddDraft != null || bodyEditorState != null) {
+        BackHandler(enabled = searchVisible || debugVisible || immersivePromptVisible || pendingAddDraft != null || bodyEditorState != null) {
             when {
                 bodyEditorState != null -> {
                     bodyEditorState = null
@@ -225,8 +269,15 @@ private fun StageFirstSandboxLocalExperience(
 
                 searchVisible -> searchVisible = false
                 pendingAddDraft != null -> cancelPendingPlacement(true)
+                immersivePromptVisible -> immersivePromptVisible = false
                 debugVisible -> debugVisible = false
             }
+        }
+
+        fun focusAndFrameBody(bodyId: String) {
+            selectedBodyId = bodyId
+            observerMode = ObserverMode.FOLLOW_SELECTED
+            renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
         }
 
         DisposableEffect(session) {
@@ -297,6 +348,33 @@ private fun StageFirstSandboxLocalExperience(
             if (selectedBodyId != null && latestFrame?.snapshot?.bodies?.none { it.id == selectedBodyId } == true) {
                 selectedBodyId = null
                 observerMode = ObserverMode.FREE
+            }
+        }
+
+        LaunchedEffect(pendingSemanticAction?.token, latestFrame, renderHostView) {
+            if (pendingSemanticAction?.token == appliedSemanticActionToken) {
+                return@LaunchedEffect
+            }
+            when (val action = pendingSemanticAction?.action) {
+                is SolarLabSemanticAction.FocusBody -> {
+                    val resolvedBodyId = resolveSandboxSemanticBodyId(
+                        frame = latestFrame,
+                        bodyQuery = action.bodyQuery,
+                    ) ?: return@LaunchedEffect
+                    selectedBodyId = resolvedBodyId
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    searchVisible = false
+                    debugVisible = false
+                    appliedSemanticActionToken = pendingSemanticAction.token
+                }
+
+                SolarLabSemanticAction.ResetCamera -> {
+                    renderHostView ?: return@LaunchedEffect
+                    renderHostView?.resetCamera()
+                    appliedSemanticActionToken = pendingSemanticAction.token
+                }
+
+                else -> Unit
             }
         }
 
@@ -411,8 +489,16 @@ private fun StageFirstSandboxLocalExperience(
                 addButtonLabel = if (pendingAddDraft == null) "Add object" else "Cancel add",
                 editButtonEnabled = selectedBodyId != null && pendingAddDraft == null,
                 authoringActive = pendingAddDraft != null,
-                modeButtonLabel = "Runtime",
-                onToggleMode = onEnterRuntimeMirror,
+                modeButtonLabel = "Immersive",
+                onToggleMode = if (onEnterRuntimeMirror != null) {
+                    {
+                        searchVisible = false
+                        debugVisible = false
+                        immersivePromptVisible = true
+                    }
+                } else {
+                    null
+                },
                 onSearch = { searchVisible = true },
                 onDebug = { debugVisible = true },
                 onAddObject = {
@@ -495,9 +581,39 @@ private fun StageFirstSandboxLocalExperience(
                 selectedBodyId = selectedBodyId,
                 onDismiss = { searchVisible = false },
                 onSelectBody = { bodyId ->
-                    selectedBodyId = bodyId
-                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    focusAndFrameBody(bodyId)
                     searchVisible = false
+                },
+            )
+        }
+
+        if (immersivePromptVisible) {
+            AlertDialog(
+                onDismissRequest = { immersivePromptVisible = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            immersivePromptVisible = false
+                            onEnterRuntimeMirror?.invoke()
+                        },
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON),
+                    ) {
+                        Text("Open immersive view")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { immersivePromptVisible = false },
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CANCEL_BUTTON),
+                    ) {
+                        Text("Stay in sandbox")
+                    }
+                },
+                title = { Text("Open immersive view?") },
+                text = {
+                    Text(
+                        "Immersive view switches from the sandbox authoring surface into the Rust-authoritative stage renderer. Sandbox remains the place for editing and quick object authoring.",
+                    )
                 },
             )
         }
@@ -619,76 +735,32 @@ private fun BoxScope.StageOverlay(
     stepQuantumLabel: String,
     speedLabel: String,
 ) {
-    Column(
-        modifier = Modifier
-            .align(Alignment.TopStart)
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            StagePanel(
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(
-                    text = timelineText,
-                    color = TimelineText,
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = selectionCard.title,
-                    color = SelectionText,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = selectionCard.detail,
-                    color = HintText,
-                    style = MaterialTheme.typography.bodyMedium,
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compactLayout = maxWidth < StageCompactWidthBreakpoint
+        val actionButtons: @Composable RowScope.() -> Unit = {
+            modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
+                StageActionButton(
+                    label = label,
+                    onClick = { onToggleMode?.invoke() },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON),
+                    secondary = true,
                 )
             }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
-                    StageActionButton(
-                        label = label,
-                        onClick = { onToggleMode?.invoke() },
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON),
-                        secondary = true,
-                    )
-                }
-                StageActionButton(
-                    label = if (searchVisible) "Searching" else "Search",
-                    onClick = onSearch,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
-                    emphasized = searchVisible,
-                    enabled = searchEnabled,
-                )
-                StageActionButton(
-                    label = if (debugVisible) "Debugging" else "Debug",
-                    onClick = onDebug,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
-                    emphasized = debugVisible,
-                )
-            }
+            StageActionButton(
+                label = if (searchVisible) "Searching" else "Search",
+                onClick = onSearch,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
+                emphasized = searchVisible,
+                enabled = searchEnabled,
+            )
+            StageActionButton(
+                label = if (debugVisible) "Debugging" else "Debug",
+                onClick = onDebug,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
+                emphasized = debugVisible,
+            )
         }
-    }
-
-    Column(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        StageControlRail {
+        val primaryControls: @Composable RowScope.() -> Unit = {
             StageActionButton(
                 label = if (isRunning) "Pause" else "Start",
                 onClick = onStartPause,
@@ -705,7 +777,7 @@ private fun BoxScope.StageOverlay(
             )
             StageActionButton(label = "Reset", onClick = onReset)
         }
-        StageControlRail {
+        val secondaryControls: @Composable RowScope.() -> Unit = {
             StageActionButton(
                 label = addButtonLabel,
                 onClick = onAddObject,
@@ -732,34 +804,141 @@ private fun BoxScope.StageOverlay(
                 enabled = !authoringActive,
             )
         }
-        StagePanel {
-            Text(
-                text = backendStatus,
-                color = TimelineText,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = interactionHintText,
-                color = HintText,
-                style = MaterialTheme.typography.bodySmall,
-            )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (compactLayout) {
+                StagePanel(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                ) {
+                    Text(
+                        text = timelineText,
+                        color = TimelineText,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = selectionCard.title,
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                        color = SelectionText,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = selectionCard.detail,
+                        color = HintText,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = actionButtons,
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    StagePanel(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                    ) {
+                        Text(
+                            text = timelineText,
+                            color = TimelineText,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = selectionCard.title,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                            color = SelectionText,
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = selectionCard.detail,
+                            color = HintText,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        content = actionButtons,
+                    )
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (compactLayout) {
+                StageControlRail(compact = true) {
+                    primaryControls()
+                    secondaryControls()
+                }
+            } else {
+                StageControlRail(content = primaryControls)
+                StageControlRail(content = secondaryControls)
+            }
+            StagePanel(
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+            ) {
+                Text(
+                    text = backendStatus,
+                    color = TimelineText,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = interactionHintText,
+                    color = HintText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
 
 @Composable
-internal fun StageControlRail(content: @Composable RowScope.() -> Unit) {
+internal fun StageControlRail(
+    compact: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
     Surface(
         color = ControlRail,
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(if (compact) 18.dp else 22.dp),
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp, vertical = 10.dp),
+                .padding(
+                    horizontal = if (compact) 8.dp else 10.dp,
+                    vertical = if (compact) 8.dp else 10.dp,
+                ),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content,
@@ -861,7 +1040,9 @@ private fun SearchDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD),
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
@@ -917,7 +1098,10 @@ private fun SearchDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                TextButton(onClick = { onSelectBody(body.id) }) {
+                                TextButton(
+                                    onClick = { onSelectBody(body.id) },
+                                    modifier = Modifier.testTag(SolarLabTestTags.stageFirstSearchFocusTag(body.id)),
+                                ) {
                                     Text("Focus")
                                 }
                             }
@@ -1546,6 +1730,16 @@ private fun BodyCategory.prettyCategoryLabel(): String = when (this) {
     BodyCategory.COMET -> "Comet"
     BodyCategory.TEST_OBJECT -> "Test object"
     BodyCategory.PROBE -> "Probe"
+}
+
+private fun resolveSandboxSemanticBodyId(frame: LabFrame?, bodyQuery: String): String? {
+    val normalizedQuery = bodyQuery.trim().lowercase(java.util.Locale.US)
+    if (normalizedQuery.isEmpty()) {
+        return null
+    }
+    return frame?.snapshot?.bodies?.firstOrNull { body ->
+        body.id.lowercase(java.util.Locale.US) == normalizedQuery || body.name.lowercase(java.util.Locale.US) == normalizedQuery
+    }?.id
 }
 
 private fun BodyState.prettyRoleLabel(): String = gravitationalRole.prettyRoleLabel()
