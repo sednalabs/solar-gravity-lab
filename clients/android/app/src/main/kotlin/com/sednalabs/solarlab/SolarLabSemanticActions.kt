@@ -50,7 +50,7 @@ internal object SolarLabSemanticActionBridge {
         if (!semanticActionsEnabled() || action != INTENT_ACTION) {
             return null
         }
-        return when (command?.trim()?.lowercase().orEmpty()) {
+        return when (command?.trim()?.lowercase(java.util.Locale.US).orEmpty()) {
             "focus_body" -> bodyQuery
                 ?.trim()
                 ?.takeIf(String::isNotEmpty)
