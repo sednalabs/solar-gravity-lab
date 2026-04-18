@@ -1733,7 +1733,7 @@ private fun BodyCategory.prettyCategoryLabel(): String = when (this) {
 }
 
 private fun resolveSandboxSemanticBodyId(frame: LabFrame?, bodyQuery: String): String? {
-    val normalizedQuery = bodyQuery.trim().lowercase()
+    val normalizedQuery = bodyQuery.trim().lowercase(java.util.Locale.US)
     if (normalizedQuery.isEmpty()) {
         return null
     }
