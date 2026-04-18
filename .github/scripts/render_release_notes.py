@@ -105,7 +105,7 @@ def normalize_subject(subject: str) -> str:
 
 
 def path_matches(path: str, prefixes: Iterable[str]) -> bool:
-    return any(path == prefix or path.startswith(prefix) for prefix in prefixes)
+    return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in prefixes)
 
 
 def classify_commit(paths: tuple[str, ...]) -> str:
