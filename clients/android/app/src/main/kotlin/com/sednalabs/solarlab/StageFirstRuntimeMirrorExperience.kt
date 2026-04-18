@@ -70,6 +70,7 @@ import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
@@ -138,6 +139,16 @@ internal fun StageFirstRuntimeMirrorExperience(
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive runtime mirror.") }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
+        var nextSearchFocusFeedbackToken by remember { mutableStateOf(0L) }
+        var searchFocusFeedback by remember { mutableStateOf<SearchFocusFeedback?>(null) }
+
+        fun showSearchFocusFeedback(bodyLabel: String) {
+            nextSearchFocusFeedbackToken += 1L
+            searchFocusFeedback = SearchFocusFeedback(
+                token = nextSearchFocusFeedbackToken,
+                message = "Framed $bodyLabel",
+            )
+        }
 
         val mirrorScene = remember(uiState.renderFrame) {
             uiState.renderFrame?.toRuntimeMirrorScene()
@@ -249,6 +260,14 @@ internal fun StageFirstRuntimeMirrorExperience(
             selectedBodyId = uiState.focusedBodyId
         }
 
+        LaunchedEffect(searchFocusFeedback?.token) {
+            val feedback = searchFocusFeedback ?: return@LaunchedEffect
+            delay(2200)
+            if (searchFocusFeedback?.token == feedback.token) {
+                searchFocusFeedback = null
+            }
+        }
+
         LaunchedEffect(uiState.observerModeCode) {
             observerMode = observerModeFromRuntimeCode(uiState.observerModeCode)
         }
@@ -275,6 +294,9 @@ internal fun StageFirstRuntimeMirrorExperience(
                     searchVisible = false
                     debugVisible = false
                     syncObserver(resolvedBodyId, observerMode)
+                    searchableBodies.firstOrNull { body -> body.id == resolvedBodyId }
+                        ?.displayName
+                        ?.let(::showSearchFocusFeedback)
                     appliedSemanticActionToken = pendingSemanticAction.token
                 }
 
@@ -514,6 +536,16 @@ internal fun StageFirstRuntimeMirrorExperience(
                 }
             }
 
+            searchFocusFeedback?.let { feedback ->
+                SearchFocusFeedbackChip(
+                    message = feedback.message,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                )
+            }
+
             Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -627,9 +659,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                 bodies = searchableBodies,
                 selectedBodyId = selectedBodyId,
                 onDismiss = { searchVisible = false },
-                onSelectBody = { bodyId ->
+                onSelectBody = { bodyId, bodyName ->
                     searchVisible = false
                     focusAndFrameRuntimeBody(bodyId)
+                    showSearchFocusFeedback(bodyName)
                 },
             )
         }
@@ -655,7 +688,7 @@ private fun RuntimeMirrorSearchDialog(
     bodies: List<RuntimeMirrorBody>,
     selectedBodyId: String?,
     onDismiss: () -> Unit,
-    onSelectBody: (String) -> Unit,
+    onSelectBody: (String, String) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val normalizedQuery = query.trim().lowercase(Locale.US)
@@ -741,7 +774,7 @@ private fun RuntimeMirrorSearchDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                TextButton(onClick = { onSelectBody(body.id) }) {
+                                TextButton(onClick = { onSelectBody(body.id, body.displayName) }) {
                                     Text("Focus")
                                 }
                             }

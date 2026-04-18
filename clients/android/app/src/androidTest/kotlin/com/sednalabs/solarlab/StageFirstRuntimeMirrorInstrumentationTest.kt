@@ -86,6 +86,8 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                     .assertTextContains("Earth")
             }.isSuccess
         }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FOCUS_FEEDBACK).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FOCUS_FEEDBACK).assertTextContains("Earth")
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).performClick()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).performClick()
