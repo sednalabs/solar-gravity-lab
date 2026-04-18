@@ -164,15 +164,30 @@ internal object SolarLabVulkanBridge {
         }
     }
 
-    fun zoomRuntimeCamera(handle: Long, scaleFactor: Float) {
+    fun zoomRuntimeCamera(
+        handle: Long,
+        scaleFactor: Float,
+        focusXPx: Float,
+        focusYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ) {
         if (isLibraryLoaded && handle != 0L) {
-            nativeZoomRuntimeCamera(handle, scaleFactor)
+            nativeZoomRuntimeCamera(handle, scaleFactor, focusXPx, focusYPx, viewportWidthPx, viewportHeightPx)
         }
     }
 
-    fun orbitRuntimeCamera(handle: Long, deltaXPx: Float, deltaYPx: Float) {
+    fun orbitRuntimeCamera(
+        handle: Long,
+        deltaXPx: Float,
+        deltaYPx: Float,
+        focusXPx: Float,
+        focusYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ) {
         if (isLibraryLoaded && handle != 0L) {
-            nativeOrbitRuntimeCamera(handle, deltaXPx, deltaYPx)
+            nativeOrbitRuntimeCamera(handle, deltaXPx, deltaYPx, focusXPx, focusYPx, viewportWidthPx, viewportHeightPx)
         }
     }
 
@@ -324,8 +339,23 @@ internal object SolarLabVulkanBridge {
         viewportWidthPx: Int,
         viewportHeightPx: Int,
     )
-    private external fun nativeZoomRuntimeCamera(handle: Long, scaleFactor: Float)
-    private external fun nativeOrbitRuntimeCamera(handle: Long, deltaXPx: Float, deltaYPx: Float)
+    private external fun nativeZoomRuntimeCamera(
+        handle: Long,
+        scaleFactor: Float,
+        focusXPx: Float,
+        focusYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    )
+    private external fun nativeOrbitRuntimeCamera(
+        handle: Long,
+        deltaXPx: Float,
+        deltaYPx: Float,
+        focusXPx: Float,
+        focusYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    )
     private external fun nativePickRuntimeBodyId(
         handle: Long,
         screenXPx: Float,

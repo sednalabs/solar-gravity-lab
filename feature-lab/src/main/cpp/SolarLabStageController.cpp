@@ -30,8 +30,8 @@ constexpr double kDefaultPitchRadians = 1.0995574287564276;   // 63 degrees.
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kMinPitchRadians = 0.20943951023931956;      // 12 degrees.
 constexpr double kMaxPitchRadians = 1.53588974175501;         // 88 degrees.
-constexpr double kOrbitYawRadiansPerPixel = 0.0075;
-constexpr double kOrbitPitchRadiansPerPixel = 0.0050;
+constexpr double kDefaultDepthExtentFactor = 48.0;
+constexpr double kPickDepthBias = 0.12;
 constexpr uint32_t kKindStar = 0U;
 constexpr uint32_t kKindPlanet = 1U;
 constexpr uint32_t kKindDwarfPlanet = 2U;
@@ -238,6 +238,13 @@ struct ProjectedBody {
     bool visible = false;
 };
 
+struct OrbitControlPolicy {
+    double preferredPitchRadians = kDefaultPitchRadians;
+    double yawRadiansPerPixel = 0.0050;
+    double pitchRadiansPerPixel = 0.0037;
+    double zoomExponent = 0.82;
+};
+
 ProjectedBody ProjectBody(
     const SolarLabStageController::RuntimeBodyProxy& body,
     double sceneOriginX,
@@ -334,6 +341,94 @@ CameraScaleBand CameraScaleBandFromViewRadius(double viewRadiusM) {
         }
     }
     return CameraScaleBand::Deep;
+}
+
+OrbitControlPolicy OrbitControlPolicyForViewRadius(double viewRadiusM) {
+    switch (CameraScaleBandFromViewRadius(viewRadiusM)) {
+        case CameraScaleBand::Close:
+            return OrbitControlPolicy{
+                .preferredPitchRadians = 44.0 * kPi / 180.0,
+                .yawRadiansPerPixel = 0.0030,
+                .pitchRadiansPerPixel = 0.0022,
+                .zoomExponent = 0.58,
+            };
+        case CameraScaleBand::Local:
+            return OrbitControlPolicy{
+                .preferredPitchRadians = 50.0 * kPi / 180.0,
+                .yawRadiansPerPixel = 0.0038,
+                .pitchRadiansPerPixel = 0.0028,
+                .zoomExponent = 0.68,
+            };
+        case CameraScaleBand::System:
+            return OrbitControlPolicy{};
+        case CameraScaleBand::Wide:
+            return OrbitControlPolicy{
+                .preferredPitchRadians = 72.0 * kPi / 180.0,
+                .yawRadiansPerPixel = 0.0062,
+                .pitchRadiansPerPixel = 0.0045,
+                .zoomExponent = 0.92,
+            };
+        case CameraScaleBand::Deep:
+            return OrbitControlPolicy{
+                .preferredPitchRadians = 80.0 * kPi / 180.0,
+                .yawRadiansPerPixel = 0.0074,
+                .pitchRadiansPerPixel = 0.0052,
+                .zoomExponent = 1.0,
+            };
+    }
+    return OrbitControlPolicy{};
+}
+
+double NormalizeAngleRadians(double value) {
+    double normalized = std::fmod(value, 2.0 * kPi);
+    if (normalized > kPi) {
+        normalized -= 2.0 * kPi;
+    } else if (normalized < -kPi) {
+        normalized += 2.0 * kPi;
+    }
+    return normalized;
+}
+
+std::pair<double, double> NormalizedViewportCoordinates(
+    float screenXPx,
+    float screenYPx,
+    int viewportWidthPx,
+    int viewportHeightPx) {
+    const int width = std::max(viewportWidthPx, 1);
+    const int height = std::max(viewportHeightPx, 1);
+    const double normalizedX = ((static_cast<double>(screenXPx) / static_cast<double>(width)) * 2.0) - 1.0;
+    const double normalizedY = 1.0 - ((static_cast<double>(screenYPx) / static_cast<double>(height)) * 2.0);
+    return std::make_pair(normalizedX, normalizedY);
+}
+
+Float3 FocusPlanePoint(
+    double centerX,
+    double centerY,
+    double centerZ,
+    const CameraFrame& frame,
+    float screenXPx,
+    float screenYPx,
+    int viewportWidthPx,
+    int viewportHeightPx) {
+    const auto [normalizedX, normalizedY] =
+        NormalizedViewportCoordinates(screenXPx, screenYPx, viewportWidthPx, viewportHeightPx);
+    return MakeFloat3(centerX, centerY, centerZ) +
+        (frame.right * (normalizedX * frame.halfSpanX)) +
+        (frame.up * (normalizedY * frame.halfSpanY));
+}
+
+Float3 CenterForAnchorAtViewportPoint(
+    const Float3& anchoredWorldPoint,
+    const CameraFrame& frame,
+    float screenXPx,
+    float screenYPx,
+    int viewportWidthPx,
+    int viewportHeightPx) {
+    const auto [normalizedX, normalizedY] =
+        NormalizedViewportCoordinates(screenXPx, screenYPx, viewportWidthPx, viewportHeightPx);
+    return anchoredWorldPoint -
+        (frame.right * (normalizedX * frame.halfSpanX)) -
+        (frame.up * (normalizedY * frame.halfSpanY));
 }
 
 SimplificationPolicy PolicyForCamera(double viewRadiusM, int processingModeCode) {
@@ -632,7 +727,12 @@ void SolarLabStageController::PanRuntimeCamera(float distanceXPx, float distance
     ++cameraRevisionCounter_;
 }
 
-void SolarLabStageController::ZoomRuntimeCamera(float scaleFactor) {
+void SolarLabStageController::ZoomRuntimeCamera(
+    float scaleFactor,
+    float focusXPx,
+    float focusYPx,
+    int viewportWidthPx,
+    int viewportHeightPx) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     if (!RuntimeSessionBoundLocked()) {
         return;
@@ -640,11 +740,52 @@ void SolarLabStageController::ZoomRuntimeCamera(float scaleFactor) {
     if (!runtimeCameraInitialized_ || scaleFactor <= 0.0f) {
         return;
     }
-    cameraViewRadiusM_ = Clamp(cameraViewRadiusM_ / static_cast<double>(scaleFactor), kMinViewRadiusM, kMaxViewRadiusM);
+    const CameraFrame currentFrame = BuildCameraFrame(
+        cameraViewRadiusM_,
+        cameraYawRadians_,
+        cameraPitchRadians_,
+        viewportWidthPx,
+        viewportHeightPx);
+    const Float3 anchoredWorldPoint = FocusPlanePoint(
+        cameraCenterX_,
+        cameraCenterY_,
+        cameraCenterZ_,
+        currentFrame,
+        focusXPx,
+        focusYPx,
+        viewportWidthPx,
+        viewportHeightPx);
+    const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(cameraViewRadiusM_);
+    const double effectiveScaleFactor = std::pow(
+        Clamp(static_cast<double>(scaleFactor), 0.25, 4.0),
+        policy.zoomExponent);
+    cameraViewRadiusM_ = Clamp(cameraViewRadiusM_ / effectiveScaleFactor, kMinViewRadiusM, kMaxViewRadiusM);
+    const CameraFrame resizedFrame = BuildCameraFrame(
+        cameraViewRadiusM_,
+        cameraYawRadians_,
+        cameraPitchRadians_,
+        viewportWidthPx,
+        viewportHeightPx);
+    const Float3 anchoredCenter = CenterForAnchorAtViewportPoint(
+        anchoredWorldPoint,
+        resizedFrame,
+        focusXPx,
+        focusYPx,
+        viewportWidthPx,
+        viewportHeightPx);
+    cameraCenterX_ = anchoredCenter.x;
+    cameraCenterY_ = anchoredCenter.y;
+    cameraCenterZ_ = anchoredCenter.z;
     ++cameraRevisionCounter_;
 }
 
-void SolarLabStageController::OrbitRuntimeCamera(float deltaXPx, float deltaYPx) {
+void SolarLabStageController::OrbitRuntimeCamera(
+    float deltaXPx,
+    float deltaYPx,
+    float focusXPx,
+    float focusYPx,
+    int viewportWidthPx,
+    int viewportHeightPx) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     if (!RuntimeSessionBoundLocked() || runtimeObserverModeCode_ != kObserverModeFree) {
         return;
@@ -652,10 +793,43 @@ void SolarLabStageController::OrbitRuntimeCamera(float deltaXPx, float deltaYPx)
     if (!runtimeCameraInitialized_) {
         return;
     }
-    cameraYawRadians_ -= static_cast<double>(deltaXPx) * kOrbitYawRadiansPerPixel;
-    while (cameraYawRadians_ > kPi) cameraYawRadians_ -= 2.0 * kPi;
-    while (cameraYawRadians_ < -kPi) cameraYawRadians_ += 2.0 * kPi;
-    cameraPitchRadians_ = Clamp(cameraPitchRadians_ - (static_cast<double>(deltaYPx) * kOrbitPitchRadiansPerPixel), kMinPitchRadians, kMaxPitchRadians);
+    const CameraFrame currentFrame = BuildCameraFrame(
+        cameraViewRadiusM_,
+        cameraYawRadians_,
+        cameraPitchRadians_,
+        viewportWidthPx,
+        viewportHeightPx);
+    const Float3 anchoredWorldPoint = FocusPlanePoint(
+        cameraCenterX_,
+        cameraCenterY_,
+        cameraCenterZ_,
+        currentFrame,
+        focusXPx,
+        focusYPx,
+        viewportWidthPx,
+        viewportHeightPx);
+    const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(cameraViewRadiusM_);
+    cameraYawRadians_ = NormalizeAngleRadians(cameraYawRadians_ - (static_cast<double>(deltaXPx) * policy.yawRadiansPerPixel));
+    cameraPitchRadians_ = Clamp(
+        cameraPitchRadians_ - (static_cast<double>(deltaYPx) * policy.pitchRadiansPerPixel),
+        kMinPitchRadians,
+        kMaxPitchRadians);
+    const CameraFrame rotatedFrame = BuildCameraFrame(
+        cameraViewRadiusM_,
+        cameraYawRadians_,
+        cameraPitchRadians_,
+        viewportWidthPx,
+        viewportHeightPx);
+    const Float3 anchoredCenter = CenterForAnchorAtViewportPoint(
+        anchoredWorldPoint,
+        rotatedFrame,
+        focusXPx,
+        focusYPx,
+        viewportWidthPx,
+        viewportHeightPx);
+    cameraCenterX_ = anchoredCenter.x;
+    cameraCenterY_ = anchoredCenter.y;
+    cameraCenterZ_ = anchoredCenter.z;
     ++cameraRevisionCounter_;
 }
 

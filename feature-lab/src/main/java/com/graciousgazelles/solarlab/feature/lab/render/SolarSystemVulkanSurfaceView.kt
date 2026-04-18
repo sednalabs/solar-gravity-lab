@@ -13,6 +13,7 @@ import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.CameraState
+import com.graciousgazelles.solarlab.render.core.MultiscaleOrbitCameraController
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
 import com.graciousgazelles.solarlab.render.core.ObserverCameraResolver
 import com.graciousgazelles.solarlab.render.core.ObserverMode
@@ -127,16 +128,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     renderLatestScene()
                     return true
                 }
-                val frame = OrbitCameraMath.frame(
+                if (ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)) return false
+                cameraState = MultiscaleOrbitCameraController.panByScreenDelta(
                     cameraState = cameraState,
+                    distanceXPx = distanceX,
+                    distanceYPx = distanceY,
                     viewportWidthPx = width.coerceAtLeast(1),
                     viewportHeightPx = height.coerceAtLeast(1),
                 )
-                cameraState = cameraState.copy(
-                    centerM = cameraState.centerM +
-                        frame.rightM * (distanceX * frame.metersPerPixel) -
-                        frame.upM * (distanceY * frame.metersPerPixel),
-                ).sanitized()
                 onCameraChanged()
                 return true
             }
@@ -475,16 +474,28 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     return false
                 }
                 if (isRuntimeBound()) {
-                    switchToFreeCameraForManualNavigation()
-                    SolarLabVulkanBridge.orbitRuntimeCamera(rendererHandle, deltaX, deltaY)
+                    if (observerMode != ObserverMode.FREE) return false
+                    SolarLabVulkanBridge.orbitRuntimeCamera(
+                        handle = rendererHandle,
+                        deltaXPx = deltaX,
+                        deltaYPx = deltaY,
+                        focusXPx = centroidX,
+                        focusYPx = centroidY,
+                        viewportWidthPx = width.coerceAtLeast(1),
+                        viewportHeightPx = height.coerceAtLeast(1),
+                    )
                     renderLatestScene()
                     return true
                 }
-                switchToFreeCameraForManualNavigation()
-                cameraState = cameraState.copy(
-                    yawRadians = cameraState.yawRadians - (deltaX * ORBIT_YAW_RADIANS_PER_PIXEL),
-                    pitchRadians = cameraState.pitchRadians - (deltaY * ORBIT_PITCH_RADIANS_PER_PIXEL),
-                ).sanitized()
+                cameraState = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
+                    cameraState = cameraState,
+                    deltaXPx = deltaX,
+                    deltaYPx = deltaY,
+                    focusXPx = centroidX,
+                    focusYPx = centroidY,
+                    viewportWidthPx = width.coerceAtLeast(1),
+                    viewportHeightPx = height.coerceAtLeast(1),
+                )
                 onCameraChanged()
                 return true
             }
@@ -566,14 +577,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             selectedBodyId = selectedBodyId,
             observerMode = observerMode,
         ) ?: return
-        cameraState = cameraState.copy(
-            centerM = target.centerM,
-            viewRadiusM = if (snapToSuggestedRadius) {
-                target.suggestedViewRadiusM.coerceIn(minViewRadiusM, maxViewRadiusM)
-            } else {
-                cameraState.viewRadiusM
-            },
-        ).sanitized()
+        cameraState = MultiscaleOrbitCameraController.retarget(
+            currentCameraState = cameraState,
+            targetCenterM = target.centerM,
+            suggestedViewRadiusM = target.suggestedViewRadiusM,
+            minViewRadiusM = minViewRadiusM,
+            maxViewRadiusM = maxViewRadiusM,
+            snapToSuggestedRadius = snapToSuggestedRadius,
+        )
     }
 
     private fun ensureRenderer(): Boolean {
@@ -768,10 +779,5 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             trailSimplificationTolerancePx = 6.0,
             maxTrailVerticesPerTrail = 96,
         )
-    }
-
-    private companion object {
-        private const val ORBIT_YAW_RADIANS_PER_PIXEL: Double = 0.0075
-        private const val ORBIT_PITCH_RADIANS_PER_PIXEL: Double = 0.0050
     }
 }

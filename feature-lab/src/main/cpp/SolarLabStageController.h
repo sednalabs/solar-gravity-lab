@@ -69,8 +69,8 @@ public:
     void SetRuntimeTraceLayerMode(int traceLayerModeCode);
     void ResetRuntimeCamera();
     void PanRuntimeCamera(float distanceXPx, float distanceYPx, int viewportWidthPx, int viewportHeightPx);
-    void ZoomRuntimeCamera(float scaleFactor);
-    void OrbitRuntimeCamera(float deltaXPx, float deltaYPx);
+    void ZoomRuntimeCamera(float scaleFactor, float focusXPx, float focusYPx, int viewportWidthPx, int viewportHeightPx);
+    void OrbitRuntimeCamera(float deltaXPx, float deltaYPx, float focusXPx, float focusYPx, int viewportWidthPx, int viewportHeightPx);
     std::string PickRuntimeBodyId(float screenXPx, float screenYPx, int viewportWidthPx, int viewportHeightPx);
 
     bool Render();
