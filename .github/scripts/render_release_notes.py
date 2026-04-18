@@ -98,7 +98,7 @@ def normalize_subject(subject: str) -> str:
             desc = f"{scope}: {desc}"
         text = desc
 
-    text = text.replace("jni", "JNI").replace("api", "API").replace("ci", "CI")
+    text = re.sub(r"\b(jni|api|ci)\b", lambda m: m.group(0).upper(), text, flags=re.IGNORECASE)
     if text:
         text = text[0].upper() + text[1:]
     return text
