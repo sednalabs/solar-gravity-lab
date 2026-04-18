@@ -1,0 +1,80 @@
+name: release-notes-from-inventory
+
+on:
+  release:
+    types:
+      - published
+      - prereleased
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-notes-${{ github.event.release.id }}
+  cancel-in-progress: false
+
+jobs:
+  render-release-notes:
+    name: Render human release notes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download changelog inventory from release assets
+        id: release_assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-assets
+          gh release download "$TAG_NAME" \
+            --repo "${{ github.repository }}" \
+            --pattern 'changelog-*.json' \
+            --dir dist/release-assets
+
+          inventory_path="$(find dist/release-assets -type f -name 'changelog-*.json' | sort | head -n 1)"
+          if [[ -z "$inventory_path" ]]; then
+            echo "Unable to locate a changelog-*.json asset on release $TAG_NAME." >&2
+            exit 1
+          fi
+
+          echo "inventory_path=$inventory_path" >> "$GITHUB_OUTPUT"
+
+      - name: Render human-facing release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/render_release_notes.py \
+            --inventory "${{ steps.release_assets.outputs.inventory_path }}" \
+            --repo "${{ github.repository }}" \
+            --output dist/rendered-release-notes.md
+
+      - name: Update GitHub Release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG_NAME" \
+            --repo "${{ github.repository }}" \
+            --notes-file dist/rendered-release-notes.md
+
+      - name: Upload rendered release notes artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rendered-release-notes-${{ github.event.release.tag_name }}
+          if-no-files-found: error
+          path: dist/rendered-release-notes.md
+
+      - name: Emit release note summary
+        shell: bash
+        run: cat dist/rendered-release-notes.md >> "$GITHUB_STEP_SUMMARY"
