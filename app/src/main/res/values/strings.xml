@@ -24,7 +24,7 @@
     <string name="action_backend_vulkan">Backend: Vulkan</string>
     <string name="action_info_show">Info</string>
     <string name="action_info_hide">Hide info</string>
-    <string name="controls_hint">Pinch to zoom. Drag to pan. Tap a body to select it. Follow mode locks the camera to the selected body or its host, and the time-step controls move catalog time by the chosen step.</string>
+    <string name="controls_hint">Pinch to zoom around your fingers. One-finger drag pans. Two-finger drag orbits around the gesture focus. Tap a body to select it. Follow mode locks the camera to the selected body or its host, and the time-step controls move catalog time by the chosen step.</string>
     <string name="diagnostics_cached_notice">Diagnostics shown from recent running tick</string>
     <string name="selection_none_title">No body selected</string>
     <string name="selection_none">Tap a moving body to select it, then use Follow to keep it in view.</string>

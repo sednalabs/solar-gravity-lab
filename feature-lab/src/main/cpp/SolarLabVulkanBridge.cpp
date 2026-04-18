@@ -314,10 +314,14 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     JNIEnv*,
     jclass,
     jlong handle,
-    jfloat scaleFactor) {
+    jfloat scaleFactor,
+    jfloat focusXPx,
+    jfloat focusYPx,
+    jint viewportWidthPx,
+    jint viewportHeightPx) {
     auto* controller = FromHandle(handle);
     if (controller != nullptr) {
-        controller->ZoomRuntimeCamera(scaleFactor);
+        controller->ZoomRuntimeCamera(scaleFactor, focusXPx, focusYPx, viewportWidthPx, viewportHeightPx);
     }
 }
 
@@ -327,10 +331,14 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     jclass,
     jlong handle,
     jfloat deltaXPx,
-    jfloat deltaYPx) {
+    jfloat deltaYPx,
+    jfloat focusXPx,
+    jfloat focusYPx,
+    jint viewportWidthPx,
+    jint viewportHeightPx) {
     auto* controller = FromHandle(handle);
     if (controller != nullptr) {
-        controller->OrbitRuntimeCamera(deltaXPx, deltaYPx);
+        controller->OrbitRuntimeCamera(deltaXPx, deltaYPx, focusXPx, focusYPx, viewportWidthPx, viewportHeightPx);
     }
 }
 

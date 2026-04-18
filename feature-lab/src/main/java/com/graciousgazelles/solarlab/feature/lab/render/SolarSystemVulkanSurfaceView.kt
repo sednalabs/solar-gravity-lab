@@ -13,6 +13,7 @@ import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.CameraState
+import com.graciousgazelles.solarlab.render.core.MultiscaleOrbitCameraController
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
 import com.graciousgazelles.solarlab.render.core.ObserverCameraResolver
 import com.graciousgazelles.solarlab.render.core.ObserverMode
@@ -66,7 +67,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 if (interactionMode == SceneInteractionMode.PLACE_BODY) {
                     return false
                 }
-                return zoomByInternal(detector.scaleFactor)
+                return zoomByInternal(
+                    scaleFactor = detector.scaleFactor,
+                    focusXPx = detector.focusX,
+                    focusYPx = detector.focusY,
+                )
             }
         },
     )
@@ -121,16 +126,13 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     return true
                 }
                 if (ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)) return false
-                val frame = OrbitCameraMath.frame(
+                cameraState = MultiscaleOrbitCameraController.panByScreenDelta(
                     cameraState = cameraState,
+                    distanceXPx = distanceX,
+                    distanceYPx = distanceY,
                     viewportWidthPx = width.coerceAtLeast(1),
                     viewportHeightPx = height.coerceAtLeast(1),
                 )
-                cameraState = cameraState.copy(
-                    centerM = cameraState.centerM +
-                        frame.rightM * (distanceX * frame.metersPerPixel) -
-                        frame.upM * (distanceY * frame.metersPerPixel),
-                ).sanitized()
                 onCameraChanged()
                 return true
             }
@@ -210,7 +212,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun zoomBy(scaleFactor: Float) {
-        zoomByInternal(scaleFactor)
+        zoomByInternal(
+            scaleFactor = scaleFactor,
+            focusXPx = width * 0.5f,
+            focusYPx = height * 0.5f,
+        )
     }
 
     override fun bindRuntimeSessionHandle(sessionHandle: Long) {
@@ -394,14 +400,27 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 }
                 if (isRuntimeBound()) {
                     if (observerMode != ObserverMode.FREE) return false
-                    SolarLabVulkanBridge.orbitRuntimeCamera(rendererHandle, deltaX, deltaY)
+                    SolarLabVulkanBridge.orbitRuntimeCamera(
+                        handle = rendererHandle,
+                        deltaXPx = deltaX,
+                        deltaYPx = deltaY,
+                        focusXPx = centroidX,
+                        focusYPx = centroidY,
+                        viewportWidthPx = width.coerceAtLeast(1),
+                        viewportHeightPx = height.coerceAtLeast(1),
+                    )
                     renderLatestScene()
                     return true
                 }
-                cameraState = cameraState.copy(
-                    yawRadians = cameraState.yawRadians - (deltaX * ORBIT_YAW_RADIANS_PER_PIXEL),
-                    pitchRadians = cameraState.pitchRadians - (deltaY * ORBIT_PITCH_RADIANS_PER_PIXEL),
-                ).sanitized()
+                cameraState = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
+                    cameraState = cameraState,
+                    deltaXPx = deltaX,
+                    deltaYPx = deltaY,
+                    focusXPx = centroidX,
+                    focusYPx = centroidY,
+                    viewportWidthPx = width.coerceAtLeast(1),
+                    viewportHeightPx = height.coerceAtLeast(1),
+                )
                 onCameraChanged()
                 return true
             }
@@ -417,18 +436,36 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         return false
     }
 
-    private fun zoomByInternal(scaleFactor: Float): Boolean {
+    private fun zoomByInternal(
+        scaleFactor: Float,
+        focusXPx: Float,
+        focusYPx: Float,
+    ): Boolean {
         if (scaleFactor <= 0f) {
             return false
         }
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.zoomRuntimeCamera(rendererHandle, scaleFactor)
+            SolarLabVulkanBridge.zoomRuntimeCamera(
+                handle = rendererHandle,
+                scaleFactor = scaleFactor,
+                focusXPx = focusXPx,
+                focusYPx = focusYPx,
+                viewportWidthPx = width.coerceAtLeast(1),
+                viewportHeightPx = height.coerceAtLeast(1),
+            )
             renderLatestScene()
             return true
         }
-        cameraState = cameraState.copy(
-            viewRadiusM = (cameraState.viewRadiusM / scaleFactor.toDouble()).coerceIn(minViewRadiusM, maxViewRadiusM),
-        ).sanitized()
+        cameraState = MultiscaleOrbitCameraController.zoomAroundViewportPoint(
+            cameraState = cameraState,
+            scaleFactor = scaleFactor,
+            focusXPx = focusXPx,
+            focusYPx = focusYPx,
+            viewportWidthPx = width.coerceAtLeast(1),
+            viewportHeightPx = height.coerceAtLeast(1),
+            minViewRadiusM = minViewRadiusM,
+            maxViewRadiusM = maxViewRadiusM,
+        )
         onCameraChanged()
         return true
     }
@@ -442,14 +479,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             selectedBodyId = selectedBodyId,
             observerMode = observerMode,
         ) ?: return
-        cameraState = cameraState.copy(
-            centerM = target.centerM,
-            viewRadiusM = if (snapToSuggestedRadius) {
-                target.suggestedViewRadiusM.coerceIn(minViewRadiusM, maxViewRadiusM)
-            } else {
-                cameraState.viewRadiusM
-            },
-        ).sanitized()
+        cameraState = MultiscaleOrbitCameraController.retarget(
+            currentCameraState = cameraState,
+            targetCenterM = target.centerM,
+            suggestedViewRadiusM = target.suggestedViewRadiusM,
+            minViewRadiusM = minViewRadiusM,
+            maxViewRadiusM = maxViewRadiusM,
+            snapToSuggestedRadius = snapToSuggestedRadius,
+        )
     }
 
     private fun ensureRenderer(): Boolean {
@@ -639,10 +676,5 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             trailSimplificationTolerancePx = 6.0,
             maxTrailVerticesPerTrail = 96,
         )
-    }
-
-    private companion object {
-        private const val ORBIT_YAW_RADIANS_PER_PIXEL: Double = 0.0075
-        private const val ORBIT_PITCH_RADIANS_PER_PIXEL: Double = 0.0050
     }
 }
