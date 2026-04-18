@@ -498,19 +498,10 @@ private fun StageFirstSandboxLocalExperience(
                 },
             )
 
-            searchFocusFeedback?.let { feedback ->
-                SearchFocusFeedbackChip(
-                    message = feedback.message,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 18.dp),
-                )
-            }
-
             StageOverlay(
                 timelineText = timelineText,
                 selectionCard = selectionCard,
+                focusFeedbackMessage = searchFocusFeedback?.message,
                 backendStatus = backendStatus,
                 interactionHintText = interactionHintText,
                 collisionMode = collisionMode,
@@ -738,6 +729,7 @@ private fun StageFirstSandboxLocalExperience(
 private fun BoxScope.StageOverlay(
     timelineText: String,
     selectionCard: SelectionCardText,
+    focusFeedbackMessage: String?,
     backendStatus: String,
     interactionHintText: String,
     collisionMode: CollisionMode,
@@ -863,6 +855,10 @@ private fun BoxScope.StageOverlay(
                         color = TimelineText,
                         style = MaterialTheme.typography.labelLarge,
                     )
+                    focusFeedbackMessage?.let { message ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SearchFocusFeedbackChip(message = message)
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = selectionCard.title,
@@ -901,6 +897,10 @@ private fun BoxScope.StageOverlay(
                             color = TimelineText,
                             style = MaterialTheme.typography.labelLarge,
                         )
+                        focusFeedbackMessage?.let { message ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SearchFocusFeedbackChip(message = message)
+                        }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = selectionCard.title,

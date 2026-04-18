@@ -536,16 +536,6 @@ internal fun StageFirstRuntimeMirrorExperience(
                 }
             }
 
-            searchFocusFeedback?.let { feedback ->
-                SearchFocusFeedbackChip(
-                    message = feedback.message,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 18.dp),
-                )
-            }
-
             Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -565,6 +555,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                             color = MaterialTheme.colorScheme.secondary,
                             style = MaterialTheme.typography.labelLarge,
                         )
+                        searchFocusFeedback?.let { feedback ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SearchFocusFeedbackChip(message = feedback.message)
+                        }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = selectionCard.title,
@@ -603,6 +597,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                                 color = MaterialTheme.colorScheme.secondary,
                                 style = MaterialTheme.typography.labelLarge,
                             )
+                            searchFocusFeedback?.let { feedback ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                SearchFocusFeedbackChip(message = feedback.message)
+                            }
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = selectionCard.title,
