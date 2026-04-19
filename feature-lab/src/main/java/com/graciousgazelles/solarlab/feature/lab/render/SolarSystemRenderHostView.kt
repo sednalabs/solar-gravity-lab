@@ -49,6 +49,14 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     }
 
     fun submitSceneFrame(frame: RenderSceneFrame) {
+        if (runtimeSessionHandle != 0L) {
+            latestScene = frame
+            return
+        }
+        if (latestScene?.sourceRevision == frame.sourceRevision) {
+            latestScene = frame
+            return
+        }
         latestScene = frame
         activeSurface?.submitScene(frame)
     }
@@ -85,27 +93,51 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     fun interactionMode(): SceneInteractionMode = interactionMode
 
     fun setProcessingMode(mode: RenderProcessingMode) {
+        if (processingMode == mode) return
         processingMode = mode
-        activeSurface?.setProcessingMode(mode)
+        activeSurface?.applyViewState(
+            runtimeSessionHandle = runtimeSessionHandle,
+            processingMode = processingMode,
+            selectedBodyId = selectedBodyId,
+            observerMode = observerMode,
+        )
     }
 
     fun bindRuntimeSessionHandle(sessionHandle: Long) {
+        if (runtimeSessionHandle == sessionHandle) return
         runtimeSessionHandle = sessionHandle
-        activeSurface?.bindRuntimeSessionHandle(sessionHandle)
+        activeSurface?.applyViewState(
+            runtimeSessionHandle = runtimeSessionHandle,
+            processingMode = processingMode,
+            selectedBodyId = selectedBodyId,
+            observerMode = observerMode,
+        )
     }
 
     fun processingMode(): RenderProcessingMode = processingMode
 
     fun setSelectedBodyId(bodyId: String?) {
+        if (selectedBodyId == bodyId) return
         selectedBodyId = bodyId
-        activeSurface?.setSelectedBodyId(bodyId)
+        activeSurface?.applyViewState(
+            runtimeSessionHandle = runtimeSessionHandle,
+            processingMode = processingMode,
+            selectedBodyId = selectedBodyId,
+            observerMode = observerMode,
+        )
     }
 
     fun selectedBodyId(): String? = selectedBodyId
 
     fun setObserverMode(mode: ObserverMode) {
+        if (observerMode == mode) return
         observerMode = mode
-        activeSurface?.setObserverMode(mode)
+        activeSurface?.applyViewState(
+            runtimeSessionHandle = runtimeSessionHandle,
+            processingMode = processingMode,
+            selectedBodyId = selectedBodyId,
+            observerMode = observerMode,
+        )
     }
     fun setPlacementPlaneZ(worldZ: Double) {
         placementPlaneZ = worldZ
@@ -188,10 +220,12 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface = view as SolarRenderSurface
         activeSurface?.setInteractionListener(interactionListener)
         activeSurface?.setInteractionMode(interactionMode)
-        activeSurface?.bindRuntimeSessionHandle(runtimeSessionHandle)
-        activeSurface?.setProcessingMode(processingMode)
-        activeSurface?.setSelectedBodyId(selectedBodyId)
-        activeSurface?.setObserverMode(observerMode)
+        activeSurface?.applyViewState(
+            runtimeSessionHandle = runtimeSessionHandle,
+            processingMode = processingMode,
+            selectedBodyId = selectedBodyId,
+            observerMode = observerMode,
+        )
         activeSurface?.setPlacementPlaneZ(placementPlaneZ)
         addView(
             view,

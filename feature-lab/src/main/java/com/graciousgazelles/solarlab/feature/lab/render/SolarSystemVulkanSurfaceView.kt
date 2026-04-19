@@ -219,6 +219,56 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         )
     }
 
+    override fun applyViewState(
+        runtimeSessionHandle: Long,
+        processingMode: RenderProcessingMode,
+        selectedBodyId: String?,
+        observerMode: ObserverMode,
+    ) {
+        val sessionChanged = this.runtimeSessionHandle != runtimeSessionHandle
+        val processingChanged = this.processingMode != processingMode
+        val selectedChanged = this.selectedBodyId != selectedBodyId
+        val observerChanged = this.observerMode != observerMode
+        if (!sessionChanged && !processingChanged && !selectedChanged && !observerChanged) return
+
+        this.runtimeSessionHandle = runtimeSessionHandle
+        this.processingMode = processingMode
+        this.scenePacketPolicy = packetPolicyForMode(processingMode)
+        this.selectedBodyId = selectedBodyId
+        this.observerMode = observerMode
+
+        if (sessionChanged) {
+            latestPacket = null
+            packetDirty = true
+            syncRuntimeBinding()
+            renderLatestScene()
+            return
+        }
+
+        if (isRuntimeBound()) {
+            if (processingChanged) {
+                SolarLabVulkanBridge.setRuntimeProcessingMode(rendererHandle, processingMode)
+            }
+            if (observerChanged) {
+                SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, observerMode)
+            }
+            if (selectedChanged) {
+                SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, selectedBodyId)
+            }
+            renderLatestScene()
+            return
+        }
+
+        if (selectedChanged || observerChanged) {
+            applyObserverTargetIfNeeded(
+                latestScene,
+                snapToSuggestedRadius = observerMode != ObserverMode.FREE,
+            )
+        }
+        packetDirty = true
+        renderLatestScene()
+    }
+
     override fun bindRuntimeSessionHandle(sessionHandle: Long) {
         if (runtimeSessionHandle == sessionHandle) return
         runtimeSessionHandle = sessionHandle
@@ -260,7 +310,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             renderLatestScene()
             return
         }
-        latestScene?.let { frame ->
+        latestScene.let { frame ->
             applyObserverTargetIfNeeded(frame, snapToSuggestedRadius = observerMode != ObserverMode.FREE)
             packetDirty = true
             renderLatestScene()

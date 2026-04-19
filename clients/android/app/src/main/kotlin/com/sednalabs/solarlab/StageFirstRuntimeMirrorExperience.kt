@@ -234,7 +234,6 @@ internal fun StageFirstRuntimeMirrorExperience(
         fun focusAndFrameRuntimeBody(bodyId: String) {
             selectedBodyId = bodyId
             observerMode = ObserverMode.FOLLOW_SELECTED
-            renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
             syncObserver(bodyId, ObserverMode.FOLLOW_SELECTED)
         }
 
@@ -503,7 +502,9 @@ internal fun StageFirstRuntimeMirrorExperience(
                         view.setObserverMode(observerMode)
                         view.setSelectedBodyId(selectedBodyId)
                         view.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
-                        mirrorScene?.scene?.let(view::submitSceneFrame)
+                        if (runtimeSessionHandle == 0L) {
+                            mirrorScene?.scene?.let(view::submitSceneFrame)
+                        }
                     },
                 )
             } else {

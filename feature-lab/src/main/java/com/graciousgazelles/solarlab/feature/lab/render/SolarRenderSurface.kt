@@ -8,6 +8,17 @@ internal interface SolarRenderSurface {
     fun resetCamera()
     fun zoomBy(scaleFactor: Float) {}
     fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {}
+    fun applyViewState(
+        runtimeSessionHandle: Long,
+        processingMode: RenderProcessingMode,
+        selectedBodyId: String?,
+        observerMode: ObserverMode,
+    ) {
+        bindRuntimeSessionHandle(runtimeSessionHandle)
+        setProcessingMode(processingMode)
+        setSelectedBodyId(selectedBodyId)
+        setObserverMode(observerMode)
+    }
     fun bindRuntimeSessionHandle(sessionHandle: Long) {}
     fun setProcessingMode(mode: RenderProcessingMode) {}
     fun setInteractionListener(listener: RenderInteractionListener?) {}
