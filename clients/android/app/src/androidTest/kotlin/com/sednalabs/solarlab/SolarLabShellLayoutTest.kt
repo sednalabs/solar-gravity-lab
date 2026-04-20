@@ -436,7 +436,6 @@ class SolarLabShellLayoutTest {
         predicate: () -> Boolean,
     ) {
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.waitForIdle()
             predicate()
         }
         assertTrue(

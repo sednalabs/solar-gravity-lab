@@ -13,6 +13,7 @@ emit_summary() {
   local enabled="$1"
   local reason="$2"
   local missing="${3:-}"
+  local credential_source_value="${4:-}"
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     {
       echo "## sccache configuration"
@@ -26,6 +27,7 @@ emit_summary() {
         echo "- bucket: \`${SCCACHE_BUCKET}\`"
         echo "- endpoint: \`${SCCACHE_ENDPOINT}\`"
         echo "- key prefix: \`${SCCACHE_S3_KEY_PREFIX:-}\`"
+        echo "- credential source: \`${credential_source_value}\`"
       fi
     } >> "${GITHUB_STEP_SUMMARY}"
   fi
@@ -39,12 +41,23 @@ if [[ -z "${sccache_path}" ]]; then
   exit 0
 fi
 
+resolved_aws_access_key_id="${SCCACHE_AWS_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}"
+resolved_aws_secret_access_key="${SCCACHE_AWS_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}"
+credential_source="${SCCACHE_CREDENTIAL_SOURCE:-}"
+if [[ -z "${credential_source}" ]]; then
+  if [[ -n "${SCCACHE_AWS_ACCESS_KEY_ID:-}" || -n "${SCCACHE_AWS_SECRET_ACCESS_KEY:-}" ]]; then
+    credential_source="dedicated-sccache-env"
+  elif [[ -n "${AWS_ACCESS_KEY_ID:-}" || -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+    credential_source="aws-env"
+  else
+    credential_source="unset"
+  fi
+fi
+
 required_vars=(
   SCCACHE_BUCKET
   SCCACHE_ENDPOINT
   SCCACHE_REGION
-  AWS_ACCESS_KEY_ID
-  AWS_SECRET_ACCESS_KEY
 )
 missing_vars=()
 for var_name in "${required_vars[@]}"; do
@@ -52,13 +65,19 @@ for var_name in "${required_vars[@]}"; do
     missing_vars+=("${var_name}")
   fi
 done
+if [[ -z "${resolved_aws_access_key_id}" ]]; then
+  missing_vars+=("SCCACHE_AWS_ACCESS_KEY_ID|AWS_ACCESS_KEY_ID")
+fi
+if [[ -z "${resolved_aws_secret_access_key}" ]]; then
+  missing_vars+=("SCCACHE_AWS_SECRET_ACCESS_KEY|AWS_SECRET_ACCESS_KEY")
+fi
 
 if [[ "${#missing_vars[@]}" -gt 0 ]]; then
   missing_csv="$(IFS=,; echo "${missing_vars[*]}")"
   emit_output "enabled" "false"
   emit_output "reason" "missing-config"
   emit_output "missing" "${missing_csv}"
-  emit_summary "false" "missing-config" "${missing_csv}"
+  emit_summary "false" "missing-config" "${missing_csv}" "${credential_source}"
   exit 0
 fi
 
@@ -70,12 +89,17 @@ if [[ -n "${GITHUB_ENV:-}" ]]; then
     echo "SCCACHE_PATH=${sccache_path}"
     echo "RUSTC_WRAPPER=${sccache_path}"
     echo "CARGO_INCREMENTAL=0"
+    echo "AWS_ACCESS_KEY_ID=${resolved_aws_access_key_id}"
+    echo "AWS_SECRET_ACCESS_KEY=${resolved_aws_secret_access_key}"
     echo "SCCACHE_REGION=${SCCACHE_REGION}"
     echo "SCCACHE_S3_USE_SSL=${SCCACHE_S3_USE_SSL:-true}"
     echo "CMAKE_C_COMPILER_LAUNCHER=${sccache_path}"
     echo "CMAKE_CXX_COMPILER_LAUNCHER=${sccache_path}"
   } >> "${GITHUB_ENV}"
 fi
+
+export AWS_ACCESS_KEY_ID="${resolved_aws_access_key_id}"
+export AWS_SECRET_ACCESS_KEY="${resolved_aws_secret_access_key}"
 
 "${sccache_path}" --stop-server >/dev/null 2>&1 || true
 "${sccache_path}" --zero-stats >/dev/null 2>&1 || true
@@ -86,4 +110,5 @@ emit_output "path" "${sccache_path}"
 emit_output "bucket" "${SCCACHE_BUCKET}"
 emit_output "endpoint" "${SCCACHE_ENDPOINT}"
 emit_output "key_prefix" "${SCCACHE_S3_KEY_PREFIX:-}"
-emit_summary "true" "configured"
+emit_output "credential_source" "${credential_source}"
+emit_summary "true" "configured" "" "${credential_source}"
