@@ -7,6 +7,22 @@ on:
         description: Branch, tag, or commit to use for the interactive session
         required: false
         type: string
+      build_source:
+        description: Whether to reuse a remote-built artifact or assemble inline inside the session workflow
+        required: true
+        type: choice
+        options:
+          - artifact
+          - inline
+        default: artifact
+      build_run_id:
+        description: Optional interactive-android-build workflow run id to install into the live session
+        required: false
+        type: string
+      artifact_name:
+        description: Optional artifact name override for the reusable interactive APK bundle
+        required: false
+        type: string
       android_emulator_mcp_ref:
         description: Branch, tag, or commit from sednalabs/android-emulator-mcp
         required: true
@@ -58,6 +74,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -106,6 +123,9 @@ jobs:
         shell: bash
         env:
           INPUT_REF: ${{ inputs.ref }}
+          INPUT_BUILD_SOURCE: ${{ inputs.build_source }}
+          INPUT_BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name }}
           INPUT_MCP_REF: ${{ inputs.android_emulator_mcp_ref }}
           INPUT_TOOLKIT_REF: ${{ inputs.mcp_toolkit_rs_ref }}
           INPUT_VALIDATION_MODE: ${{ inputs.android_validation_mode }}
@@ -120,6 +140,7 @@ jobs:
           if [[ -z "${checkout_ref}" ]]; then
             checkout_ref="${GITHUB_REF_NAME}"
           fi
+          commit_sha="$(git rev-parse HEAD)"
 
           session_timeout_minutes="${INPUT_TIMEOUT_MINUTES:-90}"
           if ! [[ "${session_timeout_minutes}" =~ ^[0-9]+$ ]]; then
@@ -168,8 +189,27 @@ jobs:
               ;;
           esac
 
+          build_source="${INPUT_BUILD_SOURCE:-artifact}"
+          case "${build_source}" in
+            artifact|inline)
+              ;;
+            *)
+              echo "Unsupported build_source: ${build_source}" >&2
+              exit 1
+              ;;
+          esac
+
+          artifact_name="${INPUT_ARTIFACT_NAME:-}"
+          if [[ -z "${artifact_name}" ]]; then
+            artifact_name="interactive-android-build-${INPUT_VALIDATION_MODE}-${INPUT_DEBUG_PROFILE}"
+          fi
+
           {
             echo "checkout_ref=${checkout_ref}"
+            echo "commit_sha=${commit_sha}"
+            echo "build_source=${build_source}"
+            echo "build_run_id=${INPUT_BUILD_RUN_ID}"
+            echo "artifact_name=${artifact_name}"
             echo "android_emulator_mcp_ref=${INPUT_MCP_REF}"
             echo "mcp_toolkit_rs_ref=${INPUT_TOOLKIT_REF}"
             echo "android_validation_mode=${INPUT_VALIDATION_MODE}"
@@ -342,8 +382,37 @@ jobs:
             "${isolated_root}/mcp-workspace/toolkits/mcp-toolkit-rs"
           echo "server_dir=${isolated_root}/mcp-workspace/servers/android-emulator-mcp" >> "${GITHUB_OUTPUT}"
 
+      - name: Download reusable interactive build artifact
+        id: resolve_build_artifact
+        if: ${{ steps.session_plan.outputs.build_source == 'artifact' }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          output_dir="${INTERACTIVE_SESSION_ROOT}/build-cache"
+          if [[ -n "${{ steps.session_plan.outputs.build_run_id }}" ]]; then
+            output_dir="${output_dir}/run-${{ steps.session_plan.outputs.build_run_id }}/${{ steps.session_plan.outputs.artifact_name }}"
+            python3 .github/scripts/download_interactive_build_artifact.py \
+              --repository "${{ github.repository }}" \
+              --workflow-run-id "${{ steps.session_plan.outputs.build_run_id }}" \
+              --artifact-name "${{ steps.session_plan.outputs.artifact_name }}" \
+              --output-dir "${output_dir}" \
+              --github-output "${GITHUB_OUTPUT}"
+          else
+            output_dir="${output_dir}/run-search-${{ steps.session_plan.outputs.commit_sha }}/${{ steps.session_plan.outputs.artifact_name }}"
+            python3 .github/scripts/download_interactive_build_artifact.py \
+              --repository "${{ github.repository }}" \
+              --workflow-file "interactive-android-build.yml" \
+              --commit-sha "${{ steps.session_plan.outputs.commit_sha }}" \
+              --artifact-name "${{ steps.session_plan.outputs.artifact_name }}" \
+              --output-dir "${output_dir}" \
+              --github-output "${GITHUB_OUTPUT}"
+          fi
+
       - name: Assemble debug APK for interactive session
         id: assemble_debug
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -358,6 +427,7 @@ jobs:
 
       - name: Derive debug APK metadata
         id: apk_meta
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -379,14 +449,57 @@ jobs:
           print(f"safe_version={safe_version}")
           PY
 
-      - name: Stage interactive debug APK
+      - name: Stage inline interactive build bundle
+        id: stage_inline_build
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "${INTERACTIVE_SESSION_ROOT}/app"
-          cp \
-            "clients/android/app/build/outputs/apk/debug/${{ steps.apk_meta.outputs.apk_name }}" \
-            "${INTERACTIVE_SESSION_ROOT}/app/solar-gravity-lab-${{ steps.apk_meta.outputs.safe_version }}-debug.apk"
+          python3 .github/scripts/stage_interactive_build_bundle.py \
+            --apk-path "clients/android/app/build/outputs/apk/debug/${{ steps.apk_meta.outputs.apk_name }}" \
+            --output-dir "${INTERACTIVE_SESSION_ROOT}/build-cache/run-${{ github.run_id }}/${{ steps.session_plan.outputs.artifact_name }}" \
+            --artifact-name "${{ steps.session_plan.outputs.artifact_name }}" \
+            --repository "${{ github.repository }}" \
+            --workflow "interactive-android-session" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --checkout-ref "${{ steps.session_plan.outputs.checkout_ref }}" \
+            --commit-sha "${{ steps.session_plan.outputs.commit_sha }}" \
+            --android-validation-mode "${{ steps.session_plan.outputs.android_validation_mode }}" \
+            --interactive-debug-profile "${{ steps.session_plan.outputs.interactive_debug_profile }}" \
+            --package-name "${INTERACTIVE_APP_PACKAGE}" \
+            --activity-name "${INTERACTIVE_APP_ACTIVITY}" \
+            --version-name "${{ steps.apk_meta.outputs.version_name }}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Resolve interactive build inputs
+        id: active_build
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.session_plan.outputs.build_source }}" == "artifact" ]]; then
+            {
+              echo "artifact_name=${{ steps.resolve_build_artifact.outputs.artifact_name }}"
+              echo "build_run_id=${{ steps.resolve_build_artifact.outputs.build_run_id }}"
+              echo "build_run_attempt=${{ steps.resolve_build_artifact.outputs.build_run_attempt }}"
+              echo "build_commit_sha=${{ steps.resolve_build_artifact.outputs.build_commit_sha }}"
+              echo "bundle_dir=${{ steps.resolve_build_artifact.outputs.bundle_dir }}"
+              echo "manifest_path=${{ steps.resolve_build_artifact.outputs.manifest_path }}"
+              echo "apk_path=${{ steps.resolve_build_artifact.outputs.apk_path }}"
+              echo "apk_sha256=${{ steps.resolve_build_artifact.outputs.apk_sha256 }}"
+            } >> "${GITHUB_OUTPUT}"
+          else
+            {
+              echo "artifact_name=${{ steps.stage_inline_build.outputs.artifact_name }}"
+              echo "build_run_id=${{ github.run_id }}"
+              echo "build_run_attempt=${{ github.run_attempt }}"
+              echo "build_commit_sha=${{ steps.session_plan.outputs.commit_sha }}"
+              echo "bundle_dir=${{ steps.stage_inline_build.outputs.bundle_dir }}"
+              echo "manifest_path=${{ steps.stage_inline_build.outputs.manifest_path }}"
+              echo "apk_path=${{ steps.stage_inline_build.outputs.apk_path }}"
+              echo "apk_sha256=${{ steps.stage_inline_build.outputs.apk_sha256 }}"
+            } >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Build android-emulator-mcp release binary
         id: build_mcp
@@ -414,7 +527,8 @@ jobs:
           disable-animations: true
           script: bash .github/scripts/run_interactive_android_session.sh
         env:
-          INTERACTIVE_APP_APK: ${{ github.workspace }}/dist/interactive-session/app/solar-gravity-lab-${{ steps.apk_meta.outputs.safe_version }}-debug.apk
+          INTERACTIVE_APP_APK: ${{ steps.active_build.outputs.apk_path }}
+          INTERACTIVE_BUILD_MANIFEST: ${{ steps.active_build.outputs.manifest_path }}
           INTERACTIVE_APP_PACKAGE: ${{ env.INTERACTIVE_APP_PACKAGE }}
           INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
           INTERACTIVE_MCP_WORKSPACE_DIR: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
@@ -426,6 +540,8 @@ jobs:
           INTERACTIVE_SESSION_TIMEOUT_MINUTES: ${{ steps.session_plan.outputs.session_timeout_minutes }}
           INTERACTIVE_KEEP_SESSION_ON_FAILURE: ${{ steps.session_plan.outputs.keep_session_on_failure }}
           INTERACTIVE_MCP_BIND_ADDR: ${{ env.INTERACTIVE_MCP_BIND_ADDR }}
+          INTERACTIVE_SESSION_GITHUB_REPOSITORY: ${{ github.repository }}
+          INTERACTIVE_SESSION_GITHUB_TOKEN: ${{ github.token }}
 
       - name: Build interactive session summary payload
         if: always()
@@ -440,6 +556,10 @@ jobs:
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
             --checkout-ref "${{ steps.session_plan.outputs.checkout_ref }}" \
+            --build-source "${{ steps.session_plan.outputs.build_source }}" \
+            --artifact-name "${{ steps.active_build.outputs.artifact_name }}" \
+            --build-run-id "${{ steps.active_build.outputs.build_run_id }}" \
+            --build-commit-sha "${{ steps.active_build.outputs.build_commit_sha }}" \
             --android-emulator-mcp-ref "${{ steps.session_plan.outputs.android_emulator_mcp_ref }}" \
             --mcp-toolkit-rs-ref "${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}" \
             --android-validation-mode "${{ steps.session_plan.outputs.android_validation_mode }}" \
