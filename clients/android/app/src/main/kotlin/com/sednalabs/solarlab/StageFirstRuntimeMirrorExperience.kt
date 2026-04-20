@@ -362,6 +362,24 @@ internal fun StageFirstRuntimeMirrorExperience(
             }
             val primaryControls: @Composable RowScope.() -> Unit = {
                 StageActionButton(
+                    label = "Zoom +",
+                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
+                    enabled = cameraControlsEnabled,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
+                )
+                StageActionButton(
+                    label = "Zoom -",
+                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR) },
+                    enabled = cameraControlsEnabled,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
+                )
+                StageActionButton(
+                    label = "Frame selected",
+                    onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
+                    enabled = cameraControlsEnabled && selectedBodyId != null,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                )
+                StageActionButton(
                     label = if (isRunning) "Pause" else "Start",
                     onClick = {
                         if (isRunning) {
@@ -394,24 +412,6 @@ internal fun StageFirstRuntimeMirrorExperience(
                         syncObserver(selectedBodyId, observerMode)
                     },
                     enabled = selectedBodyId != null || observerMode != ObserverMode.FREE,
-                )
-                StageActionButton(
-                    label = "Zoom +",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
-                )
-                StageActionButton(
-                    label = "Zoom -",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR) },
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
-                )
-                StageActionButton(
-                    label = "Frame selected",
-                    onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
-                    enabled = cameraControlsEnabled && selectedBodyId != null,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
                 )
                 StageActionButton(
                     label = "Refresh",

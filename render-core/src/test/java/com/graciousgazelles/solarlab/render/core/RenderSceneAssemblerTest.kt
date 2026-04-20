@@ -103,6 +103,8 @@ class RenderSceneAssemblerTest {
             cameraState = CameraState(
                 centerM = Vector3d.ZERO,
                 viewRadiusM = PhysicalConstants.ASTRONOMICAL_UNIT_M,
+                yawRadians = 0.0,
+                pitchRadians = Math.toRadians(90.0),
             ),
             viewportWidthPx = 1920,
             viewportHeightPx = 1080,
@@ -119,6 +121,8 @@ class RenderSceneAssemblerTest {
             cameraState = CameraState(
                 centerM = Vector3d.ZERO,
                 viewRadiusM = PhysicalConstants.ASTRONOMICAL_UNIT_M,
+                yawRadians = 0.0,
+                pitchRadians = Math.toRadians(90.0),
             ),
             viewportWidthPx = 1920,
             viewportHeightPx = 1080,
