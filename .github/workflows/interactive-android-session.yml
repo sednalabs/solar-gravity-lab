@@ -274,6 +274,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler ttyd
+          sudo systemctl disable --now ttyd.service >/dev/null 2>&1 || true
+          sudo systemctl reset-failed ttyd.service >/dev/null 2>&1 || true
+          sudo pkill -x ttyd >/dev/null 2>&1 || true
           mkdir -p "$HOME/.local/bin"
           bash .github/scripts/install_cloudflared.sh "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
