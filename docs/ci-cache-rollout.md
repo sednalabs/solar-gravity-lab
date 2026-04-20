@@ -2,6 +2,10 @@
 
 This document captures the current Solar Gravity Lab hosted-runner cache rollout.
 
+For the broader public workflow model, including reusable interactive Android
+artifacts and bounded live hosted sessions for AI-assisted development, see
+[`docs/hosted-ai-development.md`](hosted-ai-development.md).
+
 ## Goals
 
 - reduce repeated Android emulator cold-start cost on GitHub-hosted runners
