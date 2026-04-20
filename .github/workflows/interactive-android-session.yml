@@ -233,11 +233,13 @@ jobs:
           echo "session_start_epoch=$(date +%s)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/setup-java@v5
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         with:
           distribution: temurin
           java-version: "17"
 
       - uses: gradle/actions/setup-gradle@v5
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         with:
           cache-read-only: true
           cache-cleanup: on-success
@@ -307,8 +309,20 @@ jobs:
         shell: bash
         run: bash .github/scripts/configure_sccache.sh
 
-      - name: Accept Android SDK licenses and install build toolchain
-        id: android_sdk_install
+      - name: Install Android emulator runtime prerequisites
+        id: android_sdk_runtime_install
+        if: ${{ steps.session_plan.outputs.build_source == 'artifact' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "emulator" \
+            "platform-tools" \
+            "${ANDROID_SYSTEM_IMAGE_PACKAGE}"
+
+      - name: Accept Android SDK licenses and install Android build toolchain
+        id: android_sdk_build_install
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -323,6 +337,7 @@ jobs:
 
       - name: Install Rust Android toolchain
         id: rust_android_toolchain
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -384,6 +399,22 @@ jobs:
             mcp-workspace/toolkits/mcp-toolkit-rs \
             "${isolated_root}/mcp-workspace/toolkits/mcp-toolkit-rs"
           echo "server_dir=${isolated_root}/mcp-workspace/servers/android-emulator-mcp" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve interactive MCP build cache inputs
+        id: interactive_mcp_cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "server_sha=$(git -C mcp-workspace/servers/android-emulator-mcp rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "toolkit_sha=$(git -C mcp-workspace/toolkits/mcp-toolkit-rs rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "rustc_release=$(rustc -Vv | awk '/^release: / { print $2 }')" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore android-emulator-mcp target cache
+        id: interactive_mcp_target_cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.stage_mcp_workspace.outputs.server_dir }}/target
+          key: interactive-mcp-target-${{ runner.os }}-${{ runner.arch }}-${{ steps.interactive_mcp_cache.outputs.rustc_release }}-${{ steps.interactive_mcp_cache.outputs.server_sha }}-${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}
 
       - name: Download reusable interactive build artifact
         id: resolve_build_artifact
@@ -514,6 +545,21 @@ jobs:
           cargo build --release --locked
           phase_end="$(date +%s)"
           echo "build_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
+
+      - name: Emit interactive bootstrap summary
+        shell: bash
+        run: |
+          {
+            echo "## interactive bootstrap"
+            echo "- build source: \`${{ steps.session_plan.outputs.build_source }}\`"
+            echo "- Android build setup: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
+            echo "- Rust Android toolchain: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
+            echo "- android-emulator-mcp cache hit: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit || 'false' }}\`"
+            echo "- android-emulator-mcp rustc release: \`${{ steps.interactive_mcp_cache.outputs.rustc_release }}\`"
+            echo "- android-emulator-mcp server sha: \`${{ steps.interactive_mcp_cache.outputs.server_sha }}\`"
+            echo "- mcp-toolkit-rs sha: \`${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}\`"
+            echo "- android-emulator-mcp build seconds: \`${{ steps.build_mcp.outputs.build_seconds }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Run hosted interactive Android session
         id: interactive_session
