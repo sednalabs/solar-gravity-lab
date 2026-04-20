@@ -684,18 +684,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/configure_sccache.sh
 
-      - name: Install Rust Android toolchain
-        id: android_unit_rust_android_toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup target add aarch64-linux-android x86_64-linux-android
-          if command -v cargo-ndk >/dev/null 2>&1; then
-            echo "cargo-ndk already available."
-          else
-            cargo install cargo-ndk --locked
-          fi
-
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -845,18 +833,6 @@ jobs:
         id: android_lint_sccache
         shell: bash
         run: bash .github/scripts/configure_sccache.sh
-
-      - name: Install Rust Android toolchain
-        id: android_lint_rust_android_toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup target add aarch64-linux-android x86_64-linux-android
-          if command -v cargo-ndk >/dev/null 2>&1; then
-            echo "cargo-ndk already available."
-          else
-            cargo install cargo-ndk --locked
-          fi
 
       - uses: dtolnay/rust-toolchain@stable
 
