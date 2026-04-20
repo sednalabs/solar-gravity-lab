@@ -37,6 +37,11 @@ This intentionally replaces the earlier Worker-fronted cache concept.
 - `R2_CACHE_ACCESS_KEY_ID`
 - `R2_CACHE_SECRET_ACCESS_KEY`
 
+Optional migration seam for `sccache`:
+
+- `SCCACHE_ACCESS_KEY_ID`
+- `SCCACHE_SECRET_ACCESS_KEY`
+
 Optional later:
 
 - `GRADLE_CONFIGURATION_CACHE_KEY`
@@ -83,6 +88,7 @@ Optional R2 backing:
 - Workflow helper actions were refreshed to current Node 24 builds where upstreams already provide them
 - Rust-heavy jobs install `sccache` through the in-repo `.github/actions/install-sccache` action so we avoid the stale Node 20 runtime in `mozilla-actions/sccache-action` while keeping the same pinned `v0.10.0` binary
 - Rust-heavy jobs configure `sccache` from repo vars and secrets and emit per-job stats into the workflow summary
+- the current workflow contract allows a staged credential split: dedicated `SCCACHE_*` secrets can be introduced first, while the older shared R2 secrets remain as fallback during migration
 - `configure_sccache.sh` also exports `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` so AGP-driven CMake builds can reuse the same R2-backed `sccache` backend without module-specific workflow branching
 - Android/native jobs use the in-repo `.github/actions/rust-shared-cache` action so cargo registry, cargo git, cargo binaries, and workspace `target/` contents can be reused without carrying the upstream `punycode` deprecation warning
 
