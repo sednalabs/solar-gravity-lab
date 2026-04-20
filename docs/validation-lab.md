@@ -16,6 +16,7 @@ build or workflow behavior.
 - `.github/workflows/validation-lab.yml`
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 - `.github/workflows/prerelease-apk.yml` for installable internal dev previews
+- `.github/workflows/interactive-android-session.yml` for bounded live emulator debugging on a hosted runner
 
 ## Current lane families
 
