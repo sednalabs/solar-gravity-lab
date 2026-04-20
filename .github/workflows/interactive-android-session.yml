@@ -296,6 +296,24 @@ jobs:
           fetch-depth: 1
           path: mcp-workspace/toolkits/mcp-toolkit-rs
 
+      - name: Stage isolated MCP workspace
+        id: stage_mcp_workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          isolated_root="${RUNNER_TEMP}/interactive-mcp-root"
+          rm -rf "${isolated_root}"
+          mkdir -p \
+            "${isolated_root}/mcp-workspace/servers" \
+            "${isolated_root}/mcp-workspace/toolkits"
+          cp -a \
+            mcp-workspace/servers/android-emulator-mcp \
+            "${isolated_root}/mcp-workspace/servers/android-emulator-mcp"
+          cp -a \
+            mcp-workspace/toolkits/mcp-toolkit-rs \
+            "${isolated_root}/mcp-workspace/toolkits/mcp-toolkit-rs"
+          echo "server_dir=${isolated_root}/mcp-workspace/servers/android-emulator-mcp" >> "${GITHUB_OUTPUT}"
+
       - name: Assemble debug APK for interactive session
         id: assemble_debug
         shell: bash
@@ -344,7 +362,7 @@ jobs:
       - name: Build android-emulator-mcp release binary
         id: build_mcp
         shell: bash
-        working-directory: mcp-workspace/servers/android-emulator-mcp
+        working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
         run: |
           set -euo pipefail
           phase_start="$(date +%s)"
@@ -370,7 +388,7 @@ jobs:
           INTERACTIVE_APP_APK: ${{ github.workspace }}/dist/interactive-session/app/solar-gravity-lab-${{ steps.apk_meta.outputs.safe_version }}-debug.apk
           INTERACTIVE_APP_PACKAGE: ${{ env.INTERACTIVE_APP_PACKAGE }}
           INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
-          INTERACTIVE_MCP_WORKSPACE_DIR: ${{ github.workspace }}/mcp-workspace/servers/android-emulator-mcp
+          INTERACTIVE_MCP_WORKSPACE_DIR: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
           INTERACTIVE_CLOUDFLARED_BIN: cloudflared
           INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
           INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
