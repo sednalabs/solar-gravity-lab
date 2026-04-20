@@ -6,9 +6,9 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import urllib.parse
 import urllib.request
-import zipfile
 from pathlib import Path
 
 
@@ -38,16 +38,27 @@ class GitHubApiClient:
         with urllib.request.urlopen(self._request(url)) as response:
             return json.load(response)
 
-    def get_bytes(self, path_or_url: str) -> bytes:
-        url = (
-            path_or_url
-            if path_or_url.startswith("https://")
-            else f"https://api.github.com{path_or_url}"
+    def download_artifact(self, run_id: str, artifact_name: str, output_dir: Path) -> None:
+        shutil.rmtree(output_dir, ignore_errors=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env.setdefault("GH_TOKEN", self.token)
+        subprocess.run(
+            [
+                "gh",
+                "run",
+                "download",
+                run_id,
+                "-R",
+                self.repository,
+                "-n",
+                artifact_name,
+                "-D",
+                str(output_dir),
+            ],
+            check=True,
+            env=env,
         )
-        with urllib.request.urlopen(
-            self._request(url, accept="application/octet-stream")
-        ) as response:
-            return response.read()
 
 
 def parse_args() -> argparse.Namespace:
@@ -134,16 +145,6 @@ def resolve_run_artifact(client: GitHubApiClient, run_id: str, artifact_name: st
     }
 
 
-def extract_bundle(bundle_zip: bytes, output_dir: Path) -> None:
-    shutil.rmtree(output_dir, ignore_errors=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = output_dir / "artifact.zip"
-    archive_path.write_bytes(bundle_zip)
-    with zipfile.ZipFile(archive_path) as archive:
-        archive.extractall(output_dir)
-    archive_path.unlink()
-
-
 def find_single_file(root: Path, filename: str) -> Path:
     candidates = list(root.rglob(filename))
     if len(candidates) != 1:
@@ -168,7 +169,7 @@ def main() -> None:
     artifact = resolved["artifact"]
     run = resolved["run"]
     bundle_dir = Path(args.output_dir).resolve()
-    extract_bundle(client.get_bytes(artifact["archive_download_url"]), bundle_dir)
+    client.download_artifact(str(run["id"]), artifact["name"], bundle_dir)
 
     manifest_path = find_single_file(bundle_dir, "interactive-build-manifest.json")
     manifest = json.loads(manifest_path.read_text())
