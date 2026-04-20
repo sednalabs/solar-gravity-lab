@@ -41,6 +41,10 @@ STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES=(
 
 STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
+)
+
+STAGE_FIRST_MIRROR_ON_FULL_TEST_CLASSES=(
+  "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeMirrorInstrumentationTest"
 )
 
@@ -238,8 +242,7 @@ resolve_test_classes() {
           TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
           ;;
         full)
-          echo "ANDROID_TEST_SCOPE='full' is not yet supported for mode '${VALIDATION_MODE}'. Use 'core' or extend the stage-first class set explicitly first." >&2
-          exit 2
+          TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_FULL_TEST_CLASSES[@]}")
           ;;
         *)
           echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
