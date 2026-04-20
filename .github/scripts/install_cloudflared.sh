@@ -18,7 +18,7 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
 fi
 
 destination_dir="$1"
-version="${2:-2026.4.1}"
+version="${2:-2026.3.0}"
 
 machine="$(uname -m)"
 asset_arch=""
