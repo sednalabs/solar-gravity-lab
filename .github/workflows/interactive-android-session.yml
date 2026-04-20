@@ -26,6 +26,14 @@ on:
           - stage-first-mirror-off
           - stage-first-mirror-on
         default: stage-first-mirror-on
+      interactive_debug_profile:
+        description: Runtime posture for the hosted debug session
+        required: true
+        type: choice
+        options:
+          - hosted-debug-lite
+          - full-fidelity
+        default: hosted-debug-lite
       emulator_boot_strategy:
         description: Emulator startup strategy
         required: true
@@ -101,6 +109,7 @@ jobs:
           INPUT_MCP_REF: ${{ inputs.android_emulator_mcp_ref }}
           INPUT_TOOLKIT_REF: ${{ inputs.mcp_toolkit_rs_ref }}
           INPUT_VALIDATION_MODE: ${{ inputs.android_validation_mode }}
+          INPUT_DEBUG_PROFILE: ${{ inputs.interactive_debug_profile }}
           INPUT_BOOT_STRATEGY: ${{ inputs.emulator_boot_strategy }}
           INPUT_TIMEOUT_MINUTES: ${{ inputs.session_timeout_minutes }}
           INPUT_KEEP_SESSION_ON_FAILURE: ${{ inputs.keep_session_on_failure }}
@@ -126,6 +135,7 @@ jobs:
 
           debug_stage_first_client="true"
           stage_first_runtime_mirror="true"
+          hosted_debug_lite_mode="false"
           case "${INPUT_VALIDATION_MODE}" in
             shell-v2)
               debug_stage_first_client="false"
@@ -145,16 +155,31 @@ jobs:
               ;;
           esac
 
+          case "${INPUT_DEBUG_PROFILE}" in
+            full-fidelity)
+              hosted_debug_lite_mode="false"
+              ;;
+            hosted-debug-lite)
+              hosted_debug_lite_mode="true"
+              ;;
+            *)
+              echo "Unsupported interactive_debug_profile: ${INPUT_DEBUG_PROFILE}" >&2
+              exit 1
+              ;;
+          esac
+
           {
             echo "checkout_ref=${checkout_ref}"
             echo "android_emulator_mcp_ref=${INPUT_MCP_REF}"
             echo "mcp_toolkit_rs_ref=${INPUT_TOOLKIT_REF}"
             echo "android_validation_mode=${INPUT_VALIDATION_MODE}"
+            echo "interactive_debug_profile=${INPUT_DEBUG_PROFILE}"
             echo "emulator_boot_strategy=${INPUT_BOOT_STRATEGY}"
             echo "session_timeout_minutes=${session_timeout_minutes}"
             echo "keep_session_on_failure=${INPUT_KEEP_SESSION_ON_FAILURE}"
             echo "debug_stage_first_client=${debug_stage_first_client}"
             echo "stage_first_runtime_mirror=${stage_first_runtime_mirror}"
+            echo "hosted_debug_lite_mode=${hosted_debug_lite_mode}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Initialize interactive session timing
@@ -326,7 +351,8 @@ jobs:
           ./gradlew -p clients/android \
             :app:assembleDebug \
             -Psolarlab.debugStageFirstClient=${{ steps.session_plan.outputs.debug_stage_first_client }} \
-            -Psolarlab.stageFirstRuntimeMirror=${{ steps.session_plan.outputs.stage_first_runtime_mirror }}
+            -Psolarlab.stageFirstRuntimeMirror=${{ steps.session_plan.outputs.stage_first_runtime_mirror }} \
+            -Psolarlab.hostedDebugProfile=${{ steps.session_plan.outputs.interactive_debug_profile }}
           phase_end="$(date +%s)"
           echo "assemble_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
 
@@ -417,6 +443,7 @@ jobs:
             --android-emulator-mcp-ref "${{ steps.session_plan.outputs.android_emulator_mcp_ref }}" \
             --mcp-toolkit-rs-ref "${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}" \
             --android-validation-mode "${{ steps.session_plan.outputs.android_validation_mode }}" \
+            --interactive-debug-profile "${{ steps.session_plan.outputs.interactive_debug_profile }}" \
             --emulator-boot-strategy "${{ steps.session_plan.outputs.emulator_boot_strategy }}" \
             --session-timeout-minutes "${{ steps.session_plan.outputs.session_timeout_minutes }}" \
             --keep-session-on-failure "${{ steps.session_plan.outputs.keep_session_on_failure }}" \

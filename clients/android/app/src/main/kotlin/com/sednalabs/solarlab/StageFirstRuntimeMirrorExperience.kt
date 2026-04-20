@@ -130,7 +130,7 @@ internal fun StageFirstRuntimeMirrorExperience(
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
-        var renderProcessingMode by remember { mutableStateOf(RenderProcessingMode.DEFAULT) }
+        var renderProcessingMode by remember { mutableStateOf(HostedDebugMode.initialRenderProcessingMode) }
         var stepQuantumPreset by remember { mutableStateOf(StepQuantumPreset.SIX_HOURS) }
         var playbackSpeedPreset by remember { mutableStateOf(PlaybackSpeedPreset.SIX_HOURS_PER_SECOND) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
@@ -138,6 +138,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive runtime mirror.") }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
+        var hostedDebugModeApplied by remember { mutableStateOf(false) }
 
         val mirrorScene = remember(uiState.renderFrame) {
             uiState.renderFrame?.toRuntimeMirrorScene()
@@ -251,6 +252,22 @@ internal fun StageFirstRuntimeMirrorExperience(
 
         LaunchedEffect(uiState.observerModeCode) {
             observerMode = observerModeFromRuntimeCode(uiState.observerModeCode)
+        }
+
+        LaunchedEffect(canSendCommands, uiState.snapshot?.paused) {
+            if (!HostedDebugMode.enabled || hostedDebugModeApplied || !canSendCommands) {
+                return@LaunchedEffect
+            }
+
+            renderProcessingMode = RenderProcessingMode.LOW
+
+            val snapshot = uiState.snapshot ?: return@LaunchedEffect
+            if (!snapshot.paused) {
+                sendRuntimeCommand(RuntimeCommand.PausePlayback)
+                return@LaunchedEffect
+            }
+
+            hostedDebugModeApplied = true
         }
 
         LaunchedEffect(mirrorScene?.scene?.sourceRevision, searchableBodies) {

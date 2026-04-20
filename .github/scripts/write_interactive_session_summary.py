@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--android-emulator-mcp-ref", required=True)
     parser.add_argument("--mcp-toolkit-rs-ref", required=True)
     parser.add_argument("--android-validation-mode", required=True)
+    parser.add_argument("--interactive-debug-profile", required=True)
     parser.add_argument("--emulator-boot-strategy", required=True)
     parser.add_argument("--session-timeout-minutes", required=True)
     parser.add_argument("--keep-session-on-failure", required=True)
@@ -66,6 +67,7 @@ def render_markdown(payload: dict) -> str:
         f"- android-emulator-mcp ref: `{payload['context']['android_emulator_mcp_ref']}`",
         f"- mcp-toolkit-rs ref: `{payload['context']['mcp_toolkit_rs_ref']}`",
         f"- android validation mode: `{payload['context']['android_validation_mode']}`",
+        f"- interactive debug profile: `{payload['context']['interactive_debug_profile']}`",
         f"- emulator boot strategy: `{payload['context']['emulator_boot_strategy']}`",
         f"- timeout minutes: `{payload['context']['session_timeout_minutes']}`",
         f"- keep session on failure: `{payload['context']['keep_session_on_failure']}`",
@@ -176,6 +178,7 @@ def main() -> None:
             "android_emulator_mcp_ref": args.android_emulator_mcp_ref,
             "mcp_toolkit_rs_ref": args.mcp_toolkit_rs_ref,
             "android_validation_mode": args.android_validation_mode,
+            "interactive_debug_profile": args.interactive_debug_profile,
             "emulator_boot_strategy": args.emulator_boot_strategy,
             "session_timeout_minutes": args.session_timeout_minutes,
             "keep_session_on_failure": args.keep_session_on_failure,
