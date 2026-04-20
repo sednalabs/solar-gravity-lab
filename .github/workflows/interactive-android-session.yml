@@ -273,7 +273,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y ttyd
+          sudo apt-get install -y protobuf-compiler ttyd
           mkdir -p "$HOME/.local/bin"
           bash .github/scripts/install_cloudflared.sh "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
