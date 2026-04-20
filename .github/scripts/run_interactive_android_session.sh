@@ -23,7 +23,10 @@ live_access_dir="${session_root}/live-access"
 emulator_logcat_dir="${session_root}/emulator-logcat"
 ui_dump_dir="${session_root}/ui-dumps"
 screenshots_dir="${session_root}/screenshots"
+build_cache_dir="${session_root}/build-cache"
+install_history_dir="${session_root}/install-history"
 session_state_path="${session_root}/session-state.json"
+active_build_path="${session_root}/active-build.json"
 finish_sentinel="${INTERACTIVE_SESSION_END_SENTINEL:-${session_root}/finish-session}"
 mcp_health_url="${INTERACTIVE_MCP_HEALTH_URL:-http://127.0.0.1:9526/health}"
 mcp_bind_addr="${INTERACTIVE_MCP_BIND_ADDR:-127.0.0.1:9526}"
@@ -32,6 +35,7 @@ ttyd_port="${INTERACTIVE_DEBUG_TTYD_PORT:-7681}"
 session_timeout_minutes="${INTERACTIVE_SESSION_TIMEOUT_MINUTES:-90}"
 keep_session_on_failure="${INTERACTIVE_KEEP_SESSION_ON_FAILURE:-true}"
 app_apk="${INTERACTIVE_APP_APK:?INTERACTIVE_APP_APK is required}"
+build_manifest_path="${INTERACTIVE_BUILD_MANIFEST:?INTERACTIVE_BUILD_MANIFEST is required}"
 app_package="${INTERACTIVE_APP_PACKAGE:?INTERACTIVE_APP_PACKAGE is required}"
 app_activity="${INTERACTIVE_APP_ACTIVITY:?INTERACTIVE_APP_ACTIVITY is required}"
 mcp_workspace_dir="${INTERACTIVE_MCP_WORKSPACE_DIR:?INTERACTIVE_MCP_WORKSPACE_DIR is required}"
@@ -49,6 +53,8 @@ mkdir -p \
   "${emulator_logcat_dir}" \
   "${ui_dump_dir}" \
   "${screenshots_dir}" \
+  "${build_cache_dir}" \
+  "${install_history_dir}" \
   "${session_root}/android-emulator-mcp-artifacts"
 
 touch "${startup_log_dir}/session.log"
@@ -101,6 +107,67 @@ write_live_status() {
 write_session_state() {
   local payload="$1"
   json_write "${session_state_path}" "${payload}"
+}
+
+write_active_build_state() {
+  local status="$1"
+  local preflight_json_path="$2"
+  python3 - "${active_build_path}" "${build_manifest_path}" "${status}" "${preflight_json_path}" <<'PY'
+import json
+import pathlib
+import sys
+from datetime import datetime, timezone
+
+output_path = pathlib.Path(sys.argv[1])
+manifest_path = pathlib.Path(sys.argv[2])
+status = sys.argv[3]
+preflight_path = pathlib.Path(sys.argv[4])
+
+manifest = json.loads(manifest_path.read_text())
+preflight = json.loads(preflight_path.read_text()) if preflight_path.exists() else None
+payload = {
+    "schema_version": 1,
+    "status": status,
+    "activated_at_iso": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "manifest": manifest,
+    "proof": {
+        "preflight_json": str(preflight_path),
+        "launch_smoke_dir": str(preflight_path.parent / "startup-smoke"),
+        "mcp_health": str(preflight_path.parent / "mcp-health.json"),
+    },
+    "preflight": preflight,
+}
+output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+PY
+}
+
+append_install_history() {
+  local install_status="$1"
+  local preflight_json_path="$2"
+  local output_path
+  output_path="${install_history_dir}/$(date -u +%Y%m%dT%H%M%SZ)-startup-preflight.json"
+  python3 - "${output_path}" "${build_manifest_path}" "${install_status}" "${preflight_json_path}" <<'PY'
+import json
+import pathlib
+import sys
+from datetime import datetime, timezone
+
+output_path = pathlib.Path(sys.argv[1])
+manifest_path = pathlib.Path(sys.argv[2])
+install_status = sys.argv[3]
+preflight_path = pathlib.Path(sys.argv[4])
+
+manifest = json.loads(manifest_path.read_text())
+preflight = json.loads(preflight_path.read_text()) if preflight_path.exists() else None
+payload = {
+    "schema_version": 1,
+    "recorded_at_iso": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "status": install_status,
+    "manifest": manifest,
+    "preflight": preflight,
+}
+output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+PY
 }
 
 capture_final_artifacts() {
@@ -165,6 +232,11 @@ fi
 
 export ANDROID_EMULATOR_MCP_ALLOWED_HOSTS="${mcp_allowed_hosts}"
 export ANDROID_EMULATOR_MCP_HTTP_ALLOW_RESUME=0
+export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_ROOT="${session_root}"
+export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_APP_PACKAGE="${app_package}"
+export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_APP_ACTIVITY="${app_activity}"
+export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_GITHUB_REPOSITORY="${INTERACTIVE_SESSION_GITHUB_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_GITHUB_TOKEN="${INTERACTIVE_SESSION_GITHUB_TOKEN:-}"
 
 log "Starting android-emulator-mcp on ${mcp_bind_addr}"
 "${mcp_workspace_dir}/target/release/android-emulator-mcp" \
@@ -198,6 +270,13 @@ if ! bash .github/scripts/run_interactive_android_preflight.sh \
   --activity "${app_activity}" \
   --out-dir "${preflight_dir}"; then
   preflight_ok="false"
+fi
+
+if [[ "${preflight_ok}" == "true" ]]; then
+  append_install_history "ready" "${preflight_dir}/preflight.json"
+  write_active_build_state "ready" "${preflight_dir}/preflight.json"
+else
+  append_install_history "action_required" "${preflight_dir}/preflight.json"
 fi
 
 adb logcat -v threadtime > "${emulator_logcat_dir}/live-logcat.txt" 2>&1 &
