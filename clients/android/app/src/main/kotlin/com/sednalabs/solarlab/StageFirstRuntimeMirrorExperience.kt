@@ -39,9 +39,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -675,6 +678,8 @@ private fun RuntimeMirrorSearchDialog(
     onSelectBody: (String) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     val normalizedQuery = query.trim().lowercase(Locale.US)
     val filteredBodies = remember(bodies, normalizedQuery) {
         bodies
@@ -685,6 +690,11 @@ private fun RuntimeMirrorSearchDialog(
                     body.id.lowercase(Locale.US).contains(normalizedQuery)
             }
             .take(32)
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
     }
 
     AlertDialog(
@@ -702,6 +712,7 @@ private fun RuntimeMirrorSearchDialog(
                     onValueChange = { query = it },
                     modifier = Modifier
                         .fillMaxWidth()
+                        .focusRequester(focusRequester)
                         .testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD),
                     label = { Text("Search by name or id") },
                     singleLine = true,
