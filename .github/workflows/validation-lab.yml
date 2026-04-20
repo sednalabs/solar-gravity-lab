@@ -682,7 +682,7 @@ jobs:
         run: bash .github/scripts/configure_sccache.sh
 
       - name: Install Rust Android toolchain
-        id: android_unit_rust_android_toolchain
+        id: android_unit_rust_android_toolchain_cached
         shell: bash
         run: |
           set -euo pipefail
@@ -844,7 +844,7 @@ jobs:
         run: bash .github/scripts/configure_sccache.sh
 
       - name: Install Rust Android toolchain
-        id: android_lint_rust_android_toolchain
+        id: android_lint_rust_android_toolchain_cached
         shell: bash
         run: |
           set -euo pipefail
