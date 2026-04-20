@@ -13,6 +13,7 @@ emit_summary() {
   local enabled="$1"
   local reason="$2"
   local missing="${3:-}"
+  local credential_source_value="${4:-}"
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     {
       echo "## sccache configuration"
@@ -26,6 +27,7 @@ emit_summary() {
         echo "- bucket: \`${SCCACHE_BUCKET}\`"
         echo "- endpoint: \`${SCCACHE_ENDPOINT}\`"
         echo "- key prefix: \`${SCCACHE_S3_KEY_PREFIX:-}\`"
+        echo "- credential source: \`${credential_source_value}\`"
       fi
     } >> "${GITHUB_STEP_SUMMARY}"
   fi
@@ -75,7 +77,7 @@ if [[ "${#missing_vars[@]}" -gt 0 ]]; then
   emit_output "enabled" "false"
   emit_output "reason" "missing-config"
   emit_output "missing" "${missing_csv}"
-  emit_summary "false" "missing-config" "${missing_csv}"
+  emit_summary "false" "missing-config" "${missing_csv}" "${credential_source}"
   exit 0
 fi
 
@@ -109,4 +111,4 @@ emit_output "bucket" "${SCCACHE_BUCKET}"
 emit_output "endpoint" "${SCCACHE_ENDPOINT}"
 emit_output "key_prefix" "${SCCACHE_S3_KEY_PREFIX:-}"
 emit_output "credential_source" "${credential_source}"
-emit_summary "true" "configured"
+emit_summary "true" "configured" "" "${credential_source}"
