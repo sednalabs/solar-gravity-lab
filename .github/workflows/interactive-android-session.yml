@@ -1,0 +1,419 @@
+name: interactive-android-session
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to use for the interactive session
+        required: false
+        type: string
+      android_emulator_mcp_ref:
+        description: Branch, tag, or commit from sednalabs/android-emulator-mcp
+        required: true
+        type: string
+        default: 9d8e67ea7195e9b0536f9b76166e68caaa218fc9
+      mcp_toolkit_rs_ref:
+        description: Branch, tag, or commit from GraciousGazelles/toolkits-mcp-toolkit-rs
+        required: true
+        type: string
+        default: e5fffbd11480661e588cc03b6590726963986a95
+      android_validation_mode:
+        description: Which Android runtime posture to boot for live debugging
+        required: true
+        type: choice
+        options:
+          - shell-v2
+          - stage-first-mirror-off
+          - stage-first-mirror-on
+        default: stage-first-mirror-on
+      emulator_boot_strategy:
+        description: Emulator startup strategy
+        required: true
+        type: choice
+        options:
+          - snapshot-cache
+          - cold
+        default: snapshot-cache
+      session_timeout_minutes:
+        description: Interactive session timeout window in minutes (30-180)
+        required: true
+        type: string
+        default: "90"
+      keep_session_on_failure:
+        description: Keep the live session available when preflight fails
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
+  ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
+  ANDROID_AVD_CACHE_VERSION: v3
+  ANDROID_SDK_COMPONENT_CACHE_VERSION: v1
+  ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
+  ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
+  ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
+  ANDROID_SYSTEM_IMAGE_PACKAGE: "system-images;android-35;google_apis;x86_64"
+  ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
+  ANDROID_NDK_VERSION: "27.3.13750724"
+  ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  INTERACTIVE_MCP_BIND_ADDR: 127.0.0.1:9526
+  INTERACTIVE_DEBUG_TTYD_PORT: "7681"
+  INTERACTIVE_SESSION_ROOT: dist/interactive-session
+  INTERACTIVE_APP_PACKAGE: com.sednalabs.solarlab
+  INTERACTIVE_APP_ACTIVITY: com.sednalabs.solarlab.MainActivity
+  SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+  SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+  SCCACHE_REGION: auto
+  SCCACHE_S3_USE_SSL: "true"
+  SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
+
+jobs:
+  interactive-session:
+    name: Hosted interactive Android emulator session
+    runs-on: ubuntu-24.04
+    env:
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: "false"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+
+      - name: Resolve interactive session plan
+        id: session_plan
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_MCP_REF: ${{ inputs.android_emulator_mcp_ref }}
+          INPUT_TOOLKIT_REF: ${{ inputs.mcp_toolkit_rs_ref }}
+          INPUT_VALIDATION_MODE: ${{ inputs.android_validation_mode }}
+          INPUT_BOOT_STRATEGY: ${{ inputs.emulator_boot_strategy }}
+          INPUT_TIMEOUT_MINUTES: ${{ inputs.session_timeout_minutes }}
+          INPUT_KEEP_SESSION_ON_FAILURE: ${{ inputs.keep_session_on_failure }}
+        run: |
+          set -euo pipefail
+
+          checkout_ref="${INPUT_REF:-}"
+          if [[ -z "${checkout_ref}" ]]; then
+            checkout_ref="${GITHUB_REF_NAME}"
+          fi
+
+          session_timeout_minutes="${INPUT_TIMEOUT_MINUTES:-90}"
+          if ! [[ "${session_timeout_minutes}" =~ ^[0-9]+$ ]]; then
+            echo "session_timeout_minutes must be an integer minute count" >&2
+            exit 1
+          fi
+          if (( session_timeout_minutes < 30 )); then
+            session_timeout_minutes=30
+          fi
+          if (( session_timeout_minutes > 180 )); then
+            session_timeout_minutes=180
+          fi
+
+          debug_stage_first_client="true"
+          stage_first_runtime_mirror="true"
+          case "${INPUT_VALIDATION_MODE}" in
+            shell-v2)
+              debug_stage_first_client="false"
+              stage_first_runtime_mirror="false"
+              ;;
+            stage-first-mirror-off)
+              debug_stage_first_client="true"
+              stage_first_runtime_mirror="false"
+              ;;
+            stage-first-mirror-on)
+              debug_stage_first_client="true"
+              stage_first_runtime_mirror="true"
+              ;;
+            *)
+              echo "Unsupported android_validation_mode: ${INPUT_VALIDATION_MODE}" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "checkout_ref=${checkout_ref}"
+            echo "android_emulator_mcp_ref=${INPUT_MCP_REF}"
+            echo "mcp_toolkit_rs_ref=${INPUT_TOOLKIT_REF}"
+            echo "android_validation_mode=${INPUT_VALIDATION_MODE}"
+            echo "emulator_boot_strategy=${INPUT_BOOT_STRATEGY}"
+            echo "session_timeout_minutes=${session_timeout_minutes}"
+            echo "keep_session_on_failure=${INPUT_KEEP_SESSION_ON_FAILURE}"
+            echo "debug_stage_first_client=${debug_stage_first_client}"
+            echo "stage_first_runtime_mirror=${stage_first_runtime_mirror}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Initialize interactive session timing
+        id: session_timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "session_start_epoch=$(date +%s)" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Enable KVM for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Restore Android emulator AVD cache
+        id: avd-cache
+        if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' }}
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
+
+      - name: Restore Android SDK emulator packages cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            /usr/local/lib/android/sdk/emulator
+            /usr/local/lib/android/sdk/system-images/android-35/google_apis
+          key: android-sdk-components-${{ runner.os }}-${{ runner.arch }}-${{ env.ANDROID_SDK_COMPONENT_CACHE_VERSION }}
+
+      - name: Seed Android emulator snapshot
+        if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
+          emulator-boot-timeout: 1200
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: false
+          script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-interactive-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: interactive_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
+
+      - name: Accept Android SDK licenses and install build toolchain
+        id: android_sdk_install
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "emulator" \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_SYSTEM_IMAGE_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
+
+      - name: Install Rust Android toolchain
+        id: rust_android_toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase_start="$(date +%s)"
+          rustup target add aarch64-linux-android x86_64-linux-android
+          if command -v cargo-ndk >/dev/null 2>&1; then
+            echo "cargo-ndk already available."
+          else
+            cargo install cargo-ndk --locked
+          fi
+          phase_end="$(date +%s)"
+          echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
+
+      - name: Install interactive live-access dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ttyd
+          mkdir -p "$HOME/.local/bin"
+          bash .github/scripts/install_cloudflared.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Checkout android-emulator-mcp workspace
+        uses: actions/checkout@v6
+        with:
+          repository: sednalabs/android-emulator-mcp
+          ref: ${{ steps.session_plan.outputs.android_emulator_mcp_ref }}
+          token: ${{ secrets.SGL_ANDROID_EMULATOR_MCP_READ_TOKEN }}
+          fetch-depth: 1
+          path: mcp-workspace/servers/android-emulator-mcp
+
+      - name: Checkout mcp-toolkit-rs workspace
+        uses: actions/checkout@v6
+        with:
+          repository: GraciousGazelles/toolkits-mcp-toolkit-rs
+          ref: ${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}
+          token: ${{ secrets.SGL_MCP_TOOLKIT_RS_READ_TOKEN }}
+          fetch-depth: 1
+          path: mcp-workspace/toolkits/mcp-toolkit-rs
+
+      - name: Assemble debug APK for interactive session
+        id: assemble_debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase_start="$(date +%s)"
+          ./gradlew -p clients/android \
+            :app:assembleDebug \
+            -Psolarlab.debugStageFirstClient=${{ steps.session_plan.outputs.debug_stage_first_client }} \
+            -Psolarlab.stageFirstRuntimeMirror=${{ steps.session_plan.outputs.stage_first_runtime_mirror }}
+          phase_end="$(date +%s)"
+          echo "assemble_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
+
+      - name: Derive debug APK metadata
+        id: apk_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "${GITHUB_OUTPUT}"
+          import json
+          from pathlib import Path
+
+          metadata = json.loads(
+              Path("clients/android/app/build/outputs/apk/debug/output-metadata.json").read_text()
+          )
+          element = metadata["elements"][0]
+          version_name = element["versionName"]
+          safe_version = "".join(
+              ch if ch.isalnum() or ch in "._-" else "-"
+              for ch in version_name
+          )
+          print(f"apk_name={element['outputFile']}")
+          print(f"version_name={version_name}")
+          print(f"safe_version={safe_version}")
+          PY
+
+      - name: Stage interactive debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${INTERACTIVE_SESSION_ROOT}/app"
+          cp \
+            "clients/android/app/build/outputs/apk/debug/${{ steps.apk_meta.outputs.apk_name }}" \
+            "${INTERACTIVE_SESSION_ROOT}/app/solar-gravity-lab-${{ steps.apk_meta.outputs.safe_version }}-debug.apk"
+
+      - name: Build android-emulator-mcp release binary
+        id: build_mcp
+        shell: bash
+        working-directory: mcp-workspace/servers/android-emulator-mcp
+        run: |
+          set -euo pipefail
+          phase_start="$(date +%s)"
+          cargo build --release --locked
+          phase_end="$(date +%s)"
+          echo "build_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
+
+      - name: Run hosted interactive Android session
+        id: interactive_session
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          target: google_apis
+          avd-name: ${{ env.ANDROID_AVD_NAME }}
+          emulator-boot-timeout: 1200
+          force-avd-creation: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: true
+          script: bash .github/scripts/run_interactive_android_session.sh
+        env:
+          INTERACTIVE_APP_APK: ${{ github.workspace }}/dist/interactive-session/app/solar-gravity-lab-${{ steps.apk_meta.outputs.safe_version }}-debug.apk
+          INTERACTIVE_APP_PACKAGE: ${{ env.INTERACTIVE_APP_PACKAGE }}
+          INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
+          INTERACTIVE_MCP_WORKSPACE_DIR: ${{ github.workspace }}/mcp-workspace/servers/android-emulator-mcp
+          INTERACTIVE_CLOUDFLARED_BIN: cloudflared
+          INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
+          INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
+          INTERACTIVE_DEBUG_TUNNEL_TOKEN: ${{ secrets.SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN }}
+          INTERACTIVE_SESSION_TIMEOUT_MINUTES: ${{ steps.session_plan.outputs.session_timeout_minutes }}
+          INTERACTIVE_KEEP_SESSION_ON_FAILURE: ${{ steps.session_plan.outputs.keep_session_on_failure }}
+          INTERACTIVE_MCP_BIND_ADDR: ${{ env.INTERACTIVE_MCP_BIND_ADDR }}
+
+      - name: Build interactive session summary payload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/interactive-session-summary
+          python3 .github/scripts/write_interactive_session_summary.py \
+            --workflow interactive-android-session \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --repository "${{ github.repository }}" \
+            --checkout-ref "${{ steps.session_plan.outputs.checkout_ref }}" \
+            --android-emulator-mcp-ref "${{ steps.session_plan.outputs.android_emulator_mcp_ref }}" \
+            --mcp-toolkit-rs-ref "${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}" \
+            --android-validation-mode "${{ steps.session_plan.outputs.android_validation_mode }}" \
+            --emulator-boot-strategy "${{ steps.session_plan.outputs.emulator_boot_strategy }}" \
+            --session-timeout-minutes "${{ steps.session_plan.outputs.session_timeout_minutes }}" \
+            --keep-session-on-failure "${{ steps.session_plan.outputs.keep_session_on_failure }}" \
+            --job-result "${{ steps.interactive_session.outcome }}" \
+            --artifacts-dir "${INTERACTIVE_SESSION_ROOT}" \
+            --output-json dist/interactive-session-summary/interactive-session-summary.json \
+            --output-md dist/interactive-session-summary/interactive-session-summary.md
+
+      - name: Emit interactive session summary
+        if: always()
+        shell: bash
+        run: cat dist/interactive-session-summary/interactive-session-summary.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload interactive session artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: interactive-android-session-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            dist/interactive-session/**
+            dist/interactive-session-summary/**

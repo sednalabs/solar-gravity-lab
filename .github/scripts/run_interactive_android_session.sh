@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+json_write() {
+  local output_path="$1"
+  shift
+  python3 - "$output_path" "$@" <<'PY'
+import json
+import pathlib
+import sys
+
+output_path = pathlib.Path(sys.argv[1])
+payload = json.loads(sys.argv[2])
+output_path.parent.mkdir(parents=True, exist_ok=True)
+output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+PY
+}
+
+session_root="${INTERACTIVE_SESSION_ROOT:-dist/interactive-session}"
+startup_log_dir="${session_root}/startup-log"
+preflight_dir="${session_root}/preflight"
+live_access_dir="${session_root}/live-access"
+emulator_logcat_dir="${session_root}/emulator-logcat"
+ui_dump_dir="${session_root}/ui-dumps"
+screenshots_dir="${session_root}/screenshots"
+session_state_path="${session_root}/session-state.json"
+finish_sentinel="${INTERACTIVE_SESSION_END_SENTINEL:-${session_root}/finish-session}"
+mcp_health_url="${INTERACTIVE_MCP_HEALTH_URL:-http://127.0.0.1:9526/health}"
+mcp_bind_addr="${INTERACTIVE_MCP_BIND_ADDR:-127.0.0.1:9526}"
+mcp_allowed_hosts="${INTERACTIVE_MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}"
+ttyd_port="${INTERACTIVE_DEBUG_TTYD_PORT:-7681}"
+session_timeout_minutes="${INTERACTIVE_SESSION_TIMEOUT_MINUTES:-90}"
+keep_session_on_failure="${INTERACTIVE_KEEP_SESSION_ON_FAILURE:-true}"
+app_apk="${INTERACTIVE_APP_APK:?INTERACTIVE_APP_APK is required}"
+app_package="${INTERACTIVE_APP_PACKAGE:?INTERACTIVE_APP_PACKAGE is required}"
+app_activity="${INTERACTIVE_APP_ACTIVITY:?INTERACTIVE_APP_ACTIVITY is required}"
+mcp_workspace_dir="${INTERACTIVE_MCP_WORKSPACE_DIR:?INTERACTIVE_MCP_WORKSPACE_DIR is required}"
+cloudflared_bin="${INTERACTIVE_CLOUDFLARED_BIN:?INTERACTIVE_CLOUDFLARED_BIN is required}"
+debug_hostname="${INTERACTIVE_DEBUG_HOSTNAME:-}"
+debug_tunnel_token="${INTERACTIVE_DEBUG_TUNNEL_TOKEN:-}"
+ttyd_bin="${INTERACTIVE_TTYD_BIN:-ttyd}"
+session_start_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+mkdir -p \
+  "${startup_log_dir}" \
+  "${preflight_dir}" \
+  "${live_access_dir}" \
+  "${emulator_logcat_dir}" \
+  "${ui_dump_dir}" \
+  "${screenshots_dir}" \
+  "${session_root}/android-emulator-mcp-artifacts"
+
+touch "${startup_log_dir}/session.log"
+
+log() {
+  local message="$1"
+  printf '[interactive-session] %s\n' "${message}" | tee -a "${startup_log_dir}/session.log"
+}
+
+write_live_status() {
+  local payload="$1"
+  json_write "${live_access_dir}/status.json" "${payload}"
+}
+
+write_session_state() {
+  local payload="$1"
+  json_write "${session_state_path}" "${payload}"
+}
+
+capture_final_artifacts() {
+  adb logcat -d > "${emulator_logcat_dir}/final-logcat.txt" 2>&1 || true
+  adb shell dumpsys activity activities > "${ui_dump_dir}/dumpsys-activity.txt" 2>&1 || true
+  adb shell dumpsys window windows > "${ui_dump_dir}/dumpsys-window.txt" 2>&1 || true
+  adb shell uiautomator dump /sdcard/interactive-session-dump.xml >/dev/null 2>&1 || true
+  adb pull /sdcard/interactive-session-dump.xml "${ui_dump_dir}/final-window-dump.xml" >/dev/null 2>&1 || true
+  adb exec-out screencap -p > "${screenshots_dir}/final-screen.png" 2>/dev/null || true
+  curl -fsSL "${mcp_health_url}" -o "${session_root}/mcp-health.json" 2>/dev/null || true
+}
+
+mcp_pid=""
+ttyd_pid=""
+cloudflared_pid=""
+logcat_pid=""
+final_status="failure"
+final_reason="session_not_started"
+
+cleanup() {
+  capture_final_artifacts
+
+  for pid in "${cloudflared_pid}" "${ttyd_pid}" "${logcat_pid}" "${mcp_pid}"; do
+    if [[ -n "${pid}" ]]; then
+      kill "${pid}" >/dev/null 2>&1 || true
+      wait "${pid}" >/dev/null 2>&1 || true
+    fi
+  done
+
+  write_session_state "$(python3 - <<'PY' "${session_start_iso}" "${final_status}" "${final_reason}" "${session_timeout_minutes}" "${finish_sentinel}"
+import json
+import sys
+
+payload = {
+    "schema_version": 1,
+    "session_start_iso": sys.argv[1],
+    "session_end_iso": __import__("datetime").datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    "status": sys.argv[2],
+    "reason": sys.argv[3],
+    "timeout_minutes": int(sys.argv[4]),
+    "finish_sentinel": sys.argv[5],
+}
+print(json.dumps(payload))
+PY
+)"
+}
+
+trap cleanup EXIT
+
+adb wait-for-device
+adb logcat -c || true
+adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
+adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1 || true
+adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1 || true
+
+export ANDROID_EMULATOR_MCP_SDK_ROOT="${ANDROID_SDK_ROOT_DEFAULT:-${ANDROID_SDK_ROOT:-}}"
+export ANDROID_EMULATOR_MCP_ARTIFACT_DIR="${session_root}/android-emulator-mcp-artifacts"
+export ANDROID_EMULATOR_MCP_BIND_ADDR="${mcp_bind_addr}"
+export ANDROID_EMULATOR_MCP_ALLOWED_HOSTS="${mcp_allowed_hosts}"
+export ANDROID_EMULATOR_MCP_HTTP_ALLOW_RESUME=0
+
+log "Starting android-emulator-mcp on ${mcp_bind_addr}"
+"${mcp_workspace_dir}/target/release/android-emulator-mcp" \
+  > "${startup_log_dir}/android-emulator-mcp.stdout.log" \
+  2> "${startup_log_dir}/android-emulator-mcp.stderr.log" &
+mcp_pid=$!
+
+health_ready="false"
+for _ in $(seq 1 60); do
+  if curl -fsSL "${mcp_health_url}" -o "${startup_log_dir}/initial-health.json" >/dev/null 2>&1; then
+    health_ready="true"
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${health_ready}" != "true" ]]; then
+  final_status="failure"
+  final_reason="mcp_health_unavailable"
+  write_live_status '{"schema_version":1,"status":"failed","reason":"mcp_health_unavailable"}'
+  log "android-emulator-mcp never reported healthy"
+  exit 1
+fi
+
+log "Running install-and-launch preflight"
+preflight_ok="true"
+if ! bash .github/scripts/run_interactive_android_preflight.sh \
+  --mcp-health-url "${mcp_health_url}" \
+  --apk "${app_apk}" \
+  --package "${app_package}" \
+  --activity "${app_activity}" \
+  --out-dir "${preflight_dir}"; then
+  preflight_ok="false"
+fi
+
+adb logcat -v threadtime > "${emulator_logcat_dir}/live-logcat.txt" 2>&1 &
+logcat_pid=$!
+
+if [[ -z "${debug_hostname}" || -z "${debug_tunnel_token}" ]]; then
+  write_live_status '{"schema_version":1,"status":"failed","reason":"missing_live_access_secret"}'
+  final_status="failure"
+  final_reason="missing_live_access_secret"
+  log "Missing Cloudflare live-access configuration"
+  exit 1
+fi
+
+shell_wrapper="${live_access_dir}/interactive-shell.sh"
+cat > "${shell_wrapper}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "${GITHUB_WORKSPACE}"
+export INTERACTIVE_SESSION_ROOT="${session_root}"
+export INTERACTIVE_MCP_HEALTH_URL="${mcp_health_url}"
+export ANDROID_SERIAL="\${ANDROID_SERIAL:-emulator-5554}"
+echo "Interactive Android session ready"
+echo "Workspace: ${GITHUB_WORKSPACE}"
+echo "Artifacts: ${session_root}"
+echo "MCP health: ${mcp_health_url}"
+echo "Finish early with: touch ${finish_sentinel}"
+exec bash -li
+EOF
+chmod 0755 "${shell_wrapper}"
+
+log "Starting ttyd on loopback port ${ttyd_port}"
+"${ttyd_bin}" --interface 127.0.0.1 --port "${ttyd_port}" --writable "${shell_wrapper}" \
+  > "${live_access_dir}/ttyd.log" 2>&1 &
+ttyd_pid=$!
+
+cloudflared_config="${live_access_dir}/cloudflared.yml"
+cat > "${cloudflared_config}" <<EOF
+ingress:
+  - hostname: ${debug_hostname}
+    service: http://127.0.0.1:${ttyd_port}
+  - service: http_status:404
+EOF
+
+log "Starting cloudflared tunnel for ${debug_hostname}"
+"${cloudflared_bin}" --no-autoupdate tunnel --config "${cloudflared_config}" run --token "${debug_tunnel_token}" \
+  > "${live_access_dir}/cloudflared.log" 2>&1 &
+cloudflared_pid=$!
+
+sleep 5
+
+if ! kill -0 "${ttyd_pid}" >/dev/null 2>&1; then
+  write_live_status '{"schema_version":1,"status":"failed","reason":"ttyd_exited_early"}'
+  final_status="failure"
+  final_reason="ttyd_exited_early"
+  log "ttyd exited before the session opened"
+  exit 1
+fi
+
+if ! kill -0 "${cloudflared_pid}" >/dev/null 2>&1; then
+  write_live_status '{"schema_version":1,"status":"failed","reason":"cloudflared_exited_early"}'
+  final_status="failure"
+  final_reason="cloudflared_exited_early"
+  log "cloudflared exited before the session opened"
+  exit 1
+fi
+
+write_live_status "$(python3 - <<'PY' "${debug_hostname}" "${ttyd_port}" "${session_timeout_minutes}" "${finish_sentinel}"
+import json
+import sys
+
+payload = {
+    "schema_version": 1,
+    "status": "ready",
+    "hostname": sys.argv[1],
+    "loopback_port": int(sys.argv[2]),
+    "session_timeout_minutes": int(sys.argv[3]),
+    "finish_sentinel": sys.argv[4],
+}
+print(json.dumps(payload))
+PY
+)"
+
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+  {
+    echo "## interactive-android-session"
+    echo "- hostname: \`${debug_hostname}\`"
+    echo "- timeout minutes: \`${session_timeout_minutes}\`"
+    echo "- finish early inside the session with: \`touch ${finish_sentinel}\`"
+    echo "- artifacts root: \`${session_root}\`"
+  } >> "${GITHUB_STEP_SUMMARY}"
+fi
+
+if [[ "${preflight_ok}" != "true" ]]; then
+  log "Preflight failed but live access is available for debugging"
+  if [[ "${keep_session_on_failure}" != "true" ]]; then
+    final_status="failure"
+    final_reason="preflight_failed"
+    exit 1
+  fi
+fi
+
+deadline=$((SECONDS + (session_timeout_minutes * 60)))
+
+while (( SECONDS < deadline )); do
+  if [[ -f "${finish_sentinel}" ]]; then
+    final_status="success"
+    final_reason="ended_by_operator"
+    log "Session ended by operator sentinel"
+    exit 0
+  fi
+
+  if ! kill -0 "${mcp_pid}" >/dev/null 2>&1; then
+    final_status="failure"
+    final_reason="mcp_exited_early"
+    log "android-emulator-mcp exited before timeout"
+    exit 1
+  fi
+
+  if ! kill -0 "${ttyd_pid}" >/dev/null 2>&1; then
+    final_status="failure"
+    final_reason="ttyd_exited_during_session"
+    log "ttyd exited during the session"
+    exit 1
+  fi
+
+  if ! kill -0 "${cloudflared_pid}" >/dev/null 2>&1; then
+    final_status="failure"
+    final_reason="cloudflared_exited_during_session"
+    log "cloudflared exited during the session"
+    exit 1
+  fi
+
+  sleep 10
+done
+
+if [[ "${preflight_ok}" == "true" ]]; then
+  final_status="success"
+  final_reason="timeout_reached"
+else
+  final_status="failure"
+  final_reason="preflight_failed_after_debug_window"
+fi
+
+log "Session window completed"
