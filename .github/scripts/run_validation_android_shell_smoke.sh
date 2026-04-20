@@ -7,6 +7,7 @@ CLASS_TIMEOUT_SECONDS="${ANDROID_TEST_CLASS_TIMEOUT_SECONDS:-300}"
 TEST_SCOPE="${ANDROID_TEST_SCOPE:-core}"
 ARTIFACT_MODE="${ANDROID_ARTIFACT_MODE:-failures-only}"
 VALIDATION_MODE="${ANDROID_VALIDATION_MODE:-shell-v2}"
+TEST_BATCH_MODE="${ANDROID_TEST_BATCH_MODE:-auto}"
 ADB_CAPTURE_TIMEOUT_SECONDS="${ANDROID_TEST_ADB_CAPTURE_TIMEOUT_SECONDS:-20}"
 LOGCAT_SHUTDOWN_TIMEOUT_SECONDS="${ANDROID_TEST_LOGCAT_SHUTDOWN_TIMEOUT_SECONDS:-5}"
 LOGCAT_FILTER_SPECS=(
@@ -327,9 +328,112 @@ EOF
   return "${command_status}"
 }
 
+class_slug() {
+  printf '%s' "$1" | tr '.:$/' '____'
+}
+
+run_test_classes_individually() {
+  local run_dir="${REPORT_ROOT}/instrumentation-individual"
+  local class_name
+  local class_arg
+  local class_dir
+  local command_status=0
+  local overall_status=0
+
+  mkdir -p "${run_dir}"
+
+  echo "::group::InstrumentationPerClass"
+  echo "Running ${#TEST_CLASSES[@]} instrumentation classes individually with timeout ${CLASS_TIMEOUT_SECONDS}s"
+
+  for class_name in "${TEST_CLASSES[@]}"; do
+    class_arg="${class_name}"
+    class_dir="${run_dir}/$(class_slug "${class_name}")"
+    mkdir -p "${class_dir}"
+    adb logcat -c || true
+
+    capture_device_state "${class_dir}" "pre"
+
+    echo "Running ${class_name}"
+    start_live_logcat "${class_dir}"
+
+    set +e
+    timeout --foreground "${CLASS_TIMEOUT_SECONDS}s" \
+      ./gradlew -p clients/android --stacktrace \
+        :app:connectedDebugAndroidTest \
+        "${GRADLE_VALIDATION_PROPS[@]}" \
+        "-Pandroid.testInstrumentationRunnerArguments.class=${class_arg}" \
+        2>&1 | tee "${class_dir}/gradle-output.txt"
+    command_status=${PIPESTATUS[0]}
+    set -e
+    stop_live_logcat "${LAST_LOGCAT_PID}"
+    LAST_LOGCAT_PID=""
+
+    if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
+      capture_device_state "${class_dir}" "post"
+    fi
+
+    {
+      printf 'test_classes=%s\n' "${class_arg}"
+      printf 'test_class_count=%s\n' "1"
+      printf 'scope=%s\n' "${TEST_SCOPE}"
+      printf 'validation_mode=%s\n' "${VALIDATION_MODE}"
+      printf 'batch_mode=%s\n' "per-class"
+      printf 'gradle_validation_props=%s\n' "${GRADLE_VALIDATION_PROPS[*]}"
+      printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
+      printf 'timeout_seconds=%s\n' "${CLASS_TIMEOUT_SECONDS}"
+      printf 'exit_code=%s\n' "${command_status}"
+    } > "${class_dir}/status.txt"
+
+    if [[ "${command_status}" -eq 124 ]]; then
+      capture_device_state "${class_dir}" "fail"
+      echo "Timed out while running instrumentation class ${class_name}" >&2
+      emit_failure_summary "${class_dir}"
+      overall_status=${command_status}
+      break
+    elif [[ "${command_status}" -ne 0 ]]; then
+      capture_device_state "${class_dir}" "fail"
+      echo "Instrumentation class ${class_name} failed with exit code ${command_status}" >&2
+      emit_failure_summary "${class_dir}"
+      overall_status=${command_status}
+      break
+    fi
+  done
+
+  cat > "${run_dir}/status.json" <<EOF
+{
+  "test_classes": $(printf '%s\n' "${TEST_CLASSES[@]}" | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))'),
+  "scope": $(printf '%s' "${TEST_SCOPE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "validation_mode": $(printf '%s' "${VALIDATION_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "batch_mode": "per-class",
+  "gradle_validation_props": $(printf '%s\n' "${GRADLE_VALIDATION_PROPS[@]}" | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))'),
+  "artifact_mode": $(printf '%s' "${ARTIFACT_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "timeout_seconds": ${CLASS_TIMEOUT_SECONDS},
+  "exit_code": ${overall_status}
+}
+EOF
+
+  if [[ "${overall_status}" -eq 0 ]]; then
+    echo "Instrumentation classes completed successfully"
+  fi
+
+  echo "::endgroup::"
+  return "${overall_status}"
+}
+
 resolve_test_classes
+if [[ "${TEST_BATCH_MODE}" == "auto" ]]; then
+  if [[ "${VALIDATION_MODE}" == "stage-first-mirror-on" ]]; then
+    TEST_BATCH_MODE="per-class"
+  else
+    TEST_BATCH_MODE="batch"
+  fi
+fi
 set +e
-run_test_batch
+if [[ "${TEST_BATCH_MODE}" == "per-class" ]]; then
+  run_test_classes_individually
+else
+  run_test_batch
+fi
 overall_status=$?
 set -e
 
