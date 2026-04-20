@@ -38,6 +38,7 @@ mcp_workspace_dir="${INTERACTIVE_MCP_WORKSPACE_DIR:?INTERACTIVE_MCP_WORKSPACE_DI
 cloudflared_bin="${INTERACTIVE_CLOUDFLARED_BIN:?INTERACTIVE_CLOUDFLARED_BIN is required}"
 debug_hostname="${INTERACTIVE_DEBUG_HOSTNAME:-}"
 debug_tunnel_token="${INTERACTIVE_DEBUG_TUNNEL_TOKEN:-}"
+mcp_public_hostname="${INTERACTIVE_MCP_PUBLIC_HOSTNAME:-}"
 ttyd_bin="${INTERACTIVE_TTYD_BIN:-ttyd}"
 session_start_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
@@ -123,6 +124,10 @@ adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1 || true
 export ANDROID_EMULATOR_MCP_SDK_ROOT="${ANDROID_SDK_ROOT_DEFAULT:-${ANDROID_SDK_ROOT:-}}"
 export ANDROID_EMULATOR_MCP_ARTIFACT_DIR="${session_root}/android-emulator-mcp-artifacts"
 export ANDROID_EMULATOR_MCP_BIND_ADDR="${mcp_bind_addr}"
+if [[ -n "${mcp_public_hostname}" ]]; then
+  mcp_allowed_hosts="${mcp_allowed_hosts},${mcp_public_hostname}"
+fi
+
 export ANDROID_EMULATOR_MCP_ALLOWED_HOSTS="${mcp_allowed_hosts}"
 export ANDROID_EMULATOR_MCP_HTTP_ALLOW_RESUME=0
 
@@ -198,6 +203,16 @@ cat > "${cloudflared_config}" <<EOF
 ingress:
   - hostname: ${debug_hostname}
     service: http://127.0.0.1:${ttyd_port}
+EOF
+
+if [[ -n "${mcp_public_hostname}" ]]; then
+  cat >> "${cloudflared_config}" <<EOF
+  - hostname: ${mcp_public_hostname}
+    service: http://${mcp_bind_addr}
+EOF
+fi
+
+cat >> "${cloudflared_config}" <<EOF
   - service: http_status:404
 EOF
 
@@ -224,17 +239,28 @@ if ! kill -0 "${cloudflared_pid}" >/dev/null 2>&1; then
   exit 1
 fi
 
-write_live_status "$(python3 - <<'PY' "${debug_hostname}" "${ttyd_port}" "${session_timeout_minutes}" "${finish_sentinel}"
+write_live_status "$(python3 - <<'PY' "${debug_hostname}" "${mcp_public_hostname}" "${ttyd_port}" "${mcp_bind_addr}" "${session_timeout_minutes}" "${finish_sentinel}"
 import json
 import sys
 
 payload = {
     "schema_version": 1,
     "status": "ready",
-    "hostname": sys.argv[1],
-    "loopback_port": int(sys.argv[2]),
-    "session_timeout_minutes": int(sys.argv[3]),
-    "finish_sentinel": sys.argv[4],
+    "human_terminal": {
+        "status": "ready",
+        "hostname": sys.argv[1],
+        "loopback_port": int(sys.argv[3]),
+        "auth_mode": "cloudflare_access_human_identity",
+    },
+    "agent_mcp": {
+        "status": "ready" if sys.argv[2] else "disabled",
+        "hostname": sys.argv[2] or None,
+        "loopback_bind_addr": sys.argv[4],
+        "healthcheck_url": f"https://{sys.argv[2]}/health" if sys.argv[2] else None,
+        "auth_mode": "cloudflare_access_service_token" if sys.argv[2] else None,
+    },
+    "session_timeout_minutes": int(sys.argv[5]),
+    "finish_sentinel": sys.argv[6],
 }
 print(json.dumps(payload))
 PY
@@ -243,7 +269,13 @@ PY
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "## interactive-android-session"
-    echo "- hostname: \`${debug_hostname}\`"
+    echo "- browser terminal hostname: \`${debug_hostname}\`"
+    if [[ -n "${mcp_public_hostname}" ]]; then
+      echo "- agent MCP hostname: \`${mcp_public_hostname}\`"
+      echo "- agent auth: \`Cloudflare Access service token\`"
+    else
+      echo "- agent MCP hostname: \`disabled\`"
+    fi
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
     echo "- finish early inside the session with: \`touch ${finish_sentinel}\`"
     echo "- artifacts root: \`${session_root}\`"
