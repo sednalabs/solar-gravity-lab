@@ -39,14 +39,14 @@ if [[ -z "${sccache_path}" ]]; then
   exit 0
 fi
 
-resolved_aws_access_key_id="${AWS_ACCESS_KEY_ID:-${SCCACHE_AWS_ACCESS_KEY_ID:-}}"
-resolved_aws_secret_access_key="${AWS_SECRET_ACCESS_KEY:-${SCCACHE_AWS_SECRET_ACCESS_KEY:-}}"
+resolved_aws_access_key_id="${SCCACHE_AWS_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}"
+resolved_aws_secret_access_key="${SCCACHE_AWS_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}"
 credential_source="${SCCACHE_CREDENTIAL_SOURCE:-}"
 if [[ -z "${credential_source}" ]]; then
-  if [[ -n "${AWS_ACCESS_KEY_ID:-}" || -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
-    credential_source="aws-env"
-  elif [[ -n "${SCCACHE_AWS_ACCESS_KEY_ID:-}" || -n "${SCCACHE_AWS_SECRET_ACCESS_KEY:-}" ]]; then
+  if [[ -n "${SCCACHE_AWS_ACCESS_KEY_ID:-}" || -n "${SCCACHE_AWS_SECRET_ACCESS_KEY:-}" ]]; then
     credential_source="dedicated-sccache-env"
+  elif [[ -n "${AWS_ACCESS_KEY_ID:-}" || -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+    credential_source="aws-env"
   else
     credential_source="unset"
   fi
@@ -64,10 +64,10 @@ for var_name in "${required_vars[@]}"; do
   fi
 done
 if [[ -z "${resolved_aws_access_key_id}" ]]; then
-  missing_vars+=("AWS_ACCESS_KEY_ID|SCCACHE_AWS_ACCESS_KEY_ID")
+  missing_vars+=("SCCACHE_AWS_ACCESS_KEY_ID|AWS_ACCESS_KEY_ID")
 fi
 if [[ -z "${resolved_aws_secret_access_key}" ]]; then
-  missing_vars+=("AWS_SECRET_ACCESS_KEY|SCCACHE_AWS_SECRET_ACCESS_KEY")
+  missing_vars+=("SCCACHE_AWS_SECRET_ACCESS_KEY|AWS_SECRET_ACCESS_KEY")
 fi
 
 if [[ "${#missing_vars[@]}" -gt 0 ]]; then
