@@ -359,6 +359,18 @@ val solarlabStageFirstRuntimeMirror = project.booleanPropertyOrEnv(
     "solarlab.stageFirstRuntimeMirror",
     "SOLARLAB_STAGE_FIRST_RUNTIME_MIRROR",
 ) ?: true
+val solarlabHostedDebugProfile = project.stringPropertyOrEnv(
+    "solarlab.hostedDebugProfile",
+    "SOLARLAB_HOSTED_DEBUG_PROFILE",
+)?.takeIf(String::isNotBlank) ?: "full-fidelity"
+val solarlabHostedDebugLiteMode = when (solarlabHostedDebugProfile) {
+    "full-fidelity" -> false
+    "hosted-debug-lite" -> true
+    else -> throw GradleException(
+        "Unsupported solarlab.hostedDebugProfile=$solarlabHostedDebugProfile. " +
+            "Expected one of: full-fidelity, hosted-debug-lite."
+    )
+}
 
 val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
     group = "build"
@@ -395,6 +407,8 @@ android {
         buildConfigField("String", "DEV_TELEMETRY_TOKEN", solarlabDevTelemetryToken.toBuildConfigStringLiteral())
         buildConfigField("String", "PREFERRED_GPU_BACKEND", solarlabPreferredGpuBackend.toBuildConfigStringLiteral())
         buildConfigField("boolean", "STAGE_FIRST_RUNTIME_MIRROR", solarlabStageFirstRuntimeMirror.toString())
+        buildConfigField("String", "HOSTED_DEBUG_PROFILE", solarlabHostedDebugProfile.toBuildConfigStringLiteral())
+        buildConfigField("boolean", "HOSTED_DEBUG_LITE_MODE", solarlabHostedDebugLiteMode.toString())
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")

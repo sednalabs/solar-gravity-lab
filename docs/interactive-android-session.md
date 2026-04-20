@@ -48,6 +48,15 @@ The workflow:
     - `shell-v2`
     - `stage-first-mirror-off`
     - `stage-first-mirror-on`
+- `interactive_debug_profile`
+  - one of:
+    - `hosted-debug-lite`
+    - `full-fidelity`
+  - `hosted-debug-lite` starts the app in a calmer posture for GitHub-hosted
+    runners:
+    - simplified render processing
+    - playback paused until the operator explicitly resumes it
+  - `full-fidelity` keeps the existing heavy immersive posture for proof work
 - `emulator_boot_strategy`
   - `snapshot-cache` or `cold`
 - `session_timeout_minutes`
@@ -165,10 +174,11 @@ Recommended first run:
 
 1. dispatch the workflow from a `validation/*` branch
 2. keep `android_validation_mode=stage-first-mirror-on`
-3. keep `emulator_boot_strategy=snapshot-cache`
-4. keep the default timeout
-5. verify the workflow summary shows the browser terminal hostname
-6. if `SGL_INTERACTIVE_MCP_HOSTNAME` is configured, verify the summary shows the
+3. keep `interactive_debug_profile=hosted-debug-lite`
+4. keep `emulator_boot_strategy=snapshot-cache`
+5. keep the default timeout
+6. verify the workflow summary shows the browser terminal hostname
+7. if `SGL_INTERACTIVE_MCP_HOSTNAME` is configured, verify the summary shows the
    machine-facing MCP hostname as well
 
 Inside the live shell, finish early with:
@@ -186,5 +196,7 @@ window is reached.
 - `prerelease-apk` answers “can we package and launch an installable artifact?”
 - `interactive-android-session` answers “can an operator or agent inspect the
   live emulator remotely without consuming Orchard host compute?”
+- `interactive-android-session` with `interactive_debug_profile=hosted-debug-lite`
+  is the default “use this remote surface as much as we can” posture
 - `infra/self-hosted-android-runner/` stays the phase-two path if hosted-runner
   cold-start or live-session limits become the next bottleneck

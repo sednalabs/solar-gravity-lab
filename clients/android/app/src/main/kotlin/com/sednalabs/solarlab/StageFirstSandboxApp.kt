@@ -200,8 +200,8 @@ private fun StageFirstSandboxLocalExperience(
         var selectedBodyId by remember { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
         var collisionMode by remember { mutableStateOf(CollisionMode.MERGE) }
-        var renderProcessingMode by remember { mutableStateOf(RenderProcessingMode.DEFAULT) }
-        var isRunning by remember { mutableStateOf(true) }
+        var renderProcessingMode by remember { mutableStateOf(HostedDebugMode.initialRenderProcessingMode) }
+        var isRunning by remember { mutableStateOf(!HostedDebugMode.enabled) }
         var resumeSimulationOnForeground by remember { mutableStateOf(false) }
         var resumeSimulationAfterModalInteraction by remember { mutableStateOf(false) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
@@ -283,8 +283,12 @@ private fun StageFirstSandboxLocalExperience(
         DisposableEffect(session) {
             collisionMode = session.collisionMode()
             session.dispatchCurrentFrame()
-            session.start()
-            isRunning = true
+            if (HostedDebugMode.enabled) {
+                isRunning = false
+            } else {
+                session.start()
+                isRunning = true
+            }
             onDispose {
                 renderHostView?.release()
                 session.release()
