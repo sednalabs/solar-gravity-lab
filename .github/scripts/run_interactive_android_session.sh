@@ -58,6 +58,41 @@ log() {
   printf '[interactive-session] %s\n' "${message}" | tee -a "${startup_log_dir}/session.log"
 }
 
+port_is_available() {
+  local port="$1"
+  python3 - "${port}" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    sock.bind(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+}
+
+pick_loopback_port() {
+  local preferred_port="$1"
+  if port_is_available "${preferred_port}"; then
+    printf '%s\n' "${preferred_port}"
+    return 0
+  fi
+
+  python3 <<'PY'
+import socket
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+}
+
 write_live_status() {
   local payload="$1"
   json_write "${live_access_dir}/status.json" "${payload}"
@@ -192,6 +227,12 @@ echo "Finish early with: touch ${finish_sentinel}"
 exec bash -li
 EOF
 chmod 0755 "${shell_wrapper}"
+
+requested_ttyd_port="${ttyd_port}"
+ttyd_port="$(pick_loopback_port "${requested_ttyd_port}")"
+if [[ "${ttyd_port}" != "${requested_ttyd_port}" ]]; then
+  log "Loopback port ${requested_ttyd_port} was busy; selected ttyd fallback port ${ttyd_port}"
+fi
 
 log "Starting ttyd on loopback port ${ttyd_port}"
 "${ttyd_bin}" --interface 127.0.0.1 --port "${ttyd_port}" --writable "${shell_wrapper}" \
