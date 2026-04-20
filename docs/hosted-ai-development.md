@@ -10,6 +10,10 @@ This document describes the current implementation in publication-safe terms.
 It does not describe local-only operator setup, private credentials, or
 org-specific capacity policy.
 
+The current public recommendation is GitHub-hosted first. Older self-hosted
+Android runner material remains in the repository as deferred evaluation and
+operator background, not as the primary development path on `main`.
+
 ## Why this exists
 
 For this repository, the important questions are often:
@@ -126,4 +130,5 @@ The current implementation should instead be read as:
 
 - [README.md](../README.md)
 - [Validation Lab](validation-lab.md)
+- [Interactive Android Session](interactive-android-session.md)
 - [CI Cache Rollout](ci-cache-rollout.md)

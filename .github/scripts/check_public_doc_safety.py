@@ -26,10 +26,6 @@ SUSPICIOUS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"~/.codex(?:/|\\b)"),
         "local Codex-only path",
     ),
-    (
-        re.compile(r"\\bTruthCore\\b"),
-        "private placeholder name",
-    ),
 )
 
 

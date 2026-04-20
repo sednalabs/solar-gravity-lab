@@ -1,5 +1,12 @@
 # Solar Gravity Lab Self-Hosted Android Runner
 
+This directory is retained as deferred self-hosted runner scaffolding.
+
+It is not the current primary recommendation for the public repository. The
+current path on `main` is GitHub-hosted first, with reusable interactive build
+artifacts and bounded live hosted Android sessions. Keep this directory for
+future evaluation only if the hosted-first model becomes the next bottleneck.
+
 This directory contains the first-pass scaffolding for a prewarmed self-hosted Android runner pilot.
 
 The goal is to move only the heaviest Android jobs onto a dedicated runner while preserving the same workflow semantics and rollback path already wired into:
