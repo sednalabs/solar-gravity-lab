@@ -11,19 +11,19 @@ ROOT = Path(__file__).resolve().parents[2]
 DOC_PATHS = ("README.md", "docs/**/*.md")
 SUSPICIOUS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
-        re.compile(r"/home/[A-Za-z0-9_.-]+/"),
+        re.compile(r"/home/[A-Za-z0-9_.-]+(?:/|\b)"),
         "personal Linux home path",
     ),
     (
-        re.compile(r"/Users/[A-Za-z0-9_. -]+/"),
+        re.compile(r"/Users/[A-Za-z0-9_. -]+(?:/|\b)"),
         "personal macOS home path",
     ),
     (
-        re.compile(r"[A-Za-z]:\\\\Users\\\\"),
+        re.compile(r"[A-Za-z]:\\Users(?:\\|\b)"),
         "personal Windows home path",
     ),
     (
-        re.compile(r"~/.codex(?:/|\\b)"),
+        re.compile(r"~/.codex(?:/|\b)"),
         "local Codex-only path",
     ),
 )
