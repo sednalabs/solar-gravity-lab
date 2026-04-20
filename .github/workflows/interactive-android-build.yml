@@ -56,7 +56,7 @@ jobs:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      GRADLE_REMOTE_CACHE_PUSH: "false"
+      GRADLE_REMOTE_CACHE_PUSH: "true"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
@@ -119,7 +119,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: true
+          cache-read-only: false
           cache-cleanup: on-success
           add-job-summary: on-failure
           gradle-home-cache-excludes: |
@@ -167,6 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew -p clients/android \
+            --parallel \
             :app:assembleDebug \
             -Psolarlab.debugStageFirstClient=${{ steps.plan.outputs.debug_stage_first_client }} \
             -Psolarlab.stageFirstRuntimeMirror=${{ steps.plan.outputs.stage_first_runtime_mirror }} \
