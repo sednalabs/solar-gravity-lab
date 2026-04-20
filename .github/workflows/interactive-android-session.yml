@@ -375,6 +375,7 @@ jobs:
           INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
           INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
           INTERACTIVE_DEBUG_TUNNEL_TOKEN: ${{ secrets.SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN }}
+          INTERACTIVE_MCP_PUBLIC_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_MCP_HOSTNAME }}
           INTERACTIVE_SESSION_TIMEOUT_MINUTES: ${{ steps.session_plan.outputs.session_timeout_minutes }}
           INTERACTIVE_KEEP_SESSION_ON_FAILURE: ${{ steps.session_plan.outputs.keep_session_on_failure }}
           INTERACTIVE_MCP_BIND_ADDR: ${{ env.INTERACTIVE_MCP_BIND_ADDR }}

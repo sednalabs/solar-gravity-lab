@@ -29,6 +29,8 @@ The workflow:
 - starts `android-emulator-mcp` on loopback only
 - runs install-and-launch preflight before the session opens
 - exposes a live web terminal through a Cloudflare Access-protected tunnel
+- optionally exposes the MCP HTTP surface on a second Access-protected hostname
+  for agent use
 - uploads a predictable evidence bundle when the session ends
 
 ## Workflow inputs
@@ -65,7 +67,12 @@ This workflow needs explicit repo reads and tunnel access:
 - `SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN`
   - Cloudflare named tunnel token for the live terminal
 - `SGL_INTERACTIVE_DEBUG_HOSTNAME`
-  - the hostname protected by Cloudflare Access for the live session
+  - the hostname protected by Cloudflare Access for the human browser terminal
+  - recommended value: `solarlab-android-debug.sednalabs.io`
+- `SGL_INTERACTIVE_MCP_HOSTNAME`
+  - optional machine-facing hostname for `android-emulator-mcp`
+  - recommended value: `solarlab-android-mcp.sednalabs.io`
+  - omit only if the rollout is intentionally human-terminal-only
 
 The workflow also reuses the existing remote cache credentials already present in
 the heavier Android lanes:
@@ -83,12 +90,42 @@ Current safety posture:
 
 - `android-emulator-mcp` binds to `127.0.0.1` only
 - `ttyd` binds to `127.0.0.1` only
-- Cloudflare Tunnel exposes only the terminal port
+- Cloudflare Tunnel exposes only the runner-local services we route explicitly
+- the browser terminal and the MCP should use separate hostnames and separate
+  Cloudflare Access apps
+- human browser access should use normal Cloudflare Access identity
+- agent access should use a Cloudflare Access service token, not an email inbox
 - access control lives in Cloudflare Access rather than in workflow log output
 - the workflow is `workflow_dispatch` only
 
 Do not replace this with `tmate` or any similar public-log terminal pattern for
 the hosted lane.
+
+## Access model
+
+Use the same dedicated tunnel for both runner-local services:
+
+- `solarlab-android-debug.sednalabs.io`
+  - human-facing browser terminal backed by `ttyd`
+  - gated by Cloudflare Access human identity policy
+- `solarlab-android-mcp.sednalabs.io`
+  - machine-facing `android-emulator-mcp` HTTP endpoint
+  - gated by Cloudflare Access service-token policy
+
+This split keeps the rollout honest:
+
+- humans do not need to tunnel raw runner credentials through GitHub logs
+- agents do not need a fake mailbox or OTP flow
+- the MCP can stay machine-usable without pretending the browser terminal is the
+  right auth surface for automation
+
+Recommended first Cloudflare posture:
+
+1. dedicated named tunnel: `solarlab-android-debug`
+2. dedicated Access app for the browser terminal
+3. dedicated Access app for the MCP hostname
+4. no DNS publish until each hostname has an explicit allow policy
+5. keep the MCP hostname off by default until the Access service token exists
 
 ## Evidence contract
 
@@ -117,7 +154,8 @@ Those files are designed to answer:
 
 - which repo refs were used
 - whether preflight passed
-- whether live access came up
+- whether human terminal access came up
+- whether machine-facing MCP access came up
 - how the session ended
 - where the evidence bundle is rooted
 
@@ -129,7 +167,9 @@ Recommended first run:
 2. keep `android_validation_mode=stage-first-mirror-on`
 3. keep `emulator_boot_strategy=snapshot-cache`
 4. keep the default timeout
-5. verify the workflow summary shows the Cloudflare hostname
+5. verify the workflow summary shows the browser terminal hostname
+6. if `SGL_INTERACTIVE_MCP_HOSTNAME` is configured, verify the summary shows the
+   machine-facing MCP hostname as well
 
 Inside the live shell, finish early with:
 

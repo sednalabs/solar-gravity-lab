@@ -41,8 +41,15 @@ def classify_status(job_result: str, preflight: dict | None, live_access: dict |
         return "action_required"
     if preflight and preflight.get("status") != "ready":
         return "action_required"
-    if live_access and live_access.get("status") != "ready":
-        return "action_required"
+    if live_access:
+        if live_access.get("status") != "ready":
+            return "action_required"
+        human_terminal = live_access.get("human_terminal")
+        if human_terminal and human_terminal.get("status") != "ready":
+            return "action_required"
+        agent_mcp = live_access.get("agent_mcp")
+        if agent_mcp and agent_mcp.get("status") not in {"ready", "disabled"}:
+            return "action_required"
     if session_state and session_state.get("status") != "success":
         return "action_required"
     return "success"
@@ -81,16 +88,39 @@ def render_markdown(payload: dict) -> str:
 
     live_access = payload["summary"].get("live_access")
     if live_access:
+        human_terminal = live_access.get("human_terminal")
+        agent_mcp = live_access.get("agent_mcp")
         lines.extend(
             [
                 "",
                 "### Live Access",
                 "",
-                f"- status: `{live_access.get('status', 'unknown')}`",
-                f"- hostname: `{live_access.get('hostname', 'n/a')}`",
+                f"- overall status: `{live_access.get('status', 'unknown')}`",
                 f"- finish sentinel: `{live_access.get('finish_sentinel', 'n/a')}`",
             ]
         )
+        if human_terminal:
+            lines.extend(
+                [
+                    "",
+                    "#### Human Terminal",
+                    "",
+                    f"- status: `{human_terminal.get('status', 'unknown')}`",
+                    f"- hostname: `{human_terminal.get('hostname', 'n/a')}`",
+                    f"- auth mode: `{human_terminal.get('auth_mode', 'n/a')}`",
+                ]
+            )
+        if agent_mcp:
+            lines.extend(
+                [
+                    "",
+                    "#### Agent MCP",
+                    "",
+                    f"- status: `{agent_mcp.get('status', 'unknown')}`",
+                    f"- hostname: `{agent_mcp.get('hostname', 'n/a')}`",
+                    f"- auth mode: `{agent_mcp.get('auth_mode', 'n/a')}`",
+                ]
+            )
 
     session_state = payload["summary"].get("session_state")
     if session_state:
