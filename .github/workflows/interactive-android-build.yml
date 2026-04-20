@@ -1,0 +1,232 @@
+name: interactive-android-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to build for interactive reuse
+        required: false
+        type: string
+      android_validation_mode:
+        description: Which Android runtime posture to build for hosted debugging
+        required: true
+        type: choice
+        options:
+          - shell-v2
+          - stage-first-mirror-off
+          - stage-first-mirror-on
+        default: stage-first-mirror-on
+      interactive_debug_profile:
+        description: Runtime posture for the hosted debug build artifact
+        required: true
+        type: choice
+        options:
+          - hosted-debug-lite
+          - full-fidelity
+        default: hosted-debug-lite
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}-${{ inputs.android_validation_mode }}-${{ inputs.interactive_debug_profile }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
+  ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
+  ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
+  ANDROID_SYSTEM_IMAGE_PACKAGE: "system-images;android-35;google_apis;x86_64"
+  ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
+  ANDROID_NDK_VERSION: "27.3.13750724"
+  ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  INTERACTIVE_APP_PACKAGE: com.sednalabs.solarlab
+  INTERACTIVE_APP_ACTIVITY: com.sednalabs.solarlab.MainActivity
+
+jobs:
+  build-interactive-artifact:
+    name: Build reusable interactive Android artifact
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact_name: ${{ steps.plan.outputs.artifact_name }}
+      checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
+      commit_sha: ${{ steps.plan.outputs.commit_sha }}
+      version_name: ${{ steps.bundle.outputs.version_name }}
+    env:
+      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PUSH: "false"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+
+      - name: Resolve interactive build plan
+        id: plan
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_VALIDATION_MODE: ${{ inputs.android_validation_mode }}
+          INPUT_DEBUG_PROFILE: ${{ inputs.interactive_debug_profile }}
+        run: |
+          set -euo pipefail
+
+          checkout_ref="${INPUT_REF:-}"
+          if [[ -z "${checkout_ref}" ]]; then
+            checkout_ref="${GITHUB_REF_NAME}"
+          fi
+
+          debug_stage_first_client="true"
+          stage_first_runtime_mirror="true"
+          case "${INPUT_VALIDATION_MODE}" in
+            shell-v2)
+              debug_stage_first_client="false"
+              stage_first_runtime_mirror="false"
+              ;;
+            stage-first-mirror-off)
+              debug_stage_first_client="true"
+              stage_first_runtime_mirror="false"
+              ;;
+            stage-first-mirror-on)
+              debug_stage_first_client="true"
+              stage_first_runtime_mirror="true"
+              ;;
+            *)
+              echo "Unsupported android_validation_mode: ${INPUT_VALIDATION_MODE}" >&2
+              exit 1
+              ;;
+          esac
+
+          artifact_name="interactive-android-build-${INPUT_VALIDATION_MODE}-${INPUT_DEBUG_PROFILE}"
+
+          {
+            echo "checkout_ref=${checkout_ref}"
+            echo "commit_sha=$(git rev-parse HEAD)"
+            echo "artifact_name=${artifact_name}"
+            echo "debug_stage_first_client=${debug_stage_first_client}"
+            echo "stage_first_runtime_mirror=${stage_first_runtime_mirror}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+          cache-cleanup: on-success
+          add-job-summary: on-failure
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: /usr/local/lib/android/sdk
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Accept Android SDK licenses and install build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            "platform-tools" \
+            "${ANDROID_PLATFORM_PACKAGE}" \
+            "${ANDROID_BUILD_TOOLS_PACKAGE}" \
+            "${ANDROID_CMAKE_PACKAGE}" \
+            "${ANDROID_NDK_PACKAGE}"
+
+      - name: Install Rust Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android x86_64-linux-android
+          if ! command -v cargo-ndk >/dev/null 2>&1; then
+            cargo install cargo-ndk --locked
+          fi
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-interactive-android-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
+
+      - name: Assemble debug APK for interactive artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew -p clients/android \
+            :app:assembleDebug \
+            -Psolarlab.debugStageFirstClient=${{ steps.plan.outputs.debug_stage_first_client }} \
+            -Psolarlab.stageFirstRuntimeMirror=${{ steps.plan.outputs.stage_first_runtime_mirror }} \
+            -Psolarlab.hostedDebugProfile=${{ inputs.interactive_debug_profile }}
+
+      - name: Derive debug APK metadata
+        id: apk_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "${GITHUB_OUTPUT}"
+          import json
+          from pathlib import Path
+
+          metadata = json.loads(
+              Path("clients/android/app/build/outputs/apk/debug/output-metadata.json").read_text()
+          )
+          element = metadata["elements"][0]
+          print(f"apk_name={element['outputFile']}")
+          print(f"version_name={element['versionName']}")
+          PY
+
+      - name: Stage canonical interactive build bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/stage_interactive_build_bundle.py \
+            --apk-path "clients/android/app/build/outputs/apk/debug/${{ steps.apk_meta.outputs.apk_name }}" \
+            --output-dir "dist/interactive-build-bundle" \
+            --artifact-name "${{ steps.plan.outputs.artifact_name }}" \
+            --repository "${{ github.repository }}" \
+            --workflow "interactive-android-build" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --checkout-ref "${{ steps.plan.outputs.checkout_ref }}" \
+            --commit-sha "${{ steps.plan.outputs.commit_sha }}" \
+            --android-validation-mode "${{ inputs.android_validation_mode }}" \
+            --interactive-debug-profile "${{ inputs.interactive_debug_profile }}" \
+            --package-name "${INTERACTIVE_APP_PACKAGE}" \
+            --activity-name "${INTERACTIVE_APP_ACTIVITY}" \
+            --version-name "${{ steps.apk_meta.outputs.version_name }}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Emit interactive build summary
+        shell: bash
+        run: |
+          {
+            echo "## interactive-android-build"
+            echo "- ref: \`${{ steps.plan.outputs.checkout_ref }}\`"
+            echo "- commit: \`${{ steps.plan.outputs.commit_sha }}\`"
+            echo "- artifact: \`${{ steps.plan.outputs.artifact_name }}\`"
+            echo "- validation mode: \`${{ inputs.android_validation_mode }}\`"
+            echo "- debug profile: \`${{ inputs.interactive_debug_profile }}\`"
+            echo "- version: \`${{ steps.bundle.outputs.version_name }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload interactive build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.plan.outputs.artifact_name }}
+          if-no-files-found: error
+          path: dist/interactive-build-bundle/**

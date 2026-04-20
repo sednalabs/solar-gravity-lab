@@ -14,6 +14,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--checkout-ref", required=True)
+    parser.add_argument("--build-source", required=True)
+    parser.add_argument("--artifact-name", required=True)
+    parser.add_argument("--build-run-id", required=True)
+    parser.add_argument("--build-commit-sha", required=True)
     parser.add_argument("--android-emulator-mcp-ref", required=True)
     parser.add_argument("--mcp-toolkit-rs-ref", required=True)
     parser.add_argument("--android-validation-mode", required=True)
@@ -64,6 +68,10 @@ def render_markdown(payload: dict) -> str:
         "## interactive-android-session",
         "",
         f"- ref: `{payload['context']['checkout_ref']}`",
+        f"- build source: `{payload['context']['build_source']}`",
+        f"- build artifact: `{payload['context']['artifact_name']}`",
+        f"- build run id: `{payload['context']['build_run_id']}`",
+        f"- build commit: `{payload['context']['build_commit_sha']}`",
         f"- android-emulator-mcp ref: `{payload['context']['android_emulator_mcp_ref']}`",
         f"- mcp-toolkit-rs ref: `{payload['context']['mcp_toolkit_rs_ref']}`",
         f"- android validation mode: `{payload['context']['android_validation_mode']}`",
@@ -138,6 +146,22 @@ def render_markdown(payload: dict) -> str:
             ]
         )
 
+    active_build = payload["summary"].get("active_build")
+    if active_build:
+        manifest = active_build.get("manifest", {})
+        lines.extend(
+            [
+                "",
+                "### Active Build",
+                "",
+                f"- status: `{active_build.get('status', 'unknown')}`",
+                f"- activated: `{active_build.get('activated_at_iso', 'n/a')}`",
+                f"- artifact name: `{manifest.get('artifact_name', 'n/a')}`",
+                f"- commit sha: `{manifest.get('commit_sha', 'n/a')}`",
+                f"- apk sha256: `{manifest.get('apk_sha256', 'n/a')}`",
+            ]
+        )
+
     lines.extend(
         [
             "",
@@ -163,6 +187,7 @@ def main() -> None:
     preflight = load_json(artifacts_dir / "preflight" / "preflight.json")
     live_access = load_json(artifacts_dir / "live-access" / "status.json")
     session_state = load_json(artifacts_dir / "session-state.json")
+    active_build = load_json(artifacts_dir / "active-build.json")
 
     payload = {
         "schema_version": 1,
@@ -175,6 +200,10 @@ def main() -> None:
         },
         "context": {
             "checkout_ref": args.checkout_ref,
+            "build_source": args.build_source,
+            "artifact_name": args.artifact_name,
+            "build_run_id": args.build_run_id,
+            "build_commit_sha": args.build_commit_sha,
             "android_emulator_mcp_ref": args.android_emulator_mcp_ref,
             "mcp_toolkit_rs_ref": args.mcp_toolkit_rs_ref,
             "android_validation_mode": args.android_validation_mode,
@@ -190,6 +219,7 @@ def main() -> None:
             "preflight": preflight,
             "live_access": live_access,
             "session_state": session_state,
+            "active_build": active_build,
         },
     }
 
