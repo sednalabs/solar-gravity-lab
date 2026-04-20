@@ -16,6 +16,8 @@ build or workflow behavior.
 - `.github/workflows/validation-lab.yml`
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 - `.github/workflows/prerelease-apk.yml` for installable internal dev previews
+- `.github/workflows/interactive-android-build.yml` for reusable hosted Android
+  build artifacts
 - `.github/workflows/interactive-android-session.yml` for bounded live emulator debugging on a hosted runner
 
 ## Current lane families
@@ -81,6 +83,24 @@ build or workflow behavior.
    include Arm64 Rust workspace proof in `auto` mode.
 6. Use `prerelease-apk` when the real question is packaging an installable device
    build rather than simply proving the branch compiles.
+
+## Hosted interactive Android development
+
+`validation-lab` is the canonical proof lane, but it is not the only hosted
+development surface in the current implementation.
+
+The repository also supports a build-first interactive path:
+
+1. build a reusable Android artifact with
+   `.github/workflows/interactive-android-build.yml`
+2. start a bounded live emulator session with
+   `.github/workflows/interactive-android-session.yml`
+3. use that live session for targeted UI and interaction investigation
+
+This is useful for human debugging, and it is also useful for AI-assisted
+development because it lets interactive investigation happen against a real
+hosted Android environment without paying full rebuild-and-boot cost for every
+inspection turn.
 
 ## Cheap path for docs-only changes
 

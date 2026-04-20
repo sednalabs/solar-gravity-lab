@@ -1,5 +1,12 @@
 # Self-Hosted Android Runner Operator Checklist
 
+This checklist is retained for deferred operator use.
+
+It is not the current recommended path on `main`. The current public posture is
+GitHub-hosted first. Use this checklist only if a future tranche deliberately
+re-opens the self-hosted runner evaluation described in
+[`docs/self-hosted-android-runner-evaluation.md`](self-hosted-android-runner-evaluation.md).
+
 This is the shortest path from the current prepared repo state to a live self-hosted Android runner pilot.
 
 Use this together with:

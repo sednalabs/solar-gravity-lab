@@ -147,3 +147,34 @@ Use `.github/workflows/validation-lab.yml` for canonical validation slices and
 `prerelease-apk` now includes an ARM64-native ISA proof gate
 (`ubuntu-24.04-arm`) via `.github/scripts/run_arm64_isa_proof.sh` before
 publish.
+
+## Hosted Android development
+
+This repository treats GitHub-hosted workflows as the primary heavy-compute
+surface for Android proof, packaging, and bounded live investigation.
+
+The current workflow split is:
+
+- `.github/workflows/validation-lab.yml`
+  canonical remote proof for the Rust platform and Android shell
+- `.github/workflows/prerelease-apk.yml`
+  installable internal Android previews from a proved head
+- `.github/workflows/interactive-android-build.yml`
+  reusable Android artifact bundles for interactive work
+- `.github/workflows/interactive-android-session.yml`
+  bounded live hosted emulator sessions for inspection and debugging
+
+This model is especially useful for AI-assisted development because it
+separates build production from interactive investigation and gives both humans
+and models a shared remote proof surface instead of relying on one machine's
+local environment.
+
+For the public workflow overview, see
+[`docs/hosted-ai-development.md`](docs/hosted-ai-development.md).
+
+## License
+
+This repository is licensed under the GNU Affero General Public License,
+version 3 or any later version.
+
+See [`LICENSE`](LICENSE) for the full text.

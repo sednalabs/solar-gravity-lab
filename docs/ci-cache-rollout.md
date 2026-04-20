@@ -2,6 +2,10 @@
 
 This document captures the current Solar Gravity Lab hosted-runner cache rollout.
 
+For the broader public workflow model, including reusable interactive Android
+artifacts and bounded live hosted sessions for AI-assisted development, see
+[`docs/hosted-ai-development.md`](hosted-ai-development.md).
+
 ## Goals
 
 - reduce repeated Android emulator cold-start cost on GitHub-hosted runners
@@ -239,9 +243,20 @@ Interpretation:
    - reduce artifact duplication further, or
    - move heavy Android lanes onto a prewarmed self-hosted runner when hosted-runner bootstrap latency becomes the dominant cost
 
-### Self-hosted adoption seam
+### Deferred self-hosted evaluation seam
 
-The heavy Android jobs are now ready for a controlled self-hosted migration without another workflow refactor.
+The workflows still retain a reversible self-hosted runner seam, but that seam
+should now be read as deferred evaluation material rather than the active
+recommended path on `main`.
+
+The current public recommendation remains:
+
+1. GitHub-hosted runners as the primary proof and interactive development surface
+2. reusable hosted Android artifacts for build-first interactive work
+3. bounded live hosted sessions before any broader self-hosted adoption
+
+If a future tranche revisits self-hosted runners, the heavy Android jobs can
+still move without another workflow refactor.
 
 - `validation-lab` Android shell
 - `prerelease-apk` build / launch-smoke lane
@@ -264,9 +279,12 @@ Example values:
 - dedicated self-hosted Linux x64 runner:
   - `["self-hosted","linux","x64","sgl-android"]`
 
-This keeps the current validated hosted-runner behavior unchanged while giving the next self-hosted runner evaluation a small, reversible control surface.
+This keeps the current validated hosted-runner behavior unchanged while
+preserving a small, reversible control surface for later evaluation if the
+GitHub-hosted-first path stops being sufficient.
 
-For the detailed pilot recommendation, preload surface, migration plan, and rollback path, see:
+For the deferred pilot material, preload surface, migration plan, and rollback
+path, see:
 
 - `docs/self-hosted-android-runner-evaluation.md`
 

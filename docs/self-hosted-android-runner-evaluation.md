@@ -1,5 +1,13 @@
 # Self-Hosted Android Runner Evaluation
 
+This document is retained as deferred evaluation material.
+
+It does not describe the current recommended path on `main`. The current
+public recommendation is to use GitHub-hosted workflows, reusable interactive
+Android artifacts, and bounded live hosted sessions first. Read this document
+only if a future tranche needs to revisit self-hosted runners after the
+GitHub-hosted-first model has been measured honestly.
+
 This document captures the next-step evaluation for Solar Gravity Lab after the hosted-runner cache acceleration slice proved out.
 
 ## Why this is the next frontier
@@ -196,17 +204,18 @@ Rollback should be immediate and boring:
 
 No workflow revert should be required for that first rollback step.
 
-## Recommendation
+## Deferred recommendation
 
-Proceed with a pilot self-hosted Android runner evaluation rather than adding more complexity to the hosted-runner workflows first.
+If a future tranche decides the GitHub-hosted-first model is no longer
+sufficient, this document describes the smallest self-hosted pilot worth
+trying.
 
-At this point, the hosted-runner side is good enough that further gains are more likely to come from:
+Until then, prefer the current hosted path:
 
-- prewarmed machine state
-- faster emulator availability
-- less repeated runner bootstrap
-
-than from another round of cache plumbing.
+- GitHub-hosted canonical proof
+- reusable interactive Android build artifacts
+- bounded live hosted emulator sessions
+- cache improvements on the standard hosted runner surface
 
 For the concrete operator sequence, see:
 
