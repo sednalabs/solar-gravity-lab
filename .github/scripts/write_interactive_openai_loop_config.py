@@ -8,7 +8,7 @@ from pathlib import Path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Write the hosted interactive-session OpenAI loop config."
+        description="Write the hosted interactive-session model-helper config."
     )
     parser.add_argument("--mcp-url", required=True)
     parser.add_argument("--mcp-health-url", required=True)
@@ -42,9 +42,10 @@ def main() -> None:
         "default_activity": args.default_activity,
         "output_root": args.output_root,
         "notes": [
-            "Set OPENAI_API_KEY in the live shell before invoking the helper wrapper.",
-            "The helper talks to the runner-local MCP endpoint instead of exposing raw artifact paths to the model.",
-            "Hosted runs prefer uploaded OpenAI file ids for screenshots and XML/log artifacts when the key is available.",
+            "This config is shared by the staged hosted-session model helpers.",
+            "Normal Codex-driven use of the hosted Android session does not require OPENAI_API_KEY.",
+            "OPENAI_API_KEY is only needed if you intentionally use the standalone OpenAI Responses helper.",
+            "The helpers talk to the runner-local MCP endpoint instead of exposing raw artifact paths to the model.",
         ],
     }
 

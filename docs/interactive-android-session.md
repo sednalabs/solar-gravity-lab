@@ -31,8 +31,9 @@ The workflow:
 - exposes a live web terminal through a Cloudflare Access-protected tunnel
 - optionally exposes the MCP HTTP surface on a second Access-protected hostname
   for agent use
-- stages a ready-to-run OpenAI Responses loop helper inside the live session
-  when the selected `android-emulator-mcp` ref includes the adapter CLI
+- stages helper wrappers for both Codex-native observation packets and optional
+  standalone OpenAI Responses-mode calls when the selected
+  `android-emulator-mcp` ref includes those adapter CLIs
 - uploads a predictable evidence bundle when the session ends
 
 ## Workflow inputs
@@ -154,6 +155,8 @@ Expected contents:
 - `emulator-logcat/`
 - `ui-dumps/`
 - `screenshots/`
+- `codex-bridge/`
+- `codex-bridge-runs/`
 - `openai-loop/`
 - `openai-loop-runs/`
 - `session-state.json`
@@ -194,7 +197,37 @@ touch dist/interactive-session/finish-session
 If that file is not created, the workflow ends automatically when the timeout
 window is reached.
 
-## Native GPT-5.4 loop helper
+## Codex-native bridge helper
+
+When the selected `android-emulator-mcp` ref includes the Codex bridge CLI, the
+hosted session stages:
+
+- `dist/interactive-session/live-access/codex-android-observe.sh`
+
+The Codex bridge is the intended default direction:
+
+- it does not require `OPENAI_API_KEY`
+- it talks to `http://127.0.0.1:9526/mcp`
+- it keeps `android-emulator-mcp` as the Android control plane
+- it emits Codex-ready raw Responses items instead of making direct OpenAI API
+  calls from the runner
+
+Typical use inside the hosted shell:
+
+```bash
+"$INTERACTIVE_CODEX_OBSERVE_BIN" --output-json "$INTERACTIVE_CODEX_BRIDGE_OUTPUT_ROOT/observe.json"
+```
+
+Current limitation:
+
+- upstream Codex already supports `input_image`, `codex.emitImage(...)`, and
+  `thread/inject_items`
+- but the active Codex CLI thread does not automatically hand arbitrary
+  runner-local scripts a thread transport handle
+- so the staged helper currently generates Codex-ready observation packets
+  rather than silently mutating the live Codex conversation by itself
+
+## Standalone OpenAI helper
 
 When the selected `android-emulator-mcp` ref includes the OpenAI adapter CLI,
 the hosted session stages:
@@ -202,13 +235,14 @@ the hosted session stages:
 - `dist/interactive-session/live-access/openai-android-loop.sh`
 - `dist/interactive-session/openai-loop/config.json`
 
-The helper is intentionally runner-local:
+This helper is intentionally optional standalone API mode:
 
 - it talks to `http://127.0.0.1:9526/mcp`
 - it keeps `android-emulator-mcp` as the Android control plane
 - it uses the Responses-native loop above that MCP surface
 - it prefers uploaded OpenAI `file_id` references for screenshots and XML/log
   artifacts when `OPENAI_API_KEY` is present in the live shell
+- it is not required for normal Codex-driven use of the hosted session
 
 Typical use inside the hosted shell:
 

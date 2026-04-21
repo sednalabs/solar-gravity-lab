@@ -151,7 +151,7 @@ def render_markdown(payload: dict) -> str:
         lines.extend(
             [
                 "",
-                "### OpenAI Loop",
+                "### Standalone OpenAI Helper",
                 "",
                 f"- status: `{openai_loop.get('status', 'unknown')}`",
             ]
@@ -166,6 +166,25 @@ def render_markdown(payload: dict) -> str:
             lines.append(f"- output root: `{openai_loop.get('output_root')}`")
         if openai_loop.get("default_model"):
             lines.append(f"- default model: `{openai_loop.get('default_model')}`")
+
+    codex_bridge = payload["summary"].get("codex_bridge")
+    if codex_bridge:
+        lines.extend(
+            [
+                "",
+                "### Codex Bridge",
+                "",
+                f"- status: `{codex_bridge.get('status', 'unknown')}`",
+            ]
+        )
+        if codex_bridge.get("reason"):
+            lines.append(f"- reason: `{codex_bridge.get('reason')}`")
+        if codex_bridge.get("helper_path"):
+            lines.append(f"- helper path: `{codex_bridge.get('helper_path')}`")
+        if codex_bridge.get("config_path"):
+            lines.append(f"- config path: `{codex_bridge.get('config_path')}`")
+        if codex_bridge.get("output_root"):
+            lines.append(f"- output root: `{codex_bridge.get('output_root')}`")
 
     active_build = payload["summary"].get("active_build")
     if active_build:
@@ -197,6 +216,8 @@ def render_markdown(payload: dict) -> str:
             "  - `emulator-logcat/`",
             "  - `ui-dumps/`",
             "  - `screenshots/`",
+            "  - `codex-bridge/`",
+            "  - `codex-bridge-runs/`",
             "  - `openai-loop/`",
             "  - `openai-loop-runs/`",
         ]
@@ -212,6 +233,7 @@ def main() -> None:
     session_state = load_json(artifacts_dir / "session-state.json")
     active_build = load_json(artifacts_dir / "active-build.json")
     openai_loop = load_json(artifacts_dir / "openai-loop" / "status.json")
+    codex_bridge = load_json(artifacts_dir / "codex-bridge" / "status.json")
 
     payload = {
         "schema_version": 1,
@@ -245,6 +267,7 @@ def main() -> None:
             "session_state": session_state,
             "active_build": active_build,
             "openai_loop": openai_loop,
+            "codex_bridge": codex_bridge,
         },
     }
 
