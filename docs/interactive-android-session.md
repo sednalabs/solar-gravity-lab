@@ -31,6 +31,8 @@ The workflow:
 - exposes a live web terminal through a Cloudflare Access-protected tunnel
 - optionally exposes the MCP HTTP surface on a second Access-protected hostname
   for agent use
+- stages a ready-to-run OpenAI Responses loop helper inside the live session
+  when the selected `android-emulator-mcp` ref includes the adapter CLI
 - uploads a predictable evidence bundle when the session ends
 
 ## Workflow inputs
@@ -152,6 +154,8 @@ Expected contents:
 - `emulator-logcat/`
 - `ui-dumps/`
 - `screenshots/`
+- `openai-loop/`
+- `openai-loop-runs/`
 - `session-state.json`
 - `mcp-health.json`
 
@@ -189,6 +193,33 @@ touch dist/interactive-session/finish-session
 
 If that file is not created, the workflow ends automatically when the timeout
 window is reached.
+
+## Native GPT-5.4 loop helper
+
+When the selected `android-emulator-mcp` ref includes the OpenAI adapter CLI,
+the hosted session stages:
+
+- `dist/interactive-session/live-access/openai-android-loop.sh`
+- `dist/interactive-session/openai-loop/config.json`
+
+The helper is intentionally runner-local:
+
+- it talks to `http://127.0.0.1:9526/mcp`
+- it keeps `android-emulator-mcp` as the Android control plane
+- it uses the Responses-native loop above that MCP surface
+- it prefers uploaded OpenAI `file_id` references for screenshots and XML/log
+  artifacts when `OPENAI_API_KEY` is present in the live shell
+
+Typical use inside the hosted shell:
+
+```bash
+export OPENAI_API_KEY=...
+"$INTERACTIVE_OPENAI_LOOP_BIN" --prompt "Observe the current Solar Lab state and tell me what you see."
+```
+
+Loop traces and native screenshot/file outputs are written under:
+
+- `dist/interactive-session/openai-loop-runs/`
 
 ## Relationship to other Android surfaces
 

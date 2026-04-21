@@ -25,8 +25,11 @@ ui_dump_dir="${session_root}/ui-dumps"
 screenshots_dir="${session_root}/screenshots"
 build_cache_dir="${session_root}/build-cache"
 install_history_dir="${session_root}/install-history"
+openai_loop_dir="${session_root}/openai-loop"
+openai_loop_run_root="${session_root}/openai-loop-runs"
 session_state_path="${session_root}/session-state.json"
 active_build_path="${session_root}/active-build.json"
+openai_loop_status_path="${openai_loop_dir}/status.json"
 finish_sentinel="${INTERACTIVE_SESSION_END_SENTINEL:-${session_root}/finish-session}"
 mcp_health_url="${INTERACTIVE_MCP_HEALTH_URL:-http://127.0.0.1:9526/health}"
 mcp_bind_addr="${INTERACTIVE_MCP_BIND_ADDR:-127.0.0.1:9526}"
@@ -44,6 +47,8 @@ debug_hostname="${INTERACTIVE_DEBUG_HOSTNAME:-}"
 debug_tunnel_token="${INTERACTIVE_DEBUG_TUNNEL_TOKEN:-}"
 mcp_public_hostname="${INTERACTIVE_MCP_PUBLIC_HOSTNAME:-}"
 ttyd_bin="${INTERACTIVE_TTYD_BIN:-ttyd}"
+openai_default_model="${INTERACTIVE_OPENAI_DEFAULT_MODEL:-gpt-5.4}"
+openai_default_serial="${INTERACTIVE_OPENAI_DEFAULT_SERIAL:-emulator-5554}"
 session_start_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 mkdir -p \
@@ -55,6 +60,8 @@ mkdir -p \
   "${screenshots_dir}" \
   "${build_cache_dir}" \
   "${install_history_dir}" \
+  "${openai_loop_dir}" \
+  "${openai_loop_run_root}" \
   "${session_root}/android-emulator-mcp-artifacts"
 
 touch "${startup_log_dir}/session.log"
@@ -107,6 +114,11 @@ write_live_status() {
 write_session_state() {
   local payload="$1"
   json_write "${session_state_path}" "${payload}"
+}
+
+write_openai_loop_status() {
+  local payload="$1"
+  json_write "${openai_loop_status_path}" "${payload}"
 }
 
 write_active_build_state() {
@@ -168,6 +180,69 @@ payload = {
 }
 output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 PY
+}
+
+stage_openai_loop() {
+  local adapter_bin="${mcp_workspace_dir}/adapters/openai/bin/openai-android-loop.mjs"
+  local config_path="${openai_loop_dir}/config.json"
+  local helper_path="${live_access_dir}/openai-android-loop.sh"
+
+  if [[ ! -f "${adapter_bin}" ]]; then
+    write_openai_loop_status "$(python3 - <<'PY' "${adapter_bin}"
+import json
+import sys
+
+print(json.dumps({
+    "schema_version": 1,
+    "status": "unavailable",
+    "reason": "adapter_cli_missing",
+    "adapter_bin": sys.argv[1],
+}))
+PY
+)"
+    return 0
+  fi
+
+  python3 .github/scripts/write_interactive_openai_loop_config.py \
+    --mcp-url "http://${mcp_bind_addr}/mcp" \
+    --mcp-health-url "${mcp_health_url}" \
+    --session-root "${session_root}" \
+    --build-manifest "${build_manifest_path}" \
+    --mcp-workspace-dir "${mcp_workspace_dir}" \
+    --default-model "${openai_default_model}" \
+    --default-serial "${openai_default_serial}" \
+    --default-package-name "${app_package}" \
+    --default-activity "${app_activity}" \
+    --output-root "${openai_loop_run_root}" \
+    --output-json "${config_path}"
+
+  cat > "${helper_path}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -z "\${OPENAI_API_KEY:-}" ]]; then
+  echo "OPENAI_API_KEY is required before running the OpenAI Android loop helper." >&2
+  exit 1
+fi
+
+exec node "${adapter_bin}" --config "${config_path}" "\$@"
+EOF
+  chmod 0755 "${helper_path}"
+
+  write_openai_loop_status "$(python3 - <<'PY' "${config_path}" "${helper_path}" "${openai_loop_run_root}" "${openai_default_model}"
+import json
+import sys
+
+print(json.dumps({
+    "schema_version": 1,
+    "status": "ready",
+    "config_path": sys.argv[1],
+    "helper_path": sys.argv[2],
+    "output_root": sys.argv[3],
+    "default_model": sys.argv[4],
+}))
+PY
+)"
 }
 
 capture_final_artifacts() {
@@ -279,6 +354,8 @@ else
   append_install_history "action_required" "${preflight_dir}/preflight.json"
 fi
 
+stage_openai_loop
+
 adb logcat -v threadtime > "${emulator_logcat_dir}/live-logcat.txt" 2>&1 &
 logcat_pid=$!
 
@@ -298,10 +375,17 @@ cd "${GITHUB_WORKSPACE}"
 export INTERACTIVE_SESSION_ROOT="${session_root}"
 export INTERACTIVE_MCP_HEALTH_URL="${mcp_health_url}"
 export ANDROID_SERIAL="\${ANDROID_SERIAL:-emulator-5554}"
+export INTERACTIVE_OPENAI_LOOP_BIN="${live_access_dir}/openai-android-loop.sh"
+export INTERACTIVE_OPENAI_LOOP_CONFIG="${openai_loop_dir}/config.json"
+export INTERACTIVE_OPENAI_LOOP_OUTPUT_ROOT="${openai_loop_run_root}"
 echo "Interactive Android session ready"
 echo "Workspace: ${GITHUB_WORKSPACE}"
 echo "Artifacts: ${session_root}"
 echo "MCP health: ${mcp_health_url}"
+if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
+  echo "OpenAI loop helper: ${live_access_dir}/openai-android-loop.sh"
+  echo "OpenAI output root: ${openai_loop_run_root}"
+fi
 echo "Finish early with: touch ${finish_sentinel}"
 exec bash -li
 EOF
@@ -399,6 +483,13 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
     echo "- finish early inside the session with: \`touch ${finish_sentinel}\`"
     echo "- artifacts root: \`${session_root}\`"
+    if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
+      echo "- OpenAI loop helper: \`${live_access_dir}/openai-android-loop.sh\`"
+      echo "- OpenAI loop output root: \`${openai_loop_run_root}\`"
+      echo "- OpenAI default model: \`${openai_default_model}\`"
+    else
+      echo "- OpenAI loop helper: \`unavailable for the selected android-emulator-mcp ref\`"
+    fi
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
 

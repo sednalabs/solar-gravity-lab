@@ -146,6 +146,27 @@ def render_markdown(payload: dict) -> str:
             ]
         )
 
+    openai_loop = payload["summary"].get("openai_loop")
+    if openai_loop:
+        lines.extend(
+            [
+                "",
+                "### OpenAI Loop",
+                "",
+                f"- status: `{openai_loop.get('status', 'unknown')}`",
+            ]
+        )
+        if openai_loop.get("reason"):
+            lines.append(f"- reason: `{openai_loop.get('reason')}`")
+        if openai_loop.get("helper_path"):
+            lines.append(f"- helper path: `{openai_loop.get('helper_path')}`")
+        if openai_loop.get("config_path"):
+            lines.append(f"- config path: `{openai_loop.get('config_path')}`")
+        if openai_loop.get("output_root"):
+            lines.append(f"- output root: `{openai_loop.get('output_root')}`")
+        if openai_loop.get("default_model"):
+            lines.append(f"- default model: `{openai_loop.get('default_model')}`")
+
     active_build = payload["summary"].get("active_build")
     if active_build:
         manifest = active_build.get("manifest", {})
@@ -176,6 +197,8 @@ def render_markdown(payload: dict) -> str:
             "  - `emulator-logcat/`",
             "  - `ui-dumps/`",
             "  - `screenshots/`",
+            "  - `openai-loop/`",
+            "  - `openai-loop-runs/`",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -188,6 +211,7 @@ def main() -> None:
     live_access = load_json(artifacts_dir / "live-access" / "status.json")
     session_state = load_json(artifacts_dir / "session-state.json")
     active_build = load_json(artifacts_dir / "active-build.json")
+    openai_loop = load_json(artifacts_dir / "openai-loop" / "status.json")
 
     payload = {
         "schema_version": 1,
@@ -220,6 +244,7 @@ def main() -> None:
             "live_access": live_access,
             "session_state": session_state,
             "active_build": active_build,
+            "openai_loop": openai_loop,
         },
     }
 
