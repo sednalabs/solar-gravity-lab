@@ -465,7 +465,7 @@ echo "Artifacts: ${session_root}"
 echo "MCP health: ${mcp_health_url}"
 if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
   echo "Codex native dynamic-tool helper: ${live_access_dir}/codex-android-tools.sh"
-  echo "Codex dynamic-tool command: ${CODEX_DYNAMIC_TOOL_COMMAND}"
+  echo "Codex dynamic-tool command: \${CODEX_DYNAMIC_TOOL_COMMAND}"
 fi
 if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
   echo "Codex bridge observe helper: ${live_access_dir}/codex-android-observe.sh"
