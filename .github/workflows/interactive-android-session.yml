@@ -59,7 +59,7 @@ on:
           - cold
         default: snapshot-cache
       session_timeout_minutes:
-        description: Interactive session timeout window in minutes (30-180)
+        description: Interactive session timeout window in minutes (30-360)
         required: true
         type: string
         default: "90"
@@ -153,8 +153,8 @@ jobs:
           if (( session_timeout_minutes < 30 )); then
             session_timeout_minutes=30
           fi
-          if (( session_timeout_minutes > 180 )); then
-            session_timeout_minutes=180
+          if (( session_timeout_minutes > 360 )); then
+            session_timeout_minutes=360
           fi
 
           debug_stage_first_client="true"
