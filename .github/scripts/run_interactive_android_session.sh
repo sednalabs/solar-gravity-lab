@@ -27,9 +27,12 @@ build_cache_dir="${session_root}/build-cache"
 install_history_dir="${session_root}/install-history"
 openai_loop_dir="${session_root}/openai-loop"
 openai_loop_run_root="${session_root}/openai-loop-runs"
+codex_bridge_dir="${session_root}/codex-bridge"
+codex_bridge_run_root="${session_root}/codex-bridge-runs"
 session_state_path="${session_root}/session-state.json"
 active_build_path="${session_root}/active-build.json"
 openai_loop_status_path="${openai_loop_dir}/status.json"
+codex_bridge_status_path="${codex_bridge_dir}/status.json"
 finish_sentinel="${INTERACTIVE_SESSION_END_SENTINEL:-${session_root}/finish-session}"
 mcp_health_url="${INTERACTIVE_MCP_HEALTH_URL:-http://127.0.0.1:9526/health}"
 mcp_bind_addr="${INTERACTIVE_MCP_BIND_ADDR:-127.0.0.1:9526}"
@@ -62,6 +65,8 @@ mkdir -p \
   "${install_history_dir}" \
   "${openai_loop_dir}" \
   "${openai_loop_run_root}" \
+  "${codex_bridge_dir}" \
+  "${codex_bridge_run_root}" \
   "${session_root}/android-emulator-mcp-artifacts"
 
 touch "${startup_log_dir}/session.log"
@@ -119,6 +124,11 @@ write_session_state() {
 write_openai_loop_status() {
   local payload="$1"
   json_write "${openai_loop_status_path}" "${payload}"
+}
+
+write_codex_bridge_status() {
+  local payload="$1"
+  json_write "${codex_bridge_status_path}" "${payload}"
 }
 
 write_active_build_state() {
@@ -182,13 +192,30 @@ output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 PY
 }
 
-stage_openai_loop() {
-  local adapter_bin="${mcp_workspace_dir}/adapters/openai/bin/openai-android-loop.mjs"
+stage_interactive_model_helpers() {
+  local openai_adapter_bin="${mcp_workspace_dir}/adapters/openai/bin/openai-android-loop.mjs"
+  local codex_adapter_bin="${mcp_workspace_dir}/adapters/codex/bin/codex-android-observe.mjs"
   local config_path="${openai_loop_dir}/config.json"
-  local helper_path="${live_access_dir}/openai-android-loop.sh"
+  local openai_helper_path="${live_access_dir}/openai-android-loop.sh"
+  local codex_helper_path="${live_access_dir}/codex-android-observe.sh"
 
-  if [[ ! -f "${adapter_bin}" ]]; then
-    write_openai_loop_status "$(python3 - <<'PY' "${adapter_bin}"
+  if [[ -f "${openai_adapter_bin}" || -f "${codex_adapter_bin}" ]]; then
+    python3 .github/scripts/write_interactive_openai_loop_config.py \
+      --mcp-url "http://${mcp_bind_addr}/mcp" \
+      --mcp-health-url "${mcp_health_url}" \
+      --session-root "${session_root}" \
+      --build-manifest "${build_manifest_path}" \
+      --mcp-workspace-dir "${mcp_workspace_dir}" \
+      --default-model "${openai_default_model}" \
+      --default-serial "${openai_default_serial}" \
+      --default-package-name "${app_package}" \
+      --default-activity "${app_activity}" \
+      --output-root "${openai_loop_run_root}" \
+      --output-json "${config_path}"
+  fi
+
+  if [[ ! -f "${openai_adapter_bin}" ]]; then
+    write_openai_loop_status "$(python3 - <<'PY' "${openai_adapter_bin}"
 import json
 import sys
 
@@ -200,42 +227,29 @@ print(json.dumps({
 }))
 PY
 )"
-    return 0
-  fi
-
-  python3 .github/scripts/write_interactive_openai_loop_config.py \
-    --mcp-url "http://${mcp_bind_addr}/mcp" \
-    --mcp-health-url "${mcp_health_url}" \
-    --session-root "${session_root}" \
-    --build-manifest "${build_manifest_path}" \
-    --mcp-workspace-dir "${mcp_workspace_dir}" \
-    --default-model "${openai_default_model}" \
-    --default-serial "${openai_default_serial}" \
-    --default-package-name "${app_package}" \
-    --default-activity "${app_activity}" \
-    --output-root "${openai_loop_run_root}" \
-    --output-json "${config_path}"
-
-  cat > "${helper_path}" <<EOF
+  else
+    cat > "${openai_helper_path}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 if [[ -z "\${OPENAI_API_KEY:-}" ]]; then
-  echo "OPENAI_API_KEY is required before running the OpenAI Android loop helper." >&2
+  echo "OPENAI_API_KEY is only required for this optional standalone OpenAI Responses helper." >&2
+  echo "Normal Codex-driven use of the hosted Android session does not require a separate OpenAI API key." >&2
   exit 1
 fi
 
-exec node "${adapter_bin}" --config "${config_path}" "\$@"
+exec node "${openai_adapter_bin}" --config "${config_path}" "\$@"
 EOF
-  chmod 0755 "${helper_path}"
+    chmod 0755 "${openai_helper_path}"
 
-  write_openai_loop_status "$(python3 - <<'PY' "${config_path}" "${helper_path}" "${openai_loop_run_root}" "${openai_default_model}"
+    write_openai_loop_status "$(python3 - <<'PY' "${config_path}" "${openai_helper_path}" "${openai_loop_run_root}" "${openai_default_model}"
 import json
 import sys
 
 print(json.dumps({
     "schema_version": 1,
     "status": "ready",
+    "mode": "standalone_openai_api",
     "config_path": sys.argv[1],
     "helper_path": sys.argv[2],
     "output_root": sys.argv[3],
@@ -243,6 +257,45 @@ print(json.dumps({
 }))
 PY
 )"
+  fi
+
+  if [[ ! -f "${codex_adapter_bin}" ]]; then
+    write_codex_bridge_status "$(python3 - <<'PY' "${codex_adapter_bin}"
+import json
+import sys
+
+print(json.dumps({
+    "schema_version": 1,
+    "status": "unavailable",
+    "reason": "adapter_cli_missing",
+    "adapter_bin": sys.argv[1],
+}))
+PY
+)"
+  else
+    cat > "${codex_helper_path}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec node "${codex_adapter_bin}" --config "${config_path}" "\$@"
+EOF
+    chmod 0755 "${codex_helper_path}"
+
+    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_helper_path}" "${codex_bridge_run_root}"
+import json
+import sys
+
+print(json.dumps({
+    "schema_version": 1,
+    "status": "ready",
+    "mode": "codex_bridge",
+    "config_path": sys.argv[1],
+    "helper_path": sys.argv[2],
+    "output_root": sys.argv[3],
+}))
+PY
+)"
+  fi
 }
 
 capture_final_artifacts() {
@@ -354,7 +407,7 @@ else
   append_install_history "action_required" "${preflight_dir}/preflight.json"
 fi
 
-stage_openai_loop
+stage_interactive_model_helpers
 
 adb logcat -v threadtime > "${emulator_logcat_dir}/live-logcat.txt" 2>&1 &
 logcat_pid=$!
@@ -378,13 +431,19 @@ export ANDROID_SERIAL="\${ANDROID_SERIAL:-emulator-5554}"
 export INTERACTIVE_OPENAI_LOOP_BIN="${live_access_dir}/openai-android-loop.sh"
 export INTERACTIVE_OPENAI_LOOP_CONFIG="${openai_loop_dir}/config.json"
 export INTERACTIVE_OPENAI_LOOP_OUTPUT_ROOT="${openai_loop_run_root}"
+export INTERACTIVE_CODEX_OBSERVE_BIN="${live_access_dir}/codex-android-observe.sh"
+export INTERACTIVE_CODEX_BRIDGE_OUTPUT_ROOT="${codex_bridge_run_root}"
 echo "Interactive Android session ready"
 echo "Workspace: ${GITHUB_WORKSPACE}"
 echo "Artifacts: ${session_root}"
 echo "MCP health: ${mcp_health_url}"
+if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
+  echo "Codex bridge helper: ${live_access_dir}/codex-android-observe.sh"
+  echo "Codex bridge output root: ${codex_bridge_run_root}"
+fi
 if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
-  echo "OpenAI loop helper: ${live_access_dir}/openai-android-loop.sh"
-  echo "OpenAI output root: ${openai_loop_run_root}"
+  echo "Standalone OpenAI helper: ${live_access_dir}/openai-android-loop.sh"
+  echo "Standalone OpenAI output root: ${openai_loop_run_root}"
 fi
 echo "Finish early with: touch ${finish_sentinel}"
 exec bash -li
@@ -483,12 +542,18 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
     echo "- finish early inside the session with: \`touch ${finish_sentinel}\`"
     echo "- artifacts root: \`${session_root}\`"
-    if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
-      echo "- OpenAI loop helper: \`${live_access_dir}/openai-android-loop.sh\`"
-      echo "- OpenAI loop output root: \`${openai_loop_run_root}\`"
-      echo "- OpenAI default model: \`${openai_default_model}\`"
+    if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
+      echo "- Codex bridge helper: \`${live_access_dir}/codex-android-observe.sh\`"
+      echo "- Codex bridge output root: \`${codex_bridge_run_root}\`"
     else
-      echo "- OpenAI loop helper: \`unavailable for the selected android-emulator-mcp ref\`"
+      echo "- Codex bridge helper: \`unavailable for the selected android-emulator-mcp ref\`"
+    fi
+    if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
+      echo "- standalone OpenAI helper: \`${live_access_dir}/openai-android-loop.sh\`"
+      echo "- standalone OpenAI output root: \`${openai_loop_run_root}\`"
+      echo "- standalone OpenAI default model: \`${openai_default_model}\`"
+    else
+      echo "- standalone OpenAI helper: \`unavailable for the selected android-emulator-mcp ref\`"
     fi
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
