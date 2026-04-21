@@ -172,15 +172,30 @@ def render_markdown(payload: dict) -> str:
         lines.extend(
             [
                 "",
-                "### Codex Bridge",
+                "### Codex Native Android Tools",
                 "",
                 f"- status: `{codex_bridge.get('status', 'unknown')}`",
             ]
         )
         if codex_bridge.get("reason"):
             lines.append(f"- reason: `{codex_bridge.get('reason')}`")
-        if codex_bridge.get("helper_path"):
-            lines.append(f"- helper path: `{codex_bridge.get('helper_path')}`")
+        if codex_bridge.get("mode"):
+            lines.append(f"- mode: `{codex_bridge.get('mode')}`")
+        if codex_bridge.get("dynamic_tool_helper_path"):
+            lines.append(
+                f"- dynamic-tool helper path: `{codex_bridge.get('dynamic_tool_helper_path')}`"
+            )
+        if codex_bridge.get("dynamic_tool_command"):
+            lines.append(
+                f"- dynamic-tool command: `{codex_bridge.get('dynamic_tool_command')}`"
+            )
+        if codex_bridge.get("observe_helper_path"):
+            lines.append(
+                f"- observe helper path: `{codex_bridge.get('observe_helper_path')}`"
+            )
+        if codex_bridge.get("tool_names"):
+            tools = ", ".join(f"`{tool}`" for tool in codex_bridge.get("tool_names"))
+            lines.append(f"- model-callable tools: {tools}")
         if codex_bridge.get("config_path"):
             lines.append(f"- config path: `{codex_bridge.get('config_path')}`")
         if codex_bridge.get("output_root"):

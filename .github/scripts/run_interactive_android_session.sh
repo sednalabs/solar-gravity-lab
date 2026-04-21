@@ -195,11 +195,13 @@ PY
 stage_interactive_model_helpers() {
   local openai_adapter_bin="${mcp_workspace_dir}/adapters/openai/bin/openai-android-loop.mjs"
   local codex_adapter_bin="${mcp_workspace_dir}/adapters/codex/bin/codex-android-observe.mjs"
+  local codex_dynamic_tools_bin="${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs"
   local config_path="${openai_loop_dir}/config.json"
   local openai_helper_path="${live_access_dir}/openai-android-loop.sh"
   local codex_helper_path="${live_access_dir}/codex-android-observe.sh"
+  local codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools.sh"
 
-  if [[ -f "${openai_adapter_bin}" || -f "${codex_adapter_bin}" ]]; then
+  if [[ -f "${openai_adapter_bin}" || -f "${codex_adapter_bin}" || -f "${codex_dynamic_tools_bin}" ]]; then
     python3 .github/scripts/write_interactive_openai_loop_config.py \
       --mcp-url "http://${mcp_bind_addr}/mcp" \
       --mcp-health-url "${mcp_health_url}" \
@@ -259,8 +261,10 @@ PY
 )"
   fi
 
-  if [[ ! -f "${codex_adapter_bin}" ]]; then
-    write_codex_bridge_status "$(python3 - <<'PY' "${codex_adapter_bin}"
+  if [[ ! -f "${codex_dynamic_tools_bin}" ]]; then
+    rm -f "${codex_dynamic_tool_helper_path}"
+    rm -f "${codex_helper_path}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${codex_dynamic_tools_bin}" "${codex_adapter_bin}"
 import json
 import sys
 
@@ -268,30 +272,46 @@ print(json.dumps({
     "schema_version": 1,
     "status": "unavailable",
     "reason": "adapter_cli_missing",
-    "adapter_bin": sys.argv[1],
+    "dynamic_tool_adapter_bin": sys.argv[1],
+    "observe_adapter_bin": sys.argv[2],
 }))
 PY
 )"
   else
+    cat > "${codex_dynamic_tool_helper_path}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec node "${codex_dynamic_tools_bin}" --config "${config_path}" "\$@"
+EOF
+    chmod 0755 "${codex_dynamic_tool_helper_path}"
+
+    if [[ -f "${codex_adapter_bin}" ]]; then
     cat > "${codex_helper_path}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 exec node "${codex_adapter_bin}" --config "${config_path}" "\$@"
 EOF
-    chmod 0755 "${codex_helper_path}"
+      chmod 0755 "${codex_helper_path}"
+    else
+      rm -f "${codex_helper_path}"
+    fi
 
-    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_helper_path}" "${codex_bridge_run_root}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}"
 import json
 import sys
 
 print(json.dumps({
     "schema_version": 1,
     "status": "ready",
-    "mode": "codex_bridge",
+    "mode": "native_dynamic_tools",
     "config_path": sys.argv[1],
-    "helper_path": sys.argv[2],
-    "output_root": sys.argv[3],
+    "dynamic_tool_helper_path": sys.argv[2],
+    "dynamic_tool_command": sys.argv[2],
+    "observe_helper_path": sys.argv[3],
+    "output_root": sys.argv[4],
+    "tool_names": ["android_observe", "android_step"],
 }))
 PY
 )"
@@ -432,13 +452,23 @@ export INTERACTIVE_OPENAI_LOOP_BIN="${live_access_dir}/openai-android-loop.sh"
 export INTERACTIVE_OPENAI_LOOP_CONFIG="${openai_loop_dir}/config.json"
 export INTERACTIVE_OPENAI_LOOP_OUTPUT_ROOT="${openai_loop_run_root}"
 export INTERACTIVE_CODEX_OBSERVE_BIN="${live_access_dir}/codex-android-observe.sh"
+export INTERACTIVE_CODEX_DYNAMIC_TOOL_BIN="${live_access_dir}/codex-android-tools.sh"
 export INTERACTIVE_CODEX_BRIDGE_OUTPUT_ROOT="${codex_bridge_run_root}"
+if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
+  export CODEX_DYNAMIC_TOOL_COMMAND="${live_access_dir}/codex-android-tools.sh"
+else
+  unset CODEX_DYNAMIC_TOOL_COMMAND || true
+fi
 echo "Interactive Android session ready"
 echo "Workspace: ${GITHUB_WORKSPACE}"
 echo "Artifacts: ${session_root}"
 echo "MCP health: ${mcp_health_url}"
+if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
+  echo "Codex native dynamic-tool helper: ${live_access_dir}/codex-android-tools.sh"
+  echo "Codex dynamic-tool command: ${CODEX_DYNAMIC_TOOL_COMMAND}"
+fi
 if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
-  echo "Codex bridge helper: ${live_access_dir}/codex-android-observe.sh"
+  echo "Codex bridge observe helper: ${live_access_dir}/codex-android-observe.sh"
   echo "Codex bridge output root: ${codex_bridge_run_root}"
 fi
 if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
@@ -542,11 +572,17 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
     echo "- finish early inside the session with: \`touch ${finish_sentinel}\`"
     echo "- artifacts root: \`${session_root}\`"
+    if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
+      echo "- Codex native dynamic-tool helper: \`${live_access_dir}/codex-android-tools.sh\`"
+      echo "- Codex dynamic-tool command: \`${live_access_dir}/codex-android-tools.sh\`"
+    else
+      echo "- Codex native dynamic-tool helper: \`unavailable for the selected android-emulator-mcp ref\`"
+    fi
     if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
-      echo "- Codex bridge helper: \`${live_access_dir}/codex-android-observe.sh\`"
+      echo "- Codex bridge observe helper: \`${live_access_dir}/codex-android-observe.sh\`"
       echo "- Codex bridge output root: \`${codex_bridge_run_root}\`"
     else
-      echo "- Codex bridge helper: \`unavailable for the selected android-emulator-mcp ref\`"
+      echo "- Codex bridge observe helper: \`unavailable for the selected android-emulator-mcp ref\`"
     fi
     if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
       echo "- standalone OpenAI helper: \`${live_access_dir}/openai-android-loop.sh\`"

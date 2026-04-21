@@ -43,6 +43,7 @@ def main() -> None:
         "output_root": args.output_root,
         "notes": [
             "This config is shared by the staged hosted-session model helpers.",
+            "Normal Codex-native Android tool use is discovered through CODEX_DYNAMIC_TOOL_COMMAND.",
             "Normal Codex-driven use of the hosted Android session does not require OPENAI_API_KEY.",
             "OPENAI_API_KEY is only needed if you intentionally use the standalone OpenAI Responses helper.",
             "The helpers talk to the runner-local MCP endpoint instead of exposing raw artifact paths to the model.",

@@ -197,35 +197,35 @@ touch dist/interactive-session/finish-session
 If that file is not created, the workflow ends automatically when the timeout
 window is reached.
 
-## Codex-native bridge helper
+## Codex native Android tools
 
-When the selected `android-emulator-mcp` ref includes the Codex bridge CLI, the
-hosted session stages:
+When the selected `android-emulator-mcp` ref includes the native Codex dynamic
+tool CLI, the hosted session stages:
 
-- `dist/interactive-session/live-access/codex-android-observe.sh`
+- `dist/interactive-session/live-access/codex-android-tools.sh`
 
-The Codex bridge is the intended default direction:
+Inside the live shell, the session also exports:
+
+- `CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools.sh`
+
+This is the native harness direction:
 
 - it does not require `OPENAI_API_KEY`
 - it talks to `http://127.0.0.1:9526/mcp`
 - it keeps `android-emulator-mcp` as the Android control plane
-- it emits Codex-ready raw Responses items instead of making direct OpenAI API
-  calls from the runner
+- it lets Codex register model-callable Android tools in the normal thread flow
+- the model-facing tools are `android_observe` and `android_step`
 
-Typical use inside the hosted shell:
+The helper is a provider backend, not the primary UX. Codex calls the app
+server directly, the app server issues dynamic tool requests into the TUI, and
+the TUI resolves them through `CODEX_DYNAMIC_TOOL_COMMAND`.
 
-```bash
-"$INTERACTIVE_CODEX_OBSERVE_BIN" --output-json "$INTERACTIVE_CODEX_BRIDGE_OUTPUT_ROOT/observe.json"
-```
+Optional debug helper:
 
-Current limitation:
+- `dist/interactive-session/live-access/codex-android-observe.sh`
 
-- upstream Codex already supports `input_image`, `codex.emitImage(...)`, and
-  `thread/inject_items`
-- but the active Codex CLI thread does not automatically hand arbitrary
-  runner-local scripts a thread transport handle
-- so the staged helper currently generates Codex-ready observation packets
-  rather than silently mutating the live Codex conversation by itself
+The debug helper is still useful when you want to inspect the raw observation
+payloads manually, but it is not the native model-callable path.
 
 ## Standalone OpenAI helper
 
