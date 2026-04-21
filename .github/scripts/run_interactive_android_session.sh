@@ -570,24 +570,20 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
       echo "- agent MCP hostname: \`disabled\`"
     fi
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
-    echo "- finish early inside the session with: \`touch ${finish_sentinel}\`"
+    echo "- finish early inside the session with: \`touch dist/interactive-session/finish-session\`"
     echo "- artifacts root: \`${session_root}\`"
     if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
-      echo "- Codex native dynamic-tool helper: \`${live_access_dir}/codex-android-tools.sh\`"
-      echo "- Codex dynamic-tool command: \`${live_access_dir}/codex-android-tools.sh\`"
+      echo "- Codex native dynamic tools: \`available\`"
     else
-      echo "- Codex native dynamic-tool helper: \`unavailable for the selected android-emulator-mcp ref\`"
+      echo "- Codex native dynamic tools: \`unavailable for the selected android-emulator-mcp ref\`"
     fi
     if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
-      echo "- Codex bridge observe helper: \`${live_access_dir}/codex-android-observe.sh\`"
-      echo "- Codex bridge output root: \`${codex_bridge_run_root}\`"
+      echo "- Codex bridge observe helper: \`available\`"
     else
       echo "- Codex bridge observe helper: \`unavailable for the selected android-emulator-mcp ref\`"
     fi
     if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
-      echo "- standalone OpenAI helper: \`${live_access_dir}/openai-android-loop.sh\`"
-      echo "- standalone OpenAI output root: \`${openai_loop_run_root}\`"
-      echo "- standalone OpenAI default model: \`${openai_default_model}\`"
+      echo "- standalone OpenAI helper: \`available (optional API mode)\`"
     else
       echo "- standalone OpenAI helper: \`unavailable for the selected android-emulator-mcp ref\`"
     fi

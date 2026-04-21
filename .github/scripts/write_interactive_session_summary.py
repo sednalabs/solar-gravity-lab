@@ -106,7 +106,7 @@ def render_markdown(payload: dict) -> str:
                 "### Live Access",
                 "",
                 f"- overall status: `{live_access.get('status', 'unknown')}`",
-                f"- finish sentinel: `{live_access.get('finish_sentinel', 'n/a')}`",
+                "- finish early: `touch dist/interactive-session/finish-session`",
             ]
         )
         if human_terminal:
@@ -158,12 +158,6 @@ def render_markdown(payload: dict) -> str:
         )
         if openai_loop.get("reason"):
             lines.append(f"- reason: `{openai_loop.get('reason')}`")
-        if openai_loop.get("helper_path"):
-            lines.append(f"- helper path: `{openai_loop.get('helper_path')}`")
-        if openai_loop.get("config_path"):
-            lines.append(f"- config path: `{openai_loop.get('config_path')}`")
-        if openai_loop.get("output_root"):
-            lines.append(f"- output root: `{openai_loop.get('output_root')}`")
         if openai_loop.get("default_model"):
             lines.append(f"- default model: `{openai_loop.get('default_model')}`")
 
@@ -181,25 +175,9 @@ def render_markdown(payload: dict) -> str:
             lines.append(f"- reason: `{codex_bridge.get('reason')}`")
         if codex_bridge.get("mode"):
             lines.append(f"- mode: `{codex_bridge.get('mode')}`")
-        if codex_bridge.get("dynamic_tool_helper_path"):
-            lines.append(
-                f"- dynamic-tool helper path: `{codex_bridge.get('dynamic_tool_helper_path')}`"
-            )
-        if codex_bridge.get("dynamic_tool_command"):
-            lines.append(
-                f"- dynamic-tool command: `{codex_bridge.get('dynamic_tool_command')}`"
-            )
-        if codex_bridge.get("observe_helper_path"):
-            lines.append(
-                f"- observe helper path: `{codex_bridge.get('observe_helper_path')}`"
-            )
         if codex_bridge.get("tool_names"):
             tools = ", ".join(f"`{tool}`" for tool in codex_bridge.get("tool_names"))
             lines.append(f"- model-callable tools: {tools}")
-        if codex_bridge.get("config_path"):
-            lines.append(f"- config path: `{codex_bridge.get('config_path')}`")
-        if codex_bridge.get("output_root"):
-            lines.append(f"- output root: `{codex_bridge.get('output_root')}`")
 
     active_build = payload["summary"].get("active_build")
     if active_build:
@@ -218,11 +196,11 @@ def render_markdown(payload: dict) -> str:
         )
 
     lines.extend(
-        [
-            "",
-            "### Artifacts",
-            "",
-            f"- root: `{payload['summary']['artifacts_dir']}`",
+            [
+                "",
+                "### Artifacts",
+                "",
+                f"- root: `{payload['summary']['artifacts_dir']}`",
             "- expected directories:",
             "  - `android-emulator-mcp-artifacts/`",
             "  - `preflight/`",
@@ -235,6 +213,7 @@ def render_markdown(payload: dict) -> str:
             "  - `codex-bridge-runs/`",
             "  - `openai-loop/`",
             "  - `openai-loop-runs/`",
+            "- helper/config path details stay in the uploaded artifacts, not this GitHub summary",
         ]
     )
     return "\n".join(lines) + "\n"

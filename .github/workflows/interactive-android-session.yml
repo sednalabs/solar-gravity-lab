@@ -554,11 +554,8 @@ jobs:
             echo "- build source: \`${{ steps.session_plan.outputs.build_source }}\`"
             echo "- Android build setup: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- Rust Android toolchain: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
-            echo "- android-emulator-mcp cache hit: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit || 'false' }}\`"
-            echo "- android-emulator-mcp rustc release: \`${{ steps.interactive_mcp_cache.outputs.rustc_release }}\`"
-            echo "- android-emulator-mcp server sha: \`${{ steps.interactive_mcp_cache.outputs.server_sha }}\`"
-            echo "- mcp-toolkit-rs sha: \`${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}\`"
-            echo "- android-emulator-mcp build seconds: \`${{ steps.build_mcp.outputs.build_seconds }}\`"
+            echo "- android-emulator-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
+            echo "- android-emulator-mcp build completed: \`true\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Run hosted interactive Android session

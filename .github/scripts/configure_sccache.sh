@@ -14,7 +14,21 @@ emit_summary() {
   local reason="$2"
   local missing="${3:-}"
   local credential_source_value="${4:-}"
+  local summary_credential_source="n/a"
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    if [[ "${enabled}" == "true" ]]; then
+      case "${credential_source_value}" in
+        dedicated-sccache-env)
+          summary_credential_source="dedicated"
+          ;;
+        aws-env)
+          summary_credential_source="legacy-fallback"
+          ;;
+        *)
+          summary_credential_source="${credential_source_value:-unknown}"
+          ;;
+      esac
+    fi
     {
       echo "## sccache configuration"
       echo "- enabled: \`${enabled}\`"
@@ -23,11 +37,9 @@ emit_summary() {
         echo "- missing vars: \`${missing}\`"
       fi
       if [[ "${enabled}" == "true" ]]; then
-        echo "- path: \`${sccache_path}\`"
-        echo "- bucket: \`${SCCACHE_BUCKET}\`"
-        echo "- endpoint: \`${SCCACHE_ENDPOINT}\`"
-        echo "- key prefix: \`${SCCACHE_S3_KEY_PREFIX:-}\`"
-        echo "- credential source: \`${credential_source_value}\`"
+        echo "- compiler wrapper: \`configured\`"
+        echo "- storage backend: \`configured\`"
+        echo "- credential source: \`${summary_credential_source}\`"
       fi
     } >> "${GITHUB_STEP_SUMMARY}"
   fi
