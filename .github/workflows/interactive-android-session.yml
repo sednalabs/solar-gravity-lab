@@ -70,11 +70,13 @@ on:
         default: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  # Live interactive sessions share fixed Cloudflare ingress hostnames, so
+  # changing the checkout ref must not create a second concurrent tunnel owner.
+  group: ${{ github.repository }}-${{ github.workflow }}
   cancel-in-progress: true
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 env:
@@ -120,6 +122,27 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+
+      - name: Cancel older interactive session runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_FILE: interactive-android-session.yml
+        run: |
+          set -euo pipefail
+          gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow "${WORKFLOW_FILE}" \
+            --status in_progress \
+            --json databaseId \
+            --jq '.[] | .databaseId' | while read -r run_id; do
+              if [[ -z "${run_id}" || "${run_id}" == "${CURRENT_RUN_ID}" ]]; then
+                continue
+              fi
+              echo "Cancelling older interactive run ${run_id}"
+              gh run cancel "${run_id}" --repo "${GITHUB_REPOSITORY}" || true
+            done
 
       - name: Resolve interactive session plan
         id: session_plan

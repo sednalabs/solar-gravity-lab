@@ -57,6 +57,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -593,6 +595,7 @@ private fun StageFirstSandboxLocalExperience(
 
         if (immersivePromptVisible) {
             AlertDialog(
+                modifier = Modifier.androidToolingSemantics(),
                 onDismissRequest = { immersivePromptVisible = false },
                 confirmButton = {
                     TextButton(
@@ -739,7 +742,11 @@ private fun BoxScope.StageOverlay(
     stepQuantumLabel: String,
     speedLabel: String,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .androidToolingSemantics(),
+    ) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
         val actionButtons: @Composable RowScope.() -> Unit = {
             modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
@@ -1032,6 +1039,7 @@ private fun SearchDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.androidToolingSemantics(),
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = onDismiss) {
@@ -1104,7 +1112,11 @@ private fun SearchDialog(
                                 }
                                 TextButton(
                                     onClick = { onSelectBody(body.id) },
-                                    modifier = Modifier.testTag(SolarLabTestTags.stageFirstSearchFocusTag(body.id)),
+                                    modifier = Modifier
+                                        .testTag(SolarLabTestTags.stageFirstSearchFocusTag(body.id))
+                                        .semantics {
+                                            contentDescription = "Focus ${body.name}"
+                                        },
                                 ) {
                                     Text("Focus")
                                 }
@@ -1132,6 +1144,7 @@ private fun DebugDialog(
     onToggleCollisionMode: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.androidToolingSemantics(),
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = onDismiss) {

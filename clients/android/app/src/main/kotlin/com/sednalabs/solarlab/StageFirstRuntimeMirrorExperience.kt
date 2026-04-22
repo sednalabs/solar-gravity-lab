@@ -328,6 +328,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
+                .androidToolingSemantics()
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
@@ -688,6 +689,7 @@ private fun RuntimeMirrorSearchDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.androidToolingSemantics(),
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = onDismiss) {
@@ -783,6 +785,7 @@ private fun RuntimeMirrorDebugDialog(
     onRefresh: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.androidToolingSemantics(),
         onDismissRequest = onDismiss,
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
