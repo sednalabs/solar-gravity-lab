@@ -4,6 +4,20 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
+
+
+HEX_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]+")
+SWIFTSHADER_UNSUPPORTED_RE = re.compile(
+    r"SwiftShader.*UNSUPPORTED:\s*curExtension->sType:\s*(\d+)|UNSUPPORTED:\s*curExtension->sType:\s*(\d+)"
+)
+CANCELED_RE = re.compile(r"\bthe operation was canceled\b", re.IGNORECASE)
+INTERESTING_FAILURE_RE = re.compile(
+    r"\b(error|failed|failure|exception|timed out|timeout|unable|unavailable|canceled|cancelled)\b",
+    re.IGNORECASE,
+)
+MAX_INTERESTING_EXCERPTS = 3
+MAX_LOG_BYTES = 512 * 1024
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,6 +53,109 @@ def load_json(path: Path) -> dict | None:
         return json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def sanitize_log_line(line: str) -> str:
+    sanitized = HEX_ADDRESS_RE.sub("<addr>", line.strip())
+    return re.sub(r"\s+", " ", sanitized)
+
+
+def iter_diagnostic_lines(artifacts_dir: Path) -> list[str]:
+    candidates = [
+        artifacts_dir / "startup-log" / "session.log",
+        artifacts_dir / "startup-log" / "android-emulator-mcp.stdout.log",
+        artifacts_dir / "startup-log" / "android-emulator-mcp.stderr.log",
+        artifacts_dir / "live-access" / "ttyd.log",
+        artifacts_dir / "live-access" / "cloudflared.log",
+    ]
+    startup_smoke_dir = artifacts_dir / "preflight" / "startup-smoke"
+    if startup_smoke_dir.exists():
+        candidates.extend(sorted(path for path in startup_smoke_dir.rglob("*") if path.is_file()))
+
+    lines: list[str] = []
+    bytes_read = 0
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        bytes_read += len(text.encode("utf-8", errors="ignore"))
+        for line in text.splitlines():
+            if line.strip():
+                lines.append(line)
+        if bytes_read >= MAX_LOG_BYTES:
+            break
+    return lines
+
+
+def collect_failure_diagnostics(artifacts_dir: Path, overall_status: str) -> list[dict]:
+    if overall_status == "success":
+        return []
+
+    raw_lines = iter_diagnostic_lines(artifacts_dir)
+    swiftshader_stypes: list[str] = []
+    swiftshader_seen: set[str] = set()
+    swiftshader_count = 0
+    canceled_count = 0
+    excerpts: list[str] = []
+    excerpt_seen: set[str] = set()
+
+    for raw_line in raw_lines:
+        sanitized = sanitize_log_line(raw_line)
+        if not sanitized:
+            continue
+
+        swiftshader_match = SWIFTSHADER_UNSUPPORTED_RE.search(raw_line)
+        if swiftshader_match:
+            swiftshader_count += 1
+            s_type = swiftshader_match.group(1) or swiftshader_match.group(2)
+            if s_type and s_type not in swiftshader_seen:
+                swiftshader_seen.add(s_type)
+                swiftshader_stypes.append(s_type)
+            continue
+
+        if CANCELED_RE.search(raw_line):
+            canceled_count += 1
+            continue
+
+        lowered = sanitized.lower()
+        if "created vkdevice" in lowered:
+            continue
+
+        if INTERESTING_FAILURE_RE.search(sanitized) and sanitized not in excerpt_seen:
+            excerpt_seen.add(sanitized)
+            excerpts.append(sanitized[:220])
+            if len(excerpts) >= MAX_INTERESTING_EXCERPTS:
+                break
+
+    diagnostics: list[dict] = []
+    if swiftshader_count > 0:
+        diagnostics.append(
+            {
+                "kind": "swiftshader_vulkan_warning",
+                "summary": "SwiftShader emitted unsupported Vulkan-extension warnings during startup.",
+                "count": swiftshader_count,
+                "unsupported_extension_stypes": swiftshader_stypes[:8],
+            }
+        )
+    if canceled_count > 0:
+        diagnostics.append(
+            {
+                "kind": "operation_canceled",
+                "summary": "A generic cancellation message appeared in session logs.",
+                "count": canceled_count,
+            }
+        )
+    for excerpt in excerpts:
+        diagnostics.append(
+            {
+                "kind": "sanitized_excerpt",
+                "summary": excerpt,
+            }
+        )
+    return diagnostics
 
 
 def classify_status(job_result: str, preflight: dict | None, live_access: dict | None, session_state: dict | None) -> str:
@@ -146,6 +263,34 @@ def render_markdown(payload: dict) -> str:
             ]
         )
 
+    diagnostics = payload["summary"].get("diagnostics") or []
+    if diagnostics:
+        lines.extend(
+            [
+                "",
+                "### Diagnostics",
+                "",
+            ]
+        )
+        for diagnostic in diagnostics:
+            kind = diagnostic.get("kind")
+            if kind == "swiftshader_vulkan_warning":
+                stypes = diagnostic.get("unsupported_extension_stypes") or []
+                details = (
+                    f" unsupported sTypes: `{', '.join(stypes)}`"
+                    if stypes
+                    else ""
+                )
+                lines.append(
+                    f"- SwiftShader Vulkan warnings: `{diagnostic.get('count', 0)}`.{details}"
+                )
+            elif kind == "operation_canceled":
+                lines.append(
+                    f"- Generic cancellation messages observed: `{diagnostic.get('count', 0)}`."
+                )
+            elif kind == "sanitized_excerpt":
+                lines.append(f"- Sanitized excerpt: `{diagnostic.get('summary', '')}`")
+
     openai_loop = payload["summary"].get("openai_loop")
     if openai_loop:
         lines.extend(
@@ -228,6 +373,8 @@ def main() -> None:
     active_build = load_json(artifacts_dir / "active-build.json")
     openai_loop = load_json(artifacts_dir / "openai-loop" / "status.json")
     codex_bridge = load_json(artifacts_dir / "codex-bridge" / "status.json")
+    overall_status = classify_status(args.job_result, preflight, live_access, session_state)
+    diagnostics = collect_failure_diagnostics(artifacts_dir, overall_status)
 
     payload = {
         "schema_version": 1,
@@ -253,7 +400,7 @@ def main() -> None:
             "keep_session_on_failure": args.keep_session_on_failure,
         },
         "summary": {
-            "status": classify_status(args.job_result, preflight, live_access, session_state),
+            "status": overall_status,
             "job_result": args.job_result,
             "artifacts_dir": str(artifacts_dir),
             "preflight": preflight,
@@ -262,6 +409,7 @@ def main() -> None:
             "active_build": active_build,
             "openai_loop": openai_loop,
             "codex_bridge": codex_bridge,
+            "diagnostics": diagnostics,
         },
     }
 
