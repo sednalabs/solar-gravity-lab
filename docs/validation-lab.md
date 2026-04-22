@@ -81,6 +81,29 @@ build or workflow behavior.
 6. Use `prerelease-apk` when the real question is packaging an installable device
    build rather than simply proving the branch compiles.
 
+## Blocker-fix loop
+
+The intended `validation-lab` inner loop is to get narrower once the blocker is
+known.
+
+1. Use the smallest reasonable lane bundle to discover the blocker.
+2. Once the blocker family is known, rerun the smallest `lane_set` that still
+   answers the next question.
+3. Widen again only when the fix changes the question or you need a checkpoint.
+
+Today the narrowing knob in this repo is `lane_set`, not explicit lane IDs, so
+the practical version is:
+
+- do not keep repeating `frontier`, `broad`, or `full` once they have already
+  told you the failing family
+- drop back to focused `targeted` reruns like `rust-workspace`,
+  `rust-workspace-arm64`, `ffi-abi`, `android-unit`, `android-lint`, or
+  `android-shell` as soon as that narrower slice is credible
+
+This is part of the point of `validation-lab`, not a workaround. It reduces
+runner-minutes, human wait time, and unnecessary compute while keeping proof
+hosted and attributable.
+
 ## Cheap path for docs-only changes
 
 If a change only touches `README.md`, `docs/**`, or the docs-sanity workflow
