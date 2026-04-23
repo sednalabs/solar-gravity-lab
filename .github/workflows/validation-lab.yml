@@ -82,6 +82,14 @@ on:
           - cold
           - snapshot-cache
         default: cold
+      gradle_configuration_cache:
+        description: Gradle configuration-cache mode for Android lanes
+        required: true
+        type: choice
+        options:
+          - disabled
+          - enabled
+        default: disabled
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
@@ -124,6 +132,7 @@ jobs:
       android_validation_mode: ${{ steps.plan.outputs.android_validation_mode }}
       android_artifact_mode: ${{ steps.plan.outputs.android_artifact_mode }}
       emulator_boot_strategy: ${{ steps.plan.outputs.emulator_boot_strategy }}
+      gradle_configuration_cache: ${{ steps.plan.outputs.gradle_configuration_cache }}
       profile_intent: ${{ steps.plan.outputs.profile_intent }}
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
@@ -184,6 +193,10 @@ jobs:
           if [[ -z "$emulator_boot_strategy" ]]; then
             emulator_boot_strategy='cold'
           fi
+          gradle_configuration_cache='${{ inputs.gradle_configuration_cache }}'
+          if [[ -z "$gradle_configuration_cache" ]]; then
+            gradle_configuration_cache='disabled'
+          fi
 
           wrapper_bootstrap='false'
           rust_workspace='false'
@@ -212,6 +225,15 @@ jobs:
               ;;
             *)
               echo "Unknown profile: ${profile}" >&2
+              exit 1
+              ;;
+          esac
+
+          case "$gradle_configuration_cache" in
+            disabled|enabled)
+              ;;
+            *)
+              echo "Unknown gradle_configuration_cache: ${gradle_configuration_cache}" >&2
               exit 1
               ;;
           esac
@@ -307,8 +329,8 @@ jobs:
             esac
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode")"
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s, gradle_configuration_cache=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode" "$gradle_configuration_cache")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile=${profile}" >> "$GITHUB_OUTPUT"
@@ -317,6 +339,7 @@ jobs:
           echo "android_validation_mode=${android_validation_mode}" >> "$GITHUB_OUTPUT"
           echo "android_artifact_mode=${android_artifact_mode}" >> "$GITHUB_OUTPUT"
           echo "emulator_boot_strategy=${emulator_boot_strategy}" >> "$GITHUB_OUTPUT"
+          echo "gradle_configuration_cache=${gradle_configuration_cache}" >> "$GITHUB_OUTPUT"
           echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
           echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
@@ -625,6 +648,8 @@ jobs:
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
       GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_CONFIGURATION_CACHE_MODE: ${{ needs.metadata.outputs.gradle_configuration_cache }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
@@ -650,6 +675,7 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
           add-job-summary: on-failure
+          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -700,6 +726,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist/gradle
           phase_start="$(date +%s)"
+          mapfile -t gradle_configuration_cache_args < <(
+            bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )
           ./gradlew -p clients/android \
             :app:testDebugUnitTest \
             :feature-lab:testDebugUnitTest \
@@ -707,11 +736,18 @@ jobs:
             :core-math:test \
             :core-model:test \
             :core-simulation:test \
+            "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-unit.log
           phase_end="$(date +%s)"
           from_cache_count="$(grep -c 'FROM-CACHE' dist/gradle/android-unit.log || true)"
+          configuration_cache_status="$(
+            bash .github/scripts/gradle_configuration_cache_status.sh \
+              dist/gradle/android-unit.log \
+              "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )"
           echo "unit_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
           echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
+          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
 
       - name: Emit Android unit timing summary
         if: always()
@@ -740,6 +776,9 @@ jobs:
             echo "- remote gradle cache configured: \`${gradle_cache_configured}\`"
             echo "- remote gradle cache mode: \`${gradle_cache_mode}\`"
             echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+            echo "- gradle configuration cache: \`${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}\`"
+            echo "- gradle configuration cache persistence: \`${{ env.GRADLE_CONFIGURATION_CACHE_PERSISTENCE }}\`"
+            echo "- gradle configuration cache result: \`${{ steps.android_unit_tests.outputs.configuration_cache_status || 'n/a' }}\`"
             echo "- gradle FROM-CACHE lines: \`${{ steps.android_unit_tests.outputs.from_cache_count || 'n/a' }}\`"
             echo "- rust/android target cache hit: \`${{ steps.android_unit_rust_android_toolchain.outputs.target_cache_hit || 'false' }}\`"
             echo "- rust/android target status: \`${{ steps.android_unit_rust_android_toolchain.outputs.target_status || 'n/a' }}\`"
@@ -790,6 +829,8 @@ jobs:
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
       GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_CONFIGURATION_CACHE_MODE: ${{ needs.metadata.outputs.gradle_configuration_cache }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
@@ -815,6 +856,7 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
           add-job-summary: on-failure
+          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -865,12 +907,22 @@ jobs:
           set -euo pipefail
           mkdir -p dist/gradle
           phase_start="$(date +%s)"
+          mapfile -t gradle_configuration_cache_args < <(
+            bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )
           ./gradlew -p clients/android :app:lintDebug :feature-lab:lintDebug \
+            "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-lint.log
           phase_end="$(date +%s)"
           from_cache_count="$(grep -c 'FROM-CACHE' dist/gradle/android-lint.log || true)"
+          configuration_cache_status="$(
+            bash .github/scripts/gradle_configuration_cache_status.sh \
+              dist/gradle/android-lint.log \
+              "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )"
           echo "lint_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
           echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
+          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
 
       - name: Emit Android lint timing summary
         if: always()
@@ -899,6 +951,9 @@ jobs:
             echo "- remote gradle cache configured: \`${gradle_cache_configured}\`"
             echo "- remote gradle cache mode: \`${gradle_cache_mode}\`"
             echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+            echo "- gradle configuration cache: \`${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}\`"
+            echo "- gradle configuration cache persistence: \`${{ env.GRADLE_CONFIGURATION_CACHE_PERSISTENCE }}\`"
+            echo "- gradle configuration cache result: \`${{ steps.android_lint_checks.outputs.configuration_cache_status || 'n/a' }}\`"
             echo "- gradle FROM-CACHE lines: \`${{ steps.android_lint_checks.outputs.from_cache_count || 'n/a' }}\`"
             echo "- rust/android target cache hit: \`${{ steps.android_lint_rust_android_toolchain.outputs.target_cache_hit || 'false' }}\`"
             echo "- rust/android target status: \`${{ steps.android_lint_rust_android_toolchain.outputs.target_status || 'n/a' }}\`"
@@ -945,6 +1000,8 @@ jobs:
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
       GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_CONFIGURATION_CACHE_MODE: ${{ needs.metadata.outputs.gradle_configuration_cache }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     strategy:
@@ -974,6 +1031,7 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
           add-job-summary: on-failure
+          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -1078,16 +1136,26 @@ jobs:
           set -euo pipefail
           mkdir -p dist/gradle
           phase_start="$(date +%s)"
+          mapfile -t gradle_configuration_cache_args < <(
+            bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )
           ./gradlew -p clients/android \
             :app:assembleDebug \
             :app:assembleDebugAndroidTest \
             -Psolarlab.debugStageFirstClient=${{ steps.android_mode.outputs.debug_stage_first_client }} \
             -Psolarlab.stageFirstRuntimeMirror=${{ steps.android_mode.outputs.stage_first_runtime_mirror }} \
+            "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-shell-assemble-${{ matrix.validation_mode }}.log
           phase_end="$(date +%s)"
           from_cache_count="$(grep -c 'FROM-CACHE' dist/gradle/android-shell-assemble-${{ matrix.validation_mode }}.log || true)"
+          configuration_cache_status="$(
+            bash .github/scripts/gradle_configuration_cache_status.sh \
+              dist/gradle/android-shell-assemble-${{ matrix.validation_mode }}.log \
+              "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )"
           echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
           echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
+          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
 
       - name: Run connected Android shell smoke and continuity tests
         id: android_connected_tests
@@ -1107,6 +1175,7 @@ jobs:
           ANDROID_TEST_SCOPE: ${{ needs.metadata.outputs.android_test_scope }}
           ANDROID_ARTIFACT_MODE: ${{ needs.metadata.outputs.android_artifact_mode }}
           ANDROID_VALIDATION_MODE: ${{ steps.android_mode.outputs.validation_mode }}
+          GRADLE_CONFIGURATION_CACHE_MODE: ${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}
           ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
           ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
 
@@ -1126,10 +1195,15 @@ jobs:
             fi
           fi
           instrumentation_from_cache_count='n/a'
+          instrumentation_configuration_cache_status='n/a'
           total_from_cache_count='n/a'
           assemble_from_cache_count='${{ steps.android_assemble.outputs.from_cache_count || 'n/a' }}'
           if [[ -f "${status_file}" ]]; then
             instrumentation_from_cache_count="$(awk -F= '/^from_cache_count=/{print $2}' "${status_file}")"
+            instrumentation_configuration_cache_status="$(awk -F= '/^configuration_cache_status=/{print $2}' "${status_file}")"
+          fi
+          if [[ -z "${instrumentation_configuration_cache_status}" ]]; then
+            instrumentation_configuration_cache_status='n/a'
           fi
           if [[ "${assemble_from_cache_count}" =~ ^[0-9]+$ && "${instrumentation_from_cache_count}" =~ ^[0-9]+$ ]]; then
             total_from_cache_count="$((assemble_from_cache_count + instrumentation_from_cache_count))"
@@ -1161,6 +1235,10 @@ jobs:
             echo "- remote gradle cache configured: \`${gradle_cache_configured}\`"
             echo "- remote gradle cache mode: \`${gradle_cache_mode}\`"
             echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+            echo "- gradle configuration cache: \`${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}\`"
+            echo "- gradle configuration cache persistence: \`${{ env.GRADLE_CONFIGURATION_CACHE_PERSISTENCE }}\`"
+            echo "- assemble config cache result: \`${{ steps.android_assemble.outputs.configuration_cache_status || 'n/a' }}\`"
+            echo "- instrumentation config cache result: \`${instrumentation_configuration_cache_status}\`"
             echo "- assemble FROM-CACHE lines: \`${assemble_from_cache_count}\`"
             echo "- instrumentation FROM-CACHE lines: \`${instrumentation_from_cache_count}\`"
             echo "- total FROM-CACHE lines: \`${total_from_cache_count}\`"
@@ -1245,6 +1323,7 @@ jobs:
             --android-validation-mode "${{ needs.metadata.outputs.android_validation_mode }}" \
             --android-artifact-mode "${{ needs.metadata.outputs.android_artifact_mode }}" \
             --emulator-boot-strategy "${{ needs.metadata.outputs.emulator_boot_strategy }}" \
+            --gradle-configuration-cache "${{ needs.metadata.outputs.gradle_configuration_cache }}" \
             --android-shell-artifacts-dir dist/android-shell-artifacts \
             --job parity-matrix=${{ needs.parity-matrix.result }} \
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \

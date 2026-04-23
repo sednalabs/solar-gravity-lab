@@ -61,6 +61,14 @@ on:
         options:
           - snapshot-cache
           - cold
+      gradle_configuration_cache:
+        description: Gradle configuration-cache mode for Android build steps
+        required: true
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - enabled
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
@@ -112,6 +120,8 @@ jobs:
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
       GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_CONFIGURATION_CACHE_MODE: ${{ inputs.gradle_configuration_cache != '' && inputs.gradle_configuration_cache || 'disabled' }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
@@ -145,6 +155,7 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
           add-job-summary: on-failure
+          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -267,12 +278,22 @@ jobs:
           mkdir -p dist/gradle
           phase_start="$(date +%s)"
           build_variant="${{ inputs.build_variant != '' && inputs.build_variant || 'prerelease' }}"
+          mapfile -t gradle_configuration_cache_args < <(
+            bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )
           ./gradlew -p clients/android ":app:assemble${build_variant^}" \
+            "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/prerelease-assemble.log
           phase_end="$(date +%s)"
           from_cache_count="$(grep -c 'FROM-CACHE' dist/gradle/prerelease-assemble.log || true)"
+          configuration_cache_status="$(
+            bash .github/scripts/gradle_configuration_cache_status.sh \
+              dist/gradle/prerelease-assemble.log \
+              "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )"
           echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
           echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
+          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
 
       - name: Derive artifact metadata
         id: meta
@@ -406,6 +427,9 @@ jobs:
             echo "- remote gradle cache configured: \`${gradle_cache_configured}\`"
             echo "- remote gradle cache mode: \`${gradle_cache_mode}\`"
             echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+            echo "- gradle configuration cache: \`${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}\`"
+            echo "- gradle configuration cache persistence: \`${{ env.GRADLE_CONFIGURATION_CACHE_PERSISTENCE }}\`"
+            echo "- gradle configuration cache result: \`${{ steps.assemble_prerelease.outputs.configuration_cache_status || 'n/a' }}\`"
             echo "- assemble FROM-CACHE lines: \`${{ steps.assemble_prerelease.outputs.from_cache_count || 'n/a' }}\`"
             echo "- rust/android target cache hit: \`${{ steps.rust_android_toolchain.outputs.target_cache_hit || 'false' }}\`"
             echo "- rust/android target status: \`${{ steps.rust_android_toolchain.outputs.target_status || 'n/a' }}\`"

@@ -51,6 +51,11 @@ scrapes:
 - whether the remote Gradle cache was configured and whether the lane was in
   `read-only` or `write-enabled` mode
 - how many Gradle tasks reported `FROM-CACHE` for the captured lane logs
+- whether Gradle configuration cache was disabled or enabled for the run
+- whether each captured Android Gradle invocation stored or reused a
+  configuration-cache entry
+- whether configuration-cache persistence was `job-local-only` or eligible for
+  encrypted GitHub cache persistence
 - whether the Android Rust target cache hit exactly
 - whether the required Rust Android targets were restored, already available, or
   had to be installed
@@ -60,6 +65,32 @@ scrapes:
 This is intentionally measurement-first. The current policy is to keep the
 existing remote Gradle cache write/read rules and use these new signals before
 widening cache policy further.
+
+## Gradle configuration cache
+
+`validation-lab` now exposes an opt-in `workflow_dispatch` input:
+
+- `gradle_configuration_cache=disabled|enabled`
+
+This defaults to `disabled` so routine validation keeps the stable baseline
+unless the run is intentionally measuring configuration-cache compatibility.
+
+When enabled:
+
+- Android unit, lint, and shell lanes pass `--configuration-cache` to Gradle
+- public summaries report whether each Gradle invocation stored or reused a
+  configuration-cache entry
+- summaries also report whether persistence is `job-local-only` or eligible for
+  encrypted GitHub cache persistence
+
+Current recommendation:
+
+- leave the default disabled for routine runs until measurement specifically
+  calls for it
+- if you want cross-run configuration-cache reuse rather than compatibility
+  proof only, configure the repository secret
+  `GRADLE_CONFIGURATION_CACHE_KEY` so `gradle/actions/setup-gradle` can persist
+  encrypted configuration-cache state between runs
 
 ## Profiles
 

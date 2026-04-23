@@ -50,8 +50,51 @@ STAGE_FIRST_MIRROR_ON_FULL_TEST_CLASSES=(
 
 TEST_CLASSES=()
 GRADLE_VALIDATION_PROPS=()
+GRADLE_CONFIGURATION_CACHE_MODE="${GRADLE_CONFIGURATION_CACHE_MODE:-disabled}"
+GRADLE_CONFIGURATION_CACHE_ARGS=()
+
+mapfile -t GRADLE_CONFIGURATION_CACHE_ARGS < <(
+  bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
+)
 
 mkdir -p "${REPORT_ROOT}"
+
+configuration_cache_rank() {
+  case "$1" in
+    disabled)
+      printf '%s\n' "0"
+      ;;
+    enabled-no-log)
+      printf '%s\n' "1"
+      ;;
+    enabled-no-signal)
+      printf '%s\n' "2"
+      ;;
+    enabled-no-store)
+      printf '%s\n' "3"
+      ;;
+    stored)
+      printf '%s\n' "4"
+      ;;
+    reused)
+      printf '%s\n' "5"
+      ;;
+    *)
+      printf '%s\n' "1"
+      ;;
+  esac
+}
+
+merge_configuration_cache_status() {
+  local current_status="$1"
+  local new_status="$2"
+
+  if (( "$(configuration_cache_rank "${new_status}")" > "$(configuration_cache_rank "${current_status}")" )); then
+    printf '%s\n' "${new_status}"
+  else
+    printf '%s\n' "${current_status}"
+  fi
+}
 
 collect_host_emulator_logs() {
   local destination_root="$1"
@@ -261,6 +304,7 @@ run_test_batch() {
   local run_dir="${REPORT_ROOT}/instrumentation-batch"
   local command_status=0
   local from_cache_count=0
+  local configuration_cache_status="disabled"
   local run_timeout_seconds
   local class_arg
 
@@ -281,6 +325,7 @@ run_test_batch() {
   timeout --foreground "${run_timeout_seconds}s" \
     ./gradlew -p clients/android --stacktrace \
       :app:connectedDebugAndroidTest \
+      "${GRADLE_CONFIGURATION_CACHE_ARGS[@]}" \
       "${GRADLE_VALIDATION_PROPS[@]}" \
       "-Pandroid.testInstrumentationRunnerArguments.class=${class_arg}" \
       2>&1 | tee "${run_dir}/gradle-output.txt"
@@ -289,6 +334,11 @@ run_test_batch() {
   stop_live_logcat "${LAST_LOGCAT_PID}"
   LAST_LOGCAT_PID=""
   from_cache_count="$(grep -c 'FROM-CACHE' "${run_dir}/gradle-output.txt" || true)"
+  configuration_cache_status="$(
+    bash .github/scripts/gradle_configuration_cache_status.sh \
+      "${run_dir}/gradle-output.txt" \
+      "${GRADLE_CONFIGURATION_CACHE_MODE}"
+  )"
 
   if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
     capture_device_state "${run_dir}" "post"
@@ -303,6 +353,8 @@ run_test_batch() {
     printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
     printf 'timeout_seconds=%s\n' "${run_timeout_seconds}"
     printf 'from_cache_count=%s\n' "${from_cache_count}"
+    printf 'configuration_cache_mode=%s\n' "${GRADLE_CONFIGURATION_CACHE_MODE}"
+    printf 'configuration_cache_status=%s\n' "${configuration_cache_status}"
     printf 'exit_code=%s\n' "${command_status}"
   } > "${run_dir}/status.txt"
   cat > "${run_dir}/status.json" <<EOF
@@ -314,6 +366,8 @@ run_test_batch() {
   "artifact_mode": $(printf '%s' "${ARTIFACT_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
   "timeout_seconds": ${run_timeout_seconds},
   "from_cache_count": ${from_cache_count},
+  "configuration_cache_mode": $(printf '%s' "${GRADLE_CONFIGURATION_CACHE_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "configuration_cache_status": $(printf '%s' "${configuration_cache_status}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
   "exit_code": ${command_status}
 }
 EOF
@@ -347,6 +401,8 @@ run_test_classes_individually() {
   local command_status=0
   local from_cache_count=0
   local total_from_cache_count=0
+  local configuration_cache_status="disabled"
+  local command_configuration_cache_status="disabled"
   local overall_status=0
 
   mkdir -p "${run_dir}"
@@ -369,6 +425,7 @@ run_test_classes_individually() {
     timeout --foreground "${CLASS_TIMEOUT_SECONDS}s" \
       ./gradlew -p clients/android --stacktrace \
         :app:connectedDebugAndroidTest \
+        "${GRADLE_CONFIGURATION_CACHE_ARGS[@]}" \
         "${GRADLE_VALIDATION_PROPS[@]}" \
         "-Pandroid.testInstrumentationRunnerArguments.class=${class_arg}" \
         2>&1 | tee "${class_dir}/gradle-output.txt"
@@ -378,6 +435,16 @@ run_test_classes_individually() {
     LAST_LOGCAT_PID=""
     from_cache_count="$(grep -c 'FROM-CACHE' "${class_dir}/gradle-output.txt" || true)"
     total_from_cache_count="$((total_from_cache_count + from_cache_count))"
+    command_configuration_cache_status="$(
+      bash .github/scripts/gradle_configuration_cache_status.sh \
+        "${class_dir}/gradle-output.txt" \
+        "${GRADLE_CONFIGURATION_CACHE_MODE}"
+    )"
+    configuration_cache_status="$(
+      merge_configuration_cache_status \
+        "${configuration_cache_status}" \
+        "${command_configuration_cache_status}"
+    )"
 
     if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
       capture_device_state "${class_dir}" "post"
@@ -393,6 +460,8 @@ run_test_classes_individually() {
       printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
       printf 'timeout_seconds=%s\n' "${CLASS_TIMEOUT_SECONDS}"
       printf 'from_cache_count=%s\n' "${from_cache_count}"
+      printf 'configuration_cache_mode=%s\n' "${GRADLE_CONFIGURATION_CACHE_MODE}"
+      printf 'configuration_cache_status=%s\n' "${command_configuration_cache_status}"
       printf 'exit_code=%s\n' "${command_status}"
     } > "${class_dir}/status.txt"
 
@@ -421,6 +490,8 @@ run_test_classes_individually() {
   "artifact_mode": $(printf '%s' "${ARTIFACT_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
   "timeout_seconds": ${CLASS_TIMEOUT_SECONDS},
   "from_cache_count": ${total_from_cache_count},
+  "configuration_cache_mode": $(printf '%s' "${GRADLE_CONFIGURATION_CACHE_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
+  "configuration_cache_status": $(printf '%s' "${configuration_cache_status}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
   "exit_code": ${overall_status}
 }
 EOF

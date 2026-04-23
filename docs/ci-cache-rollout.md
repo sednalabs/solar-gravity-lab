@@ -40,6 +40,8 @@ This intentionally replaces the earlier Worker-fronted cache concept.
 - `GRADLE_REMOTE_CACHE_PASSWORD`
 - `R2_CACHE_ACCESS_KEY_ID`
 - `R2_CACHE_SECRET_ACCESS_KEY`
+- `GRADLE_CONFIGURATION_CACHE_KEY` for encrypted cross-run Gradle
+  configuration-cache persistence when that mode is enabled
 
 Optional migration seam for `sccache`:
 
@@ -51,10 +53,6 @@ environment variables:
 
 - `SCCACHE_AWS_ACCESS_KEY_ID`
 - `SCCACHE_AWS_SECRET_ACCESS_KEY`
-
-Optional later:
-
-- `GRADLE_CONFIGURATION_CACHE_KEY`
 
 ## Host-side cache service
 
@@ -95,6 +93,9 @@ Optional R2 backing:
 - `validation-lab` and `prerelease-apk` use AVD snapshot caching with generation `v3`
 - KVM must be enabled before any emulator boot, including snapshot seeding
 - Gradle jobs use `gradle/actions/setup-gradle@v5` plus the remote cache at `cache.sednalabs.io`
+- Android Gradle jobs can now opt into `--configuration-cache`; when
+  `GRADLE_CONFIGURATION_CACHE_KEY` is configured, `setup-gradle` can persist
+  encrypted configuration-cache state between runs
 - Workflow helper actions were refreshed to current Node 24 builds where upstreams already provide them
 - Rust-heavy jobs install `sccache` through the in-repo `.github/actions/install-sccache` action so we avoid the stale Node 20 runtime in `mozilla-actions/sccache-action` while keeping the same pinned `v0.10.0` binary
 - Rust-heavy jobs configure `sccache` from repo vars and secrets and emit per-job stats into the workflow summary
@@ -254,6 +255,48 @@ Interpretation:
 3. the strongest remaining case for more speed is no longer "cache the Android packages" but either:
    - reduce artifact duplication further, or
    - move heavy Android lanes onto a prewarmed self-hosted runner when hosted-runner bootstrap latency becomes the dominant cost
+
+### Gradle configuration cache viability checkpoint
+
+The next cache follow-up after the Android Rust toolchain rollout was to test
+whether Android Gradle lanes were actually compatible with configuration cache,
+and whether that should change the remote Gradle cache policy.
+
+Measured proof on snapshot
+`validation/snapshot-android-gradle-config-cache-fix-20260423-20260423T065201Z`:
+
+- targeted Android shell with `gradle_configuration_cache=enabled`:
+  - run `24821345870`
+  - after fixing `:app:buildSolarlabNative`, both the assemble and connected
+    test invocations completed and each reported `Configuration cache entry stored.`
+- warm rerun of the same Android shell slice with
+  `emulator_boot_strategy=snapshot-cache`:
+  - run `24821544754`
+  - AVD restore hit again and snapshot seeding stayed skipped
+  - shell lane total improved from about `269s` to about `233s`
+  - assemble step improved from about `101s` to about `74s`
+  - assemble `FROM-CACHE` count stayed at `9` on both runs
+  - configuration-cache status still reported `stored`, not `reused`
+- widened Android unit proof with `gradle_configuration_cache=enabled`:
+  - run `24821726040`
+  - host-side unit suites completed and reported `Configuration cache entry stored.`
+
+Important environment finding:
+
+- both shell runs and the widened unit run logged
+  `Not saving configuration-cache state, as no encryption key was provided`
+- the workflow summaries correctly reported configuration-cache persistence as
+  `job-local-only`
+
+Interpretation:
+
+1. configuration cache is now compatible enough to use on the tested Android
+   shell and unit seams
+2. cross-run configuration-cache reuse is not active yet because the repository
+   is not currently providing `GRADLE_CONFIGURATION_CACHE_KEY`
+3. the current remote Gradle cache policy does not need widening based on this
+   evidence; the stronger next move is enabling encrypted configuration-cache
+   persistence first, then re-measuring
 
 ### Deferred self-hosted evaluation seam
 
