@@ -22,19 +22,9 @@ esac
 mapfile -t targets < <(
   python3 - <<'PY'
 import os
-
 raw = os.environ["RUST_ANDROID_TARGETS"]
-seen = set()
-targets = []
-for token in raw.replace(",", " ").split():
-    token = token.strip()
-    if not token or token in seen:
-        continue
-    seen.add(token)
-    targets.append(token)
-
-for target in sorted(targets):
-    print(target)
+targets = sorted(list(set(token.strip() for token in raw.replace(",", " ").split() if token.strip())))
+for t in targets: print(t)
 PY
 )
 
