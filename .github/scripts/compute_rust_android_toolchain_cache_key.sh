@@ -39,23 +39,7 @@ if [[ -z "${active_toolchain}" ]]; then
   exit 1
 fi
 
-targets_csv="$(
-  python3 - <<'PY'
-import json
-import os
-
-raw = os.environ["RUST_ANDROID_TARGETS"]
-seen = set()
-targets = []
-for token in raw.replace(",", " ").split():
-    token = token.strip()
-    if not token or token in seen:
-        continue
-    seen.add(token)
-    targets.append(token)
-print(",".join(sorted(targets)))
-PY
-)"
+targets_csv="$(IFS=,; echo "${targets[*]:-}")"
 
 toolchain_hash="$(
   {
