@@ -1,0 +1,135 @@
+name: Prepare Rust Android toolchain
+description: Restore cached Rust Android targets and ensure cargo-ndk is available.
+
+inputs:
+  targets:
+    description: Space- or comma-separated Rust Android targets to prepare.
+    required: false
+    default: aarch64-linux-android x86_64-linux-android
+  cache-version:
+    description: Manual cache version for Android Rust target artifacts.
+    required: false
+    default: v1
+  shared-cache-hit:
+    description: Exact rust-shared-cache hit state from the caller, if available.
+    required: false
+    default: ""
+
+outputs:
+  target_cache_hit:
+    description: Whether the Android Rust target cache restored on an exact key hit.
+    value: ${{ steps.prepare.outputs.target_cache_hit }}
+  target_cache_key:
+    description: Primary cache key for the Android Rust target cache.
+    value: ${{ steps.cache_keys.outputs.primary-key }}
+  toolchain_name:
+    description: Active Rust toolchain used for the cache scope.
+    value: ${{ steps.cache_keys.outputs.toolchain-name }}
+  target_list:
+    description: Comma-separated Android Rust target list.
+    value: ${{ steps.cache_keys.outputs.target-list }}
+  target_status:
+    description: Whether the Android Rust targets were restored, already available, or freshly installed.
+    value: ${{ steps.prepare.outputs.target_status }}
+  cargo_ndk_status:
+    description: Whether cargo-ndk was reused or freshly installed.
+    value: ${{ steps.prepare.outputs.cargo_ndk_status }}
+  rust_android_toolchain_seconds:
+    description: Total preparation time in seconds.
+    value: ${{ steps.prepare.outputs.rust_android_toolchain_seconds }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute Android Rust toolchain cache keys
+      id: cache_keys
+      shell: bash
+      env:
+        RUST_ANDROID_TOOLCHAIN_CACHE_VERSION: ${{ inputs.cache-version }}
+        RUST_ANDROID_TARGETS: ${{ inputs.targets }}
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        bash "${{ github.workspace }}/.github/scripts/compute_rust_android_toolchain_cache_key.sh"
+
+    - name: Restore Android Rust target cache
+      id: target_cache
+      uses: actions/cache@v5
+      with:
+        path: ${{ steps.cache_keys.outputs.cache-paths }}
+        key: ${{ steps.cache_keys.outputs.primary-key }}
+        restore-keys: |
+          ${{ steps.cache_keys.outputs.restore-key-1 }}
+
+    - name: Ensure Android Rust targets and cargo-ndk
+      id: prepare
+      shell: bash
+      env:
+        INPUT_SHARED_CACHE_HIT: ${{ inputs.shared-cache-hit }}
+        TARGET_CACHE_HIT: ${{ steps.target_cache.outputs.cache-hit }}
+        TARGETS_CSV: ${{ steps.cache_keys.outputs.target-list }}
+      run: |
+        set -euo pipefail
+        phase_start="$(date +%s)"
+        target_cache_hit="${TARGET_CACHE_HIT:-false}"
+        if [[ -z "${target_cache_hit}" ]]; then
+          target_cache_hit='false'
+        fi
+
+        targets_csv="${TARGETS_CSV:-}"
+        IFS=',' read -r -a targets <<< "${targets_csv}"
+
+        if [[ "${#targets[@]}" -eq 0 ]]; then
+          echo "No Android Rust targets were provided." >&2
+          exit 1
+        fi
+
+        cargo_ndk_status="installed"
+        if command -v cargo-ndk >/dev/null 2>&1; then
+          if [[ "${INPUT_SHARED_CACHE_HIT}" == "true" ]]; then
+            cargo_ndk_status="restored-via-rust-shared-cache"
+          else
+            cargo_ndk_status="available"
+          fi
+        else
+          cargo install cargo-ndk --locked
+        fi
+
+        mapfile -t installed_targets < <(rustup target list --installed)
+        missing_targets=()
+        for target in "${targets[@]}"; do
+          found="false"
+          for installed_target in "${installed_targets[@]}"; do
+            if [[ "${installed_target}" == "${target}" ]]; then
+              found="true"
+              break
+            fi
+          done
+          if [[ "${found}" != "true" ]]; then
+            missing_targets+=("${target}")
+          fi
+        done
+
+        if [[ "${#missing_targets[@]}" -eq 0 ]]; then
+          if [[ "${target_cache_hit}" == "true" ]]; then
+            target_status="restored-via-android-target-cache"
+          else
+            target_status="available"
+          fi
+        else
+          rustup target add "${missing_targets[@]}"
+          if [[ "${target_cache_hit}" == "true" ]]; then
+            target_status="repaired-after-cache-restore"
+          else
+            target_status="installed"
+          fi
+        fi
+
+        phase_end="$(date +%s)"
+        {
+          echo "target_cache_hit=${target_cache_hit}"
+          echo "target_status=${target_status}"
+          echo "cargo_ndk_status=${cargo_ndk_status}"
+          echo "rust_android_toolchain_seconds=$((phase_end - phase_start))"
+        } >> "${GITHUB_OUTPUT}"

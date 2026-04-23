@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--android-validation-mode", required=True)
     parser.add_argument("--android-artifact-mode", required=True)
     parser.add_argument("--emulator-boot-strategy", required=True)
+    parser.add_argument("--gradle-configuration-cache", required=True)
     parser.add_argument("--android-shell-artifacts-dir")
     parser.add_argument("--job", action="append", default=[])
     parser.add_argument("--output-json", required=True)
@@ -74,6 +75,8 @@ def load_android_shell_modes(artifacts_dir: str | None) -> list[dict[str, object
                 "scope": payload.get("scope", "unknown"),
                 "artifact_mode": payload.get("artifact_mode", "unknown"),
                 "timeout_seconds": payload.get("timeout_seconds", "unknown"),
+                "from_cache_count": payload.get("from_cache_count", "unknown"),
+                "configuration_cache_status": payload.get("configuration_cache_status", "unknown"),
                 "exit_code": exit_code if exit_code is not None else "unknown",
                 "result": result,
             }
@@ -95,6 +98,7 @@ def render_markdown(payload: dict) -> str:
         f"- android validation mode: `{payload['validation_context']['android_validation_mode']}`",
         f"- android artifact mode: `{payload['validation_context']['android_artifact_mode']}`",
         f"- emulator boot strategy: `{payload['validation_context']['emulator_boot_strategy']}`",
+        f"- gradle configuration cache: `{payload['validation_context']['gradle_configuration_cache']}`",
         f"- overall status: `{payload['summary']['status']}`",
     ]
     if payload["summary"]["first_blocker"] is not None:
@@ -115,13 +119,13 @@ def render_markdown(payload: dict) -> str:
                 "",
                 "### Android Shell Matrix",
                 "",
-                "| Validation mode | Result | Scope | Exit code | Timeout |",
-                "| --- | --- | --- | --- | --- |",
+                "| Validation mode | Result | Scope | Exit code | Timeout | FROM-CACHE | Config cache |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for mode in android_shell_modes:
             lines.append(
-                f"| `{mode['validation_mode']}` | `{mode['result']}` | `{mode['scope']}` | `{mode['exit_code']}` | `{mode['timeout_seconds']}` |"
+                f"| `{mode['validation_mode']}` | `{mode['result']}` | `{mode['scope']}` | `{mode['exit_code']}` | `{mode['timeout_seconds']}` | `{mode['from_cache_count']}` | `{mode['configuration_cache_status']}` |"
             )
     return "\n".join(lines) + "\n"
 
@@ -163,6 +167,7 @@ def main() -> None:
             "android_validation_mode": args.android_validation_mode,
             "android_artifact_mode": args.android_artifact_mode,
             "emulator_boot_strategy": args.emulator_boot_strategy,
+            "gradle_configuration_cache": args.gradle_configuration_cache,
         },
         "jobs": jobs,
         "summary": {

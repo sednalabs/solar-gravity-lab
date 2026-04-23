@@ -30,6 +30,9 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
     @get:Input
     abstract val ffiCrateRelativePath: Property<String>
 
+    @get:Input
+    abstract val androidRootLocalPropertiesPath: Property<String>
+
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val rustWorkspaceInputs: ConfigurableFileCollection
@@ -75,7 +78,7 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
         }
 
         val outputDir = generatedJniLibsDir.get().asFile
-        project.delete(outputDir)
+        outputDir.deleteRecursively()
         outputDir.mkdirs()
 
         execOps.exec {
@@ -148,7 +151,7 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
         }
 
         val candidateLocalPropertiesFiles = buildList {
-            add(project.rootProject.file("local.properties"))
+            add(File(androidRootLocalPropertiesPath.get()))
             val workspaceRootFile = workspaceRootPath.orNull?.let(::File)
             if (workspaceRootFile != null) {
                 add(workspaceRootFile.resolve("local.properties"))
@@ -377,6 +380,7 @@ val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
     description = "Builds and stages libsolarlab_v2.so for Android ABIs under build/generated."
     workspaceRootPath.set(workspaceRootDir.absolutePath)
     ffiCrateRelativePath.set("engine/ffi")
+    androidRootLocalPropertiesPath.set(rootProject.file("local.properties").absolutePath)
     generatedJniLibsDir.set(solarlabGeneratedJniLibsDir)
     rustWorkspaceInputs.from(
         fileTree(workspaceRootDir) {

@@ -61,6 +61,14 @@ on:
         options:
           - snapshot-cache
           - cold
+      gradle_configuration_cache:
+        description: Gradle configuration-cache mode for Android build steps
+        required: true
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - enabled
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
@@ -73,6 +81,7 @@ env:
   ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
   ANDROID_AVD_CACHE_VERSION: v3
   ANDROID_SDK_COMPONENT_CACHE_VERSION: v1
+  ANDROID_RUST_TOOLCHAIN_CACHE_VERSION: v1
   ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
   ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
   ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -106,11 +115,18 @@ jobs:
       changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
       changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || (vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gradle_configuration_cache: ${{ inputs.gradle_configuration_cache != '' && inputs.gradle_configuration_cache || 'disabled' }}
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
       GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
       GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_CONFIGURATION_CACHE_MODE: ${{ inputs.gradle_configuration_cache != '' && inputs.gradle_configuration_cache || 'disabled' }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
@@ -144,6 +160,7 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
           add-job-summary: on-failure
+          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -209,7 +226,10 @@ jobs:
             "${ANDROID_CMAKE_PACKAGE}" \
             "${ANDROID_NDK_PACKAGE}"
 
-      - uses: ./.github/actions/rust-shared-cache
+      - uses: dtolnay/rust-toolchain@stable
+
+      - id: prerelease_rust_shared_cache
+        uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-android-${{ runner.os }}-${{ runner.arch }}
 
@@ -222,20 +242,12 @@ jobs:
         shell: bash
         run: bash .github/scripts/configure_sccache.sh
 
-      - name: Install Rust Android toolchain
+      - name: Prepare Rust Android toolchain
         id: rust_android_toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          phase_start="$(date +%s)"
-          rustup target add aarch64-linux-android x86_64-linux-android
-          if command -v cargo-ndk >/dev/null 2>&1; then
-            echo "cargo-ndk already available."
-          else
-            cargo install cargo-ndk --locked
-          fi
-          phase_end="$(date +%s)"
-          echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/prepare-rust-android-toolchain
+        with:
+          cache-version: ${{ env.ANDROID_RUST_TOOLCHAIN_CACHE_VERSION }}
+          shared-cache-hit: ${{ steps.prerelease_rust_shared_cache.outputs.cache-hit }}
 
       - name: Resolve prerelease version defaults
         id: resolved_version
@@ -268,11 +280,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p dist/gradle
           phase_start="$(date +%s)"
           build_variant="${{ inputs.build_variant != '' && inputs.build_variant || 'prerelease' }}"
-          ./gradlew -p clients/android ":app:assemble${build_variant^}"
+          mapfile -t gradle_configuration_cache_args < <(
+            bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )
+          ./gradlew -p clients/android ":app:assemble${build_variant^}" \
+            "${gradle_configuration_cache_args[@]}" \
+            2>&1 | tee dist/gradle/prerelease-assemble.log
           phase_end="$(date +%s)"
+          from_cache_count="$(grep -c 'FROM-CACHE' dist/gradle/prerelease-assemble.log || true)"
+          configuration_cache_status="$(
+            bash .github/scripts/gradle_configuration_cache_status.sh \
+              dist/gradle/prerelease-assemble.log \
+              "${GRADLE_CONFIGURATION_CACHE_MODE}"
+          )"
           echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
+          echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
+          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
 
       - name: Derive artifact metadata
         id: meta
@@ -383,6 +409,16 @@ jobs:
           lane_end_epoch="$(date +%s)"
           lane_start_epoch="${{ steps.prerelease_timing.outputs.lane_start_epoch }}"
           lane_total="$((lane_end_epoch - lane_start_epoch))"
+          gradle_cache_configured='false'
+          gradle_cache_mode='disabled'
+          if [[ -n "${GRADLE_REMOTE_CACHE_URL:-}" ]]; then
+            gradle_cache_configured='true'
+            if [[ "${GRADLE_REMOTE_CACHE_PUSH}" == "true" ]]; then
+              gradle_cache_mode='write-enabled'
+            else
+              gradle_cache_mode='read-only'
+            fi
+          fi
           {
             echo "## prerelease android timings"
             echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
@@ -393,7 +429,16 @@ jobs:
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
             echo "- avd cache key: \`avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}\`"
             echo "- avd cache result: \`${{ inputs.emulator_boot_strategy == 'snapshot-cache' && (steps.avd-cache.outputs.cache-hit == 'true' && 'hit' || 'miss') || 'skipped' }}\`"
+            echo "- remote gradle cache configured: \`${gradle_cache_configured}\`"
+            echo "- remote gradle cache mode: \`${gradle_cache_mode}\`"
             echo "- remote gradle cache push: \`${{ env.GRADLE_REMOTE_CACHE_PUSH }}\`"
+            echo "- gradle configuration cache: \`${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}\`"
+            echo "- gradle configuration cache persistence: \`${{ env.GRADLE_CONFIGURATION_CACHE_PERSISTENCE }}\`"
+            echo "- gradle configuration cache result: \`${{ steps.assemble_prerelease.outputs.configuration_cache_status || 'n/a' }}\`"
+            echo "- assemble FROM-CACHE lines: \`${{ steps.assemble_prerelease.outputs.from_cache_count || 'n/a' }}\`"
+            echo "- rust/android target cache hit: \`${{ steps.rust_android_toolchain.outputs.target_cache_hit || 'false' }}\`"
+            echo "- rust/android target status: \`${{ steps.rust_android_toolchain.outputs.target_status || 'n/a' }}\`"
+            echo "- cargo-ndk status: \`${{ steps.rust_android_toolchain.outputs.cargo_ndk_status || 'n/a' }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Emit prerelease sccache stats
@@ -419,6 +464,7 @@ jobs:
             dist/*.sha256
             dist/*.json
             dist/*.md
+            dist/gradle/**
             dist/startup-smoke/**
             dist/sccache/**
             clients/android/app/build/outputs/apk/${{ steps.meta.outputs.build_variant }}/output-metadata.json
