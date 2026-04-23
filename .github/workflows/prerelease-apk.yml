@@ -115,6 +115,11 @@ jobs:
       changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
       changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || (vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gradle_configuration_cache: ${{ inputs.gradle_configuration_cache != '' && inputs.gradle_configuration_cache || 'disabled' }}
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}

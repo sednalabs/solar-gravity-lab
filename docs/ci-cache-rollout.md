@@ -298,6 +298,26 @@ Interpretation:
    evidence; the stronger next move is enabling encrypted configuration-cache
    persistence first, then re-measuring
 
+Follow-up encrypted persistence finding:
+
+- after `GRADLE_CONFIGURATION_CACHE_KEY` was configured, the first attempted key
+  value failed before Gradle execution with an invalid AES key length; the key
+  must be a base64-encoded AES key for `gradle/actions/setup-gradle`
+- corrected encrypted runs reported `github-cache-encrypted` persistence and
+  stored configuration-cache entries, but immediate reruns still reported
+  `stored` rather than `reused`
+- the cause was a Gradle User Home cache-key collision: setup-gradle includes
+  the job/matrix context in the cache key, but the Android Gradle lanes did not
+  include `gradle_configuration_cache` in their matrix metadata, so enabled
+  runs on the same commit could exact-hit disabled-mode entries and skip saving
+  the encrypted state they had just generated
+
+The Android Gradle workflows now make `gradle_configuration_cache` part of the
+matrix metadata for `android-shell`, `android-unit`, `android-lint`, and
+`prerelease-apk`. The expected proof shape is two identical enabled runs at the
+same commit: the first saves a new enabled-mode Gradle User Home cache entry,
+and the second restores that entry and reports configuration-cache reuse.
+
 ### Deferred self-hosted evaluation seam
 
 The workflows still retain a reversible self-hosted runner seam, but that seam

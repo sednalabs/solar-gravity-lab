@@ -327,6 +327,11 @@ jobs:
                 exit 1
                 ;;
             esac
+            android_shell_matrix="$(
+              ANDROID_SHELL_MATRIX="$android_shell_matrix" \
+              GRADLE_CONFIGURATION_CACHE="$gradle_configuration_cache" \
+              python3 -c 'import json, os; rows = json.loads(os.environ["ANDROID_SHELL_MATRIX"]); [row.__setitem__("gradle_configuration_cache", os.environ["GRADLE_CONFIGURATION_CACHE"]) for row in rows]; print(json.dumps(rows, separators=(",", ":")))'
+            )"
           fi
 
           lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s, gradle_configuration_cache=%s' \
@@ -643,6 +648,11 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.android_unit == 'true' }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gradle_configuration_cache: ${{ needs.metadata.outputs.gradle_configuration_cache }}
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
@@ -824,6 +834,11 @@ jobs:
     needs: metadata
     if: ${{ needs.metadata.outputs.android_lint == 'true' }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gradle_configuration_cache: ${{ needs.metadata.outputs.gradle_configuration_cache }}
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}

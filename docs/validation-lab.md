@@ -82,6 +82,9 @@ When enabled:
   configuration-cache entry
 - summaries also report whether persistence is `job-local-only` or eligible for
   encrypted GitHub cache persistence
+- the configuration-cache mode is part of the Android Gradle job matrix used by
+  `gradle/actions/setup-gradle`, keeping enabled runs from exact-hitting older
+  disabled-mode Gradle User Home cache entries for the same commit
 
 Current recommendation:
 
