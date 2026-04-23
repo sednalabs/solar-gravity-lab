@@ -77,24 +77,25 @@ runs:
           target_cache_hit='false'
         fi
 
-        mapfile -t targets < <(
-          python3 - <<'PY'
-          import os
-
-          raw = os.environ["INPUT_TARGETS"]
-          seen = set()
-          targets = []
-          for token in raw.replace(",", " ").split():
-              token = token.strip()
-              if not token or token in seen:
-                  continue
-              seen.add(token)
-              targets.append(token)
-
-          for target in sorted(targets):
-              print(target)
-          PY
-        )
+        raw_targets="${INPUT_TARGETS//,/ }"
+        targets=()
+        for token in ${raw_targets}; do
+          token="${token## }"
+          token="${token%% }"
+          if [[ -z "${token}" ]]; then
+            continue
+          fi
+          duplicate='false'
+          for existing_target in "${targets[@]:-}"; do
+            if [[ "${existing_target}" == "${token}" ]]; then
+              duplicate='true'
+              break
+            fi
+          done
+          if [[ "${duplicate}" != "true" ]]; then
+            targets+=("${token}")
+          fi
+        done
 
         if [[ "${#targets[@]}" -eq 0 ]]; then
           echo "No Android Rust targets were provided." >&2

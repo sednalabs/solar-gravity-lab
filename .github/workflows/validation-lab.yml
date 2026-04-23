@@ -1120,7 +1120,10 @@ jobs:
           lane_total="$((lane_end_epoch - lane_start_epoch))"
           status_file="clients/android/app/build/reports/emulator-smoke/instrumentation-batch/status.txt"
           if [[ ! -f "${status_file}" ]]; then
-            status_file="$(find clients/android/app/build/reports/emulator-smoke -path '*/status.txt' | sort | tail -n 1)"
+            status_file=''
+            if [[ -d clients/android/app/build/reports/emulator-smoke ]]; then
+              status_file="$(find clients/android/app/build/reports/emulator-smoke -path '*/status.txt' | sort | tail -n 1)"
+            fi
           fi
           instrumentation_from_cache_count='n/a'
           total_from_cache_count='n/a'
