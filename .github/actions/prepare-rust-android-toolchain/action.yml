@@ -66,9 +66,9 @@ runs:
       id: prepare
       shell: bash
       env:
-        INPUT_TARGETS: ${{ inputs.targets }}
         INPUT_SHARED_CACHE_HIT: ${{ inputs.shared-cache-hit }}
         TARGET_CACHE_HIT: ${{ steps.target_cache.outputs.cache-hit }}
+        TARGETS_CSV: ${{ steps.cache_keys.outputs.target-list }}
       run: |
         set -euo pipefail
         phase_start="$(date +%s)"
@@ -77,25 +77,8 @@ runs:
           target_cache_hit='false'
         fi
 
-        raw_targets="${INPUT_TARGETS//,/ }"
-        targets=()
-        for token in ${raw_targets}; do
-          token="${token## }"
-          token="${token%% }"
-          if [[ -z "${token}" ]]; then
-            continue
-          fi
-          duplicate='false'
-          for existing_target in "${targets[@]:-}"; do
-            if [[ "${existing_target}" == "${token}" ]]; then
-              duplicate='true'
-              break
-            fi
-          done
-          if [[ "${duplicate}" != "true" ]]; then
-            targets+=("${token}")
-          fi
-        done
+        targets_csv="${TARGETS_CSV:-}"
+        IFS=',' read -r -a targets <<< "${targets_csv}"
 
         if [[ "${#targets[@]}" -eq 0 ]]; then
           echo "No Android Rust targets were provided." >&2

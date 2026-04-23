@@ -41,6 +41,16 @@ fi
 
 targets_csv="$(IFS=,; echo "${targets[*]:-}")"
 
+hash_cmd=()
+if command -v sha256sum >/dev/null 2>&1; then
+  hash_cmd=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  hash_cmd=(shasum -a 256)
+else
+  echo "Unable to locate sha256sum or shasum for Android toolchain cache hashing." >&2
+  exit 1
+fi
+
 toolchain_hash="$(
   {
     rustup show active-toolchain 2>/dev/null || true
@@ -49,7 +59,7 @@ toolchain_hash="$(
     printf 'RUSTUP_HOME=%s\n' "${rustup_home}"
     printf 'RUST_ANDROID_TARGETS=%s\n' "${targets_csv}"
     printf 'RUST_ANDROID_TOOLCHAIN_CACHE_VERSION=%s\n' "${cache_version}"
-  } | sha256sum | awk '{print substr($1, 1, 8)}'
+  } | "${hash_cmd[@]}" | awk '{print substr($1, 1, 8)}'
 )"
 
 prefix="v0-rust-android-${cache_version}-${runner_os}-${normalized_arch}-${active_toolchain}"
