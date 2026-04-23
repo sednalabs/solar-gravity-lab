@@ -260,6 +260,7 @@ resolve_test_classes() {
 run_test_batch() {
   local run_dir="${REPORT_ROOT}/instrumentation-batch"
   local command_status=0
+  local from_cache_count=0
   local run_timeout_seconds
   local class_arg
 
@@ -287,6 +288,7 @@ run_test_batch() {
   set -e
   stop_live_logcat "${LAST_LOGCAT_PID}"
   LAST_LOGCAT_PID=""
+  from_cache_count="$(grep -c 'FROM-CACHE' "${run_dir}/gradle-output.txt" || true)"
 
   if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
     capture_device_state "${run_dir}" "post"
@@ -300,6 +302,7 @@ run_test_batch() {
     printf 'gradle_validation_props=%s\n' "${GRADLE_VALIDATION_PROPS[*]}"
     printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
     printf 'timeout_seconds=%s\n' "${run_timeout_seconds}"
+    printf 'from_cache_count=%s\n' "${from_cache_count}"
     printf 'exit_code=%s\n' "${command_status}"
   } > "${run_dir}/status.txt"
   cat > "${run_dir}/status.json" <<EOF
@@ -310,6 +313,7 @@ run_test_batch() {
   "gradle_validation_props": $(printf '%s\n' "${GRADLE_VALIDATION_PROPS[@]}" | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))'),
   "artifact_mode": $(printf '%s' "${ARTIFACT_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
   "timeout_seconds": ${run_timeout_seconds},
+  "from_cache_count": ${from_cache_count},
   "exit_code": ${command_status}
 }
 EOF
@@ -341,6 +345,8 @@ run_test_classes_individually() {
   local class_arg
   local class_dir
   local command_status=0
+  local from_cache_count=0
+  local total_from_cache_count=0
   local overall_status=0
 
   mkdir -p "${run_dir}"
@@ -370,6 +376,8 @@ run_test_classes_individually() {
     set -e
     stop_live_logcat "${LAST_LOGCAT_PID}"
     LAST_LOGCAT_PID=""
+    from_cache_count="$(grep -c 'FROM-CACHE' "${class_dir}/gradle-output.txt" || true)"
+    total_from_cache_count="$((total_from_cache_count + from_cache_count))"
 
     if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
       capture_device_state "${class_dir}" "post"
@@ -384,6 +392,7 @@ run_test_classes_individually() {
       printf 'gradle_validation_props=%s\n' "${GRADLE_VALIDATION_PROPS[*]}"
       printf 'artifact_mode=%s\n' "${ARTIFACT_MODE}"
       printf 'timeout_seconds=%s\n' "${CLASS_TIMEOUT_SECONDS}"
+      printf 'from_cache_count=%s\n' "${from_cache_count}"
       printf 'exit_code=%s\n' "${command_status}"
     } > "${class_dir}/status.txt"
 
@@ -411,6 +420,7 @@ run_test_classes_individually() {
   "gradle_validation_props": $(printf '%s\n' "${GRADLE_VALIDATION_PROPS[@]}" | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))'),
   "artifact_mode": $(printf '%s' "${ARTIFACT_MODE}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'),
   "timeout_seconds": ${CLASS_TIMEOUT_SECONDS},
+  "from_cache_count": ${total_from_cache_count},
   "exit_code": ${overall_status}
 }
 EOF

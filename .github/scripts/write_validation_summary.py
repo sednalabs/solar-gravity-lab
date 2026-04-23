@@ -74,6 +74,7 @@ def load_android_shell_modes(artifacts_dir: str | None) -> list[dict[str, object
                 "scope": payload.get("scope", "unknown"),
                 "artifact_mode": payload.get("artifact_mode", "unknown"),
                 "timeout_seconds": payload.get("timeout_seconds", "unknown"),
+                "from_cache_count": payload.get("from_cache_count", "unknown"),
                 "exit_code": exit_code if exit_code is not None else "unknown",
                 "result": result,
             }
@@ -115,13 +116,13 @@ def render_markdown(payload: dict) -> str:
                 "",
                 "### Android Shell Matrix",
                 "",
-                "| Validation mode | Result | Scope | Exit code | Timeout |",
-                "| --- | --- | --- | --- | --- |",
+                "| Validation mode | Result | Scope | Exit code | Timeout | FROM-CACHE |",
+                "| --- | --- | --- | --- | --- | --- |",
             ]
         )
         for mode in android_shell_modes:
             lines.append(
-                f"| `{mode['validation_mode']}` | `{mode['result']}` | `{mode['scope']}` | `{mode['exit_code']}` | `{mode['timeout_seconds']}` |"
+                f"| `{mode['validation_mode']}` | `{mode['result']}` | `{mode['scope']}` | `{mode['exit_code']}` | `{mode['timeout_seconds']}` | `{mode['from_cache_count']}` |"
             )
     return "\n".join(lines) + "\n"
 

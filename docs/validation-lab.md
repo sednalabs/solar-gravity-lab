@@ -34,13 +34,32 @@ build or workflow behavior.
    Runs a narrower `cargo test -p solarlab-ffi` proof slice when the active seam
    is runtime/ABI/JNI-facing rather than the whole workspace.
 5. `android-shell`
-   Installs the Android toolchain plus Rust Android targets, then builds the real
-   app under `clients/android` with `:app:assembleDebug`.
+   Prepares the Android toolchain plus the Rust Android targets, then builds the
+   real app under `clients/android` with `:app:assembleDebug`.
    It supports fast-path controls:
    - `android_test_scope=core`: startup + shell layout smoke classes (stable and fast)
    - `android_test_scope=full`: adds rotation continuity + playback continuity
    - `android_artifact_mode=failures-only|always`: controls heavy artifact capture
    - `emulator_boot_strategy=cold|snapshot-cache`: reliable cold boot default with opt-in AVD snapshot cache
+
+## Android cache observability
+
+The Android validation lanes and `prerelease-apk` now surface the main cache
+signals directly in the public step summaries instead of forcing deep log
+scrapes:
+
+- whether the remote Gradle cache was configured and whether the lane was in
+  `read-only` or `write-enabled` mode
+- how many Gradle tasks reported `FROM-CACHE` for the captured lane logs
+- whether the Android Rust target cache hit exactly
+- whether the required Rust Android targets were restored, already available, or
+  had to be installed
+- whether `cargo-ndk` was reused from the shared Rust cache surface or freshly
+  installed
+
+This is intentionally measurement-first. The current policy is to keep the
+existing remote Gradle cache write/read rules and use these new signals before
+widening cache policy further.
 
 ## Profiles
 
