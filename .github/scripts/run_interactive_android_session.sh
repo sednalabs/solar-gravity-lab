@@ -29,6 +29,7 @@ openai_loop_dir="${session_root}/openai-loop"
 openai_loop_run_root="${session_root}/openai-loop-runs"
 codex_bridge_dir="${session_root}/codex-bridge"
 codex_bridge_run_root="${session_root}/codex-bridge-runs"
+codex_provider_manifest_path="${codex_bridge_dir}/provider-manifest.json"
 session_state_path="${session_root}/session-state.json"
 active_build_path="${session_root}/active-build.json"
 openai_loop_status_path="${openai_loop_dir}/status.json"
@@ -286,6 +287,18 @@ exec node "${codex_dynamic_tools_bin}" --config "${config_path}" "\$@"
 EOF
     chmod 0755 "${codex_dynamic_tool_helper_path}"
 
+    if node "${codex_dynamic_tools_bin}" \
+      --config "${config_path}" \
+      --session-root "${session_root}" \
+      --artifact-root "${codex_bridge_run_root}" \
+      --build-manifest "${build_manifest_path}" \
+      manifest > "${codex_provider_manifest_path}"; then
+      provider_manifest_status="ready"
+    else
+      provider_manifest_status="unavailable"
+      rm -f "${codex_provider_manifest_path}"
+    fi
+
     if [[ -f "${codex_adapter_bin}" ]]; then
     cat > "${codex_helper_path}" <<EOF
 #!/usr/bin/env bash
@@ -298,7 +311,7 @@ EOF
       rm -f "${codex_helper_path}"
     fi
 
-    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${provider_manifest_status}"
 import json
 import sys
 
@@ -311,6 +324,8 @@ print(json.dumps({
     "dynamic_tool_command": sys.argv[2],
     "observe_helper_path": sys.argv[3],
     "output_root": sys.argv[4],
+    "provider_manifest_path": sys.argv[5] if sys.argv[6] == "ready" else None,
+    "provider_manifest_status": sys.argv[6],
     "tool_names": ["android_observe", "android_step"],
 }))
 PY
@@ -454,6 +469,7 @@ export INTERACTIVE_OPENAI_LOOP_OUTPUT_ROOT="${openai_loop_run_root}"
 export INTERACTIVE_CODEX_OBSERVE_BIN="${live_access_dir}/codex-android-observe.sh"
 export INTERACTIVE_CODEX_DYNAMIC_TOOL_BIN="${live_access_dir}/codex-android-tools.sh"
 export INTERACTIVE_CODEX_BRIDGE_OUTPUT_ROOT="${codex_bridge_run_root}"
+export INTERACTIVE_CODEX_PROVIDER_MANIFEST="${codex_provider_manifest_path}"
 if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
   export CODEX_DYNAMIC_TOOL_COMMAND="${live_access_dir}/codex-android-tools.sh"
 else
@@ -466,6 +482,9 @@ echo "MCP health: ${mcp_health_url}"
 if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
   echo "Codex native dynamic-tool helper: ${live_access_dir}/codex-android-tools.sh"
   echo "Codex dynamic-tool command: \${CODEX_DYNAMIC_TOOL_COMMAND}"
+  if [[ -f "${codex_provider_manifest_path}" ]]; then
+    echo "Codex Android provider manifest: ${codex_provider_manifest_path}"
+  fi
 fi
 if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
   echo "Codex bridge observe helper: ${live_access_dir}/codex-android-observe.sh"
@@ -574,6 +593,11 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- artifacts root: \`${session_root}\`"
     if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
       echo "- Codex native dynamic tools: \`available\`"
+      if [[ -f "${codex_provider_manifest_path}" ]]; then
+        echo "- Codex Android provider manifest: \`available\`"
+      else
+        echo "- Codex Android provider manifest: \`unavailable for the selected android-emulator-mcp ref\`"
+      fi
     else
       echo "- Codex native dynamic tools: \`unavailable for the selected android-emulator-mcp ref\`"
     fi

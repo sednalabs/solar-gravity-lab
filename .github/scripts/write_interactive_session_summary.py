@@ -175,9 +175,27 @@ def render_markdown(payload: dict) -> str:
             lines.append(f"- reason: `{codex_bridge.get('reason')}`")
         if codex_bridge.get("mode"):
             lines.append(f"- mode: `{codex_bridge.get('mode')}`")
+        if codex_bridge.get("provider_manifest_status"):
+            lines.append(f"- provider manifest: `{codex_bridge.get('provider_manifest_status')}`")
         if codex_bridge.get("tool_names"):
             tools = ", ".join(f"`{tool}`" for tool in codex_bridge.get("tool_names"))
             lines.append(f"- model-callable tools: {tools}")
+
+    codex_provider_manifest = payload["summary"].get("codex_provider_manifest")
+    if codex_provider_manifest:
+        provider = codex_provider_manifest.get("provider", {})
+        policy = codex_provider_manifest.get("policy", {})
+        lines.extend(
+            [
+                "",
+                "### Codex Android Provider Manifest",
+                "",
+                f"- adapter: `{provider.get('adapter', 'unknown')}`",
+                f"- transport: `{provider.get('transport', 'unknown')}`",
+                f"- resume behavior: `{policy.get('resumeBehavior', 'unknown')}`",
+                f"- persist on resume: `{as_flag(policy.get('persistOnResume', False))}`",
+            ]
+        )
 
     active_build = payload["summary"].get("active_build")
     if active_build:
@@ -228,6 +246,7 @@ def main() -> None:
     active_build = load_json(artifacts_dir / "active-build.json")
     openai_loop = load_json(artifacts_dir / "openai-loop" / "status.json")
     codex_bridge = load_json(artifacts_dir / "codex-bridge" / "status.json")
+    codex_provider_manifest = load_json(artifacts_dir / "codex-bridge" / "provider-manifest.json")
 
     payload = {
         "schema_version": 1,
@@ -262,6 +281,7 @@ def main() -> None:
             "active_build": active_build,
             "openai_loop": openai_loop,
             "codex_bridge": codex_bridge,
+            "codex_provider_manifest": codex_provider_manifest,
         },
     }
 
