@@ -182,7 +182,7 @@ def render_markdown(payload: dict) -> str:
             lines.append(f"- model-callable tools: {tools}")
 
     codex_provider_manifest = payload["summary"].get("codex_provider_manifest")
-    if codex_provider_manifest:
+    if isinstance(codex_provider_manifest, dict):
         provider = codex_provider_manifest.get("provider", {})
         policy = codex_provider_manifest.get("policy", {})
         lines.extend(
