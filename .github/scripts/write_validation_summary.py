@@ -14,6 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--checkout-ref", required=True)
+    parser.add_argument("--pull-request-number", default="")
     parser.add_argument("--profile", required=True)
     parser.add_argument("--profile-intent", required=True)
     parser.add_argument("--profile-notes", required=True)
@@ -24,6 +25,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--android-artifact-mode", required=True)
     parser.add_argument("--emulator-boot-strategy", required=True)
     parser.add_argument("--gradle-configuration-cache", required=True)
+    parser.add_argument("--base-sha", default="")
+    parser.add_argument("--head-sha", default="")
+    parser.add_argument("--effective-changed-files-source", default="unknown")
+    parser.add_argument("--prior-evidence-reused", default="false")
+    parser.add_argument("--prior-evidence-sha", default="")
+    parser.add_argument("--prior-evidence-run-url", default="")
+    parser.add_argument("--prior-evidence-reason", default="")
+    parser.add_argument("--merge-checkpoint-required", default="false")
+    parser.add_argument("--route-reason", default="")
     parser.add_argument("--android-shell-artifacts-dir")
     parser.add_argument("--job", action="append", default=[])
     parser.add_argument("--output-json", required=True)
@@ -99,8 +109,15 @@ def render_markdown(payload: dict) -> str:
         f"- android artifact mode: `{payload['validation_context']['android_artifact_mode']}`",
         f"- emulator boot strategy: `{payload['validation_context']['emulator_boot_strategy']}`",
         f"- gradle configuration cache: `{payload['validation_context']['gradle_configuration_cache']}`",
+        f"- changed files source: `{payload['selection']['effective_changed_files_source']}`",
+        f"- prior evidence reused: `{str(payload['selection']['evidence_reuse']['reused']).lower()}`",
+        f"- merge checkpoint required: `{str(payload['selection']['merge_checkpoint_required']).lower()}`",
         f"- overall status: `{payload['summary']['status']}`",
     ]
+    if payload["selection"]["route_reason"]:
+        lines.append(f"- route reason: `{payload['selection']['route_reason']}`")
+    if payload["selection"]["evidence_reuse"]["run_url"]:
+        lines.append(f"- prior evidence run: `{payload['selection']['evidence_reuse']['run_url']}`")
     if payload["summary"]["first_blocker"] is not None:
         lines.append(f"- first blocker: `{payload['summary']['first_blocker']}`")
     lines.extend(
@@ -155,6 +172,9 @@ def main() -> None:
             "attempt": args.run_attempt,
             "url": args.run_url,
             "repository": args.repository,
+            "base_sha": args.base_sha,
+            "head_sha": args.head_sha,
+            "pull_request_number": args.pull_request_number,
         },
         "validation_context": {
             "checkout_ref": args.checkout_ref,
@@ -168,6 +188,21 @@ def main() -> None:
             "android_artifact_mode": args.android_artifact_mode,
             "emulator_boot_strategy": args.emulator_boot_strategy,
             "gradle_configuration_cache": args.gradle_configuration_cache,
+            "base_sha": args.base_sha,
+            "head_sha": args.head_sha,
+            "pull_request_number": args.pull_request_number,
+        },
+        "selection": {
+            "effective_changed_files_source": args.effective_changed_files_source,
+            "route_reason": args.route_reason,
+            "merge_checkpoint_required": args.merge_checkpoint_required.lower() == "true",
+            "evidence_reuse": {
+                "reused": args.prior_evidence_reused.lower() == "true",
+                "sha": args.prior_evidence_sha,
+                "run_url": args.prior_evidence_run_url,
+                "reason": args.prior_evidence_reason,
+                "scope": "same-pr-immediate-prior-head",
+            },
         },
         "jobs": jobs,
         "summary": {

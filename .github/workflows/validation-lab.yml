@@ -1,7 +1,9 @@
 name: validation-lab
 
 on:
-  pull_request:
+  push:
+    branches:
+      - main
     paths:
       - ".github/workflows/**"
       - ".github/scripts/**"
@@ -11,6 +13,40 @@ on:
       - "core-math/**"
       - "core-model/**"
       - "core-simulation/**"
+      - "engine/**"
+      - "proto/**"
+      - "render/**"
+      - "services/**"
+      - "labs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradle/**"
+  merge_group:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/scripts/**"
+      - ".github/actions/**"
+      - "clients/android/**"
+      - "feature-lab/**"
+      - "render-core/**"
+      - "core-math/**"
+      - "core-model/**"
+      - "core-simulation/**"
+      - "engine/**"
+      - "proto/**"
+      - "render/**"
+      - "services/**"
+      - "labs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradle/**"
   workflow_dispatch:
     inputs:
       ref:
@@ -97,6 +133,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
@@ -145,218 +182,208 @@ jobs:
       android_shell_matrix: ${{ steps.plan.outputs.android_shell_matrix }}
       runtime_scene_telemetry: ${{ steps.plan.outputs.runtime_scene_telemetry }}
       lane_summary: ${{ steps.plan.outputs.lane_summary }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
+      effective_changed_files_source: ${{ steps.plan.outputs.effective_changed_files_source }}
+      prior_evidence_reused: ${{ steps.plan.outputs.prior_evidence_reused }}
+      prior_evidence_sha: ${{ steps.plan.outputs.prior_evidence_sha }}
+      prior_evidence_run_url: ${{ steps.plan.outputs.prior_evidence_run_url }}
+      prior_evidence_reason: ${{ steps.plan.outputs.prior_evidence_reason }}
+      merge_checkpoint_required: ${{ steps.plan.outputs.merge_checkpoint_required }}
+      route_reason: ${{ steps.plan.outputs.route_reason }}
     steps:
+      - name: Resolve checkout ref
+        id: checkout_ref
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          checkout_ref="$INPUT_REF"
+          if [[ -z "$checkout_ref" ]]; then
+            checkout_ref="$FALLBACK_REF"
+          fi
+          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.checkout_ref.outputs.checkout_ref }}
+
+      - name: Collect changed files
+        id: files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          event_name='${{ github.event_name }}'
+          base_sha=''
+          head_sha="$(git rev-parse HEAD)"
+          before_sha=''
+
+          if [[ "$event_name" == 'pull_request' ]]; then
+            base_sha='${{ github.event.pull_request.base.sha }}'
+            head_sha='${{ github.event.pull_request.head.sha }}'
+            before_sha='${{ github.event.before }}'
+            git fetch --no-tags --prune origin '${{ github.event.pull_request.base.ref }}' || true
+          elif [[ "$event_name" == 'push' ]]; then
+            base_sha='${{ github.event.before }}'
+            head_sha='${{ github.sha }}'
+          elif [[ "$event_name" == 'merge_group' ]]; then
+            base_sha='${{ github.event.merge_group.base_sha }}'
+            head_sha='${{ github.sha }}'
+          fi
+
+          mkdir -p dist/validation-plan
+          : > dist/validation-plan/primary-files.txt
+          : > dist/validation-plan/latest-files.txt
+
+          if [[ -n "$base_sha" ]] && git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            git diff --name-only "$base_sha" "$head_sha" > dist/validation-plan/primary-files.txt
+          else
+            git diff --name-only HEAD~1 "$head_sha" > dist/validation-plan/primary-files.txt || true
+          fi
+
+          if [[ "$event_name" == 'pull_request' && -n "$before_sha" && "$before_sha" != '0000000000000000000000000000000000000000' ]] && \
+             git cat-file -e "${before_sha}^{commit}" 2>/dev/null; then
+            git diff --name-only "$before_sha" "$head_sha" > dist/validation-plan/latest-files.txt
+          else
+            cp dist/validation-plan/primary-files.txt dist/validation-plan/latest-files.txt
+          fi
+
+          {
+            echo "base_sha=${base_sha}"
+            echo "head_sha=${head_sha}"
+            echo "before_sha=${before_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve prior validation evidence
+        id: prior_evidence
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ steps.files.outputs.before_sha }}
+          BASE_SHA: ${{ steps.files.outputs.base_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/validation-plan/prior-evidence
+          : > dist/validation-plan/prior-evidence/validation-summary.json
+
+          if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" == '0000000000000000000000000000000000000000' ]]; then
+            echo "No immediate previous PR head SHA is available."
+            exit 0
+          fi
+
+          run_list_json="$(
+            gh run list \
+              --repo "$REPOSITORY" \
+              --workflow validation-lab.yml \
+              --event pull_request \
+              --limit 50 \
+              --json databaseId,headSha,conclusion,status,headBranch 2>/dev/null || true
+          )"
+          if [[ -z "$run_list_json" ]]; then
+            echo "Could not list prior validation-lab runs."
+            exit 0
+          fi
+
+          candidate_run_id="$(
+            jq -r --arg before "$BEFORE_SHA" --arg current "$CURRENT_RUN_ID" '
+              map(select((.databaseId|tostring) != $current))
+              | map(select(.headSha == $before and .status == "completed" and .conclusion == "success"))
+              | .[0].databaseId // empty
+            ' <<< "$run_list_json"
+          )"
+
+          if [[ -z "$candidate_run_id" ]]; then
+            echo "No successful validation-lab run found for immediate previous head ${BEFORE_SHA}."
+            exit 0
+          fi
+
+          if ! gh run download "$candidate_run_id" \
+              --repo "$REPOSITORY" \
+              --name validation-summary \
+              --dir dist/validation-plan/prior-evidence/download >/dev/null 2>&1; then
+            echo "Could not download validation-summary artifact from run ${candidate_run_id}."
+            exit 0
+          fi
+
+          candidate_summary="$(
+            find dist/validation-plan/prior-evidence/download -type f -name 'validation-summary.json' | sort | head -n 1
+          )"
+          if [[ -z "$candidate_summary" ]]; then
+            echo "Downloaded artifact did not contain validation-summary.json."
+            exit 0
+          fi
+
+          if jq -e --arg before "$BEFORE_SHA" --arg base "$BASE_SHA" '
+              .summary.status == "success" and
+              (.run.head_sha // .validation_context.head_sha // "") == $before and
+              (.run.base_sha // .validation_context.base_sha // "") == $base
+            ' "$candidate_summary" >/dev/null; then
+            if jq -e --arg pr "$PR_NUMBER" '
+                (.run.pull_request_number // .validation_context.pull_request_number // "") == $pr
+              ' "$candidate_summary" >/dev/null; then
+              cp "$candidate_summary" dist/validation-plan/prior-evidence/validation-summary.json
+              echo "Reusing prior validation evidence from run ${candidate_run_id}."
+            else
+              echo "Prior validation summary matched the head/base but not this PR number."
+            fi
+          else
+            echo "Prior validation summary did not match this PR base and immediate previous head."
+          fi
+
       - name: Compute active lanes
         id: plan
         shell: bash
         run: |
           set -euo pipefail
 
-          checkout_ref='${{ inputs.ref }}'
-          if [[ -z "$checkout_ref" ]]; then
-            checkout_ref='${{ github.head_ref || github.ref_name }}'
-          fi
+          python3 .github/scripts/resolve_validation_lab_plan.py \
+            --event-name '${{ github.event_name }}' \
+            --checkout-ref '${{ steps.checkout_ref.outputs.checkout_ref }}' \
+            --profile '${{ inputs.profile }}' \
+            --lane-set '${{ inputs.lane_set }}' \
+            --write-wrapper '${{ inputs.write_wrapper }}' \
+            --android-test-scope '${{ inputs.android_test_scope }}' \
+            --android-validation-mode '${{ inputs.android_validation_mode }}' \
+            --android-artifact-mode '${{ inputs.android_artifact_mode }}' \
+            --emulator-boot-strategy '${{ inputs.emulator_boot_strategy }}' \
+            --gradle-configuration-cache '${{ inputs.gradle_configuration_cache }}' \
+            --base-sha '${{ steps.files.outputs.base_sha }}' \
+            --head-sha '${{ steps.files.outputs.head_sha }}' \
+            --pull-request-number '${{ github.event.pull_request.number }}' \
+            --primary-changed-files dist/validation-plan/primary-files.txt \
+            --latest-changed-files dist/validation-plan/latest-files.txt \
+            --prior-evidence-json dist/validation-plan/prior-evidence/validation-summary.json \
+            --output-env dist/validation-plan/outputs.env
 
-          profile='${{ inputs.profile }}'
-          if [[ -z "$profile" ]]; then
-            if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
-              profile='full'
-            else
-              profile='targeted'
+          cat dist/validation-plan/outputs.env >> "$GITHUB_OUTPUT"
+
+      - name: Emit validation routing breadcrumb
+        shell: bash
+        run: |
+          {
+            echo "## validation-lab routing"
+            echo
+            echo "- route reason: \`${{ steps.plan.outputs.route_reason }}\`"
+            echo "- changed files source: \`${{ steps.plan.outputs.effective_changed_files_source }}\`"
+            echo "- prior evidence reused: \`${{ steps.plan.outputs.prior_evidence_reused }}\`"
+            echo "- prior evidence SHA: \`${{ steps.plan.outputs.prior_evidence_sha || 'n/a' }}\`"
+            echo "- prior evidence run: \`${{ steps.plan.outputs.prior_evidence_run_url || 'n/a' }}\`"
+            echo "- merge checkpoint required: \`${{ steps.plan.outputs.merge_checkpoint_required }}\`"
+            if [[ '${{ steps.plan.outputs.merge_checkpoint_required }}' == 'true' ]]; then
+              echo
+              echo "Full validation remains required on the merge/default-branch checkpoint; PR-local evidence reuse never satisfies that final checkpoint."
             fi
-          fi
-          lane_set='${{ inputs.lane_set }}'
-          if [[ -z "$lane_set" ]]; then
-            if [[ '${{ github.event_name }}' == 'pull_request' ]]; then
-              lane_set='full'
-            else
-              lane_set='auto'
-            fi
-          fi
-          write_wrapper='${{ inputs.write_wrapper }}'
-          if [[ -z "$write_wrapper" ]]; then
-            write_wrapper='false'
-          fi
-          android_test_scope='${{ inputs.android_test_scope }}'
-          if [[ -z "$android_test_scope" ]]; then
-            android_test_scope='core'
-          fi
-          android_validation_mode='${{ inputs.android_validation_mode }}'
-          if [[ -z "$android_validation_mode" ]]; then
-            android_validation_mode='auto'
-          fi
-          android_artifact_mode='${{ inputs.android_artifact_mode }}'
-          if [[ -z "$android_artifact_mode" ]]; then
-            android_artifact_mode='failures-only'
-          fi
-          emulator_boot_strategy='${{ inputs.emulator_boot_strategy }}'
-          if [[ -z "$emulator_boot_strategy" ]]; then
-            emulator_boot_strategy='cold'
-          fi
-          gradle_configuration_cache='${{ inputs.gradle_configuration_cache }}'
-          if [[ -z "$gradle_configuration_cache" ]]; then
-            gradle_configuration_cache='disabled'
-          fi
-
-          wrapper_bootstrap='false'
-          rust_workspace='false'
-          rust_workspace_arm64='false'
-          ffi_abi='false'
-          android_unit='false'
-          android_lint='false'
-          android_shell='false'
-          runtime_scene_telemetry='false'
-          profile_intent='targeted'
-          profile_notes='One active slice only; use this to prove the current canonical seam before widening.'
-          android_shell_matrix='[]'
-
-          case "$profile" in
-            targeted)
-              profile_intent='targeted'
-              profile_notes='One active slice only; use this to prove the current canonical seam before widening.'
-              ;;
-            frontier)
-              profile_intent='frontier'
-              profile_notes='Bounded next-blocker harvest; keep the Rust baseline and add the Android shell when appropriate.'
-              ;;
-            broad|full)
-              profile_intent='checkpoint'
-              profile_notes='Explicit checkpoint mode; use sparingly for milestone passes rather than routine iteration.'
-              ;;
-            *)
-              echo "Unknown profile: ${profile}" >&2
-              exit 1
-              ;;
-          esac
-
-          case "$gradle_configuration_cache" in
-            disabled|enabled)
-              ;;
-            *)
-              echo "Unknown gradle_configuration_cache: ${gradle_configuration_cache}" >&2
-              exit 1
-              ;;
-          esac
-
-          case "$lane_set" in
-            auto)
-              rust_workspace='true'
-              if [[ "$profile" == 'frontier' || "$profile" == 'broad' || "$profile" == 'full' ]]; then
-                android_shell='true'
-              fi
-              if [[ "$profile" == 'broad' || "$profile" == 'full' ]]; then
-                ffi_abi='true'
-                rust_workspace_arm64='true'
-                android_unit='true'
-                android_lint='true'
-              fi
-              ;;
-            bootstrap)
-              wrapper_bootstrap='true'
-              ;;
-            rust-workspace)
-              rust_workspace='true'
-              ;;
-            rust-workspace-arm64)
-              rust_workspace_arm64='true'
-              ;;
-            ffi-abi)
-              ffi_abi='true'
-              ;;
-            android-unit)
-              android_unit='true'
-              ;;
-            android-lint)
-              android_lint='true'
-              ;;
-            android-shell)
-              android_shell='true'
-              ;;
-            runtime-scene-telemetry)
-              runtime_scene_telemetry='true'
-              ;;
-            full)
-              rust_workspace='true'
-              rust_workspace_arm64='true'
-              ffi_abi='true'
-              android_unit='true'
-              android_lint='true'
-              android_shell='true'
-              runtime_scene_telemetry='true'
-              ;;
-            *)
-              echo "Unknown lane_set: ${lane_set}" >&2
-              exit 1
-              ;;
-          esac
-
-          if [[ "$write_wrapper" == 'true' ]]; then
-            wrapper_bootstrap='true'
-          fi
-
-          if [[ "$android_shell" == 'true' ]]; then
-            case "$android_validation_mode" in
-              shell-v2)
-                android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"}]'
-                ;;
-              stage-first-mirror-off)
-                android_shell_matrix='[{"validation_mode":"stage-first-mirror-off","debug_stage_first_client":"true","stage_first_runtime_mirror":"false"}]'
-                ;;
-              stage-first-mirror-on)
-                android_shell_matrix='[{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
-                ;;
-              auto)
-                case "$profile" in
-                  targeted)
-                    android_shell_matrix='[{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
-                    ;;
-                  frontier)
-                    android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
-                    ;;
-                  broad|full)
-                    android_shell_matrix='[{"validation_mode":"shell-v2","debug_stage_first_client":"false","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-off","debug_stage_first_client":"true","stage_first_runtime_mirror":"false"},{"validation_mode":"stage-first-mirror-on","debug_stage_first_client":"true","stage_first_runtime_mirror":"true"}]'
-                    ;;
-                  *)
-                    echo "Unknown profile for android shell matrix: ${profile}" >&2
-                    exit 1
-                    ;;
-                esac
-                ;;
-              *)
-                echo "Unknown android_validation_mode: ${android_validation_mode}" >&2
-                exit 1
-                ;;
-            esac
-            android_shell_matrix="$(
-              ANDROID_SHELL_MATRIX="$android_shell_matrix" \
-              GRADLE_CONFIGURATION_CACHE="$gradle_configuration_cache" \
-              python3 -c 'import json, os; rows = json.loads(os.environ["ANDROID_SHELL_MATRIX"]); [row.__setitem__("gradle_configuration_cache", os.environ["GRADLE_CONFIGURATION_CACHE"]) for row in rows]; print(json.dumps(rows, separators=(",", ":")))'
-            )"
-          fi
-
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s, gradle_configuration_cache=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode" "$gradle_configuration_cache")"
-
-          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
-          echo "profile=${profile}" >> "$GITHUB_OUTPUT"
-          echo "lane_set=${lane_set}" >> "$GITHUB_OUTPUT"
-          echo "android_test_scope=${android_test_scope}" >> "$GITHUB_OUTPUT"
-          echo "android_validation_mode=${android_validation_mode}" >> "$GITHUB_OUTPUT"
-          echo "android_artifact_mode=${android_artifact_mode}" >> "$GITHUB_OUTPUT"
-          echo "emulator_boot_strategy=${emulator_boot_strategy}" >> "$GITHUB_OUTPUT"
-          echo "gradle_configuration_cache=${gradle_configuration_cache}" >> "$GITHUB_OUTPUT"
-          echo "profile_intent=${profile_intent}" >> "$GITHUB_OUTPUT"
-          echo "profile_notes=${profile_notes}" >> "$GITHUB_OUTPUT"
-          echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
-          echo "rust_workspace=${rust_workspace}" >> "$GITHUB_OUTPUT"
-          echo "rust_workspace_arm64=${rust_workspace_arm64}" >> "$GITHUB_OUTPUT"
-          echo "ffi_abi=${ffi_abi}" >> "$GITHUB_OUTPUT"
-          echo "android_unit=${android_unit}" >> "$GITHUB_OUTPUT"
-          echo "android_lint=${android_lint}" >> "$GITHUB_OUTPUT"
-          echo "android_shell=${android_shell}" >> "$GITHUB_OUTPUT"
-          echo "android_shell_matrix=${android_shell_matrix}" >> "$GITHUB_OUTPUT"
-          echo "runtime_scene_telemetry=${runtime_scene_telemetry}" >> "$GITHUB_OUTPUT"
-          echo "lane_summary=${lane_summary}" >> "$GITHUB_OUTPUT"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   wrapper-bootstrap:
     name: Wrapper bootstrap
@@ -755,9 +782,11 @@ jobs:
               dist/gradle/android-unit.log \
               "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )"
-          echo "unit_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
-          echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
-          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
+          {
+            echo "unit_seconds=$((phase_end - phase_start))"
+            echo "from_cache_count=${from_cache_count}"
+            echo "configuration_cache_status=${configuration_cache_status}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Emit Android unit timing summary
         if: always()
@@ -935,9 +964,11 @@ jobs:
               dist/gradle/android-lint.log \
               "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )"
-          echo "lint_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
-          echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
-          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
+          {
+            echo "lint_seconds=$((phase_end - phase_start))"
+            echo "from_cache_count=${from_cache_count}"
+            echo "configuration_cache_status=${configuration_cache_status}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Emit Android lint timing summary
         if: always()
@@ -1140,9 +1171,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "validation_mode=${{ matrix.validation_mode }}" >> "$GITHUB_OUTPUT"
-          echo "debug_stage_first_client=${{ matrix.debug_stage_first_client }}" >> "$GITHUB_OUTPUT"
-          echo "stage_first_runtime_mirror=${{ matrix.stage_first_runtime_mirror }}" >> "$GITHUB_OUTPUT"
+          {
+            echo "validation_mode=${{ matrix.validation_mode }}"
+            echo "debug_stage_first_client=${{ matrix.debug_stage_first_client }}"
+            echo "stage_first_runtime_mirror=${{ matrix.stage_first_runtime_mirror }}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Assemble debug Android shell and androidTest
         id: android_assemble
@@ -1168,9 +1201,11 @@ jobs:
               dist/gradle/android-shell-assemble-${{ matrix.validation_mode }}.log \
               "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )"
-          echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
-          echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
-          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
+          {
+            echo "assemble_seconds=$((phase_end - phase_start))"
+            echo "from_cache_count=${from_cache_count}"
+            echo "configuration_cache_status=${configuration_cache_status}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run connected Android shell smoke and continuity tests
         id: android_connected_tests
@@ -1329,6 +1364,7 @@ jobs:
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
             --checkout-ref "${{ needs.metadata.outputs.checkout_ref }}" \
+            --pull-request-number "${{ github.event.pull_request.number }}" \
             --profile "${{ needs.metadata.outputs.profile }}" \
             --profile-intent "${{ needs.metadata.outputs.profile_intent }}" \
             --profile-notes "${{ needs.metadata.outputs.profile_notes }}" \
@@ -1339,6 +1375,15 @@ jobs:
             --android-artifact-mode "${{ needs.metadata.outputs.android_artifact_mode }}" \
             --emulator-boot-strategy "${{ needs.metadata.outputs.emulator_boot_strategy }}" \
             --gradle-configuration-cache "${{ needs.metadata.outputs.gradle_configuration_cache }}" \
+            --base-sha "${{ needs.metadata.outputs.base_sha }}" \
+            --head-sha "${{ needs.metadata.outputs.head_sha }}" \
+            --effective-changed-files-source "${{ needs.metadata.outputs.effective_changed_files_source }}" \
+            --prior-evidence-reused "${{ needs.metadata.outputs.prior_evidence_reused }}" \
+            --prior-evidence-sha "${{ needs.metadata.outputs.prior_evidence_sha }}" \
+            --prior-evidence-run-url "${{ needs.metadata.outputs.prior_evidence_run_url }}" \
+            --prior-evidence-reason "${{ needs.metadata.outputs.prior_evidence_reason }}" \
+            --merge-checkpoint-required "${{ needs.metadata.outputs.merge_checkpoint_required }}" \
+            --route-reason "${{ needs.metadata.outputs.route_reason }}" \
             --android-shell-artifacts-dir dist/android-shell-artifacts \
             --job parity-matrix=${{ needs.parity-matrix.result }} \
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
