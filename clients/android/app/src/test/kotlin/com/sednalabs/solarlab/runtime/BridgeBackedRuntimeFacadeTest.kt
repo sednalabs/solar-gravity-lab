@@ -118,6 +118,49 @@ class BridgeBackedRuntimeFacadeTest {
     }
 
     @Test
+    fun startSession_preservesRequestedAndEffectiveCpuBackendTruth() = runBlocking {
+        val bridge = FakeRuntimeBridge(
+            connectSignals = flowOf(
+                RuntimeSignal.RuntimeInfoAvailable(
+                    requestedCpuBackendLabel = "simd-arm64",
+                    cpuBackendLabel = "reference-scalar",
+                    cpuSolverPathLabel = "scalar.reference",
+                    cpuFeatureSummary = "neon+sve2",
+                    cpuFallbackSummary = "simd-arm64 requested on non-aarch64 host",
+                    gpuBackendLabel = "none",
+                ),
+            ),
+        )
+        val sink = RecordingTelemetrySink()
+        val facade = BridgeBackedRuntimeFacade(
+            bridge = bridge,
+            developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                enabled = true,
+                sinks = listOf(sink),
+            ),
+        )
+
+        facade.startSession()
+
+        val state = facade.uiState.value
+        assertEquals(
+            "cpu=requested simd-arm64 -> effective reference-scalar | gpu=none | " +
+                "solver: scalar.reference | cpu features: neon+sve2 | " +
+                "cpu fallback: simd-arm64 requested on non-aarch64 host",
+            state.backendSummary,
+        )
+        assertTrue(
+            sink.events
+                .filter { it.category == "runtime.info" }
+                .any {
+                    it.message.contains(
+                        "requested-cpu=simd-arm64, cpu=reference-scalar, solver=scalar.reference",
+                    )
+                },
+        )
+    }
+
+    @Test
     fun renderPacketReady_withZeroBodyPacketIsNotReady() = runBlocking {
         val bridge = FakeRuntimeBridge(
             connectSignals = flowOf(

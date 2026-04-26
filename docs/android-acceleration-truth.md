@@ -24,6 +24,16 @@ Only report a backend as active when the runtime or renderer actually selected
 that path. If a requested path falls back, telemetry and UI must show both the
 requested backend and the effective backend.
 
+The Android bridge also requests the Arm64 SIMD CPU backend for device builds.
+That request is not itself an activation claim. Runtime info must carry all of
+these fields separately:
+
+- requested CPU backend;
+- effective CPU backend;
+- active solver path;
+- normalized CPU feature flags; and
+- fallback code when the requested backend is not active.
+
 ## What Is Real Today
 
 - Native Vulkan stage hosting is real in the stage-first client.
@@ -31,6 +41,9 @@ requested backend and the effective backend.
 - Vulkan medium/far packet compaction and far tile-bin rendering telemetry are
   real renderer-side acceleration paths.
 - CPU feature detection and solver dispatch reporting are real.
+- The implemented Arm64 solver path is `simd.arm64.neon-f64-pairwise`: a
+  double-precision NEON pairwise gravity acceleration kernel guarded by runtime
+  feature detection and scalar-oracle parity tests.
 
 ## What Must Stay Honest
 
@@ -38,6 +51,12 @@ requested backend and the effective backend.
   kernel/workload execution path, parity proof, and fallback report are present.
 - Arm64 SIMD reporting is not enough by itself. A specialized solver path must
   be backed by measurable device behavior and parity with CPU scalar truth.
+- SVE, SVE2, SME, SME2, FP16, FHM, DotProd, I8MM, LSE, CRC, and MOPS may be
+  detected and reported as device capabilities, but they are not active solver
+  claims unless the runtime reports a concrete solver path that uses them.
+- Lower-precision and matrix/vector extensions are reserved for future
+  visualization, tracer-assist, or explicitly bounded compute slices until a
+  precision policy and scalar-oracle equivalence gate exists.
 - Hosted emulator proof can validate Vulkan/runtime wiring, but real device
   claims need a Galaxy-class Android device artifact.
 
@@ -51,6 +70,11 @@ the canonical hosted Android proof for the runtime mirror. That lane must:
 - bind a nonzero native runtime session handle;
 - assert that backend summary telemetry includes CPU and GPU truth; and
 - preserve logs/screenshots as the shared audit trail.
+
+For CPU ISA work, dispatch `validation-lab` with `lane_set=arm64-isa-proof`.
+That lane runs on GitHub-hosted Arm64 hardware, records normalized CPU
+capabilities, and proves the active solver path without waiting for a broader
+workspace or APK build.
 
 Use the local sandbox lane only for local authoring surface checks. Do not use a
 local sandbox smoke as proof that the accelerated runtime mirror is healthy.

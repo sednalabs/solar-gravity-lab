@@ -33,6 +33,10 @@ The installable prerelease workflow also now runs an ARM64 ISA proof lane
 publication. This gate validates backend activation truth and scalar-oracle
 equivalence evidence for the ARM64 CPU path.
 
+For pre-release iteration before a package build, `validation-lab` exposes the
+same proof as the focused `arm64-isa-proof` lane. Prefer that lane when the
+active question is CPU ISA truth rather than APK packaging.
+
 Validation runs are evidence, not release artifacts. They answer whether a
 slice is green; they do not imply that the app is ready for external
 distribution.

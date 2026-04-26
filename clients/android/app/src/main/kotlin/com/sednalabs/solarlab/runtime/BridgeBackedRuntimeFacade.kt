@@ -195,7 +195,11 @@ class BridgeBackedRuntimeFacade internal constructor(
 
             is RuntimeSignal.RuntimeInfoAvailable -> _uiState.update { current ->
                 val backendSummary = backendSummaryLabel(
+                    requestedCpuBackendLabel = signal.requestedCpuBackendLabel,
                     cpuBackendLabel = signal.cpuBackendLabel,
+                    cpuSolverPathLabel = signal.cpuSolverPathLabel,
+                    cpuFeatureSummary = signal.cpuFeatureSummary,
+                    cpuFallbackSummary = signal.cpuFallbackSummary,
                     requestedGpuBackendLabel = signal.requestedGpuBackendLabel,
                     gpuBackendLabel = signal.gpuBackendLabel,
                     workloadSummary = signal.workloadSummary,
@@ -733,12 +737,26 @@ private fun RuntimeNoticeLevel.toDeveloperTelemetryLevel(): DeveloperTelemetryLe
 }
 
 private fun backendSummaryLabel(
+    requestedCpuBackendLabel: String?,
     cpuBackendLabel: String,
+    cpuSolverPathLabel: String?,
+    cpuFeatureSummary: String?,
+    cpuFallbackSummary: String?,
     requestedGpuBackendLabel: String?,
     gpuBackendLabel: String,
     workloadSummary: String?,
     interopErrorBudgetSummary: String?,
 ): String {
+    val requestedCpuSegment = requestedCpuBackendLabel
+        ?.takeIf { it.isNotBlank() }
+        ?.let { requested ->
+            if (requested == cpuBackendLabel) {
+                "cpu=$cpuBackendLabel"
+            } else {
+                "cpu=requested $requested -> effective $cpuBackendLabel"
+            }
+        }
+        ?: "cpu=$cpuBackendLabel"
     val requestedGpuSegment = requestedGpuBackendLabel
         ?.takeIf { it.isNotBlank() }
         ?.let { requested ->
@@ -749,7 +767,16 @@ private fun backendSummaryLabel(
             }
         }
         ?: "gpu=$gpuBackendLabel"
-    val segments = mutableListOf("cpu=$cpuBackendLabel", requestedGpuSegment)
+    val segments = mutableListOf(requestedCpuSegment, requestedGpuSegment)
+    cpuSolverPathLabel?.takeIf { it.isNotBlank() }?.let {
+        segments += "solver: $it"
+    }
+    cpuFeatureSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu features: $it"
+    }
+    cpuFallbackSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu fallback: $it"
+    }
     workloadSummary?.takeIf { it.isNotBlank() }?.let {
         segments += "workloads: $it"
     }
@@ -761,10 +788,18 @@ private fun backendSummaryLabel(
 
 private fun runtimeInfoTelemetryMessage(signal: RuntimeSignal.RuntimeInfoAvailable): String {
     val segments = mutableListOf(
+        "requested-cpu=${signal.requestedCpuBackendLabel ?: signal.cpuBackendLabel}",
         "cpu=${signal.cpuBackendLabel}",
+        "solver=${signal.cpuSolverPathLabel ?: "unknown"}",
         "requested-gpu=${signal.requestedGpuBackendLabel ?: signal.gpuBackendLabel}",
         "gpu=${signal.gpuBackendLabel}",
     )
+    signal.cpuFeatureSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu-features=$it"
+    }
+    signal.cpuFallbackSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu-fallback=$it"
+    }
     signal.workloadSummary?.takeIf { it.isNotBlank() }?.let {
         segments += "workloads=$it"
     }

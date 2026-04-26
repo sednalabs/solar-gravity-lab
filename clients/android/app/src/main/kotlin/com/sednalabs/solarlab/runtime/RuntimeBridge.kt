@@ -155,13 +155,17 @@ internal class JniRuntimeBridge(
             return@callbackFlow
         }
         logInfo(
-            "connect.runtimeInfo.result handle=$handle status=${runtimeInfoResult.result.describe()} cpu=${runtimeInfoResult.cpuBackendLabel()} gpu=${runtimeInfoResult.gpuBackendLabel()}"
+            "connect.runtimeInfo.result handle=$handle status=${runtimeInfoResult.result.describe()} requestedCpu=${runtimeInfoResult.requestedCpuBackendLabel()} cpu=${runtimeInfoResult.cpuBackendLabel()} solver=${runtimeInfoResult.cpuSolverPathLabel()} features=${runtimeInfoResult.cpuFeatureSummary() ?: "none"} gpu=${runtimeInfoResult.gpuBackendLabel()}"
         )
 
         if (runtimeInfoResult.result.isOk()) {
             trySend(
                 RuntimeSignal.RuntimeInfoAvailable(
+                    requestedCpuBackendLabel = runtimeInfoResult.requestedCpuBackendLabel(),
                     cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
+                    cpuSolverPathLabel = runtimeInfoResult.cpuSolverPathLabel(),
+                    cpuFeatureSummary = runtimeInfoResult.cpuFeatureSummary(),
+                    cpuFallbackSummary = runtimeInfoResult.cpuFallbackSummary(),
                     requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
                     gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
                     workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
@@ -583,7 +587,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 3
+        private const val ABI_VERSION = 4
         private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
@@ -608,7 +612,11 @@ internal class JniRuntimeBridge(
 internal sealed interface RuntimeSignal {
     data class Connected(val handle: Long) : RuntimeSignal
     data class RuntimeInfoAvailable(
+        val requestedCpuBackendLabel: String? = null,
         val cpuBackendLabel: String,
+        val cpuSolverPathLabel: String? = null,
+        val cpuFeatureSummary: String? = null,
+        val cpuFallbackSummary: String? = null,
         val gpuBackendLabel: String,
         val requestedGpuBackendLabel: String? = null,
         val workloadSummary: String? = null,
@@ -863,6 +871,27 @@ internal const val NATIVE_GPU_BACKEND_VULKAN = 1
 internal const val NATIVE_GPU_BACKEND_METAL = 2
 internal const val NATIVE_GPU_BACKEND_WEBGPU_CLASS = 3
 internal const val NATIVE_GPU_BACKEND_OPENCL = 4
+private const val NATIVE_CPU_SOLVER_PATH_SCALAR_REFERENCE = 0
+private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PAIRWISE = 1
+private const val NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK = 2
+private const val NATIVE_CPU_FALLBACK_NONE = 0
+private const val NATIVE_CPU_FALLBACK_ARM64_NON_AARCH64_HOST = 1
+private const val NATIVE_CPU_FALLBACK_ARM64_MISSING_NEON = 2
+private const val NATIVE_CPU_FALLBACK_X64_UNAVAILABLE = 3
+private const val CPU_FEATURE_NEON = 1L shl 0
+private const val CPU_FEATURE_FP = 1L shl 1
+private const val CPU_FEATURE_FP16 = 1L shl 2
+private const val CPU_FEATURE_FHM = 1L shl 3
+private const val CPU_FEATURE_DOTPROD = 1L shl 4
+private const val CPU_FEATURE_I8MM = 1L shl 5
+private const val CPU_FEATURE_SVE = 1L shl 6
+private const val CPU_FEATURE_SVE2 = 1L shl 7
+private const val CPU_FEATURE_SME = 1L shl 8
+private const val CPU_FEATURE_SME2 = 1L shl 9
+private const val CPU_FEATURE_LSE = 1L shl 10
+private const val CPU_FEATURE_LSE2 = 1L shl 11
+private const val CPU_FEATURE_CRC = 1L shl 12
+private const val CPU_FEATURE_MOPS = 1L shl 13
 
 internal fun preferredGpuBackendCode(preferredBackendRaw: String): Int {
     val normalized = preferredBackendRaw.trim()
@@ -1064,14 +1093,61 @@ internal data class NativeCreateSessionResult(
 internal data class NativeRuntimeInfoResult(
     val result: NativeResult,
     val abiVersion: Int,
+    val requestedCpuBackend: Int,
     val cpuBackend: Int,
     val gpuBackend: Int,
+    val cpuFeatureFlags: Long,
+    val cpuSolverPath: Int,
+    val cpuFallbackCode: Int,
 ) {
-    fun cpuBackendLabel(): String = when (cpuBackend) {
+    fun requestedCpuBackendLabel(): String = cpuBackendLabel(requestedCpuBackend)
+
+    fun cpuBackendLabel(): String = cpuBackendLabel(cpuBackend)
+
+    private fun cpuBackendLabel(value: Int): String = when (value) {
         0 -> "reference-scalar"
         1 -> "simd-arm64"
         2 -> "simd-x64"
-        else -> "unknown($cpuBackend)"
+        else -> "unknown($value)"
+    }
+
+    fun cpuSolverPathLabel(): String = when (cpuSolverPath) {
+        NATIVE_CPU_SOLVER_PATH_SCALAR_REFERENCE -> "scalar.reference"
+        NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PAIRWISE -> "simd.arm64.neon-f64-pairwise"
+        NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK -> "simd.x64.scalar-fallback"
+        else -> "unknown($cpuSolverPath)"
+    }
+
+    fun cpuFallbackSummary(): String? = when (cpuFallbackCode) {
+        NATIVE_CPU_FALLBACK_NONE -> null
+        NATIVE_CPU_FALLBACK_ARM64_NON_AARCH64_HOST -> "simd-arm64 requested on non-aarch64 host"
+        NATIVE_CPU_FALLBACK_ARM64_MISSING_NEON -> "simd-arm64 requested but neon was not detected"
+        NATIVE_CPU_FALLBACK_X64_UNAVAILABLE -> "simd-x64 requested but no dedicated x64 kernel is active"
+        else -> "unknown fallback($cpuFallbackCode)"
+    }
+
+    fun cpuFeatureSummary(): String? {
+        val features = mutableListOf<String>()
+        fun addIfPresent(mask: Long, label: String) {
+            if (cpuFeatureFlags and mask != 0L) {
+                features += label
+            }
+        }
+        addIfPresent(CPU_FEATURE_NEON, "neon")
+        addIfPresent(CPU_FEATURE_FP, "fp")
+        addIfPresent(CPU_FEATURE_FP16, "fp16")
+        addIfPresent(CPU_FEATURE_FHM, "fhm")
+        addIfPresent(CPU_FEATURE_DOTPROD, "dotprod")
+        addIfPresent(CPU_FEATURE_I8MM, "i8mm")
+        addIfPresent(CPU_FEATURE_SVE, "sve")
+        addIfPresent(CPU_FEATURE_SVE2, "sve2")
+        addIfPresent(CPU_FEATURE_SME, "sme")
+        addIfPresent(CPU_FEATURE_SME2, "sme2")
+        addIfPresent(CPU_FEATURE_LSE, "lse")
+        addIfPresent(CPU_FEATURE_LSE2, "lse2")
+        addIfPresent(CPU_FEATURE_CRC, "crc")
+        addIfPresent(CPU_FEATURE_MOPS, "mops")
+        return features.takeIf { it.isNotEmpty() }?.joinToString("+")
     }
 
     fun gpuBackendLabel(): String = when (gpuBackend) {
