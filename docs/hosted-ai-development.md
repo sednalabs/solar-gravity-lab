@@ -7,8 +7,8 @@ for AI-assisted development because it gives both humans and models a shared,
 reproducible execution surface instead of one machine's local toolchain state.
 
 This document describes the current implementation in publication-safe terms.
-It does not describe local-only operator setup, private credentials, or
-org-specific capacity policy.
+It does not describe operator-specific setup, deployment credentials, or
+organization-specific capacity policy.
 
 The current public recommendation is GitHub-hosted first. Older self-hosted
 Android runner material remains in the repository as deferred evaluation and
@@ -105,10 +105,34 @@ This repository's hosted workflow model supports that by combining:
 - reusable Android artifacts
 - bounded live emulator sessions
 - structured Android interaction surfaces where available
+- native Codex Android provider artifacts emitted by the selected
+  `android-emulator-mcp` ref
 
 That combination lets a model participate in real investigation and proof work
 without depending on one laptop's local state or on purely hypothetical UI
 reasoning.
+
+## Android computer-use boundary
+
+Solar Gravity Lab is the consumer and proof target for the native Android/Codex
+computer-use harness. The generic provider backend and model-callable Android
+tools live in `android-emulator-mcp`; Solar Lab sessions pin that repository by
+ref, run the app in a hosted emulator, and preserve the emitted provider
+manifest plus session artifacts as evidence.
+
+That means Solar Lab documentation should describe:
+
+- which hosted workflow produced the app build or live session
+- which Solar Lab, `android-emulator-mcp`, and toolkit refs were used
+- whether `android_observe` and `android_step` were available through the
+  Codex dynamic-tool path
+- where the provider manifest and session artifacts were uploaded
+- what Solar-specific behavior was proved in the run
+
+It should not redefine generic Android action semantics or provider schema
+ownership. See
+[`Android Codex Computer-Use Harness`](android-codex-computer-use.md) for the
+Solar-side artifact contract.
 
 ## What this document is not claiming
 
@@ -131,4 +155,5 @@ The current implementation should instead be read as:
 - [README.md](../README.md)
 - [Validation Lab](validation-lab.md)
 - [Interactive Android Session](interactive-android-session.md)
+- [Android Codex Computer-Use Harness](android-codex-computer-use.md)
 - [CI Cache Rollout](ci-cache-rollout.md)

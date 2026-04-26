@@ -162,6 +162,18 @@ Expected contents:
 - `session-state.json`
 - `mcp-health.json`
 
+The Codex-native Android provider evidence is concentrated in:
+
+- `codex-bridge/status.json`
+- `codex-bridge/provider-manifest.json`, when the selected
+  `android-emulator-mcp` ref can emit it
+- `codex-bridge-runs/`
+- `live-access/codex-android-tools.sh`
+
+The provider manifest is Android capability metadata from
+`android-emulator-mcp`. Solar Lab stores and summarizes it as run evidence; it
+does not define the generic computer-use contract here.
+
 The summary payloads live under:
 
 - `dist/interactive-session-summary/`
@@ -172,6 +184,7 @@ Those files are designed to answer:
 - whether preflight passed
 - whether human terminal access came up
 - whether machine-facing MCP access came up
+- whether the Codex-native Android provider helper and manifest were available
 - how the session ended
 - where the evidence bundle is rooted
 
@@ -226,6 +239,19 @@ Optional debug helper:
 
 The debug helper is still useful when you want to inspect the raw observation
 payloads manually, but it is not the native model-callable path.
+
+The session also writes:
+
+- `dist/interactive-session/codex-bridge/status.json`
+- `dist/interactive-session/codex-bridge/provider-manifest.json`, when
+  available
+- `dist/interactive-session/codex-bridge-runs/`
+
+Those files record which Android provider backend was available, which native
+tool names were exposed, where session artifacts live, and what read/write lease
+policy applied. See
+[`android-codex-computer-use`](android-codex-computer-use.md) for the Solar-side
+boundary and artifact contract.
 
 ## Standalone OpenAI helper
 

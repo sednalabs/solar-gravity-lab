@@ -169,6 +169,13 @@ separates build production from interactive investigation and gives both humans
 and models a shared remote proof surface instead of relying on one machine's
 local environment.
 
+Solar Lab consumes the native Android/Codex computer-use harness from
+`android-emulator-mcp`; it does not own the generic provider contract. Hosted
+sessions preserve Codex bridge status, provider-manifest, active-build, and
+session-state artifacts so a run can show which Android provider capabilities
+were active. For the Solar-side boundary, see
+[`docs/android-codex-computer-use.md`](docs/android-codex-computer-use.md).
+
 For the public workflow overview, see
 [`docs/hosted-ai-development.md`](docs/hosted-ai-development.md).
 

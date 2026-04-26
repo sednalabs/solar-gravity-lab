@@ -155,6 +155,14 @@ development because it lets interactive investigation happen against a real
 hosted Android environment without paying full rebuild-and-boot cost for every
 inspection turn.
 
+When the selected `android-emulator-mcp` ref supports the native Codex Android
+provider, the interactive session also publishes Codex bridge status and a
+provider manifest under `dist/interactive-session/codex-bridge/`. Those
+artifacts prove provider availability for the hosted session, while
+`validation-lab` remains the canonical compile, test, and build proof lane. For
+the Solar-side boundary, see
+[`Android Codex Computer-Use Harness`](android-codex-computer-use.md).
+
 ## Cheap path for docs-only changes
 
 If a change only touches `README.md`, `docs/**`, or the docs-sanity workflow
