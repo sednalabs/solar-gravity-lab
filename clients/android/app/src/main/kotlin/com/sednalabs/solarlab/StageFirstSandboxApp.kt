@@ -86,16 +86,16 @@ import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.sqrt
 
-private val StageBackdrop = Color(0xFF02070D)
-private val OverlayPanel = Color(0xD8141B25)
-private val ControlRail = Color(0xE0111820)
-private val OverlayStroke = Color(0x4D8FC7FF)
-private val PrimaryAction = Color(0xFF223142)
-private val SecondaryAction = Color(0xFF1A2734)
-private val TimelineText = Color(0xFF99E1FF)
-private val SelectionText = Color(0xFFFFE8A6)
-private val HintText = Color(0xC2D8E4F5)
-private val BodyText = Color(0xD9F3F8FF)
+private val StageBackdrop = Color(0xFF02050B)
+private val OverlayPanel = Color(0xE6070D18)
+private val ControlRail = Color(0xEA07101A)
+private val OverlayStroke = Color(0x5C76F7FF)
+private val PrimaryAction = Color(0xFF17344A)
+private val SecondaryAction = Color(0xFF0E1B29)
+private val TimelineText = Color(0xFF76F7FF)
+private val SelectionText = Color(0xFFFFD36B)
+private val HintText = Color(0xC29FB6C9)
+private val BodyText = Color(0xE6E8F7FF)
 private val SurfaceText = Color(0xFFF4FBFF)
 
 private val StageCompactWidthBreakpoint = 720.dp
@@ -932,7 +932,7 @@ internal fun StageControlRail(
 ) {
     Surface(
         color = ControlRail,
-        shape = RoundedCornerShape(if (compact) 18.dp else 22.dp),
+        shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
         Row(
@@ -958,7 +958,7 @@ internal fun StagePanel(
     Surface(
         modifier = modifier,
         color = OverlayPanel,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
         Column(
@@ -994,7 +994,7 @@ internal fun StageActionButton(
             .defaultMinSize(minHeight = 46.dp)
             .sizeIn(minWidth = 88.dp),
         enabled = enabled,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = container,
             contentColor = contentColor,
