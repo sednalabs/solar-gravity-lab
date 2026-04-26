@@ -199,6 +199,11 @@ def render_markdown(payload: dict) -> str:
     if isinstance(codex_provider_manifest, dict):
         provider = codex_provider_manifest.get("provider", {})
         policy = codex_provider_manifest.get("policy", {})
+        outcome_taxonomy = policy.get("outcomeTaxonomy", {})
+        if not isinstance(outcome_taxonomy, dict):
+            outcome_taxonomy = {}
+        outcome_statuses = outcome_taxonomy.get("statuses")
+        outcome_retryability = outcome_taxonomy.get("retryability")
         lines.extend(
             [
                 "",
@@ -210,6 +215,12 @@ def render_markdown(payload: dict) -> str:
                 f"- persist on resume: `{as_flag(policy.get('persistOnResume', False))}`",
             ]
         )
+        if isinstance(outcome_statuses, list) and outcome_statuses:
+            statuses = ", ".join(f"`{status}`" for status in outcome_statuses)
+            lines.append(f"- outcome statuses: {statuses}")
+        if isinstance(outcome_retryability, list) and outcome_retryability:
+            retryability = ", ".join(f"`{value}`" for value in outcome_retryability)
+            lines.append(f"- retryability values: {retryability}")
 
     active_build = payload["summary"].get("active_build")
     if active_build:
