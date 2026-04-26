@@ -68,7 +68,7 @@ def classify_status(
         return "action_required"
     if (
         codex_provider_manifest_validation
-        and codex_provider_manifest_validation.get("ok") is not True
+        and codex_provider_manifest_validation.get("ok") is False
     ):
         return "action_required"
     return "success"

@@ -303,16 +303,22 @@ EOF
         provider_manifest_status="ready"
         rm -f "${codex_provider_manifest_validation_error_path}"
       else
-        provider_manifest_status="invalid"
-        python3 - <<'PY' "${codex_provider_manifest_validation_path}" "${codex_provider_manifest_validation_error_path}"
+        if grep -Eq "Unknown argument: validate-manifest|Unknown command: validate-manifest" "${codex_provider_manifest_validation_error_path}"; then
+          provider_manifest_status="validation_unavailable"
+        else
+          provider_manifest_status="invalid"
+        fi
+        python3 - <<'PY' "${codex_provider_manifest_validation_path}" "${codex_provider_manifest_validation_error_path}" "${provider_manifest_status}"
 import json
 import pathlib
 import sys
 
 output_path = pathlib.Path(sys.argv[1])
 error_path = pathlib.Path(sys.argv[2])
+status = sys.argv[3]
 output_path.write_text(json.dumps({
-    "ok": False,
+    "ok": False if status == "invalid" else None,
+    "status": status,
     "error": (error_path.read_text(errors="replace").strip() if error_path.exists() else "") or "provider manifest validation failed",
 }, indent=2, sort_keys=True) + "\n")
 PY
@@ -341,7 +347,7 @@ import json
 import sys
 
 provider_manifest_ready = sys.argv[7] == "ready"
-provider_manifest_available = sys.argv[7] in {"ready", "invalid"}
+provider_manifest_available = sys.argv[7] in {"ready", "invalid", "validation_unavailable"}
 print(json.dumps({
     "schema_version": 1,
     "status": "ready",
@@ -626,6 +632,8 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
         echo "- Codex Android provider manifest: \`available and validated\`"
       elif [[ "${provider_manifest_status:-unavailable}" == "invalid" ]]; then
         echo "- Codex Android provider manifest: \`invalid\`"
+      elif [[ "${provider_manifest_status:-unavailable}" == "validation_unavailable" ]]; then
+        echo "- Codex Android provider manifest: \`available; validation unsupported by selected provider ref\`"
       else
         echo "- Codex Android provider manifest: \`unavailable for the selected android-emulator-mcp ref\`"
       fi
