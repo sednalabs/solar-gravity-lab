@@ -46,6 +46,8 @@ that bundle are:
   provider-manifest status, and available tool names
 - `codex-bridge/provider-manifest.json`: generic Android provider metadata, when
   the provider can emit it
+- `codex-bridge/provider-manifest-validation.json`: the selected provider's
+  validation summary for that manifest, when supported
 - `codex-bridge-runs/`: output root for Codex bridge observations and tool-call
   artifacts
 - `active-build.json`: the app build selected for the session

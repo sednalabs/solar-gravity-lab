@@ -247,6 +247,9 @@ def main() -> None:
     openai_loop = load_json(artifacts_dir / "openai-loop" / "status.json")
     codex_bridge = load_json(artifacts_dir / "codex-bridge" / "status.json")
     codex_provider_manifest = load_json(artifacts_dir / "codex-bridge" / "provider-manifest.json")
+    codex_provider_manifest_validation = load_json(
+        artifacts_dir / "codex-bridge" / "provider-manifest-validation.json"
+    )
 
     payload = {
         "schema_version": 1,
@@ -282,6 +285,7 @@ def main() -> None:
             "openai_loop": openai_loop,
             "codex_bridge": codex_bridge,
             "codex_provider_manifest": codex_provider_manifest,
+            "codex_provider_manifest_validation": codex_provider_manifest_validation,
         },
     }
 
