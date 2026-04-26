@@ -199,6 +199,10 @@ def render_markdown(payload: dict) -> str:
     if isinstance(codex_provider_manifest, dict):
         provider = codex_provider_manifest.get("provider", {})
         policy = codex_provider_manifest.get("policy", {})
+        if not isinstance(provider, dict):
+            provider = {}
+        if not isinstance(policy, dict):
+            policy = {}
         outcome_taxonomy = policy.get("outcomeTaxonomy", {})
         if not isinstance(outcome_taxonomy, dict):
             outcome_taxonomy = {}

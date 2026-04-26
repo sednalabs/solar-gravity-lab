@@ -23,13 +23,27 @@ def load_summary_module():
     return module
 
 
-def base_payload(outcome_taxonomy: dict | None) -> dict:
-    policy = {
-        "resumeBehavior": "revalidate_required",
-        "persistOnResume": False,
-    }
-    if outcome_taxonomy is not None:
-        policy["outcomeTaxonomy"] = outcome_taxonomy
+DEFAULT_VALUE = object()
+
+
+def base_payload(
+    outcome_taxonomy: dict | None,
+    *,
+    provider: object = DEFAULT_VALUE,
+    policy: object = DEFAULT_VALUE,
+) -> dict:
+    if policy is DEFAULT_VALUE:
+        policy = {
+            "resumeBehavior": "revalidate_required",
+            "persistOnResume": False,
+        }
+        if outcome_taxonomy is not None:
+            policy["outcomeTaxonomy"] = outcome_taxonomy
+    if provider is DEFAULT_VALUE:
+        provider = {
+            "adapter": "android",
+            "transport": "android-emulator-mcp",
+        }
 
     return {
         "context": {
@@ -51,10 +65,7 @@ def base_payload(outcome_taxonomy: dict | None) -> dict:
             "job_result": "success",
             "artifacts_dir": "dist/interactive-session",
             "codex_provider_manifest": {
-                "provider": {
-                    "adapter": "android",
-                    "transport": "android-emulator-mcp",
-                },
+                "provider": provider,
                 "policy": policy,
             },
         },
@@ -85,6 +96,13 @@ def main() -> int:
     rendered_absent = module.render_markdown(base_payload(None))
     assert "- outcome statuses:" not in rendered_absent
     assert "- retryability values:" not in rendered_absent
+
+    rendered_nulls = module.render_markdown(
+        base_payload(None, provider=None, policy=None),
+    )
+    assert "- adapter: `unknown`" in rendered_nulls
+    assert "- outcome statuses:" not in rendered_nulls
+    assert "- retryability values:" not in rendered_nulls
 
     print("interactive session summary rendering tests passed")
     return 0
