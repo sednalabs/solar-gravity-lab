@@ -1128,7 +1128,7 @@ private fun MissionTimelineRail(
                     cap = StrokeCap.Round,
                 )
                 repeat(9) { index ->
-                    val tickX = startX + (endX - startX) * (index / 8f)
+                    val tickX = startX + ((endX - startX) * (index / 8f))
                     val tickHeight = if (index % 2 == 0) 8.dp.toPx() else 5.dp.toPx()
                     drawLine(
                         color = MissionTextDim.copy(alpha = 0.42f),
