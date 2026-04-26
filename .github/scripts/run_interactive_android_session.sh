@@ -313,7 +313,7 @@ output_path = pathlib.Path(sys.argv[1])
 error_path = pathlib.Path(sys.argv[2])
 output_path.write_text(json.dumps({
     "ok": False,
-    "error": error_path.read_text(errors="replace").strip() if error_path.exists() else "provider manifest validation failed",
+    "error": (error_path.read_text(errors="replace").strip() if error_path.exists() else "") or "provider manifest validation failed",
 }, indent=2, sort_keys=True) + "\n")
 PY
       fi
