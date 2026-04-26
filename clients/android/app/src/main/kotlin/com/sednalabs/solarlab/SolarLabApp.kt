@@ -1132,8 +1132,8 @@ private fun MissionTimelineRail(
                     val tickHeight = if (index % 2 == 0) 8.dp.toPx() else 5.dp.toPx()
                     drawLine(
                         color = MissionTextDim.copy(alpha = 0.42f),
-                        start = Offset(tickX, railY - tickHeight * 0.5f),
-                        end = Offset(tickX, railY + tickHeight * 0.5f),
+                        start = Offset(tickX, railY - (tickHeight * 0.5f)),
+                        end = Offset(tickX, railY + (tickHeight * 0.5f)),
                         strokeWidth = 1.dp.toPx(),
                     )
                 }
@@ -2605,6 +2605,33 @@ private fun deriveFocusedBodyHeroModel(
 
 private const val ASTRONOMICAL_UNIT_M_DOUBLE = 149_597_870_700.0
 
+private object MissionSignalTuning {
+    const val BodyNormalization = 18f
+    const val TracerNormalization = 120f
+    const val TrailNormalization = 28f
+    const val FocusLift = 0.18f
+
+    const val L1_Base = 0.24f
+    const val L1_BodyCoeff = 0.34f
+
+    const val L2_Base = 0.18f
+    const val L2_TracerCoeff = 0.52f
+    const val L2_FocusCoeff = 0.24f
+
+    const val L3_Base = 0.30f
+    const val L3_TrailCoeff = 0.42f
+
+    const val L4_Base = 0.22f
+    const val L4_TimeCoeff = 0.48f
+
+    const val L5_Base = 0.32f
+    const val L5_BodyCoeff = 0.22f
+    const val L5_TrailCoeff = 0.24f
+
+    const val L6_Base = 0.28f
+    const val L6_TracerCoeff = 0.34f
+}
+
 private fun SnapshotPresentation?.toSnapshotEntries(): List<Pair<String, String>> {
     if (this == null) {
         return listOf(
@@ -2643,17 +2670,21 @@ private fun missionRailProgress(uiState: ShellUiState): Float {
 
 private fun missionSignalValues(uiState: ShellUiState): List<Float> {
     val epochProgress = missionRailProgress(uiState)
-    val bodySignal = (uiState.renderStatus.renderedBodyCount / 18f).coerceIn(0.08f, 0.92f)
-    val tracerSignal = (uiState.renderStatus.renderedTracerCount / 120f).coerceIn(0.06f, 0.86f)
-    val trailSignal = (uiState.renderStatus.renderedTrailCount / 28f).coerceIn(0.10f, 0.90f)
-    val focusLift = if (uiState.focusedBodyId != null) 0.18f else 0f
+    val bodySignal = (uiState.renderStatus.renderedBodyCount / MissionSignalTuning.BodyNormalization)
+        .coerceIn(0.08f, 0.92f)
+    val tracerSignal = (uiState.renderStatus.renderedTracerCount / MissionSignalTuning.TracerNormalization)
+        .coerceIn(0.06f, 0.86f)
+    val trailSignal = (uiState.renderStatus.renderedTrailCount / MissionSignalTuning.TrailNormalization)
+        .coerceIn(0.10f, 0.90f)
+    val focusLift = if (uiState.focusedBodyId != null) MissionSignalTuning.FocusLift else 0f
+
     return listOf(
-        0.24f + bodySignal * 0.34f,
-        0.18f + tracerSignal * 0.52f + focusLift * 0.24f,
-        0.30f + trailSignal * 0.42f,
-        0.22f + epochProgress * 0.48f,
-        0.32f + bodySignal * 0.22f + trailSignal * 0.24f,
-        0.28f + tracerSignal * 0.34f + focusLift,
+        MissionSignalTuning.L1_Base + (bodySignal * MissionSignalTuning.L1_BodyCoeff),
+        MissionSignalTuning.L2_Base + (tracerSignal * MissionSignalTuning.L2_TracerCoeff) + (focusLift * MissionSignalTuning.L2_FocusCoeff),
+        MissionSignalTuning.L3_Base + (trailSignal * MissionSignalTuning.L3_TrailCoeff),
+        MissionSignalTuning.L4_Base + (epochProgress * MissionSignalTuning.L4_TimeCoeff),
+        MissionSignalTuning.L5_Base + (bodySignal * MissionSignalTuning.L5_BodyCoeff) + (trailSignal * MissionSignalTuning.L5_TrailCoeff),
+        MissionSignalTuning.L6_Base + (tracerSignal * MissionSignalTuning.L6_TracerCoeff) + focusLift,
     ).map { value -> value.coerceIn(0.05f, 0.95f) }
 }
 
