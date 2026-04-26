@@ -197,11 +197,16 @@ jobs:
         shell: bash
         env:
           INPUT_REF: ${{ inputs.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
           FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
 
           checkout_ref="$INPUT_REF"
+          if [[ -z "$checkout_ref" && "$EVENT_NAME" == 'pull_request' ]]; then
+            checkout_ref="$EVENT_SHA"
+          fi
           if [[ -z "$checkout_ref" ]]; then
             checkout_ref="$FALLBACK_REF"
           fi
@@ -359,11 +364,7 @@ jobs:
             --gradle-configuration-cache '${{ inputs.gradle_configuration_cache }}' \
             --base-sha '${{ steps.files.outputs.base_sha }}' \
             --head-sha '${{ steps.files.outputs.head_sha }}' \
-            --pull-request-number '${{ github.event.pull_request.number }}' \
-            --primary-changed-files dist/validation-plan/primary-files.txt \
-            --latest-changed-files dist/validation-plan/latest-files.txt \
-            --prior-evidence-json dist/validation-plan/prior-evidence/validation-summary.json \
-            --output-env dist/validation-plan/outputs.env
+            --pull-request-number '${{ github.event.pull_request.number }}'
 
           cat dist/validation-plan/outputs.env >> "$GITHUB_OUTPUT"
 

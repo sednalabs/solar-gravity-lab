@@ -25,9 +25,12 @@ def run_plan(
 ) -> dict[str, str]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        primary_path = root / "primary.txt"
-        latest_path = root / "latest.txt"
-        evidence_path = root / "evidence.json"
+        plan_dir = root / "dist" / "validation-plan"
+        evidence_dir = plan_dir / "prior-evidence"
+        evidence_dir.mkdir(parents=True)
+        primary_path = plan_dir / "primary-files.txt"
+        latest_path = plan_dir / "latest-files.txt"
+        evidence_path = evidence_dir / "validation-summary.json"
         primary_path.write_text("\n".join(primary_files) + ("\n" if primary_files else ""), encoding="utf-8")
         latest_values = primary_files if latest_files is None else latest_files
         latest_path.write_text("\n".join(latest_values) + ("\n" if latest_values else ""), encoding="utf-8")
@@ -63,17 +66,12 @@ def run_plan(
             head_sha,
             "--pull-request-number",
             pull_request_number,
-            "--primary-changed-files",
-            str(primary_path),
-            "--latest-changed-files",
-            str(latest_path),
-            "--prior-evidence-json",
-            str(evidence_path),
         ]
-        result = subprocess.run(command, check=True, text=True, capture_output=True)
+        subprocess.run(command, check=True, text=True, capture_output=True, cwd=root)
+        result_text = (plan_dir / "outputs.env").read_text(encoding="utf-8")
 
     outputs: dict[str, str] = {}
-    for line in result.stdout.splitlines():
+    for line in result_text.splitlines():
         key, _, value = line.partition("=")
         outputs[key] = value
     return outputs

@@ -13,6 +13,16 @@ PROFILE_NOTES = {
     "broad": "Explicit checkpoint mode; use sparingly for milestone passes rather than routine iteration.",
     "full": "Explicit checkpoint mode; use sparingly for milestone passes rather than routine iteration.",
 }
+PRIMARY_FILES_PATH = "dist/validation-plan/primary-files.txt"
+LATEST_FILES_PATH = "dist/validation-plan/latest-files.txt"
+PRIOR_EVIDENCE_PATH = "dist/validation-plan/prior-evidence/validation-summary.json"
+OUTPUT_ENV_PATH = "dist/validation-plan/outputs.env"
+ALLOWED_LOCAL_PATHS = {
+    PRIMARY_FILES_PATH,
+    LATEST_FILES_PATH,
+    PRIOR_EVIDENCE_PATH,
+    OUTPUT_ENV_PATH,
+}
 
 
 @dataclass
@@ -38,15 +48,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-sha", default="")
     parser.add_argument("--head-sha", default="")
     parser.add_argument("--pull-request-number", default="")
-    parser.add_argument("--primary-changed-files", required=True)
-    parser.add_argument("--latest-changed-files", required=True)
-    parser.add_argument("--prior-evidence-json")
-    parser.add_argument("--output-env")
+    parser.add_argument("--primary-changed-files", default=PRIMARY_FILES_PATH)
+    parser.add_argument("--latest-changed-files", default=LATEST_FILES_PATH)
+    parser.add_argument("--prior-evidence-json", default=PRIOR_EVIDENCE_PATH)
+    parser.add_argument("--output-env", default=OUTPUT_ENV_PATH)
     return parser.parse_args()
 
 
+def workflow_owned_path(raw_path: str) -> Path:
+    if raw_path not in ALLOWED_LOCAL_PATHS:
+        raise ValueError(f"Unexpected workflow path: {raw_path}")
+    return Path(raw_path)
+
+
 def read_changed_files(path: str) -> list[str]:
-    changed_path = Path(path)
+    changed_path = workflow_owned_path(path)
     if not changed_path.exists():
         return []
     return [
@@ -151,7 +167,7 @@ def has_android_unit_surface(files: list[str]) -> bool:
 def load_evidence(path: str | None, base_sha: str, head_sha: str, pull_request_number: str = "") -> Evidence:
     if not path:
         return Evidence(False)
-    evidence_path = Path(path)
+    evidence_path = workflow_owned_path(path)
     if not evidence_path.exists() or evidence_path.stat().st_size == 0:
         return Evidence(False)
     try:
@@ -412,7 +428,9 @@ def main() -> None:
 
     output_lines = [f"{key}={value}" for key, value in outputs.items()]
     if args.output_env:
-        Path(args.output_env).write_text("\n".join(output_lines) + "\n", encoding="utf-8")
+        output_path = workflow_owned_path(args.output_env)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
     else:
         print("\n".join(output_lines))
 
