@@ -24,16 +24,18 @@ The workflow:
 
 - boots the existing x64 emulator image on a GitHub-hosted runner
 - builds the app debug APK under `clients/android`
-- checks out and builds `android-emulator-mcp` from source inside the job
-- checks out the pinned `mcp-toolkit-rs` sibling workspace needed by the MCP
-- starts `android-emulator-mcp` on loopback only
+- checks out and builds the configured Android provider from source inside the
+  job
+- checks out the pinned `mcp-toolkit-rs` sibling workspace needed by that
+  provider
+- starts the Android provider on loopback only
 - runs install-and-launch preflight before the session opens
 - exposes a live web terminal through a Cloudflare Access-protected tunnel
 - optionally exposes the MCP HTTP surface on a second Access-protected hostname
   for agent use
 - stages helper wrappers for both Codex-native observation packets and optional
   standalone OpenAI Responses-mode calls when the selected
-  `android-emulator-mcp` ref includes those adapter CLIs
+  provider ref includes those adapter CLIs
 - uploads a predictable evidence bundle when the session ends
 
 ## Workflow inputs
@@ -41,11 +43,13 @@ The workflow:
 - `ref`
   - branch, tag, or commit from this repo
 - `android_emulator_mcp_ref`
-  - branch, tag, or commit from `sednalabs/android-emulator-mcp`
+  - branch, tag, or commit from the maintainer-configured Android provider
+    repository
   - default: `9d8e67ea7195e9b0536f9b76166e68caaa218fc9`
 - `mcp_toolkit_rs_ref`
   - branch, tag, or commit from `GraciousGazelles/toolkits-mcp-toolkit-rs`
-  - keep this in sync with the MCP repo's path-based toolkit dependency surface
+  - keep this in sync with the provider's path-based toolkit dependency
+    surface
 - `android_validation_mode`
   - one of:
     - `shell-v2`
@@ -73,7 +77,7 @@ The workflow:
 This workflow needs explicit repo reads and tunnel access:
 
 - `SGL_ANDROID_EMULATOR_MCP_READ_TOKEN`
-  - read access to `sednalabs/android-emulator-mcp`
+  - read access to the maintainer-configured Android provider repository
 - `SGL_MCP_TOOLKIT_RS_READ_TOKEN`
   - read access to `GraciousGazelles/toolkits-mcp-toolkit-rs`
 - `SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN`
@@ -82,7 +86,7 @@ This workflow needs explicit repo reads and tunnel access:
   - the hostname protected by Cloudflare Access for the human browser terminal
   - recommended value: `solarlab-android-debug.sednalabs.io`
 - `SGL_INTERACTIVE_MCP_HOSTNAME`
-  - optional machine-facing hostname for `android-emulator-mcp`
+  - optional machine-facing hostname for the Android provider
   - recommended value: `solarlab-android-mcp.sednalabs.io`
   - omit only if the rollout is intentionally human-terminal-only
 
@@ -100,7 +104,7 @@ mechanism that would dump one-time credentials into GitHub Actions logs.
 
 Current safety posture:
 
-- `android-emulator-mcp` binds to `127.0.0.1` only
+- the Android provider binds to `127.0.0.1` only
 - `ttyd` binds to `127.0.0.1` only
 - Cloudflare Tunnel exposes only the runner-local services we route explicitly
 - the browser terminal and the MCP should use separate hostnames and separate
@@ -121,15 +125,15 @@ Use the same dedicated tunnel for both runner-local services:
   - human-facing browser terminal backed by `ttyd`
   - gated by Cloudflare Access human identity policy
 - `solarlab-android-mcp.sednalabs.io`
-  - machine-facing `android-emulator-mcp` HTTP endpoint
+  - machine-facing Android provider HTTP endpoint
   - gated by Cloudflare Access service-token policy
 
 This split keeps the rollout honest:
 
 - humans do not need to tunnel raw runner credentials through GitHub logs
 - agents do not need a fake mailbox or OTP flow
-- the MCP can stay machine-usable without pretending the browser terminal is the
-  right auth surface for automation
+- the provider can stay machine-usable without pretending the browser terminal
+  is the right auth surface for automation
 
 Recommended first Cloudflare posture:
 
@@ -162,6 +166,18 @@ Expected contents:
 - `session-state.json`
 - `mcp-health.json`
 
+The Codex-native Android provider evidence is concentrated in:
+
+- `codex-bridge/status.json`
+- `codex-bridge/provider-manifest.json`, when the selected
+  provider ref can emit it
+- `codex-bridge-runs/`
+- `live-access/codex-android-tools.sh`
+
+The provider manifest is Android capability metadata from the selected provider.
+Solar Lab stores and summarizes it as run evidence; it does not define the
+generic computer-use contract here.
+
 The summary payloads live under:
 
 - `dist/interactive-session-summary/`
@@ -172,6 +188,7 @@ Those files are designed to answer:
 - whether preflight passed
 - whether human terminal access came up
 - whether machine-facing MCP access came up
+- whether the Codex-native Android provider helper and manifest were available
 - how the session ended
 - where the evidence bundle is rooted
 
@@ -199,8 +216,8 @@ window is reached.
 
 ## Codex native Android tools
 
-When the selected `android-emulator-mcp` ref includes the native Codex dynamic
-tool CLI, the hosted session stages:
+When the selected Android provider ref includes the native Codex dynamic-tool
+CLI, the hosted session stages:
 
 - `dist/interactive-session/live-access/codex-android-tools.sh`
 
@@ -212,7 +229,7 @@ This is the native harness direction:
 
 - it does not require `OPENAI_API_KEY`
 - it talks to `http://127.0.0.1:9526/mcp`
-- it keeps `android-emulator-mcp` as the Android control plane
+- it keeps the configured Android provider as the Android control plane
 - it lets Codex register model-callable Android tools in the normal thread flow
 - the model-facing tools are `android_observe` and `android_step`
 
@@ -227,10 +244,23 @@ Optional debug helper:
 The debug helper is still useful when you want to inspect the raw observation
 payloads manually, but it is not the native model-callable path.
 
+The session also writes:
+
+- `dist/interactive-session/codex-bridge/status.json`
+- `dist/interactive-session/codex-bridge/provider-manifest.json`, when
+  available
+- `dist/interactive-session/codex-bridge-runs/`
+
+Those files record which Android provider backend was available, which native
+tool names were exposed, where session artifacts live, and what read/write lease
+policy applied. See
+[`Android Codex Computer-Use Harness`](android-codex-computer-use.md) for the Solar-side
+boundary and artifact contract.
+
 ## Standalone OpenAI helper
 
-When the selected `android-emulator-mcp` ref includes the OpenAI adapter CLI,
-the hosted session stages:
+When the selected Android provider ref includes the OpenAI adapter CLI, the
+hosted session stages:
 
 - `dist/interactive-session/live-access/openai-android-loop.sh`
 - `dist/interactive-session/openai-loop/config.json`
@@ -238,7 +268,7 @@ the hosted session stages:
 This helper is intentionally optional standalone API mode:
 
 - it talks to `http://127.0.0.1:9526/mcp`
-- it keeps `android-emulator-mcp` as the Android control plane
+- it keeps the configured Android provider as the Android control plane
 - it uses the Responses-native loop above that MCP surface
 - it prefers uploaded OpenAI `file_id` references for screenshots and XML/log
   artifacts when `OPENAI_API_KEY` is present in the live shell
