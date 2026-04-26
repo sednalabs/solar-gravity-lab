@@ -105,8 +105,7 @@ This repository's hosted workflow model supports that by combining:
 - reusable Android artifacts
 - bounded live emulator sessions
 - structured Android interaction surfaces where available
-- native Codex Android provider artifacts emitted by the selected
-  `android-emulator-mcp` ref
+- native Codex Android provider artifacts emitted by the selected provider ref
 
 That combination lets a model participate in real investigation and proof work
 without depending on one laptop's local state or on purely hypothetical UI
@@ -116,14 +115,14 @@ reasoning.
 
 Solar Gravity Lab is the consumer and proof target for the native Android/Codex
 computer-use harness. The generic provider backend and model-callable Android
-tools live in `android-emulator-mcp`; Solar Lab sessions pin that repository by
-ref, run the app in a hosted emulator, and preserve the emitted provider
-manifest plus session artifacts as evidence.
+tools are supplied by a maintainer-configured Android provider; Solar Lab
+sessions pin that provider by ref, run the app in a hosted emulator, and
+preserve the emitted provider manifest plus session artifacts as evidence.
 
 That means Solar Lab documentation should describe:
 
 - which hosted workflow produced the app build or live session
-- which Solar Lab, `android-emulator-mcp`, and toolkit refs were used
+- which Solar Lab, Android provider, and toolkit refs were used
 - whether `android_observe` and `android_step` were available through the
   Codex dynamic-tool path
 - where the provider manifest and session artifacts were uploaded

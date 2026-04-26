@@ -2,8 +2,9 @@
 
 Solar Gravity Lab uses the native Android/Codex computer-use harness as a
 consumer and proving app. The reusable Android provider, Codex dynamic-tool
-adapter, and generic computer-use contract live in `android-emulator-mcp`; this
-repository should not grow a second owner for that tooling.
+adapter, and generic computer-use contract are supplied by a
+maintainer-configured Android provider; this repository should not grow a
+second owner for that tooling.
 
 ## Boundary
 
@@ -11,14 +12,14 @@ Solar Gravity Lab owns:
 
 - a real Android app under [`clients/android`](../clients/android/README.md)
   that can be built, installed, launched, observed, and driven in hosted runs
-- workflow inputs that pin the Solar Lab ref, the `android-emulator-mcp` ref,
-  and the supporting toolkit ref for a session
+- workflow inputs that pin the Solar Lab ref, the Android provider ref, and the
+  supporting toolkit ref for a session
 - hosted workflow artifacts that prove which app build and Android provider
   were active for the run
 - app-specific validation expectations, such as render readiness, runtime
   snapshot availability, and interaction continuity
 
-`android-emulator-mcp` owns:
+The selected Android provider owns:
 
 - Android device and emulator control
 - the generic Codex-facing provider backend
@@ -38,7 +39,7 @@ artifact bundle under `dist/interactive-session/`. The Codex-facing parts of
 that bundle are:
 
 - `live-access/codex-android-tools.sh`: dynamic-tool provider helper, when the
-  selected `android-emulator-mcp` ref supports it
+  selected provider ref supports it
 - `live-access/codex-android-observe.sh`: optional explicit observation helper
   for debugging
 - `codex-bridge/status.json`: readiness, mode, helper paths, output root,
@@ -49,7 +50,8 @@ that bundle are:
   artifacts
 - `active-build.json`: the app build selected for the session
 - `session-state.json`: the final hosted session status
-- `mcp-health.json`: the Android MCP health payload captured by the workflow
+- `mcp-health.json`: the Android provider health payload captured by the
+  workflow
 
 The live shell also exports the dynamic-tool command when available:
 
@@ -62,8 +64,8 @@ does not require an OpenAI API key in the session.
 
 ## Provider Manifest
 
-The provider manifest is emitted by the selected `android-emulator-mcp` ref and
-stored by Solar Lab as evidence. It is generic Android capability metadata, not a
+The provider manifest is emitted by the selected Android provider ref and stored
+by Solar Lab as evidence. It is generic Android capability metadata, not a
 Solar-specific tool definition.
 
 Solar Lab uses the manifest to record:
@@ -88,7 +90,7 @@ Use the hosted workflows for different questions:
 - `interactive-android-build` produces reusable Android build artifacts for
   hosted interactive work.
 - `interactive-android-session` proves that a bounded hosted emulator session
-  can launch Solar Lab, expose the Android MCP control plane, stage the Codex
+  can launch Solar Lab, expose the Android provider control plane, stage the Codex
   dynamic-tool helper, and upload the resulting session artifacts.
 - `prerelease-apk` proves installable preview packaging from a promoted head.
 
