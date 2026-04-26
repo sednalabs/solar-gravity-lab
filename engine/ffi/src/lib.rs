@@ -27,7 +27,8 @@ use solarlab_hardware::{
     HardwareProfile,
 };
 use solarlab_physics::{
-    detect_cpu_features, CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend,
+    cpu_feature_flags, detect_cpu_features, solver_execution_report_for_backend, CollisionModel,
+    IntegratorKind, PhysicsPolicy, SolverBackend, SolverExecutionReport, SolverFallbackCode,
 };
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_scene::SceneTrailFamily;
@@ -36,7 +37,7 @@ use solarlab_vulkan_adapter::{
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 3;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 4;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -174,8 +175,12 @@ pub enum SlBodyClass {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlRuntimeInfo {
     pub abi_version: u32,
+    pub requested_cpu_backend: SlCpuBackend,
     pub cpu_backend: SlCpuBackend,
     pub gpu_backend: SlGpuBackend,
+    pub cpu_feature_flags: u64,
+    pub cpu_solver_path: u32,
+    pub cpu_fallback_code: u32,
 }
 
 #[repr(C)]
@@ -417,6 +422,7 @@ pub struct SlBufferViewResult {
 /// Single runtime session entry in the process registry.
 struct RuntimeSession {
     runtime: WorldRuntime,
+    runtime_info: SlRuntimeInfo,
     vulkan_scene_adapter: VulkanSceneAdapter,
 }
 
@@ -649,11 +655,20 @@ pub fn abi_version() -> u32 {
 }
 
 #[must_use]
-pub fn runtime_info(cpu_backend: CpuBackend, gpu_backend: GpuBackend) -> SlRuntimeInfo {
+pub fn runtime_info(
+    requested_cpu_backend: CpuBackend,
+    gpu_backend: GpuBackend,
+    solver_execution: &SolverExecutionReport,
+) -> SlRuntimeInfo {
+    let effective_cpu_backend = cpu_backend_for_solver_backend(&solver_execution.effective_backend);
     SlRuntimeInfo {
         abi_version: SOLARLAB_V2_ABI_VERSION,
-        cpu_backend: encode_cpu_backend(&cpu_backend),
+        requested_cpu_backend: encode_cpu_backend(&requested_cpu_backend),
+        cpu_backend: encode_cpu_backend(&effective_cpu_backend),
         gpu_backend: encode_gpu_backend(&gpu_backend),
+        cpu_feature_flags: cpu_feature_flags(&solver_execution.active_cpu_features),
+        cpu_solver_path: cpu_solver_path_code(&solver_execution.path_id),
+        cpu_fallback_code: cpu_fallback_code(&solver_execution.fallback_code),
     }
 }
 
@@ -694,6 +709,7 @@ pub extern "C" fn sl_v2_session_create(params: SlSessionCreateParams) -> SlSessi
 
     let handle = registry.insert(RuntimeSession {
         runtime,
+        runtime_info: info,
         vulkan_scene_adapter: VulkanSceneAdapter::default(),
     });
 
@@ -752,14 +768,9 @@ pub extern "C" fn sl_v2_session_runtime_info(handle: SlRuntimeHandle) -> SlRunti
         };
     };
 
-    let snapshot = session.runtime.snapshot();
-
     SlRuntimeInfoResult {
         result: status(SlStatusCode::Ok),
-        info: runtime_info(
-            snapshot.hardware_profile.cpu_backend,
-            snapshot.hardware_profile.gpu_backend,
-        ),
+        info: session.runtime_info,
     }
 }
 
@@ -1025,12 +1036,13 @@ fn build_session(
     let scenario_id = decode_identifier(&params.scenario_id, params.scenario_id_len)?;
     let root_branch_id = decode_identifier(&params.root_branch_id, params.root_branch_id_len)?;
     let timeline_semantics = decode_timeline_semantics(params.timeline_semantics)?;
-    let cpu_backend = decode_cpu_backend(params.cpu_backend)?;
+    let requested_cpu_backend = decode_cpu_backend(params.cpu_backend)?;
     let gpu_backend = decode_gpu_backend(params.gpu_backend)?;
+    let requested_solver_backend = solver_for_cpu_backend(&requested_cpu_backend);
 
     let runtime_config = RuntimeConfig {
         physics: PhysicsPolicy {
-            solver_backend: solver_for_cpu_backend(&cpu_backend),
+            solver_backend: requested_solver_backend.clone(),
             integrator: IntegratorKind::LeapfrogKickDriftKick,
             collision_model: CollisionModel::None,
             max_substep_seconds: 1.0,
@@ -1041,17 +1053,24 @@ fn build_session(
 
     let gpu_backend_report = default_gpu_backend_report(&gpu_backend);
     let cpu_features = detect_cpu_features();
+    let solver_execution =
+        solver_execution_report_for_backend(&requested_solver_backend, &cpu_features);
+    let effective_cpu_backend = cpu_backend_for_solver_backend(&solver_execution.effective_backend);
     let gpu_workload_assignments = gpu_backend_report.workload_assignments();
     let gpu_interop_policy = gpu_backend_report.interop_policy();
     let hardware_profile = HardwareProfile {
-        cpu_backend: cpu_backend.clone(),
+        cpu_backend: effective_cpu_backend,
         gpu_backend: gpu_backend.clone(),
         gpu_backend_report,
         gpu_workload_assignments,
         gpu_interop_policy,
         cpu_features: cpu_features.clone(),
         gpu_features: Vec::new(),
-        acceleration_modes: default_acceleration_modes(&gpu_backend, &cpu_backend, &cpu_features),
+        acceleration_modes: default_acceleration_modes(
+            &gpu_backend,
+            &cpu_backend_for_solver_backend(&solver_execution.effective_backend),
+            &cpu_features,
+        ),
     };
 
     let runtime = WorldRuntime::new(
@@ -1062,7 +1081,7 @@ fn build_session(
         params.created_at_unix_ms,
     );
 
-    let info = runtime_info(cpu_backend, gpu_backend);
+    let info = runtime_info(requested_cpu_backend, gpu_backend, &solver_execution);
     let summary = snapshot_summary(&runtime)?;
 
     Ok((runtime, info, summary))
@@ -1160,8 +1179,8 @@ fn cpu_acceleration_modes(cpu_backend: &CpuBackend, cpu_features: &[String]) -> 
     let mut modes = Vec::new();
     match cpu_backend {
         CpuBackend::ReferenceScalar => modes.push("cpu-scalar".to_owned()),
-        CpuBackend::SimdArm64 => modes.push("cpu-simd-arm64-requested".to_owned()),
-        CpuBackend::SimdX64 => modes.push("cpu-simd-x64-requested".to_owned()),
+        CpuBackend::SimdArm64 => modes.push("cpu-simd-arm64-active".to_owned()),
+        CpuBackend::SimdX64 => modes.push("cpu-simd-x64-active".to_owned()),
     }
 
     for feature in cpu_features {
@@ -1491,6 +1510,32 @@ fn solver_for_cpu_backend(cpu_backend: &CpuBackend) -> SolverBackend {
     }
 }
 
+fn cpu_backend_for_solver_backend(solver_backend: &SolverBackend) -> CpuBackend {
+    match solver_backend {
+        SolverBackend::ReferenceScalar => CpuBackend::ReferenceScalar,
+        SolverBackend::SimdArm64 => CpuBackend::SimdArm64,
+        SolverBackend::SimdX64 => CpuBackend::SimdX64,
+    }
+}
+
+fn cpu_solver_path_code(path_id: &str) -> u32 {
+    match path_id {
+        "scalar.reference" => 0,
+        "simd.arm64.neon-f64-pairwise" => 1,
+        "simd.x64.scalar-fallback" => 2,
+        _ => u32::MAX,
+    }
+}
+
+fn cpu_fallback_code(fallback_code: &SolverFallbackCode) -> u32 {
+    match fallback_code {
+        SolverFallbackCode::None => 0,
+        SolverFallbackCode::SimdArm64OnNonAarch64Host => 1,
+        SolverFallbackCode::SimdArm64MissingNeon => 2,
+        SolverFallbackCode::SimdX64Unavailable => 3,
+    }
+}
+
 fn encode_cpu_backend(cpu_backend: &CpuBackend) -> SlCpuBackend {
     match cpu_backend {
         CpuBackend::ReferenceScalar => SlCpuBackend::ReferenceScalar,
@@ -1543,8 +1588,12 @@ fn status(code: SlStatusCode) -> SlResult {
 fn empty_runtime_info() -> SlRuntimeInfo {
     SlRuntimeInfo {
         abi_version: SOLARLAB_V2_ABI_VERSION,
+        requested_cpu_backend: SlCpuBackend::ReferenceScalar,
         cpu_backend: SlCpuBackend::ReferenceScalar,
         gpu_backend: SlGpuBackend::None,
+        cpu_feature_flags: 0,
+        cpu_solver_path: 0,
+        cpu_fallback_code: 0,
     }
 }
 
@@ -2144,12 +2193,16 @@ mod android_jni {
         let native_result = create_native_result(env, result.result)?;
         env.new_object(
             CLASS_NATIVE_RUNTIME_INFO_RESULT,
-            "(Lcom/sednalabs/solarlab/runtime/NativeResult;III)V",
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;IIIIJII)V",
             &[
                 JValue::Object(&native_result),
                 JValue::Int(i32::try_from(result.info.abi_version).unwrap_or(i32::MAX)),
+                JValue::Int(result.info.requested_cpu_backend as i32),
                 JValue::Int(result.info.cpu_backend as i32),
                 JValue::Int(result.info.gpu_backend as i32),
+                JValue::Long(i64::try_from(result.info.cpu_feature_flags).unwrap_or(i64::MAX)),
+                JValue::Int(i32::try_from(result.info.cpu_solver_path).unwrap_or(i32::MAX)),
+                JValue::Int(i32::try_from(result.info.cpu_fallback_code).unwrap_or(i32::MAX)),
             ],
         )
     }
@@ -2408,7 +2461,7 @@ mod android_jni {
 
 #[cfg(test)]
 mod tests {
-    use std::mem::size_of;
+    use std::mem::{align_of, offset_of, size_of};
 
     use solarlab_domain::{BodyClass, BodyId, Vector3d};
     use solarlab_hardware::{GpuBackend, GpuBackendStateFamily};
@@ -2419,14 +2472,33 @@ mod tests {
         sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_export_vulkan_scene,
         sl_v2_session_refresh, sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
         sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlBodyClass,
-        SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlSessionCommand,
-        SlSessionCreateParams, SlStatusCode, SlTimelineSemantics, SlVector3d, SlVulkanBodyInstance,
-        SlVulkanSceneBufferKind, SlVulkanTrailSpan, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
+        SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlRuntimeInfo,
+        SlRuntimeInfoResult, SlSessionCommand, SlSessionCreateParams, SlStatusCode,
+        SlTimelineSemantics, SlVector3d, SlVulkanBodyInstance, SlVulkanSceneBufferKind,
+        SlVulkanTrailSpan, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
 
     #[test]
     fn abi_version_matches_constant() {
         assert_eq!(sl_v2_abi_version(), SOLARLAB_V2_ABI_VERSION);
+    }
+
+    #[test]
+    fn runtime_info_layout_matches_c_header_contract() {
+        assert_eq!(size_of::<SlRuntimeInfo>(), 32);
+        assert_eq!(align_of::<SlRuntimeInfo>(), 8);
+        assert_eq!(offset_of!(SlRuntimeInfo, abi_version), 0);
+        assert_eq!(offset_of!(SlRuntimeInfo, requested_cpu_backend), 4);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_backend), 8);
+        assert_eq!(offset_of!(SlRuntimeInfo, gpu_backend), 12);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_feature_flags), 16);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_solver_path), 24);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_fallback_code), 28);
+
+        assert_eq!(size_of::<SlRuntimeInfoResult>(), 40);
+        assert_eq!(align_of::<SlRuntimeInfoResult>(), 8);
+        assert_eq!(offset_of!(SlRuntimeInfoResult, result), 0);
+        assert_eq!(offset_of!(SlRuntimeInfoResult, info), 8);
     }
 
     #[test]
@@ -2436,10 +2508,16 @@ mod tests {
         assert_ne!(create.handle.raw, 0);
 
         assert_eq!(
+            create.runtime_info.requested_cpu_backend,
+            SlCpuBackend::ReferenceScalar
+        );
+        assert_eq!(
             create.runtime_info.cpu_backend,
             SlCpuBackend::ReferenceScalar
         );
         assert_eq!(create.runtime_info.gpu_backend, SlGpuBackend::None);
+        assert_eq!(create.runtime_info.cpu_solver_path, 0);
+        assert_eq!(create.runtime_info.cpu_fallback_code, 0);
 
         let summary = sl_v2_session_snapshot_summary(create.handle);
         assert_eq!(summary.result.code, SlStatusCode::Ok);
@@ -2453,8 +2531,14 @@ mod tests {
 
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            runtime_info.info.requested_cpu_backend,
+            SlCpuBackend::ReferenceScalar
+        );
         assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::ReferenceScalar);
         assert_eq!(runtime_info.info.gpu_backend, SlGpuBackend::None);
+        assert_eq!(runtime_info.info.cpu_solver_path, 0);
+        assert_eq!(runtime_info.info.cpu_fallback_code, 0);
 
         let destroy = sl_v2_session_destroy(create.handle);
         assert_eq!(destroy.code, SlStatusCode::Ok);
@@ -2476,6 +2560,44 @@ mod tests {
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info.gpu_backend, SlGpuBackend::OpenCl);
+
+        let destroy = sl_v2_session_destroy(create.handle);
+        assert_eq!(destroy.code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn runtime_info_preserves_requested_and_effective_arm64_cpu_truth() {
+        let mut params = new_params("sol-system", "main");
+        params.cpu_backend = 1;
+
+        let create = sl_v2_session_create(params);
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            create.runtime_info.requested_cpu_backend,
+            SlCpuBackend::SimdArm64
+        );
+
+        let has_neon = create.runtime_info.cpu_feature_flags & 1 != 0;
+        if cfg!(target_arch = "aarch64") && has_neon {
+            assert_eq!(create.runtime_info.cpu_backend, SlCpuBackend::SimdArm64);
+            assert_eq!(create.runtime_info.cpu_solver_path, 1);
+            assert_eq!(create.runtime_info.cpu_fallback_code, 0);
+        } else {
+            assert_eq!(
+                create.runtime_info.cpu_backend,
+                SlCpuBackend::ReferenceScalar
+            );
+            assert_eq!(create.runtime_info.cpu_solver_path, 0);
+            if cfg!(target_arch = "aarch64") {
+                assert_eq!(create.runtime_info.cpu_fallback_code, 2);
+            } else {
+                assert_eq!(create.runtime_info.cpu_fallback_code, 1);
+            }
+        }
+
+        let runtime_info = sl_v2_session_runtime_info(create.handle);
+        assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
+        assert_eq!(runtime_info.info, create.runtime_info);
 
         let destroy = sl_v2_session_destroy(create.handle);
         assert_eq!(destroy.code, SlStatusCode::Ok);

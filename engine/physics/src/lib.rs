@@ -63,8 +63,17 @@ pub struct SolverExecutionReport {
     pub requested_backend: SolverBackend,
     pub effective_backend: SolverBackend,
     pub path_id: String,
+    pub fallback_code: SolverFallbackCode,
     pub fallback_reason: Option<String>,
     pub active_cpu_features: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SolverFallbackCode {
+    None,
+    SimdArm64OnNonAarch64Host,
+    SimdArm64MissingNeon,
+    SimdX64Unavailable,
 }
 
 impl SolverExecutionReport {
@@ -74,6 +83,7 @@ impl SolverExecutionReport {
             requested_backend: SolverBackend::ReferenceScalar,
             effective_backend: SolverBackend::ReferenceScalar,
             path_id: "scalar.reference".to_owned(),
+            fallback_code: SolverFallbackCode::None,
             fallback_reason: None,
             active_cpu_features: detect_cpu_features(),
         }
@@ -98,8 +108,41 @@ pub struct BackendEquivalenceReport {
 struct DispatchDecision {
     effective_backend: SolverBackend,
     path_id: String,
+    fallback_code: SolverFallbackCode,
     fallback_reason: Option<String>,
+    arm64_gravity_kernel: Option<Arm64GravityKernel>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Arm64GravityKernel {
+    NeonF64Pairwise,
+    PortableScalarOracle,
+}
+
+impl Arm64GravityKernel {
+    fn best_available_for_host() -> Self {
+        if arm64_neon_runtime_available() {
+            Self::NeonF64Pairwise
+        } else {
+            Self::PortableScalarOracle
+        }
+    }
+}
+
+pub const CPU_FEATURE_NEON: u64 = 1 << 0;
+pub const CPU_FEATURE_FP: u64 = 1 << 1;
+pub const CPU_FEATURE_FP16: u64 = 1 << 2;
+pub const CPU_FEATURE_FHM: u64 = 1 << 3;
+pub const CPU_FEATURE_DOTPROD: u64 = 1 << 4;
+pub const CPU_FEATURE_I8MM: u64 = 1 << 5;
+pub const CPU_FEATURE_SVE: u64 = 1 << 6;
+pub const CPU_FEATURE_SVE2: u64 = 1 << 7;
+pub const CPU_FEATURE_SME: u64 = 1 << 8;
+pub const CPU_FEATURE_SME2: u64 = 1 << 9;
+pub const CPU_FEATURE_LSE: u64 = 1 << 10;
+pub const CPU_FEATURE_LSE2: u64 = 1 << 11;
+pub const CPU_FEATURE_CRC: u64 = 1 << 12;
+pub const CPU_FEATURE_MOPS: u64 = 1 << 13;
 
 const G_M3_PER_KG_S2: f64 = 6.67430e-11;
 const MIN_DISTANCE_M2: f64 = 1.0e-12;
@@ -159,7 +202,14 @@ pub fn advance_authoritative_with_features(
         SolverBackend::ReferenceScalar => {
             advance_authoritative_scalar(policy, bodies, delta_seconds)
         }
-        SolverBackend::SimdArm64 => advance_authoritative_arm64(policy, bodies, delta_seconds),
+        SolverBackend::SimdArm64 => advance_authoritative_arm64(
+            policy,
+            bodies,
+            delta_seconds,
+            decision
+                .arm64_gravity_kernel
+                .unwrap_or(Arm64GravityKernel::PortableScalarOracle),
+        ),
         SolverBackend::SimdX64 => advance_authoritative_x64(policy, bodies, delta_seconds),
     };
 
@@ -169,10 +219,28 @@ pub fn advance_authoritative_with_features(
             requested_backend: policy.solver_backend.clone(),
             effective_backend: decision.effective_backend,
             path_id: decision.path_id,
+            fallback_code: decision.fallback_code,
             fallback_reason: decision.fallback_reason,
             active_cpu_features: normalized_features,
         },
     )
+}
+
+#[must_use]
+pub fn solver_execution_report_for_backend(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+) -> SolverExecutionReport {
+    let normalized_features = normalize_cpu_features(active_cpu_features);
+    let decision = dispatch_solver_backend(requested_backend, &normalized_features);
+    SolverExecutionReport {
+        requested_backend: requested_backend.clone(),
+        effective_backend: decision.effective_backend,
+        path_id: decision.path_id,
+        fallback_code: decision.fallback_code,
+        fallback_reason: decision.fallback_reason,
+        active_cpu_features: normalized_features,
+    }
 }
 
 #[must_use]
@@ -193,27 +261,32 @@ pub fn detect_cpu_features() -> Vec<String> {
 fn add_arm64_features(features: &mut BTreeSet<String>) {
     // Runtime feature detection gives non-Linux ARM64 hosts a truthful baseline
     // even when /proc/cpuinfo is unavailable.
-    if std::arch::is_aarch64_feature_detected!("neon") {
+    if arm64_neon_runtime_available() {
         features.insert("neon".to_owned());
     }
 
-    let tokens = cpuinfo_feature_tokens();
-    if has_any_token(&tokens, &["asimd", "neon"]) {
-        features.insert("neon".to_owned());
-    }
-    if has_any_token(&tokens, &["fma", "fhm", "asimdfhm"]) {
-        features.insert("fma".to_owned());
-    }
-    if has_any_token(&tokens, &["sve2"]) {
-        features.insert("sve2".to_owned());
-    }
-    if has_any_token(&tokens, &["sme", "sme2"]) {
-        features.insert("sme".to_owned());
+    for token in cpuinfo_feature_tokens() {
+        insert_normalized_cpu_feature(features, &token);
     }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
 fn add_arm64_features(_features: &mut BTreeSet<String>) {}
+
+#[cfg(target_arch = "aarch64")]
+fn arm64_neon_runtime_available() -> bool {
+    std::arch::is_aarch64_feature_detected!("neon")
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn arm64_neon_runtime_available() -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+fn has_any_token(tokens: &BTreeSet<String>, aliases: &[&str]) -> bool {
+    aliases.iter().any(|alias| tokens.contains(*alias))
+}
 
 #[cfg(target_arch = "x86_64")]
 fn add_x64_features(features: &mut BTreeSet<String>) {
@@ -276,7 +349,12 @@ pub fn compare_arm64_kernel_to_scalar(
     let mut arm64_bodies = initial_bodies.to_vec();
 
     let scalar_invariants = advance_authoritative_scalar(policy, &mut scalar_bodies, delta_seconds);
-    let arm64_invariants = advance_authoritative_arm64(policy, &mut arm64_bodies, delta_seconds);
+    let arm64_invariants = advance_authoritative_arm64(
+        policy,
+        &mut arm64_bodies,
+        delta_seconds,
+        Arm64GravityKernel::best_available_for_host(),
+    );
     let metrics = solver_equivalence_metrics(&arm64_bodies, &scalar_bodies);
 
     let energy_scale = scalar_invariants.total_energy_j.abs().max(1.0);
@@ -357,6 +435,7 @@ fn advance_authoritative_arm64(
     policy: &PhysicsPolicy,
     bodies: &mut [MassiveBodyState],
     delta_seconds: f64,
+    gravity_kernel: Arm64GravityKernel,
 ) -> PhysicsInvariants {
     if bodies.is_empty() || delta_seconds <= 0.0 {
         return compute_invariants(bodies);
@@ -372,7 +451,7 @@ fn advance_authoritative_arm64(
     let dt_seconds = delta_seconds / step_count as f64;
 
     for _ in 0..step_count {
-        integrate_substep_arm64(bodies, dt_seconds);
+        integrate_substep_arm64(bodies, dt_seconds, gravity_kernel);
     }
 
     compute_invariants(bodies)
@@ -457,8 +536,12 @@ fn integrate_substep(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
     }
 }
 
-fn integrate_substep_arm64(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
-    let a0 = pairwise_gravity_accelerations_arm64(bodies);
+fn integrate_substep_arm64(
+    bodies: &mut [MassiveBodyState],
+    dt_seconds: f64,
+    gravity_kernel: Arm64GravityKernel,
+) {
+    let a0 = pairwise_gravity_accelerations_arm64(bodies, gravity_kernel);
     let half_dt = 0.5 * dt_seconds;
 
     for i in 0..bodies.len() {
@@ -479,7 +562,7 @@ fn integrate_substep_arm64(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
             .mul_add(dt_seconds, bodies[i].position_m.z);
     }
 
-    let a1 = pairwise_gravity_accelerations_arm64(bodies);
+    let a1 = pairwise_gravity_accelerations_arm64(bodies, gravity_kernel);
     for i in 0..bodies.len() {
         bodies[i].velocity_mps.x = a1[i].x.mul_add(half_dt, bodies[i].velocity_mps.x);
         bodies[i].velocity_mps.y = a1[i].y.mul_add(half_dt, bodies[i].velocity_mps.y);
@@ -512,7 +595,37 @@ fn pairwise_gravity_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> 
     accelerations
 }
 
-fn pairwise_gravity_accelerations_arm64(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+#[allow(unsafe_code)]
+fn pairwise_gravity_accelerations_arm64(
+    bodies: &[MassiveBodyState],
+    gravity_kernel: Arm64GravityKernel,
+) -> Vec<Vector3d> {
+    match gravity_kernel {
+        Arm64GravityKernel::NeonF64Pairwise => pairwise_gravity_accelerations_arm64_neon(bodies),
+        Arm64GravityKernel::PortableScalarOracle => {
+            pairwise_gravity_accelerations_arm64_portable(bodies)
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[allow(unsafe_code)]
+fn pairwise_gravity_accelerations_arm64_neon(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+    assert!(
+        arm64_neon_runtime_available(),
+        "Arm64 NEON solver selected without runtime NEON support"
+    );
+    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
+    // and the function does not expose raw pointers or outlive the input slice.
+    unsafe { arm64_neon::pairwise_gravity_accelerations_neon_f64(bodies) }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn pairwise_gravity_accelerations_arm64_neon(_bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+    panic!("Arm64 NEON solver selected on a non-aarch64 host")
+}
+
+fn pairwise_gravity_accelerations_arm64_portable(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
     let mut accelerations = vec![Vector3d::default(); bodies.len()];
     for i in 0..bodies.len() {
         for j in (i + 1)..bodies.len() {
@@ -535,6 +648,67 @@ fn pairwise_gravity_accelerations_arm64(bodies: &[MassiveBodyState]) -> Vec<Vect
     accelerations
 }
 
+#[cfg(target_arch = "aarch64")]
+#[allow(unsafe_code)]
+mod arm64_neon {
+    use std::arch::aarch64::{
+        float64x2_t, vdupq_n_f64, vfmaq_n_f64, vgetq_lane_f64, vsetq_lane_f64, vsubq_f64,
+    };
+
+    use solarlab_domain::Vector3d;
+
+    use super::{MassiveBodyState, G_M3_PER_KG_S2, MIN_DISTANCE_M2};
+
+    #[target_feature(enable = "neon")]
+    pub unsafe fn pairwise_gravity_accelerations_neon_f64(
+        bodies: &[MassiveBodyState],
+    ) -> Vec<Vector3d> {
+        let mut accelerations = vec![Vector3d::default(); bodies.len()];
+        for i in 0..bodies.len() {
+            for j in (i + 1)..bodies.len() {
+                let delta_xy = vsubq_f64(
+                    xy_vector(bodies[j].position_m.x, bodies[j].position_m.y),
+                    xy_vector(bodies[i].position_m.x, bodies[i].position_m.y),
+                );
+                let delta_x = vgetq_lane_f64::<0>(delta_xy);
+                let delta_y = vgetq_lane_f64::<1>(delta_xy);
+                let delta_z = bodies[j].position_m.z - bodies[i].position_m.z;
+                let distance_sq = delta_x
+                    .mul_add(delta_x, delta_y.mul_add(delta_y, delta_z * delta_z))
+                    .max(MIN_DISTANCE_M2);
+                let inv_distance = distance_sq.sqrt().recip();
+                let inv_distance_cubed = inv_distance * inv_distance * inv_distance;
+                let scale_i = G_M3_PER_KG_S2 * bodies[j].mass_kg * inv_distance_cubed;
+                let scale_j = -G_M3_PER_KG_S2 * bodies[i].mass_kg * inv_distance_cubed;
+
+                let accel_i_xy = vfmaq_n_f64(
+                    xy_vector(accelerations[i].x, accelerations[i].y),
+                    delta_xy,
+                    scale_i,
+                );
+                accelerations[i].x = vgetq_lane_f64::<0>(accel_i_xy);
+                accelerations[i].y = vgetq_lane_f64::<1>(accel_i_xy);
+                accelerations[i].z = delta_z.mul_add(scale_i, accelerations[i].z);
+
+                let accel_j_xy = vfmaq_n_f64(
+                    xy_vector(accelerations[j].x, accelerations[j].y),
+                    delta_xy,
+                    scale_j,
+                );
+                accelerations[j].x = vgetq_lane_f64::<0>(accel_j_xy);
+                accelerations[j].y = vgetq_lane_f64::<1>(accel_j_xy);
+                accelerations[j].z = delta_z.mul_add(scale_j, accelerations[j].z);
+            }
+        }
+        accelerations
+    }
+
+    #[target_feature(enable = "neon")]
+    unsafe fn xy_vector(x: f64, y: f64) -> float64x2_t {
+        vsetq_lane_f64::<1>(y, vsetq_lane_f64::<0>(x, vdupq_n_f64(0.0)))
+    }
+}
+
 fn dispatch_solver_backend(
     requested_backend: &SolverBackend,
     active_cpu_features: &[String],
@@ -544,6 +718,7 @@ fn dispatch_solver_backend(
         active_cpu_features,
         cfg!(target_arch = "aarch64"),
         cfg!(target_arch = "x86_64"),
+        arm64_neon_runtime_available(),
     )
 }
 
@@ -552,6 +727,7 @@ fn dispatch_solver_backend_for_host(
     active_cpu_features: &[String],
     is_aarch64_host: bool,
     is_x64_host: bool,
+    arm64_neon_runtime_available: bool,
 ) -> DispatchDecision {
     let has_feature = |feature: &str| active_cpu_features.iter().any(|value| value == feature);
 
@@ -559,42 +735,41 @@ fn dispatch_solver_backend_for_host(
         SolverBackend::ReferenceScalar => DispatchDecision {
             effective_backend: SolverBackend::ReferenceScalar,
             path_id: "scalar.reference".to_owned(),
+            fallback_code: SolverFallbackCode::None,
             fallback_reason: None,
+            arm64_gravity_kernel: None,
         },
         SolverBackend::SimdArm64 => {
             if !is_aarch64_host {
                 return DispatchDecision {
                     effective_backend: SolverBackend::ReferenceScalar,
                     path_id: "scalar.reference".to_owned(),
+                    fallback_code: SolverFallbackCode::SimdArm64OnNonAarch64Host,
                     fallback_reason: Some(
                         "simd-arm64 requested on non-aarch64 host; using scalar oracle".to_owned(),
                     ),
+                    arm64_gravity_kernel: None,
                 };
             }
-            if !has_feature("neon") {
+            if !has_feature("neon") || !arm64_neon_runtime_available {
                 return DispatchDecision {
                     effective_backend: SolverBackend::ReferenceScalar,
                     path_id: "scalar.reference".to_owned(),
+                    fallback_code: SolverFallbackCode::SimdArm64MissingNeon,
                     fallback_reason: Some(
-                        "simd-arm64 requested but neon capability not detected".to_owned(),
+                        "simd-arm64 requested but runtime neon activation is not available"
+                            .to_owned(),
                     ),
+                    arm64_gravity_kernel: None,
                 };
             }
 
-            let path_id = if has_feature("sme") {
-                "simd.arm64.sme"
-            } else if has_feature("sve2") {
-                "simd.arm64.sve2"
-            } else if has_feature("fma") {
-                "simd.arm64.neon-fma"
-            } else {
-                "simd.arm64.neon"
-            };
-
             DispatchDecision {
                 effective_backend: SolverBackend::SimdArm64,
-                path_id: path_id.to_owned(),
+                path_id: "simd.arm64.neon-f64-pairwise".to_owned(),
+                fallback_code: SolverFallbackCode::None,
                 fallback_reason: None,
+                arm64_gravity_kernel: Some(Arm64GravityKernel::NeonF64Pairwise),
             }
         }
         SolverBackend::SimdX64 => {
@@ -602,9 +777,11 @@ fn dispatch_solver_backend_for_host(
                 DispatchDecision {
                 effective_backend: SolverBackend::ReferenceScalar,
                 path_id: "scalar.reference".to_owned(),
+                fallback_code: SolverFallbackCode::SimdX64Unavailable,
                 fallback_reason: Some(
                     "simd-x64 requested but dedicated x64 kernel is not implemented; using scalar oracle".to_owned(),
                 ),
+                arm64_gravity_kernel: None,
             }
             };
 
@@ -621,14 +798,9 @@ fn dispatch_solver_backend_for_host(
 
 fn override_cpu_features() -> Option<Vec<String>> {
     let raw = std::env::var("SOLARLAB_FORCE_CPU_FEATURES").ok()?;
-    let mut dedupe = BTreeSet::new();
-    for token in raw.split(',') {
-        let normalized = token.trim().to_ascii_lowercase();
-        if !normalized.is_empty() {
-            dedupe.insert(normalized);
-        }
-    }
-    Some(dedupe.into_iter().collect())
+    Some(normalize_cpu_features(
+        &raw.split(',').map(ToOwned::to_owned).collect::<Vec<_>>(),
+    ))
 }
 
 fn cpuinfo_feature_tokens() -> BTreeSet<String> {
@@ -652,10 +824,58 @@ fn cpuinfo_feature_tokens() -> BTreeSet<String> {
     features
 }
 
-fn has_any_token(tokens: &BTreeSet<String>, candidates: &[&str]) -> bool {
-    candidates
+#[must_use]
+pub fn cpu_feature_flags(features: &[String]) -> u64 {
+    normalize_cpu_features(features)
         .iter()
-        .any(|candidate| tokens.contains(*candidate))
+        .filter_map(|feature| cpu_feature_flag(feature))
+        .fold(0, |flags, flag| flags | flag)
+}
+
+fn cpu_feature_flag(feature: &str) -> Option<u64> {
+    match feature {
+        "neon" => Some(CPU_FEATURE_NEON),
+        "fp" => Some(CPU_FEATURE_FP),
+        "fp16" => Some(CPU_FEATURE_FP16),
+        "fhm" => Some(CPU_FEATURE_FHM),
+        "dotprod" => Some(CPU_FEATURE_DOTPROD),
+        "i8mm" => Some(CPU_FEATURE_I8MM),
+        "sve" => Some(CPU_FEATURE_SVE),
+        "sve2" => Some(CPU_FEATURE_SVE2),
+        "sme" => Some(CPU_FEATURE_SME),
+        "sme2" => Some(CPU_FEATURE_SME2),
+        "lse" => Some(CPU_FEATURE_LSE),
+        "lse2" => Some(CPU_FEATURE_LSE2),
+        "crc" => Some(CPU_FEATURE_CRC),
+        "mops" => Some(CPU_FEATURE_MOPS),
+        _ => None,
+    }
+}
+
+fn insert_normalized_cpu_feature(features: &mut BTreeSet<String>, raw_feature: &str) {
+    let normalized = raw_feature.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return;
+    }
+
+    let canonical = match normalized.as_str() {
+        "asimd" | "neon" => "neon",
+        "fphp" | "asimdhp" | "fp16" => "fp16",
+        "fhm" | "asimdfhm" => "fhm",
+        "asimddp" | "dotprod" => "dotprod",
+        "i8mm" => "i8mm",
+        "sve" => "sve",
+        "sve2" => "sve2",
+        "sme" => "sme",
+        "sme2" => "sme2",
+        "atomics" | "lse" => "lse",
+        "lse2" => "lse2",
+        "crc32" | "crc" => "crc",
+        "mops" => "mops",
+        "fp" => "fp",
+        _ => normalized.as_str(),
+    };
+    features.insert(canonical.to_owned());
 }
 
 fn update_equivalence_metrics(lhs: f64, rhs: f64, metrics: &mut SolverEquivalenceMetrics) {
@@ -679,10 +899,7 @@ fn update_equivalence_metrics(lhs: f64, rhs: f64, metrics: &mut SolverEquivalenc
 fn normalize_cpu_features(features: &[String]) -> Vec<String> {
     let mut dedupe = BTreeSet::new();
     for feature in features {
-        let normalized = feature.trim().to_ascii_lowercase();
-        if !normalized.is_empty() {
-            dedupe.insert(normalized);
-        }
+        insert_normalized_cpu_feature(&mut dedupe, feature);
     }
     dedupe.into_iter().collect()
 }
@@ -730,11 +947,15 @@ fn norm_squared(v: Vector3d) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_authoritative, advance_authoritative_scalar, compare_arm64_kernel_to_scalar,
-        compute_invariants, detect_cpu_features, dispatch_solver_backend_for_host,
-        effective_playback_max_substep_seconds, norm, pairwise_gravity_accelerations,
-        playback_substep_plan, subtract, CollisionModel, IntegratorKind, MassiveBodyState,
-        PhysicsPolicy, SolverBackend, G_M3_PER_KG_S2, MIN_DISTANCE_M2,
+        advance_authoritative, advance_authoritative_scalar, arm64_neon_runtime_available,
+        compare_arm64_kernel_to_scalar, compute_invariants, cpu_feature_flags, detect_cpu_features,
+        dispatch_solver_backend_for_host, effective_playback_max_substep_seconds, norm,
+        pairwise_gravity_accelerations, playback_substep_plan, solver_execution_report_for_backend,
+        subtract, Arm64GravityKernel, CollisionModel, IntegratorKind, MassiveBodyState,
+        PhysicsPolicy, SolverBackend, SolverFallbackCode, CPU_FEATURE_CRC, CPU_FEATURE_DOTPROD,
+        CPU_FEATURE_FHM, CPU_FEATURE_FP16, CPU_FEATURE_I8MM, CPU_FEATURE_LSE, CPU_FEATURE_MOPS,
+        CPU_FEATURE_NEON, CPU_FEATURE_SME, CPU_FEATURE_SME2, CPU_FEATURE_SVE, CPU_FEATURE_SVE2,
+        G_M3_PER_KG_S2, MIN_DISTANCE_M2,
     };
     use solarlab_domain::Vector3d;
 
@@ -938,58 +1159,140 @@ mod tests {
     }
 
     #[test]
-    fn simd_arm64_dispatch_prioritizes_sme_then_sve2_then_fma() {
+    fn simd_arm64_dispatch_activates_only_implemented_neon_kernel() {
         let requested = SolverBackend::SimdArm64;
-        let sme_decision = dispatch_solver_backend_for_host(
+        let rich_arm64_decision = dispatch_solver_backend_for_host(
             &requested,
             &[
                 "neon".to_owned(),
-                "fma".to_owned(),
+                "fhm".to_owned(),
                 "sve2".to_owned(),
                 "sme".to_owned(),
+                "sme2".to_owned(),
             ],
             true,
             false,
-        );
-        let sve2_decision = dispatch_solver_backend_for_host(
-            &requested,
-            &["neon".to_owned(), "fma".to_owned(), "sve2".to_owned()],
             true,
-            false,
-        );
-        let fma_decision = dispatch_solver_backend_for_host(
-            &requested,
-            &["neon".to_owned(), "fma".to_owned()],
-            true,
-            false,
         );
         let neon_decision =
-            dispatch_solver_backend_for_host(&requested, &["neon".to_owned()], true, false);
+            dispatch_solver_backend_for_host(&requested, &["neon".to_owned()], true, false, true);
 
-        assert_eq!(sme_decision.path_id, "simd.arm64.sme");
-        assert_eq!(sve2_decision.path_id, "simd.arm64.sve2");
-        assert_eq!(fma_decision.path_id, "simd.arm64.neon-fma");
-        assert_eq!(neon_decision.path_id, "simd.arm64.neon");
+        assert_eq!(rich_arm64_decision.path_id, "simd.arm64.neon-f64-pairwise");
+        assert_eq!(neon_decision.path_id, "simd.arm64.neon-f64-pairwise");
+        assert_eq!(rich_arm64_decision.fallback_code, SolverFallbackCode::None);
+        assert_eq!(
+            rich_arm64_decision.arm64_gravity_kernel,
+            Some(Arm64GravityKernel::NeonF64Pairwise)
+        );
     }
 
     #[test]
     fn simd_arm64_dispatch_falls_back_without_neon_or_wrong_host() {
         let requested = SolverBackend::SimdArm64;
         let non_arm_host =
-            dispatch_solver_backend_for_host(&requested, &["neon".to_owned()], false, true);
+            dispatch_solver_backend_for_host(&requested, &["neon".to_owned()], false, true, true);
         let missing_neon =
-            dispatch_solver_backend_for_host(&requested, &["fma".to_owned()], true, false);
+            dispatch_solver_backend_for_host(&requested, &["fma".to_owned()], true, false, true);
+        let runtime_probe_rejected_neon =
+            dispatch_solver_backend_for_host(&requested, &["neon".to_owned()], true, false, false);
 
         assert_eq!(
             non_arm_host.effective_backend,
             SolverBackend::ReferenceScalar
+        );
+        assert_eq!(
+            non_arm_host.fallback_code,
+            SolverFallbackCode::SimdArm64OnNonAarch64Host
         );
         assert!(non_arm_host.fallback_reason.is_some());
         assert_eq!(
             missing_neon.effective_backend,
             SolverBackend::ReferenceScalar
         );
+        assert_eq!(
+            missing_neon.fallback_code,
+            SolverFallbackCode::SimdArm64MissingNeon
+        );
         assert!(missing_neon.fallback_reason.is_some());
+        assert_eq!(
+            runtime_probe_rejected_neon.effective_backend,
+            SolverBackend::ReferenceScalar
+        );
+        assert_eq!(
+            runtime_probe_rejected_neon.fallback_code,
+            SolverFallbackCode::SimdArm64MissingNeon
+        );
+        assert_eq!(runtime_probe_rejected_neon.arm64_gravity_kernel, None);
+    }
+
+    #[test]
+    fn simd_x64_dispatch_reports_unavailable_until_dedicated_kernel_exists() {
+        let decision = dispatch_solver_backend_for_host(
+            &SolverBackend::SimdX64,
+            &["sse2".to_owned(), "avx2".to_owned()],
+            false,
+            true,
+            false,
+        );
+
+        assert_eq!(decision.effective_backend, SolverBackend::ReferenceScalar);
+        assert_eq!(
+            decision.fallback_code,
+            SolverFallbackCode::SimdX64Unavailable
+        );
+        assert!(decision.fallback_reason.is_some());
+    }
+
+    #[test]
+    fn arm64_cpu_feature_flags_normalize_android_linux_aliases() {
+        let features = [
+            "asimd", "asimdhp", "asimdfhm", "asimddp", "i8mm", "sve", "sve2", "sme", "sme2",
+            "atomics", "crc32", "mops",
+        ]
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect::<Vec<_>>();
+
+        let flags = cpu_feature_flags(&features);
+
+        assert_eq!(flags & CPU_FEATURE_NEON, CPU_FEATURE_NEON);
+        assert_eq!(flags & CPU_FEATURE_FP16, CPU_FEATURE_FP16);
+        assert_eq!(flags & CPU_FEATURE_FHM, CPU_FEATURE_FHM);
+        assert_eq!(flags & CPU_FEATURE_DOTPROD, CPU_FEATURE_DOTPROD);
+        assert_eq!(flags & CPU_FEATURE_I8MM, CPU_FEATURE_I8MM);
+        assert_eq!(flags & CPU_FEATURE_SVE, CPU_FEATURE_SVE);
+        assert_eq!(flags & CPU_FEATURE_SVE2, CPU_FEATURE_SVE2);
+        assert_eq!(flags & CPU_FEATURE_SME, CPU_FEATURE_SME);
+        assert_eq!(flags & CPU_FEATURE_SME2, CPU_FEATURE_SME2);
+        assert_eq!(flags & CPU_FEATURE_LSE, CPU_FEATURE_LSE);
+        assert_eq!(flags & CPU_FEATURE_CRC, CPU_FEATURE_CRC);
+        assert_eq!(flags & CPU_FEATURE_MOPS, CPU_FEATURE_MOPS);
+    }
+
+    #[test]
+    fn solver_execution_report_preserves_detected_extensions_without_claiming_sve_or_sme_kernel() {
+        let features = ["asimd", "sve2", "sme2"]
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
+
+        let report = solver_execution_report_for_backend(&SolverBackend::SimdArm64, &features);
+
+        if cfg!(target_arch = "aarch64") && arm64_neon_runtime_available() {
+            assert_eq!(report.effective_backend, SolverBackend::SimdArm64);
+            assert_eq!(report.path_id, "simd.arm64.neon-f64-pairwise");
+        } else {
+            assert_eq!(report.effective_backend, SolverBackend::ReferenceScalar);
+            let expected_fallback = if cfg!(target_arch = "aarch64") {
+                SolverFallbackCode::SimdArm64MissingNeon
+            } else {
+                SolverFallbackCode::SimdArm64OnNonAarch64Host
+            };
+            assert_eq!(report.fallback_code, expected_fallback);
+        }
+        assert!(report.active_cpu_features.contains(&"neon".to_owned()));
+        assert!(report.active_cpu_features.contains(&"sve2".to_owned()));
+        assert!(report.active_cpu_features.contains(&"sme2".to_owned()));
     }
 
     #[test]
@@ -1224,17 +1527,18 @@ mod tests {
         let (_, report) = advance_authoritative(&policy, &mut bodies, 60.0);
         let features = detect_cpu_features();
 
-        if features.iter().any(|feature| feature == "neon") {
+        let neon_active =
+            features.iter().any(|feature| feature == "neon") && arm64_neon_runtime_available();
+
+        if neon_active {
             assert_eq!(report.effective_backend, SolverBackend::SimdArm64);
         } else {
             assert_eq!(report.effective_backend, SolverBackend::ReferenceScalar);
             assert!(report.fallback_reason.is_some());
         }
 
-        if features.iter().any(|feature| feature == "sme") {
-            assert_eq!(report.path_id, "simd.arm64.sme");
-        } else if features.iter().any(|feature| feature == "sve2") {
-            assert_eq!(report.path_id, "simd.arm64.sve2");
+        if neon_active {
+            assert_eq!(report.path_id, "simd.arm64.neon-f64-pairwise");
         }
     }
 

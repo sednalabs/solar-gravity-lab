@@ -20,17 +20,60 @@ if cpuinfo_path.exists():
         for token in values.split():
             tokens.add(token.strip().lower())
 
+ALIASES = {
+    "asimd": "neon",
+    "neon": "neon",
+    "fp": "fp",
+    "fphp": "fp16",
+    "asimdhp": "fp16",
+    "fp16": "fp16",
+    "fhm": "fhm",
+    "asimdfhm": "fhm",
+    "asimddp": "dotprod",
+    "dotprod": "dotprod",
+    "i8mm": "i8mm",
+    "sve": "sve",
+    "sve2": "sve2",
+    "sme": "sme",
+    "sme2": "sme2",
+    "atomics": "lse",
+    "lse": "lse",
+    "lse2": "lse2",
+    "crc32": "crc",
+    "crc": "crc",
+    "mops": "mops",
+}
+normalized_tokens = sorted({ALIASES.get(token, token) for token in tokens})
+
 supports = {
-    "neon": any(t in tokens for t in ("asimd", "neon")),
-    "fma": any(t in tokens for t in ("fma", "fhm", "asimdfhm")),
-    "sve2": "sve2" in tokens,
-    "sme": ("sme" in tokens) or ("sme2" in tokens),
+    feature: feature in normalized_tokens
+    for feature in (
+        "neon",
+        "fp",
+        "fp16",
+        "fhm",
+        "dotprod",
+        "i8mm",
+        "sve",
+        "sve2",
+        "sme",
+        "sme2",
+        "lse",
+        "lse2",
+        "crc",
+        "mops",
+    )
 }
 
 payload = {
     "runner_arch": "arm64",
     "cpuinfo_tokens_count": len(tokens),
+    "normalized_tokens": normalized_tokens,
     "capabilities": supports,
+    "implemented_solver_paths": {
+        "active_when_supported": ["simd.arm64.neon-f64-pairwise"],
+        "reported_but_reserved_until_kernel_exists": ["sve", "sve2", "sme", "sme2"],
+    },
 }
 
 Path("dist/arm64-isa-proof/capabilities.json").write_text(
@@ -48,6 +91,8 @@ cargo test -p solarlab-runtime --lib telemetry_report
 # Minimal summary for CI artifact consumers.
 {
   echo "arm64-isa-proof: passed"
+  echo "active-arm64-solver-path: simd.arm64.neon-f64-pairwise"
+  echo "reserved-arm64-extensions: sve,sve2,sme,sme2"
   echo "physics-tests: solarlab-physics --lib"
   echo "runtime-tests: solarlab-runtime telemetry_report"
 } > dist/arm64-isa-proof/summary.txt

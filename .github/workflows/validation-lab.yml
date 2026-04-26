@@ -5,12 +5,18 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/scripts/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
       - "clients/android/**"
-      - "feature-lab/**"
-      - "render-core/**"
       - "core-math/**"
       - "core-model/**"
       - "core-simulation/**"
+      - "engine/**"
+      - "feature-lab/**"
+      - "labs/**"
+      - "render/**"
+      - "render-core/**"
+      - "services/**"
   workflow_dispatch:
     inputs:
       ref:
@@ -36,6 +42,7 @@ on:
           - bootstrap
           - rust-workspace
           - rust-workspace-arm64
+          - arm64-isa-proof
           - ffi-abi
           - android-unit
           - android-lint
@@ -138,6 +145,7 @@ jobs:
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       rust_workspace: ${{ steps.plan.outputs.rust_workspace }}
       rust_workspace_arm64: ${{ steps.plan.outputs.rust_workspace_arm64 }}
+      arm64_isa_proof: ${{ steps.plan.outputs.arm64_isa_proof }}
       ffi_abi: ${{ steps.plan.outputs.ffi_abi }}
       android_unit: ${{ steps.plan.outputs.android_unit }}
       android_lint: ${{ steps.plan.outputs.android_lint }}
@@ -201,6 +209,7 @@ jobs:
           wrapper_bootstrap='false'
           rust_workspace='false'
           rust_workspace_arm64='false'
+          arm64_isa_proof='false'
           ffi_abi='false'
           android_unit='false'
           android_lint='false'
@@ -247,6 +256,7 @@ jobs:
               if [[ "$profile" == 'broad' || "$profile" == 'full' ]]; then
                 ffi_abi='true'
                 rust_workspace_arm64='true'
+                arm64_isa_proof='true'
                 android_unit='true'
                 android_lint='true'
               fi
@@ -259,6 +269,9 @@ jobs:
               ;;
             rust-workspace-arm64)
               rust_workspace_arm64='true'
+              ;;
+            arm64-isa-proof)
+              arm64_isa_proof='true'
               ;;
             ffi-abi)
               ffi_abi='true'
@@ -278,6 +291,7 @@ jobs:
             full)
               rust_workspace='true'
               rust_workspace_arm64='true'
+              arm64_isa_proof='true'
               ffi_abi='true'
               android_unit='true'
               android_lint='true'
@@ -334,8 +348,8 @@ jobs:
             )"
           fi
 
-          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s, gradle_configuration_cache=%s' \
-            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode" "$gradle_configuration_cache")"
+          lane_summary="$(printf 'intent=%s, wrapper_bootstrap=%s, rust_workspace=%s, rust_workspace_arm64=%s, arm64_isa_proof=%s, ffi_abi=%s, android_unit=%s, android_lint=%s, android_shell=%s, runtime_scene_telemetry=%s, android_validation_mode=%s, gradle_configuration_cache=%s' \
+            "$profile_intent" "$wrapper_bootstrap" "$rust_workspace" "$rust_workspace_arm64" "$arm64_isa_proof" "$ffi_abi" "$android_unit" "$android_lint" "$android_shell" "$runtime_scene_telemetry" "$android_validation_mode" "$gradle_configuration_cache")"
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "profile=${profile}" >> "$GITHUB_OUTPUT"
@@ -350,6 +364,7 @@ jobs:
           echo "wrapper_bootstrap=${wrapper_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "rust_workspace=${rust_workspace}" >> "$GITHUB_OUTPUT"
           echo "rust_workspace_arm64=${rust_workspace_arm64}" >> "$GITHUB_OUTPUT"
+          echo "arm64_isa_proof=${arm64_isa_proof}" >> "$GITHUB_OUTPUT"
           echo "ffi_abi=${ffi_abi}" >> "$GITHUB_OUTPUT"
           echo "android_unit=${android_unit}" >> "$GITHUB_OUTPUT"
           echo "android_lint=${android_lint}" >> "$GITHUB_OUTPUT"
@@ -547,6 +562,61 @@ jobs:
             echo "## rust-workspace-arm64 sccache"
             cat dist/sccache/rust-workspace-arm64.txt
           } >> "$GITHUB_STEP_SUMMARY"
+
+  arm64-isa-proof:
+    name: Arm64 ISA proof
+    needs: metadata
+    if: ${{ needs.metadata.outputs.arm64_isa_proof == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: arm64_isa_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
+
+      - name: Run Arm64 ISA activation proof
+        shell: bash
+        run: bash .github/scripts/run_arm64_isa_proof.sh
+
+      - name: Emit Arm64 ISA sccache stats
+        if: always() && steps.arm64_isa_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/arm64-isa-proof.txt
+          {
+            echo "## arm64-isa-proof sccache"
+            cat dist/sccache/arm64-isa-proof.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Arm64 ISA proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: arm64-isa-proof-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            dist/arm64-isa-proof/**
+            dist/sccache/arm64-isa-proof.txt
 
   ffi-abi:
     name: FFI ABI tests
@@ -1305,6 +1375,7 @@ jobs:
       - wrapper-bootstrap
       - rust-workspace
       - rust-workspace-arm64
+      - arm64-isa-proof
       - ffi-abi
       - android-unit
       - android-lint
@@ -1352,6 +1423,7 @@ jobs:
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
             --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
             --job rust-workspace-arm64=${{ needs.rust-workspace-arm64.result || 'skipped' }} \
+            --job arm64-isa-proof=${{ needs.arm64-isa-proof.result || 'skipped' }} \
             --job ffi-abi=${{ needs.ffi-abi.result || 'skipped' }} \
             --job android-unit=${{ needs.android-unit.result || 'skipped' }} \
             --job android-lint=${{ needs.android-lint.result || 'skipped' }} \
