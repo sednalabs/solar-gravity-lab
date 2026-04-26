@@ -162,6 +162,7 @@ internal class JniRuntimeBridge(
             trySend(
                 RuntimeSignal.RuntimeInfoAvailable(
                     cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
+                    requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
                     gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
                     workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
                     interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
@@ -609,6 +610,7 @@ internal sealed interface RuntimeSignal {
     data class RuntimeInfoAvailable(
         val cpuBackendLabel: String,
         val gpuBackendLabel: String,
+        val requestedGpuBackendLabel: String? = null,
         val workloadSummary: String? = null,
         val interopErrorBudgetSummary: String? = null,
     ) : RuntimeSignal
@@ -876,6 +878,21 @@ internal fun preferredGpuBackendCode(preferredBackendRaw: String): Int {
         else -> NATIVE_GPU_BACKEND_NONE
     }
 }
+
+internal fun preferredGpuBackendLabel(preferredBackendRaw: String): String =
+    when (
+        preferredBackendRaw.trim()
+            .lowercase(Locale.US)
+            .replace(Regex("\\s+"), "")
+    ) {
+        "", "none" -> "none"
+        "vulkan" -> "vulkan"
+        "metal" -> "metal"
+        "webgpu", "webgpu-class", "webgpu_class" -> "webgpu-class"
+        "vulkan+opencl", "opencl+vulkan", "vulkan,opencl", "opencl,vulkan" -> "vulkan+opencl"
+        "opencl", "open-cl", "open_cl" -> "opencl"
+        else -> "unsupported:${preferredBackendRaw.trim()}"
+    }
 
 internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private const val LIBRARY_NAME = "solarlab_v2"

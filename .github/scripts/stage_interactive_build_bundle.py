@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--commit-sha", required=True)
     parser.add_argument("--android-validation-mode", required=True)
     parser.add_argument("--interactive-debug-profile", required=True)
+    parser.add_argument("--preferred-gpu-backend", required=True)
     parser.add_argument("--package-name", required=True)
     parser.add_argument("--activity-name", required=True)
     parser.add_argument("--version-name", required=True)
@@ -81,6 +82,7 @@ def main() -> None:
         "commit_sha": args.commit_sha,
         "android_validation_mode": args.android_validation_mode,
         "interactive_debug_profile": args.interactive_debug_profile,
+        "preferred_gpu_backend": args.preferred_gpu_backend,
         "package_name": args.package_name,
         "activity_name": args.activity_name,
         "version_name": args.version_name,

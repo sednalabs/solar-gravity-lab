@@ -104,8 +104,9 @@ What is intentionally still early:
 - physics implementation is not yet a deep authoritative solver surface
 - scene extraction is still bodies-first; richer tracer, trail, and light history
   surfaces remain thin
-- the Android host currently renders exported packets in a software packet-render
-  path even though the exported scene contract is Vulkan-shaped
+- the legacy shell still has packet-decoding and software/debug presentation
+  paths, but the stage-first runtime mirror is the canonical visual surface and
+  hosts the native Vulkan stage directly
 - medium/far compute-compaction should be treated as a deliberate re-entry
   decision, not an automatically active next step
 
@@ -128,8 +129,9 @@ Read the durable architecture in this order:
 10. `performance-and-scaling-strategy.md`
 11. `frame-lifecycle.md`
 12. `compute-compaction-reintroduction-plan.md`
-13. `v2/architecture.md`
-14. `v2/roadmap.md`
+13. `android-acceleration-truth.md`
+14. `v2/architecture.md`
+15. `v2/roadmap.md`
 
 ## Operational repo truth
 

@@ -33,6 +33,7 @@ def base_payload(
     policy: object = DEFAULT_VALUE,
     codex_bridge: dict | None = None,
     proof_validation: dict | None = None,
+    active_build: dict | None = None,
 ) -> dict:
     if policy is DEFAULT_VALUE:
         policy = {
@@ -60,6 +61,8 @@ def base_payload(
         summary["codex_bridge"] = codex_bridge
     if proof_validation is not None:
         summary["codex_dynamic_tool_proof_validation"] = proof_validation
+    if active_build is not None:
+        summary["active_build"] = active_build
 
     return {
         "context": {
@@ -72,6 +75,7 @@ def base_payload(
             "mcp_toolkit_rs_ref": "toolkit-ref",
             "android_validation_mode": "shell-v2",
             "interactive_debug_profile": "hosted-debug-lite",
+            "preferred_gpu_backend": "none",
             "emulator_boot_strategy": "snapshot-cache",
             "session_timeout_minutes": "30",
             "keep_session_on_failure": "true",
@@ -91,6 +95,7 @@ def main() -> int:
     )
     assert "- outcome statuses: `succeeded`, `observe_degraded`" in rendered
     assert "- retryability values: `none`, `observe_then_retry`" in rendered
+    assert "- preferred GPU backend: `none`" in rendered
 
     rendered_empty = module.render_markdown(
         base_payload({
@@ -160,6 +165,28 @@ def main() -> int:
     assert "- error details: `see uploaded proof-validation artifact`" in rendered_error
     assert "/home/runner/work/example" not in rendered_error
     assert "`raw stderr`" not in rendered_error
+
+    rendered_active_build = module.render_markdown(
+        base_payload(
+            None,
+            active_build={
+                "status": "installed",
+                "activated_at_iso": "2026-04-26T00:00:00Z",
+                "manifest": {
+                    "artifact_name": "interactive-android-build-stage-first-mirror-on-hosted-debug-lite",
+                    "android_validation_mode": "stage-first-mirror-on",
+                    "interactive_debug_profile": "hosted-debug-lite",
+                    "preferred_gpu_backend": "vulkan",
+                    "commit_sha": "deadbeef",
+                    "apk_sha256": "abc123",
+                },
+            },
+        ),
+    )
+    assert "### Active Build" in rendered_active_build
+    assert "- validation mode: `stage-first-mirror-on`" in rendered_active_build
+    assert "- debug profile: `hosted-debug-lite`" in rendered_active_build
+    assert "- preferred GPU backend: `vulkan`" in rendered_active_build
 
     status = module.classify_status(
         "success",

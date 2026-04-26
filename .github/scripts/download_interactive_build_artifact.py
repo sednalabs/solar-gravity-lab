@@ -71,6 +71,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workflow-file", default="interactive-android-build.yml")
     parser.add_argument("--workflow-run-id")
     parser.add_argument("--commit-sha")
+    parser.add_argument("--expected-android-validation-mode")
+    parser.add_argument("--expected-interactive-debug-profile")
+    parser.add_argument("--expected-preferred-gpu-backend")
     parser.add_argument("--github-token-env", default="GITHUB_TOKEN")
     parser.add_argument("--github-output")
     return parser.parse_args()
@@ -154,6 +157,41 @@ def find_single_file(root: Path, filename: str) -> Path:
     return candidates[0]
 
 
+def validate_manifest_value(manifest: dict, key: str, expected_value: str | None) -> None:
+    if expected_value is None:
+        return
+    actual_value = manifest.get(key)
+    if actual_value != expected_value:
+        raise SystemExit(
+            f"Interactive build manifest mismatch for {key}: "
+            f"expected {expected_value!r}, got {actual_value!r}"
+        )
+
+
+def validate_manifest_matches_request(
+    manifest: dict,
+    *,
+    expected_android_validation_mode: str | None,
+    expected_interactive_debug_profile: str | None,
+    expected_preferred_gpu_backend: str | None,
+) -> None:
+    validate_manifest_value(
+        manifest,
+        "android_validation_mode",
+        expected_android_validation_mode,
+    )
+    validate_manifest_value(
+        manifest,
+        "interactive_debug_profile",
+        expected_interactive_debug_profile,
+    )
+    validate_manifest_value(
+        manifest,
+        "preferred_gpu_backend",
+        expected_preferred_gpu_backend,
+    )
+
+
 def main() -> None:
     args = parse_args()
     token = require_token(args.github_token_env)
@@ -173,6 +211,12 @@ def main() -> None:
 
     manifest_path = find_single_file(bundle_dir, "interactive-build-manifest.json")
     manifest = json.loads(manifest_path.read_text())
+    validate_manifest_matches_request(
+        manifest,
+        expected_android_validation_mode=args.expected_android_validation_mode,
+        expected_interactive_debug_profile=args.expected_interactive_debug_profile,
+        expected_preferred_gpu_backend=args.expected_preferred_gpu_backend,
+    )
     apk_path = find_single_file(bundle_dir, manifest["apk_filename"])
     apk_sha256 = sha256_file(apk_path)
     expected_sha256 = manifest.get("apk_sha256")
@@ -190,6 +234,9 @@ def main() -> None:
         "manifest_path": str(manifest_path),
         "apk_path": str(apk_path),
         "apk_sha256": apk_sha256,
+        "android_validation_mode": manifest.get("android_validation_mode", ""),
+        "interactive_debug_profile": manifest.get("interactive_debug_profile", ""),
+        "preferred_gpu_backend": manifest.get("preferred_gpu_backend", ""),
     }
     write_outputs(Path(args.github_output) if args.github_output else None, payload)
     print(json.dumps(payload, indent=2, sort_keys=True))

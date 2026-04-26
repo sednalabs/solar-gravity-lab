@@ -1,0 +1,56 @@
+# Android Acceleration Truth
+
+Solar Gravity Lab has two separate Android truths that must not be mixed up:
+
+- The stage is a native Vulkan renderer. The stage-first runtime mirror should
+  bind the Rust runtime session to `SolarSystemRenderHostView`, which hosts the
+  native Vulkan surface.
+- The Rust runtime remains the authority for world state. GPU paths may assist
+  rendering, packet compaction, or future long-horizon workloads, but they must
+  not silently become authoritative simulation truth.
+
+## Current Contract
+
+The current Android build supports these runtime backend requests through
+`solarlab.preferredGpuBackend` or `SOLARLAB_PREFERRED_GPU_BACKEND`:
+
+- `none`: portable default for host and emulator compatibility.
+- `vulkan`: runtime reports Vulkan as the requested in-frame GPU path.
+- `vulkan+opencl` / `opencl`: reserved for the dual-backend profile where
+  Vulkan owns realtime rendering and OpenCL owns future long-horizon assist
+  workloads.
+
+Only report a backend as active when the runtime or renderer actually selected
+that path. If a requested path falls back, telemetry and UI must show both the
+requested backend and the effective backend.
+
+## What Is Real Today
+
+- Native Vulkan stage hosting is real in the stage-first client.
+- Runtime scene export through the Rust FFI is real.
+- Vulkan medium/far packet compaction and far tile-bin rendering telemetry are
+  real renderer-side acceleration paths.
+- CPU feature detection and solver dispatch reporting are real.
+
+## What Must Stay Honest
+
+- OpenCL is currently an architecture and reporting seam until a provider,
+  kernel/workload execution path, parity proof, and fallback report are present.
+- Arm64 SIMD reporting is not enough by itself. A specialized solver path must
+  be backed by measurable device behavior and parity with CPU scalar truth.
+- Hosted emulator proof can validate Vulkan/runtime wiring, but real device
+  claims need a Galaxy-class Android device artifact.
+
+## Validation Expectations
+
+`validation-lab` should use `android_validation_mode=stage-first-mirror-on` as
+the canonical hosted Android proof for the runtime mirror. That lane must:
+
+- build with `solarlab.preferredGpuBackend=vulkan`;
+- enter the stage-first runtime mirror, not only the local sandbox;
+- bind a nonzero native runtime session handle;
+- assert that backend summary telemetry includes CPU and GPU truth; and
+- preserve logs/screenshots as the shared audit trail.
+
+Use the local sandbox lane only for local authoring surface checks. Do not use a
+local sandbox smoke as proof that the accelerated runtime mirror is healthy.

@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab.runtime
 
+import com.sednalabs.solarlab.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -139,6 +140,7 @@ class JniRuntimeBridgeTest {
             .last()
 
         assertEquals("simd-arm64", runtimeInfo.cpuBackendLabel)
+        assertEquals(preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND), runtimeInfo.requestedGpuBackendLabel)
         assertEquals("opencl", runtimeInfo.gpuBackendLabel)
         assertTrue(runtimeInfo.workloadSummary?.contains("long-horizon") == true)
         assertTrue(runtimeInfo.interopErrorBudgetSummary?.contains("checkpoint-publication") == true)

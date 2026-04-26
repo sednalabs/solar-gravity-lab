@@ -1140,9 +1140,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          preferred_gpu_backend="none"
+          if [[ "${{ matrix.validation_mode }}" == "stage-first-mirror-on" ]]; then
+            preferred_gpu_backend="vulkan"
+          fi
+
           echo "validation_mode=${{ matrix.validation_mode }}" >> "$GITHUB_OUTPUT"
           echo "debug_stage_first_client=${{ matrix.debug_stage_first_client }}" >> "$GITHUB_OUTPUT"
           echo "stage_first_runtime_mirror=${{ matrix.stage_first_runtime_mirror }}" >> "$GITHUB_OUTPUT"
+          echo "preferred_gpu_backend=${preferred_gpu_backend}" >> "$GITHUB_OUTPUT"
 
       - name: Assemble debug Android shell and androidTest
         id: android_assemble
@@ -1159,6 +1165,7 @@ jobs:
             :app:assembleDebugAndroidTest \
             -Psolarlab.debugStageFirstClient=${{ steps.android_mode.outputs.debug_stage_first_client }} \
             -Psolarlab.stageFirstRuntimeMirror=${{ steps.android_mode.outputs.stage_first_runtime_mirror }} \
+            -Psolarlab.preferredGpuBackend=${{ steps.android_mode.outputs.preferred_gpu_backend }} \
             "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-shell-assemble-${{ matrix.validation_mode }}.log
           phase_end="$(date +%s)"
@@ -1238,6 +1245,7 @@ jobs:
             echo "- validation mode: \`${{ steps.android_mode.outputs.validation_mode }}\`"
             echo "- stage-first client: \`${{ steps.android_mode.outputs.debug_stage_first_client }}\`"
             echo "- stage-first runtime mirror: \`${{ steps.android_mode.outputs.stage_first_runtime_mirror }}\`"
+            echo "- preferred GPU backend: \`${{ steps.android_mode.outputs.preferred_gpu_backend }}\`"
             echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"

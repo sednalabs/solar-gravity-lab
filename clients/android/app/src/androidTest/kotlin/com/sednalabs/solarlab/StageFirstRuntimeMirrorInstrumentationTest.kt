@@ -40,6 +40,34 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            val state = composeRule.activity.runtimeFacadeForTesting.uiState.value
+            state.sessionHandle != null && state.backendSummary != null
+        }
+
+        val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
+        assertTrue(
+            "Runtime mirror should bind a native runtime session handle",
+            requireNotNull(runtimeState.sessionHandle) > 0L,
+        )
+        val backendSummary = requireNotNull(runtimeState.backendSummary) {
+            "Runtime mirror should expose requested/effective backend truth"
+        }
+        assertTrue(
+            "Runtime mirror backend summary should include CPU truth: $backendSummary",
+            backendSummary.contains("cpu="),
+        )
+        assertTrue(
+            "Runtime mirror backend summary should include GPU truth: $backendSummary",
+            backendSummary.contains("gpu="),
+        )
+        if (BuildConfig.PREFERRED_GPU_BACKEND.equals("vulkan", ignoreCase = true)) {
+            assertTrue(
+                "Stage-first mirror validation should request and surface Vulkan runtime intent: $backendSummary",
+                backendSummary.contains("gpu=vulkan") ||
+                    backendSummary.contains("requested vulkan -> effective vulkan"),
+            )
+        }
 
         assertTrue(
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty()

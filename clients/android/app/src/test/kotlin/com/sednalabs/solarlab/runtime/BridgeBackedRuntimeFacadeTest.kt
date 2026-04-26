@@ -83,6 +83,41 @@ class BridgeBackedRuntimeFacadeTest {
     }
 
     @Test
+    fun startSession_preservesRequestedAndEffectiveGpuBackendTruth() = runBlocking {
+        val bridge = FakeRuntimeBridge(
+            connectSignals = flowOf(
+                RuntimeSignal.RuntimeInfoAvailable(
+                    cpuBackendLabel = "simd-arm64",
+                    requestedGpuBackendLabel = "vulkan+opencl",
+                    gpuBackendLabel = "opencl",
+                    workloadSummary = "opencl long-horizon assist",
+                ),
+            ),
+        )
+        val sink = RecordingTelemetrySink()
+        val facade = BridgeBackedRuntimeFacade(
+            bridge = bridge,
+            developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                enabled = true,
+                sinks = listOf(sink),
+            ),
+        )
+
+        facade.startSession()
+
+        val state = facade.uiState.value
+        assertEquals(
+            "cpu=simd-arm64 | gpu=requested vulkan+opencl -> effective opencl | workloads: opencl long-horizon assist",
+            state.backendSummary,
+        )
+        assertTrue(
+            sink.events
+                .filter { it.category == "runtime.info" }
+                .any { it.message.contains("requested-gpu=vulkan+opencl, gpu=opencl") },
+        )
+    }
+
+    @Test
     fun renderPacketReady_withZeroBodyPacketIsNotReady() = runBlocking {
         val bridge = FakeRuntimeBridge(
             connectSignals = flowOf(

@@ -196,6 +196,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             is RuntimeSignal.RuntimeInfoAvailable -> _uiState.update { current ->
                 val backendSummary = backendSummaryLabel(
                     cpuBackendLabel = signal.cpuBackendLabel,
+                    requestedGpuBackendLabel = signal.requestedGpuBackendLabel,
                     gpuBackendLabel = signal.gpuBackendLabel,
                     workloadSummary = signal.workloadSummary,
                     interopErrorBudgetSummary = signal.interopErrorBudgetSummary,
@@ -733,11 +734,22 @@ private fun RuntimeNoticeLevel.toDeveloperTelemetryLevel(): DeveloperTelemetryLe
 
 private fun backendSummaryLabel(
     cpuBackendLabel: String,
+    requestedGpuBackendLabel: String?,
     gpuBackendLabel: String,
     workloadSummary: String?,
     interopErrorBudgetSummary: String?,
 ): String {
-    val segments = mutableListOf("$cpuBackendLabel + $gpuBackendLabel")
+    val requestedGpuSegment = requestedGpuBackendLabel
+        ?.takeIf { it.isNotBlank() }
+        ?.let { requested ->
+            if (requested == gpuBackendLabel) {
+                "gpu=$gpuBackendLabel"
+            } else {
+                "gpu=requested $requested -> effective $gpuBackendLabel"
+            }
+        }
+        ?: "gpu=$gpuBackendLabel"
+    val segments = mutableListOf("cpu=$cpuBackendLabel", requestedGpuSegment)
     workloadSummary?.takeIf { it.isNotBlank() }?.let {
         segments += "workloads: $it"
     }
@@ -750,6 +762,7 @@ private fun backendSummaryLabel(
 private fun runtimeInfoTelemetryMessage(signal: RuntimeSignal.RuntimeInfoAvailable): String {
     val segments = mutableListOf(
         "cpu=${signal.cpuBackendLabel}",
+        "requested-gpu=${signal.requestedGpuBackendLabel ?: signal.gpuBackendLabel}",
         "gpu=${signal.gpuBackendLabel}",
     )
     signal.workloadSummary?.takeIf { it.isNotBlank() }?.let {

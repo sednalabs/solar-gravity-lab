@@ -44,6 +44,13 @@ build or workflow behavior.
    - `android_artifact_mode=failures-only|always`: controls heavy artifact capture
    - `emulator_boot_strategy=cold|snapshot-cache`: reliable cold boot default with opt-in AVD snapshot cache
 
+For stage-first runtime work, prefer
+`android_validation_mode=stage-first-mirror-on`. That mode builds the app with
+`solarlab.preferredGpuBackend=vulkan` and the core scope enters the runtime
+mirror, binds the native runtime session, and checks backend truth instead of
+only proving the local sandbox. See
+[`Android Acceleration Truth`](android-acceleration-truth.md).
+
 ## Android cache observability
 
 The Android validation lanes and `prerelease-apk` now surface the main cache

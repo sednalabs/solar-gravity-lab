@@ -55,6 +55,9 @@ The workflow:
     - `shell-v2`
     - `stage-first-mirror-off`
     - `stage-first-mirror-on`
+  - `stage-first-mirror-on` builds with `solarlab.preferredGpuBackend=vulkan`
+    so hosted interactive sessions exercise the native runtime mirror with the
+    same requested GPU intent as the canonical Android validation lane
 - `interactive_debug_profile`
   - one of:
     - `hosted-debug-lite`

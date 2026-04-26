@@ -35,6 +35,15 @@ class RuntimeBridgeGpuBackendSelectionTest {
     }
 
     @Test
+    fun preferredGpuBackendLabel_tracksRequestedBackendForTelemetry() {
+        assertEquals("none", preferredGpuBackendLabel(""))
+        assertEquals("vulkan", preferredGpuBackendLabel("vulkan"))
+        assertEquals("vulkan+opencl", preferredGpuBackendLabel("vulkan + opencl"))
+        assertEquals("vulkan+opencl", preferredGpuBackendLabel("opencl, vulkan"))
+        assertEquals("unsupported:cuda", preferredGpuBackendLabel("cuda"))
+    }
+
+    @Test
     fun nativeRuntimeInfoResult_surfacesOpenClWorkloadsAndInteropPolicy() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
