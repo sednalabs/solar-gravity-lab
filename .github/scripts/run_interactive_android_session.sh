@@ -32,6 +32,11 @@ codex_bridge_run_root="${session_root}/codex-bridge-runs"
 codex_provider_manifest_path="${codex_bridge_dir}/provider-manifest.json"
 codex_provider_manifest_validation_path="${codex_bridge_dir}/provider-manifest-validation.json"
 codex_provider_manifest_validation_error_path="${codex_bridge_dir}/provider-manifest-validation.err"
+codex_dynamic_tool_specs_path="${codex_bridge_dir}/tool-specs.json"
+codex_dynamic_tool_specs_error_path="${codex_bridge_dir}/tool-specs.err"
+codex_dynamic_tool_proof_response_path="${codex_bridge_dir}/android-observe-proof.json"
+codex_dynamic_tool_proof_error_path="${codex_bridge_dir}/android-observe-proof.err"
+codex_dynamic_tool_proof_validation_path="${codex_bridge_dir}/android-observe-proof-validation.json"
 session_state_path="${session_root}/session-state.json"
 active_build_path="${session_root}/active-build.json"
 openai_loop_status_path="${openai_loop_dir}/status.json"
@@ -203,6 +208,9 @@ stage_interactive_model_helpers() {
   local openai_helper_path="${live_access_dir}/openai-android-loop.sh"
   local codex_helper_path="${live_access_dir}/codex-android-observe.sh"
   local codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools.sh"
+  local provider_manifest_status="unavailable"
+  local dynamic_tool_specs_status="unavailable"
+  local dynamic_tool_proof_status="unavailable"
 
   if [[ -f "${openai_adapter_bin}" || -f "${codex_adapter_bin}" || -f "${codex_dynamic_tools_bin}" ]]; then
     python3 .github/scripts/write_interactive_openai_loop_config.py \
@@ -267,6 +275,11 @@ PY
   if [[ ! -f "${codex_dynamic_tools_bin}" ]]; then
     rm -f "${codex_dynamic_tool_helper_path}"
     rm -f "${codex_helper_path}"
+    rm -f "${codex_dynamic_tool_specs_path}"
+    rm -f "${codex_dynamic_tool_specs_error_path}"
+    rm -f "${codex_dynamic_tool_proof_response_path}"
+    rm -f "${codex_dynamic_tool_proof_error_path}"
+    rm -f "${codex_dynamic_tool_proof_validation_path}"
     write_codex_bridge_status "$(python3 - <<'PY' "${codex_dynamic_tools_bin}" "${codex_adapter_bin}"
 import json
 import sys
@@ -288,6 +301,59 @@ set -euo pipefail
 exec node "${codex_dynamic_tools_bin}" --config "${config_path}" "\$@"
 EOF
     chmod 0755 "${codex_dynamic_tool_helper_path}"
+
+    if node "${codex_dynamic_tools_bin}" --config "${config_path}" specs \
+      > "${codex_dynamic_tool_specs_path}" \
+      2> "${codex_dynamic_tool_specs_error_path}"; then
+      if python3 - <<'PY' "${codex_dynamic_tool_specs_path}" "${codex_dynamic_tool_specs_error_path}"
+import json
+import pathlib
+import sys
+
+specs_path = pathlib.Path(sys.argv[1])
+error_path = pathlib.Path(sys.argv[2])
+try:
+    payload = json.loads(specs_path.read_text())
+except (OSError, json.JSONDecodeError) as exc:
+    error_path.write_text(f"tool specs are not valid JSON: {exc}\n")
+    raise SystemExit(1)
+
+if isinstance(payload, dict):
+    if isinstance(payload.get("tools"), list):
+        tools = payload["tools"]
+    elif isinstance(payload.get("tool_specs"), list):
+        tools = payload["tool_specs"]
+    else:
+        tools = []
+elif isinstance(payload, list):
+    tools = payload
+else:
+    tools = []
+
+names = {
+    tool.get("name")
+    for tool in tools
+    if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+}
+missing = sorted({"android_observe", "android_step"} - names)
+if missing:
+    error_path.write_text(f"tool specs missing expected tools: {', '.join(missing)}\n")
+    raise SystemExit(1)
+PY
+      then
+        dynamic_tool_specs_status="ready"
+        rm -f "${codex_dynamic_tool_specs_error_path}"
+      else
+        dynamic_tool_specs_status="invalid"
+      fi
+    else
+      if grep -Eq "Unknown argument: specs|Unknown command: specs" "${codex_dynamic_tool_specs_error_path}"; then
+        dynamic_tool_specs_status="validation_unavailable"
+        rm -f "${codex_dynamic_tool_specs_path}"
+      else
+        dynamic_tool_specs_status="invalid"
+      fi
+    fi
 
     if node "${codex_dynamic_tools_bin}" \
       --config "${config_path}" \
@@ -330,6 +396,176 @@ PY
       rm -f "${codex_provider_manifest_validation_error_path}"
     fi
 
+    if [[ "${dynamic_tool_specs_status}" == "ready" ]]; then
+      if printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen"}}' \
+        | node "${codex_dynamic_tools_bin}" --config "${config_path}" call \
+          > "${codex_dynamic_tool_proof_response_path}" \
+          2> "${codex_dynamic_tool_proof_error_path}"; then
+        if python3 - <<'PY' "${codex_dynamic_tool_proof_response_path}" "${codex_dynamic_tool_proof_validation_path}" "${codex_dynamic_tool_specs_path}" "${codex_provider_manifest_path}"
+import json
+import pathlib
+import sys
+
+response_path = pathlib.Path(sys.argv[1])
+validation_path = pathlib.Path(sys.argv[2])
+specs_path = pathlib.Path(sys.argv[3])
+manifest_path = pathlib.Path(sys.argv[4])
+
+fallback_statuses = {
+    "succeeded",
+    "observe_degraded",
+    "postcondition_unsatisfied",
+    "invalid_request",
+    "provider_unavailable",
+    "cancelled",
+    "failed",
+}
+fallback_retryability = {
+    "none",
+    "observe_then_retry",
+    "retry_same_request",
+    "operator_required",
+}
+
+known_statuses = set(fallback_statuses)
+known_retryability = set(fallback_retryability)
+taxonomy_source = "fallback"
+if manifest_path.exists():
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        policy = manifest.get("policy") if isinstance(manifest, dict) else {}
+        taxonomy = policy.get("outcomeTaxonomy") if isinstance(policy, dict) else {}
+        statuses = taxonomy.get("statuses") if isinstance(taxonomy, dict) else None
+        retryability = taxonomy.get("retryability") if isinstance(taxonomy, dict) else None
+        if isinstance(statuses, list) and all(isinstance(value, str) for value in statuses):
+            known_statuses = set(statuses)
+            taxonomy_source = "provider_manifest"
+        if isinstance(retryability, list) and all(isinstance(value, str) for value in retryability):
+            known_retryability = set(retryability)
+            taxonomy_source = "provider_manifest"
+    except (OSError, json.JSONDecodeError):
+        taxonomy_source = "fallback"
+
+payload = None
+error = ""
+try:
+    payload = json.loads(response_path.read_text())
+except (OSError, json.JSONDecodeError) as exc:
+    error = f"dynamic-tool proof response is not valid JSON: {exc}"
+
+outcome = {}
+if isinstance(payload, dict):
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        android_metadata = metadata.get("android")
+        if isinstance(android_metadata, dict):
+            candidate = android_metadata.get("outcome")
+            if isinstance(candidate, dict):
+                outcome = candidate
+
+outcome_status = outcome.get("status")
+retryability = outcome.get("retryability")
+success = payload.get("success") if isinstance(payload, dict) else None
+
+ok = (
+    error == ""
+    and isinstance(outcome_status, str)
+    and outcome_status in known_statuses
+    and isinstance(retryability, str)
+    and retryability in known_retryability
+    and isinstance(success, bool)
+)
+
+if not ok and not error:
+    error = "dynamic-tool proof response did not include a known Android outcome contract"
+
+validation_path.write_text(json.dumps({
+    "ok": ok,
+    "status": "ready" if ok else "invalid",
+    "tool": "android_observe",
+    "response_success": success,
+    "outcome_status": outcome_status,
+    "outcome_retryability": retryability,
+    "response_path": str(response_path),
+    "specs_path": str(specs_path),
+    "taxonomy_source": taxonomy_source,
+    "error": error or None,
+}, indent=2, sort_keys=True) + "\n")
+raise SystemExit(0 if ok else 1)
+PY
+        then
+          dynamic_tool_proof_status="ready"
+          rm -f "${codex_dynamic_tool_proof_error_path}"
+        else
+          dynamic_tool_proof_status="invalid"
+        fi
+      else
+        if grep -Eq "Unknown argument: call|Unknown command: call" "${codex_dynamic_tool_proof_error_path}"; then
+          dynamic_tool_proof_status="validation_unavailable"
+          rm -f "${codex_dynamic_tool_proof_response_path}"
+          python3 - <<'PY' "${codex_dynamic_tool_proof_validation_path}" "${codex_dynamic_tool_proof_error_path}" "${codex_dynamic_tool_specs_path}"
+import json
+import pathlib
+import sys
+
+validation_path = pathlib.Path(sys.argv[1])
+error_path = pathlib.Path(sys.argv[2])
+specs_path = pathlib.Path(sys.argv[3])
+validation_path.write_text(json.dumps({
+    "ok": None,
+    "status": "validation_unavailable",
+    "tool": "android_observe",
+    "response_path": None,
+    "specs_path": str(specs_path),
+    "error": (error_path.read_text(errors="replace").strip() if error_path.exists() else "") or "dynamic-tool call command is unavailable",
+}, indent=2, sort_keys=True) + "\n")
+PY
+        else
+          dynamic_tool_proof_status="invalid"
+          python3 - <<'PY' "${codex_dynamic_tool_proof_validation_path}" "${codex_dynamic_tool_proof_error_path}" "${codex_dynamic_tool_proof_response_path}" "${codex_dynamic_tool_specs_path}"
+import json
+import pathlib
+import sys
+
+validation_path = pathlib.Path(sys.argv[1])
+error_path = pathlib.Path(sys.argv[2])
+response_path = pathlib.Path(sys.argv[3])
+specs_path = pathlib.Path(sys.argv[4])
+validation_path.write_text(json.dumps({
+    "ok": False,
+    "status": "invalid",
+    "tool": "android_observe",
+    "response_path": str(response_path) if response_path.exists() else None,
+    "specs_path": str(specs_path),
+    "error": (error_path.read_text(errors="replace").strip() if error_path.exists() else "") or "dynamic-tool proof call failed",
+}, indent=2, sort_keys=True) + "\n")
+PY
+        fi
+      fi
+    else
+      dynamic_tool_proof_status="${dynamic_tool_specs_status}"
+      rm -f "${codex_dynamic_tool_proof_response_path}"
+      rm -f "${codex_dynamic_tool_proof_error_path}"
+      python3 - <<'PY' "${codex_dynamic_tool_proof_validation_path}" "${codex_dynamic_tool_specs_status}" "${codex_dynamic_tool_specs_path}" "${codex_dynamic_tool_specs_error_path}"
+import json
+import pathlib
+import sys
+
+validation_path = pathlib.Path(sys.argv[1])
+status = sys.argv[2]
+specs_path = pathlib.Path(sys.argv[3])
+error_path = pathlib.Path(sys.argv[4])
+validation_path.write_text(json.dumps({
+    "ok": False if status == "invalid" else None,
+    "status": status,
+    "tool": "android_observe",
+    "response_path": None,
+    "specs_path": str(specs_path) if specs_path.exists() else None,
+    "error": (error_path.read_text(errors="replace").strip() if error_path.exists() else "") or "dynamic-tool specs were not ready",
+}, indent=2, sort_keys=True) + "\n")
+PY
+    fi
+
     if [[ -f "${codex_adapter_bin}" ]]; then
     cat > "${codex_helper_path}" <<EOF
 #!/usr/bin/env bash
@@ -342,12 +578,31 @@ EOF
       rm -f "${codex_helper_path}"
     fi
 
-    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${codex_provider_manifest_validation_path}" "${provider_manifest_status}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${codex_provider_manifest_validation_path}" "${provider_manifest_status}" "${codex_dynamic_tool_specs_path}" "${dynamic_tool_specs_status}" "${codex_dynamic_tool_proof_response_path}" "${codex_dynamic_tool_proof_validation_path}" "${dynamic_tool_proof_status}"
 import json
+import pathlib
 import sys
 
 provider_manifest_ready = sys.argv[7] == "ready"
 provider_manifest_available = sys.argv[7] in {"ready", "invalid", "validation_unavailable"}
+specs_path = pathlib.Path(sys.argv[8])
+proof_response_path = pathlib.Path(sys.argv[10])
+proof_validation_path = pathlib.Path(sys.argv[11])
+proof_available = sys.argv[12] in {"ready", "invalid", "validation_unavailable"}
+proof_validation = None
+if proof_validation_path.exists():
+    try:
+        payload = json.loads(proof_validation_path.read_text())
+        if isinstance(payload, dict):
+            proof_validation = payload
+    except (OSError, json.JSONDecodeError):
+        proof_validation = None
+proof_contract_proven = sys.argv[12] == "ready"
+proof_response_success = (
+    proof_validation.get("response_success") is True
+    if proof_validation is not None
+    else False
+)
 print(json.dumps({
     "schema_version": 1,
     "status": "ready",
@@ -361,6 +616,13 @@ print(json.dumps({
     "provider_manifest_validation_path": sys.argv[6] if provider_manifest_available else None,
     "provider_manifest_status": sys.argv[7],
     "provider_manifest_validated": provider_manifest_ready,
+    "dynamic_tool_specs_path": sys.argv[8] if specs_path.exists() else None,
+    "dynamic_tool_specs_status": sys.argv[9],
+    "dynamic_tool_proof_path": sys.argv[10] if proof_response_path.exists() else None,
+    "dynamic_tool_proof_validation_path": sys.argv[11] if proof_available and proof_validation_path.exists() else None,
+    "dynamic_tool_proof_status": sys.argv[12],
+    "dynamic_tool_outcome_contract_proven": proof_contract_proven,
+    "dynamic_tool_outcome_success": proof_response_success,
     "tool_names": ["android_observe", "android_step"],
 }))
 PY
@@ -626,20 +888,58 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
     echo "- finish early inside the session with: \`touch dist/interactive-session/finish-session\`"
     echo "- artifacts root: \`${session_root}\`"
-    if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
-      echo "- Codex native dynamic tools: \`available\`"
-      if [[ "${provider_manifest_status:-unavailable}" == "ready" ]]; then
-        echo "- Codex Android provider manifest: \`available and validated\`"
-      elif [[ "${provider_manifest_status:-unavailable}" == "invalid" ]]; then
-        echo "- Codex Android provider manifest: \`invalid\`"
-      elif [[ "${provider_manifest_status:-unavailable}" == "validation_unavailable" ]]; then
-        echo "- Codex Android provider manifest: \`available; validation unsupported by selected provider ref\`"
-      else
-        echo "- Codex Android provider manifest: \`unavailable for the selected android-emulator-mcp ref\`"
-      fi
-    else
-      echo "- Codex native dynamic tools: \`unavailable for the selected android-emulator-mcp ref\`"
-    fi
+    python3 - <<'PY' "${codex_bridge_status_path}" "${live_access_dir}/codex-android-tools.sh"
+import json
+import pathlib
+import sys
+
+status_path = pathlib.Path(sys.argv[1])
+helper_path = pathlib.Path(sys.argv[2])
+status = {}
+if status_path.exists():
+    try:
+        payload = json.loads(status_path.read_text())
+        if isinstance(payload, dict):
+            status = payload
+    except (OSError, json.JSONDecodeError):
+        status = {}
+
+if not helper_path.exists():
+    print("- Codex native dynamic tools: `unavailable for the selected android-emulator-mcp ref`")
+    raise SystemExit(0)
+
+print("- Codex native dynamic tools: `available`")
+
+specs_status = status.get("dynamic_tool_specs_status", "unavailable")
+if specs_status == "ready":
+    print("- Codex dynamic-tool specs: `available`")
+elif specs_status == "invalid":
+    print("- Codex dynamic-tool specs: `invalid`")
+elif specs_status == "validation_unavailable":
+    print("- Codex dynamic-tool specs: `unsupported by selected provider ref`")
+else:
+    print("- Codex dynamic-tool specs: `unavailable`")
+
+proof_status = status.get("dynamic_tool_proof_status", "unavailable")
+if proof_status == "ready":
+    print("- Codex Android dynamic-tool proof: `android_observe outcome captured`")
+elif proof_status == "invalid":
+    print("- Codex Android dynamic-tool proof: `invalid`")
+elif proof_status == "validation_unavailable":
+    print("- Codex Android dynamic-tool proof: `unsupported by selected provider ref`")
+else:
+    print("- Codex Android dynamic-tool proof: `unavailable`")
+
+manifest_status = status.get("provider_manifest_status", "unavailable")
+if manifest_status == "ready":
+    print("- Codex Android provider manifest: `available and validated`")
+elif manifest_status == "invalid":
+    print("- Codex Android provider manifest: `invalid`")
+elif manifest_status == "validation_unavailable":
+    print("- Codex Android provider manifest: `available; validation unsupported by selected provider ref`")
+else:
+    print("- Codex Android provider manifest: `unavailable for the selected android-emulator-mcp ref`")
+PY
     if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
       echo "- Codex bridge observe helper: \`available\`"
     else

@@ -31,6 +31,8 @@ def base_payload(
     *,
     provider: object = DEFAULT_VALUE,
     policy: object = DEFAULT_VALUE,
+    codex_bridge: dict | None = None,
+    proof_validation: dict | None = None,
 ) -> dict:
     if policy is DEFAULT_VALUE:
         policy = {
@@ -44,6 +46,20 @@ def base_payload(
             "adapter": "android",
             "transport": "android-emulator-mcp",
         }
+
+    summary = {
+        "status": "success",
+        "job_result": "success",
+        "artifacts_dir": "dist/interactive-session",
+        "codex_provider_manifest": {
+            "provider": provider,
+            "policy": policy,
+        },
+    }
+    if codex_bridge is not None:
+        summary["codex_bridge"] = codex_bridge
+    if proof_validation is not None:
+        summary["codex_dynamic_tool_proof_validation"] = proof_validation
 
     return {
         "context": {
@@ -60,15 +76,7 @@ def base_payload(
             "session_timeout_minutes": "30",
             "keep_session_on_failure": "true",
         },
-        "summary": {
-            "status": "success",
-            "job_result": "success",
-            "artifacts_dir": "dist/interactive-session",
-            "codex_provider_manifest": {
-                "provider": provider,
-                "policy": policy,
-            },
-        },
+        "summary": summary,
     }
 
 
@@ -103,6 +111,105 @@ def main() -> int:
     assert "- adapter: `unknown`" in rendered_nulls
     assert "- outcome statuses:" not in rendered_nulls
     assert "- retryability values:" not in rendered_nulls
+
+    rendered_proof = module.render_markdown(
+        base_payload(
+            None,
+            codex_bridge={
+                "status": "ready",
+                "mode": "native_dynamic_tools",
+                "dynamic_tool_specs_status": "ready",
+                "dynamic_tool_proof_status": "ready",
+                "dynamic_tool_outcome_contract_proven": True,
+                "dynamic_tool_outcome_success": True,
+                "tool_names": ["android_observe", "android_step"],
+            },
+            proof_validation={
+                "ok": True,
+                "status": "ready",
+                "tool": "android_observe",
+                "response_success": True,
+                "outcome_status": "succeeded",
+                "outcome_retryability": "none",
+                "taxonomy_source": "provider_manifest",
+                "response_path": "dist/interactive-session/codex-bridge/android-observe-proof.json",
+            },
+        ),
+    )
+    assert "- dynamic-tool specs: `ready`" in rendered_proof
+    assert "- dynamic-tool proof: `ready`" in rendered_proof
+    assert "- dynamic-tool outcome contract proven: `true`" in rendered_proof
+    assert "- dynamic-tool outcome success: `true`" in rendered_proof
+    assert "### Codex Android Dynamic-Tool Proof" in rendered_proof
+    assert "- response success: `true`" in rendered_proof
+    assert "- outcome status: `succeeded`" in rendered_proof
+    assert "- outcome retryability: `none`" in rendered_proof
+    assert "- taxonomy source: `provider_manifest`" in rendered_proof
+
+    rendered_error = module.render_markdown(
+        base_payload(
+            None,
+            proof_validation={
+                "ok": False,
+                "status": "invalid",
+                "tool": "android_observe",
+                "error": "failed at /home/runner/work/example\n`raw stderr`",
+            },
+        ),
+    )
+    assert "- error details: `see uploaded proof-validation artifact`" in rendered_error
+    assert "/home/runner/work/example" not in rendered_error
+    assert "`raw stderr`" not in rendered_error
+
+    status = module.classify_status(
+        "success",
+        None,
+        None,
+        None,
+        {"dynamic_tool_proof_status": "invalid"},
+        None,
+        None,
+    )
+    assert status == "action_required"
+
+    status = module.classify_status(
+        "success",
+        None,
+        None,
+        None,
+        {"dynamic_tool_proof_status": "validation_unavailable"},
+        None,
+        {"ok": None, "status": "validation_unavailable"},
+    )
+    assert status == "success"
+
+    status = module.classify_status(
+        "success",
+        None,
+        None,
+        None,
+        {"dynamic_tool_proof_status": "ready"},
+        None,
+        {
+            "ok": True,
+            "status": "ready",
+            "response_success": False,
+            "outcome_status": "provider_unavailable",
+            "outcome_retryability": "operator_required",
+        },
+    )
+    assert status == "action_required"
+
+    status = module.classify_status(
+        "success",
+        None,
+        None,
+        None,
+        None,
+        None,
+        {"ok": False, "status": "invalid"},
+    )
+    assert status == "action_required"
 
     print("interactive session summary rendering tests passed")
     return 0

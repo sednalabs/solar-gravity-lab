@@ -169,6 +169,12 @@ Expected contents:
 The Codex-native Android provider evidence is concentrated in:
 
 - `codex-bridge/status.json`
+- `codex-bridge/tool-specs.json`, when the selected provider ref can expose the
+  Codex dynamic-tool specs
+- `codex-bridge/android-observe-proof.json`, when the selected provider ref can
+  run the lightweight hosted `android_observe` proof
+- `codex-bridge/android-observe-proof-validation.json`, when the hosted proof is
+  evaluated
 - `codex-bridge/provider-manifest.json`, when the selected
   provider ref can emit it
 - `codex-bridge/provider-manifest-validation.json`, when the selected
@@ -190,7 +196,8 @@ Those files are designed to answer:
 - whether preflight passed
 - whether human terminal access came up
 - whether machine-facing MCP access came up
-- whether the Codex-native Android provider helper and manifest were available
+- whether the Codex-native Android provider helper, dynamic-tool specs,
+  `android_observe` proof, and manifest were available
 - how the session ended
 - where the evidence bundle is rooted
 
@@ -249,14 +256,21 @@ payloads manually, but it is not the native model-callable path.
 The session also writes:
 
 - `dist/interactive-session/codex-bridge/status.json`
+- `dist/interactive-session/codex-bridge/tool-specs.json`, when available
+- `dist/interactive-session/codex-bridge/android-observe-proof.json`, when
+  available
+- `dist/interactive-session/codex-bridge/android-observe-proof-validation.json`,
+  when available
 - `dist/interactive-session/codex-bridge/provider-manifest.json`, when
   available
 - `dist/interactive-session/codex-bridge-runs/`
 
 Those files record which Android provider backend was available, which native
 tool names were exposed, where session artifacts live, and what read/write lease
-policy applied. When the selected provider emits an outcome taxonomy, the
-summary records that too. See
+policy applied. The hosted session also performs a lightweight `android_observe`
+proof when the selected provider supports it, and records the provider-owned
+`metadata.android.outcome` status and retryability in the summary. When the
+selected provider emits an outcome taxonomy, the summary records that too. See
 [`Android Codex Computer-Use Harness`](android-codex-computer-use.md) for the Solar-side
 boundary and artifact contract.
 

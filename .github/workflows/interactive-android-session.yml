@@ -632,3 +632,25 @@ jobs:
           path: |
             dist/interactive-session/**
             dist/interactive-session-summary/**
+
+      - name: Fail on action-required interactive session summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          summary_path = pathlib.Path("dist/interactive-session-summary/interactive-session-summary.json")
+          if not summary_path.exists():
+              print("interactive session summary is missing", file=sys.stderr)
+              raise SystemExit(1)
+
+          summary = json.loads(summary_path.read_text())
+          status = summary.get("summary", {}).get("status")
+          if status != "success":
+              print(f"interactive session summary status is {status!r}", file=sys.stderr)
+              raise SystemExit(1)
+          PY

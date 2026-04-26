@@ -48,6 +48,7 @@ def classify_status(
     session_state: dict | None,
     codex_bridge: dict | None,
     codex_provider_manifest_validation: dict | None,
+    codex_dynamic_tool_proof_validation: dict | None,
 ) -> str:
     if job_result != "success":
         return "action_required"
@@ -69,6 +70,18 @@ def classify_status(
     if (
         codex_provider_manifest_validation
         and codex_provider_manifest_validation.get("ok") is False
+    ):
+        return "action_required"
+    if codex_bridge and codex_bridge.get("dynamic_tool_proof_status") == "invalid":
+        return "action_required"
+    if (
+        codex_dynamic_tool_proof_validation
+        and codex_dynamic_tool_proof_validation.get("ok") is False
+    ):
+        return "action_required"
+    if (
+        codex_dynamic_tool_proof_validation
+        and codex_dynamic_tool_proof_validation.get("response_success") is False
     ):
         return "action_required"
     return "success"
@@ -191,9 +204,60 @@ def render_markdown(payload: dict) -> str:
             lines.append(f"- mode: `{codex_bridge.get('mode')}`")
         if codex_bridge.get("provider_manifest_status"):
             lines.append(f"- provider manifest: `{codex_bridge.get('provider_manifest_status')}`")
+        if codex_bridge.get("dynamic_tool_specs_status"):
+            lines.append(f"- dynamic-tool specs: `{codex_bridge.get('dynamic_tool_specs_status')}`")
+        if codex_bridge.get("dynamic_tool_proof_status"):
+            lines.append(f"- dynamic-tool proof: `{codex_bridge.get('dynamic_tool_proof_status')}`")
+        if "dynamic_tool_outcome_contract_proven" in codex_bridge:
+            lines.append(
+                "- dynamic-tool outcome contract proven: "
+                f"`{as_flag(codex_bridge.get('dynamic_tool_outcome_contract_proven'))}`"
+            )
+        if "dynamic_tool_outcome_success" in codex_bridge:
+            lines.append(
+                "- dynamic-tool outcome success: "
+                f"`{as_flag(codex_bridge.get('dynamic_tool_outcome_success'))}`"
+            )
         if codex_bridge.get("tool_names"):
             tools = ", ".join(f"`{tool}`" for tool in codex_bridge.get("tool_names"))
             lines.append(f"- model-callable tools: {tools}")
+
+    codex_dynamic_tool_proof_validation = payload["summary"].get(
+        "codex_dynamic_tool_proof_validation"
+    )
+    if isinstance(codex_dynamic_tool_proof_validation, dict):
+        lines.extend(
+            [
+                "",
+                "### Codex Android Dynamic-Tool Proof",
+                "",
+                f"- status: `{codex_dynamic_tool_proof_validation.get('status', 'unknown')}`",
+                f"- tool: `{codex_dynamic_tool_proof_validation.get('tool', 'unknown')}`",
+            ]
+        )
+        if "response_success" in codex_dynamic_tool_proof_validation:
+            lines.append(
+                f"- response success: `{as_flag(codex_dynamic_tool_proof_validation.get('response_success'))}`"
+            )
+        if codex_dynamic_tool_proof_validation.get("outcome_status"):
+            lines.append(
+                f"- outcome status: `{codex_dynamic_tool_proof_validation.get('outcome_status')}`"
+            )
+        if codex_dynamic_tool_proof_validation.get("outcome_retryability"):
+            lines.append(
+                "- outcome retryability: "
+                f"`{codex_dynamic_tool_proof_validation.get('outcome_retryability')}`"
+            )
+        if codex_dynamic_tool_proof_validation.get("taxonomy_source"):
+            lines.append(
+                f"- taxonomy source: `{codex_dynamic_tool_proof_validation.get('taxonomy_source')}`"
+            )
+        if codex_dynamic_tool_proof_validation.get("response_path"):
+            lines.append(
+                f"- response path: `{codex_dynamic_tool_proof_validation.get('response_path')}`"
+            )
+        if codex_dynamic_tool_proof_validation.get("error"):
+            lines.append("- error details: `see uploaded proof-validation artifact`")
 
     codex_provider_manifest = payload["summary"].get("codex_provider_manifest")
     if isinstance(codex_provider_manifest, dict):
@@ -279,6 +343,9 @@ def main() -> None:
     codex_provider_manifest_validation = load_json(
         artifacts_dir / "codex-bridge" / "provider-manifest-validation.json"
     )
+    codex_dynamic_tool_proof_validation = load_json(
+        artifacts_dir / "codex-bridge" / "android-observe-proof-validation.json"
+    )
 
     payload = {
         "schema_version": 1,
@@ -311,6 +378,7 @@ def main() -> None:
                 session_state,
                 codex_bridge,
                 codex_provider_manifest_validation,
+                codex_dynamic_tool_proof_validation,
             ),
             "job_result": args.job_result,
             "artifacts_dir": str(artifacts_dir),
@@ -322,6 +390,7 @@ def main() -> None:
             "codex_bridge": codex_bridge,
             "codex_provider_manifest": codex_provider_manifest,
             "codex_provider_manifest_validation": codex_provider_manifest_validation,
+            "codex_dynamic_tool_proof_validation": codex_dynamic_tool_proof_validation,
         },
     }
 

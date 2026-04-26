@@ -43,7 +43,13 @@ that bundle are:
 - `live-access/codex-android-observe.sh`: optional explicit observation helper
   for debugging
 - `codex-bridge/status.json`: readiness, mode, helper paths, output root,
-  provider-manifest status, and available tool names
+  provider-manifest status, dynamic-tool proof status, and available tool names
+- `codex-bridge/tool-specs.json`: Codex dynamic-tool specs for
+  `android_observe` and `android_step`, when supported
+- `codex-bridge/android-observe-proof.json`: the lightweight hosted
+  `android_observe` dynamic-tool response, when supported
+- `codex-bridge/android-observe-proof-validation.json`: Solar Lab's validation
+  summary for the dynamic-tool proof response, when supported
 - `codex-bridge/provider-manifest.json`: generic Android provider metadata, when
   the provider can emit it
 - `codex-bridge/provider-manifest-validation.json`: the selected provider's
@@ -85,6 +91,14 @@ The interactive session summary includes both the bridge readiness payload and
 the provider manifest details when present, so a completed run can be inspected
 without guessing which provider capabilities were active.
 
+When the selected provider ref supports the dynamic-tool CLI, the hosted
+session also asks the provider for the model-callable tool specs and performs a
+single lightweight `android_observe` call against the running app. Solar Lab
+validates that the response includes the provider-owned
+`metadata.android.outcome` contract and records the result as run evidence. This
+is deliberately a consumer-side proof, not a Solar-owned redefinition of the
+generic Android tool response schema.
+
 When present, the outcome taxonomy stays provider-owned. Solar Lab records it as
 evidence so operators can see whether a selected provider distinguishes
 successful actions, degraded observation, unsatisfied postconditions, retry
@@ -101,7 +115,8 @@ Use the hosted workflows for different questions:
   hosted interactive work.
 - `interactive-android-session` proves that a bounded hosted emulator session
   can launch Solar Lab, expose the Android provider control plane, stage the Codex
-  dynamic-tool helper, and upload the resulting session artifacts.
+  dynamic-tool helper, capture the dynamic-tool specs, exercise a lightweight
+  `android_observe` call, and upload the resulting session artifacts.
 - `prerelease-apk` proves installable preview packaging from a promoted head.
 
 For documentation-only changes, prefer the docs sanity checks described in
