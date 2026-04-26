@@ -89,6 +89,28 @@ Use it when the question is:
 These sessions are intentionally bounded and operator-started. They are a
 development and proof surface, not a general-purpose public service.
 
+### 5. Static security analysis
+
+`.github/workflows/codeql.yml` is the maintained advanced CodeQL setup for this
+repository. Keep the checked-in workflow authoritative so language coverage,
+query selection, permissions, scheduling, and dependency-cache policy remain
+reviewable with the rest of the workflow catalog.
+
+The matrix intentionally covers Actions, C/C++, Java/Kotlin, Python, and Rust.
+Java/Kotlin uses a manual Gradle compile path because Kotlin is not analyzed by
+CodeQL's no-build Java mode. Rust and C/C++ use no-build analysis, which keeps
+the scan independent of Android emulator work while still covering the
+canonical Rust workspace and native source surfaces.
+
+The shared CodeQL config uses the broad `security-and-quality` suite plus the
+local threat model. That is intentionally noisier than default setup, but it
+gives this repository the widest stable built-in signal. Cache writes stay
+limited to trusted `main` runs, and pull requests only restore caches.
+
+If GitHub ever creates a generated default CodeQL workflow for this repository,
+disable that duplicate after the checked-in advanced workflow is green. Running
+both makes it harder to tell which CodeQL configuration produced an alert.
+
 ## Why this helps AI-assisted development
 
 AI-assisted development gets more useful when the model has:

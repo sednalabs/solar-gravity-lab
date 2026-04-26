@@ -19,6 +19,8 @@ build or workflow behavior.
 - `.github/workflows/interactive-android-build.yml` for reusable hosted Android
   build artifacts
 - `.github/workflows/interactive-android-session.yml` for bounded live emulator debugging on a hosted runner
+- `.github/workflows/codeql.yml` for checked-in advanced CodeQL analysis across
+  Actions, C/C++, Java/Kotlin, Python, and Rust
 
 ## Current lane families
 

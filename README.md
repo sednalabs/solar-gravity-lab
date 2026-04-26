@@ -163,6 +163,9 @@ The current workflow split is:
   reusable Android artifact bundles for interactive work
 - `.github/workflows/interactive-android-session.yml`
   bounded live hosted emulator sessions for inspection and debugging
+- `.github/workflows/codeql.yml`
+  checked-in advanced CodeQL analysis for Actions, C/C++, Java/Kotlin,
+  Python, and Rust security scanning
 
 This model is especially useful for AI-assisted development because it
 separates build production from interactive investigation and gives both humans
