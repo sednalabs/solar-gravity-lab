@@ -212,7 +212,15 @@ jobs:
           fi
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
+      - name: Checkout pull request merge
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout requested ref
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ steps.checkout_ref.outputs.checkout_ref }}

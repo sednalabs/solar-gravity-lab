@@ -70,10 +70,26 @@ def run_plan(
         subprocess.run(command, check=True, text=True, capture_output=True, cwd=root)
         result_text = (plan_dir / "outputs.env").read_text(encoding="utf-8")
 
+    return parse_github_outputs(result_text)
+
+
+def parse_github_outputs(text: str) -> dict[str, str]:
     outputs: dict[str, str] = {}
-    for line in result_text.splitlines():
-        key, _, value = line.partition("=")
-        outputs[key] = value
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        key, marker, delimiter = line.partition("<<")
+        if not marker:
+            index += 1
+            continue
+        index += 1
+        value_lines: list[str] = []
+        while index < len(lines) and lines[index] != delimiter:
+            value_lines.append(lines[index])
+            index += 1
+        outputs[key] = "\n".join(value_lines)
+        index += 1
     return outputs
 
 

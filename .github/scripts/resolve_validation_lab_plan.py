@@ -13,16 +13,10 @@ PROFILE_NOTES = {
     "broad": "Explicit checkpoint mode; use sparingly for milestone passes rather than routine iteration.",
     "full": "Explicit checkpoint mode; use sparingly for milestone passes rather than routine iteration.",
 }
-PRIMARY_FILES_PATH = "dist/validation-plan/primary-files.txt"
-LATEST_FILES_PATH = "dist/validation-plan/latest-files.txt"
-PRIOR_EVIDENCE_PATH = "dist/validation-plan/prior-evidence/validation-summary.json"
-OUTPUT_ENV_PATH = "dist/validation-plan/outputs.env"
-ALLOWED_LOCAL_PATHS = {
-    PRIMARY_FILES_PATH,
-    LATEST_FILES_PATH,
-    PRIOR_EVIDENCE_PATH,
-    OUTPUT_ENV_PATH,
-}
+PRIMARY_FILES_PATH = Path("dist/validation-plan/primary-files.txt")
+LATEST_FILES_PATH = Path("dist/validation-plan/latest-files.txt")
+PRIOR_EVIDENCE_PATH = Path("dist/validation-plan/prior-evidence/validation-summary.json")
+OUTPUT_ENV_PATH = Path("dist/validation-plan/outputs.env")
 
 
 @dataclass
@@ -48,21 +42,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-sha", default="")
     parser.add_argument("--head-sha", default="")
     parser.add_argument("--pull-request-number", default="")
-    parser.add_argument("--primary-changed-files", default=PRIMARY_FILES_PATH)
-    parser.add_argument("--latest-changed-files", default=LATEST_FILES_PATH)
-    parser.add_argument("--prior-evidence-json", default=PRIOR_EVIDENCE_PATH)
-    parser.add_argument("--output-env", default=OUTPUT_ENV_PATH)
     return parser.parse_args()
 
 
-def workflow_owned_path(raw_path: str) -> Path:
-    if raw_path not in ALLOWED_LOCAL_PATHS:
-        raise ValueError(f"Unexpected workflow path: {raw_path}")
-    return Path(raw_path)
-
-
-def read_changed_files(path: str) -> list[str]:
-    changed_path = workflow_owned_path(path)
+def read_changed_files(changed_path: Path) -> list[str]:
     if not changed_path.exists():
         return []
     return [
@@ -164,10 +147,8 @@ def has_android_unit_surface(files: list[str]) -> bool:
     )
 
 
-def load_evidence(path: str | None, base_sha: str, head_sha: str, pull_request_number: str = "") -> Evidence:
-    if not path:
-        return Evidence(False)
-    evidence_path = workflow_owned_path(path)
+def load_evidence(base_sha: str, head_sha: str, pull_request_number: str = "") -> Evidence:
+    evidence_path = PRIOR_EVIDENCE_PATH
     if not evidence_path.exists() or evidence_path.stat().st_size == 0:
         return Evidence(False)
     try:
@@ -319,13 +300,20 @@ def normalize_choice(value: str, default: str) -> str:
     return (value or "").strip() or default
 
 
+def github_output_line(key: str, value: str) -> str:
+    delimiter = f"__SGL_{key}_EOF__"
+    while delimiter in value:
+        delimiter = f"{delimiter}_"
+    return f"{key}<<{delimiter}\n{value}\n{delimiter}"
+
+
 def main() -> None:
     args = parse_args()
 
     event_name = args.event_name
     checkout_ref = normalize_choice(args.checkout_ref, "")
     profile = normalize_choice(args.profile, "targeted")
-    lane_set = normalize_choice(args.lane_set, "auto" if event_name != "pull_request" else "auto")
+    lane_set = normalize_choice(args.lane_set, "auto")
     write_wrapper = normalize_choice(args.write_wrapper, "false")
     android_test_scope = normalize_choice(args.android_test_scope, "core")
     android_validation_mode = normalize_choice(args.android_validation_mode, "auto")
@@ -340,9 +328,9 @@ def main() -> None:
     if emulator_boot_strategy not in {"cold", "snapshot-cache"}:
         raise ValueError(f"Unknown emulator_boot_strategy: {emulator_boot_strategy}")
 
-    primary_files = read_changed_files(args.primary_changed_files)
-    latest_files = read_changed_files(args.latest_changed_files)
-    evidence = load_evidence(args.prior_evidence_json, args.base_sha, args.head_sha, args.pull_request_number)
+    primary_files = read_changed_files(PRIMARY_FILES_PATH)
+    latest_files = read_changed_files(LATEST_FILES_PATH)
+    evidence = load_evidence(args.base_sha, args.head_sha, args.pull_request_number)
     effective_files = latest_files if evidence.reused else primary_files
     changed_source = "latest_delta" if evidence.reused else "primary_diff"
 
@@ -426,13 +414,9 @@ def main() -> None:
         "route_reason": route_reason,
     }
 
-    output_lines = [f"{key}={value}" for key, value in outputs.items()]
-    if args.output_env:
-        output_path = workflow_owned_path(args.output_env)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
-    else:
-        print("\n".join(output_lines))
+    output_lines = [github_output_line(key, value) for key, value in outputs.items()]
+    OUTPUT_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_ENV_PATH.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
