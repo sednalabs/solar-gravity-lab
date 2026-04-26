@@ -9,8 +9,13 @@ interface RuntimeFacade {
     // State stream is immutable from the UI perspective and sourced from runtime signals.
     val uiState: StateFlow<ShellUiState>
 
+    val scenarioPacks: List<RuntimeScenarioPack>
+
     // One-time bind/handshake into native runtime.
     suspend fun startSession()
+
+    // Replace the active runtime session with a deterministic built-in scenario pack.
+    suspend fun loadScenario(scenarioId: String)
 
     // Pull latest runtime snapshot/render packet on demand.
     suspend fun refresh()
