@@ -34,7 +34,7 @@ proves the harness rather than redefining a general Android computer-use API.
 
 ## Hosted Session Artifacts
 
-[`interactive-android-session`](interactive-android-session.md) writes its main
+[`Interactive Android Session`](interactive-android-session.md) writes its main
 artifact bundle under `dist/interactive-session/`. The Codex-facing parts of
 that bundle are:
 
@@ -85,7 +85,7 @@ without guessing which provider capabilities were active.
 
 Use the hosted workflows for different questions:
 
-- [`validation-lab`](validation-lab.md) proves the canonical Rust platform and
+- [Validation Lab](validation-lab.md) proves the canonical Rust platform and
   Android shell build path. It is the main remote proof lane for code changes.
 - `interactive-android-build` produces reusable Android build artifacts for
   hosted interactive work.

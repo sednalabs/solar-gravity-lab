@@ -174,7 +174,7 @@ provider; it does not own the generic provider contract. Hosted sessions
 preserve Codex bridge status, provider-manifest, active-build, and session-state
 artifacts so a run can show which Android provider capabilities were active.
 For the Solar-side boundary, see
-[`docs/android-codex-computer-use.md`](docs/android-codex-computer-use.md).
+[`Android Codex Computer-Use Harness`](docs/android-codex-computer-use.md).
 
 For the public workflow overview, see
 [`docs/hosted-ai-development.md`](docs/hosted-ai-development.md).
