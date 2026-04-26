@@ -41,6 +41,9 @@ these fields separately:
 - Vulkan medium/far packet compaction and far tile-bin rendering telemetry are
   real renderer-side acceleration paths.
 - CPU feature detection and solver dispatch reporting are real.
+- The Arm64 capability census artifact is real. It records detected CPU
+  features separately from active SGL workload claims, and preserves uncataloged
+  feature tokens for follow-up instead of silently dropping them.
 - The implemented Arm64 solver path is `simd.arm64.neon-f64-pairwise`: a
   double-precision NEON pairwise gravity acceleration kernel guarded by runtime
   feature detection and scalar-oracle parity tests.
@@ -51,9 +54,13 @@ these fields separately:
   kernel/workload execution path, parity proof, and fallback report are present.
 - Arm64 SIMD reporting is not enough by itself. A specialized solver path must
   be backed by measurable device behavior and parity with CPU scalar truth.
-- SVE, SVE2, SME, SME2, FP16, FHM, DotProd, I8MM, LSE, CRC, and MOPS may be
-  detected and reported as device capabilities, but they are not active solver
-  claims unless the runtime reports a concrete solver path that uses them.
+- SVE, SVE2, SVE-I8MM, SME, SME2, FP16, FHM, DotProd, I8MM, LSE, CRC, and MOPS
+  may be detected and reported as device capabilities, but they are not active
+  solver claims unless the runtime reports a concrete solver path that uses
+  them.
+- BF16, RDM, FCMA, crypto, hardening, and memory-operation features may also be
+  captured by the census. They must remain utility or reserved capabilities
+  until an SGL workload explicitly consumes them.
 - Lower-precision and matrix/vector extensions are reserved for future
   visualization, tracer-assist, or explicitly bounded compute slices until a
   precision policy and scalar-oracle equivalence gate exists.
@@ -76,5 +83,13 @@ That lane runs on GitHub-hosted Arm64 hardware, records normalized CPU
 capabilities, and proves the active solver path without waiting for a broader
 workspace or APK build.
 
+For capability inventory work that does not need solver tests, dispatch
+`validation-lab` with `lane_set=arm64-capability-census`. That lane emits the
+same schema used by real-device census runs while making clear that a hosted
+runner is not Galaxy S25 Ultra proof.
+
 Use the local sandbox lane only for local authoring surface checks. Do not use a
 local sandbox smoke as proof that the accelerated runtime mirror is healthy.
+
+See [`Android Arm64 Capability Census`](android-arm64-capability-census.md) for
+the census schema and S25-specific proof contract.

@@ -143,6 +143,261 @@ pub const CPU_FEATURE_LSE: u64 = 1 << 10;
 pub const CPU_FEATURE_LSE2: u64 = 1 << 11;
 pub const CPU_FEATURE_CRC: u64 = 1 << 12;
 pub const CPU_FEATURE_MOPS: u64 = 1 << 13;
+pub const CPU_FEATURE_AES: u64 = 1 << 14;
+pub const CPU_FEATURE_PMULL: u64 = 1 << 15;
+pub const CPU_FEATURE_SHA1: u64 = 1 << 16;
+pub const CPU_FEATURE_SHA2: u64 = 1 << 17;
+pub const CPU_FEATURE_SHA3: u64 = 1 << 18;
+pub const CPU_FEATURE_SHA512: u64 = 1 << 19;
+pub const CPU_FEATURE_SM3: u64 = 1 << 20;
+pub const CPU_FEATURE_SM4: u64 = 1 << 21;
+pub const CPU_FEATURE_BF16: u64 = 1 << 22;
+pub const CPU_FEATURE_RNG: u64 = 1 << 23;
+pub const CPU_FEATURE_BTI: u64 = 1 << 24;
+pub const CPU_FEATURE_MTE: u64 = 1 << 25;
+pub const CPU_FEATURE_RDM: u64 = 1 << 26;
+pub const CPU_FEATURE_JSCVT: u64 = 1 << 27;
+pub const CPU_FEATURE_FCMA: u64 = 1 << 28;
+pub const CPU_FEATURE_FLAGM: u64 = 1 << 29;
+pub const CPU_FEATURE_FLAGM2: u64 = 1 << 30;
+pub const CPU_FEATURE_DIT: u64 = 1 << 31;
+pub const CPU_FEATURE_SB: u64 = 1 << 32;
+pub const CPU_FEATURE_SSBS: u64 = 1 << 33;
+pub const CPU_FEATURE_SVE_I8MM: u64 = 1 << 34;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CpuFeatureUseStatus {
+    ActiveSolverCapability,
+    BaselineFloatingPoint,
+    ReservedUntilKernelExists,
+    RuntimeUtilityNoCurrentHotPath,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CpuFeatureCatalogEntry {
+    pub canonical_name: &'static str,
+    pub flag: u64,
+    pub status: CpuFeatureUseStatus,
+    pub current_workload: &'static str,
+}
+
+pub const ARM64_CPU_FEATURE_CATALOG: &[CpuFeatureCatalogEntry] = &[
+    CpuFeatureCatalogEntry {
+        canonical_name: "neon",
+        flag: CPU_FEATURE_NEON,
+        status: CpuFeatureUseStatus::ActiveSolverCapability,
+        current_workload: "simd.arm64.neon-f64-pairwise",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "fp",
+        flag: CPU_FEATURE_FP,
+        status: CpuFeatureUseStatus::BaselineFloatingPoint,
+        current_workload: "baseline floating-point substrate",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "fp16",
+        flag: CPU_FEATURE_FP16,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved visualization/tracer-assist precision slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "fhm",
+        flag: CPU_FEATURE_FHM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved fp16 fused multiply-add assist slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "dotprod",
+        flag: CPU_FEATURE_DOTPROD,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved packed render/tracer assist slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "i8mm",
+        flag: CPU_FEATURE_I8MM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved packed integer/matrix assist slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sve",
+        flag: CPU_FEATURE_SVE,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved wider f64 batch gravity/tracer slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sve2",
+        flag: CPU_FEATURE_SVE2,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved wider f64 batch gravity/tracer slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sve-i8mm",
+        flag: CPU_FEATURE_SVE_I8MM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved SVE packed integer assist slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sme",
+        flag: CPU_FEATURE_SME,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved matrix/tile assist slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sme2",
+        flag: CPU_FEATURE_SME2,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved matrix/tile assist slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "lse",
+        flag: CPU_FEATURE_LSE,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "atomic/runtime throughput capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "lse2",
+        flag: CPU_FEATURE_LSE2,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "atomic/runtime throughput capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "crc",
+        flag: CPU_FEATURE_CRC,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility checksum capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "mops",
+        flag: CPU_FEATURE_MOPS,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "memory-operation throughput capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "aes",
+        flag: CPU_FEATURE_AES,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "pmull",
+        flag: CPU_FEATURE_PMULL,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sha1",
+        flag: CPU_FEATURE_SHA1,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sha2",
+        flag: CPU_FEATURE_SHA2,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sha3",
+        flag: CPU_FEATURE_SHA3,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sha512",
+        flag: CPU_FEATURE_SHA512,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sm3",
+        flag: CPU_FEATURE_SM3,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sm4",
+        flag: CPU_FEATURE_SM4,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility crypto capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "bf16",
+        flag: CPU_FEATURE_BF16,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved approximate assist slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rng",
+        flag: CPU_FEATURE_RNG,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "utility random-number capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "bti",
+        flag: CPU_FEATURE_BTI,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "platform hardening capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "mte",
+        flag: CPU_FEATURE_MTE,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "platform memory-tagging capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rdm",
+        flag: CPU_FEATURE_RDM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved SIMD rounding multiply slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "jscvt",
+        flag: CPU_FEATURE_JSCVT,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "conversion support capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "fcma",
+        flag: CPU_FEATURE_FCMA,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "reserved complex/vector math slice",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "flagm",
+        flag: CPU_FEATURE_FLAGM,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "flag manipulation support capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "flagm2",
+        flag: CPU_FEATURE_FLAGM2,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "flag manipulation support capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "dit",
+        flag: CPU_FEATURE_DIT,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "data-independent timing support capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sb",
+        flag: CPU_FEATURE_SB,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "speculation barrier capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "ssbs",
+        flag: CPU_FEATURE_SSBS,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "speculative store bypass control capability",
+    },
+];
+
+#[must_use]
+pub fn arm64_cpu_feature_catalog() -> &'static [CpuFeatureCatalogEntry] {
+    ARM64_CPU_FEATURE_CATALOG
+}
 
 const G_M3_PER_KG_S2: f64 = 6.67430e-11;
 const MIN_DISTANCE_M2: f64 = 1.0e-12;
@@ -833,23 +1088,10 @@ pub fn cpu_feature_flags(features: &[String]) -> u64 {
 }
 
 fn cpu_feature_flag(feature: &str) -> Option<u64> {
-    match feature {
-        "neon" => Some(CPU_FEATURE_NEON),
-        "fp" => Some(CPU_FEATURE_FP),
-        "fp16" => Some(CPU_FEATURE_FP16),
-        "fhm" => Some(CPU_FEATURE_FHM),
-        "dotprod" => Some(CPU_FEATURE_DOTPROD),
-        "i8mm" => Some(CPU_FEATURE_I8MM),
-        "sve" => Some(CPU_FEATURE_SVE),
-        "sve2" => Some(CPU_FEATURE_SVE2),
-        "sme" => Some(CPU_FEATURE_SME),
-        "sme2" => Some(CPU_FEATURE_SME2),
-        "lse" => Some(CPU_FEATURE_LSE),
-        "lse2" => Some(CPU_FEATURE_LSE2),
-        "crc" => Some(CPU_FEATURE_CRC),
-        "mops" => Some(CPU_FEATURE_MOPS),
-        _ => None,
-    }
+    arm64_cpu_feature_catalog()
+        .iter()
+        .find(|entry| entry.canonical_name == feature)
+        .map(|entry| entry.flag)
 }
 
 fn insert_normalized_cpu_feature(features: &mut BTreeSet<String>, raw_feature: &str) {
@@ -866,12 +1108,33 @@ fn insert_normalized_cpu_feature(features: &mut BTreeSet<String>, raw_feature: &
         "i8mm" => "i8mm",
         "sve" => "sve",
         "sve2" => "sve2",
+        "svei8mm" | "sve_i8mm" | "sve-i8mm" => "sve-i8mm",
         "sme" => "sme",
         "sme2" => "sme2",
         "atomics" | "lse" => "lse",
         "lse2" => "lse2",
         "crc32" | "crc" => "crc",
         "mops" => "mops",
+        "aes" => "aes",
+        "pmull" => "pmull",
+        "sha1" => "sha1",
+        "sha2" => "sha2",
+        "sha3" => "sha3",
+        "sha512" => "sha512",
+        "sm3" => "sm3",
+        "sm4" => "sm4",
+        "bf16" => "bf16",
+        "rng" => "rng",
+        "bti" => "bti",
+        "mte" => "mte",
+        "asimdrdm" | "rdm" => "rdm",
+        "jscvt" => "jscvt",
+        "fcma" => "fcma",
+        "flagm" => "flagm",
+        "flagm2" => "flagm2",
+        "dit" => "dit",
+        "sb" => "sb",
+        "ssbs" => "ssbs",
         "fp" => "fp",
         _ => normalized.as_str(),
     };
@@ -947,15 +1210,17 @@ fn norm_squared(v: Vector3d) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_authoritative, advance_authoritative_scalar, arm64_neon_runtime_available,
-        compare_arm64_kernel_to_scalar, compute_invariants, cpu_feature_flags, detect_cpu_features,
-        dispatch_solver_backend_for_host, effective_playback_max_substep_seconds, norm,
-        pairwise_gravity_accelerations, playback_substep_plan, solver_execution_report_for_backend,
-        subtract, Arm64GravityKernel, CollisionModel, IntegratorKind, MassiveBodyState,
-        PhysicsPolicy, SolverBackend, SolverFallbackCode, CPU_FEATURE_CRC, CPU_FEATURE_DOTPROD,
-        CPU_FEATURE_FHM, CPU_FEATURE_FP16, CPU_FEATURE_I8MM, CPU_FEATURE_LSE, CPU_FEATURE_MOPS,
-        CPU_FEATURE_NEON, CPU_FEATURE_SME, CPU_FEATURE_SME2, CPU_FEATURE_SVE, CPU_FEATURE_SVE2,
-        G_M3_PER_KG_S2, MIN_DISTANCE_M2,
+        advance_authoritative, advance_authoritative_scalar, arm64_cpu_feature_catalog,
+        arm64_neon_runtime_available, compare_arm64_kernel_to_scalar, compute_invariants,
+        cpu_feature_flags, detect_cpu_features, dispatch_solver_backend_for_host,
+        effective_playback_max_substep_seconds, norm, pairwise_gravity_accelerations,
+        playback_substep_plan, solver_execution_report_for_backend, subtract, Arm64GravityKernel,
+        CollisionModel, CpuFeatureUseStatus, IntegratorKind, MassiveBodyState, PhysicsPolicy,
+        SolverBackend, SolverFallbackCode, CPU_FEATURE_AES, CPU_FEATURE_BF16, CPU_FEATURE_CRC,
+        CPU_FEATURE_DOTPROD, CPU_FEATURE_FCMA, CPU_FEATURE_FHM, CPU_FEATURE_FP, CPU_FEATURE_FP16,
+        CPU_FEATURE_I8MM, CPU_FEATURE_JSCVT, CPU_FEATURE_LSE, CPU_FEATURE_MOPS, CPU_FEATURE_NEON,
+        CPU_FEATURE_RDM, CPU_FEATURE_SME, CPU_FEATURE_SME2, CPU_FEATURE_SVE, CPU_FEATURE_SVE2,
+        CPU_FEATURE_SVE_I8MM, G_M3_PER_KG_S2, MIN_DISTANCE_M2,
     };
     use solarlab_domain::Vector3d;
 
@@ -1247,7 +1512,8 @@ mod tests {
     fn arm64_cpu_feature_flags_normalize_android_linux_aliases() {
         let features = [
             "asimd", "asimdhp", "asimdfhm", "asimddp", "i8mm", "sve", "sve2", "sme", "sme2",
-            "atomics", "crc32", "mops",
+            "svei8mm", "atomics", "crc32", "mops", "fp", "aes", "bf16", "asimdrdm", "jscvt",
+            "fcma",
         ]
         .iter()
         .map(|value| (*value).to_owned())
@@ -1256,17 +1522,48 @@ mod tests {
         let flags = cpu_feature_flags(&features);
 
         assert_eq!(flags & CPU_FEATURE_NEON, CPU_FEATURE_NEON);
+        assert_eq!(flags & CPU_FEATURE_FP, CPU_FEATURE_FP);
         assert_eq!(flags & CPU_FEATURE_FP16, CPU_FEATURE_FP16);
         assert_eq!(flags & CPU_FEATURE_FHM, CPU_FEATURE_FHM);
         assert_eq!(flags & CPU_FEATURE_DOTPROD, CPU_FEATURE_DOTPROD);
         assert_eq!(flags & CPU_FEATURE_I8MM, CPU_FEATURE_I8MM);
         assert_eq!(flags & CPU_FEATURE_SVE, CPU_FEATURE_SVE);
         assert_eq!(flags & CPU_FEATURE_SVE2, CPU_FEATURE_SVE2);
+        assert_eq!(flags & CPU_FEATURE_SVE_I8MM, CPU_FEATURE_SVE_I8MM);
         assert_eq!(flags & CPU_FEATURE_SME, CPU_FEATURE_SME);
         assert_eq!(flags & CPU_FEATURE_SME2, CPU_FEATURE_SME2);
         assert_eq!(flags & CPU_FEATURE_LSE, CPU_FEATURE_LSE);
         assert_eq!(flags & CPU_FEATURE_CRC, CPU_FEATURE_CRC);
         assert_eq!(flags & CPU_FEATURE_MOPS, CPU_FEATURE_MOPS);
+        assert_eq!(flags & CPU_FEATURE_AES, CPU_FEATURE_AES);
+        assert_eq!(flags & CPU_FEATURE_BF16, CPU_FEATURE_BF16);
+        assert_eq!(flags & CPU_FEATURE_RDM, CPU_FEATURE_RDM);
+        assert_eq!(flags & CPU_FEATURE_JSCVT, CPU_FEATURE_JSCVT);
+        assert_eq!(flags & CPU_FEATURE_FCMA, CPU_FEATURE_FCMA);
+    }
+
+    #[test]
+    fn arm64_cpu_feature_catalog_separates_active_reserved_and_utility_capabilities() {
+        let catalog = arm64_cpu_feature_catalog();
+        let neon = catalog
+            .iter()
+            .find(|entry| entry.canonical_name == "neon")
+            .expect("neon catalog entry");
+        let sve2 = catalog
+            .iter()
+            .find(|entry| entry.canonical_name == "sve2")
+            .expect("sve2 catalog entry");
+        let mops = catalog
+            .iter()
+            .find(|entry| entry.canonical_name == "mops")
+            .expect("mops catalog entry");
+
+        assert_eq!(neon.status, CpuFeatureUseStatus::ActiveSolverCapability);
+        assert_eq!(sve2.status, CpuFeatureUseStatus::ReservedUntilKernelExists);
+        assert_eq!(
+            mops.status,
+            CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath
+        );
     }
 
     #[test]

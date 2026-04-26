@@ -892,6 +892,27 @@ private const val CPU_FEATURE_LSE = 1L shl 10
 private const val CPU_FEATURE_LSE2 = 1L shl 11
 private const val CPU_FEATURE_CRC = 1L shl 12
 private const val CPU_FEATURE_MOPS = 1L shl 13
+private const val CPU_FEATURE_AES = 1L shl 14
+private const val CPU_FEATURE_PMULL = 1L shl 15
+private const val CPU_FEATURE_SHA1 = 1L shl 16
+private const val CPU_FEATURE_SHA2 = 1L shl 17
+private const val CPU_FEATURE_SHA3 = 1L shl 18
+private const val CPU_FEATURE_SHA512 = 1L shl 19
+private const val CPU_FEATURE_SM3 = 1L shl 20
+private const val CPU_FEATURE_SM4 = 1L shl 21
+private const val CPU_FEATURE_BF16 = 1L shl 22
+private const val CPU_FEATURE_RNG = 1L shl 23
+private const val CPU_FEATURE_BTI = 1L shl 24
+private const val CPU_FEATURE_MTE = 1L shl 25
+private const val CPU_FEATURE_RDM = 1L shl 26
+private const val CPU_FEATURE_JSCVT = 1L shl 27
+private const val CPU_FEATURE_FCMA = 1L shl 28
+private const val CPU_FEATURE_FLAGM = 1L shl 29
+private const val CPU_FEATURE_FLAGM2 = 1L shl 30
+private const val CPU_FEATURE_DIT = 1L shl 31
+private const val CPU_FEATURE_SB = 1L shl 32
+private const val CPU_FEATURE_SSBS = 1L shl 33
+private const val CPU_FEATURE_SVE_I8MM = 1L shl 34
 
 internal fun preferredGpuBackendCode(preferredBackendRaw: String): Int {
     val normalized = preferredBackendRaw.trim()
@@ -1141,12 +1162,33 @@ internal data class NativeRuntimeInfoResult(
         addIfPresent(CPU_FEATURE_I8MM, "i8mm")
         addIfPresent(CPU_FEATURE_SVE, "sve")
         addIfPresent(CPU_FEATURE_SVE2, "sve2")
+        addIfPresent(CPU_FEATURE_SVE_I8MM, "sve-i8mm")
         addIfPresent(CPU_FEATURE_SME, "sme")
         addIfPresent(CPU_FEATURE_SME2, "sme2")
         addIfPresent(CPU_FEATURE_LSE, "lse")
         addIfPresent(CPU_FEATURE_LSE2, "lse2")
         addIfPresent(CPU_FEATURE_CRC, "crc")
         addIfPresent(CPU_FEATURE_MOPS, "mops")
+        addIfPresent(CPU_FEATURE_AES, "aes")
+        addIfPresent(CPU_FEATURE_PMULL, "pmull")
+        addIfPresent(CPU_FEATURE_SHA1, "sha1")
+        addIfPresent(CPU_FEATURE_SHA2, "sha2")
+        addIfPresent(CPU_FEATURE_SHA3, "sha3")
+        addIfPresent(CPU_FEATURE_SHA512, "sha512")
+        addIfPresent(CPU_FEATURE_SM3, "sm3")
+        addIfPresent(CPU_FEATURE_SM4, "sm4")
+        addIfPresent(CPU_FEATURE_BF16, "bf16")
+        addIfPresent(CPU_FEATURE_RNG, "rng")
+        addIfPresent(CPU_FEATURE_BTI, "bti")
+        addIfPresent(CPU_FEATURE_MTE, "mte")
+        addIfPresent(CPU_FEATURE_RDM, "rdm")
+        addIfPresent(CPU_FEATURE_JSCVT, "jscvt")
+        addIfPresent(CPU_FEATURE_FCMA, "fcma")
+        addIfPresent(CPU_FEATURE_FLAGM, "flagm")
+        addIfPresent(CPU_FEATURE_FLAGM2, "flagm2")
+        addIfPresent(CPU_FEATURE_DIT, "dit")
+        addIfPresent(CPU_FEATURE_SB, "sb")
+        addIfPresent(CPU_FEATURE_SSBS, "ssbs")
         return features.takeIf { it.isNotEmpty() }?.joinToString("+")
     }
 

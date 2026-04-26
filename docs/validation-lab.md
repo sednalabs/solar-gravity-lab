@@ -32,14 +32,18 @@ build or workflow behavior.
 3. `rust-workspace-arm64`
    Runs `cargo test --workspace` on an Arm64 runner to prove ISA-sensitive
    behavior on target architecture class.
-4. `arm64-isa-proof`
+4. `arm64-capability-census`
+   Runs `.github/scripts/collect_android_capability_census.py` on an Arm64
+   runner. Use this when the question is capability inventory, schema shape, or
+   hosted Arm64 normalization rather than solver execution.
+5. `arm64-isa-proof`
    Runs `.github/scripts/run_arm64_isa_proof.sh` on an Arm64 runner. Use this
    focused lane when the question is CPU feature normalization, solver-path
    activation truth, or scalar-oracle equivalence for Arm64.
-5. `ffi-abi`
+6. `ffi-abi`
    Runs a narrower `cargo test -p solarlab-ffi` proof slice when the active seam
    is runtime/ABI/JNI-facing rather than the whole workspace.
-6. `android-shell`
+7. `android-shell`
    Prepares the Android toolchain plus the Rust Android targets, then builds the
    real app under `clients/android` with `:app:assembleDebug`.
    It supports fast-path controls:
@@ -129,6 +133,8 @@ Current recommendation:
   Run only the canonical Rust workspace tests.
 - `rust-workspace-arm64`
   Run only the canonical Rust workspace tests on Arm64.
+- `arm64-capability-census`
+  Run only the hosted Arm64 capability census collector and artifact upload.
 - `arm64-isa-proof`
   Run only the focused Arm64 CPU ISA proof script on an Arm64 hosted runner.
 - `runtime-cpu-truth`
@@ -150,18 +156,21 @@ Current recommendation:
 3. Prefer `profile=targeted`, `lane_set=arm64-isa-proof` when the active seam is
    specifically CPU feature reporting, Arm64 solver dispatch, or backend
    activation truth. This is the lower-carbon, fail-small path before widening.
-4. Use `profile=targeted`, `lane_set=runtime-cpu-truth` when the active seam
+4. Use `profile=targeted`, `lane_set=arm64-capability-census` when the active
+   seam is capability inventory or census schema only. This is cheaper and more
+   targeted than running solver parity tests.
+5. Use `profile=targeted`, `lane_set=runtime-cpu-truth` when the active seam
    crosses physics dispatch, FFI runtime info, and Android telemetry. This avoids
    canceling separate same-branch workflow dispatches while staying narrower
    than `full`.
-5. Use `profile=targeted`, `lane_set=ffi-abi` when the active seam is the C ABI,
+6. Use `profile=targeted`, `lane_set=ffi-abi` when the active seam is the C ABI,
    JNI, or Android bridge contract.
-6. Use `profile=frontier`, `lane_set=auto` when you want the Android shell lane
+7. Use `profile=frontier`, `lane_set=auto` when you want the Android shell lane
    alongside the Rust baseline.
-7. Reserve `profile=broad` or `profile=full` for milestone checkpoints; these now
-   include Arm64 Rust workspace proof and the focused Arm64 ISA proof in `auto`
-   mode.
-8. Use `prerelease-apk` when the real question is packaging an installable device
+8. Reserve `profile=broad` or `profile=full` for milestone checkpoints; these
+   now include Arm64 Rust workspace proof, capability census, and the focused
+   Arm64 ISA proof in `auto` mode.
+9. Use `prerelease-apk` when the real question is packaging an installable device
    build rather than simply proving the branch compiles.
 
 ## Hosted interactive Android development

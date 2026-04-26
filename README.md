@@ -144,7 +144,8 @@ not the old root app:
 
 Use `.github/workflows/validation-lab.yml` for canonical validation slices and
 `.github/workflows/prerelease-apk.yml` for installable release candidates.
-`prerelease-apk` now includes an ARM64-native ISA proof gate
+`validation-lab` includes a hosted Arm64 capability census lane and an
+ARM64-native ISA proof lane. `prerelease-apk` also runs the ISA proof gate
 (`ubuntu-24.04-arm`) via `.github/scripts/run_arm64_isa_proof.sh` before
 publish.
 
