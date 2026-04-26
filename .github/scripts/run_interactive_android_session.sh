@@ -433,8 +433,8 @@ taxonomy_source = "fallback"
 if manifest_path.exists():
     try:
         manifest = json.loads(manifest_path.read_text())
-        policy = manifest.get("policy") if isinstance(manifest, dict) else None
-        taxonomy = policy.get("outcomeTaxonomy") if isinstance(policy, dict) else None
+        policy = manifest.get("policy") if isinstance(manifest, dict) else {}
+        taxonomy = policy.get("outcomeTaxonomy") if isinstance(policy, dict) else {}
         statuses = taxonomy.get("statuses") if isinstance(taxonomy, dict) else None
         retryability = taxonomy.get("retryability") if isinstance(taxonomy, dict) else None
         if isinstance(statuses, list) and all(isinstance(value, str) for value in statuses):
