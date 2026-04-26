@@ -171,6 +171,8 @@ The Codex-native Android provider evidence is concentrated in:
 - `codex-bridge/status.json`
 - `codex-bridge/provider-manifest.json`, when the selected
   provider ref can emit it
+- `codex-bridge/provider-manifest-validation.json`, when the selected
+  provider ref can validate the emitted manifest
 - `codex-bridge-runs/`
 - `live-access/codex-android-tools.sh`
 

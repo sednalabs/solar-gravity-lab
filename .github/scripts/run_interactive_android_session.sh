@@ -30,6 +30,8 @@ openai_loop_run_root="${session_root}/openai-loop-runs"
 codex_bridge_dir="${session_root}/codex-bridge"
 codex_bridge_run_root="${session_root}/codex-bridge-runs"
 codex_provider_manifest_path="${codex_bridge_dir}/provider-manifest.json"
+codex_provider_manifest_validation_path="${codex_bridge_dir}/provider-manifest-validation.json"
+codex_provider_manifest_validation_error_path="${codex_bridge_dir}/provider-manifest-validation.err"
 session_state_path="${session_root}/session-state.json"
 active_build_path="${session_root}/active-build.json"
 openai_loop_status_path="${openai_loop_dir}/status.json"
@@ -293,10 +295,39 @@ EOF
       --artifact-root "${codex_bridge_run_root}" \
       --build-manifest "${build_manifest_path}" \
       manifest > "${codex_provider_manifest_path}"; then
-      provider_manifest_status="ready"
+      if node "${codex_dynamic_tools_bin}" \
+        validate-manifest \
+        --manifest "${codex_provider_manifest_path}" \
+        > "${codex_provider_manifest_validation_path}" \
+        2> "${codex_provider_manifest_validation_error_path}"; then
+        provider_manifest_status="ready"
+        rm -f "${codex_provider_manifest_validation_error_path}"
+      else
+        if grep -Eq "Unknown argument: validate-manifest|Unknown command: validate-manifest" "${codex_provider_manifest_validation_error_path}"; then
+          provider_manifest_status="validation_unavailable"
+        else
+          provider_manifest_status="invalid"
+        fi
+        python3 - <<'PY' "${codex_provider_manifest_validation_path}" "${codex_provider_manifest_validation_error_path}" "${provider_manifest_status}"
+import json
+import pathlib
+import sys
+
+output_path = pathlib.Path(sys.argv[1])
+error_path = pathlib.Path(sys.argv[2])
+status = sys.argv[3]
+output_path.write_text(json.dumps({
+    "ok": False if status == "invalid" else None,
+    "status": status,
+    "error": (error_path.read_text(errors="replace").strip() if error_path.exists() else "") or "provider manifest validation failed",
+}, indent=2, sort_keys=True) + "\n")
+PY
+      fi
     else
       provider_manifest_status="unavailable"
       rm -f "${codex_provider_manifest_path}"
+      rm -f "${codex_provider_manifest_validation_path}"
+      rm -f "${codex_provider_manifest_validation_error_path}"
     fi
 
     if [[ -f "${codex_adapter_bin}" ]]; then
@@ -311,10 +342,12 @@ EOF
       rm -f "${codex_helper_path}"
     fi
 
-    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${provider_manifest_status}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${codex_provider_manifest_validation_path}" "${provider_manifest_status}"
 import json
 import sys
 
+provider_manifest_ready = sys.argv[7] == "ready"
+provider_manifest_available = sys.argv[7] in {"ready", "invalid", "validation_unavailable"}
 print(json.dumps({
     "schema_version": 1,
     "status": "ready",
@@ -324,8 +357,10 @@ print(json.dumps({
     "dynamic_tool_command": sys.argv[2],
     "observe_helper_path": sys.argv[3],
     "output_root": sys.argv[4],
-    "provider_manifest_path": sys.argv[5] if sys.argv[6] == "ready" else None,
-    "provider_manifest_status": sys.argv[6],
+    "provider_manifest_path": sys.argv[5] if provider_manifest_available else None,
+    "provider_manifest_validation_path": sys.argv[6] if provider_manifest_available else None,
+    "provider_manifest_status": sys.argv[7],
+    "provider_manifest_validated": provider_manifest_ready,
     "tool_names": ["android_observe", "android_step"],
 }))
 PY
@@ -593,8 +628,12 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- artifacts root: \`${session_root}\`"
     if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
       echo "- Codex native dynamic tools: \`available\`"
-      if [[ -f "${codex_provider_manifest_path}" ]]; then
-        echo "- Codex Android provider manifest: \`available\`"
+      if [[ "${provider_manifest_status:-unavailable}" == "ready" ]]; then
+        echo "- Codex Android provider manifest: \`available and validated\`"
+      elif [[ "${provider_manifest_status:-unavailable}" == "invalid" ]]; then
+        echo "- Codex Android provider manifest: \`invalid\`"
+      elif [[ "${provider_manifest_status:-unavailable}" == "validation_unavailable" ]]; then
+        echo "- Codex Android provider manifest: \`available; validation unsupported by selected provider ref\`"
       else
         echo "- Codex Android provider manifest: \`unavailable for the selected android-emulator-mcp ref\`"
       fi
