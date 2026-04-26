@@ -22,26 +22,12 @@ if cpuinfo_path.exists():
 
 ALIASES = {
     "asimd": "neon",
-    "neon": "neon",
-    "fp": "fp",
     "fphp": "fp16",
     "asimdhp": "fp16",
-    "fp16": "fp16",
-    "fhm": "fhm",
     "asimdfhm": "fhm",
     "asimddp": "dotprod",
-    "dotprod": "dotprod",
-    "i8mm": "i8mm",
-    "sve": "sve",
-    "sve2": "sve2",
-    "sme": "sme",
-    "sme2": "sme2",
     "atomics": "lse",
-    "lse": "lse",
-    "lse2": "lse2",
     "crc32": "crc",
-    "crc": "crc",
-    "mops": "mops",
 }
 normalized_tokens = sorted({ALIASES.get(token, token) for token in tokens})
 
