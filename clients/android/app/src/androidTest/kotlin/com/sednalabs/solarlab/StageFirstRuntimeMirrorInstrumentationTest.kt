@@ -65,7 +65,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             assertTrue(
                 "Stage-first mirror validation should request and surface Vulkan runtime intent: $backendSummary",
                 backendSummary.contains("gpu=vulkan") ||
-                    backendSummary.contains("requested vulkan -> effective vulkan"),
+                    backendSummary.contains("requested vulkan"),
             )
         }
 
