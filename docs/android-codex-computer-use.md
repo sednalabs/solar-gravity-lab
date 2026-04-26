@@ -78,10 +78,18 @@ Solar Lab uses the manifest to record:
 - session, artifact, and active-build manifest paths
 - app package and activity hints for the focused Solar Lab session
 - timeout and lease policy for read-only observation and mutating step calls
+- the provider-owned outcome taxonomy used by Android tool responses, when the
+  selected provider emits it
 
 The interactive session summary includes both the bridge readiness payload and
 the provider manifest details when present, so a completed run can be inspected
 without guessing which provider capabilities were active.
+
+When present, the outcome taxonomy stays provider-owned. Solar Lab records it as
+evidence so operators can see whether a selected provider distinguishes
+successful actions, degraded observation, unsatisfied postconditions, retry
+posture, and operator-required failures; this repository should not redefine
+those generic Android meanings.
 
 ## Proof Surfaces
 

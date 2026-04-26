@@ -255,7 +255,8 @@ The session also writes:
 
 Those files record which Android provider backend was available, which native
 tool names were exposed, where session artifacts live, and what read/write lease
-policy applied. See
+policy applied. When the selected provider emits an outcome taxonomy, the
+summary records that too. See
 [`Android Codex Computer-Use Harness`](android-codex-computer-use.md) for the Solar-side
 boundary and artifact contract.
 

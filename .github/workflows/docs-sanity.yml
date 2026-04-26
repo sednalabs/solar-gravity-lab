@@ -8,6 +8,8 @@ on:
       - ".github/workflows/docs-sanity.yml"
       - ".github/scripts/check_markdown_links.py"
       - ".github/scripts/check_public_doc_safety.py"
+      - ".github/scripts/test_interactive_session_summary.py"
+      - ".github/scripts/write_interactive_session_summary.py"
   push:
     paths:
       - "README.md"
@@ -15,6 +17,8 @@ on:
       - ".github/workflows/docs-sanity.yml"
       - ".github/scripts/check_markdown_links.py"
       - ".github/scripts/check_public_doc_safety.py"
+      - ".github/scripts/test_interactive_session_summary.py"
+      - ".github/scripts/write_interactive_session_summary.py"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -42,6 +46,10 @@ jobs:
         shell: bash
         run: python3 .github/scripts/check_public_doc_safety.py
 
+      - name: Test interactive session summary rendering
+        shell: bash
+        run: python3 .github/scripts/test_interactive_session_summary.py
+
       - name: Emit summary
         shell: bash
         run: |
@@ -51,5 +59,6 @@ jobs:
             echo "- checked: \`README.md\` and \`docs/**/*.md\`"
             echo "- validation: relative markdown links"
             echo "- validation: publication-safety guard for obvious local-only leaks"
+            echo "- validation: interactive session summary rendering"
             echo "- scope: documentation-only workflow intended to stay cheap"
           } >> "$GITHUB_STEP_SUMMARY"
