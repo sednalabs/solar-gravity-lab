@@ -43,6 +43,7 @@ on:
           - rust-workspace
           - rust-workspace-arm64
           - arm64-isa-proof
+          - runtime-cpu-truth
           - ffi-abi
           - android-unit
           - android-lint
@@ -272,6 +273,11 @@ jobs:
               ;;
             arm64-isa-proof)
               arm64_isa_proof='true'
+              ;;
+            runtime-cpu-truth)
+              arm64_isa_proof='true'
+              ffi_abi='true'
+              android_unit='true'
               ;;
             ffi-abi)
               ffi_abi='true'
