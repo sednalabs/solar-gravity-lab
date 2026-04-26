@@ -41,7 +41,14 @@ def load_json(path: Path) -> dict | None:
         return None
 
 
-def classify_status(job_result: str, preflight: dict | None, live_access: dict | None, session_state: dict | None) -> str:
+def classify_status(
+    job_result: str,
+    preflight: dict | None,
+    live_access: dict | None,
+    session_state: dict | None,
+    codex_bridge: dict | None,
+    codex_provider_manifest_validation: dict | None,
+) -> str:
     if job_result != "success":
         return "action_required"
     if preflight and preflight.get("status") != "ready":
@@ -56,6 +63,13 @@ def classify_status(job_result: str, preflight: dict | None, live_access: dict |
         if agent_mcp and agent_mcp.get("status") not in {"ready", "disabled"}:
             return "action_required"
     if session_state and session_state.get("status") != "success":
+        return "action_required"
+    if codex_bridge and codex_bridge.get("provider_manifest_status") == "invalid":
+        return "action_required"
+    if (
+        codex_provider_manifest_validation
+        and codex_provider_manifest_validation.get("ok") is not True
+    ):
         return "action_required"
     return "success"
 
@@ -275,7 +289,14 @@ def main() -> None:
             "keep_session_on_failure": args.keep_session_on_failure,
         },
         "summary": {
-            "status": classify_status(args.job_result, preflight, live_access, session_state),
+            "status": classify_status(
+                args.job_result,
+                preflight,
+                live_access,
+                session_state,
+                codex_bridge,
+                codex_provider_manifest_validation,
+            ),
             "job_result": args.job_result,
             "artifacts_dir": str(artifacts_dir),
             "preflight": preflight,
