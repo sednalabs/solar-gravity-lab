@@ -1564,6 +1564,7 @@ fn cpu_solver_path_code(path_id: &str) -> u32 {
         "simd.arm64.neon-f64-pairwise" => 1,
         "simd.x64.scalar-fallback" => 2,
         "simd.arm64.neon-f64-tiled-pairwise" => 3,
+        "simd.arm64.neon-f64-parallel-tiled-pairwise" => 4,
         _ => u32::MAX,
     }
 }
@@ -1587,6 +1588,7 @@ fn cpu_schedule_mode_code(schedule_mode: &SolverScheduleMode) -> u32 {
     match schedule_mode {
         SolverScheduleMode::SingleWorker => 0,
         SolverScheduleMode::AdaptiveTiledCandidate => 1,
+        SolverScheduleMode::AdaptiveTiledActive => 2,
     }
 }
 
@@ -2667,7 +2669,7 @@ mod tests {
         assert_eq!(runtime_info.info.cpu_fallback_code, 0);
         assert_eq!(runtime_info.info.cpu_schedule_body_count, 0);
         assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 0);
-        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 14);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 15);
         assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
         assert_eq!(
             runtime_info.info.cpu_kernel_eligible_candidate_count
@@ -2718,6 +2720,7 @@ mod tests {
             assert!(
                 create.runtime_info.cpu_solver_path == 1
                     || create.runtime_info.cpu_solver_path == 3
+                    || create.runtime_info.cpu_solver_path == 4
             );
             assert_eq!(create.runtime_info.cpu_fallback_code, 0);
             assert_eq!(create.runtime_info.cpu_kernel_active_count, 1);
@@ -2738,7 +2741,7 @@ mod tests {
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info, create.runtime_info);
-        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 14);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 15);
         assert_eq!(
             runtime_info.info.cpu_kernel_eligible_candidate_count
                 + runtime_info.info.cpu_kernel_blocked_candidate_count,
@@ -3292,7 +3295,11 @@ mod tests {
         let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;
         if cfg!(target_arch = "aarch64") && has_neon {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::SimdArm64);
-            assert_eq!(runtime_info.info.cpu_solver_path, 3);
+            if runtime_info.info.cpu_schedule_active_workers > 1 {
+                assert_eq!(runtime_info.info.cpu_solver_path, 4);
+            } else {
+                assert_eq!(runtime_info.info.cpu_solver_path, 3);
+            }
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
         } else {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::ReferenceScalar);

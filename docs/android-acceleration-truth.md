@@ -50,19 +50,21 @@ these fields separately:
   as SVE, SVE2, FP16, DotProd, I8MM, BF16, RDM, FCMA, crypto, hardening, and
   utility features can be reported even when one evidence source is incomplete.
 - The implemented Arm64 solver paths are `simd.arm64.neon-f64-pairwise` and
-  `simd.arm64.neon-f64-tiled-pairwise`: double-precision NEON pairwise gravity
-  acceleration kernels guarded by runtime feature detection and scalar-oracle
-  parity tests. Runtime dispatch selects the tiled path only for larger body
-  sets.
+  `simd.arm64.neon-f64-tiled-pairwise` and
+  `simd.arm64.neon-f64-parallel-tiled-pairwise`: double-precision NEON pairwise
+  gravity acceleration kernels guarded by runtime feature detection and
+  scalar-oracle parity tests. Runtime dispatch selects tiled paths only for
+  larger body sets, and selects the parallel tiled path only when worker budget
+  is available.
 - The Arm64 kernel registry also names candidate lanes for SVE, SVE2, SME,
   SME2, SVE-I8MM, DotProd, I8MM, BF16, FP16, FHM, RDM, and FCMA so future
   acceleration work has stable path IDs before those paths become active.
 - Runtime info and the capability census now count active, eligible candidate,
   and blocked candidate kernel lanes against the detected CPU feature set.
-- Runtime info reports scheduler truth separately from kernel truth. The active
-  worker count remains single-worker; larger Arm64 scenes may select the tiled
-  NEON kernel path, while adaptive multi-worker scheduling remains candidate
-  truth until a parallel solver is actually selected.
+- Runtime info reports scheduler truth separately from kernel truth. Small
+  scenes remain single-worker; larger Arm64 scenes may select tiled NEON
+  kernels, including the active parallel tiled path when the runtime has more
+  than one worker available.
 
 ## What Must Stay Honest
 

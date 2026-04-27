@@ -128,7 +128,7 @@ class BridgeBackedRuntimeFacadeTest {
                     cpuFeatureSummary = "neon+sve2",
                     cpuFallbackSummary = "simd-arm64 requested on non-aarch64 host",
                     cpuScheduleSummary = "single-worker active, adaptive tiled candidate 8 workers",
-                    cpuKernelCatalogSummary = "kernel catalog: 14 paths, active 1, eligible candidates 2, blocked candidates 10",
+                    cpuKernelCatalogSummary = "kernel catalog: 15 paths, active 1, eligible candidates 2, blocked candidates 10",
                     gpuBackendLabel = "none",
                 ),
             ),
@@ -150,7 +150,7 @@ class BridgeBackedRuntimeFacadeTest {
                 "solver: scalar.reference | cpu features: neon+sve2 | " +
                 "cpu fallback: simd-arm64 requested on non-aarch64 host | " +
                 "cpu scheduler: single-worker active, adaptive tiled candidate 8 workers | " +
-                "cpu kernels: kernel catalog: 14 paths, active 1, eligible candidates 2, blocked candidates 10",
+                "cpu kernels: kernel catalog: 15 paths, active 1, eligible candidates 2, blocked candidates 10",
             state.backendSummary,
         )
         assertTrue(
@@ -162,7 +162,7 @@ class BridgeBackedRuntimeFacadeTest {
                     ) && it.message.contains(
                         "cpu-scheduler=single-worker active, adaptive tiled candidate 8 workers",
                     ) && it.message.contains(
-                        "cpu-kernels=kernel catalog: 14 paths, active 1, eligible candidates 2, blocked candidates 10",
+                        "cpu-kernels=kernel catalog: 15 paths, active 1, eligible candidates 2, blocked candidates 10",
                     )
                 },
         )

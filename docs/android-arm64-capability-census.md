@@ -88,9 +88,11 @@ Detection does not imply activation.
 
 The current active Arm64 solver claims are
 `simd.arm64.neon-f64-pairwise` and
-`simd.arm64.neon-f64-tiled-pairwise`. Both are double-precision NEON gravity
-paths; runtime dispatch selects the tiled path only for larger body sets. SVE,
-SVE2, SVE-I8MM, SME, SME2, FP16, FHM, DotProd, I8MM, BF16, RDM, and FCMA are
+`simd.arm64.neon-f64-tiled-pairwise` and
+`simd.arm64.neon-f64-parallel-tiled-pairwise`. All are double-precision NEON
+gravity paths; runtime dispatch selects tiled paths only for larger body sets
+and selects the parallel tiled path only when worker budget is available. SVE,
+SVE2, SVE-I8MM, SME, SME2, FP16, FHM, DotProd, I8MM, BF16, RDM, and FCMA remain
 reserved until a concrete workload lands with runtime dispatch, scalar-oracle
 or error-budget parity, and measured device behavior.
 

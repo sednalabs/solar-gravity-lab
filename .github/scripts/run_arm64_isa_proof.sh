@@ -22,7 +22,7 @@ cargo test -p solarlab-runtime --lib telemetry_report
 # Minimal summary for CI artifact consumers.
 {
   echo "arm64-isa-proof: passed"
-  echo "implemented-arm64-solver-paths: simd.arm64.neon-f64-pairwise,simd.arm64.neon-f64-tiled-pairwise"
+  echo "implemented-arm64-solver-paths: simd.arm64.neon-f64-pairwise,simd.arm64.neon-f64-tiled-pairwise,simd.arm64.neon-f64-parallel-tiled-pairwise"
   echo "large-scene-tiled-threshold-bodies: 96"
   echo "reserved-arm64-extensions: sve,sve2,sve-i8mm,sme,sme2,dotprod,i8mm,bf16,fp16,fhm,rdm,fcma"
   echo "capability-census: dist/arm64-isa-proof/capability-census.json"
