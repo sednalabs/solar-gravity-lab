@@ -148,7 +148,10 @@ private val RuntimeMirrorEligibleKernelCountRegex =
     Regex("""\beligible candidates (\d+)""", RegexOption.IGNORE_CASE)
 private val RuntimeMirrorBlockedKernelCountRegex =
     Regex("""\bblocked candidates (\d+)""", RegexOption.IGNORE_CASE)
+private val RuntimeMirrorHugePayloadMarkerRegex = Regex("""\(\d+ chars\)""")
+private val RuntimeMirrorWhitespaceRegex = Regex("""\s+""")
 private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
+private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 220
 private const val RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION = 18f
 private const val RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION = 28f
 private const val RUNTIME_MIRROR_SIGNAL_FOCUS_LIFT = 0.16f
@@ -1602,7 +1605,7 @@ private fun buildRuntimeSelectionCard(
     )
 }
 
-private fun buildRuntimeBackendStatus(
+internal fun buildRuntimeBackendStatus(
     uiState: ShellUiState,
     hostRendererStatus: String,
 ): String {
@@ -1614,10 +1617,37 @@ private fun buildRuntimeBackendStatus(
     val revision = uiState.renderStatus.sceneRevision ?: "waiting-for-packet"
     return listOfNotNull(
         connectionSummary,
-        uiState.statusLine.takeIf(String::isNotBlank),
+        uiState.statusLine
+            .takeIf(String::isNotBlank)
+            ?.let(::runtimeMirrorCompactStatusText),
         "rev=$revision",
-        hostRendererStatus.takeIf(String::isNotBlank),
+        hostRendererStatus
+            .takeIf(String::isNotBlank)
+            ?.let(::runtimeMirrorCompactStatusText),
     ).joinToString(separator = " · ")
+}
+
+internal fun runtimeMirrorCompactStatusText(value: String): String {
+    val normalized = value
+        .replace('\n', ' ')
+        .replace(RuntimeMirrorWhitespaceRegex, " ")
+        .trim()
+    if (normalized.length <= RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT) {
+        return normalized
+    }
+
+    RuntimeMirrorHugePayloadMarkerRegex.find(normalized)?.let { marker ->
+        val markerEnd = marker.range.last + 1
+        val throughPayloadMarker = normalized.take(markerEnd).trim()
+        if (throughPayloadMarker.length <= RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT) {
+            return throughPayloadMarker
+        }
+    }
+
+    return normalized
+        .take(RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT)
+        .trimEnd()
+        .plus("... [truncated]")
 }
 
 private fun buildRuntimeDiagnosticsText(

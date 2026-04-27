@@ -146,6 +146,11 @@ colors are presentation, not proof. The labels and audit string remain the
 source of truth, and they must continue to separate active execution from
 candidate capability.
 
+Runtime status text should be bounded for the cockpit surface. Large packet or
+backend payload summaries are useful as artifacts and diagnostics, but the
+device-visible readout should compact them before they crowd out the lane
+visualization that the native computer-use loop is trying to inspect.
+
 The long-term loop is:
 
 - implement or expose a device-native capability;
