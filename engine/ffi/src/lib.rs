@@ -1489,6 +1489,7 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
     match error {
         RuntimeError::DuplicateBody(_)
         | RuntimeError::UnknownBody(_)
+        | RuntimeError::UnknownScenario(_)
         | RuntimeError::InvalidEpochDelta(_)
         | RuntimeError::InvalidPlaybackRate(_)
         | RuntimeError::UnknownCheckpoint(_)

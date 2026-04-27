@@ -64,7 +64,7 @@ class JniRuntimeBridgeTest {
         assertTrue(
             signals
                 .filterIsInstance<RuntimeSignal.Notice>()
-                .any { it.message.contains("Seeded canonical solar system via Rust authority") }
+                .any { it.message.contains("Seeded scenario pack via Rust authority") }
         )
         assertTrue(
             signals
@@ -114,7 +114,7 @@ class JniRuntimeBridgeTest {
         assertFalse(
             signals
                 .filterIsInstance<RuntimeSignal.Notice>()
-                .any { it.message.contains("Seeded canonical solar system via Rust authority") }
+                .any { it.message.contains("Seeded scenario pack via Rust authority") }
         )
     }
 
@@ -145,6 +145,107 @@ class JniRuntimeBridgeTest {
         assertTrue(runtimeInfo.workloadSummary?.contains("long-horizon") == true)
         assertTrue(runtimeInfo.interopErrorBudgetSummary?.contains("checkpoint-publication") == true)
     }
+
+    @Test
+    fun loadScenario_replacesActiveSessionAndAppliesScenarioDefaults() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            refreshResults = ArrayDeque(
+                listOf(
+                    snapshotSummary(
+                        scenarioId = "showcase.jupiter-system",
+                        bodyCount = 0,
+                    ),
+                    snapshotSummary(
+                        scenarioId = "showcase.jupiter-system",
+                        bodyCount = 31,
+                    ),
+                )
+            ),
+        )
+        val renderHostAdapter = FakeRenderHostAdapter()
+        val bridge = JniRuntimeBridge(
+            transport = transport,
+            renderHostAdapter = renderHostAdapter,
+        )
+
+        val signals = bridge.loadScenario("showcase.jupiter-system")
+
+        assertEquals(listOf("showcase.jupiter-system"), transport.createdScenarioIds)
+        assertEquals(listOf(42L), renderHostAdapter.boundSessionHandles)
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM) })
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SET_PLAYBACK_RATE) })
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_FOCUS_BODY) })
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SET_OBSERVER_MODE) })
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) })
+        assertTrue(
+            signals
+                .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
+                .any { it.summary.scenarioId == "showcase.jupiter-system" && it.summary.bodyCount == 31 }
+        )
+    }
+
+    @Test
+    fun loadScenario_rejectsUnknownScenarioWithoutCreatingSession() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            refreshResults = ArrayDeque(listOf(snapshotSummary(bodyCount = 1))),
+        )
+        val bridge = JniRuntimeBridge(
+            transport = transport,
+            renderHostAdapter = FakeRenderHostAdapter(),
+        )
+
+        val signals = bridge.loadScenario("missing-pack")
+
+        assertTrue(signals.any { it is RuntimeSignal.Unavailable })
+        assertTrue(transport.createdScenarioIds.isEmpty())
+    }
+
+    @Test
+    fun loadScenario_releasesPreviousSessionWhenReplacingActiveHandle() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            refreshResults = ArrayDeque(
+                listOf(
+                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 21_600.0),
+                    snapshotSummary(
+                        scenarioId = "showcase.jupiter-system",
+                        bodyCount = 31,
+                        paused = false,
+                        simSecondsPerRealSecond = 14_400.0,
+                    ),
+                )
+            ),
+            sessionHandles = ArrayDeque(listOf(42L, 84L)),
+        )
+        val renderHostAdapter = FakeRenderHostAdapter()
+        val bridge = JniRuntimeBridge(
+            transport = transport,
+            renderHostAdapter = renderHostAdapter,
+        )
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val job = scope.launch {
+            bridge.connect().collect { /* keep default session alive */ }
+        }
+
+        withTimeout(2_000) {
+            while (transport.runtimeInfoHandles.isEmpty()) {
+                delay(25)
+            }
+        }
+
+        bridge.loadScenario("showcase.jupiter-system")
+        assertEquals(listOf("sol-system", "showcase.jupiter-system"), transport.createdScenarioIds)
+        assertEquals(listOf(42L), transport.destroyedHandles)
+        assertEquals(listOf(42L, 84L), renderHostAdapter.boundSessionHandles)
+
+        job.cancel()
+        job.join()
+        scope.cancel()
+        assertTrue(
+            "Expected closing the runtime bridge flow to release the current scenario session",
+            transport.destroyedHandles.contains(84L),
+        )
+    }
+
 
     @Test
     fun connect_keepsRefreshing_whenPlaybackIsLive() = runBlocking {
@@ -241,7 +342,10 @@ class JniRuntimeBridgeTest {
         private val refreshResults: ArrayDeque<NativeSnapshotSummaryResult>,
         private val runtimeInfoCpuBackend: Int = 1,
         private val runtimeInfoGpuBackend: Int = 0,
+        private val sessionHandles: ArrayDeque<Long> = ArrayDeque(listOf(42L)),
     ) : NativeRuntimeTransport {
+        val createdScenarioIds = CopyOnWriteArrayList<String>()
+        val destroyedHandles = CopyOnWriteArrayList<Long>()
         val runtimeInfoHandles = CopyOnWriteArrayList<Long>()
         val refreshedHandles = CopyOnWriteArrayList<Long>()
         val appliedCommands = CopyOnWriteArrayList<NativeRuntimeCommandPayload>()
@@ -252,13 +356,16 @@ class JniRuntimeBridgeTest {
         override fun createSession(
             scenarioId: String,
             rootBranchId: String,
-        ): NativeCreateSessionResult = NativeCreateSessionResult(
-            result = NativeResult(code = 0),
-            handle = 42L,
-            abiVersion = 4,
-            cpuBackend = runtimeInfoCpuBackend,
-            gpuBackend = runtimeInfoGpuBackend,
-        )
+        ): NativeCreateSessionResult {
+            createdScenarioIds += scenarioId
+            return NativeCreateSessionResult(
+                result = NativeResult(code = 0),
+                handle = sessionHandles.removeFirstOrNull() ?: 42L,
+                abiVersion = 4,
+                cpuBackend = runtimeInfoCpuBackend,
+                gpuBackend = runtimeInfoGpuBackend,
+            )
+        }
 
         override fun runtimeInfo(handle: Long): NativeRuntimeInfoResult {
             runtimeInfoHandles += handle
@@ -298,6 +405,7 @@ class JniRuntimeBridgeTest {
                 3 -> current.copy(
                     simSecondsPerRealSecond = command.simSecondsPerRealSecond
                 )
+                4 -> current.copy(observerMode = command.observerMode)
                 0 -> current.copy(
                     epochSeconds = current.epochSeconds + command.deltaSeconds
                 )
@@ -312,7 +420,9 @@ class JniRuntimeBridgeTest {
 
         override fun releaseVulkanScene(packetHandle: Long) = Unit
 
-        override fun destroySession(handle: Long) = Unit
+        override fun destroySession(handle: Long) {
+            destroyedHandles += handle
+        }
     }
 
     private companion object {
@@ -320,6 +430,8 @@ class JniRuntimeBridgeTest {
         const val COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM = 11
         const val COMMAND_KIND_RESUME_PLAYBACK = 2
         const val COMMAND_KIND_SET_PLAYBACK_RATE = 3
+        const val COMMAND_KIND_SET_OBSERVER_MODE = 4
+        const val COMMAND_KIND_FOCUS_BODY = 5
 
         fun hasCommandKind(command: NativeRuntimeCommandPayload, kind: Int): Boolean =
             command.kind == kind
@@ -330,12 +442,13 @@ class JniRuntimeBridgeTest {
         const val STARTUP_EXPECTED_BODY_COUNT = 365
 
         fun snapshotSummary(
+            scenarioId: String = "sol-system",
             bodyCount: Int,
             paused: Boolean = true,
             simSecondsPerRealSecond: Double = 1.0,
         ): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
             result = NativeResult(code = 0),
-            scenarioId = "sol-system",
+            scenarioId = scenarioId,
             activeBranchId = "main",
             bodyCount = bodyCount,
             epochSeconds = 0.0,

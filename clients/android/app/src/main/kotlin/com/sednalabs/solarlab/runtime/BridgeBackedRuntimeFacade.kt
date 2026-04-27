@@ -45,6 +45,8 @@ class BridgeBackedRuntimeFacade internal constructor(
 
     override val uiState: StateFlow<ShellUiState> = _uiState.asStateFlow()
 
+    override val scenarioPacks: List<RuntimeScenarioPack> = RuntimeScenarioPacks.all
+
     /**
      * Initializes the connection to the Rust-owned runtime boundary.
      * 
@@ -93,6 +95,71 @@ class BridgeBackedRuntimeFacade internal constructor(
                 statusLine = "Runtime startup failed",
                 detailLine = error.message ?: error::class.java.simpleName,
                 noticeLine = "Android shell caught an unhandled startup failure instead of crashing",
+            )
+        }
+    }
+
+    override suspend fun loadScenario(scenarioId: String) {
+        val scenarioPack = RuntimeScenarioPacks.byId(scenarioId)
+        if (scenarioPack == null) {
+            _uiState.update { current ->
+                current.copy(
+                    noticeLine = "Unknown scenario pack: $scenarioId",
+                    noticeTone = ShellNoticeTone.Caution,
+                    pendingActionLabel = null,
+                    developerTelemetry = recordTelemetry(
+                        level = DeveloperTelemetryLevel.Warning,
+                        category = "scenario.load.rejected",
+                        message = "Unknown scenario $scenarioId",
+                    ),
+                )
+            }
+            return
+        }
+        try {
+            runShellAction(
+                label = "Loading ${scenarioPack.title}",
+                telemetry = TelemetryEvent(
+                    level = DeveloperTelemetryLevel.Info,
+                    category = "scenario.load.requested",
+                    message = "Requested scenario ${scenarioPack.scenarioId}",
+                ),
+                onStart = { current ->
+                    current.copy(
+                        connectionState = SessionConnectionState.Connecting,
+                        statusLine = "Loading ${scenarioPack.title}",
+                        detailLine = scenarioPack.description,
+                        noticeLine = "Replacing the runtime session with scenario ${scenarioPack.scenarioId}",
+                        noticeTone = ShellNoticeTone.Neutral,
+                        pendingActionLabel = "Loading ${scenarioPack.title}",
+                        sessionHandle = null,
+                        snapshot = null,
+                        snapshotSummary = null,
+                        observerModeCode = null,
+                        cameraFacingSummary = null,
+                        focusedBodyId = null,
+                        recentFocusedBodyIds = emptyList(),
+                        activeCheckpointId = null,
+                        activeCheckpointLabel = null,
+                        renderStatus = RenderStatusPresentation(
+                            readiness = RenderHostReadiness.WaitingForSession,
+                        ),
+                        renderPacketSummary = null,
+                        renderFrame = null,
+                    )
+                }
+            ) {
+                withContext(boundaryDispatcher) {
+                    bridge.loadScenario(scenarioPack.scenarioId).forEach(::applySignal)
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            surfaceShellFailure(
+                statusLine = "Scenario load failed",
+                detailLine = error.message ?: error::class.java.simpleName,
+                noticeLine = "Android shell caught an unhandled scenario load failure instead of crashing",
             )
         }
     }

@@ -19,7 +19,8 @@ offline-first scientific simulation.
 - `scene.proto`: backend-neutral render scene and delta contracts with typed
   bodies/trails/tracers/camera/light state.
 - `diagnostics.proto`: runtime+hardware metrics and package verification state.
-- `scenario.proto`: scenario package requirements and runtime presets.
+- `scenario.proto`: scenario package requirements, runtime presets, and
+  presentation-oriented view defaults for scenario-pack startup.
 - `common.proto`: shared versioning, digest/signature, provenance, vectors,
   and core enums.
 

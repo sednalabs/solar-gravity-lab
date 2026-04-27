@@ -130,8 +130,9 @@ Read the durable architecture in this order:
 11. `frame-lifecycle.md`
 12. `compute-compaction-reintroduction-plan.md`
 13. `android-acceleration-truth.md`
-14. `v2/architecture.md`
-15. `v2/roadmap.md`
+14. `scenario-packs.md`
+15. `v2/architecture.md`
+16. `v2/roadmap.md`
 
 ## Operational repo truth
 

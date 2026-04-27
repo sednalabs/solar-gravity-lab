@@ -296,9 +296,11 @@ jobs:
               dist/gradle/prerelease-assemble.log \
               "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )"
-          echo "assemble_seconds=$((phase_end - phase_start))" >> "$GITHUB_OUTPUT"
-          echo "from_cache_count=${from_cache_count}" >> "$GITHUB_OUTPUT"
-          echo "configuration_cache_status=${configuration_cache_status}" >> "$GITHUB_OUTPUT"
+          {
+            echo "assemble_seconds=$((phase_end - phase_start))"
+            echo "from_cache_count=${from_cache_count}"
+            echo "configuration_cache_status=${configuration_cache_status}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Derive artifact metadata
         id: meta
@@ -561,9 +563,11 @@ jobs:
             exit 1
           fi
 
-          echo "changelog_json=$changelog_json" >> "$GITHUB_OUTPUT"
-          echo "changelog_md=$changelog_md" >> "$GITHUB_OUTPUT"
-          echo "metadata_path=$metadata_path" >> "$GITHUB_OUTPUT"
+          {
+            echo "changelog_json=$changelog_json"
+            echo "changelog_md=$changelog_md"
+            echo "metadata_path=$metadata_path"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         env:
@@ -609,6 +613,7 @@ jobs:
           fi
 
           uploaded=false
+          # shellcheck disable=SC2034
           for attempt in {1..10}; do
             if gh release upload "$TAG_NAME" \
               --repo "${{ github.repository }}" \
@@ -690,6 +695,7 @@ jobs:
             --android-validation-mode "${{ needs.build-prerelease-apk.outputs.build_variant || 'prerelease' }}" \
             --android-artifact-mode "${{ inputs.android_artifact_mode }}" \
             --emulator-boot-strategy "${{ inputs.emulator_boot_strategy }}" \
+            --gradle-configuration-cache "${{ inputs.gradle_configuration_cache }}" \
             --job build-prerelease-apk=${{ needs.build-prerelease-apk.result }} \
             --job isa-prerelease-proof=${{ needs.isa-prerelease-proof.result }} \
             --job publish-prerelease-apk=${{ needs.publish-prerelease-apk.result }} \
