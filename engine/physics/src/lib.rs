@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::sync::OnceLock;
 
 use solarlab_domain::Vector3d;
 
@@ -1354,24 +1355,22 @@ mod arm64_neon {
 
         let tile_count = bodies.len().div_ceil(TILE_SIZE);
         let worker_count = worker_budget.min(tile_count).max(1);
-        let tiles_per_worker = tile_count.div_ceil(worker_count);
 
         let partials = std::thread::scope(|scope| {
             let mut handles = Vec::new();
             for worker_index in 0..worker_count {
-                let start_tile = worker_index * tiles_per_worker;
-                let end_tile = ((worker_index + 1) * tiles_per_worker).min(tile_count);
-                if start_tile >= end_tile {
-                    continue;
-                }
-                let i_start = start_tile * TILE_SIZE;
-                let i_end = (end_tile * TILE_SIZE).min(bodies.len());
                 handles.push(scope.spawn(move || {
                     let mut local_accelerations = vec![Vector3d::default(); bodies.len()];
-                    for i in i_start..i_end {
-                        for j in (i + 1)..bodies.len() {
-                            unsafe {
-                                accumulate_pair(bodies, &mut local_accelerations, i, j);
+                    // Cyclic tiles balance the triangular pair workload: early
+                    // rows have many more interactions than late rows.
+                    for tile_index in (worker_index..tile_count).step_by(worker_count) {
+                        let i_start = tile_index * TILE_SIZE;
+                        let i_end = ((tile_index + 1) * TILE_SIZE).min(bodies.len());
+                        for i in i_start..i_end {
+                            for j in (i + 1)..bodies.len() {
+                                unsafe {
+                                    accumulate_pair(bodies, &mut local_accelerations, i, j);
+                                }
                             }
                         }
                     }
@@ -1577,10 +1576,13 @@ fn arm64_kernel_for_body_count(body_count: usize) -> (&'static str, Arm64Gravity
 }
 
 fn runtime_worker_budget() -> usize {
-    std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1)
-        .max(1)
+    static RUNTIME_WORKER_BUDGET: OnceLock<usize> = OnceLock::new();
+    *RUNTIME_WORKER_BUDGET.get_or_init(|| {
+        std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1)
+            .max(1)
+    })
 }
 
 fn override_cpu_features() -> Option<Vec<String>> {
