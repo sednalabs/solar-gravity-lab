@@ -503,7 +503,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -550,7 +550,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -597,7 +597,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -687,7 +687,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -734,7 +734,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -831,7 +831,7 @@ jobs:
             "${ANDROID_CMAKE_PACKAGE}" \
             "${ANDROID_NDK_PACKAGE}"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - id: android_unit_rust_shared_cache
         uses: ./.github/actions/rust-shared-cache
@@ -1019,7 +1019,7 @@ jobs:
             "${ANDROID_CMAKE_PACKAGE}" \
             "${ANDROID_NDK_PACKAGE}"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - id: android_lint_rust_shared_cache
         uses: ./.github/actions/rust-shared-cache
@@ -1227,7 +1227,7 @@ jobs:
           disable-animations: false
           script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - id: android_shell_rust_shared_cache
         uses: ./.github/actions/rust-shared-cache
