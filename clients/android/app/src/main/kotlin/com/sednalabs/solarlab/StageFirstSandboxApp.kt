@@ -115,6 +115,20 @@ private enum class StageFirstExperienceMode {
     RUNTIME_MIRROR,
 }
 
+internal data class LoadScenarioSemanticRouting(
+    val shouldEnterRuntimeMirror: Boolean,
+    val shouldDeliverAction: Boolean,
+)
+
+internal fun resolveLoadScenarioSemanticRouting(
+    runtimeMirrorAvailable: Boolean,
+    currentlyInRuntimeMirror: Boolean,
+    scenarioKnown: Boolean,
+): LoadScenarioSemanticRouting = LoadScenarioSemanticRouting(
+    shouldEnterRuntimeMirror = runtimeMirrorAvailable && scenarioKnown,
+    shouldDeliverAction = scenarioKnown || currentlyInRuntimeMirror,
+)
+
 internal data class PendingSemanticAction(
     val token: Long,
     val action: SolarLabSemanticAction,
@@ -143,6 +157,29 @@ internal fun StageFirstSandboxApp(
 
                 SolarLabSemanticAction.ReturnToSandbox -> {
                     experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX
+                    SolarLabSemanticActionBridge.clearPendingReplay()
+                }
+
+                is SolarLabSemanticAction.LoadScenario -> {
+                    val scenarioKnown = runtimeFacade
+                        ?.scenarioPacks
+                        ?.any { it.scenarioId == action.scenarioId }
+                        ?: false
+                    val routing = resolveLoadScenarioSemanticRouting(
+                        runtimeMirrorAvailable = runtimeMirrorAvailable,
+                        currentlyInRuntimeMirror = experienceMode == StageFirstExperienceMode.RUNTIME_MIRROR,
+                        scenarioKnown = scenarioKnown,
+                    )
+                    if (routing.shouldEnterRuntimeMirror) {
+                        experienceMode = StageFirstExperienceMode.RUNTIME_MIRROR
+                    }
+                    if (routing.shouldDeliverAction) {
+                        nextSemanticToken += 1L
+                        pendingSemanticAction = PendingSemanticAction(
+                            token = nextSemanticToken,
+                            action = action,
+                        )
+                    }
                     SolarLabSemanticActionBridge.clearPendingReplay()
                 }
 

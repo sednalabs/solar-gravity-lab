@@ -9,7 +9,7 @@ use std::mem::size_of;
 use std::time::Instant;
 
 use solarlab_data::{
-    apply_update_plan, canonical_startup_seed, plan_manifest_update, ApplyPackageInputs,
+    apply_update_plan, plan_manifest_update, scenario_pack_seed, ApplyPackageInputs,
     ApplyProvenance, ApplyUpdateError, CompatibilityTarget, Digest, LocalDataState, PackageKind,
     SemVer, StoredPackage, UpdateManifest, UpdatePlan, UpdatePlanError,
 };
@@ -217,6 +217,7 @@ pub enum RuntimeError {
     /// responses.
     DuplicateBody(BodyId),
     UnknownBody(BodyId),
+    UnknownScenario(ScenarioId),
     InvalidEpochDelta(f64),
     InvalidPlaybackRate(f64),
     UnknownCheckpoint(CheckpointId),
@@ -481,9 +482,10 @@ impl WorldRuntime {
 
         match &command {
             WorldCommand::SeedCanonicalSolarSystem => {
-                let branch = self.active_branch_mut();
-                if branch.world.bodies.is_empty() {
-                    let seed = canonical_startup_seed();
+                if self.active_branch().world.bodies.is_empty() {
+                    let seed = scenario_pack_seed(&self.scenario_id.0)
+                        .ok_or_else(|| RuntimeError::UnknownScenario(self.scenario_id.clone()))?;
+                    let branch = self.active_branch_mut();
                     branch.world.bodies = seed
                         .bodies
                         .into_iter()
@@ -496,6 +498,14 @@ impl WorldRuntime {
                             velocity_mps: body.velocity_mps,
                         })
                         .collect();
+                    branch.world.observer = ObserverState {
+                        mode: seed.default_observer_mode,
+                        focus_body_id: seed.default_focus_body_id.map(BodyId),
+                    };
+                    branch.world.playback = PlaybackState {
+                        paused: seed.start_paused,
+                        sim_seconds_per_real_second: seed.sim_seconds_per_real_second,
+                    };
                     branch.world.invariants = compute_world_invariants(&branch.world.bodies);
                     branch.world.trail_history_by_body.clear();
                     record_trail_samples_from_bodies(
@@ -2019,6 +2029,70 @@ mod tests {
             .iter()
             .any(|body| body.body_id.0 == "oort-95"));
         assert_eq!(snapshot.trail_history_by_body.len(), 365);
+    }
+
+    #[test]
+    fn seed_scenario_pack_populates_focus_and_playback_defaults() {
+        let mut runtime = new_runtime_with_scenario("showcase.jupiter-system");
+
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .expect("scenario pack seed command should succeed");
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.scenario_id,
+            ScenarioId("showcase.jupiter-system".into())
+        );
+        assert!(snapshot
+            .bodies
+            .iter()
+            .any(|body| body.body_id.0 == "jupiter"));
+        assert!(snapshot.bodies.iter().any(|body| body.body_id.0 == "io"));
+        assert!(snapshot
+            .bodies
+            .iter()
+            .any(|body| body.body_id.0 == "callisto"));
+        assert_eq!(
+            snapshot.observer.focus_body_id,
+            Some(BodyId("jupiter".into()))
+        );
+        assert_eq!(snapshot.observer.mode, ObserverMode::FollowSelected);
+        assert!(!snapshot.playback.paused);
+        assert_eq!(snapshot.playback.sim_seconds_per_real_second, 14_400.0);
+    }
+
+    #[test]
+    fn seed_close_scenario_can_start_paused_for_visual_inspection() {
+        let mut runtime = new_runtime_with_scenario("showcase.earth-moon");
+
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .expect("scenario pack seed command should succeed");
+
+        let snapshot = runtime.snapshot();
+        assert!(snapshot
+            .bodies
+            .iter()
+            .any(|body| body.body_id.0 == "lunar-marker-00"));
+        assert_eq!(snapshot.observer.focus_body_id, Some(BodyId("moon".into())));
+        assert_eq!(snapshot.observer.mode, ObserverMode::FollowHost);
+        assert!(snapshot.playback.paused);
+    }
+
+    #[test]
+    fn seed_unknown_scenario_pack_is_rejected() {
+        let mut runtime = new_runtime_with_scenario("missing-pack");
+
+        let err = runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .expect_err("unknown scenario pack should not silently seed default");
+
+        assert_eq!(
+            err,
+            RuntimeError::UnknownScenario(ScenarioId("missing-pack".into()))
+        );
+        assert!(runtime.snapshot().bodies.is_empty());
     }
 
     #[test]
@@ -3998,8 +4072,12 @@ mod tests {
     }
 
     fn new_runtime() -> WorldRuntime {
+        new_runtime_with_scenario("sol-system")
+    }
+
+    fn new_runtime_with_scenario(scenario_id: &str) -> WorldRuntime {
         WorldRuntime::new(
-            ScenarioId("sol-system".into()),
+            ScenarioId(scenario_id.into()),
             BranchId("main".into()),
             RuntimeConfig {
                 physics: PhysicsPolicy {

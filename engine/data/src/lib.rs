@@ -2,11 +2,16 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod canonical_startup;
+mod scenario_packs;
 
 pub use canonical_startup::{
     canonical_startup_seed, CanonicalBodySpec, CanonicalStartupSeed,
     CANONICAL_STARTUP_CURATED_SMALL_BODY_COUNT, CANONICAL_STARTUP_SYNTHETIC_ASTEROID_BELT_COUNT,
     CANONICAL_STARTUP_SYNTHETIC_OORT_CLOUD_COUNT,
+};
+pub use scenario_packs::{
+    scenario_pack_catalog, scenario_pack_seed, ScenarioPackDescriptor, ScenarioPackSeed,
+    DEFAULT_SCENARIO_PACK_ID,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

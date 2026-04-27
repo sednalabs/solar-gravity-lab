@@ -407,8 +407,11 @@ class SolarLabShellLayoutTest {
         val commands = CopyOnWriteArrayList<RuntimeCommand>()
 
         override val uiState: StateFlow<ShellUiState> = state
+        override val scenarioPacks = emptyList<com.sednalabs.solarlab.runtime.RuntimeScenarioPack>()
 
         override suspend fun startSession() = Unit
+
+        override suspend fun loadScenario(scenarioId: String) = Unit
 
         override suspend fun refresh() = Unit
 
