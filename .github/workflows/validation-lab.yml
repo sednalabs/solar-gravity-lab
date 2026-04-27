@@ -7,13 +7,15 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/scripts/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
       - "clients/android/**"
-      - "feature-lab/**"
-      - "render-core/**"
       - "core-math/**"
       - "core-model/**"
       - "core-simulation/**"
       - "engine/**"
+      - "feature-lab/**"
+      - "render-core/**"
       - "proto/**"
       - "render/**"
       - "services/**"
@@ -72,6 +74,8 @@ on:
           - bootstrap
           - rust-workspace
           - rust-workspace-arm64
+          - arm64-isa-proof
+          - runtime-cpu-truth
           - ffi-abi
           - android-unit
           - android-lint
@@ -175,6 +179,7 @@ jobs:
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       rust_workspace: ${{ steps.plan.outputs.rust_workspace }}
       rust_workspace_arm64: ${{ steps.plan.outputs.rust_workspace_arm64 }}
+      arm64_isa_proof: ${{ steps.plan.outputs.arm64_isa_proof }}
       ffi_abi: ${{ steps.plan.outputs.ffi_abi }}
       android_unit: ${{ steps.plan.outputs.android_unit }}
       android_lint: ${{ steps.plan.outputs.android_lint }}
@@ -496,7 +501,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -543,7 +548,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -576,6 +581,61 @@ jobs:
             cat dist/sccache/rust-workspace-arm64.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
+  arm64-isa-proof:
+    name: Arm64 ISA proof
+    needs: metadata
+    if: ${{ needs.metadata.outputs.arm64_isa_proof == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - uses: ./.github/actions/rust-shared-cache
+        with:
+          shared-key: solarlab-rust-native-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: ./.github/actions/install-sccache
+        with:
+          version: v0.10.0
+
+      - name: Configure sccache
+        id: arm64_isa_sccache
+        shell: bash
+        run: bash .github/scripts/configure_sccache.sh
+
+      - name: Run Arm64 ISA activation proof
+        shell: bash
+        run: bash .github/scripts/run_arm64_isa_proof.sh
+
+      - name: Emit Arm64 ISA sccache stats
+        if: always() && steps.arm64_isa_sccache.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sccache
+          bash .github/scripts/capture_sccache_stats.sh dist/sccache/arm64-isa-proof.txt
+          {
+            echo "## arm64-isa-proof sccache"
+            cat dist/sccache/arm64-isa-proof.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Arm64 ISA proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: arm64-isa-proof-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            dist/arm64-isa-proof/**
+            dist/sccache/arm64-isa-proof.txt
+
   ffi-abi:
     name: FFI ABI tests
     needs: metadata
@@ -590,7 +650,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -637,7 +697,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -734,7 +794,7 @@ jobs:
             "${ANDROID_CMAKE_PACKAGE}" \
             "${ANDROID_NDK_PACKAGE}"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - id: android_unit_rust_shared_cache
         uses: ./.github/actions/rust-shared-cache
@@ -922,7 +982,7 @@ jobs:
             "${ANDROID_CMAKE_PACKAGE}" \
             "${ANDROID_NDK_PACKAGE}"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - id: android_lint_rust_shared_cache
         uses: ./.github/actions/rust-shared-cache
@@ -1130,7 +1190,7 @@ jobs:
           disable-animations: false
           script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - id: android_shell_rust_shared_cache
         uses: ./.github/actions/rust-shared-cache
@@ -1176,6 +1236,8 @@ jobs:
             echo "validation_mode=${{ matrix.validation_mode }}"
             echo "debug_stage_first_client=${{ matrix.debug_stage_first_client }}"
             echo "stage_first_runtime_mirror=${{ matrix.stage_first_runtime_mirror }}"
+            echo "preferred_gpu_backend=${{ matrix.preferred_gpu_backend }}"
+            echo "hosted_debug_profile=${{ matrix.hosted_debug_profile }}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Assemble debug Android shell and androidTest
@@ -1193,6 +1255,8 @@ jobs:
             :app:assembleDebugAndroidTest \
             -Psolarlab.debugStageFirstClient=${{ steps.android_mode.outputs.debug_stage_first_client }} \
             -Psolarlab.stageFirstRuntimeMirror=${{ steps.android_mode.outputs.stage_first_runtime_mirror }} \
+            -Psolarlab.preferredGpuBackend=${{ steps.android_mode.outputs.preferred_gpu_backend }} \
+            -Psolarlab.hostedDebugProfile=${{ steps.android_mode.outputs.hosted_debug_profile }} \
             "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-shell-assemble-${{ matrix.validation_mode }}.log
           phase_end="$(date +%s)"
@@ -1229,6 +1293,8 @@ jobs:
           GRADLE_CONFIGURATION_CACHE_MODE: ${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}
           ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
           ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
+          ORG_GRADLE_PROJECT_solarlab_preferredGpuBackend: ${{ steps.android_mode.outputs.preferred_gpu_backend }}
+          ORG_GRADLE_PROJECT_solarlab_hostedDebugProfile: ${{ steps.android_mode.outputs.hosted_debug_profile }}
 
       - name: Emit Android lane timing summary
         if: always()
@@ -1274,6 +1340,8 @@ jobs:
             echo "- validation mode: \`${{ steps.android_mode.outputs.validation_mode }}\`"
             echo "- stage-first client: \`${{ steps.android_mode.outputs.debug_stage_first_client }}\`"
             echo "- stage-first runtime mirror: \`${{ steps.android_mode.outputs.stage_first_runtime_mirror }}\`"
+            echo "- preferred GPU backend: \`${{ steps.android_mode.outputs.preferred_gpu_backend }}\`"
+            echo "- hosted debug profile: \`${{ steps.android_mode.outputs.hosted_debug_profile }}\`"
             echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"
@@ -1333,6 +1401,7 @@ jobs:
       - wrapper-bootstrap
       - rust-workspace
       - rust-workspace-arm64
+      - arm64-isa-proof
       - ffi-abi
       - android-unit
       - android-lint
@@ -1390,6 +1459,7 @@ jobs:
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
             --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
             --job rust-workspace-arm64=${{ needs.rust-workspace-arm64.result || 'skipped' }} \
+            --job arm64-isa-proof=${{ needs.arm64-isa-proof.result || 'skipped' }} \
             --job ffi-abi=${{ needs.ffi-abi.result || 'skipped' }} \
             --job android-unit=${{ needs.android-unit.result || 'skipped' }} \
             --job android-lint=${{ needs.android-lint.result || 'skipped' }} \

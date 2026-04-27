@@ -35,12 +35,25 @@ class RuntimeBridgeGpuBackendSelectionTest {
     }
 
     @Test
+    fun preferredGpuBackendLabel_tracksRequestedBackendForTelemetry() {
+        assertEquals("none", preferredGpuBackendLabel(""))
+        assertEquals("vulkan", preferredGpuBackendLabel("vulkan"))
+        assertEquals("vulkan+opencl", preferredGpuBackendLabel("vulkan + opencl"))
+        assertEquals("vulkan+opencl", preferredGpuBackendLabel("opencl, vulkan"))
+        assertEquals("unsupported:cuda", preferredGpuBackendLabel("cuda"))
+    }
+
+    @Test
     fun nativeRuntimeInfoResult_surfacesOpenClWorkloadsAndInteropPolicy() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 3,
+            abiVersion = 4,
+            requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_OPENCL,
+            cpuFeatureFlags = 0,
+            cpuSolverPath = 1,
+            cpuFallbackCode = 0,
         )
 
         assertTrue(info.gpuWorkloadSummary()?.contains("long-horizon") == true)
@@ -51,12 +64,36 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_returnsNoInteropPolicy_forNonOpenClBackends() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 3,
+            abiVersion = 4,
+            requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
+            cpuFeatureFlags = 0,
+            cpuSolverPath = 1,
+            cpuFallbackCode = 0,
         )
 
         assertTrue(info.gpuWorkloadSummary()?.contains("realtime") == true)
         assertNull(info.gpuInteropErrorBudgetSummary())
+    }
+
+    @Test
+    fun nativeRuntimeInfoResult_surfacesCpuIsaTruth() {
+        val info = NativeRuntimeInfoResult(
+            result = NativeResult(code = 0),
+            abiVersion = 4,
+            requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            cpuBackend = 0,
+            gpuBackend = NATIVE_GPU_BACKEND_NONE,
+            cpuFeatureFlags = (1L shl 0) or (1L shl 7) or (1L shl 9),
+            cpuSolverPath = 0,
+            cpuFallbackCode = 1,
+        )
+
+        assertEquals("simd-arm64", info.requestedCpuBackendLabel())
+        assertEquals("reference-scalar", info.cpuBackendLabel())
+        assertEquals("scalar.reference", info.cpuSolverPathLabel())
+        assertEquals("neon+sve2+sme2", info.cpuFeatureSummary())
+        assertTrue(info.cpuFallbackSummary()?.contains("non-aarch64") == true)
     }
 }

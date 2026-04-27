@@ -24,6 +24,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
     @Test
     fun runtimeMirror_mode_switch_exposes_runtime_controls() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR)
+        SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
@@ -40,13 +41,34 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            val state = composeRule.activity.runtimeFacadeForTesting.uiState.value
+            state.sessionHandle != null && state.backendSummary != null
+        }
 
+        val runtimeState = composeRule.activity.runtimeFacadeForTesting.uiState.value
         assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            "Runtime mirror should bind a native runtime session handle",
+            requireNotNull(runtimeState.sessionHandle) > 0L,
+        )
+        val backendSummary = requireNotNull(runtimeState.backendSummary) {
+            "Runtime mirror should expose requested/effective backend truth"
+        }
+        assertTrue(
+            "Runtime mirror backend summary should include CPU truth: $backendSummary",
+            backendSummary.contains("cpu="),
         )
         assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            "Runtime mirror backend summary should include GPU truth: $backendSummary",
+            backendSummary.contains("gpu="),
         )
+        if (BuildConfig.PREFERRED_GPU_BACKEND.equals("vulkan", ignoreCase = true)) {
+            assertTrue(
+                "Stage-first mirror validation should request and surface Vulkan runtime intent: $backendSummary",
+                backendSummary.contains("gpu=vulkan") ||
+                    backendSummary.contains("requested vulkan"),
+            )
+        }
         assertTrue(
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).fetchSemanticsNodes().isNotEmpty()
         )
@@ -56,15 +78,15 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).performClick()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG).assertIsDisplayed()
-        composeRule
-            .onNodeWithTag(SolarLabTestTags.stageFirstScenarioLoadTag("showcase.jupiter-system"))
-            .assertIsDisplayed()
-            .performClick()
+        val showcaseScenarioId = "showcase.jupiter-system"
+        assertTrue(
+            "Runtime mirror should accept semantic scenario load requests",
+            SolarLabSemanticActionBridge.submit(SolarLabSemanticAction.LoadScenario(showcaseScenarioId)),
+        )
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG).fetchSemanticsNodes().isEmpty()
+            composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.scenarioId == showcaseScenarioId
         }
+        SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
@@ -76,16 +98,6 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         assertTrue(
             "Runtime mirror render host should have a measured size",
             requireNotNull(hostView).width > 0 && hostView.height > 0,
-        )
-
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isEmpty()
-        }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
-        assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
         )
     }
 

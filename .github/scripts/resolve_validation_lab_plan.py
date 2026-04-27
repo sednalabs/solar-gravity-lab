@@ -185,6 +185,7 @@ def apply_lane_set(lanes: dict[str, bool], lane_set: str, profile: str) -> None:
         if profile in {"broad", "full"}:
             lanes["ffi_abi"] = True
             lanes["rust_workspace_arm64"] = True
+            lanes["arm64_isa_proof"] = True
             lanes["android_unit"] = True
             lanes["android_lint"] = True
         return
@@ -193,12 +194,18 @@ def apply_lane_set(lanes: dict[str, bool], lane_set: str, profile: str) -> None:
         "bootstrap": "wrapper_bootstrap",
         "rust-workspace": "rust_workspace",
         "rust-workspace-arm64": "rust_workspace_arm64",
+        "arm64-isa-proof": "arm64_isa_proof",
         "ffi-abi": "ffi_abi",
         "android-unit": "android_unit",
         "android-lint": "android_lint",
         "android-shell": "android_shell",
         "runtime-scene-telemetry": "runtime_scene_telemetry",
     }
+    if lane_set == "runtime-cpu-truth":
+        lanes["arm64_isa_proof"] = True
+        lanes["ffi_abi"] = True
+        lanes["android_unit"] = True
+        return
     if lane_set == "full":
         for lane in lanes:
             if lane != "wrapper_bootstrap":
@@ -214,6 +221,7 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
         "wrapper_bootstrap": False,
         "rust_workspace": False,
         "rust_workspace_arm64": False,
+        "arm64_isa_proof": False,
         "ffi_abi": False,
         "android_unit": False,
         "android_lint": False,
@@ -242,6 +250,7 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
         lanes["ffi_abi"] = True
     if has_arm64_surface(files) and (not evidence_reused or has_runtime_scene_surface(files) or has_ffi_surface(files)):
         lanes["rust_workspace_arm64"] = True
+        lanes["arm64_isa_proof"] = True
 
     if has_android_surface(files):
         lanes["android_lint"] = True
@@ -272,12 +281,32 @@ def resolve_android_shell_matrix(enabled: bool, android_validation_mode: str, pr
         return "[]"
 
     matrix_by_mode = {
-        "shell-v2": [{"validation_mode": "shell-v2", "debug_stage_first_client": "false", "stage_first_runtime_mirror": "false"}],
+        "shell-v2": [
+            {
+                "validation_mode": "shell-v2",
+                "debug_stage_first_client": "false",
+                "stage_first_runtime_mirror": "false",
+                "preferred_gpu_backend": "none",
+                "hosted_debug_profile": "full-fidelity",
+            }
+        ],
         "stage-first-mirror-off": [
-            {"validation_mode": "stage-first-mirror-off", "debug_stage_first_client": "true", "stage_first_runtime_mirror": "false"}
+            {
+                "validation_mode": "stage-first-mirror-off",
+                "debug_stage_first_client": "true",
+                "stage_first_runtime_mirror": "false",
+                "preferred_gpu_backend": "none",
+                "hosted_debug_profile": "full-fidelity",
+            }
         ],
         "stage-first-mirror-on": [
-            {"validation_mode": "stage-first-mirror-on", "debug_stage_first_client": "true", "stage_first_runtime_mirror": "true"}
+            {
+                "validation_mode": "stage-first-mirror-on",
+                "debug_stage_first_client": "true",
+                "stage_first_runtime_mirror": "true",
+                "preferred_gpu_backend": "vulkan",
+                "hosted_debug_profile": "hosted-debug-lite",
+            }
         ],
     }
     if android_validation_mode == "auto":
@@ -349,6 +378,7 @@ def main() -> None:
             "wrapper_bootstrap": False,
             "rust_workspace": False,
             "rust_workspace_arm64": False,
+            "arm64_isa_proof": False,
             "ffi_abi": False,
             "android_unit": False,
             "android_lint": False,
@@ -375,6 +405,7 @@ def main() -> None:
         f"intent={profile_intent}, wrapper_bootstrap={str(lanes['wrapper_bootstrap']).lower()}, "
         f"rust_workspace={str(lanes['rust_workspace']).lower()}, "
         f"rust_workspace_arm64={str(lanes['rust_workspace_arm64']).lower()}, "
+        f"arm64_isa_proof={str(lanes['arm64_isa_proof']).lower()}, "
         f"ffi_abi={str(lanes['ffi_abi']).lower()}, android_unit={str(lanes['android_unit']).lower()}, "
         f"android_lint={str(lanes['android_lint']).lower()}, android_shell={str(lanes['android_shell']).lower()}, "
         f"runtime_scene_telemetry={str(lanes['runtime_scene_telemetry']).lower()}, "
@@ -396,6 +427,7 @@ def main() -> None:
         "wrapper_bootstrap": str(lanes["wrapper_bootstrap"]).lower(),
         "rust_workspace": str(lanes["rust_workspace"]).lower(),
         "rust_workspace_arm64": str(lanes["rust_workspace_arm64"]).lower(),
+        "arm64_isa_proof": str(lanes["arm64_isa_proof"]).lower(),
         "ffi_abi": str(lanes["ffi_abi"]).lower(),
         "android_unit": str(lanes["android_unit"]).lower(),
         "android_lint": str(lanes["android_lint"]).lower(),

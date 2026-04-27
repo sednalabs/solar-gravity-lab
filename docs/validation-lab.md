@@ -32,10 +32,14 @@ build or workflow behavior.
 3. `rust-workspace-arm64`
    Runs `cargo test --workspace` on an Arm64 runner to prove ISA-sensitive
    behavior on target architecture class.
-4. `ffi-abi`
+4. `arm64-isa-proof`
+   Runs `.github/scripts/run_arm64_isa_proof.sh` on an Arm64 runner. Use this
+   focused lane when the question is CPU feature normalization, solver-path
+   activation truth, or scalar-oracle equivalence for Arm64.
+5. `ffi-abi`
    Runs a narrower `cargo test -p solarlab-ffi` proof slice when the active seam
    is runtime/ABI/JNI-facing rather than the whole workspace.
-5. `android-shell`
+6. `android-shell`
    Prepares the Android toolchain plus the Rust Android targets, then builds the
    real app under `clients/android` with `:app:assembleDebug`.
    It supports fast-path controls:
@@ -43,6 +47,13 @@ build or workflow behavior.
    - `android_test_scope=full`: adds rotation continuity + playback continuity
    - `android_artifact_mode=failures-only|always`: controls heavy artifact capture
    - `emulator_boot_strategy=cold|snapshot-cache`: reliable cold boot default with opt-in AVD snapshot cache
+
+For stage-first runtime work, prefer
+`android_validation_mode=stage-first-mirror-on`. That mode builds the app with
+`solarlab.preferredGpuBackend=vulkan` and the core scope enters the runtime
+mirror, binds the native runtime session, and checks backend truth instead of
+only proving the local sandbox. See
+[`Android Acceleration Truth`](android-acceleration-truth.md).
 
 ## Android cache observability
 
@@ -118,6 +129,12 @@ Current recommendation:
   Run only the canonical Rust workspace tests.
 - `rust-workspace-arm64`
   Run only the canonical Rust workspace tests on Arm64.
+- `arm64-isa-proof`
+  Run only the focused Arm64 CPU ISA proof script on an Arm64 hosted runner.
+- `runtime-cpu-truth`
+  Run the focused CPU truth bundle: Arm64 ISA proof, FFI ABI tests, and Android
+  unit tests. Use this when runtime info or JNI telemetry changes cross the
+  physics/FFI/Android boundary.
 - `ffi-abi`
   Run only the focused FFI ABI test slice.
 - `android-shell`
@@ -129,14 +146,22 @@ Current recommendation:
 
 1. Use `profile=targeted`, `lane_set=rust-workspace` for fast normal runtime changes.
 2. Add `profile=targeted`, `lane_set=rust-workspace-arm64` when the seam touches
-   architecture-sensitive physics, SIMD/ISA behavior, or release gating for Arm64 devices.
-3. Use `profile=targeted`, `lane_set=ffi-abi` when the active seam is the C ABI,
+   broad architecture-sensitive physics or release gating for Arm64 devices.
+3. Prefer `profile=targeted`, `lane_set=arm64-isa-proof` when the active seam is
+   specifically CPU feature reporting, Arm64 solver dispatch, or backend
+   activation truth. This is the lower-carbon, fail-small path before widening.
+4. Use `profile=targeted`, `lane_set=runtime-cpu-truth` when the active seam
+   crosses physics dispatch, FFI runtime info, and Android telemetry. This avoids
+   canceling separate same-branch workflow dispatches while staying narrower
+   than `full`.
+5. Use `profile=targeted`, `lane_set=ffi-abi` when the active seam is the C ABI,
    JNI, or Android bridge contract.
-4. Use `profile=frontier`, `lane_set=auto` when you want the Android shell lane
+6. Use `profile=frontier`, `lane_set=auto` when you want the Android shell lane
    alongside the Rust baseline.
-5. Reserve `profile=broad` or `profile=full` for milestone checkpoints; these now
-   include Arm64 Rust workspace proof in `auto` mode.
-6. Use `prerelease-apk` when the real question is packaging an installable device
+7. Reserve `profile=broad` or `profile=full` for milestone checkpoints; these now
+   include Arm64 Rust workspace proof and the focused Arm64 ISA proof in `auto`
+   mode.
+8. Use `prerelease-apk` when the real question is packaging an installable device
    build rather than simply proving the branch compiles.
 
 ## Hosted interactive Android development

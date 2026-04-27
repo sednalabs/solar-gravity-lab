@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mcp-toolkit-rs-ref", required=True)
     parser.add_argument("--android-validation-mode", required=True)
     parser.add_argument("--interactive-debug-profile", required=True)
+    parser.add_argument("--preferred-gpu-backend", required=True)
     parser.add_argument("--emulator-boot-strategy", required=True)
     parser.add_argument("--session-timeout-minutes", required=True)
     parser.add_argument("--keep-session-on-failure", required=True)
@@ -103,6 +104,7 @@ def render_markdown(payload: dict) -> str:
         f"- mcp-toolkit-rs ref: `{payload['context']['mcp_toolkit_rs_ref']}`",
         f"- android validation mode: `{payload['context']['android_validation_mode']}`",
         f"- interactive debug profile: `{payload['context']['interactive_debug_profile']}`",
+        f"- preferred GPU backend: `{payload['context']['preferred_gpu_backend']}`",
         f"- emulator boot strategy: `{payload['context']['emulator_boot_strategy']}`",
         f"- timeout minutes: `{payload['context']['session_timeout_minutes']}`",
         f"- keep session on failure: `{payload['context']['keep_session_on_failure']}`",
@@ -301,6 +303,9 @@ def render_markdown(payload: dict) -> str:
                 f"- status: `{active_build.get('status', 'unknown')}`",
                 f"- activated: `{active_build.get('activated_at_iso', 'n/a')}`",
                 f"- artifact name: `{manifest.get('artifact_name', 'n/a')}`",
+                f"- validation mode: `{manifest.get('android_validation_mode', 'n/a')}`",
+                f"- debug profile: `{manifest.get('interactive_debug_profile', 'n/a')}`",
+                f"- preferred GPU backend: `{manifest.get('preferred_gpu_backend', 'n/a')}`",
                 f"- commit sha: `{manifest.get('commit_sha', 'n/a')}`",
                 f"- apk sha256: `{manifest.get('apk_sha256', 'n/a')}`",
             ]
@@ -366,6 +371,7 @@ def main() -> None:
             "mcp_toolkit_rs_ref": args.mcp_toolkit_rs_ref,
             "android_validation_mode": args.android_validation_mode,
             "interactive_debug_profile": args.interactive_debug_profile,
+            "preferred_gpu_backend": args.preferred_gpu_backend,
             "emulator_boot_strategy": args.emulator_boot_strategy,
             "session_timeout_minutes": args.session_timeout_minutes,
             "keep_session_on_failure": args.keep_session_on_failure,

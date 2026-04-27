@@ -41,6 +41,7 @@ STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES=(
 
 STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstRuntimeMirrorInstrumentationTest"
 )
 
 STAGE_FIRST_MIRROR_ON_FULL_TEST_CLASSES=(
@@ -224,6 +225,8 @@ resolve_test_classes() {
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.stageFirstRuntimeMirror=true"
+        "-Psolarlab.preferredGpuBackend=vulkan"
+        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
       )
       ;;
     *)
@@ -279,6 +282,8 @@ resolve_test_classes() {
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.stageFirstRuntimeMirror=true"
+        "-Psolarlab.preferredGpuBackend=vulkan"
+        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
       )
       case "${TEST_SCOPE}" in
         core)
