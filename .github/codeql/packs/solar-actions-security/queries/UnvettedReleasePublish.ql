@@ -23,8 +23,8 @@ predicate publishesRelease(Run run, string script) {
 predicate hasPromotedRefGuard(Run run) {
   exists(Run guard |
     guard.getEnclosingJob() = run.getEnclosingJob() and
-    guard.getScript().getRawScript().regexpMatch("(?s).*Validate promoted release target.*") and
-    guard.getScript().getRawScript().regexpMatch("(?s).*refs/heads/release/.*") and
+    guard.getScript().getRawScript().regexpMatch("(?is).*validate promoted release target.*") and
+    guard.getScript().getRawScript().regexpMatch("(?is).*refs/heads/release/.*") and
     guard.getScript().getRawScript().regexpMatch("(?s).*RELEASE_TARGET.*")
   )
 }
@@ -35,12 +35,19 @@ predicate publishesProvenance(string script) {
   script.regexpMatch("(?s).*sha256.*")
 }
 
+predicate jobPublishesProvenance(Job job) {
+  exists(Run run |
+    run.getEnclosingJob() = job and
+    publishesProvenance(run.getScript().getRawScript())
+  )
+}
+
 from Run run, string script
 where
   publishesRelease(run, script) and
   not (
     hasPromotedRefGuard(run) and
-    publishesProvenance(script)
+    jobPublishesProvenance(run.getEnclosingJob())
   )
 select run,
   "This release publishing step must validate that the target is a promoted ref or exact proven SHA and upload release provenance metadata with the assets."
