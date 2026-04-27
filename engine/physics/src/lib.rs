@@ -761,41 +761,90 @@ fn arm64_neon_runtime_available() -> bool {
 #[cfg(target_arch = "aarch64")]
 fn arm64_runtime_detected_feature_names() -> Vec<&'static str> {
     let mut features = Vec::new();
-    macro_rules! add_detected {
-        ($rust_feature:literal => $($canonical_feature:literal),+ $(,)?) => {
-            if std::arch::is_aarch64_feature_detected!($rust_feature) {
-                $(features.push($canonical_feature);)+
-            }
-        };
+    if std::arch::is_aarch64_feature_detected!("neon") {
+        features.push("neon");
     }
-
-    add_detected!("neon" => "neon");
-    add_detected!("fp" => "fp");
-    add_detected!("fp16" => "fp16");
-    add_detected!("fhm" => "fhm");
-    add_detected!("dotprod" => "dotprod");
-    add_detected!("i8mm" => "i8mm");
-    add_detected!("sve" => "sve");
-    add_detected!("sve2" => "sve2");
-    add_detected!("bf16" => "bf16");
-    add_detected!("rdm" => "rdm");
-    add_detected!("fcma" => "fcma");
-    add_detected!("aes" => "aes");
-    add_detected!("pmull" => "pmull");
-    add_detected!("sha2" => "sha1", "sha2");
-    add_detected!("sha3" => "sha3", "sha512");
-    add_detected!("sm4" => "sm3", "sm4");
-    add_detected!("rand" => "rng");
-    add_detected!("lse" => "lse");
-    add_detected!("lse2" => "lse2");
-    add_detected!("crc" => "crc");
-    add_detected!("bti" => "bti");
-    add_detected!("mte" => "mte");
-    add_detected!("flagm" => "flagm");
-    add_detected!("jsconv" => "jscvt");
-    add_detected!("dit" => "dit");
-    add_detected!("sb" => "sb");
-    add_detected!("ssbs" => "ssbs");
+    if std::arch::is_aarch64_feature_detected!("fp") {
+        features.push("fp");
+    }
+    if std::arch::is_aarch64_feature_detected!("fp16") {
+        features.push("fp16");
+    }
+    if std::arch::is_aarch64_feature_detected!("fhm") {
+        features.push("fhm");
+    }
+    if std::arch::is_aarch64_feature_detected!("dotprod") {
+        features.push("dotprod");
+    }
+    if std::arch::is_aarch64_feature_detected!("i8mm") {
+        features.push("i8mm");
+    }
+    if std::arch::is_aarch64_feature_detected!("sve") {
+        features.push("sve");
+    }
+    if std::arch::is_aarch64_feature_detected!("sve2") {
+        features.push("sve2");
+    }
+    if std::arch::is_aarch64_feature_detected!("bf16") {
+        features.push("bf16");
+    }
+    if std::arch::is_aarch64_feature_detected!("rdm") {
+        features.push("rdm");
+    }
+    if std::arch::is_aarch64_feature_detected!("fcma") {
+        features.push("fcma");
+    }
+    if std::arch::is_aarch64_feature_detected!("aes") {
+        features.push("aes");
+    }
+    if std::arch::is_aarch64_feature_detected!("pmull") {
+        features.push("pmull");
+    }
+    if std::arch::is_aarch64_feature_detected!("sha2") {
+        features.push("sha1");
+        features.push("sha2");
+    }
+    if std::arch::is_aarch64_feature_detected!("sha3") {
+        features.push("sha3");
+        features.push("sha512");
+    }
+    if std::arch::is_aarch64_feature_detected!("sm4") {
+        features.push("sm3");
+        features.push("sm4");
+    }
+    if std::arch::is_aarch64_feature_detected!("rand") {
+        features.push("rng");
+    }
+    if std::arch::is_aarch64_feature_detected!("lse") {
+        features.push("lse");
+    }
+    if std::arch::is_aarch64_feature_detected!("lse2") {
+        features.push("lse2");
+    }
+    if std::arch::is_aarch64_feature_detected!("crc") {
+        features.push("crc");
+    }
+    if std::arch::is_aarch64_feature_detected!("bti") {
+        features.push("bti");
+    }
+    if std::arch::is_aarch64_feature_detected!("mte") {
+        features.push("mte");
+    }
+    if std::arch::is_aarch64_feature_detected!("flagm") {
+        features.push("flagm");
+    }
+    if std::arch::is_aarch64_feature_detected!("jsconv") {
+        features.push("jscvt");
+    }
+    if std::arch::is_aarch64_feature_detected!("dit") {
+        features.push("dit");
+    }
+    if std::arch::is_aarch64_feature_detected!("sb") {
+        features.push("sb");
+    }
+    if std::arch::is_aarch64_feature_detected!("ssbs") {
+        features.push("ssbs");
+    }
     features
 }
 
