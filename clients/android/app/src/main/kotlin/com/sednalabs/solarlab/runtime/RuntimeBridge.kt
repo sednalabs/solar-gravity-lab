@@ -1129,7 +1129,7 @@ internal data class NativeRuntimeInfoResult(
     fun cpuFeatureSummary(): String? {
         val features = mutableListOf<String>()
         fun addIfPresent(mask: Long, label: String) {
-            if (cpuFeatureFlags and mask != 0L) {
+            if ((cpuFeatureFlags and mask) != 0L) {
                 features += label
             }
         }
