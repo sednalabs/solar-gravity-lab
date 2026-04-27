@@ -1080,7 +1080,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         }
 
         if (originX in -margin..(viewportWidth + margin) && originY in -margin..(viewportHeight + margin)) {
-            val referenceRadiusBase = (halfWorldSpan * scale).coerceAtLeast(minDimension * 0.16f)
+            val referenceRadiusBase = minDimension * 0.46f
             listOf(0.34f, 0.58f, 0.82f).forEachIndexed { index, radiusScale ->
                 val radius = (referenceRadiusBase * radiusScale).coerceIn(minDimension * 0.10f, minDimension * 0.48f)
                 referenceAxisPaint.color = Color.argb(18 + index * 6, 118, 247, 255)
