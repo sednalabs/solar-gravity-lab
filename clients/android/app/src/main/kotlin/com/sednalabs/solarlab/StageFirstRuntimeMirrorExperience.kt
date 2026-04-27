@@ -153,6 +153,7 @@ private val RuntimeMirrorHugePayloadCharCountRegex = Regex("""\((\d+) chars\)"""
 private val RuntimeMirrorRevisionScenarioRegex = Regex("""(?:^|\|)scenario=([^|]+)""")
 private val RuntimeMirrorRevisionBranchRegex = Regex("""(?:^|\|)branch=([^|]+)""")
 private val RuntimeMirrorRevisionEpochRegex = Regex("""(?:^|\|)epoch=([^|]+)""")
+private val RuntimeMirrorRendererPacketTelemetryRegex = Regex("""\s+(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[.=]).*""")
 private val RuntimeMirrorWhitespaceRegex = Regex("""\s+""")
 private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
 private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 140
@@ -1619,7 +1620,7 @@ internal fun buildRuntimeBackendStatus(
         SessionConnectionState.Unavailable -> "Runtime unavailable"
     }
     val revision = uiState.renderStatus.sceneRevision
-        ?.let(::runtimeMirrorCompactRevisionText)
+        ?.let { revision -> runtimeMirrorCompactRevisionText(revision, includePayloadSize = false) }
         ?: "waiting-for-packet"
     return listOfNotNull(
         connectionSummary,
@@ -1629,11 +1630,11 @@ internal fun buildRuntimeBackendStatus(
         "rev=$revision",
         hostRendererStatus
             .takeIf(String::isNotBlank)
-            ?.let(::runtimeMirrorCompactStatusText),
+            ?.let(::runtimeMirrorCompactRendererStatusText),
     ).joinToString(separator = " · ")
 }
 
-internal fun runtimeMirrorCompactRevisionText(value: String): String {
+internal fun runtimeMirrorCompactRevisionText(value: String, includePayloadSize: Boolean = true): String {
     val normalized = runtimeMirrorNormalizeStatusText(value)
     if (normalized.isBlank()) {
         return "waiting-for-packet"
@@ -1652,12 +1653,34 @@ internal fun runtimeMirrorCompactRevisionText(value: String): String {
         scenario?.takeIf(String::isNotBlank),
         branch?.takeIf(String::isNotBlank),
         epochHours?.let { hours -> String.format(Locale.US, "t+%.1fh", hours) },
-        payloadChars?.let { chars -> "payload $chars chars" },
+        payloadChars?.takeIf { includePayloadSize }?.let { chars -> "payload $chars chars" },
     )
     if (summary.isNotEmpty()) {
         return summary.joinToString(" / ")
     }
     return runtimeMirrorCompactStatusText(normalized)
+}
+
+internal fun runtimeMirrorCompactRendererStatusText(value: String): String {
+    val normalized = runtimeMirrorNormalizeStatusText(value)
+    val withoutPacketTelemetry = normalized
+        .replace(RuntimeMirrorRendererPacketTelemetryRegex, "")
+        .trimEnd('.', ' ')
+
+    return when {
+        withoutPacketTelemetry.contains(
+            "Vulkan SPIR-V graphics pipelines + compute compaction active",
+            ignoreCase = true,
+        ) -> "Vulkan SPIR-V + compute compaction active"
+
+        withoutPacketTelemetry.contains(
+            "Vulkan SPIR-V graphics pipelines",
+            ignoreCase = true,
+        ) -> "Vulkan SPIR-V graphics active"
+
+        withoutPacketTelemetry.isNotBlank() -> runtimeMirrorCompactStatusText(withoutPacketTelemetry)
+        else -> runtimeMirrorCompactStatusText(normalized)
+    }
 }
 
 internal fun runtimeMirrorCompactStatusText(value: String): String {

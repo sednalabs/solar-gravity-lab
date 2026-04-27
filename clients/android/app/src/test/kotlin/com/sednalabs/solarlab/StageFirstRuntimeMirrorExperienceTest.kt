@@ -1,5 +1,8 @@
 package com.sednalabs.solarlab
 
+import com.sednalabs.solarlab.runtime.RenderStatusPresentation
+import com.sednalabs.solarlab.runtime.SessionConnectionState
+import com.sednalabs.solarlab.runtime.ShellUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -159,10 +162,55 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactRevisionText_canOmitPayloadForHud() {
+        assertEquals(
+            "sol-system / main / t+6.0h",
+            runtimeMirrorCompactRevisionText(
+                value = "scenario=sol-system|branch=main|epoch=21600.000000|" +
+                    "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)",
+                includePayloadSize = false,
+            ),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactRevisionText_fallsBackToStatusCompaction() {
         val compacted = runtimeMirrorCompactRevisionText("revision-" + "segment-".repeat(80))
 
         assertTrue(compacted.endsWith("... [truncated]"))
         assertTrue(compacted.length <= 155)
+    }
+
+    @Test
+    fun runtimeMirrorCompactRendererStatusText_removesPacketCountersForHud() {
+        assertEquals(
+            "Vulkan SPIR-V + compute compaction active",
+            runtimeMirrorCompactRendererStatusText(
+                "Vulkan SPIR-V graphics pipelines + compute compaction active. " +
+                    "rev=-485007626274543117 A=355/AI=355 TN=0 TM=0 TF=0 TL=768/8 bytes=32400 paths..."
+            ),
+        )
+    }
+
+    @Test
+    fun buildRuntimeBackendStatus_keepsHudStatusOutOfPacketTelemetry() {
+        val status = buildRuntimeBackendStatus(
+            uiState = ShellUiState(
+                connectionState = SessionConnectionState.Active,
+                statusLine = "Render host ready",
+                renderStatus = RenderStatusPresentation(
+                    sceneRevision = "scenario=sol-system|branch=main|epoch=21600.000000|" +
+                        "packet=${"x".repeat(80)} (89693 chars)",
+                ),
+            ),
+            hostRendererStatus = "Vulkan SPIR-V graphics pipelines + compute compaction active. " +
+                "rev=-485007626274543117 A=355/AI=355 TN=0 TM=0 TF=0 TL=768/8 bytes=32400 paths...",
+        )
+
+        assertEquals(
+            "Runtime connected · Render host ready · rev=sol-system / main / t+6.0h · " +
+                "Vulkan SPIR-V + compute compaction active",
+            status,
+        )
     }
 }

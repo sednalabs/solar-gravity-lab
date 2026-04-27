@@ -152,6 +152,10 @@ device-visible readout should compact them before they crowd out the lane
 visualization that the native computer-use loop is trying to inspect.
 Revision identifiers should be summarized into scenario, branch, mission time,
 and payload size when the raw packet key is too large for a readable HUD.
+The always-visible HUD should go one step further: keep packet hashes, byte
+counts, path counters, and large payload sizes in debug/audit surfaces, while
+the flight status line stays focused on connection state, render readiness,
+scenario time, and the active graphics/compute capability.
 
 The long-term loop is:
 
