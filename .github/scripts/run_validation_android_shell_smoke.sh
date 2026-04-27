@@ -226,6 +226,7 @@ resolve_test_classes() {
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.stageFirstRuntimeMirror=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
+        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
       )
       ;;
     *)
@@ -282,6 +283,7 @@ resolve_test_classes() {
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.stageFirstRuntimeMirror=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
+        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
       )
       case "${TEST_SCOPE}" in
         core)

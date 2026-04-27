@@ -218,7 +218,7 @@ internal class JniRuntimeBridge(
 
         val refreshJob = launch {
             while (isActive) {
-                delay(REFRESH_INTERVAL_MS)
+                delay(refreshIntervalMillis())
                 val signals = synchronized(operationLock) {
                     val activeHandle = synchronized(stateLock) { activeSessionHandle }
                     if (activeHandle == 0L) {
@@ -227,7 +227,7 @@ internal class JniRuntimeBridge(
                     refreshSignalsForHandle(
                         handle = activeHandle,
                         includeSummary = true,
-                        advancePlayback = true,
+                        advancePlayback = !BuildConfig.HOSTED_DEBUG_LITE_MODE,
                     )
                 }
                 signals.forEach { trySend(it) }
@@ -752,6 +752,14 @@ internal class JniRuntimeBridge(
         private const val ABI_VERSION = 4
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
+        private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
+
+        private fun refreshIntervalMillis(): Long =
+            if (BuildConfig.HOSTED_DEBUG_LITE_MODE) {
+                HOSTED_DEBUG_REFRESH_INTERVAL_MS
+            } else {
+                REFRESH_INTERVAL_MS
+            }
 
         private fun logInfo(message: String) {
             if (runCatching { Log.i(LOG_TAG, message) }.isFailure) {

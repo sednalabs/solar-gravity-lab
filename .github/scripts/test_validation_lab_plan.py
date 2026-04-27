@@ -125,6 +125,19 @@ class ValidationLabPlanTests(unittest.TestCase):
         self.assertEqual(outputs["rust_workspace_arm64"], "false")
         self.assertEqual(outputs["emulator_boot_strategy"], "snapshot-cache")
         self.assertEqual(outputs["gradle_configuration_cache"], "enabled")
+        self.assertEqual(
+            json.loads(outputs["android_shell_matrix"]),
+            [
+                {
+                    "validation_mode": "stage-first-mirror-on",
+                    "debug_stage_first_client": "true",
+                    "stage_first_runtime_mirror": "true",
+                    "preferred_gpu_backend": "vulkan",
+                    "hosted_debug_profile": "hosted-debug-lite",
+                    "gradle_configuration_cache": "enabled",
+                }
+            ],
+        )
 
     def test_workflow_change_forces_full_checkpoint(self) -> None:
         outputs = run_plan([".github/workflows/validation-lab.yml"])

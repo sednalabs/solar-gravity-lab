@@ -281,12 +281,32 @@ def resolve_android_shell_matrix(enabled: bool, android_validation_mode: str, pr
         return "[]"
 
     matrix_by_mode = {
-        "shell-v2": [{"validation_mode": "shell-v2", "debug_stage_first_client": "false", "stage_first_runtime_mirror": "false"}],
+        "shell-v2": [
+            {
+                "validation_mode": "shell-v2",
+                "debug_stage_first_client": "false",
+                "stage_first_runtime_mirror": "false",
+                "preferred_gpu_backend": "none",
+                "hosted_debug_profile": "full-fidelity",
+            }
+        ],
         "stage-first-mirror-off": [
-            {"validation_mode": "stage-first-mirror-off", "debug_stage_first_client": "true", "stage_first_runtime_mirror": "false"}
+            {
+                "validation_mode": "stage-first-mirror-off",
+                "debug_stage_first_client": "true",
+                "stage_first_runtime_mirror": "false",
+                "preferred_gpu_backend": "none",
+                "hosted_debug_profile": "full-fidelity",
+            }
         ],
         "stage-first-mirror-on": [
-            {"validation_mode": "stage-first-mirror-on", "debug_stage_first_client": "true", "stage_first_runtime_mirror": "true"}
+            {
+                "validation_mode": "stage-first-mirror-on",
+                "debug_stage_first_client": "true",
+                "stage_first_runtime_mirror": "true",
+                "preferred_gpu_backend": "vulkan",
+                "hosted_debug_profile": "hosted-debug-lite",
+            }
         ],
     }
     if android_validation_mode == "auto":
