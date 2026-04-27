@@ -28,6 +28,7 @@ object SolarLabTestTags {
     const val STAGE_FIRST_SELECTION_PANEL = "stage_first.selection_panel"
     const val STAGE_FIRST_SELECTION_TITLE = "stage_first.selection.title"
     const val STAGE_FIRST_STATUS_PANEL = "stage_first.status_panel"
+    const val STAGE_FIRST_ACCELERATION_PANEL = "stage_first.acceleration_panel"
     const val STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON = "stage_first.immersive.confirm_button"
     const val STAGE_FIRST_IMMERSIVE_CANCEL_BUTTON = "stage_first.immersive.cancel_button"
     const val STAGE_FIRST_SEARCH_FIELD = "stage_first.search.field"

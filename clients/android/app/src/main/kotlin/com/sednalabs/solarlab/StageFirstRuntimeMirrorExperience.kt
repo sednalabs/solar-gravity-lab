@@ -104,6 +104,12 @@ private data class RuntimeSelectionCard(
     val detail: String,
 )
 
+internal data class RuntimeAccelerationReadout(
+    val headline: String,
+    val chips: List<String>,
+    val detail: String,
+)
+
 private val RuntimeMirrorCompactWidthBreakpoint = 720.dp
 private val RuntimeMirrorVoid = Color(0xFF02050B)
 private val RuntimeMirrorGlass = Color(0xE6070D18)
@@ -224,6 +230,13 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
         val backendStatus = remember(uiState, hostRendererStatus) {
             buildRuntimeBackendStatus(uiState = uiState, hostRendererStatus = hostRendererStatus)
+        }
+        val accelerationReadout = remember(uiState.backendSummary, uiState.snapshot, uiState.renderStatus) {
+            buildRuntimeAccelerationReadout(
+                backendSummary = uiState.backendSummary,
+                scenarioId = uiState.snapshot?.scenarioId,
+                bodyCount = uiState.snapshot?.bodyCount ?: uiState.renderStatus.renderedBodyCount.takeIf { it > 0 },
+            )
         }
         val interactionHintText = remember(uiState) {
             when {
@@ -692,6 +705,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                         color = RuntimeMirrorCyan,
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    accelerationReadout?.let { readout ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        RuntimeMirrorAccelerationPanel(readout = readout)
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = interactionHintText,
@@ -795,6 +812,38 @@ private fun RuntimeMirrorBackdropOverlay(compact: Boolean) {
                 cap = StrokeCap.Round,
             )
         }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(SolarLabTestTags.STAGE_FIRST_ACCELERATION_PANEL),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = readout.headline,
+            color = RuntimeMirrorGold,
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            readout.chips.forEach { chip ->
+                RuntimeMirrorMetricPill(label = "ACCEL", value = chip)
+            }
+        }
+        Text(
+            text = readout.detail,
+            color = RuntimeMirrorTextDim,
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -1439,6 +1488,81 @@ private fun buildRuntimeDiagnosticsText(
         renderStatus.diagnosticsGpuUploadMs?.let { appendLine("gpuUploadMs=${"%.3f".format(Locale.US, it)}") }
         append("droppedFrames=${renderStatus.diagnosticsDroppedFrames}")
     }
+}
+
+internal fun buildRuntimeAccelerationReadout(
+    backendSummary: String?,
+    scenarioId: String?,
+    bodyCount: Int?,
+): RuntimeAccelerationReadout? {
+    val summary = backendSummary?.takeIf(String::isNotBlank) ?: return null
+    val segments = summary
+        .split('|')
+        .map { it.trim() }
+        .filter(String::isNotEmpty)
+    fun segmentStartingWith(prefix: String): String? =
+        segments.firstOrNull { it.startsWith(prefix, ignoreCase = true) }
+
+    val cpu = segmentStartingWith("cpu=")
+        ?: segmentStartingWith("cpu=requested")
+    val gpu = segmentStartingWith("gpu=")
+        ?: segmentStartingWith("gpu=requested")
+    val solver = segmentStartingWith("solver:")
+    val fallback = segmentStartingWith("cpu fallback:")
+    val scheduler = segmentStartingWith("cpu scheduler:")
+    val kernels = segmentStartingWith("cpu kernels:")
+    val workloads = segmentStartingWith("workloads:")
+
+    val tilePlan = scheduler
+        ?.let { Regex("""(\d+)x(\d+)-body tiles""").find(it)?.value }
+    val tileWorkers = scheduler
+        ?.let { Regex("""(\d+) tile workers""").find(it)?.value }
+    val schedulerMode = when {
+        scheduler?.contains("adaptive tiled active", ignoreCase = true) == true -> "Parallel tiled"
+        scheduler?.contains("adaptive tiled", ignoreCase = true) == true -> "Tiled candidate"
+        scheduler?.contains("single-worker", ignoreCase = true) == true -> "Single worker"
+        scheduler != null -> "Scheduler reported"
+        else -> null
+    }
+    val gpuChip = gpu
+        ?.let { value ->
+            val gpuValue = value.substringAfter("gpu=", missingDelimiterValue = value)
+            gpuValue.substringAfter("effective ", missingDelimiterValue = gpuValue)
+        }
+        ?.takeIf { it.contains("vulkan", ignoreCase = true) }
+        ?.let { "Vulkan" }
+
+    val chips = buildList {
+        if (scenarioId == "stress.s25-tile-swarm") {
+            add("S25 swarm")
+        }
+        bodyCount?.takeIf { it > 0 }?.let { add("$it bodies") }
+        schedulerMode?.let(::add)
+        tilePlan?.let(::add)
+        tileWorkers?.let(::add)
+        gpuChip?.let(::add)
+    }.distinct()
+
+    val headline = if (scenarioId == "stress.s25-tile-swarm") {
+        "S25 tile swarm acceleration probe"
+    } else {
+        "Runtime acceleration truth"
+    }
+    val detail = listOfNotNull(
+        cpu,
+        gpu,
+        solver,
+        fallback,
+        scheduler,
+        kernels,
+        workloads,
+    ).joinToString(separator = " | ").ifBlank { summary }
+
+    return RuntimeAccelerationReadout(
+        headline = headline,
+        chips = chips.ifEmpty { listOf("Backend reported") },
+        detail = detail,
+    )
 }
 
 private fun RenderFrame.toRuntimeMirrorScene(): RuntimeMirrorScene {
