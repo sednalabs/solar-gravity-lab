@@ -140,7 +140,7 @@ def classify_path(raw_path: str) -> set[str]:
         surfaces.add("android")
         surfaces.add("java-kotlin")
 
-    if path.startswith(".github/workflows/") or path.startswith(".github/scripts/") or path.startswith(".github/actions/"):
+    if path.startswith((".github/workflows/", ".github/scripts/", ".github/actions/")):
         surfaces.add("ci")
 
     return surfaces
