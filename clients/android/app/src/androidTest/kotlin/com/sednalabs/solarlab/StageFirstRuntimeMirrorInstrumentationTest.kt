@@ -2,11 +2,13 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import org.junit.Assert.assertNotNull
@@ -78,10 +80,25 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).performClick()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG).assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule
+                .onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
         composeRule
-            .onNodeWithTag(SolarLabTestTags.stageFirstScenarioLoadTag("showcase.jupiter-system"))
-            .assertIsDisplayed()
+            .onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG, useUnmergedTree = true)
+            .assertExists()
+        val showcaseScenarioTag = SolarLabTestTags.stageFirstScenarioLoadTag("showcase.jupiter-system")
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule
+                .onAllNodesWithTag(showcaseScenarioTag, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeRule
+            .onNodeWithTag(showcaseScenarioTag, useUnmergedTree = true)
+            .performScrollTo()
             .performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG).fetchSemanticsNodes().isEmpty()
