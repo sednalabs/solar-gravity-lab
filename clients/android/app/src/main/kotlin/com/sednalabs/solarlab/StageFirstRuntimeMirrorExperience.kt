@@ -192,6 +192,12 @@ internal fun StageFirstRuntimeMirrorExperience(
                 ?: RuntimeScenarioPacks.default
         }
         val runtimeSessionHandle = uiState.sessionHandle ?: 0L
+        val attachRenderHost = shouldAttachRuntimeMirrorRenderHost(
+            runtimeSessionHandle = runtimeSessionHandle,
+            hasMirrorScene = mirrorScene?.scene != null,
+            hostedDebugModeEnabled = HostedDebugMode.enabled,
+            hostedDebugModeApplied = hostedDebugModeApplied,
+        )
         val timelineText = remember(uiState.snapshot, stepQuantumPreset, playbackSpeedPreset, activeScenarioPack) {
             buildRuntimeTimelineText(
                 uiState = uiState,
@@ -539,7 +545,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                 )
             }
 
-            if (runtimeSessionHandle != 0L || mirrorScene?.scene != null) {
+            if (attachRenderHost) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { viewContext ->
@@ -731,6 +737,16 @@ internal fun StageFirstRuntimeMirrorExperience(
             )
         }
     }
+}
+
+internal fun shouldAttachRuntimeMirrorRenderHost(
+    runtimeSessionHandle: Long,
+    hasMirrorScene: Boolean,
+    hostedDebugModeEnabled: Boolean,
+    hostedDebugModeApplied: Boolean,
+): Boolean {
+    val runtimeReady = runtimeSessionHandle != 0L || hasMirrorScene
+    return runtimeReady && (!hostedDebugModeEnabled || hostedDebugModeApplied)
 }
 
 @Composable
