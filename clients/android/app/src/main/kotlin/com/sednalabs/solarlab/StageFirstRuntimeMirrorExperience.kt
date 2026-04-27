@@ -2,6 +2,7 @@ package com.sednalabs.solarlab
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -40,7 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -98,6 +105,34 @@ private data class RuntimeSelectionCard(
 )
 
 private val RuntimeMirrorCompactWidthBreakpoint = 720.dp
+private val RuntimeMirrorVoid = Color(0xFF02050B)
+private val RuntimeMirrorGlass = Color(0xE6070D18)
+private val RuntimeMirrorGlassSoft = Color(0xB40B1424)
+private val RuntimeMirrorCyan = Color(0xFF76F7FF)
+private val RuntimeMirrorCyanDim = Color(0xFF2A9DAC)
+private val RuntimeMirrorGold = Color(0xFFFFD36B)
+private val RuntimeMirrorBlue = Color(0xFF5E8CFF)
+private val RuntimeMirrorInkLine = Color(0xFF19324B)
+private val RuntimeMirrorText = Color(0xFFE8F7FF)
+private val RuntimeMirrorTextDim = Color(0xFF9FB6C9)
+private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
+private const val RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION = 18f
+private const val RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION = 28f
+private const val RUNTIME_MIRROR_SIGNAL_FOCUS_LIFT = 0.16f
+private const val RUNTIME_MIRROR_SIGNAL_SELECTED_LIFT = 0.12f
+private const val RUNTIME_MIRROR_SIGNAL_L1_BASE = 0.24f
+private const val RUNTIME_MIRROR_SIGNAL_L1_BODY_COEFF = 0.34f
+private const val RUNTIME_MIRROR_SIGNAL_L2_BASE = 0.22f
+private const val RUNTIME_MIRROR_SIGNAL_L2_SELECTED_COEFF = 0.44f
+private const val RUNTIME_MIRROR_SIGNAL_L3_BASE = 0.30f
+private const val RUNTIME_MIRROR_SIGNAL_L3_TRAIL_COEFF = 0.42f
+private const val RUNTIME_MIRROR_SIGNAL_L4_BASE = 0.20f
+private const val RUNTIME_MIRROR_SIGNAL_L4_TIME_COEFF = 0.50f
+private const val RUNTIME_MIRROR_SIGNAL_L5_BASE = 0.32f
+private const val RUNTIME_MIRROR_SIGNAL_L5_BODY_COEFF = 0.20f
+private const val RUNTIME_MIRROR_SIGNAL_L5_TRAIL_COEFF = 0.22f
+private const val RUNTIME_MIRROR_SIGNAL_L6_BASE = 0.28f
+private const val RUNTIME_MIRROR_SIGNAL_L6_FOCUS_COEFF = 0.48f
 private const val RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
 private const val RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR
 
@@ -366,9 +401,9 @@ internal fun StageFirstRuntimeMirrorExperience(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            androidx.compose.ui.graphics.Color(0xFF02070D),
-                            androidx.compose.ui.graphics.Color(0xFF071019),
-                            androidx.compose.ui.graphics.Color(0xFF0B1622),
+                            RuntimeMirrorVoid,
+                            Color(0xFF06101C),
+                            Color(0xFF0B1829),
                         )
                     )
                 ),
@@ -543,6 +578,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         mirrorScene?.scene?.let(view::submitSceneFrame)
                     },
                 )
+                RuntimeMirrorBackdropOverlay(compact = compactLayout)
             } else {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -582,31 +618,17 @@ internal fun StageFirstRuntimeMirrorExperience(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (compactLayout) {
-                    StagePanel(
+                    RuntimeMirrorMissionPanel(
+                        uiState = uiState,
+                        selectionCard = selectionCard,
+                        selectedBody = selectedBody,
+                        observerMode = observerMode,
+                        renderProcessingMode = renderProcessingMode,
+                        scenarioLabel = timelineText,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                    ) {
-                        Text(
-                            text = timelineText,
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
-                            color = MaterialTheme.colorScheme.secondary,
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = selectionCard.title,
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = selectionCard.detail,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
+                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -621,31 +643,17 @@ internal fun StageFirstRuntimeMirrorExperience(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.Top,
                     ) {
-                        StagePanel(
+                        RuntimeMirrorMissionPanel(
+                            uiState = uiState,
+                            selectionCard = selectionCard,
+                            selectedBody = selectedBody,
+                            observerMode = observerMode,
+                            renderProcessingMode = renderProcessingMode,
+                            scenarioLabel = timelineText,
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                        ) {
-                            Text(
-                                text = timelineText,
-                                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
-                                color = MaterialTheme.colorScheme.secondary,
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = selectionCard.title,
-                                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.titleLarge,
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = selectionCard.detail,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
+                        )
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -663,6 +671,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                     .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                RuntimeMirrorTimelineRail(
+                    uiState = uiState,
+                    fallbackSpeedPreset = playbackSpeedPreset,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 StageControlRail(compact = compactLayout, content = primaryControls)
                 StageControlRail(compact = compactLayout, content = secondaryControls)
                 StagePanel(
@@ -670,13 +683,13 @@ internal fun StageFirstRuntimeMirrorExperience(
                 ) {
                     Text(
                         text = backendStatus,
-                        color = MaterialTheme.colorScheme.secondary,
+                        color = RuntimeMirrorCyan,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = interactionHintText,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = RuntimeMirrorTextDim,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -715,6 +728,321 @@ internal fun StageFirstRuntimeMirrorExperience(
                 selectedBodyId = selectedBodyId,
                 onDismiss = { debugVisible = false },
                 onRefresh = refreshRuntime,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorBackdropOverlay(compact: Boolean) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val haloCenter = Offset(size.width * 0.74f, size.height * if (compact) 0.54f else 0.48f)
+        val haloRadius = size.minDimension * if (compact) 0.30f else 0.38f
+        drawCircle(
+            color = RuntimeMirrorCyanDim.copy(alpha = 0.07f),
+            radius = haloRadius,
+            center = haloCenter,
+        )
+        drawCircle(
+            color = RuntimeMirrorBlue.copy(alpha = 0.05f),
+            radius = haloRadius * 0.62f,
+            center = Offset(size.width * 0.22f, size.height * 0.24f),
+        )
+        drawArc(
+            color = RuntimeMirrorCyan.copy(alpha = 0.11f),
+            startAngle = 196f,
+            sweepAngle = 116f,
+            useCenter = false,
+            topLeft = Offset(haloCenter.x - haloRadius, haloCenter.y - haloRadius),
+            size = Size(haloRadius * 2f, haloRadius * 2f),
+            style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round),
+        )
+        drawArc(
+            color = RuntimeMirrorGold.copy(alpha = 0.16f),
+            startAngle = 242f,
+            sweepAngle = 34f,
+            useCenter = false,
+            topLeft = Offset(haloCenter.x - haloRadius * 1.18f, haloCenter.y - haloRadius * 1.18f),
+            size = Size(haloRadius * 2.36f, haloRadius * 2.36f),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+        )
+
+        val gridTop = size.height * if (compact) 0.10f else 0.08f
+        val gridBottom = size.height * if (compact) 0.48f else 0.58f
+        repeat(12) { index ->
+            val fraction = index / 11f
+            drawLine(
+                color = RuntimeMirrorInkLine.copy(alpha = 0.30f),
+                start = Offset(size.width * fraction, gridTop),
+                end = Offset(size.width * (fraction + 0.08f), gridBottom),
+                strokeWidth = 1.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorMissionPanel(
+    uiState: ShellUiState,
+    selectionCard: RuntimeSelectionCard,
+    selectedBody: RuntimeMirrorBody?,
+    observerMode: ObserverMode,
+    renderProcessingMode: RenderProcessingMode,
+    scenarioLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    val revision = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision ?: "waiting"
+    val bodyCount = uiState.renderStatus.renderedBodyCount
+    val trailCount = uiState.renderStatus.renderedTrailCount
+    val focusLabel = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: "Free camera"
+
+    Surface(
+        modifier = modifier.widthIn(max = 760.dp),
+        color = RuntimeMirrorGlass,
+        shape = RoundedCornerShape(26.dp),
+        border = BorderStroke(1.dp, RuntimeMirrorCyan.copy(alpha = 0.30f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            RuntimeMirrorCyanDim.copy(alpha = 0.20f),
+                            RuntimeMirrorGlass,
+                            RuntimeMirrorGold.copy(alpha = 0.08f),
+                        )
+                    )
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "TRAJECTORY STAGE",
+                    color = RuntimeMirrorCyan,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(
+                    text = when (renderProcessingMode) {
+                        RenderProcessingMode.DEFAULT -> "FULL DETAIL"
+                        RenderProcessingMode.LOW -> "LITE RENDER"
+                    },
+                    color = RuntimeMirrorGold,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            Text(
+                text = scenarioLabel,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
+                color = RuntimeMirrorGold,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = selectionCard.title,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                color = RuntimeMirrorText,
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Text(
+                text = selectionCard.detail,
+                color = RuntimeMirrorTextDim,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RuntimeMirrorMetricPill(label = "Focus", value = focusLabel)
+                RuntimeMirrorMetricPill(label = "Rev", value = revision)
+                RuntimeMirrorMetricPill(label = "Scene", value = "$bodyCount bodies / $trailCount trails")
+                RuntimeMirrorMetricPill(label = "Camera", value = observerMode.runtimeDisplayLabel().removePrefix("Observer: "))
+            }
+            RuntimeMirrorMiniSignalChart(
+                values = runtimeMirrorSignalValues(uiState = uiState, selectedBody = selectedBody),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(34.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorMetricPill(
+    label: String,
+    value: String,
+) {
+    Surface(
+        color = RuntimeMirrorGlassSoft,
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.24f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = label.uppercase(Locale.US),
+                color = RuntimeMirrorTextDim,
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Text(
+                text = value,
+                color = RuntimeMirrorText,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorTimelineRail(
+    uiState: ShellUiState,
+    fallbackSpeedPreset: PlaybackSpeedPreset,
+    modifier: Modifier = Modifier,
+) {
+    val snapshot = uiState.snapshot
+    val epochSeconds = snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds
+    val speedLabel = snapshot?.let { formatPlaybackRateLabel(it.simSecondsPerRealSecond, fallbackSpeedPreset) }
+        ?: "packet time"
+    val progress = runtimeMirrorRailProgress(epochSeconds)
+
+    Surface(
+        modifier = modifier,
+        color = RuntimeMirrorGlass,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.24f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = epochSeconds?.let { "MET ${formatRuntimeEpoch(it)}" } ?: "Awaiting mission clock",
+                    color = RuntimeMirrorText,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(
+                    text = speedLabel,
+                    color = RuntimeMirrorGold,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(24.dp),
+            ) {
+                val railY = size.height * 0.58f
+                val startX = 4.dp.toPx()
+                val endX = size.width - 4.dp.toPx()
+                val activeX = startX + (endX - startX) * progress
+                drawLine(
+                    color = RuntimeMirrorInkLine.copy(alpha = 0.86f),
+                    start = Offset(startX, railY),
+                    end = Offset(endX, railY),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = RuntimeMirrorCyan.copy(alpha = 0.88f),
+                    start = Offset(startX, railY),
+                    end = Offset(activeX, railY),
+                    strokeWidth = 2.4.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                repeat(9) { index ->
+                    val tickProgress = index / 8f
+                    val tickX = startX + ((endX - startX) * tickProgress)
+                    val tickHeight = if (index % 2 == 0) 8.dp.toPx() else 5.dp.toPx()
+                    drawLine(
+                        color = RuntimeMirrorTextDim.copy(alpha = 0.42f),
+                        start = Offset(tickX, railY - (tickHeight * 0.5f)),
+                        end = Offset(tickX, railY + (tickHeight * 0.5f)),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+                drawCircle(
+                    color = RuntimeMirrorGold.copy(alpha = 0.26f),
+                    radius = 8.dp.toPx(),
+                    center = Offset(activeX, railY),
+                )
+                drawCircle(
+                    color = RuntimeMirrorGold,
+                    radius = 3.dp.toPx(),
+                    center = Offset(activeX, railY),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorMiniSignalChart(
+    values: List<Float>,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        if (values.isEmpty()) {
+            return@Canvas
+        }
+        val left = 2.dp.toPx()
+        val right = size.width - 2.dp.toPx()
+        val top = 4.dp.toPx()
+        val bottom = size.height - 4.dp.toPx()
+        val baseline = bottom - (bottom - top) * 0.18f
+        drawLine(
+            color = RuntimeMirrorInkLine.copy(alpha = 0.72f),
+            start = Offset(left, baseline),
+            end = Offset(right, baseline),
+            strokeWidth = 1.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        var previous: Offset? = null
+        values.forEachIndexed { index, value ->
+            val fraction = if (values.size == 1) 1f else index / values.lastIndex.toFloat()
+            val current = Offset(
+                x = left + (right - left) * fraction,
+                y = bottom - (bottom - top) * value.coerceIn(0f, 1f),
+            )
+            previous?.let { last ->
+                drawLine(
+                    color = RuntimeMirrorCyan.copy(alpha = 0.30f),
+                    start = last,
+                    end = current,
+                    strokeWidth = 5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = RuntimeMirrorCyan.copy(alpha = 0.88f),
+                    start = last,
+                    end = current,
+                    strokeWidth = 1.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+            previous = current
+        }
+        previous?.let { head ->
+            drawCircle(
+                color = RuntimeMirrorGold.copy(alpha = 0.88f),
+                radius = 2.4.dp.toPx(),
+                center = head,
             )
         }
     }
@@ -1274,6 +1602,37 @@ private fun nearestPlaybackSpeedPreset(simSecondsPerRealSecond: Double): Playbac
     return PlaybackSpeedPreset.entries.minByOrNull { preset ->
         abs(preset.simSecondsPerRealSecond - simSecondsPerRealSecond)
     } ?: PlaybackSpeedPreset.SIX_HOURS_PER_SECOND
+}
+
+private fun runtimeMirrorRailProgress(epochSeconds: Double?): Float {
+    if (epochSeconds == null) {
+        return 0.08f
+    }
+    val normalized = ((epochSeconds % RUNTIME_MIRROR_MISSION_DAY_SECONDS) + RUNTIME_MIRROR_MISSION_DAY_SECONDS) %
+        RUNTIME_MIRROR_MISSION_DAY_SECONDS
+    return (normalized / RUNTIME_MIRROR_MISSION_DAY_SECONDS).toFloat().coerceIn(0.04f, 0.96f)
+}
+
+private fun runtimeMirrorSignalValues(
+    uiState: ShellUiState,
+    selectedBody: RuntimeMirrorBody?,
+): List<Float> {
+    val epochProgress = runtimeMirrorRailProgress(uiState.snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds)
+    val bodySignal = (uiState.renderStatus.renderedBodyCount / RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION)
+        .coerceIn(0.08f, 0.92f)
+    val trailSignal = (uiState.renderStatus.renderedTrailCount / RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION)
+        .coerceIn(0.10f, 0.90f)
+    val focusLift = if (uiState.focusedBodyId != null) RUNTIME_MIRROR_SIGNAL_FOCUS_LIFT else 0f
+    val selectedLift = if (selectedBody != null) RUNTIME_MIRROR_SIGNAL_SELECTED_LIFT else 0f
+
+    return listOf(
+        RUNTIME_MIRROR_SIGNAL_L1_BASE + (bodySignal * RUNTIME_MIRROR_SIGNAL_L1_BODY_COEFF),
+        RUNTIME_MIRROR_SIGNAL_L2_BASE + (selectedLift * RUNTIME_MIRROR_SIGNAL_L2_SELECTED_COEFF),
+        RUNTIME_MIRROR_SIGNAL_L3_BASE + (trailSignal * RUNTIME_MIRROR_SIGNAL_L3_TRAIL_COEFF),
+        RUNTIME_MIRROR_SIGNAL_L4_BASE + (epochProgress * RUNTIME_MIRROR_SIGNAL_L4_TIME_COEFF),
+        RUNTIME_MIRROR_SIGNAL_L5_BASE + (bodySignal * RUNTIME_MIRROR_SIGNAL_L5_BODY_COEFF) + (trailSignal * RUNTIME_MIRROR_SIGNAL_L5_TRAIL_COEFF),
+        RUNTIME_MIRROR_SIGNAL_L6_BASE + (focusLift * RUNTIME_MIRROR_SIGNAL_L6_FOCUS_COEFF) + selectedLift,
+    ).map { value -> value.coerceIn(0.05f, 0.95f) }
 }
 
 private fun formatPlaybackRateLabel(
