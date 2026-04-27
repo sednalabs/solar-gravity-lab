@@ -11,23 +11,19 @@
 
 import actions
 
-predicate writesPublicChannel(string script) {
-  script.regexpMatch("(?s).*GITHUB_STEP_SUMMARY.*") or
-  script.regexpMatch("(?s).*GITHUB_OUTPUT.*")
-}
-
-predicate directSensitiveValue(string script) {
-  script.regexpMatch("(?is).*\\$\\{\\{[^}]*secrets\\..*") or
-  script.regexpMatch("(?s).*\\$(OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|GH_TOKEN|GITHUB_TOKEN).*") or
-  script.regexpMatch("(?s).*\\$\\{(OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|GH_TOKEN|GITHUB_TOKEN)\\}.*") or
-  script.regexpMatch("(?is).*private[_-]?key.*")
-}
-
 from Run run, string script
 where
   script = run.getScript().getRawScript() and
-  writesPublicChannel(script) and
-  directSensitiveValue(script) and
+  (
+    script.regexpMatch("(?s).*GITHUB_STEP_SUMMARY.*") or
+    script.regexpMatch("(?s).*GITHUB_OUTPUT.*")
+  ) and
+  (
+    script.regexpMatch("(?is).*\\$\\{\\{[^}]*secrets\\..*") or
+    script.regexpMatch("(?s).*\\$(OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|GH_TOKEN|GITHUB_TOKEN).*") or
+    script.regexpMatch("(?s).*\\$\\{(OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|GH_TOKEN|GITHUB_TOKEN)\\}.*") or
+    script.regexpMatch("(?is).*private[_-]?key.*")
+  ) and
   not script.regexpMatch("(?s).*credential source.*") and
   not script.regexpMatch("(?s).*redact.*")
 select run,

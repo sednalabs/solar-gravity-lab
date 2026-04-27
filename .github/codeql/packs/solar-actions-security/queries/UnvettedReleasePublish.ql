@@ -29,16 +29,12 @@ predicate hasPromotedRefGuard(Run run) {
   )
 }
 
-predicate publishesProvenance(string script) {
-  script.regexpMatch("(?s).*release-provenance.*") and
-  script.regexpMatch("(?s).*RELEASE_TARGET.*") and
-  script.regexpMatch("(?s).*sha256.*")
-}
-
 predicate jobPublishesProvenance(Job job) {
   exists(Run run |
     run.getEnclosingJob() = job and
-    publishesProvenance(run.getScript().getRawScript())
+    run.getScript().getRawScript().regexpMatch("(?s).*release-provenance.*") and
+    run.getScript().getRawScript().regexpMatch("(?s).*RELEASE_TARGET.*") and
+    run.getScript().getRawScript().regexpMatch("(?s).*sha256.*")
   )
 }
 

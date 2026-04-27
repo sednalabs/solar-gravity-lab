@@ -38,18 +38,16 @@ predicate jobHasWritePermission(Job job) {
   )
 }
 
-predicate inputDrivenRef(string ref) {
-  ref.regexpMatch("(?s).*\\$\\{\\{[^}]*inputs\\..*") or
-  ref.regexpMatch("(?s).*\\$\\{\\{[^}]*github\\.event\\..*") or
-  ref.regexpMatch("(?s).*\\$\\{\\{[^}]*github\\.head_ref.*") or
-  ref.regexpMatch("(?s).*\\$\\{\\{[^}]*github\\.ref_name.*")
-}
-
 from UsesStep step, string ref
 where
   step.getCallee() = "actions/checkout" and
   ref = step.getArgument("ref") and
-  inputDrivenRef(ref) and
+  (
+    ref.regexpMatch("(?s).*\\$\\{\\{[^}]*inputs\\..*") or
+    ref.regexpMatch("(?s).*\\$\\{\\{[^}]*github\\.event\\..*") or
+    ref.regexpMatch("(?s).*\\$\\{\\{[^}]*github\\.head_ref.*") or
+    ref.regexpMatch("(?s).*\\$\\{\\{[^}]*github\\.ref_name.*")
+  ) and
   jobHasWritePermission(step.getEnclosingJob())
 select step,
   "This write-privileged job checks out an input- or event-controlled ref. Split checkout/build from publishing, or validate the ref before granting write permissions."

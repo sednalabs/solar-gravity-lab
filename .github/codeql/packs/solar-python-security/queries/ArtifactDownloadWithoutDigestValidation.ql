@@ -22,28 +22,70 @@ predicate functionInFile(Function function, File file, string name) {
   function.getName() = name
 }
 
-predicate literalInFile(StringLiteral literal, File file, string text) {
+predicate downloadsArtifactByApi(File file) {
   ciHelperFile(file) and
-  file = literal.getEnclosingModule().getFile() and
-  literal.getText().regexpMatch(text)
+  exists(StringLiteral literal |
+    file = literal.getEnclosingModule().getFile() and
+    literal.getText().regexpMatch("(?s).*actions/runs/.*/artifacts.*")
+  )
+}
+
+predicate downloadsArtifactByCli(File file) {
+  ciHelperFile(file) and
+  exists(StringLiteral literal |
+    file = literal.getEnclosingModule().getFile() and
+    literal.getText().regexpMatch("(?s).*gh.*run.*download.*")
+  )
+}
+
+predicate mentionsApkSha(File file) {
+  ciHelperFile(file) and
+  exists(StringLiteral literal |
+    file = literal.getEnclosingModule().getFile() and
+    literal.getText().regexpMatch("(?s).*apk_sha256.*")
+  )
+}
+
+predicate mentionsShaMismatch(File file) {
+  ciHelperFile(file) and
+  exists(StringLiteral literal |
+    file = literal.getEnclosingModule().getFile() and
+    literal.getText().regexpMatch("(?s).*SHA mismatch.*")
+  )
+}
+
+predicate mentionsCommitSha(File file) {
+  ciHelperFile(file) and
+  exists(StringLiteral literal |
+    file = literal.getEnclosingModule().getFile() and
+    literal.getText().regexpMatch("(?s).*commit_sha.*")
+  )
+}
+
+predicate mentionsArtifactName(File file) {
+  ciHelperFile(file) and
+  exists(StringLiteral literal |
+    file = literal.getEnclosingModule().getFile() and
+    literal.getText().regexpMatch("(?s).*artifact_name.*")
+  )
 }
 
 predicate downloadsArtifact(File file) {
   functionInFile(_, file, "download_artifact") or
-  literalInFile(_, file, "(?s).*actions/runs/.*/artifacts.*") or
-  literalInFile(_, file, "(?s).*gh.*run.*download.*")
+  downloadsArtifactByApi(file) or
+  downloadsArtifactByCli(file)
 }
 
 predicate validatesArtifactDigest(File file) {
   functionInFile(_, file, "sha256_file") and
-  literalInFile(_, file, "(?s).*apk_sha256.*") and
-  literalInFile(_, file, "(?s).*SHA mismatch.*")
+  mentionsApkSha(file) and
+  mentionsShaMismatch(file)
 }
 
 predicate validatesArtifactIdentity(File file) {
   functionInFile(_, file, "validate_manifest_matches_request") and
-  literalInFile(_, file, "(?s).*commit_sha.*") and
-  literalInFile(_, file, "(?s).*artifact_name.*")
+  mentionsCommitSha(file) and
+  mentionsArtifactName(file)
 }
 
 from File file

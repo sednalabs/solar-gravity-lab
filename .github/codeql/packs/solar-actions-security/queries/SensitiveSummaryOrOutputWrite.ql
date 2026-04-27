@@ -11,21 +11,17 @@
 
 import actions
 
-predicate writesPublicChannel(string script) {
-  script.regexpMatch("(?s).*GITHUB_STEP_SUMMARY.*") or
-  script.regexpMatch("(?s).*GITHUB_OUTPUT.*")
-}
-
-predicate mentionsSensitiveMaterial(string script) {
-  script.regexpMatch("(?is).*(token|secret|password|private[_-]?key|OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY).*") or
-  script.regexpMatch("(?s).*(/home/runner/|/home/\\S+|~/.codex).*")
-}
-
 from Run run, string script
 where
   script = run.getScript().getRawScript() and
-  writesPublicChannel(script) and
-  mentionsSensitiveMaterial(script) and
+  (
+    script.regexpMatch("(?s).*GITHUB_STEP_SUMMARY.*") or
+    script.regexpMatch("(?s).*GITHUB_OUTPUT.*")
+  ) and
+  (
+    script.regexpMatch("(?is).*(token|secret|password|private[_-]?key|OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY).*") or
+    script.regexpMatch("(?s).*(/home/runner/|/home/\\S+|~/.codex).*")
+  ) and
   not script.regexpMatch("(?s).*credential source.*") and
   not script.regexpMatch("(?s).*see uploaded proof-validation artifact.*")
 select run,
