@@ -88,12 +88,51 @@ jobs:
           EXPECTED_CHANGED_FILES: ${{ steps.pr_files.outputs.expected_changed_files }}
         run: |
           set -euo pipefail
-          plan="$(
-            python3 .github/scripts/resolve_codeql_plan.py \
-              --event-name '${{ github.event_name }}' \
-              --changed-files-json "${CHANGED_FILES_JSON}" \
-              --expected-changed-files "${EXPECTED_CHANGED_FILES}"
-          )"
+          if [[ -f .github/scripts/resolve_codeql_plan.py ]]; then
+            plan="$(
+              python3 .github/scripts/resolve_codeql_plan.py \
+                --event-name '${{ github.event_name }}' \
+                --changed-files-json "${CHANGED_FILES_JSON}" \
+                --expected-changed-files "${EXPECTED_CHANGED_FILES}"
+            )"
+          else
+            plan="$(python3 - <<'PY'
+          import json
+
+          languages = ("actions", "c-cpp", "java-kotlin", "python", "rust")
+          build_modes = {
+              "actions": "none",
+              "c-cpp": "none",
+              "java-kotlin": "manual",
+              "python": "none",
+              "rust": "none",
+          }
+          matrix = {
+              "include": [
+                  {
+                      "language": language,
+                      "build-mode": build_modes[language],
+                      "config_file": "./.github/codeql/codeql-config.yml",
+                  }
+                  for language in languages
+              ]
+          }
+          print(
+              json.dumps(
+                  {
+                      "matrix": json.dumps(matrix, separators=(",", ":")),
+                      "languages": ",".join(languages),
+                      "surfaces": "",
+                      "has_codeql_relevant_changes": "true",
+                      "run_all_languages": "true",
+                      "reason": "trusted CodeQL planner was absent on the base ref; full scan required",
+                  },
+                  separators=(",", ":"),
+              )
+          )
+          PY
+            )"
+          fi
           PLAN_JSON="${plan}" python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           import os
