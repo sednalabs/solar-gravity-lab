@@ -70,7 +70,7 @@ def classify_path(raw_path: str) -> set[str]:
     if path in CODEQL_POLICY_PATHS or path.startswith(".github/codeql/"):
         surfaces.add("codeql_policy")
 
-    if path.startswith(".github/scripts/") or path.startswith(".github/actions/"):
+    if path.startswith((".github/scripts/", ".github/actions/")):
         surfaces.add("ci_tooling")
 
     if (
@@ -164,16 +164,21 @@ def codeql_languages_for_surfaces(surfaces: set[str]) -> tuple[str, ...]:
 def summarize_paths(paths: list[str]) -> SurfaceSummary:
     normalized_paths = [n for path in paths if (n := normalize_path(path))]
     surfaces: set[str] = set()
+    critical_surfaces = {"codeql_policy", "cache", "release", "toolchain"}
+    critical = False
     for path in normalized_paths:
-        surfaces.update(classify_path(path))
+        path_surfaces = classify_path(path)
+        surfaces.update(path_surfaces)
+        if (
+            not critical
+            and (
+                bool(path_surfaces & critical_surfaces)
+                or path.startswith((".github/workflows/", ".github/actions/"))
+            )
+        ):
+            critical = True
 
     docs_only = bool(normalized_paths) and all(is_doc_path(path) for path in normalized_paths)
-    critical_surfaces = {"codeql_policy", "cache", "release", "toolchain"}
-    critical = bool(surfaces & critical_surfaces)
-    if any(path.startswith(".github/workflows/") for path in normalized_paths):
-        critical = True
-    if any(path.startswith(".github/actions/") for path in normalized_paths):
-        critical = True
 
     languages = ALL_CODEQL_LANGUAGES if critical else codeql_languages_for_surfaces(surfaces)
     return SurfaceSummary(

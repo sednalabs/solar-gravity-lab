@@ -2,17 +2,12 @@ name: rust-nextest-archive-pilot
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Branch, tag, or commit to validate
-        required: false
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: rust-nextest-archive-pilot-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  group: rust-nextest-archive-pilot-${{ github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -31,7 +26,7 @@ jobs:
     name: Build nextest archive
     runs-on: ubuntu-24.04
     outputs:
-      checkout_ref: ${{ steps.ref.outputs.checkout_ref }}
+      checkout_ref: ${{ github.ref_name }}
       head_sha: ${{ steps.git_meta.outputs.head_sha }}
       archive_bytes: ${{ steps.archive.outputs.archive_bytes }}
       archive_seconds: ${{ steps.archive.outputs.archive_seconds }}
@@ -40,17 +35,9 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - name: Resolve checkout ref
-        id: ref
-        shell: bash
-        run: |
-          set -euo pipefail
-          checkout_ref='${{ inputs.ref != '' && inputs.ref || github.ref_name }}'
-          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v6
         with:
-          ref: ${{ steps.ref.outputs.checkout_ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -76,7 +63,7 @@ jobs:
         run: bash .github/scripts/configure_sccache.sh
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
         with:
           tool: nextest@0.9.128
           fallback: none
@@ -137,14 +124,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.nextest-archive.outputs.checkout_ref }}
+          ref: ${{ needs.nextest-archive.outputs.head_sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
         with:
           tool: nextest@0.9.128
           fallback: none
@@ -198,7 +185,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.nextest-archive.outputs.checkout_ref }}
+          ref: ${{ needs.nextest-archive.outputs.head_sha }}
           fetch-depth: 1
           persist-credentials: false
 
