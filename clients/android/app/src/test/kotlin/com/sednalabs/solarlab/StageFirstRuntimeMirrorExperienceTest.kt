@@ -116,4 +116,34 @@ class StageFirstRuntimeMirrorExperienceTest {
             )
         )
     }
+
+    @Test
+    fun runtimeMirrorCompactStatusText_normalizesShortStatusText() {
+        assertEquals(
+            "Runtime connected Vulkan ready · 8 tile workers",
+            runtimeMirrorCompactStatusText(
+                "Runtime connected\n\tVulkan ready   ·   8 tile workers"
+            ),
+        )
+    }
+
+    @Test
+    fun runtimeMirrorCompactStatusText_cutsAfterHugePayloadMarker() {
+        val compacted = runtimeMirrorCompactStatusText(
+            "Render host ready (89686 chars) observer=FollowSelected|sun|" +
+                "packet=${"x".repeat(300)}"
+        )
+
+        assertEquals("Render host ready (89686 chars)", compacted)
+    }
+
+    @Test
+    fun runtimeMirrorCompactStatusText_boundsGenericLongStatusText() {
+        val compacted = runtimeMirrorCompactStatusText(
+            "Runtime connected " + "tile-lane ".repeat(80)
+        )
+
+        assertTrue(compacted.endsWith("... [truncated]"))
+        assertTrue(compacted.length <= 235)
+    }
 }
