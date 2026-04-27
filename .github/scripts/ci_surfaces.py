@@ -62,7 +62,7 @@ def classify_path(raw_path: str) -> set[str]:
     if is_doc_path(path):
         surfaces.add("docs")
 
-    if path.startswith(".github/workflows/") or path.startswith(".github/actions/") or path.endswith(
+    if path.startswith((".github/workflows/", ".github/actions/")) or path.endswith(
         ("/action.yml", "/action.yaml")
     ) or path in {"action.yml", "action.yaml"}:
         surfaces.add("actions")
