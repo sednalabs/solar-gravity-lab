@@ -156,6 +156,10 @@ The always-visible HUD should go one step further: keep packet hashes, byte
 counts, path counters, and large payload sizes in debug/audit surfaces, while
 the flight status line stays focused on connection state, render readiness,
 scenario time, and the active graphics/compute capability.
+This applies to both the runtime mirror cockpit and the pre-immersive stage
+shell. Debug dialogs can keep the raw renderer callback, but the visible stage
+surface should not make humans or native computer-use agents read packet
+counters before they can understand the scene.
 
 The long-term loop is:
 
