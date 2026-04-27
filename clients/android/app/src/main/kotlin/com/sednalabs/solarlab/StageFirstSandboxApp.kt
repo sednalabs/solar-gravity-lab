@@ -101,9 +101,13 @@ private val BodyText = Color(0xE6E8F7FF)
 private val SurfaceText = Color(0xFFF4FBFF)
 
 private val StageCompactWidthBreakpoint = 720.dp
+private val StageRendererTelemetryTailRegex =
+    Regex("""\s*(?:[·|]\s*)?(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[=\[].*|compute[=\[].*|gp[=\[].*|cp[=\[].*|cam[=\[].*).*$""")
+private val StageRendererWhitespaceRegex = Regex("""\s+""")
 
 private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
 private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
+private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
 
 /**
  * Restored stage-first client that brings the interactive feature-lab surface back into the
@@ -455,6 +459,9 @@ private fun StageFirstSandboxLocalExperience(
         val selectedBody = remember(frame, selectedBodyId) {
             frame?.snapshot?.bodies?.firstOrNull { it.id == selectedBodyId }
         }
+        val backendHudStatus = remember(backendStatus) {
+            compactStageBackendHudStatusText(backendStatus)
+        }
 
         Box(
             modifier = Modifier
@@ -524,7 +531,7 @@ private fun StageFirstSandboxLocalExperience(
             StageOverlay(
                 timelineText = timelineText,
                 selectionCard = selectionCard,
-                backendStatus = backendStatus,
+                backendStatus = backendHudStatus,
                 interactionHintText = interactionHintText,
                 collisionMode = collisionMode,
                 renderProcessingMode = renderProcessingMode,
@@ -743,6 +750,52 @@ private fun StageFirstSandboxLocalExperience(
                 },
             )
         }
+    }
+}
+
+internal fun compactStageBackendHudStatusText(value: String): String {
+    val normalized = value
+        .replace('\n', ' ')
+        .replace(StageRendererWhitespaceRegex, " ")
+        .trim()
+    if (normalized.isBlank()) {
+        return "Preparing immersive Vulkan stage."
+    }
+
+    val withoutTelemetry = normalized
+        .replace(StageRendererTelemetryTailRegex, "")
+        .trimEnd('.', ' ')
+
+    val rendererSummary = when {
+        withoutTelemetry.contains(
+            "Vulkan SPIR-V graphics pipelines + compute compaction active",
+            ignoreCase = true,
+        ) -> withoutTelemetry.replace(
+            oldValue = "Vulkan SPIR-V graphics pipelines + compute compaction active",
+            newValue = "Vulkan SPIR-V + compute compaction active",
+            ignoreCase = true,
+        )
+
+        withoutTelemetry.contains(
+            "Vulkan SPIR-V graphics pipelines",
+            ignoreCase = true,
+        ) -> withoutTelemetry.replace(
+            oldValue = "Vulkan SPIR-V graphics pipelines",
+            newValue = "Vulkan SPIR-V graphics",
+            ignoreCase = true,
+        )
+
+        withoutTelemetry.isNotBlank() -> withoutTelemetry
+        else -> normalized
+    }
+
+    return if (rendererSummary.length <= STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT) {
+        rendererSummary
+    } else {
+        rendererSummary
+            .take(STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT)
+            .trimEnd()
+            .plus("... [truncated]")
     }
 }
 
