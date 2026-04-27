@@ -1,0 +1,88 @@
+name: codeql-query-tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/codeql/**"
+      - ".github/workflows/codeql-query-tests.yml"
+      - ".github/scripts/resolve_codeql_plan.py"
+      - ".github/scripts/test_codeql_plan.py"
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/codeql/**"
+      - ".github/workflows/codeql-query-tests.yml"
+      - ".github/scripts/resolve_codeql_plan.py"
+      - ".github/scripts/test_codeql_plan.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-custom-packs:
+    name: Validate custom CodeQL packs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up CodeQL CLI
+        id: setup_codeql
+        uses: github/codeql-action/setup-codeql@v4
+
+      - name: Install custom pack dependencies
+        shell: bash
+        env:
+          CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}
+        run: |
+          set -euo pipefail
+          "${CODEQL}" pack install .github/codeql/packs/solar-actions-security
+          "${CODEQL}" pack install .github/codeql/packs/solar-python-security
+
+      - name: Resolve custom query suites
+        shell: bash
+        env:
+          CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}
+        run: |
+          set -euo pipefail
+          "${CODEQL}" resolve queries \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-actions-security/suites/solar-actions-security.qls
+          "${CODEQL}" resolve queries \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-python-security/suites/solar-python-security.qls
+
+      - name: Compile custom queries
+        shell: bash
+        env:
+          CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}
+        run: |
+          set -euo pipefail
+          "${CODEQL}" query compile \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-actions-security/queries/*.ql
+          "${CODEQL}" query compile \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-python-security/queries/*.ql
+
+      - name: Run CodeQL planner tests
+        shell: bash
+        run: python3 .github/scripts/test_codeql_plan.py
+
+      - name: Emit summary
+        shell: bash
+        run: |
+          {
+            echo "## codeql-query-tests"
+            echo
+            echo "- resolved custom Actions and Python query suites"
+            echo "- compiled custom CodeQL queries"
+            echo "- ran CodeQL planner unit tests"
+          } >> "$GITHUB_STEP_SUMMARY"

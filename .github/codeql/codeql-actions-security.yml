@@ -1,0 +1,7 @@
+name: solar-gravity-lab-codeql-actions-security
+
+queries:
+  - uses: security-and-quality
+  - uses: ./.github/codeql/packs/solar-actions-security/suites/solar-actions-security.qls
+
+threat-models: local

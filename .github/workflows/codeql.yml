@@ -308,7 +308,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew -p clients/android --no-daemon \
+          ./gradlew -p clients/android --no-daemon --rerun-tasks --no-build-cache \
+            -Dorg.gradle.caching=false \
             :app:compileDebugKotlin \
             :app:compileDebugUnitTestKotlin \
             :app:compileDebugAndroidTestKotlin \

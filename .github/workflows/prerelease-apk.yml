@@ -75,7 +75,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
@@ -403,6 +403,39 @@ jobs:
           print(f"commit_count={payload['commit_count']}")
           PY
 
+      - name: Generate build provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          safe_version = "${{ steps.meta.outputs.safe_version }}"
+          artifact_name = f"solar-gravity-lab-{safe_version}-${{ steps.meta.outputs.package_label }}.apk"
+          sha_path = Path(f"dist/{artifact_name}.sha256")
+          payload = {
+              "schema_version": 1,
+              "provenance_kind": "android-build",
+              "repository": "${{ github.repository }}",
+              "workflow": "${{ github.workflow }}",
+              "run_id": "${{ github.run_id }}",
+              "run_attempt": "${{ github.run_attempt }}",
+              "checkout_ref": "${{ inputs.ref != '' && inputs.ref || github.ref_name }}",
+              "commit_sha": "${{ steps.git_meta.outputs.head_sha }}",
+              "version_name": "${{ steps.meta.outputs.version_name }}",
+              "version_code": "${{ steps.meta.outputs.version_code }}",
+              "build_variant": "${{ steps.meta.outputs.build_variant }}",
+              "release_channel": "${{ steps.meta.outputs.release_channel }}",
+              "artifact_name": artifact_name,
+              "artifact_sha256": sha_path.read_text(encoding="utf-8").split()[0],
+              "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+          }
+          output = Path(f"dist/build-provenance-{safe_version}.json")
+          output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Emit prerelease Android timing summary
         if: always()
         shell: bash
@@ -464,6 +497,7 @@ jobs:
           path: |
             dist/*.apk
             dist/*.sha256
+            dist/*provenance*.json
             dist/*.json
             dist/*.md
             dist/gradle/**
@@ -539,6 +573,8 @@ jobs:
       needs.isa-prerelease-proof.result == 'success' &&
       (github.event_name == 'push' || inputs.publish_release == true)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Download packaged artifacts
         uses: actions/download-artifact@v8
@@ -569,6 +605,80 @@ jobs:
             echo "metadata_path=$metadata_path"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate promoted release target
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          RELEASE_TARGET: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          echo "Validate promoted release target"
+
+          requested_ref="${INPUT_REF:-${GITHUB_REF_NAME}}"
+          case "${GITHUB_EVENT_NAME}:${requested_ref}" in
+            push:release/*|push:refs/heads/release/*)
+              exit 0
+              ;;
+          esac
+
+          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
+            echo "Release publishing is only allowed from release pushes or explicitly validated manual dispatches." >&2
+            exit 1
+          fi
+
+          case "${requested_ref}" in
+            main|refs/heads/main|release/*|refs/heads/release/*|v*|refs/tags/v*)
+              exit 0
+              ;;
+          esac
+
+          if [[ "${requested_ref}" =~ ^[0-9a-fA-F]{40}$ && "${requested_ref}" == "${RELEASE_TARGET}" ]]; then
+            exit 0
+          fi
+
+          echo "Refuses to publish a release from unpromoted ref: ${requested_ref}" >&2
+          exit 1
+
+      - name: Generate release provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          safe_version = "${{ needs.build-prerelease-apk.outputs.safe_version }}"
+          artifact_name = f"solar-gravity-lab-{safe_version}-${{ needs.build-prerelease-apk.outputs.package_label }}.apk"
+          sha_candidates = sorted(Path("dist").rglob(f"{artifact_name}.sha256"))
+          if not sha_candidates:
+              raise SystemExit(f"Missing SHA-256 file for {artifact_name}")
+          payload = {
+              "schema_version": 1,
+              "provenance_kind": "github-release",
+              "repository": "${{ github.repository }}",
+              "workflow": "${{ github.workflow }}",
+              "run_id": "${{ github.run_id }}",
+              "run_attempt": "${{ github.run_attempt }}",
+              "release_tag": "${{ needs.build-prerelease-apk.outputs.tag_name }}",
+              "release_target": "${{ needs.build-prerelease-apk.outputs.head_sha }}",
+              "checkout_ref": "${{ inputs.ref != '' && inputs.ref || github.ref_name }}",
+              "version_name": "${{ needs.build-prerelease-apk.outputs.version_name }}",
+              "version_code": "${{ needs.build-prerelease-apk.outputs.version_code }}",
+              "build_variant": "${{ needs.build-prerelease-apk.outputs.build_variant }}",
+              "release_channel": "${{ needs.build-prerelease-apk.outputs.release_channel }}",
+              "artifact_name": artifact_name,
+              "artifact_sha256": sha_candidates[0].read_text(encoding="utf-8").split()[0],
+              "launch_smoke_outcome": "${{ needs.build-prerelease-apk.outputs.launch_smoke_outcome }}",
+              "arm64_isa_proof": "${{ needs.isa-prerelease-proof.result }}",
+              "changelog_baseline_tag": "${{ needs.build-prerelease-apk.outputs.changelog_baseline_tag }}",
+              "changelog_commit_count": "${{ needs.build-prerelease-apk.outputs.changelog_commit_count }}",
+              "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+          }
+          output = Path("dist") / f"release-provenance-{safe_version}.json"
+          output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -582,6 +692,11 @@ jobs:
           set -euo pipefail
           release_notes="${{ steps.release_artifacts.outputs.changelog_md }}"
           metadata_path="${{ steps.release_artifacts.outputs.metadata_path }}"
+          release_provenance_path="$(find dist -type f -name 'release-provenance-*.json' | sort | head -n 1)"
+          if [[ -z "$release_provenance_path" ]]; then
+            echo "Missing release provenance asset under dist/." >&2
+            exit 1
+          fi
 
           prerelease_flag=""
           if [[ "$RELEASE_CHANNEL" == "prerelease" ]]; then
@@ -594,6 +709,7 @@ jobs:
             exit 1
           fi
           release_assets+=( "$metadata_path" )
+          release_assets+=( "$release_provenance_path" )
           mapfile -t release_assets < <(printf '%s\n' "${release_assets[@]}" | sort -u)
 
           if gh release view "$TAG_NAME" --repo "${{ github.repository }}" >/dev/null 2>&1; then

@@ -1,0 +1,7 @@
+name: sednalabs/solar-actions-security
+version: 0.0.1
+library: false
+dependencies:
+  codeql/actions-all: "*"
+suites: suites
+defaultSuiteFile: suites/solar-actions-security.qls
