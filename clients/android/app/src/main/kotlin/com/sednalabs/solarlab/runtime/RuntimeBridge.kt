@@ -303,8 +303,6 @@ internal class JniRuntimeBridge(
                 )
             }
 
-            synchronized(stateLock) {
-                val oldHandle = activeSessionHandle
             val oldHandle = synchronized(stateLock) {
                 val current = activeSessionHandle
                 if (current != 0L && current != handle) {
@@ -321,9 +319,6 @@ internal class JniRuntimeBridge(
 
             if (oldHandle != 0L) {
                 transport.destroySession(oldHandle)
-            }
-                activeSessionHandle = handle
-                renderHostAdapter.bindSession(handle)
             }
 
             signals += RuntimeSignal.Connected(handle = handle)
