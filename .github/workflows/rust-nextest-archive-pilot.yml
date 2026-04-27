@@ -12,14 +12,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
-  SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
-  SCCACHE_REGION: auto
-  SCCACHE_S3_USE_SSL: "true"
-  SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
-  SCCACHE_AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID }}
-  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY }}
-  SCCACHE_CREDENTIAL_SOURCE: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && 'dedicated-sccache-secrets' || 'shared-r2-secrets' }}
 
 jobs:
   nextest-archive:
@@ -31,9 +23,6 @@ jobs:
       archive_bytes: ${{ steps.archive.outputs.archive_bytes }}
       archive_seconds: ${{ steps.archive.outputs.archive_seconds }}
       rust_cache_hit: ${{ steps.rust_shared_cache.outputs.cache-hit }}
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -52,15 +41,6 @@ jobs:
         uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-native-nextest-${{ runner.os }}-${{ runner.arch }}
-
-      - uses: ./.github/actions/install-sccache
-        with:
-          version: v0.10.0
-
-      - name: Configure sccache
-        id: archive_sccache
-        shell: bash
-        run: bash .github/scripts/configure_sccache.sh
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
@@ -87,33 +67,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           du -h "${archive_file}"
 
-      - name: Emit archive sccache stats
-        if: always() && steps.archive_sccache.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/sccache
-          bash .github/scripts/capture_sccache_stats.sh dist/sccache/nextest-archive.txt
-          {
-            echo "## nextest archive sccache"
-            cat dist/sccache/nextest-archive.txt
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload nextest archive
         uses: actions/upload-artifact@v7
         with:
           name: solarlab-rust-nextest-archive-${{ github.run_id }}
           if-no-files-found: error
           path: dist/nextest/solarlab-rust-workspace.tar.zst
-
-      - name: Upload archive diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: solarlab-rust-nextest-archive-diagnostics-${{ github.run_id }}
-          if-no-files-found: warn
-          path: |
-            dist/sccache/**
 
   nextest-run:
     name: Run archived tests
@@ -179,9 +138,6 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       doctest_seconds: ${{ steps.doctest.outputs.doctest_seconds }}
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -195,15 +151,6 @@ jobs:
         uses: ./.github/actions/rust-shared-cache
         with:
           shared-key: solarlab-rust-native-nextest-${{ runner.os }}-${{ runner.arch }}
-
-      - uses: ./.github/actions/install-sccache
-        with:
-          version: v0.10.0
-
-      - name: Configure sccache
-        id: doctest_sccache
-        shell: bash
-        run: bash .github/scripts/configure_sccache.sh
 
       - name: Run workspace doctests
         id: doctest
@@ -221,27 +168,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           exit "${status}"
 
-      - name: Emit doctest sccache stats
-        if: always() && steps.doctest_sccache.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/sccache
-          bash .github/scripts/capture_sccache_stats.sh dist/sccache/nextest-doctest.txt
-          {
-            echo "## nextest doctest sccache"
-            cat dist/sccache/nextest-doctest.txt
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload doctest diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: solarlab-rust-nextest-doctest-${{ github.run_id }}
           if-no-files-found: warn
-          path: |
-            dist/nextest/doctest.log
-            dist/sccache/**
+          path: dist/nextest/doctest.log
 
   summary:
     name: Publish nextest pilot summary
