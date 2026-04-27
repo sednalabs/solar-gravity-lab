@@ -162,7 +162,7 @@ def codeql_languages_for_surfaces(surfaces: set[str]) -> tuple[str, ...]:
 
 
 def summarize_paths(paths: list[str]) -> SurfaceSummary:
-    normalized_paths = [normalize_path(path) for path in paths if normalize_path(path)]
+    normalized_paths = [n for path in paths if (n := normalize_path(path))]
     surfaces: set[str] = set()
     for path in normalized_paths:
         surfaces.update(classify_path(path))
