@@ -171,6 +171,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
         strokeWidth = 3.3f
     }
+    private val referenceGridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f
+    }
+    private val referenceAxisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeWidth = 1.4f
+    }
     private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -396,8 +405,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             0f,
             viewportWidth,
             viewportHeight,
-            Color.rgb(3, 7, 15),
-            Color.rgb(10, 23, 40),
+            Color.rgb(2, 5, 12),
+            Color.rgb(8, 19, 34),
             Shader.TileMode.CLAMP,
         )
         canvas.drawRect(0f, 0f, viewportWidth, viewportHeight, backgroundPaint)
@@ -408,7 +417,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             minDimension * 0.72f,
             intArrayOf(
                 Color.argb(82, 28, 69, 146),
-                Color.argb(24, 11, 29, 58),
+                Color.argb(24, 8, 35, 54),
                 Color.TRANSPARENT,
             ),
             floatArrayOf(0f, 0.58f, 1f),
@@ -421,7 +430,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             viewportHeight * 0.16f,
             viewportWidth,
             viewportHeight * 0.82f,
-            Color.argb(28, 54, 103, 171),
+            Color.argb(26, 42, 157, 172),
             Color.TRANSPARENT,
             Shader.TileMode.CLAMP,
         )
@@ -492,8 +501,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             minDimension * 0.92f,
             intArrayOf(
                 Color.TRANSPARENT,
-                Color.argb(18, 3, 6, 13),
-                Color.argb(136, 2, 4, 9),
+                Color.argb(18, 2, 5, 12),
+                Color.argb(146, 1, 3, 8),
             ),
             floatArrayOf(0.58f, 0.84f, 1f),
             Shader.TileMode.CLAMP,
@@ -541,6 +550,15 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             centerX = effectiveCamera.centerX,
             centerY = effectiveCamera.centerY,
             scale = scale,
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight,
+        )
+        drawReferencePlane(
+            canvas = canvas,
+            centerX = effectiveCamera.centerX,
+            centerY = effectiveCamera.centerY,
+            scale = scale,
+            halfWorldSpan = halfWorldSpan,
             viewportWidth = viewportWidth,
             viewportHeight = viewportHeight,
         )
@@ -1011,6 +1029,79 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         )
         canvas.drawCircle(sunScreenX, sunScreenY, radiusPx * 0.72f, glowPaint)
         glowPaint.shader = null
+    }
+
+    private fun drawReferencePlane(
+        canvas: Canvas,
+        centerX: Float,
+        centerY: Float,
+        scale: Float,
+        halfWorldSpan: Float,
+        viewportWidth: Float,
+        viewportHeight: Float,
+    ) {
+        if (!centerX.isFinite() || !centerY.isFinite() || !scale.isFinite() || scale <= 0f) {
+            return
+        }
+        val minDimension = min(viewportWidth, viewportHeight)
+        val gridSpacingPx = (minDimension / 8.4f).coerceIn(42f, 96f)
+        val gridAlpha = when (cameraPresentationMode) {
+            CameraPresentationMode.Cinematic -> 24
+            CameraPresentationMode.Overhead -> 32
+            CameraPresentationMode.Follow -> 20
+        }
+        referenceGridPaint.color = Color.argb(gridAlpha, 118, 247, 255)
+        referenceGridPaint.strokeWidth = 1f
+
+        val originX = screenX(0f, centerX, scale, viewportWidth)
+        val originY = screenY(0f, centerY, scale, viewportHeight)
+
+        var x = positiveModulo(originX, gridSpacingPx)
+        var x = positiveModulo(-centerX * scale, gridSpacingPx)
+        while (x <= viewportWidth) {
+            canvas.drawLine(x, 0f, x, viewportHeight, referenceGridPaint)
+            x += gridSpacingPx
+        }
+
+        var y = positiveModulo(originY, gridSpacingPx)
+        var y = positiveModulo(centerY * scale, gridSpacingPx)
+        while (y <= viewportHeight) {
+            canvas.drawLine(0f, y, viewportWidth, y, referenceGridPaint)
+            y += gridSpacingPx
+        }
+
+        val originX = screenX(0f, centerX, scale, viewportWidth)
+        val originY = screenY(0f, centerY, scale, viewportHeight)
+        val margin = minDimension * 0.28f
+        if (originX in -margin..(viewportWidth + margin)) {
+            referenceAxisPaint.color = Color.argb(54, 118, 247, 255)
+            referenceAxisPaint.strokeWidth = 1.2f
+            canvas.drawLine(originX, 0f, originX, viewportHeight, referenceAxisPaint)
+        }
+        if (originY in -margin..(viewportHeight + margin)) {
+            referenceAxisPaint.color = Color.argb(42, 255, 211, 107)
+            referenceAxisPaint.strokeWidth = 1.2f
+            canvas.drawLine(0f, originY, viewportWidth, originY, referenceAxisPaint)
+        }
+
+        if (originX in -margin..(viewportWidth + margin) && originY in -margin..(viewportHeight + margin)) {
+            val referenceRadiusBase = minDimension * 0.46f
+            val referenceRadiusBase = (halfWorldSpan * scale).coerceAtLeast(minDimension * 0.16f)
+            listOf(0.34f, 0.58f, 0.82f).forEachIndexed { index, radiusScale ->
+                val radius = (referenceRadiusBase * radiusScale).coerceIn(minDimension * 0.10f, minDimension * 0.48f)
+                referenceAxisPaint.color = Color.argb(18 + index * 6, 118, 247, 255)
+                referenceAxisPaint.strokeWidth = 1f
+                canvas.drawCircle(originX, originY, radius, referenceAxisPaint)
+            }
+        }
+    }
+
+    private fun positiveModulo(value: Float, modulus: Float): Float {
+        if (!value.isFinite() || !modulus.isFinite() || modulus <= 0f) {
+            return 0f
+        }
+        val remainder = value % modulus
+        return if (remainder < 0f) remainder + modulus else remainder
     }
 
     private fun resolveEffectiveCameraState(target: StageCameraState): StageCameraState {
