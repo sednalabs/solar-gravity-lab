@@ -160,7 +160,7 @@ internal class JniRuntimeBridge(
             }
             runtimeInfoResult?.let { result ->
                 logInfo(
-                    "connect.runtimeInfo.result handle=$handle status=${result.result.describe()} requestedCpu=${result.requestedCpuBackendLabel()} cpu=${result.cpuBackendLabel()} solver=${result.cpuSolverPathLabel()} scheduler=${result.cpuScheduleSummary()} features=${result.cpuFeatureSummary() ?: "none"} gpu=${result.gpuBackendLabel()}"
+                    "connect.runtimeInfo.result handle=$handle status=${result.result.describe()} requestedCpu=${result.requestedCpuBackendLabel()} cpu=${result.cpuBackendLabel()} solver=${result.cpuSolverPathLabel()} scheduler=${result.cpuScheduleSummary()} kernels=${result.cpuKernelCatalogSummary() ?: "none"} features=${result.cpuFeatureSummary() ?: "none"} gpu=${result.gpuBackendLabel()}"
                 )
             }
 
@@ -173,6 +173,7 @@ internal class JniRuntimeBridge(
                         cpuFeatureSummary = runtimeInfoResult.cpuFeatureSummary(),
                         cpuFallbackSummary = runtimeInfoResult.cpuFallbackSummary(),
                         cpuScheduleSummary = runtimeInfoResult.cpuScheduleSummary(),
+                        cpuKernelCatalogSummary = runtimeInfoResult.cpuKernelCatalogSummary(),
                         requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
                         gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
                         workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
@@ -346,6 +347,7 @@ internal class JniRuntimeBridge(
                     cpuFeatureSummary = runtimeInfoResult.cpuFeatureSummary(),
                     cpuFallbackSummary = runtimeInfoResult.cpuFallbackSummary(),
                     cpuScheduleSummary = runtimeInfoResult.cpuScheduleSummary(),
+                    cpuKernelCatalogSummary = runtimeInfoResult.cpuKernelCatalogSummary(),
                     requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
                     gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
                     workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
@@ -624,6 +626,7 @@ internal class JniRuntimeBridge(
                 cpuFeatureSummary = result.cpuFeatureSummary(),
                 cpuFallbackSummary = result.cpuFallbackSummary(),
                 cpuScheduleSummary = result.cpuScheduleSummary(),
+                cpuKernelCatalogSummary = result.cpuKernelCatalogSummary(),
                 requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
                 gpuBackendLabel = result.gpuBackendLabel(),
                 workloadSummary = result.gpuWorkloadSummary(),
@@ -812,7 +815,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 5
+        private const val ABI_VERSION = 6
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
@@ -848,6 +851,7 @@ internal sealed interface RuntimeSignal {
         val cpuFeatureSummary: String? = null,
         val cpuFallbackSummary: String? = null,
         val cpuScheduleSummary: String? = null,
+        val cpuKernelCatalogSummary: String? = null,
         val gpuBackendLabel: String,
         val requestedGpuBackendLabel: String? = null,
         val workloadSummary: String? = null,
@@ -1365,6 +1369,10 @@ internal data class NativeRuntimeInfoResult(
     val cpuScheduleCandidateWorkers: Int = 1,
     val cpuScheduleBodyCount: Int = 0,
     val cpuScheduleEstimatedPairCount: Long = 0,
+    val cpuKernelCatalogCount: Int = 0,
+    val cpuKernelActiveCount: Int = 0,
+    val cpuKernelEligibleCandidateCount: Int = 0,
+    val cpuKernelBlockedCandidateCount: Int = 0,
 ) {
     fun requestedCpuBackendLabel(): String = cpuBackendLabel(requestedCpuBackend)
 
@@ -1406,6 +1414,15 @@ internal data class NativeRuntimeInfoResult(
         } else {
             ""
         }
+
+    fun cpuKernelCatalogSummary(): String? =
+        cpuKernelCatalogCount
+            .takeIf { it > 0 }
+            ?.let {
+                "kernel catalog: $it paths, active $cpuKernelActiveCount, " +
+                    "eligible candidates $cpuKernelEligibleCandidateCount, " +
+                    "blocked candidates $cpuKernelBlockedCandidateCount"
+            }
 
     fun cpuFeatureSummary(): String? {
         val features = mutableListOf<String>()

@@ -47,7 +47,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesOpenClWorkloadsAndInteropPolicy() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 5,
+            abiVersion = 6,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_OPENCL,
@@ -64,7 +64,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_returnsNoInteropPolicy_forNonOpenClBackends() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 5,
+            abiVersion = 6,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
@@ -81,7 +81,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesCpuIsaTruth() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 5,
+            abiVersion = 6,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = 0,
             gpuBackend = NATIVE_GPU_BACKEND_NONE,
@@ -101,7 +101,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesCpuSchedulerTruth() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 5,
+            abiVersion = 6,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
@@ -118,6 +118,29 @@ class RuntimeBridgeGpuBackendSelectionTest {
         assertEquals(
             "single-worker active, adaptive tiled candidate 8 workers (192 bodies, 18336 pairs)",
             info.cpuScheduleSummary(),
+        )
+    }
+
+    @Test
+    fun nativeRuntimeInfoResult_surfacesCpuKernelCatalogTruth() {
+        val info = NativeRuntimeInfoResult(
+            result = NativeResult(code = 0),
+            abiVersion = 6,
+            requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
+            cpuFeatureFlags = (1L shl 0) or (1L shl 7) or (1L shl 9),
+            cpuSolverPath = 1,
+            cpuFallbackCode = 0,
+            cpuKernelCatalogCount = 13,
+            cpuKernelActiveCount = 1,
+            cpuKernelEligibleCandidateCount = 2,
+            cpuKernelBlockedCandidateCount = 10,
+        )
+
+        assertEquals(
+            "kernel catalog: 13 paths, active 1, eligible candidates 2, blocked candidates 10",
+            info.cpuKernelCatalogSummary(),
         )
     }
 }

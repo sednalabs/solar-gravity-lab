@@ -215,6 +215,12 @@ pub struct Arm64KernelCatalogEntry {
     pub workload: &'static str,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Arm64KernelAvailability {
+    pub eligible_candidate_paths: Vec<&'static str>,
+    pub blocked_candidate_paths: Vec<&'static str>,
+}
+
 pub const ARM64_KERNEL_CATALOG: &[Arm64KernelCatalogEntry] = &[
     Arm64KernelCatalogEntry {
         path_id: "simd.arm64.neon-f64-pairwise",
@@ -519,6 +525,40 @@ pub fn arm64_kernel_catalog() -> &'static [Arm64KernelCatalogEntry] {
     ARM64_KERNEL_CATALOG
 }
 
+#[must_use]
+pub fn arm64_kernel_availability(active_cpu_features: &[String]) -> Arm64KernelAvailability {
+    let normalized_features = normalize_cpu_features(active_cpu_features);
+    let has_feature = |feature: &str| {
+        normalized_features
+            .iter()
+            .any(|candidate| candidate == feature)
+    };
+    let requirements_met = |entry: &Arm64KernelCatalogEntry| {
+        entry
+            .required_features
+            .iter()
+            .all(|feature| has_feature(feature))
+    };
+    let mut availability = Arm64KernelAvailability::default();
+
+    for entry in ARM64_KERNEL_CATALOG {
+        match entry.readiness {
+            Arm64KernelReadiness::Candidate if requirements_met(entry) => {
+                availability.eligible_candidate_paths.push(entry.path_id);
+            }
+            Arm64KernelReadiness::Candidate => {
+                availability.blocked_candidate_paths.push(entry.path_id);
+            }
+            Arm64KernelReadiness::Active
+            | Arm64KernelReadiness::Implemented
+            | Arm64KernelReadiness::ParityProven
+            | Arm64KernelReadiness::Eligible => {}
+        }
+    }
+
+    availability
+}
+
 const G_M3_PER_KG_S2: f64 = 6.67430e-11;
 const MIN_DISTANCE_M2: f64 = 1.0e-12;
 const MAX_SIMULATION_SUBSTEP_SECONDS: f64 = 3_600.0;
@@ -623,6 +663,7 @@ pub fn solver_execution_report_for_backend_with_body_count(
 ) -> SolverExecutionReport {
     let normalized_features = normalize_cpu_features(active_cpu_features);
     let decision = dispatch_solver_backend(requested_backend, &normalized_features);
+    let arm64_solver_active = decision.effective_backend == SolverBackend::SimdArm64;
     SolverExecutionReport {
         requested_backend: requested_backend.clone(),
         effective_backend: decision.effective_backend,
@@ -630,10 +671,7 @@ pub fn solver_execution_report_for_backend_with_body_count(
         fallback_code: decision.fallback_code,
         fallback_reason: decision.fallback_reason,
         active_cpu_features: normalized_features,
-        schedule: solver_schedule_report(
-            body_count,
-            decision.effective_backend == SolverBackend::SimdArm64,
-        ),
+        schedule: solver_schedule_report(body_count, arm64_solver_active),
     }
 }
 
@@ -1385,8 +1423,8 @@ fn norm_squared(v: Vector3d) -> f64 {
 mod tests {
     use super::{
         advance_authoritative, advance_authoritative_scalar, arm64_cpu_feature_catalog,
-        arm64_kernel_catalog, arm64_neon_runtime_available, compare_arm64_kernel_to_scalar,
-        compute_invariants, cpu_feature_flags, detect_cpu_features,
+        arm64_kernel_availability, arm64_kernel_catalog, arm64_neon_runtime_available,
+        compare_arm64_kernel_to_scalar, compute_invariants, cpu_feature_flags, detect_cpu_features,
         dispatch_solver_backend_for_host, effective_playback_max_substep_seconds, norm,
         pairwise_gravity_accelerations, playback_substep_plan, solver_execution_report_for_backend,
         solver_schedule_report, subtract, Arm64GravityKernel, Arm64KernelReadiness, CollisionModel,
@@ -1764,6 +1802,32 @@ mod tests {
         assert!(candidate_paths.contains(&"simd.arm64.i8mm-packed-assist-candidate"));
         assert!(candidate_paths.contains(&"simd.arm64.bf16-forecast-assist-candidate"));
         assert!(candidate_paths.contains(&"simd.arm64.fp16-visual-assist-candidate"));
+    }
+
+    #[test]
+    fn arm64_kernel_availability_marks_feature_qualified_candidate_lanes() {
+        let features = ["asimd", "sve2", "sme2", "i8mm", "bf16"]
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
+
+        let availability = arm64_kernel_availability(&features);
+
+        assert!(availability
+            .eligible_candidate_paths
+            .contains(&"simd.arm64.sve2-f64-batch-candidate"));
+        assert!(availability
+            .eligible_candidate_paths
+            .contains(&"simd.arm64.sme2-tiled-f64-candidate"));
+        assert!(availability
+            .eligible_candidate_paths
+            .contains(&"simd.arm64.i8mm-packed-assist-candidate"));
+        assert!(availability
+            .eligible_candidate_paths
+            .contains(&"simd.arm64.bf16-forecast-assist-candidate"));
+        assert!(availability
+            .blocked_candidate_paths
+            .contains(&"simd.arm64.sve-f64-batch-candidate"));
     }
 
     #[test]

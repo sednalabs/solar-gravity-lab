@@ -89,6 +89,11 @@ candidate lane is useful backlog and telemetry shape, not an active claim. It
 becomes an active path only after implementation, parity proof, runtime
 eligibility, and device-visible selection all land.
 
+The census summary separates all candidate paths from the feature-qualified
+subset that is eligible on the captured device or runner. This is the bridge
+between "cataloged ambition" and "worth compiling or benchmarking on this
+hardware" while still keeping active solver claims limited to selected paths.
+
 Utility features such as LSE/LSE2, MOPS, CRC, AES, SHA, BTI, MTE, and RNG may
 matter to compiler output, memory throughput, hardening, checksums, or future
 asset/runtime work, but they are not solver paths.

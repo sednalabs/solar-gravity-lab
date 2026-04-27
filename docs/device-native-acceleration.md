@@ -58,6 +58,12 @@ Candidate paths are product direction and engineering backlog, not active
 claims. They should become active only after implementation, parity proof,
 runtime dispatch, and device-visible telemetry land together.
 
+Runtime telemetry also reports how many cataloged kernel paths are active,
+eligible candidates, or blocked candidates for the detected CPU feature set.
+That lets a Galaxy-class device say "these SVE/SVE2/SME/I8MM/BF16-style lanes
+are worth trying here" without turning feature detection into an execution
+claim.
+
 ## Scheduler Direction
 
 Runtime info now separates active workers from candidate worker budget. That is

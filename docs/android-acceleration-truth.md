@@ -51,6 +51,8 @@ these fields separately:
 - The Arm64 kernel registry also names candidate lanes for SVE, SVE2, SME,
   SME2, SVE-I8MM, DotProd, I8MM, BF16, FP16, FHM, RDM, and FCMA so future
   acceleration work has stable path IDs before those paths become active.
+- Runtime info and the capability census now count active, eligible candidate,
+  and blocked candidate kernel lanes against the detected CPU feature set.
 - Runtime info reports scheduler truth separately from kernel truth. Adaptive
   tiled scheduling may be reported as a candidate worker budget, but the active
   worker count remains single-worker until a tiled solver is actually selected.
