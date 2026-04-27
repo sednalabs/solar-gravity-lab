@@ -741,8 +741,8 @@ pub fn detect_cpu_features() -> Vec<String> {
 fn add_arm64_features(features: &mut BTreeSet<String>) {
     // Runtime feature detection gives non-Linux ARM64 hosts a truthful baseline
     // even when /proc/cpuinfo is unavailable.
-    if arm64_neon_runtime_available() {
-        features.insert("neon".to_owned());
+    for feature in arm64_runtime_detected_feature_names() {
+        insert_normalized_cpu_feature(features, feature);
     }
 
     for token in cpuinfo_feature_tokens() {
@@ -756,6 +756,47 @@ fn add_arm64_features(_features: &mut BTreeSet<String>) {}
 #[cfg(target_arch = "aarch64")]
 fn arm64_neon_runtime_available() -> bool {
     std::arch::is_aarch64_feature_detected!("neon")
+}
+
+#[cfg(target_arch = "aarch64")]
+fn arm64_runtime_detected_feature_names() -> Vec<&'static str> {
+    let mut features = Vec::new();
+    macro_rules! add_detected {
+        ($rust_feature:literal => $($canonical_feature:literal),+ $(,)?) => {
+            if std::arch::is_aarch64_feature_detected!($rust_feature) {
+                $(features.push($canonical_feature);)+
+            }
+        };
+    }
+
+    add_detected!("neon" => "neon");
+    add_detected!("fp" => "fp");
+    add_detected!("fp16" => "fp16");
+    add_detected!("fhm" => "fhm");
+    add_detected!("dotprod" => "dotprod");
+    add_detected!("i8mm" => "i8mm");
+    add_detected!("sve" => "sve");
+    add_detected!("sve2" => "sve2");
+    add_detected!("bf16" => "bf16");
+    add_detected!("rdm" => "rdm");
+    add_detected!("fcma" => "fcma");
+    add_detected!("aes" => "aes");
+    add_detected!("pmull" => "pmull");
+    add_detected!("sha2" => "sha1", "sha2");
+    add_detected!("sha3" => "sha3", "sha512");
+    add_detected!("sm4" => "sm3", "sm4");
+    add_detected!("rand" => "rng");
+    add_detected!("lse" => "lse");
+    add_detected!("lse2" => "lse2");
+    add_detected!("crc" => "crc");
+    add_detected!("bti" => "bti");
+    add_detected!("mte" => "mte");
+    add_detected!("flagm" => "flagm");
+    add_detected!("jsconv" => "jscvt");
+    add_detected!("dit" => "dit");
+    add_detected!("sb" => "sb");
+    add_detected!("ssbs" => "ssbs");
+    features
 }
 
 #[cfg(not(target_arch = "aarch64"))]
