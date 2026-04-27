@@ -24,4 +24,15 @@ class RuntimeScenarioPacksTest {
         assertEquals("moon", earthMoon.defaultFocusBodyId)
         assertTrue(earthMoon.startPaused)
     }
+
+    @Test
+    fun s25TileSwarmPackCarriesSchedulerStressDefaults() {
+        val pack = RuntimeScenarioPacks.requireKnown("stress.s25-tile-swarm")
+
+        assertEquals("sun", pack.defaultFocusBodyId)
+        assertEquals(RuntimeObserverMode.SystemFrame, pack.defaultObserverMode)
+        assertTrue(pack.tags.contains("arm64"))
+        assertTrue(pack.tags.contains("tiles"))
+        assertEquals(172_800.0, pack.simSecondsPerRealSecond, 0.0)
+    }
 }

@@ -23,8 +23,13 @@ export.
   small-body flyby checks.
 - `stress.trail-density`: a denser tracer field for legibility and render
   pressure checks. It also crosses the large-scene threshold used by the Arm64
-  NEON tiled gravity kernel, making it the preferred built-in pack for checking
-  whether large-scene solver-path telemetry becomes visible after load.
+  NEON tiled gravity kernel, making it useful for checking whether large-scene
+  solver-path telemetry becomes visible after load.
+- `stress.s25-tile-swarm`: a Galaxy S25 Ultra oriented tracer swarm that keeps
+  the full canonical startup catalog and adds deterministic tracer rings around
+  the Sun, Earth, and Jupiter. It is the preferred pack for checking the active
+  Arm64 parallel tiled scheduler and tile-plan telemetry introduced for
+  device-native optimization work.
 
 ## Runtime contract
 
@@ -57,6 +62,13 @@ Recommended visual iteration loop:
    `validation-lab`.
 4. Patch the UI/renderer/runtime seam.
 5. Rerun the same pack so before/after evidence is comparable.
+
+For S25 Ultra acceleration work, load `stress.s25-tile-swarm` in the
+stage-first runtime mirror and inspect the backend summary. A healthy Arm64
+device should make the large-scene scheduler fields obvious: body count,
+estimated pair count, tile count, tile size, and tile-worker slots should all
+be visible in the runtime-info summary before making any device-specific
+performance claim.
 
 ## Future forecast packs
 

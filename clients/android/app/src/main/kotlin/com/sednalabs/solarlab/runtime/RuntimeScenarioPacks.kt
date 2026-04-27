@@ -75,6 +75,16 @@ object RuntimeScenarioPacks {
             startPaused = false,
             simSecondsPerRealSecond = 86_400.0,
         ),
+        RuntimeScenarioPack(
+            scenarioId = "stress.s25-tile-swarm",
+            title = "S25 tile swarm",
+            description = "A Galaxy S25 Ultra stress pack shaped to exercise Arm64 parallel tiled scheduler telemetry.",
+            tags = listOf("stress", "s25", "arm64", "tiles"),
+            defaultFocusBodyId = "sun",
+            defaultObserverMode = RuntimeObserverMode.SystemFrame,
+            startPaused = false,
+            simSecondsPerRealSecond = 172_800.0,
+        ),
     )
 
     fun byId(scenarioId: String?): RuntimeScenarioPack? {

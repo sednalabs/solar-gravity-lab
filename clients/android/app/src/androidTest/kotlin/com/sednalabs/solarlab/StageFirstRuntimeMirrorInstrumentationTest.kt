@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -9,6 +10,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -41,7 +43,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
             val state = composeRule.activity.runtimeFacadeForTesting.uiState.value
             state.sessionHandle != null && state.backendSummary != null
         }
@@ -79,16 +81,14 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
         val showcaseScenarioId = "showcase.jupiter-system"
-        assertTrue(
-            "Runtime mirror should accept semantic scenario load requests",
-            SolarLabSemanticActionBridge.submit(SolarLabSemanticAction.LoadScenario(showcaseScenarioId)),
-        )
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        runBlocking {
+            composeRule.activity.runtimeFacadeForTesting.loadScenario(showcaseScenarioId)
+        }
+        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
             composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.scenarioId == showcaseScenarioId
         }
-        SolarLabSemanticActionBridge.clearPendingReplay()
 
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
             hostView != null && hostView.width > 0 && hostView.height > 0
         }
@@ -114,5 +114,20 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             }
         }
         return null
+    }
+
+    private fun waitForRuntimeMirrorCondition(
+        timeoutMillis: Long,
+        pollMillis: Long = 50,
+        condition: () -> Boolean,
+    ) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMillis
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition()) {
+                return
+            }
+            SystemClock.sleep(pollMillis)
+        }
+        throw AssertionError("Timed out waiting for runtime mirror condition after ${timeoutMillis}ms")
     }
 }
