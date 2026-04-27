@@ -513,11 +513,13 @@ mod tests {
 
     #[test]
     fn s25_tile_swarm_pack_exercises_parallel_tile_scheduler_shape() {
+        const ACTIVE_ARM64_TILE_SIZE: usize = 32;
+
         let seed =
             scenario_pack_seed("stress.s25-tile-swarm").expect("s25 tile swarm should exist");
 
         assert_eq!(seed.bodies.len(), 749);
-        assert_eq!(seed.bodies.len().div_ceil(32), 24);
+        assert_eq!(seed.bodies.len().div_ceil(ACTIVE_ARM64_TILE_SIZE), 24);
         assert_eq!(seed.default_observer_mode, ObserverMode::SystemFrame);
         assert_eq!(seed.default_focus_body_id.as_deref(), Some("sun"));
         assert!(seed
