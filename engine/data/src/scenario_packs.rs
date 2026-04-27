@@ -42,6 +42,7 @@ pub fn scenario_pack_catalog() -> Vec<ScenarioPackDescriptor> {
         jupiter_system_descriptor(),
         comet_flyby_descriptor(),
         trail_density_descriptor(),
+        s25_tile_swarm_descriptor(),
     ]
     .into_iter()
     .collect()
@@ -56,6 +57,7 @@ pub fn scenario_pack_seed(scenario_id: &str) -> Option<ScenarioPackSeed> {
         "showcase.jupiter-system" => Some(jupiter_system_pack_seed()),
         "showcase.comet-flyby" => Some(comet_flyby_pack_seed()),
         "stress.trail-density" => Some(trail_density_pack_seed()),
+        "stress.s25-tile-swarm" => Some(s25_tile_swarm_pack_seed()),
         _ => None,
     }
 }
@@ -126,6 +128,18 @@ fn trail_density_descriptor() -> ScenarioPackDescriptor {
         "Trail density stress",
         "A denser tracer field for checking beauty, legibility, and render pressure.",
         ["stress", "trails", "density"],
+        Some("sun"),
+        ObserverMode::SystemFrame,
+        false,
+    )
+}
+
+fn s25_tile_swarm_descriptor() -> ScenarioPackDescriptor {
+    descriptor(
+        "stress.s25-tile-swarm",
+        "S25 tile swarm",
+        "A Galaxy S25 Ultra stress pack with enough deterministic tracers to exercise the Arm64 parallel tiled scheduler.",
+        ["stress", "s25", "arm64", "tiles"],
         Some("sun"),
         ObserverMode::SystemFrame,
         false,
@@ -281,6 +295,34 @@ fn trail_density_pack_seed() -> ScenarioPackSeed {
             .cloned(),
     );
     seed_from_descriptor(trail_density_descriptor(), 86_400.0, bodies)
+}
+
+fn s25_tile_swarm_pack_seed() -> ScenarioPackSeed {
+    let mut bodies = canonical_startup_seed().bodies;
+    let sun = body_by_id(&bodies, "sun");
+    let earth = body_by_id(&bodies, "earth");
+    let jupiter = body_by_id(&bodies, "jupiter");
+
+    bodies.extend(marker_ring_around_primary(
+        &sun,
+        "s25-inner-tile",
+        192,
+        4.5e11,
+    ));
+    bodies.extend(marker_ring_around_primary(
+        &jupiter,
+        "s25-jovian-tile",
+        96,
+        4.0e9,
+    ));
+    bodies.extend(marker_ring_around_primary(
+        &earth,
+        "s25-local-tile",
+        96,
+        1.2e9,
+    ));
+
+    seed_from_descriptor(s25_tile_swarm_descriptor(), 172_800.0, bodies)
 }
 
 fn descriptor<const N: usize>(
@@ -467,6 +509,29 @@ mod tests {
         assert!(inner.bodies.len() < canonical.bodies.len());
         assert!(jupiter.bodies.iter().any(|body| body.body_id == "io"));
         assert!(jupiter.bodies.iter().any(|body| body.body_id == "callisto"));
+    }
+
+    #[test]
+    fn s25_tile_swarm_pack_exercises_parallel_tile_scheduler_shape() {
+        let seed =
+            scenario_pack_seed("stress.s25-tile-swarm").expect("s25 tile swarm should exist");
+
+        assert_eq!(seed.bodies.len(), 749);
+        assert_eq!(seed.bodies.len().div_ceil(32), 24);
+        assert_eq!(seed.default_observer_mode, ObserverMode::SystemFrame);
+        assert_eq!(seed.default_focus_body_id.as_deref(), Some("sun"));
+        assert!(seed
+            .bodies
+            .iter()
+            .any(|body| body.body_id == "s25-inner-tile-191"));
+        assert!(seed
+            .bodies
+            .iter()
+            .any(|body| body.body_id == "s25-jovian-tile-95"));
+        assert!(seed
+            .bodies
+            .iter()
+            .any(|body| body.body_id == "s25-local-tile-95"));
     }
 
     #[test]
