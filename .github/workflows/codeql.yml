@@ -5,6 +5,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  merge_group:
   schedule:
     - cron: "31 8 * * 2"
   workflow_dispatch:
@@ -17,50 +18,88 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  detect-languages:
-    name: Detect CodeQL language surfaces
+  plan:
+    name: CodeQL risk router
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      languages: ${{ steps.detect.outputs.languages }}
-      matrix: ${{ steps.detect.outputs.matrix }}
-      run_all: ${{ steps.detect.outputs.run_all }}
+      languages: ${{ steps.plan.outputs.languages }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      surfaces: ${{ steps.plan.outputs.surfaces }}
+      has_codeql_relevant_changes: ${{ steps.plan.outputs.has_codeql_relevant_changes }}
+      run_all_languages: ${{ steps.plan.outputs.run_all_languages }}
+      reason: ${{ steps.plan.outputs.reason }}
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout trusted policy ref
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Resolve CodeQL language set
-        id: detect
+      - name: Resolve trusted PR file metadata
+        id: pr_files
+        if: ${{ github.event_name == 'pull_request' }}
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
         run: |
           set -euo pipefail
+          mkdir -p dist/codeql-plan
+          raw_files="dist/codeql-plan/pr-files.jsonl"
+          : > "${raw_files}"
 
-          if [[ "$EVENT_NAME" != 'pull_request' ]]; then
-            {
-              echo 'languages=[]'
-              echo 'matrix=[{"language":"actions","build-mode":"none"},{"language":"c-cpp","build-mode":"none"},{"language":"java-kotlin","build-mode":"manual"},{"language":"python","build-mode":"none"},{"language":"rust","build-mode":"none"}]'
-              echo 'run_all=true'
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
-          else
-            git diff --name-only HEAD~1 "$HEAD_SHA" > changed-files.txt || true
-          fi
-
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --jq '.[] | {filename, previous_filename}' > "${raw_files}"; then
+            python3 - "${raw_files}" >> "$GITHUB_OUTPUT" <<'PY'
           import json
+          import sys
           from pathlib import Path
 
-          files = [line.strip() for line in Path("changed-files.txt").read_text().splitlines() if line.strip()]
-          languages = set()
+          paths = []
+          for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+              if not line.strip():
+                  continue
+              payload = json.loads(line)
+              previous = payload.get("previous_filename")
+              filename = payload.get("filename")
+              if previous:
+                  paths.append(previous)
+              if filename:
+                  paths.append(filename)
+          unique_paths = sorted(set(paths))
+          print(f"changed_files_json={json.dumps(unique_paths, separators=(',', ':'))}")
+          PY
+          else
+            echo "changed_files_json=" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "expected_changed_files=${EXPECTED_CHANGED_FILES}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute CodeQL plan
+        id: plan
+        shell: bash
+        env:
+          CHANGED_FILES_JSON: ${{ steps.pr_files.outputs.changed_files_json }}
+          EXPECTED_CHANGED_FILES: ${{ steps.pr_files.outputs.expected_changed_files }}
+        run: |
+          set -euo pipefail
+          if [[ -f .github/scripts/resolve_codeql_plan.py ]]; then
+            plan="$(
+              python3 .github/scripts/resolve_codeql_plan.py \
+                --event-name '${{ github.event_name }}' \
+                --changed-files-json "${CHANGED_FILES_JSON}" \
+                --expected-changed-files "${EXPECTED_CHANGED_FILES}"
+            )"
+          else
+            plan="$(python3 - <<'PY'
+          import json
+
+          languages = ("actions", "c-cpp", "java-kotlin", "python", "rust")
           build_modes = {
               "actions": "none",
               "c-cpp": "none",
@@ -68,37 +107,57 @@ jobs:
               "python": "none",
               "rust": "none",
           }
-
-          for path in files:
-              suffix = Path(path).suffix
-              if path.startswith(".github/workflows/") or path.startswith(".github/actions/"):
-                  languages.add("actions")
-              if suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"} or path.endswith("CMakeLists.txt"):
-                  languages.add("c-cpp")
-              if suffix in {".kt", ".kts", ".java"} or path.startswith(("clients/android/", "feature-lab/", "render-core/", "core-math/", "core-model/", "core-simulation/", "gradle/")):
-                  languages.add("java-kotlin")
-              if suffix == ".py":
-                  languages.add("python")
-              if suffix == ".rs" or path.endswith(("Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml")):
-                  languages.add("rust")
-              if path.startswith(".github/codeql/"):
-                  languages.update({"actions", "c-cpp", "java-kotlin", "python", "rust"})
-
-          matrix = [
-              {"language": language, "build-mode": build_modes[language]}
-              for language in sorted(languages)
-          ]
-          if not matrix:
-              matrix = [{"language": "none", "build-mode": "none", "skip": "true"}]
-
-          print(f"languages={json.dumps(sorted(languages), separators=(',', ':'))}")
-          print(f"matrix={json.dumps(matrix, separators=(',', ':'))}")
-          print("run_all=false")
+          matrix = {
+              "include": [
+                  {
+                      "language": language,
+                      "build-mode": build_modes[language],
+                      "config_file": "./.github/codeql/codeql-config.yml",
+                  }
+                  for language in languages
+              ]
+          }
+          print(
+              json.dumps(
+                  {
+                      "matrix": json.dumps(matrix, separators=(",", ":")),
+                      "languages": ",".join(languages),
+                      "surfaces": "",
+                      "has_codeql_relevant_changes": "true",
+                      "run_all_languages": "true",
+                      "reason": "trusted CodeQL planner was absent on the base ref; full scan required",
+                  },
+                  separators=(",", ":"),
+              )
+          )
           PY
+            )"
+          fi
+          PLAN_JSON="${plan}" python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          plan = json.loads(os.environ["PLAN_JSON"])
+          for key, value in plan.items():
+              print(f"{key}={value}")
+          PY
+
+      - name: Emit CodeQL routing summary
+        shell: bash
+        run: |
+          {
+            echo "## CodeQL routing"
+            echo "- languages: \`${{ steps.plan.outputs.languages || 'none' }}\`"
+            echo "- surfaces: \`${{ steps.plan.outputs.surfaces || 'none' }}\`"
+            echo "- full scan: \`${{ steps.plan.outputs.run_all_languages }}\`"
+            echo "- relevant changes: \`${{ steps.plan.outputs.has_codeql_relevant_changes }}\`"
+            echo "- reason: \`${{ steps.plan.outputs.reason }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   analyze:
     name: Analyze (${{ matrix.language }})
-    needs: detect-languages
+    needs: plan
+    if: ${{ needs.plan.outputs.has_codeql_relevant_changes == 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -107,8 +166,7 @@ jobs:
       security-events: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.detect-languages.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
       ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -116,19 +174,30 @@ jobs:
       ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
       ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
     steps:
-      - name: No CodeQL language surfaces changed
-        if: ${{ matrix.skip == 'true' }}
-        shell: bash
-        run: echo "No CodeQL-owned language surfaces changed in this pull request."
-
       - name: Checkout repository
-        if: ${{ matrix.skip != 'true' }}
         uses: actions/checkout@v6
         with:
           persist-credentials: false
 
+      - name: Restore trusted CodeQL policy for PRs
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-codeql-policy
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Apply trusted CodeQL policy for PRs
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .github/codeql
+          cp -R .trusted-codeql-policy/.github/codeql .github/codeql
+
       - name: Install Rust toolchains for CodeQL
-        if: ${{ matrix.skip != 'true' && matrix.language == 'rust' }}
+        if: ${{ matrix.language == 'rust' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -170,7 +239,7 @@ jobs:
           PY
 
       - name: Restore Rust dependency cache for CodeQL
-        if: ${{ matrix.skip != 'true' && matrix.language == 'rust' }}
+        if: ${{ matrix.language == 'rust' }}
         id: cache_codeql_rust_cargo_home_restore
         uses: actions/cache/restore@v5
         with:
@@ -183,7 +252,7 @@ jobs:
             codeql-rust-cargo-home-v1-${{ runner.os }}-
 
       - name: Prefetch Rust dependencies for CodeQL
-        if: ${{ matrix.skip != 'true' && matrix.language == 'rust' }}
+        if: ${{ matrix.language == 'rust' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -192,14 +261,14 @@ jobs:
           cargo fetch --locked --manifest-path infra/gradle-cache-service/Cargo.toml
 
       - name: Set up Java for CodeQL Kotlin extraction
-        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.language == 'java-kotlin' }}
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle for CodeQL Kotlin extraction
-        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.language == 'java-kotlin' }}
         uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
@@ -209,14 +278,14 @@ jobs:
             caches/build-cache-1
 
       - name: Prepare Android SDK for CodeQL Kotlin extraction
-        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.language == 'java-kotlin' }}
         uses: ./.github/actions/prepare-android-sdk
         with:
           sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
           ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Install Android build inputs for CodeQL Kotlin extraction
-        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.language == 'java-kotlin' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -227,15 +296,15 @@ jobs:
             "${ANDROID_NDK_PACKAGE}"
 
       - name: Initialize CodeQL
-        if: ${{ matrix.skip != 'true' }}
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          config-file: ./.github/codeql/codeql-config.yml
+          config-file: ${{ matrix.config_file }}
+          dependency-caching: ${{ github.event_name == 'pull_request' && 'restore' || 'full' }}
 
       - name: Build Java and Kotlin sources for CodeQL
-        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.language == 'java-kotlin' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -256,13 +325,12 @@ jobs:
             -Psolarlab.stageFirstRuntimeMirror=false
 
       - name: Perform CodeQL Analysis
-        if: ${{ matrix.skip != 'true' }}
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
 
       - name: Save Rust dependency cache for CodeQL
-        if: ${{ always() && !cancelled() && matrix.skip != 'true' && matrix.language == 'rust' && steps.cache_codeql_rust_cargo_home_restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && !cancelled() && matrix.language == 'rust' && steps.cache_codeql_rust_cargo_home_restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         continue-on-error: true
         uses: actions/cache/save@v5
         with:
@@ -271,3 +339,51 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: codeql-rust-cargo-home-v1-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/rust-toolchain*') }}
+
+  results:
+    name: CodeQL required gate
+    needs:
+      - plan
+      - analyze
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    steps:
+      - name: Report CodeQL timing
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### CodeQL timing"
+            gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+              --jq '.jobs[]
+                | select(.name | test("^(CodeQL risk router|Analyze \\(|CodeQL required gate)"))
+                | "- \(.name): \(.status)/\(.conclusion // "") started=\(.started_at) completed=\(.completed_at // "")"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize CodeQL result
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "languages: ${{ needs.plan.outputs.languages }}"
+          echo "surfaces : ${{ needs.plan.outputs.surfaces }}"
+          echo "full     : ${{ needs.plan.outputs.run_all_languages }}"
+          echo "reason   : ${{ needs.plan.outputs.reason }}"
+          echo "analyze  : ${{ needs.analyze.result }}"
+
+          if [[ '${{ needs.plan.result }}' != 'success' ]]; then
+            echo 'CodeQL router failed.'
+            exit 1
+          fi
+          if [[ '${{ needs.plan.outputs.has_codeql_relevant_changes }}' != 'true' ]]; then
+            echo 'No CodeQL-relevant changes; analysis was not required.'
+            exit 0
+          fi
+          if [[ '${{ needs.analyze.result }}' != 'success' ]]; then
+            echo 'CodeQL analysis failed.'
+            exit 1
+          fi
