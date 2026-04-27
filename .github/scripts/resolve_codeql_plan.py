@@ -51,9 +51,10 @@ def parse_changed_files_json(value: str, expected_count: int | None) -> tuple[li
         return None, "trusted PR file metadata must be an array of strings"
 
     files = [item for item in payload if item.strip()]
-    if expected_count is not None and len(set(files)) < expected_count:
-        return None, f"trusted PR file metadata was incomplete: {len(set(files))} of {expected_count} files"
-    return sorted(set(files)), ""
+    unique_files = set(files)
+    if expected_count is not None and len(unique_files) < expected_count:
+        return None, f"trusted PR file metadata was incomplete: {len(unique_files)} of {expected_count} files"
+    return sorted(unique_files), ""
 
 
 def config_file_for(language: str, event_name: str, full_scan: bool) -> str:
