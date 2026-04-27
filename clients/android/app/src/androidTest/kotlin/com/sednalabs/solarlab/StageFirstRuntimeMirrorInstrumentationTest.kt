@@ -1,6 +1,5 @@
 package com.sednalabs.solarlab
 
-import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
@@ -36,10 +35,10 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             composeRule.activity.showStageFirstRuntimeMirrorForTesting()
         }
 
-        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()
         }
-        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             val state = composeRule.activity.runtimeFacadeForTesting.uiState.value
             state.sessionHandle != null && state.backendSummary != null
         }
@@ -76,11 +75,11 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         runBlocking {
             composeRule.activity.runtimeFacadeForTesting.loadScenario(showcaseScenarioId)
         }
-        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.scenarioId == showcaseScenarioId
         }
 
-        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
             hostView != null && hostView.width > 0 && hostView.height > 0
         }
@@ -106,20 +105,5 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             }
         }
         return null
-    }
-
-    private fun waitForRuntimeMirrorCondition(
-        timeoutMillis: Long,
-        pollMillis: Long = 50,
-        condition: () -> Boolean,
-    ) {
-        val deadline = SystemClock.uptimeMillis() + timeoutMillis
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (condition()) {
-                return
-            }
-            SystemClock.sleep(pollMillis)
-        }
-        throw AssertionError("Timed out waiting for runtime mirror condition after ${timeoutMillis}ms")
     }
 }
