@@ -1117,12 +1117,14 @@ private const val NATIVE_CPU_SOLVER_PATH_SCALAR_REFERENCE = 0
 private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PAIRWISE = 1
 private const val NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK = 2
 private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_TILED_PAIRWISE = 3
+private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PARALLEL_TILED_PAIRWISE = 4
 private const val NATIVE_CPU_FALLBACK_NONE = 0
 private const val NATIVE_CPU_FALLBACK_ARM64_NON_AARCH64_HOST = 1
 private const val NATIVE_CPU_FALLBACK_ARM64_MISSING_NEON = 2
 private const val NATIVE_CPU_FALLBACK_X64_UNAVAILABLE = 3
 private const val NATIVE_CPU_SCHEDULE_SINGLE_WORKER = 0
 private const val NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_CANDIDATE = 1
+private const val NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_ACTIVE = 2
 private const val CPU_FEATURE_NEON = 1L shl 0
 private const val CPU_FEATURE_FP = 1L shl 1
 private const val CPU_FEATURE_FP16 = 1L shl 2
@@ -1390,6 +1392,8 @@ internal data class NativeRuntimeInfoResult(
         NATIVE_CPU_SOLVER_PATH_SCALAR_REFERENCE -> "scalar.reference"
         NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PAIRWISE -> "simd.arm64.neon-f64-pairwise"
         NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_TILED_PAIRWISE -> "simd.arm64.neon-f64-tiled-pairwise"
+        NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PARALLEL_TILED_PAIRWISE ->
+            "simd.arm64.neon-f64-parallel-tiled-pairwise"
         NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK -> "simd.x64.scalar-fallback"
         else -> "unknown($cpuSolverPath)"
     }
@@ -1407,6 +1411,8 @@ internal data class NativeRuntimeInfoResult(
             "single-worker${cpuScheduleWorkloadSuffix()}"
         NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_CANDIDATE ->
             "single-worker active, adaptive tiled candidate ${cpuScheduleCandidateWorkers.coerceAtLeast(cpuScheduleActiveWorkers)} workers${cpuScheduleWorkloadSuffix()}"
+        NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_ACTIVE ->
+            "adaptive tiled active ${cpuScheduleActiveWorkers.coerceAtLeast(1)} workers${cpuScheduleWorkloadSuffix()}"
         else -> "unknown scheduler($cpuScheduleMode)"
     }
 

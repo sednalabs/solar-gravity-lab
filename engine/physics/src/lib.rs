@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::sync::OnceLock;
 
 use solarlab_domain::Vector3d;
 
@@ -81,6 +82,7 @@ pub enum SolverFallbackCode {
 pub enum SolverScheduleMode {
     SingleWorker,
     AdaptiveTiledCandidate,
+    AdaptiveTiledActive,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +104,7 @@ impl SolverExecutionReport {
             fallback_code: SolverFallbackCode::None,
             fallback_reason: None,
             active_cpu_features: detect_cpu_features(),
-            schedule: solver_schedule_report(0, false),
+            schedule: solver_schedule_report_for_arm64_kernel(0, false, None),
         }
     }
 }
@@ -134,6 +136,7 @@ struct DispatchDecision {
 enum Arm64GravityKernel {
     NeonF64Pairwise,
     NeonF64TiledPairwise,
+    NeonF64ParallelTiledPairwise,
     PortableScalarOracle,
 }
 
@@ -236,6 +239,12 @@ pub const ARM64_KERNEL_CATALOG: &[Arm64KernelCatalogEntry] = &[
         workload: "authoritative f64 pairwise gravity for larger body sets",
     },
     Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.neon-f64-parallel-tiled-pairwise",
+        required_features: &["neon"],
+        readiness: Arm64KernelReadiness::Active,
+        workload: "authoritative f64 pairwise gravity with parallel body tiles",
+    },
+    Arm64KernelCatalogEntry {
         path_id: "simd.arm64.sve-f64-batch-candidate",
         required_features: &["sve"],
         readiness: Arm64KernelReadiness::Candidate,
@@ -314,7 +323,7 @@ pub const ARM64_CPU_FEATURE_CATALOG: &[CpuFeatureCatalogEntry] = &[
         canonical_name: "neon",
         flag: CPU_FEATURE_NEON,
         status: CpuFeatureUseStatus::ActiveSolverCapability,
-        current_workload: "simd.arm64.neon-f64-pairwise and simd.arm64.neon-f64-tiled-pairwise",
+        current_workload: "simd.arm64.neon-f64-pairwise, simd.arm64.neon-f64-tiled-pairwise, and simd.arm64.neon-f64-parallel-tiled-pairwise",
     },
     CpuFeatureCatalogEntry {
         canonical_name: "fp",
@@ -625,9 +634,10 @@ pub fn advance_authoritative_with_features(
         &normalized_features,
         bodies.len(),
     );
-    let schedule = solver_schedule_report(
+    let schedule = solver_schedule_report_for_arm64_kernel(
         bodies.len(),
         decision.effective_backend == SolverBackend::SimdArm64,
+        decision.arm64_gravity_kernel,
     );
     let invariants = match decision.effective_backend {
         SolverBackend::ReferenceScalar => {
@@ -686,7 +696,11 @@ pub fn solver_execution_report_for_backend_with_body_count(
         fallback_code: decision.fallback_code,
         fallback_reason: decision.fallback_reason,
         active_cpu_features: normalized_features,
-        schedule: solver_schedule_report(body_count, arm64_solver_active),
+        schedule: solver_schedule_report_for_arm64_kernel(
+            body_count,
+            arm64_solver_active,
+            decision.arm64_gravity_kernel,
+        ),
     }
 }
 
@@ -695,21 +709,34 @@ pub fn solver_schedule_report(
     body_count: usize,
     arm64_solver_active: bool,
 ) -> SolverScheduleReport {
-    let active_workers = 1;
-    let worker_budget = std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1)
-        .max(1);
-    let candidate_workers =
-        if arm64_solver_active && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES {
-            worker_budget
-        } else {
-            1
-        };
-    let mode = if candidate_workers > active_workers {
-        SolverScheduleMode::AdaptiveTiledCandidate
+    solver_schedule_report_for_arm64_kernel(body_count, arm64_solver_active, None)
+}
+
+fn solver_schedule_report_for_arm64_kernel(
+    body_count: usize,
+    arm64_solver_active: bool,
+    arm64_gravity_kernel: Option<Arm64GravityKernel>,
+) -> SolverScheduleReport {
+    let worker_budget = runtime_worker_budget();
+    let parallel_tiled_active = arm64_solver_active
+        && arm64_gravity_kernel == Some(Arm64GravityKernel::NeonF64ParallelTiledPairwise);
+    let candidate_parallel = arm64_solver_active
+        && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
+        && worker_budget > 1;
+    let active_workers = if parallel_tiled_active {
+        worker_budget
     } else {
-        SolverScheduleMode::SingleWorker
+        1
+    };
+    let candidate_workers = if candidate_parallel {
+        worker_budget
+    } else {
+        active_workers
+    };
+    let mode = match (parallel_tiled_active, candidate_workers > active_workers) {
+        (true, _) => SolverScheduleMode::AdaptiveTiledActive,
+        (false, true) => SolverScheduleMode::AdaptiveTiledCandidate,
+        (false, false) => SolverScheduleMode::SingleWorker,
     };
     let body_count_u64 = body_count as u64;
     let estimated_pair_count = body_count_u64.saturating_mul(body_count_u64.saturating_sub(1)) / 2;
@@ -1175,6 +1202,9 @@ fn pairwise_gravity_accelerations_arm64(
         Arm64GravityKernel::NeonF64TiledPairwise => {
             pairwise_gravity_accelerations_arm64_neon_tiled(bodies)
         }
+        Arm64GravityKernel::NeonF64ParallelTiledPairwise => {
+            pairwise_gravity_accelerations_arm64_neon_parallel_tiled(bodies)
+        }
         Arm64GravityKernel::PortableScalarOracle => {
             pairwise_gravity_accelerations_arm64_portable(bodies)
         }
@@ -1213,6 +1243,30 @@ fn pairwise_gravity_accelerations_arm64_neon_tiled(bodies: &[MassiveBodyState]) 
 #[cfg(not(target_arch = "aarch64"))]
 fn pairwise_gravity_accelerations_arm64_neon_tiled(_bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
     panic!("Arm64 tiled NEON solver selected on a non-aarch64 host")
+}
+
+#[cfg(target_arch = "aarch64")]
+#[allow(unsafe_code)]
+fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
+    bodies: &[MassiveBodyState],
+) -> Vec<Vector3d> {
+    assert!(
+        arm64_neon_runtime_available(),
+        "Arm64 parallel tiled NEON solver selected without runtime NEON support"
+    );
+    let worker_budget = runtime_worker_budget();
+    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
+    // and scoped workers borrow `bodies` without extending its lifetime.
+    unsafe {
+        arm64_neon::pairwise_gravity_accelerations_neon_f64_parallel_tiled(bodies, worker_budget)
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
+    _bodies: &[MassiveBodyState],
+) -> Vec<Vector3d> {
+    panic!("Arm64 parallel tiled NEON solver selected on a non-aarch64 host")
 }
 
 fn pairwise_gravity_accelerations_arm64_portable(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
@@ -1283,6 +1337,62 @@ mod arm64_neon {
                         accumulate_pair(bodies, &mut accelerations, i, j);
                     }
                 }
+            }
+        }
+        accelerations
+    }
+
+    #[target_feature(enable = "neon")]
+    pub unsafe fn pairwise_gravity_accelerations_neon_f64_parallel_tiled(
+        bodies: &[MassiveBodyState],
+        worker_budget: usize,
+    ) -> Vec<Vector3d> {
+        const TILE_SIZE: usize = 32;
+
+        if bodies.len() < 2 || worker_budget <= 1 {
+            return pairwise_gravity_accelerations_neon_f64_tiled(bodies);
+        }
+
+        let tile_count = bodies.len().div_ceil(TILE_SIZE);
+        let worker_count = worker_budget.min(tile_count).max(1);
+
+        let partials = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for worker_index in 0..worker_count {
+                handles.push(scope.spawn(move || {
+                    let mut local_accelerations = vec![Vector3d::default(); bodies.len()];
+                    // Cyclic tiles balance the triangular pair workload: early
+                    // rows have many more interactions than late rows.
+                    for tile_index in (worker_index..tile_count).step_by(worker_count) {
+                        let i_start = tile_index * TILE_SIZE;
+                        let i_end = ((tile_index + 1) * TILE_SIZE).min(bodies.len());
+                        for i in i_start..i_end {
+                            for j in (i + 1)..bodies.len() {
+                                unsafe {
+                                    accumulate_pair(bodies, &mut local_accelerations, i, j);
+                                }
+                            }
+                        }
+                    }
+                    local_accelerations
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .expect("Arm64 gravity worker should not panic")
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let mut accelerations = vec![Vector3d::default(); bodies.len()];
+        for partial in partials {
+            for (target, contribution) in accelerations.iter_mut().zip(partial) {
+                target.x += contribution.x;
+                target.y += contribution.y;
+                target.z += contribution.z;
             }
         }
         accelerations
@@ -1445,6 +1555,13 @@ fn dispatch_solver_backend_for_host_with_body_count(
 }
 
 fn arm64_kernel_for_body_count(body_count: usize) -> (&'static str, Arm64GravityKernel) {
+    if body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES && runtime_worker_budget() > 1 {
+        return (
+            "simd.arm64.neon-f64-parallel-tiled-pairwise",
+            Arm64GravityKernel::NeonF64ParallelTiledPairwise,
+        );
+    }
+
     if body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES {
         (
             "simd.arm64.neon-f64-tiled-pairwise",
@@ -1456,6 +1573,16 @@ fn arm64_kernel_for_body_count(body_count: usize) -> (&'static str, Arm64Gravity
             Arm64GravityKernel::NeonF64Pairwise,
         )
     }
+}
+
+fn runtime_worker_budget() -> usize {
+    static RUNTIME_WORKER_BUDGET: OnceLock<usize> = OnceLock::new();
+    *RUNTIME_WORKER_BUDGET.get_or_init(|| {
+        std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1)
+            .max(1)
+    })
 }
 
 fn override_cpu_features() -> Option<Vec<String>> {
@@ -1622,8 +1749,9 @@ mod tests {
         arm64_neon_runtime_available, compare_arm64_kernel_to_scalar, compute_invariants,
         cpu_feature_flags, detect_cpu_features, dispatch_solver_backend_for_host,
         dispatch_solver_backend_for_host_with_body_count, effective_playback_max_substep_seconds,
-        norm, pairwise_gravity_accelerations, playback_substep_plan,
-        solver_execution_report_for_backend, solver_schedule_report, subtract, Arm64GravityKernel,
+        norm, pairwise_gravity_accelerations, playback_substep_plan, runtime_worker_budget,
+        solver_execution_report_for_backend, solver_schedule_report,
+        solver_schedule_report_for_arm64_kernel, subtract, Arm64GravityKernel,
         Arm64KernelReadiness, CollisionModel, CpuFeatureUseStatus, IntegratorKind,
         MassiveBodyState, PhysicsPolicy, SolverBackend, SolverFallbackCode, SolverScheduleMode,
         CPU_FEATURE_AES, CPU_FEATURE_BF16, CPU_FEATURE_CRC, CPU_FEATURE_DOTPROD, CPU_FEATURE_FCMA,
@@ -1987,6 +2115,10 @@ mod tests {
             .iter()
             .find(|entry| entry.path_id == "simd.arm64.neon-f64-tiled-pairwise")
             .expect("active tiled neon kernel entry");
+        let parallel_tiled_neon = catalog
+            .iter()
+            .find(|entry| entry.path_id == "simd.arm64.neon-f64-parallel-tiled-pairwise")
+            .expect("active parallel tiled neon kernel entry");
         let candidate_paths = catalog
             .iter()
             .filter(|entry| entry.readiness == Arm64KernelReadiness::Candidate)
@@ -1997,6 +2129,8 @@ mod tests {
         assert_eq!(neon.required_features, &["neon"]);
         assert_eq!(tiled_neon.readiness, Arm64KernelReadiness::Active);
         assert_eq!(tiled_neon.required_features, &["neon"]);
+        assert_eq!(parallel_tiled_neon.readiness, Arm64KernelReadiness::Active);
+        assert_eq!(parallel_tiled_neon.required_features, &["neon"]);
         assert!(candidate_paths.contains(&"simd.arm64.sve-f64-batch-candidate"));
         assert!(candidate_paths.contains(&"simd.arm64.sve2-f64-batch-candidate"));
         assert!(candidate_paths.contains(&"simd.arm64.sme-tiled-f64-candidate"));
@@ -2058,11 +2192,22 @@ mod tests {
             small_scene.arm64_gravity_kernel,
             Some(Arm64GravityKernel::NeonF64Pairwise)
         );
-        assert_eq!(large_scene.path_id, "simd.arm64.neon-f64-tiled-pairwise");
-        assert_eq!(
-            large_scene.arm64_gravity_kernel,
-            Some(Arm64GravityKernel::NeonF64TiledPairwise)
-        );
+        if runtime_worker_budget() > 1 {
+            assert_eq!(
+                large_scene.path_id,
+                "simd.arm64.neon-f64-parallel-tiled-pairwise"
+            );
+            assert_eq!(
+                large_scene.arm64_gravity_kernel,
+                Some(Arm64GravityKernel::NeonF64ParallelTiledPairwise)
+            );
+        } else {
+            assert_eq!(large_scene.path_id, "simd.arm64.neon-f64-tiled-pairwise");
+            assert_eq!(
+                large_scene.arm64_gravity_kernel,
+                Some(Arm64GravityKernel::NeonF64TiledPairwise)
+            );
+        }
     }
 
     #[test]
@@ -2084,6 +2229,26 @@ mod tests {
             );
         } else {
             assert_eq!(arm64_large_schedule.mode, SolverScheduleMode::SingleWorker);
+        }
+    }
+
+    #[test]
+    fn solver_schedule_report_marks_parallel_tiling_active_when_selected() {
+        let schedule = solver_schedule_report_for_arm64_kernel(
+            192,
+            true,
+            Some(Arm64GravityKernel::NeonF64ParallelTiledPairwise),
+        );
+
+        assert_eq!(schedule.body_count, 192);
+        assert_eq!(schedule.estimated_pair_count, 18_336);
+        if runtime_worker_budget() > 1 {
+            assert_eq!(schedule.mode, SolverScheduleMode::AdaptiveTiledActive);
+            assert!(schedule.active_workers > 1);
+            assert_eq!(schedule.active_workers, schedule.candidate_workers);
+        } else {
+            assert_eq!(schedule.mode, SolverScheduleMode::AdaptiveTiledActive);
+            assert_eq!(schedule.active_workers, 1);
         }
     }
 
@@ -2370,6 +2535,50 @@ mod tests {
         );
         assert!(
             energy_relative_error <= 1.0e-12,
+            "relative total energy error {energy_relative_error} exceeded tolerance"
+        );
+    }
+
+    #[test]
+    fn arm64_parallel_tiled_neon_kernel_is_scalar_oracle_equivalent_for_large_scenes() {
+        if !cfg!(target_arch = "aarch64")
+            || !arm64_neon_runtime_available()
+            || runtime_worker_budget() <= 1
+        {
+            return;
+        }
+
+        let policy = test_policy();
+        let initial_bodies = dense_kernel_parity_scenario(192);
+        let mut scalar_bodies = initial_bodies.clone();
+        let mut parallel_bodies = initial_bodies;
+
+        let scalar_invariants = advance_authoritative_scalar(&policy, &mut scalar_bodies, 1_200.0);
+        let parallel_invariants = advance_authoritative_arm64(
+            &policy,
+            &mut parallel_bodies,
+            1_200.0,
+            Arm64GravityKernel::NeonF64ParallelTiledPairwise,
+        );
+        let metrics = super::solver_equivalence_metrics(&parallel_bodies, &scalar_bodies);
+        let energy_scale = scalar_invariants.total_energy_j.abs().max(1.0);
+        let energy_relative_error =
+            (parallel_invariants.total_energy_j - scalar_invariants.total_energy_j).abs()
+                / energy_scale;
+
+        assert_eq!(metrics.compared_components, 192 * 6);
+        assert!(
+            metrics.max_abs_error <= 1.0e-2,
+            "max_abs_error {} exceeded tolerance",
+            metrics.max_abs_error
+        );
+        assert!(
+            metrics.max_relative_error <= 1.0e-11,
+            "max_relative_error {} exceeded tolerance",
+            metrics.max_relative_error
+        );
+        assert!(
+            energy_relative_error <= 1.0e-11,
             "relative total energy error {energy_relative_error} exceeded tolerance"
         );
     }

@@ -41,15 +41,17 @@ available capability picture without confusing "visible to the runtime" with
 
 ## Current Arm64 Kernel Registry
 
-The current active authoritative Arm64 solver path is:
+The current active authoritative Arm64 solver paths are:
 
 - `simd.arm64.neon-f64-pairwise`
 - `simd.arm64.neon-f64-tiled-pairwise`
+- `simd.arm64.neon-f64-parallel-tiled-pairwise`
 
-Both active paths use NEON double-precision gravity math. The tiled path is
-selected only for larger body sets where the dispatch policy can make use of
-the large-scene kernel shape without overclaiming SVE, SME, or packed-integer
-extensions.
+All active paths use NEON double-precision gravity math. The tiled path is
+selected only for larger body sets, and the parallel tiled path is selected
+only when the runtime also has more than one worker available. This uses the
+large-scene kernel shape and available CPU parallelism without overclaiming SVE,
+SME, or packed-integer extensions.
 
 The registry also names experimental candidate lanes so the project does not
 forget the intended breadth:
@@ -79,10 +81,11 @@ claim.
 
 ## Scheduler Direction
 
-Runtime info now separates active workers from candidate worker budget. That is
-deliberate: the present authoritative solver remains single-worker unless a
-parallel/tiled implementation is actually selected, while telemetry can show
-when a workload is large enough to justify an adaptive tiled scheduler.
+Runtime info separates active workers from candidate worker budget. That is
+deliberate: small scenes remain single-worker, large Arm64 NEON scenes may
+select the active parallel tiled kernel when worker budget is available, and
+telemetry can still show candidate worker budget when a workload is large
+enough but a parallel path is not selected.
 
 This gives the project a safe way to plan the next solver stage:
 
