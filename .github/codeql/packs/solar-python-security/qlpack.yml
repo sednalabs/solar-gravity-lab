@@ -1,0 +1,7 @@
+name: sednalabs/solar-python-security
+version: 0.0.1
+library: false
+dependencies:
+  codeql/python-all: "*"
+suites: suites
+defaultSuiteFile: suites/solar-python-security.qls
