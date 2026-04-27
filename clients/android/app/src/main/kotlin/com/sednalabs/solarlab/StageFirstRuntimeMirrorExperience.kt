@@ -141,6 +141,8 @@ private const val RUNTIME_MIRROR_SIGNAL_L6_BASE = 0.28f
 private const val RUNTIME_MIRROR_SIGNAL_L6_FOCUS_COEFF = 0.48f
 private const val RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
 private const val RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR
+private val RuntimeMirrorTilePlanRegex = Regex("""(\d+)x(\d+)-body tiles""")
+private val RuntimeMirrorTileWorkersRegex = Regex("""(\d+) tile workers""")
 
 @Composable
 internal fun StageFirstRuntimeMirrorExperience(
@@ -1504,9 +1506,7 @@ internal fun buildRuntimeAccelerationReadout(
         segments.firstOrNull { it.startsWith(prefix, ignoreCase = true) }
 
     val cpu = segmentStartingWith("cpu=")
-        ?: segmentStartingWith("cpu=requested")
     val gpu = segmentStartingWith("gpu=")
-        ?: segmentStartingWith("gpu=requested")
     val solver = segmentStartingWith("solver:")
     val fallback = segmentStartingWith("cpu fallback:")
     val scheduler = segmentStartingWith("cpu scheduler:")
@@ -1514,9 +1514,9 @@ internal fun buildRuntimeAccelerationReadout(
     val workloads = segmentStartingWith("workloads:")
 
     val tilePlan = scheduler
-        ?.let { Regex("""(\d+)x(\d+)-body tiles""").find(it)?.value }
+        ?.let { RuntimeMirrorTilePlanRegex.find(it)?.value }
     val tileWorkers = scheduler
-        ?.let { Regex("""(\d+) tile workers""").find(it)?.value }
+        ?.let { RuntimeMirrorTileWorkersRegex.find(it)?.value }
     val schedulerMode = when {
         scheduler?.contains("adaptive tiled active", ignoreCase = true) == true -> "Parallel tiled"
         scheduler?.contains("adaptive tiled", ignoreCase = true) == true -> "Tiled candidate"
