@@ -19,6 +19,15 @@ message RuntimePreset {
   string default_focus_body_id = 5;
 }
 
+message ScenarioViewPreset {
+  string view_preset_id = 1;
+  ObserverMode default_observer_mode = 2;
+  string default_focus_body_id = 3;
+  double default_playback_rate = 4;
+  bool start_paused = 5;
+  repeated string highlighted_body_ids = 6;
+}
+
 message ScenarioPackage {
   string scenario_id = 1;
   string title = 2;
@@ -30,4 +39,5 @@ message ScenarioPackage {
   repeated RuntimePreset runtime_presets = 8;
   repeated string tags = 9;
   string initial_branch_id = 10;
+  ScenarioViewPreset view_preset = 11;
 }
