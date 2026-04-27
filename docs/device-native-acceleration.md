@@ -150,6 +150,8 @@ Runtime status text should be bounded for the cockpit surface. Large packet or
 backend payload summaries are useful as artifacts and diagnostics, but the
 device-visible readout should compact them before they crowd out the lane
 visualization that the native computer-use loop is trying to inspect.
+Revision identifiers should be summarized into scenario, branch, mission time,
+and payload size when the raw packet key is too large for a readable HUD.
 
 The long-term loop is:
 
