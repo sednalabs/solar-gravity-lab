@@ -45,6 +45,10 @@ these fields separately:
 - The Arm64 capability census artifact is real. It records detected CPU
   features separately from active SGL workload claims, and preserves uncataloged
   feature tokens for follow-up instead of silently dropping them.
+- Runtime CPU feature detection unions stable Rust Arm64 runtime probes with
+  normalized `/proc/cpuinfo` tokens, so richer device-visible extensions such
+  as SVE, SVE2, FP16, DotProd, I8MM, BF16, RDM, FCMA, crypto, hardening, and
+  utility features can be reported even when one evidence source is incomplete.
 - The implemented Arm64 solver paths are `simd.arm64.neon-f64-pairwise` and
   `simd.arm64.neon-f64-tiled-pairwise`: double-precision NEON pairwise gravity
   acceleration kernels guarded by runtime feature detection and scalar-oracle

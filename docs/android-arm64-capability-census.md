@@ -22,6 +22,14 @@ runtime census. A real-device artifact remains the authoritative source for the
 exact CPU feature tokens, Android build identity, Vulkan physical-device
 features, OpenCL provider state, and active Solar Gravity Lab runtime paths.
 
+The Rust runtime also performs stable `std::arch` feature probes for the Arm64
+extensions Rust can currently detect directly, then unions that with
+`/proc/cpuinfo` normalization. That keeps the app truthful on Android and other
+Arm64 hosts where one evidence source is partial. SME, SME2, SVE-I8MM, MOPS,
+and other extensions that are not yet stable Rust runtime probes remain visible
+through the census and `/proc` path rather than being promoted to active solver
+claims.
+
 ## Census Contract
 
 The canonical collector is

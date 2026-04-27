@@ -741,8 +741,8 @@ pub fn detect_cpu_features() -> Vec<String> {
 fn add_arm64_features(features: &mut BTreeSet<String>) {
     // Runtime feature detection gives non-Linux ARM64 hosts a truthful baseline
     // even when /proc/cpuinfo is unavailable.
-    if arm64_neon_runtime_available() {
-        features.insert("neon".to_owned());
+    for feature in arm64_runtime_detected_feature_names() {
+        insert_normalized_cpu_feature(features, feature);
     }
 
     for token in cpuinfo_feature_tokens() {
@@ -756,6 +756,96 @@ fn add_arm64_features(_features: &mut BTreeSet<String>) {}
 #[cfg(target_arch = "aarch64")]
 fn arm64_neon_runtime_available() -> bool {
     std::arch::is_aarch64_feature_detected!("neon")
+}
+
+#[cfg(target_arch = "aarch64")]
+fn arm64_runtime_detected_feature_names() -> Vec<&'static str> {
+    let mut features = Vec::new();
+    if std::arch::is_aarch64_feature_detected!("neon") {
+        features.push("neon");
+    }
+    if std::arch::is_aarch64_feature_detected!("fp") {
+        features.push("fp");
+    }
+    if std::arch::is_aarch64_feature_detected!("fp16") {
+        features.push("fp16");
+    }
+    if std::arch::is_aarch64_feature_detected!("fhm") {
+        features.push("fhm");
+    }
+    if std::arch::is_aarch64_feature_detected!("dotprod") {
+        features.push("dotprod");
+    }
+    if std::arch::is_aarch64_feature_detected!("i8mm") {
+        features.push("i8mm");
+    }
+    if std::arch::is_aarch64_feature_detected!("sve") {
+        features.push("sve");
+    }
+    if std::arch::is_aarch64_feature_detected!("sve2") {
+        features.push("sve2");
+    }
+    if std::arch::is_aarch64_feature_detected!("bf16") {
+        features.push("bf16");
+    }
+    if std::arch::is_aarch64_feature_detected!("rdm") {
+        features.push("rdm");
+    }
+    if std::arch::is_aarch64_feature_detected!("fcma") {
+        features.push("fcma");
+    }
+    if std::arch::is_aarch64_feature_detected!("aes") {
+        features.push("aes");
+    }
+    if std::arch::is_aarch64_feature_detected!("pmull") {
+        features.push("pmull");
+    }
+    if std::arch::is_aarch64_feature_detected!("sha2") {
+        features.push("sha1");
+        features.push("sha2");
+    }
+    if std::arch::is_aarch64_feature_detected!("sha3") {
+        features.push("sha3");
+        features.push("sha512");
+    }
+    if std::arch::is_aarch64_feature_detected!("sm4") {
+        features.push("sm3");
+        features.push("sm4");
+    }
+    if std::arch::is_aarch64_feature_detected!("rand") {
+        features.push("rng");
+    }
+    if std::arch::is_aarch64_feature_detected!("lse") {
+        features.push("lse");
+    }
+    if std::arch::is_aarch64_feature_detected!("lse2") {
+        features.push("lse2");
+    }
+    if std::arch::is_aarch64_feature_detected!("crc") {
+        features.push("crc");
+    }
+    if std::arch::is_aarch64_feature_detected!("bti") {
+        features.push("bti");
+    }
+    if std::arch::is_aarch64_feature_detected!("mte") {
+        features.push("mte");
+    }
+    if std::arch::is_aarch64_feature_detected!("flagm") {
+        features.push("flagm");
+    }
+    if std::arch::is_aarch64_feature_detected!("jsconv") {
+        features.push("jscvt");
+    }
+    if std::arch::is_aarch64_feature_detected!("dit") {
+        features.push("dit");
+    }
+    if std::arch::is_aarch64_feature_detected!("sb") {
+        features.push("sb");
+    }
+    if std::arch::is_aarch64_feature_detected!("ssbs") {
+        features.push("ssbs");
+    }
+    features
 }
 
 #[cfg(not(target_arch = "aarch64"))]

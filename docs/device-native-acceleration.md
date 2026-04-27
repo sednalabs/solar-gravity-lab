@@ -32,6 +32,13 @@ SME, SME2, packed integer extensions, and lower-precision assists: they are
 exactly the sort of capabilities the project wants to exploit, but each one
 must earn its way into active runtime selection.
 
+Detection should use every trustworthy local surface available. The Rust
+runtime now unions stable Arm64 `std::arch` probes with normalized
+`/proc/cpuinfo` evidence, while the capability census keeps preserving auxv and
+raw token evidence. That lets a Galaxy-class device advertise the richest
+available capability picture without confusing "visible to the runtime" with
+"executed by an SGL kernel".
+
 ## Current Arm64 Kernel Registry
 
 The current active authoritative Arm64 solver path is:
