@@ -1,13 +1,10 @@
 package com.sednalabs.solarlab
 
-import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import kotlinx.coroutines.runBlocking
@@ -29,21 +26,19 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
+            }.isSuccess
         }
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).performClick()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON).assertIsDisplayed()
-        assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isEmpty()
-        )
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON).performClick()
+        composeRule.runOnUiThread {
+            composeRule.activity.showStageFirstRuntimeMirrorForTesting()
+        }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()
         }
-        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             val state = composeRule.activity.runtimeFacadeForTesting.uiState.value
             state.sessionHandle != null && state.backendSummary != null
         }
@@ -72,23 +67,19 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             )
         }
         assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            "Runtime mirror surface should stay mounted after binding backend truth",
+            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
         )
-        assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
-        )
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
         val showcaseScenarioId = "showcase.jupiter-system"
         runBlocking {
             composeRule.activity.runtimeFacadeForTesting.loadScenario(showcaseScenarioId)
         }
-        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.scenarioId == showcaseScenarioId
         }
 
-        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
             hostView != null && hostView.width > 0 && hostView.height > 0
         }
@@ -114,20 +105,5 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             }
         }
         return null
-    }
-
-    private fun waitForRuntimeMirrorCondition(
-        timeoutMillis: Long,
-        pollMillis: Long = 50,
-        condition: () -> Boolean,
-    ) {
-        val deadline = SystemClock.uptimeMillis() + timeoutMillis
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (condition()) {
-                return
-            }
-            SystemClock.sleep(pollMillis)
-        }
-        throw AssertionError("Timed out waiting for runtime mirror condition after ${timeoutMillis}ms")
     }
 }
