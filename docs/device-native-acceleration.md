@@ -74,10 +74,11 @@ claims. They should become active only after implementation, parity proof,
 runtime dispatch, and device-visible telemetry land together.
 
 Runtime telemetry also reports how many cataloged kernel paths are active,
-eligible candidates, or blocked candidates for the detected CPU feature set.
-That lets a Galaxy-class device say "these SVE/SVE2/SME/I8MM/BF16-style lanes
-are worth trying here" without turning feature detection into an execution
-claim.
+eligible candidates, or blocked candidates for the detected CPU feature set,
+and carries compact path masks so Android can name the exact active, eligible,
+and blocked lanes in the runtime readout. That lets a Galaxy-class device say
+"these SVE/SVE2/SME/I8MM/BF16-style lanes are worth trying here" without
+turning feature detection into an execution claim.
 
 ## Scheduler Direction
 

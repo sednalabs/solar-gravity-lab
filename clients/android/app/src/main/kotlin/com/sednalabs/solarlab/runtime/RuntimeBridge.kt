@@ -815,7 +815,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 7
+        private const val ABI_VERSION = 8
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
@@ -1379,6 +1379,9 @@ internal data class NativeRuntimeInfoResult(
     val cpuKernelActiveCount: Int = 0,
     val cpuKernelEligibleCandidateCount: Int = 0,
     val cpuKernelBlockedCandidateCount: Int = 0,
+    val cpuKernelActiveMask: Long = 0L,
+    val cpuKernelEligibleCandidateMask: Long = 0L,
+    val cpuKernelBlockedCandidateMask: Long = 0L,
 ) {
     fun requestedCpuBackendLabel(): String = cpuBackendLabel(requestedCpuBackend)
 
@@ -1449,9 +1452,14 @@ internal data class NativeRuntimeInfoResult(
         cpuKernelCatalogCount
             .takeIf { it > 0 }
             ?.let {
-                "kernel catalog: $it paths, active $cpuKernelActiveCount, " +
-                    "eligible candidates $cpuKernelEligibleCandidateCount, " +
-                    "blocked candidates $cpuKernelBlockedCandidateCount"
+                listOf(
+                    "kernel catalog: $it paths",
+                    "active $cpuKernelActiveCount${cpuKernelMaskDetail(cpuKernelActiveMask)}",
+                    "eligible candidates $cpuKernelEligibleCandidateCount" +
+                        cpuKernelMaskDetail(cpuKernelEligibleCandidateMask),
+                    "blocked candidates $cpuKernelBlockedCandidateCount" +
+                        cpuKernelMaskDetail(cpuKernelBlockedCandidateMask),
+                ).joinToString(", ")
             }
 
     fun cpuFeatureSummary(): String? {
@@ -1519,6 +1527,36 @@ internal data class NativeRuntimeInfoResult(
         NATIVE_GPU_BACKEND_OPENCL ->
             "sync=checkpoint-publication, budget=position<=5m velocity<=1mm/s drift<=10ppm"
         else -> null
+    }
+
+    private fun cpuKernelMaskDetail(mask: Long): String {
+        val paths = ARM64_KERNEL_CATALOG_PATHS
+            .filterIndexed { index, _ -> (mask and (1L shl index)) != 0L }
+        return paths
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString(prefix = " [", postfix = "]", separator = ", ")
+            .orEmpty()
+    }
+
+    private companion object {
+        // Mirrors the Rust Arm64 kernel catalog order used by runtime-info masks.
+        private val ARM64_KERNEL_CATALOG_PATHS = listOf(
+            "simd.arm64.neon-f64-pairwise",
+            "simd.arm64.neon-f64-tiled-pairwise",
+            "simd.arm64.neon-f64-parallel-tiled-pairwise",
+            "simd.arm64.sve-f64-batch-candidate",
+            "simd.arm64.sve2-f64-batch-candidate",
+            "simd.arm64.sve-i8mm-packed-assist-candidate",
+            "simd.arm64.sme-tiled-f64-candidate",
+            "simd.arm64.sme2-tiled-f64-candidate",
+            "simd.arm64.dotprod-packed-assist-candidate",
+            "simd.arm64.i8mm-packed-assist-candidate",
+            "simd.arm64.bf16-forecast-assist-candidate",
+            "simd.arm64.fp16-visual-assist-candidate",
+            "simd.arm64.fhm-visual-assist-candidate",
+            "simd.arm64.rdm-vector-assist-candidate",
+            "simd.arm64.fcma-vector-assist-candidate",
+        )
     }
 }
 

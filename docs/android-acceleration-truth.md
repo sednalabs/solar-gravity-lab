@@ -60,7 +60,9 @@ these fields separately:
   SME2, SVE-I8MM, DotProd, I8MM, BF16, FP16, FHM, RDM, and FCMA so future
   acceleration work has stable path IDs before those paths become active.
 - Runtime info and the capability census now count active, eligible candidate,
-  and blocked candidate kernel lanes against the detected CPU feature set.
+  and blocked candidate kernel lanes against the detected CPU feature set. The
+  FFI runtime-info contract also carries path masks for those lanes so Android
+  can show named kernel IDs rather than only anonymous counts.
 - Runtime info reports scheduler truth separately from kernel truth. Small
   scenes remain single-worker; larger Arm64 scenes may select tiled NEON
   kernels, including the active parallel tiled path when the runtime has more

@@ -38,7 +38,7 @@ use solarlab_vulkan_adapter::{
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 7;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 8;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -194,6 +194,9 @@ pub struct SlRuntimeInfo {
     pub cpu_kernel_active_count: u32,
     pub cpu_kernel_eligible_candidate_count: u32,
     pub cpu_kernel_blocked_candidate_count: u32,
+    pub cpu_kernel_active_mask: u64,
+    pub cpu_kernel_eligible_candidate_mask: u64,
+    pub cpu_kernel_blocked_candidate_mask: u64,
 }
 
 #[repr(C)]
@@ -675,14 +678,15 @@ pub fn runtime_info(
 ) -> SlRuntimeInfo {
     let effective_cpu_backend = cpu_backend_for_solver_backend(&solver_execution.effective_backend);
     let kernel_availability = arm64_kernel_availability(&solver_execution.active_cpu_features);
-    let active_kernel_count =
-        if matches!(solver_execution.effective_backend, SolverBackend::SimdArm64)
-            && is_active_arm64_kernel_path(&solver_execution.path_id)
-        {
-            1
-        } else {
-            0
-        };
+    let has_active_kernel_path =
+        matches!(solver_execution.effective_backend, SolverBackend::SimdArm64)
+            && is_active_arm64_kernel_path(&solver_execution.path_id);
+    let active_kernel_count = if has_active_kernel_path { 1 } else { 0 };
+    let active_kernel_mask = if has_active_kernel_path {
+        arm64_kernel_path_mask_for(&[solver_execution.path_id.as_str()])
+    } else {
+        0
+    };
     SlRuntimeInfo {
         abi_version: SOLARLAB_V2_ABI_VERSION,
         requested_cpu_backend: encode_cpu_backend(&requested_cpu_backend),
@@ -706,6 +710,13 @@ pub fn runtime_info(
         ),
         cpu_kernel_blocked_candidate_count: usize_to_u32(
             kernel_availability.blocked_candidate_paths.len(),
+        ),
+        cpu_kernel_active_mask: active_kernel_mask,
+        cpu_kernel_eligible_candidate_mask: arm64_kernel_path_mask_for(
+            &kernel_availability.eligible_candidate_paths,
+        ),
+        cpu_kernel_blocked_candidate_mask: arm64_kernel_path_mask_for(
+            &kernel_availability.blocked_candidate_paths,
         ),
     }
 }
@@ -1581,6 +1592,14 @@ fn is_active_arm64_kernel_path(path_id: &str) -> bool {
         .any(|entry| entry.readiness == Arm64KernelReadiness::Active && entry.path_id == path_id)
 }
 
+fn arm64_kernel_path_mask_for(paths: &[&str]) -> u64 {
+    arm64_kernel_catalog()
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| paths.iter().any(|path| *path == entry.path_id))
+        .fold(0_u64, |mask, (index, _)| mask | (1_u64 << index))
+}
+
 fn cpu_fallback_code(fallback_code: &SolverFallbackCode) -> u32 {
     match fallback_code {
         SolverFallbackCode::None => 0,
@@ -1686,6 +1705,9 @@ fn empty_runtime_info() -> SlRuntimeInfo {
         cpu_kernel_active_count: 0,
         cpu_kernel_eligible_candidate_count: 0,
         cpu_kernel_blocked_candidate_count: 0,
+        cpu_kernel_active_mask: 0,
+        cpu_kernel_eligible_candidate_mask: 0,
+        cpu_kernel_blocked_candidate_mask: 0,
     }
 }
 
@@ -2285,7 +2307,7 @@ mod android_jni {
         let native_result = create_native_result(env, result.result)?;
         env.new_object(
             CLASS_NATIVE_RUNTIME_INFO_RESULT,
-            "(Lcom/sednalabs/solarlab/runtime/NativeResult;IIIIJIIIIIIJIIIIIII)V",
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;IIIIJIIIIIIJIIIIIIIJJJ)V",
             &[
                 JValue::Object(&native_result),
                 JValue::Int(i32::try_from(result.info.abi_version).unwrap_or(i32::MAX)),
@@ -2326,6 +2348,15 @@ mod android_jni {
                 JValue::Int(
                     i32::try_from(result.info.cpu_kernel_blocked_candidate_count)
                         .unwrap_or(i32::MAX),
+                ),
+                JValue::Long(i64::try_from(result.info.cpu_kernel_active_mask).unwrap_or(i64::MAX)),
+                JValue::Long(
+                    i64::try_from(result.info.cpu_kernel_eligible_candidate_mask)
+                        .unwrap_or(i64::MAX),
+                ),
+                JValue::Long(
+                    i64::try_from(result.info.cpu_kernel_blocked_candidate_mask)
+                        .unwrap_or(i64::MAX),
                 ),
             ],
         )
@@ -2609,7 +2640,7 @@ mod tests {
 
     #[test]
     fn runtime_info_layout_matches_c_header_contract() {
-        assert_eq!(size_of::<SlRuntimeInfo>(), 88);
+        assert_eq!(size_of::<SlRuntimeInfo>(), 112);
         assert_eq!(align_of::<SlRuntimeInfo>(), 8);
         assert_eq!(offset_of!(SlRuntimeInfo, abi_version), 0);
         assert_eq!(offset_of!(SlRuntimeInfo, requested_cpu_backend), 4);
@@ -2645,8 +2676,17 @@ mod tests {
             offset_of!(SlRuntimeInfo, cpu_kernel_blocked_candidate_count),
             80
         );
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_kernel_active_mask), 88);
+        assert_eq!(
+            offset_of!(SlRuntimeInfo, cpu_kernel_eligible_candidate_mask),
+            96
+        );
+        assert_eq!(
+            offset_of!(SlRuntimeInfo, cpu_kernel_blocked_candidate_mask),
+            104
+        );
 
-        assert_eq!(size_of::<SlRuntimeInfoResult>(), 96);
+        assert_eq!(size_of::<SlRuntimeInfoResult>(), 120);
         assert_eq!(align_of::<SlRuntimeInfoResult>(), 8);
         assert_eq!(offset_of!(SlRuntimeInfoResult, result), 0);
         assert_eq!(offset_of!(SlRuntimeInfoResult, info), 8);
@@ -2697,10 +2737,16 @@ mod tests {
         assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
         assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 15);
         assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
+        assert_eq!(runtime_info.info.cpu_kernel_active_mask, 0);
         assert_eq!(
             runtime_info.info.cpu_kernel_eligible_candidate_count
                 + runtime_info.info.cpu_kernel_blocked_candidate_count,
             12
+        );
+        assert_ne!(
+            runtime_info.info.cpu_kernel_eligible_candidate_mask
+                | runtime_info.info.cpu_kernel_blocked_candidate_mask,
+            0
         );
 
         let destroy = sl_v2_session_destroy(create.handle);
@@ -2750,6 +2796,7 @@ mod tests {
             );
             assert_eq!(create.runtime_info.cpu_fallback_code, 0);
             assert_eq!(create.runtime_info.cpu_kernel_active_count, 1);
+            assert_ne!(create.runtime_info.cpu_kernel_active_mask, 0);
         } else {
             assert_eq!(
                 create.runtime_info.cpu_backend,
@@ -2757,6 +2804,7 @@ mod tests {
             );
             assert_eq!(create.runtime_info.cpu_solver_path, 0);
             assert_eq!(create.runtime_info.cpu_kernel_active_count, 0);
+            assert_eq!(create.runtime_info.cpu_kernel_active_mask, 0);
             if cfg!(target_arch = "aarch64") {
                 assert_eq!(create.runtime_info.cpu_fallback_code, 2);
             } else {
@@ -2772,6 +2820,11 @@ mod tests {
             runtime_info.info.cpu_kernel_eligible_candidate_count
                 + runtime_info.info.cpu_kernel_blocked_candidate_count,
             12
+        );
+        assert_ne!(
+            runtime_info.info.cpu_kernel_eligible_candidate_mask
+                | runtime_info.info.cpu_kernel_blocked_candidate_mask,
+            0
         );
 
         let destroy = sl_v2_session_destroy(create.handle);
@@ -3332,12 +3385,14 @@ mod tests {
                 assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
             }
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
+            assert_ne!(runtime_info.info.cpu_kernel_active_mask, 0);
         } else {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::ReferenceScalar);
             assert_eq!(runtime_info.info.cpu_solver_path, 0);
             assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
             assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
+            assert_eq!(runtime_info.info.cpu_kernel_active_mask, 0);
         }
 
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
