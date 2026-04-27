@@ -150,6 +150,7 @@ internal fun StageFirstRuntimeMirrorExperience(
     ensureRuntimeStarted: (() -> Unit)?,
     pendingSemanticAction: PendingSemanticAction?,
     onReturnToSandbox: () -> Unit,
+    runtimeMirrorMountedState: androidx.compose.runtime.MutableState<Boolean>? = null,
 ) {
     SolarLabTheme {
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -397,7 +398,9 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         DisposableEffect(Unit) {
+            runtimeMirrorMountedState?.value = true
             onDispose {
+                runtimeMirrorMountedState?.value = false
                 renderHostView?.release()
             }
         }

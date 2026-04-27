@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeFacade
@@ -23,13 +24,35 @@ import kotlinx.coroutines.launch
  * depending on the build variant / build flag.
  */
 class MainActivity : ComponentActivity() {
+    private companion object {
+        const val STATE_STAGE_FIRST_EXPERIENCE_MODE = "stage_first_experience_mode"
+    }
+
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
+    private val stageFirstExperienceModeState = mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX)
+    private val stageFirstRuntimeMirrorMountedState = mutableStateOf(false)
 
     @VisibleForTesting
     internal val runtimeFacadeForTesting: RuntimeFacade
         get() = runtimeViewModel.runtimeFacade
 
+    @VisibleForTesting
+    internal fun showStageFirstRuntimeMirrorForTesting() {
+        if (BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
+            stageFirstExperienceModeState.value = StageFirstExperienceMode.RUNTIME_MIRROR
+        }
+    }
+
+    @VisibleForTesting
+    internal fun isStageFirstRuntimeMirrorMountedForTesting(): Boolean =
+        stageFirstRuntimeMirrorMountedState.value
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        stageFirstExperienceModeState.value = savedInstanceState
+            ?.getString(STATE_STAGE_FIRST_EXPERIENCE_MODE)
+            ?.let(StageFirstExperienceMode::valueOf)
+            ?: StageFirstExperienceMode.LOCAL_SANDBOX
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -50,6 +73,8 @@ class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
+                    experienceModeState = stageFirstExperienceModeState,
+                    runtimeMirrorMountedState = stageFirstRuntimeMirrorMountedState,
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
@@ -57,6 +82,11 @@ class MainActivity : ComponentActivity() {
         }
 
         handleSemanticIntent(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_STAGE_FIRST_EXPERIENCE_MODE, stageFirstExperienceModeState.value.name)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onNewIntent(intent: Intent) {

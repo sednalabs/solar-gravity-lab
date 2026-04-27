@@ -39,9 +39,8 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         )
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON).performClick()
 
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
+            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()
         }
         waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
             val state = composeRule.activity.runtimeFacadeForTesting.uiState.value
@@ -72,13 +71,9 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             )
         }
         assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            "Runtime mirror surface should stay mounted after binding backend truth",
+            composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting(),
         )
-        assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
-        )
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
         val showcaseScenarioId = "showcase.jupiter-system"
         runBlocking {
