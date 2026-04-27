@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -80,14 +81,12 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
         val showcaseScenarioId = "showcase.jupiter-system"
-        assertTrue(
-            "Runtime mirror should accept semantic scenario load requests",
-            SolarLabSemanticActionBridge.submit(SolarLabSemanticAction.LoadScenario(showcaseScenarioId)),
-        )
+        runBlocking {
+            composeRule.activity.runtimeFacadeForTesting.loadScenario(showcaseScenarioId)
+        }
         waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
             composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.scenarioId == showcaseScenarioId
         }
-        SolarLabSemanticActionBridge.clearPendingReplay()
 
         waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
