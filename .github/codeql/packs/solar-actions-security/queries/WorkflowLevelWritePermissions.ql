@@ -31,6 +31,9 @@ from Workflow workflow, Permissions permissions, string permission
 where
   permissions = workflow.getPermissions() and
   writePermissionName(permission) and
-  permissions.getPermission(permission) = "write"
+  (
+    permissions.getPermission(permission) = "write" or
+    permissions.toString().regexpMatch("(?is).*write-all.*")
+  )
 select permissions,
   "Workflow-level `" + permission + ": write` grants write access to every job. Move this permission to the specific publishing or analysis job that needs it."

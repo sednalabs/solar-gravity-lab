@@ -16,12 +16,12 @@ predicate ciHelperFile(File file) {
 }
 
 predicate summaryLiteral(StringLiteral literal) {
-  ciHelperFile(literal.getFile()) and
-  literal.getValue().regexpMatch("(?is).*(token|secret|password|private[_-]?key|hostname|/home/runner|~/.codex).*")
+  ciHelperFile(literal.getEnclosingModule().getFile()) and
+  literal.getText().regexpMatch("(?is).*(token|secret|password|private[_-]?key|hostname|/home/runner|~/.codex).*")
 }
 
 predicate explicitlyRedacted(StringLiteral literal) {
-  literal.getValue().regexpMatch("(?is).*(redact|uploaded proof-validation artifact|credential source|not this GitHub summary).*")
+  literal.getText().regexpMatch("(?is).*(redact|uploaded proof-validation artifact|credential source|not this GitHub summary).*")
 }
 
 from StringLiteral literal

@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  security-events: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -33,34 +34,41 @@ jobs:
           persist-credentials: false
 
       - name: Set up CodeQL CLI
+        id: setup_codeql
         uses: github/codeql-action/setup-codeql@v4
 
       - name: Install custom pack dependencies
         shell: bash
+        env:
+          CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}
         run: |
           set -euo pipefail
-          codeql pack install .github/codeql/packs/solar-actions-security
-          codeql pack install .github/codeql/packs/solar-python-security
+          "${CODEQL}" pack install .github/codeql/packs/solar-actions-security
+          "${CODEQL}" pack install .github/codeql/packs/solar-python-security
 
       - name: Resolve custom query suites
         shell: bash
+        env:
+          CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}
         run: |
           set -euo pipefail
-          codeql resolve queries \
+          "${CODEQL}" resolve queries \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-actions-security/suites/solar-actions-security.qls
-          codeql resolve queries \
+          "${CODEQL}" resolve queries \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-python-security/suites/solar-python-security.qls
 
       - name: Compile custom queries
         shell: bash
+        env:
+          CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}
         run: |
           set -euo pipefail
-          codeql query compile \
+          "${CODEQL}" query compile \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-actions-security/queries/*.ql
-          codeql query compile \
+          "${CODEQL}" query compile \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-python-security/queries/*.ql
 
