@@ -94,6 +94,24 @@ private val MissionBlue = Color(0xFF5E8CFF)
 private val MissionInkLine = Color(0xFF19324B)
 private val MissionText = Color(0xFFE8F7FF)
 private val MissionTextDim = Color(0xFF9FB6C9)
+private const val MISSION_SIGNAL_BODY_NORMALIZATION = 18f
+private const val MISSION_SIGNAL_TRACER_NORMALIZATION = 120f
+private const val MISSION_SIGNAL_TRAIL_NORMALIZATION = 28f
+private const val MISSION_SIGNAL_FOCUS_LIFT = 0.18f
+private const val MISSION_SIGNAL_L1_BASE = 0.24f
+private const val MISSION_SIGNAL_L1_BODY_COEFF = 0.34f
+private const val MISSION_SIGNAL_L2_BASE = 0.18f
+private const val MISSION_SIGNAL_L2_TRACER_COEFF = 0.52f
+private const val MISSION_SIGNAL_L2_FOCUS_COEFF = 0.24f
+private const val MISSION_SIGNAL_L3_BASE = 0.30f
+private const val MISSION_SIGNAL_L3_TRAIL_COEFF = 0.42f
+private const val MISSION_SIGNAL_L4_BASE = 0.22f
+private const val MISSION_SIGNAL_L4_TIME_COEFF = 0.48f
+private const val MISSION_SIGNAL_L5_BASE = 0.32f
+private const val MISSION_SIGNAL_L5_BODY_COEFF = 0.22f
+private const val MISSION_SIGNAL_L5_TRAIL_COEFF = 0.24f
+private const val MISSION_SIGNAL_L6_BASE = 0.28f
+private const val MISSION_SIGNAL_L6_TRACER_COEFF = 0.34f
 
 @Composable
 fun SolarLabApp(runtimeFacade: RuntimeFacade) {
@@ -2643,21 +2661,21 @@ private fun missionRailProgress(uiState: ShellUiState): Float {
 
 private fun missionSignalValues(uiState: ShellUiState): List<Float> {
     val epochProgress = missionRailProgress(uiState)
-    val bodySignal = (uiState.renderStatus.renderedBodyCount / MissionSignalTuning.BodyNormalization)
+    val bodySignal = (uiState.renderStatus.renderedBodyCount / MISSION_SIGNAL_BODY_NORMALIZATION)
         .coerceIn(0.08f, 0.92f)
-    val tracerSignal = (uiState.renderStatus.renderedTracerCount / MissionSignalTuning.TracerNormalization)
+    val tracerSignal = (uiState.renderStatus.renderedTracerCount / MISSION_SIGNAL_TRACER_NORMALIZATION)
         .coerceIn(0.06f, 0.86f)
-    val trailSignal = (uiState.renderStatus.renderedTrailCount / MissionSignalTuning.TrailNormalization)
+    val trailSignal = (uiState.renderStatus.renderedTrailCount / MISSION_SIGNAL_TRAIL_NORMALIZATION)
         .coerceIn(0.10f, 0.90f)
-    val focusLift = if (uiState.focusedBodyId != null) MissionSignalTuning.FocusLift else 0f
+    val focusLift = if (uiState.focusedBodyId != null) MISSION_SIGNAL_FOCUS_LIFT else 0f
 
     return listOf(
-        MissionSignalTuning.L1_Base + (bodySignal * MissionSignalTuning.L1_BodyCoeff),
-        MissionSignalTuning.L2_Base + (tracerSignal * MissionSignalTuning.L2_TracerCoeff) + (focusLift * MissionSignalTuning.L2_FocusCoeff),
-        MissionSignalTuning.L3_Base + (trailSignal * MissionSignalTuning.L3_TrailCoeff),
-        MissionSignalTuning.L4_Base + (epochProgress * MissionSignalTuning.L4_TimeCoeff),
-        MissionSignalTuning.L5_Base + (bodySignal * MissionSignalTuning.L5_BodyCoeff) + (trailSignal * MissionSignalTuning.L5_TrailCoeff),
-        MissionSignalTuning.L6_Base + (tracerSignal * MissionSignalTuning.L6_TracerCoeff) + focusLift,
+        MISSION_SIGNAL_L1_BASE + (bodySignal * MISSION_SIGNAL_L1_BODY_COEFF),
+        MISSION_SIGNAL_L2_BASE + (tracerSignal * MISSION_SIGNAL_L2_TRACER_COEFF) + (focusLift * MISSION_SIGNAL_L2_FOCUS_COEFF),
+        MISSION_SIGNAL_L3_BASE + (trailSignal * MISSION_SIGNAL_L3_TRAIL_COEFF),
+        MISSION_SIGNAL_L4_BASE + (epochProgress * MISSION_SIGNAL_L4_TIME_COEFF),
+        MISSION_SIGNAL_L5_BASE + (bodySignal * MISSION_SIGNAL_L5_BODY_COEFF) + (trailSignal * MISSION_SIGNAL_L5_TRAIL_COEFF),
+        MISSION_SIGNAL_L6_BASE + (tracerSignal * MISSION_SIGNAL_L6_TRACER_COEFF) + focusLift,
     ).map { value -> value.coerceIn(0.05f, 0.95f) }
 }
 
