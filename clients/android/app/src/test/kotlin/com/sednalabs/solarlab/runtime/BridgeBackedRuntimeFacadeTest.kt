@@ -337,6 +337,65 @@ class BridgeBackedRuntimeFacadeTest {
     }
 
     @Test
+    fun loadScenario_resetsUiStateAndRoutesBoundaryWork() = runBlocking {
+        val bridge = FakeRuntimeBridge(
+            connectSignals = flowOf(RuntimeSignal.Connected(handle = 21L)),
+            loadScenarioSignals = listOf(
+                RuntimeSignal.Connected(handle = 33L),
+                RuntimeSignal.CommandApplied(
+                    command = RuntimeCommand.FocusBody("jupiter"),
+                    commandLabel = RuntimeCommand.FocusBody("jupiter").label,
+                    summary = snapshotSummary(
+                        scenarioId = "showcase.jupiter-system",
+                        bodyCount = 31,
+                    ),
+                ),
+            ),
+        )
+        val facade = BridgeBackedRuntimeFacade(
+            bridge = bridge,
+            developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                enabled = true,
+                sinks = emptyList(),
+            ),
+        )
+
+        facade.startSession()
+        facade.loadScenario("showcase.jupiter-system")
+
+        val state = facade.uiState.value
+        assertEquals(listOf("showcase.jupiter-system"), bridge.loadedScenarioIds)
+        assertEquals(33L, state.sessionHandle)
+        assertEquals("showcase.jupiter-system", state.snapshot?.scenarioId)
+        assertEquals("jupiter", state.focusedBodyId)
+        assertTrue(state.developerTelemetry.entries.any { it.category == "scenario.load.requested" })
+    }
+
+    @Test
+    fun loadScenario_rejectsUnknownScenarioWithoutCallingBridge() = runBlocking {
+        val bridge = FakeRuntimeBridge(
+            connectSignals = flowOf(RuntimeSignal.Connected(handle = 21L)),
+        )
+        val facade = BridgeBackedRuntimeFacade(
+            bridge = bridge,
+            developerTelemetryRecorder = DeveloperTelemetryRecorder(
+                enabled = true,
+                sinks = emptyList(),
+            ),
+        )
+
+        facade.startSession()
+        facade.loadScenario("missing-pack")
+
+        val state = facade.uiState.value
+        assertTrue(bridge.loadedScenarioIds.isEmpty())
+        assertEquals(ShellNoticeTone.Caution, state.noticeTone)
+        assertTrue(state.noticeLine?.contains("Unknown scenario pack") == true)
+        assertTrue(state.developerTelemetry.entries.any { it.category == "scenario.load.rejected" })
+    }
+
+
+    @Test
     fun focusHistory_keepsMostRecentDistinctBodies() = runBlocking {
         val bridge = FakeRuntimeBridge(
             connectSignals = flowOf(
@@ -433,15 +492,24 @@ class BridgeBackedRuntimeFacadeTest {
         private val connectSignals: Flow<RuntimeSignal>,
         private val refreshSignals: List<RuntimeSignal> = emptyList(),
         private val applyCommandSignals: List<RuntimeSignal> = emptyList(),
+        private val loadScenarioSignals: List<RuntimeSignal> = emptyList(),
     ) : RuntimeBridge {
         val appliedCommands = mutableListOf<RuntimeCommand>()
+        val loadedScenarioIds = mutableListOf<String>()
         val connectThreadNames = mutableListOf<String>()
         val refreshThreadNames = mutableListOf<String>()
         val applyCommandThreadNames = mutableListOf<String>()
+        val loadScenarioThreadNames = mutableListOf<String>()
 
         override fun connect(): Flow<RuntimeSignal> {
             connectThreadNames += Thread.currentThread().name
             return connectSignals
+        }
+
+        override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> {
+            loadScenarioThreadNames += Thread.currentThread().name
+            loadedScenarioIds += scenarioId
+            return loadScenarioSignals
         }
 
         override suspend fun refresh(): List<RuntimeSignal> {
@@ -458,11 +526,12 @@ class BridgeBackedRuntimeFacadeTest {
 
     private companion object {
         fun snapshotSummary(
+            scenarioId: String = "sol-system",
             bodyCount: Int,
             paused: Boolean = false,
         ): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
             result = NativeResult(code = 0),
-            scenarioId = "sol-system",
+            scenarioId = scenarioId,
             activeBranchId = "main",
             bodyCount = bodyCount,
             epochSeconds = 0.0,

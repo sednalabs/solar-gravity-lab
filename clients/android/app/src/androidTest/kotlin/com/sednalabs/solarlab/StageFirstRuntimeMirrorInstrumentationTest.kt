@@ -68,6 +68,24 @@ class StageFirstRuntimeMirrorInstrumentationTest {
                     backendSummary.contains("requested vulkan"),
             )
         }
+        assertTrue(
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        )
+        assertTrue(
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        )
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
+
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG).assertIsDisplayed()
+        composeRule
+            .onNodeWithTag(SolarLabTestTags.stageFirstScenarioLoadTag("showcase.jupiter-system"))
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG).fetchSemanticsNodes().isEmpty()
+        }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)

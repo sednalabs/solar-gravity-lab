@@ -17,8 +17,88 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  detect-languages:
+    name: Detect CodeQL language surfaces
+    runs-on: ubuntu-24.04
+    outputs:
+      languages: ${{ steps.detect.outputs.languages }}
+      matrix: ${{ steps.detect.outputs.matrix }}
+      run_all: ${{ steps.detect.outputs.run_all }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve CodeQL language set
+        id: detect
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" != 'pull_request' ]]; then
+            {
+              echo 'languages=[]'
+              echo 'matrix=[{"language":"actions","build-mode":"none"},{"language":"c-cpp","build-mode":"none"},{"language":"java-kotlin","build-mode":"manual"},{"language":"python","build-mode":"none"},{"language":"rust","build-mode":"none"}]'
+              echo 'run_all=true'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+          else
+            git diff --name-only HEAD~1 "$HEAD_SHA" > changed-files.txt || true
+          fi
+
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          files = [line.strip() for line in Path("changed-files.txt").read_text().splitlines() if line.strip()]
+          languages = set()
+          build_modes = {
+              "actions": "none",
+              "c-cpp": "none",
+              "java-kotlin": "manual",
+              "python": "none",
+              "rust": "none",
+          }
+
+          for path in files:
+              suffix = Path(path).suffix
+              if path.startswith(".github/workflows/") or path.startswith(".github/actions/"):
+                  languages.add("actions")
+              if suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"} or path.endswith("CMakeLists.txt"):
+                  languages.add("c-cpp")
+              if suffix in {".kt", ".kts", ".java"} or path.startswith(("clients/android/", "feature-lab/", "render-core/", "core-math/", "core-model/", "core-simulation/", "gradle/")):
+                  languages.add("java-kotlin")
+              if suffix == ".py":
+                  languages.add("python")
+              if suffix == ".rs" or path.endswith(("Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml")):
+                  languages.add("rust")
+              if path.startswith(".github/codeql/"):
+                  languages.update({"actions", "c-cpp", "java-kotlin", "python", "rust"})
+
+          matrix = [
+              {"language": language, "build-mode": build_modes[language]}
+              for language in sorted(languages)
+          ]
+          if not matrix:
+              matrix = [{"language": "none", "build-mode": "none", "skip": "true"}]
+
+          print(f"languages={json.dumps(sorted(languages), separators=(',', ':'))}")
+          print(f"matrix={json.dumps(matrix, separators=(',', ':'))}")
+          print("run_all=false")
+          PY
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: detect-languages
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -28,17 +108,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: actions
-            build-mode: none
-          - language: c-cpp
-            build-mode: none
-          - language: java-kotlin
-            build-mode: manual
-          - language: python
-            build-mode: none
-          - language: rust
-            build-mode: none
+        include: ${{ fromJSON(needs.detect-languages.outputs.matrix) }}
     env:
       ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
       ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -46,13 +116,19 @@ jobs:
       ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
       ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
     steps:
+      - name: No CodeQL language surfaces changed
+        if: ${{ matrix.skip == 'true' }}
+        shell: bash
+        run: echo "No CodeQL-owned language surfaces changed in this pull request."
+
       - name: Checkout repository
+        if: ${{ matrix.skip != 'true' }}
         uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Install Rust toolchains for CodeQL
-        if: ${{ matrix.language == 'rust' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'rust' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -94,7 +170,7 @@ jobs:
           PY
 
       - name: Restore Rust dependency cache for CodeQL
-        if: ${{ matrix.language == 'rust' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'rust' }}
         id: cache_codeql_rust_cargo_home_restore
         uses: actions/cache/restore@v5
         with:
@@ -107,7 +183,7 @@ jobs:
             codeql-rust-cargo-home-v1-${{ runner.os }}-
 
       - name: Prefetch Rust dependencies for CodeQL
-        if: ${{ matrix.language == 'rust' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'rust' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -116,14 +192,14 @@ jobs:
           cargo fetch --locked --manifest-path infra/gradle-cache-service/Cargo.toml
 
       - name: Set up Java for CodeQL Kotlin extraction
-        if: ${{ matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle for CodeQL Kotlin extraction
-        if: ${{ matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
         uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
@@ -133,14 +209,14 @@ jobs:
             caches/build-cache-1
 
       - name: Prepare Android SDK for CodeQL Kotlin extraction
-        if: ${{ matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
         uses: ./.github/actions/prepare-android-sdk
         with:
           sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
           ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
       - name: Install Android build inputs for CodeQL Kotlin extraction
-        if: ${{ matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -151,6 +227,7 @@ jobs:
             "${ANDROID_NDK_PACKAGE}"
 
       - name: Initialize CodeQL
+        if: ${{ matrix.skip != 'true' }}
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
@@ -158,7 +235,7 @@ jobs:
           config-file: ./.github/codeql/codeql-config.yml
 
       - name: Build Java and Kotlin sources for CodeQL
-        if: ${{ matrix.language == 'java-kotlin' }}
+        if: ${{ matrix.skip != 'true' && matrix.language == 'java-kotlin' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -179,12 +256,13 @@ jobs:
             -Psolarlab.stageFirstRuntimeMirror=false
 
       - name: Perform CodeQL Analysis
+        if: ${{ matrix.skip != 'true' }}
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
 
       - name: Save Rust dependency cache for CodeQL
-        if: ${{ always() && !cancelled() && matrix.language == 'rust' && steps.cache_codeql_rust_cargo_home_restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && !cancelled() && matrix.skip != 'true' && matrix.language == 'rust' && steps.cache_codeql_rust_cargo_home_restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         continue-on-error: true
         uses: actions/cache/save@v5
         with:

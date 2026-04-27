@@ -13,6 +13,7 @@ import ctypes
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -336,6 +337,11 @@ def collect_props(serial: str | None) -> dict[str, str]:
         }
 
     props: dict[str, str] = {"surface": "adb"}
+    raw_props = adb_command(serial, "getprop")
+    all_props = {
+        match.group(1): match.group(2)
+        for match in re.finditer(r"\[(.+?)\]: \[(.*?)\]", raw_props)
+    }
     for key in (
         "ro.product.manufacturer",
         "ro.product.model",
@@ -348,7 +354,7 @@ def collect_props(serial: str | None) -> dict[str, str]:
         "ro.product.cpu.abi",
         "ro.product.cpu.abilist",
     ):
-        value = adb_command(serial, f"getprop {key}").strip()
+        value = all_props.get(key, "").strip()
         if value:
             props[key] = value
     return props

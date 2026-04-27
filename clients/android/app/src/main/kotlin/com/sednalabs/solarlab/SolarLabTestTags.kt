@@ -20,6 +20,9 @@ object SolarLabTestTags {
     const val RENDER_PACKET_SUMMARY = "shell.render_packet_summary"
     const val STAGE_FIRST_MODE_BUTTON = "stage_first.mode_button"
     const val STAGE_FIRST_SEARCH_BUTTON = "stage_first.search_button"
+    const val STAGE_FIRST_SCENARIO_BUTTON = "stage_first.scenario_button"
+    const val STAGE_FIRST_SCENARIO_DIALOG = "stage_first.scenario.dialog"
+    const val STAGE_FIRST_SCENARIO_BADGE = "stage_first.scenario.badge"
     const val STAGE_FIRST_DEBUG_BUTTON = "stage_first.debug_button"
     const val STAGE_FIRST_ADD_OBJECT_BUTTON = "stage_first.add_object_button"
     const val STAGE_FIRST_SELECTION_PANEL = "stage_first.selection_panel"
@@ -75,6 +78,8 @@ object SolarLabTestTags {
     fun focusCatalogSpawnPresetTag(bodyId: String): String = "shell.focus_catalog_spawn_preset.$bodyId"
 
     fun stageFirstSearchFocusTag(bodyId: String): String = "stage_first.search.focus.$bodyId"
+
+    fun stageFirstScenarioLoadTag(scenarioId: String): String = "stage_first.scenario.load.$scenarioId"
 
     fun trackedOrbitLimitTag(limit: Int): String = "shell.tracked_orbit_limit.$limit"
 }
