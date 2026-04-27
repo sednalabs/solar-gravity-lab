@@ -2,7 +2,6 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -88,8 +87,9 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         }
         composeRule
             .onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG, useUnmergedTree = true)
-            .assertExists()
-        val showcaseScenarioTag = SolarLabTestTags.stageFirstScenarioLoadTag("showcase.jupiter-system")
+            .fetchSemanticsNode()
+        val showcaseScenarioTag =
+            SolarLabTestTags.stageFirstScenarioLoadTag("showcase.jupiter-system")
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule
                 .onAllNodesWithTag(showcaseScenarioTag, useUnmergedTree = true)
