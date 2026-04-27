@@ -1,8 +1,8 @@
 # Android Codex Computer-Use Harness
 
 Solar Gravity Lab uses the native Android/Codex computer-use harness as a
-consumer and proving app. The reusable Android provider, Codex dynamic-tool
-adapter, and generic computer-use contract are supplied by a
+consumer and proving app. The reusable Android provider implementation and
+generic computer-use contract are supplied by a
 maintainer-configured Android provider; this repository should not grow a
 second owner for that tooling.
 
@@ -22,12 +22,12 @@ Solar Gravity Lab owns:
 The selected Android provider owns:
 
 - Android device and emulator control
+- provider-side session and lease lifecycle
+- screenshots, UI/state capture, and input execution
 - the generic Codex-facing provider backend
-- the model-callable Android tools exposed as `android_observe` and
-  `android_step`
 - artifact capture and remote artifact reads
-- Android-level action semantics, leases, transport details, and provider
-  manifest schema
+- Android-level action semantics, transport details, and provider manifest
+  schema
 
 That split keeps Solar Lab documentation focused on how the app consumes and
 proves the harness rather than redefining a general Android computer-use API.
@@ -38,18 +38,19 @@ proves the harness rather than redefining a general Android computer-use API.
 artifact bundle under `dist/interactive-session/`. The Codex-facing parts of
 that bundle are:
 
-- `live-access/codex-android-tools.sh`: dynamic-tool provider helper, when the
+- `live-access/codex-android-tools.sh`: provider helper, when the
   selected provider ref supports it
 - `live-access/codex-android-observe.sh`: optional explicit observation helper
   for debugging
 - `codex-bridge/status.json`: readiness, mode, helper paths, output root,
-  provider-manifest status, dynamic-tool proof status, and available tool names
-- `codex-bridge/tool-specs.json`: Codex dynamic-tool specs for
+  provider-manifest status, native tool proof status, and available native tool
+  names
+- `codex-bridge/tool-specs.json`: provider-advertised tool metadata for
   `android_observe` and `android_step`, when supported
 - `codex-bridge/android-observe-proof.json`: the lightweight hosted
-  `android_observe` dynamic-tool response, when supported
+  `android_observe` response, when supported
 - `codex-bridge/android-observe-proof-validation.json`: Solar Lab's validation
-  summary for the dynamic-tool proof response, when supported
+  summary for the native proof response, when supported
 - `codex-bridge/provider-manifest.json`: generic Android provider metadata, when
   the provider can emit it
 - `codex-bridge/provider-manifest-validation.json`: the selected provider's
@@ -61,14 +62,16 @@ that bundle are:
 - `mcp-health.json`: the Android provider health payload captured by the
   workflow
 
-The live shell also exports the dynamic-tool command when available:
+The live shell also exports the provider helper command when available:
 
 ```bash
 CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools.sh
 ```
 
-Normal Codex-driven use of the hosted session follows that dynamic-tool path and
-does not require an OpenAI API key in the session.
+Normal Codex-driven use of the hosted session uses Codex's native
+`android_observe` / `android_step` flow, with the helper script acting as the
+provider-side runtime adapter below that boundary. This path does not require
+an OpenAI API key in the session.
 
 ## Provider Manifest
 
@@ -91,8 +94,8 @@ The interactive session summary includes both the bridge readiness payload and
 the provider manifest details when present, so a completed run can be inspected
 without guessing which provider capabilities were active.
 
-When the selected provider ref supports the dynamic-tool CLI, the hosted
-session also asks the provider for the model-callable tool specs and performs a
+When the selected provider ref supports the helper CLI, the hosted session also
+asks the provider for tool metadata and performs a
 single lightweight `android_observe` call against the running app. Solar Lab
 validates that the response includes the provider-owned
 `metadata.android.outcome` contract and records the result as run evidence. This
@@ -115,7 +118,7 @@ Use the hosted workflows for different questions:
   hosted interactive work.
 - `interactive-android-session` proves that a bounded hosted emulator session
   can launch Solar Lab, expose the Android provider control plane, stage the Codex
-  dynamic-tool helper, capture the dynamic-tool specs, exercise a lightweight
+  provider helper, capture provider tool metadata, exercise a lightweight
   `android_observe` call, and upload the resulting session artifacts.
 - `prerelease-apk` proves installable preview packaging from a promoted head.
 

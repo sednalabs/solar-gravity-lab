@@ -146,9 +146,15 @@ That means Solar Lab documentation should describe:
 - which hosted workflow produced the app build or live session
 - which Solar Lab, Android provider, and toolkit refs were used
 - whether `android_observe` and `android_step` were available through the
-  Codex dynamic-tool path
+  native Codex computer-use path
 - where the provider manifest and session artifacts were uploaded
 - what Solar-specific behavior was proved in the run
+
+At the model boundary, Codex owns the native contract: model calls map to
+`ComputerUseCallRequest` and `ComputerUseCallResponse` events, transcript
+projection (including `Ctrl+T` visibility in Codex surfaces), and rollout-trace
+runtime spans. Provider MCP/HTTP details stay below that boundary as runtime
+transport.
 
 It should not redefine generic Android action semantics or provider schema
 ownership. See
