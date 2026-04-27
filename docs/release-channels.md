@@ -34,8 +34,10 @@ publication. This gate validates backend activation truth and scalar-oracle
 equivalence evidence for the ARM64 CPU path.
 
 For pre-release iteration before a package build, `validation-lab` exposes the
-same proof as the focused `arm64-isa-proof` lane. Prefer that lane when the
-active question is CPU ISA truth rather than APK packaging.
+same proof as the focused `arm64-isa-proof` lane, plus the lighter
+`arm64-capability-census` lane for inventory-only questions. Prefer the census
+lane when the active question is detected capability shape, and prefer the ISA
+proof lane when solver activation or scalar-oracle parity is part of the claim.
 
 Validation runs are evidence, not release artifacts. They answer whether a
 slice is green; they do not imply that the app is ready for external

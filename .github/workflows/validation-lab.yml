@@ -74,6 +74,7 @@ on:
           - bootstrap
           - rust-workspace
           - rust-workspace-arm64
+          - arm64-capability-census
           - arm64-isa-proof
           - runtime-cpu-truth
           - ffi-abi
@@ -179,6 +180,7 @@ jobs:
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       rust_workspace: ${{ steps.plan.outputs.rust_workspace }}
       rust_workspace_arm64: ${{ steps.plan.outputs.rust_workspace_arm64 }}
+      arm64_capability_census: ${{ steps.plan.outputs.arm64_capability_census }}
       arm64_isa_proof: ${{ steps.plan.outputs.arm64_isa_proof }}
       ffi_abi: ${{ steps.plan.outputs.ffi_abi }}
       android_unit: ${{ steps.plan.outputs.android_unit }}
@@ -635,6 +637,41 @@ jobs:
           path: |
             dist/arm64-isa-proof/**
             dist/sccache/arm64-isa-proof.txt
+
+  arm64-capability-census:
+    name: Arm64 capability census
+    needs: metadata
+    if: ${{ needs.metadata.outputs.arm64_capability_census == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.metadata.outputs.checkout_ref }}
+
+      - name: Collect hosted Arm64 capability census
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check_arm64_capability_catalog_sync.py
+          python3 .github/scripts/collect_android_capability_census.py \
+            --output dist/arm64-capability-census/capability-census.json \
+            --summary-output dist/arm64-capability-census/summary.txt \
+            --legacy-capabilities-output dist/arm64-capability-census/capabilities.json \
+            --surface github-hosted-arm64 \
+            --device-label github-arm64-runner
+
+      - name: Emit Arm64 capability census summary
+        shell: bash
+        run: cat dist/arm64-capability-census/summary.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Arm64 capability census artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: arm64-capability-census-${{ github.run_id }}
+          if-no-files-found: error
+          path: dist/arm64-capability-census/**
 
   ffi-abi:
     name: FFI ABI tests
@@ -1401,6 +1438,7 @@ jobs:
       - wrapper-bootstrap
       - rust-workspace
       - rust-workspace-arm64
+      - arm64-capability-census
       - arm64-isa-proof
       - ffi-abi
       - android-unit
@@ -1459,6 +1497,7 @@ jobs:
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
             --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
             --job rust-workspace-arm64=${{ needs.rust-workspace-arm64.result || 'skipped' }} \
+            --job arm64-capability-census=${{ needs.arm64-capability-census.result || 'skipped' }} \
             --job arm64-isa-proof=${{ needs.arm64-isa-proof.result || 'skipped' }} \
             --job ffi-abi=${{ needs.ffi-abi.result || 'skipped' }} \
             --job android-unit=${{ needs.android-unit.result || 'skipped' }} \
