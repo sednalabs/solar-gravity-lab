@@ -33,7 +33,7 @@ these fields separately:
 - active solver path;
 - normalized CPU feature flags; and
 - fallback code when the requested backend is not active; and
-- CPU scheduler mode and worker budget.
+- CPU scheduler mode, worker budget, and large-scene tile plan.
 
 ## What Is Real Today
 
@@ -65,6 +65,10 @@ these fields separately:
   scenes remain single-worker; larger Arm64 scenes may select tiled NEON
   kernels, including the active parallel tiled path when the runtime has more
   than one worker available.
+- Runtime info also reports the large-scene tile plan: tile size, tile count,
+  and the number of tile workers that can receive work. This lets hosted logs,
+  real-device artifacts, and native Android computer-use sessions verify that a
+  scenario is actually exercising the parallel tiled workload shape.
 
 ## What Must Stay Honest
 

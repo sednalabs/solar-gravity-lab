@@ -38,7 +38,7 @@ use solarlab_vulkan_adapter::{
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 6;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 7;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -187,6 +187,9 @@ pub struct SlRuntimeInfo {
     pub cpu_schedule_candidate_workers: u32,
     pub cpu_schedule_body_count: u32,
     pub cpu_schedule_estimated_pair_count: u64,
+    pub cpu_schedule_tile_size_bodies: u32,
+    pub cpu_schedule_tile_count: u32,
+    pub cpu_schedule_parallel_tile_workers: u32,
     pub cpu_kernel_catalog_count: u32,
     pub cpu_kernel_active_count: u32,
     pub cpu_kernel_eligible_candidate_count: u32,
@@ -693,6 +696,9 @@ pub fn runtime_info(
         cpu_schedule_candidate_workers: solver_execution.schedule.candidate_workers,
         cpu_schedule_body_count: solver_execution.schedule.body_count,
         cpu_schedule_estimated_pair_count: solver_execution.schedule.estimated_pair_count,
+        cpu_schedule_tile_size_bodies: solver_execution.schedule.tile_size_bodies,
+        cpu_schedule_tile_count: solver_execution.schedule.tile_count,
+        cpu_schedule_parallel_tile_workers: solver_execution.schedule.parallel_tile_workers,
         cpu_kernel_catalog_count: usize_to_u32(arm64_kernel_catalog().len()),
         cpu_kernel_active_count: active_kernel_count,
         cpu_kernel_eligible_candidate_count: usize_to_u32(
@@ -1673,6 +1679,9 @@ fn empty_runtime_info() -> SlRuntimeInfo {
         cpu_schedule_candidate_workers: 0,
         cpu_schedule_body_count: 0,
         cpu_schedule_estimated_pair_count: 0,
+        cpu_schedule_tile_size_bodies: 0,
+        cpu_schedule_tile_count: 0,
+        cpu_schedule_parallel_tile_workers: 0,
         cpu_kernel_catalog_count: 0,
         cpu_kernel_active_count: 0,
         cpu_kernel_eligible_candidate_count: 0,
@@ -2276,7 +2285,7 @@ mod android_jni {
         let native_result = create_native_result(env, result.result)?;
         env.new_object(
             CLASS_NATIVE_RUNTIME_INFO_RESULT,
-            "(Lcom/sednalabs/solarlab/runtime/NativeResult;IIIIJIIIIIIJIIII)V",
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;IIIIJIIIIIIJIIIIIII)V",
             &[
                 JValue::Object(&native_result),
                 JValue::Int(i32::try_from(result.info.abi_version).unwrap_or(i32::MAX)),
@@ -2297,6 +2306,14 @@ mod android_jni {
                 JValue::Long(
                     i64::try_from(result.info.cpu_schedule_estimated_pair_count)
                         .unwrap_or(i64::MAX),
+                ),
+                JValue::Int(
+                    i32::try_from(result.info.cpu_schedule_tile_size_bodies).unwrap_or(i32::MAX),
+                ),
+                JValue::Int(i32::try_from(result.info.cpu_schedule_tile_count).unwrap_or(i32::MAX)),
+                JValue::Int(
+                    i32::try_from(result.info.cpu_schedule_parallel_tile_workers)
+                        .unwrap_or(i32::MAX),
                 ),
                 JValue::Int(
                     i32::try_from(result.info.cpu_kernel_catalog_count).unwrap_or(i32::MAX),
@@ -2592,7 +2609,7 @@ mod tests {
 
     #[test]
     fn runtime_info_layout_matches_c_header_contract() {
-        assert_eq!(size_of::<SlRuntimeInfo>(), 72);
+        assert_eq!(size_of::<SlRuntimeInfo>(), 88);
         assert_eq!(align_of::<SlRuntimeInfo>(), 8);
         assert_eq!(offset_of!(SlRuntimeInfo, abi_version), 0);
         assert_eq!(offset_of!(SlRuntimeInfo, requested_cpu_backend), 4);
@@ -2612,18 +2629,24 @@ mod tests {
             offset_of!(SlRuntimeInfo, cpu_schedule_estimated_pair_count),
             48
         );
-        assert_eq!(offset_of!(SlRuntimeInfo, cpu_kernel_catalog_count), 56);
-        assert_eq!(offset_of!(SlRuntimeInfo, cpu_kernel_active_count), 60);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_schedule_tile_size_bodies), 56);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_schedule_tile_count), 60);
+        assert_eq!(
+            offset_of!(SlRuntimeInfo, cpu_schedule_parallel_tile_workers),
+            64
+        );
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_kernel_catalog_count), 68);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_kernel_active_count), 72);
         assert_eq!(
             offset_of!(SlRuntimeInfo, cpu_kernel_eligible_candidate_count),
-            64
+            76
         );
         assert_eq!(
             offset_of!(SlRuntimeInfo, cpu_kernel_blocked_candidate_count),
-            68
+            80
         );
 
-        assert_eq!(size_of::<SlRuntimeInfoResult>(), 80);
+        assert_eq!(size_of::<SlRuntimeInfoResult>(), 96);
         assert_eq!(align_of::<SlRuntimeInfoResult>(), 8);
         assert_eq!(offset_of!(SlRuntimeInfoResult, result), 0);
         assert_eq!(offset_of!(SlRuntimeInfoResult, info), 8);
@@ -2669,6 +2692,9 @@ mod tests {
         assert_eq!(runtime_info.info.cpu_fallback_code, 0);
         assert_eq!(runtime_info.info.cpu_schedule_body_count, 0);
         assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 0);
+        assert_eq!(runtime_info.info.cpu_schedule_tile_size_bodies, 32);
+        assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
+        assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
         assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 15);
         assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
         assert_eq!(
@@ -3291,19 +3317,26 @@ mod tests {
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info.cpu_schedule_body_count, 365);
         assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+        assert_eq!(runtime_info.info.cpu_schedule_tile_size_bodies, 32);
 
         let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;
         if cfg!(target_arch = "aarch64") && has_neon {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::SimdArm64);
+            assert_eq!(runtime_info.info.cpu_schedule_tile_count, 12);
             if runtime_info.info.cpu_schedule_active_workers > 1 {
                 assert_eq!(runtime_info.info.cpu_solver_path, 4);
+                assert!(runtime_info.info.cpu_schedule_parallel_tile_workers > 1);
+                assert!(runtime_info.info.cpu_schedule_parallel_tile_workers <= 12);
             } else {
                 assert_eq!(runtime_info.info.cpu_solver_path, 3);
+                assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
             }
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
         } else {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::ReferenceScalar);
             assert_eq!(runtime_info.info.cpu_solver_path, 0);
+            assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
+            assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
         }
 

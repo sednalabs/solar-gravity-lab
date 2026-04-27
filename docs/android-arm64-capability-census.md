@@ -79,8 +79,8 @@ should include:
 - Vulkan physical-device features and extensions.
 - OpenCL platform/device/provider details.
 - Solar Gravity Lab runtime info: requested/effective CPU backend, solver path,
-  CPU feature flags, CPU scheduler truth, requested/effective GPU backend, and
-  fallback reason.
+  CPU feature flags, CPU scheduler truth, large-scene tile-plan truth,
+  requested/effective GPU backend, and fallback reason.
 
 ## Activation Rules
 

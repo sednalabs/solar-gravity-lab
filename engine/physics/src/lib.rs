@@ -92,6 +92,9 @@ pub struct SolverScheduleReport {
     pub candidate_workers: u32,
     pub body_count: u32,
     pub estimated_pair_count: u64,
+    pub tile_size_bodies: u32,
+    pub tile_count: u32,
+    pub parallel_tile_workers: u32,
 }
 
 impl SolverExecutionReport {
@@ -587,6 +590,7 @@ const HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: f64 = 21_600.0;
 const HIGH_SPEED_PLAYBACK_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: f64 = 604_800.0;
 const HOST_RELATIVE_SHORT_WINDOW_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: f64 = 2_592_000.0;
 const ADAPTIVE_TILED_SCHEDULER_MIN_BODIES: usize = 96;
+const ARM64_GRAVITY_TILE_SIZE_BODIES: usize = 32;
 
 pub fn advance_authoritative_scalar(
     policy: &PhysicsPolicy,
@@ -740,6 +744,16 @@ fn solver_schedule_report_for_arm64_kernel(
     };
     let body_count_u64 = body_count as u64;
     let estimated_pair_count = body_count_u64.saturating_mul(body_count_u64.saturating_sub(1)) / 2;
+    let tile_count = if arm64_solver_active && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES {
+        body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES)
+    } else {
+        0
+    };
+    let parallel_tile_workers = if tile_count > 0 && (parallel_tiled_active || candidate_parallel) {
+        candidate_workers.max(active_workers).min(tile_count)
+    } else {
+        0
+    };
 
     SolverScheduleReport {
         mode,
@@ -747,6 +761,9 @@ fn solver_schedule_report_for_arm64_kernel(
         candidate_workers: candidate_workers as u32,
         body_count: body_count as u32,
         estimated_pair_count,
+        tile_size_bodies: ARM64_GRAVITY_TILE_SIZE_BODIES as u32,
+        tile_count: tile_count as u32,
+        parallel_tile_workers: parallel_tile_workers as u32,
     }
 }
 
@@ -1301,7 +1318,9 @@ mod arm64_neon {
 
     use solarlab_domain::Vector3d;
 
-    use super::{MassiveBodyState, G_M3_PER_KG_S2, MIN_DISTANCE_M2};
+    use super::{
+        MassiveBodyState, ARM64_GRAVITY_TILE_SIZE_BODIES, G_M3_PER_KG_S2, MIN_DISTANCE_M2,
+    };
 
     #[target_feature(enable = "neon")]
     pub unsafe fn pairwise_gravity_accelerations_neon_f64(
@@ -1320,13 +1339,12 @@ mod arm64_neon {
     pub unsafe fn pairwise_gravity_accelerations_neon_f64_tiled(
         bodies: &[MassiveBodyState],
     ) -> Vec<Vector3d> {
-        const TILE_SIZE: usize = 32;
-
         let mut accelerations = vec![Vector3d::default(); bodies.len()];
-        for tile_i_start in (0..bodies.len()).step_by(TILE_SIZE) {
-            let tile_i_end = (tile_i_start + TILE_SIZE).min(bodies.len());
-            for tile_j_start in (tile_i_start..bodies.len()).step_by(TILE_SIZE) {
-                let tile_j_end = (tile_j_start + TILE_SIZE).min(bodies.len());
+        for tile_i_start in (0..bodies.len()).step_by(ARM64_GRAVITY_TILE_SIZE_BODIES) {
+            let tile_i_end = (tile_i_start + ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
+            for tile_j_start in (tile_i_start..bodies.len()).step_by(ARM64_GRAVITY_TILE_SIZE_BODIES)
+            {
+                let tile_j_end = (tile_j_start + ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
                 for i in tile_i_start..tile_i_end {
                     let j_start = if tile_i_start == tile_j_start {
                         i + 1
@@ -1347,13 +1365,11 @@ mod arm64_neon {
         bodies: &[MassiveBodyState],
         worker_budget: usize,
     ) -> Vec<Vector3d> {
-        const TILE_SIZE: usize = 32;
-
         if bodies.len() < 2 || worker_budget <= 1 {
             return pairwise_gravity_accelerations_neon_f64_tiled(bodies);
         }
 
-        let tile_count = bodies.len().div_ceil(TILE_SIZE);
+        let tile_count = bodies.len().div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES);
         let worker_count = worker_budget.min(tile_count).max(1);
 
         let partials = std::thread::scope(|scope| {
@@ -1364,8 +1380,9 @@ mod arm64_neon {
                     // Cyclic tiles balance the triangular pair workload: early
                     // rows have many more interactions than late rows.
                     for tile_index in (worker_index..tile_count).step_by(worker_count) {
-                        let i_start = tile_index * TILE_SIZE;
-                        let i_end = ((tile_index + 1) * TILE_SIZE).min(bodies.len());
+                        let i_start = tile_index * ARM64_GRAVITY_TILE_SIZE_BODIES;
+                        let i_end =
+                            ((tile_index + 1) * ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
                         for i in i_start..i_end {
                             for j in (i + 1)..bodies.len() {
                                 unsafe {
@@ -2217,18 +2234,29 @@ mod tests {
         let arm64_large_schedule = solver_schedule_report(192, true);
 
         assert_eq!(scalar_schedule.mode, SolverScheduleMode::SingleWorker);
+        assert_eq!(scalar_schedule.tile_count, 0);
+        assert_eq!(scalar_schedule.parallel_tile_workers, 0);
         assert_eq!(arm64_tiny_schedule.mode, SolverScheduleMode::SingleWorker);
+        assert_eq!(arm64_tiny_schedule.tile_count, 0);
+        assert_eq!(arm64_tiny_schedule.parallel_tile_workers, 0);
         assert_eq!(arm64_large_schedule.active_workers, 1);
         assert_eq!(arm64_large_schedule.body_count, 192);
         assert_eq!(arm64_large_schedule.estimated_pair_count, 18_336);
+        assert_eq!(arm64_large_schedule.tile_size_bodies, 32);
+        assert_eq!(arm64_large_schedule.tile_count, 6);
 
         if arm64_large_schedule.candidate_workers > 1 {
             assert_eq!(
                 arm64_large_schedule.mode,
                 SolverScheduleMode::AdaptiveTiledCandidate
             );
+            assert_eq!(
+                arm64_large_schedule.parallel_tile_workers,
+                arm64_large_schedule.candidate_workers.min(6)
+            );
         } else {
             assert_eq!(arm64_large_schedule.mode, SolverScheduleMode::SingleWorker);
+            assert_eq!(arm64_large_schedule.parallel_tile_workers, 0);
         }
     }
 
@@ -2242,13 +2270,20 @@ mod tests {
 
         assert_eq!(schedule.body_count, 192);
         assert_eq!(schedule.estimated_pair_count, 18_336);
+        assert_eq!(schedule.tile_size_bodies, 32);
+        assert_eq!(schedule.tile_count, 6);
         if runtime_worker_budget() > 1 {
             assert_eq!(schedule.mode, SolverScheduleMode::AdaptiveTiledActive);
             assert!(schedule.active_workers > 1);
             assert_eq!(schedule.active_workers, schedule.candidate_workers);
+            assert_eq!(
+                schedule.parallel_tile_workers,
+                schedule.active_workers.min(6)
+            );
         } else {
             assert_eq!(schedule.mode, SolverScheduleMode::AdaptiveTiledActive);
             assert_eq!(schedule.active_workers, 1);
+            assert_eq!(schedule.parallel_tile_workers, 1);
         }
     }
 
