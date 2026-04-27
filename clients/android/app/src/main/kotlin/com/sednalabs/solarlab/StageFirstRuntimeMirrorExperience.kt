@@ -1701,6 +1701,11 @@ internal fun buildRuntimeAccelerationReadout(
         scheduler != null -> "Scheduler reported"
         else -> null
     }
+    val schedulerTone = when (schedulerMode) {
+        "Parallel tiled" -> RuntimeAccelerationLaneTone.Active
+        "Tiled candidate" -> RuntimeAccelerationLaneTone.Eligible
+        else -> RuntimeAccelerationLaneTone.Neutral
+    }
     val gpuChip = gpu
         ?.let { value ->
             val gpuValue = value.substringAfter("gpu=", missingDelimiterValue = value)
@@ -1780,7 +1785,7 @@ internal fun buildRuntimeAccelerationReadout(
                 RuntimeAccelerationLane(
                     "Scheduler",
                     segmentValue(it, "cpu scheduler:"),
-                    RuntimeAccelerationLaneTone.Active,
+                    schedulerTone,
                 )
             )
         }
