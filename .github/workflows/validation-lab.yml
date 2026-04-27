@@ -1273,6 +1273,8 @@ jobs:
             echo "validation_mode=${{ matrix.validation_mode }}"
             echo "debug_stage_first_client=${{ matrix.debug_stage_first_client }}"
             echo "stage_first_runtime_mirror=${{ matrix.stage_first_runtime_mirror }}"
+            echo "preferred_gpu_backend=${{ matrix.preferred_gpu_backend }}"
+            echo "hosted_debug_profile=${{ matrix.hosted_debug_profile }}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Assemble debug Android shell and androidTest
@@ -1291,6 +1293,7 @@ jobs:
             -Psolarlab.debugStageFirstClient=${{ steps.android_mode.outputs.debug_stage_first_client }} \
             -Psolarlab.stageFirstRuntimeMirror=${{ steps.android_mode.outputs.stage_first_runtime_mirror }} \
             -Psolarlab.preferredGpuBackend=${{ steps.android_mode.outputs.preferred_gpu_backend }} \
+            -Psolarlab.hostedDebugProfile=${{ steps.android_mode.outputs.hosted_debug_profile }} \
             "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-shell-assemble-${{ matrix.validation_mode }}.log
           phase_end="$(date +%s)"
@@ -1327,6 +1330,8 @@ jobs:
           GRADLE_CONFIGURATION_CACHE_MODE: ${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}
           ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
           ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
+          ORG_GRADLE_PROJECT_solarlab_preferredGpuBackend: ${{ steps.android_mode.outputs.preferred_gpu_backend }}
+          ORG_GRADLE_PROJECT_solarlab_hostedDebugProfile: ${{ steps.android_mode.outputs.hosted_debug_profile }}
 
       - name: Emit Android lane timing summary
         if: always()
@@ -1373,6 +1378,7 @@ jobs:
             echo "- stage-first client: \`${{ steps.android_mode.outputs.debug_stage_first_client }}\`"
             echo "- stage-first runtime mirror: \`${{ steps.android_mode.outputs.stage_first_runtime_mirror }}\`"
             echo "- preferred GPU backend: \`${{ steps.android_mode.outputs.preferred_gpu_backend }}\`"
+            echo "- hosted debug profile: \`${{ steps.android_mode.outputs.hosted_debug_profile }}\`"
             echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
             echo "- rust/android toolchain: \`${{ steps.rust_android_toolchain.outputs.rust_android_toolchain_seconds || 'n/a' }}s\`"
             echo "- assemble debug + androidTest: \`${{ steps.android_assemble.outputs.assemble_seconds || 'n/a' }}s\`"
