@@ -170,7 +170,7 @@ The Codex-native Android provider evidence is concentrated in:
 
 - `codex-bridge/status.json`
 - `codex-bridge/tool-specs.json`, when the selected provider ref can expose the
-  Codex dynamic-tool specs
+  provider tool metadata for the native Android names
 - `codex-bridge/android-observe-proof.json`, when the selected provider ref can
   run the lightweight hosted `android_observe` proof
 - `codex-bridge/android-observe-proof-validation.json`, when the hosted proof is
@@ -196,7 +196,7 @@ Those files are designed to answer:
 - whether preflight passed
 - whether human terminal access came up
 - whether machine-facing MCP access came up
-- whether the Codex-native Android provider helper, dynamic-tool specs,
+- whether the Codex-native Android provider helper, provider tool metadata,
   `android_observe` proof, and manifest were available
 - how the session ended
 - where the evidence bundle is rooted
@@ -225,8 +225,8 @@ window is reached.
 
 ## Codex native Android tools
 
-When the selected Android provider ref includes the native Codex dynamic-tool
-CLI, the hosted session stages:
+When the selected Android provider ref includes the native Codex provider CLI,
+the hosted session stages:
 
 - `dist/interactive-session/live-access/codex-android-tools.sh`
 
@@ -239,12 +239,14 @@ This is the native harness direction:
 - it does not require `OPENAI_API_KEY`
 - it talks to `http://127.0.0.1:9526/mcp`
 - it keeps the configured Android provider as the Android control plane
-- it lets Codex register model-callable Android tools in the normal thread flow
-- the model-facing tools are `android_observe` and `android_step`
+- it lets Codex route model calls through the native `android_observe` and
+  `android_step` contract
+- model turns are represented through `ComputerUseCallRequest` and
+  `ComputerUseCallResponse` semantics in Codex transcript and rollout surfaces
 
 The helper is a provider backend, not the primary UX. Codex calls the app
-server directly, the app server issues dynamic tool requests into the TUI, and
-the TUI resolves them through `CODEX_DYNAMIC_TOOL_COMMAND`.
+server directly, the app server issues provider/runtime requests into the TUI,
+and the TUI resolves them through `CODEX_DYNAMIC_TOOL_COMMAND`.
 
 Optional debug helper:
 
