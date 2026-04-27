@@ -19,6 +19,18 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
+    fun parseSemanticCommand_mapsScenarioLoadCommand() {
+        val action = SolarLabSemanticActionBridge.parseSemanticCommand(
+            action = SolarLabSemanticActionBridge.INTENT_ACTION,
+            command = "load_scenario",
+            bodyQuery = null,
+            scenarioId = "showcase.jupiter-system",
+        )
+
+        assertEquals(SolarLabSemanticAction.LoadScenario("showcase.jupiter-system"), action)
+    }
+
+    @Test
     fun parseSemanticCommand_returnsNullForMissingBodyQuery() {
         val action = SolarLabSemanticActionBridge.parseSemanticCommand(
             action = SolarLabSemanticActionBridge.INTENT_ACTION,
@@ -67,6 +79,42 @@ class SolarLabSemanticActionBridgeTest {
 
         SolarLabSemanticActionBridge.clearPendingReplay()
         assertTrue(SolarLabSemanticActionBridge.commands.replayCache.isEmpty())
+    }
+
+    @Test
+    fun resolveLoadScenarioSemanticRouting_doesNotEnterMirrorForUnknownScenarioFromSandbox() {
+        val routing = resolveLoadScenarioSemanticRouting(
+            runtimeMirrorAvailable = true,
+            currentlyInRuntimeMirror = false,
+            scenarioKnown = false,
+        )
+
+        assertFalse(routing.shouldEnterRuntimeMirror)
+        assertFalse(routing.shouldDeliverAction)
+    }
+
+    @Test
+    fun resolveLoadScenarioSemanticRouting_allowsKnownScenarioToEnterMirror() {
+        val routing = resolveLoadScenarioSemanticRouting(
+            runtimeMirrorAvailable = true,
+            currentlyInRuntimeMirror = false,
+            scenarioKnown = true,
+        )
+
+        assertTrue(routing.shouldEnterRuntimeMirror)
+        assertTrue(routing.shouldDeliverAction)
+    }
+
+    @Test
+    fun resolveLoadScenarioSemanticRouting_deliversUnknownScenarioInsideMirrorForNotice() {
+        val routing = resolveLoadScenarioSemanticRouting(
+            runtimeMirrorAvailable = true,
+            currentlyInRuntimeMirror = true,
+            scenarioKnown = false,
+        )
+
+        assertFalse(routing.shouldEnterRuntimeMirror)
+        assertTrue(routing.shouldDeliverAction)
     }
 
     @Test

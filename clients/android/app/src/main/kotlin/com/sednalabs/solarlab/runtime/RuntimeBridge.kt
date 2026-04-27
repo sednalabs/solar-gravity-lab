@@ -28,6 +28,9 @@ internal interface RuntimeBridge {
     // Streamed connection events from the runtime host.
     fun connect(): Flow<RuntimeSignal>
 
+    // Fresh-session scenario replacement for visual iteration.
+    suspend fun loadScenario(scenarioId: String): List<RuntimeSignal>
+
     // Synchronous refresh/query path for already-bound handles.
     suspend fun refresh(): List<RuntimeSignal>
 
@@ -39,8 +42,10 @@ internal class JniRuntimeBridge(
     private val transport: NativeRuntimeTransport = JniNativeRuntimeTransport,
     private val renderHostAdapter: RenderHostAdapter = NativeRenderHostAdapter(transport),
 ) : RuntimeBridge {
-    // Serialize access to activeSessionHandle and avoid races between connect/refresh/apply.
+    // Keep active-handle state and native operations serialized even when tests call the
+    // bridge directly rather than through the facade's single-lane dispatcher.
     private val stateLock = Any()
+    private val operationLock = Any()
     @Volatile
     private var activeSessionHandle: Long = 0L
 
@@ -64,12 +69,13 @@ internal class JniRuntimeBridge(
             )
         )
 
+        val scenarioPack = RuntimeScenarioPacks.default
         logInfo(
-            "connect.createSession.begin scenario=$DEFAULT_SCENARIO_ID branch=$DEFAULT_ROOT_BRANCH_ID abi=$ABI_VERSION gpu=${BuildConfig.PREFERRED_GPU_BACKEND}"
+            "connect.createSession.begin scenario=${scenarioPack.scenarioId} branch=$DEFAULT_ROOT_BRANCH_ID abi=$ABI_VERSION gpu=${BuildConfig.PREFERRED_GPU_BACKEND}"
         )
         val createResult = runCatching {
             transport.createSession(
-                scenarioId = DEFAULT_SCENARIO_ID,
+                scenarioId = scenarioPack.scenarioId,
                 rootBranchId = DEFAULT_ROOT_BRANCH_ID,
             )
         }.getOrElse { error ->
@@ -128,158 +134,305 @@ internal class JniRuntimeBridge(
             return@callbackFlow
         }
 
-        synchronized(stateLock) {
-            activeSessionHandle = handle
-            renderHostAdapter.bindSession(handle)
-        }
-
-        trySend(RuntimeSignal.Connected(handle = handle))
-
-        logInfo("connect.runtimeInfo.begin handle=$handle")
-        val runtimeInfoResult = runCatching {
-            transport.runtimeInfo(handle)
-        }.getOrElse { error ->
-            logError(
-                "connect.runtimeInfo.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
-                error,
-            )
-            trySend(
-                RuntimeSignal.Notice(
-                    message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
-                    level = RuntimeNoticeLevel.Warning,
-                )
-            )
-            awaitClose {
-                releaseActiveSession(handle)
+        synchronized(operationLock) {
+            synchronized(stateLock) {
+                activeSessionHandle = handle
+                renderHostAdapter.bindSession(handle)
             }
-            return@callbackFlow
-        }
-        logInfo(
-            "connect.runtimeInfo.result handle=$handle status=${runtimeInfoResult.result.describe()} cpu=${runtimeInfoResult.cpuBackendLabel()} gpu=${runtimeInfoResult.gpuBackendLabel()}"
-        )
 
-        if (runtimeInfoResult.result.isOk()) {
-            trySend(
-                RuntimeSignal.RuntimeInfoAvailable(
-                    cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
-                    gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
-                    workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
-                    interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
+            trySend(RuntimeSignal.Connected(handle = handle))
+
+            logInfo("connect.runtimeInfo.begin handle=$handle")
+            val runtimeInfoResult = runCatching {
+                transport.runtimeInfo(handle)
+            }.getOrElse { error ->
+                logError(
+                    "connect.runtimeInfo.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
+                    error,
                 )
-            )
-        } else {
-            trySend(
-                RuntimeSignal.Notice(
-                    message = "Runtime info unavailable: ${runtimeInfoResult.result.describe()}",
-                    level = RuntimeNoticeLevel.Warning,
+                trySend(
+                    RuntimeSignal.Notice(
+                        message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
+                        level = RuntimeNoticeLevel.Warning,
+                    )
                 )
-            )
-        }
+                null
+            }
+            runtimeInfoResult?.let { result ->
+                logInfo(
+                    "connect.runtimeInfo.result handle=$handle status=${result.result.describe()} cpu=${result.cpuBackendLabel()} gpu=${result.gpuBackendLabel()}"
+                )
+            }
 
-        val initialSignals = refreshSignalsForHandle(
-            handle,
-            includeSummary = true,
-            traceLabel = "connect.initial-refresh",
-        )
-        initialSignals.forEach { trySend(it) }
-        var latestSummary = extractLatestSnapshotSummary(initialSignals)
+            if (runtimeInfoResult?.result?.isOk() == true) {
+                trySend(
+                    RuntimeSignal.RuntimeInfoAvailable(
+                        cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
+                        gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
+                        workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
+                        interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
+                    )
+                )
+            } else if (runtimeInfoResult != null) {
+                trySend(
+                    RuntimeSignal.Notice(
+                        message = "Runtime info unavailable: ${runtimeInfoResult.result.describe()}",
+                        level = RuntimeNoticeLevel.Warning,
+                    )
+                )
+            }
 
-        if (extractBodyCountFrom(initialSignals) == 0L) {
-            logInfo("connect.seed.begin handle=$handle")
-            ensureStartupSeedApplied(handle).forEach { trySend(it) }
-            logInfo("connect.seed.refresh.begin handle=$handle")
-            val seededSignals = refreshSignalsForHandle(
+            val initialSignals = refreshSignalsForHandle(
                 handle,
                 includeSummary = true,
-                traceLabel = "connect.seeded-refresh",
+                traceLabel = "connect.initial-refresh",
             )
-            seededSignals.forEach { trySend(it) }
-            latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
-        }
+            initialSignals.forEach { trySend(it) }
+            var latestSummary = extractLatestSnapshotSummary(initialSignals)
 
-        latestSummary?.let { summary ->
-            logInfo(
-                "connect.playback-config.begin handle=$handle paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
-            )
-            ensureStartupPlaybackConfigured(handle, summary).forEach { trySend(it) }
+            if (extractBodyCountFrom(initialSignals) == 0L) {
+                logInfo("connect.seed.begin handle=$handle")
+                ensureStartupSeedApplied(handle).forEach { trySend(it) }
+                logInfo("connect.seed.refresh.begin handle=$handle")
+                val seededSignals = refreshSignalsForHandle(
+                    handle,
+                    includeSummary = true,
+                    traceLabel = "connect.seeded-refresh",
+                )
+                seededSignals.forEach { trySend(it) }
+                latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
+            }
+
+            latestSummary?.let { summary ->
+                logInfo(
+                    "connect.playback-config.begin handle=$handle paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
+                )
+                ensureStartupScenarioConfigured(handle, scenarioPack, summary).forEach { trySend(it) }
+            }
         }
 
         val refreshJob = launch {
             while (isActive) {
                 delay(REFRESH_INTERVAL_MS)
-                val activeHandle = synchronized(stateLock) { activeSessionHandle }
-                if (activeHandle == 0L) {
-                    continue
+                val signals = synchronized(operationLock) {
+                    val activeHandle = synchronized(stateLock) { activeSessionHandle }
+                    if (activeHandle == 0L) {
+                        return@synchronized emptyList()
+                    }
+                    refreshSignalsForHandle(
+                        handle = activeHandle,
+                        includeSummary = true,
+                        advancePlayback = true,
+                    )
                 }
-                refreshSignalsForHandle(
-                    handle = activeHandle,
-                    includeSummary = true,
-                    advancePlayback = true,
-                ).forEach { trySend(it) }
+                signals.forEach { trySend(it) }
             }
         }
 
         awaitClose {
             refreshJob.cancel()
-            releaseActiveSession(handle)
+            synchronized(operationLock) {
+                releaseCurrentSession()
+            }
+        }
+    }
+
+    override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> {
+        return synchronized(operationLock) {
+            val scenarioPack = RuntimeScenarioPacks.byId(scenarioId)
+                ?: return@synchronized listOf(
+                    RuntimeSignal.Unavailable(
+                        message = "Unknown scenario pack",
+                        detail = "No built-in runtime scenario pack matched `$scenarioId`.",
+                    )
+                )
+            val signals = mutableListOf<RuntimeSignal>(
+                RuntimeSignal.Notice(
+                    message = "Loading scenario pack: ${scenarioPack.title}",
+                    level = RuntimeNoticeLevel.Info,
+                )
+            )
+
+            val loadOutcome = transport.ensureLibraryLoaded()
+            if (loadOutcome is NativeLibraryLoadOutcome.Failure) {
+                return@synchronized signals + RuntimeSignal.Unavailable(loadOutcome.reason)
+            }
+
+            logInfo(
+                "loadScenario.createSession.begin scenario=${scenarioPack.scenarioId} branch=$DEFAULT_ROOT_BRANCH_ID abi=$ABI_VERSION gpu=${BuildConfig.PREFERRED_GPU_BACKEND}"
+            )
+            val createResult = runCatching {
+                transport.createSession(
+                    scenarioId = scenarioPack.scenarioId,
+                    rootBranchId = DEFAULT_ROOT_BRANCH_ID,
+                )
+            }.getOrElse { error ->
+                logError(
+                    "loadScenario.createSession.failure scenario=${scenarioPack.scenarioId} error=${error.message ?: error::class.java.simpleName}",
+                    error,
+                )
+                return@synchronized signals + RuntimeSignal.Unavailable(
+                    message = "Scenario pack could not start",
+                    detail = error.message ?: error::class.java.simpleName,
+                )
+            }
+
+            if (!createResult.result.isOk()) {
+                if (createResult.handle != 0L) {
+                    transport.destroySession(createResult.handle)
+                }
+                return@synchronized signals + RuntimeSignal.Unavailable(
+                    message = "Scenario pack session create failed",
+                    detail = "${createResult.result.describe()} (${createResult.result.context})",
+                )
+            }
+
+            val handle = createResult.handle
+            if (handle == 0L) {
+                return@synchronized signals + RuntimeSignal.Unavailable(
+                    message = "Scenario pack returned an empty session handle",
+                    detail = "The native runtime did not provide a valid `SlRuntimeHandle`.",
+                )
+            }
+
+            if (createResult.abiVersion != ABI_VERSION) {
+                transport.destroySession(handle)
+                return@synchronized signals + RuntimeSignal.Unavailable(
+                    message = "Scenario pack ABI mismatch",
+                    detail = "expected=$ABI_VERSION, native=${createResult.abiVersion}",
+                )
+            }
+
+            synchronized(stateLock) {
+                val oldHandle = activeSessionHandle
+            val oldHandle = synchronized(stateLock) {
+                val current = activeSessionHandle
+                if (current != 0L && current != handle) {
+                    renderHostAdapter.releasePacket()
+                    activeSessionHandle = handle
+                    renderHostAdapter.bindSession(handle)
+                    current
+                } else {
+                    activeSessionHandle = handle
+                    renderHostAdapter.bindSession(handle)
+                    0L
+                }
+            }
+
+            if (oldHandle != 0L) {
+                transport.destroySession(oldHandle)
+            }
+                activeSessionHandle = handle
+                renderHostAdapter.bindSession(handle)
+            }
+
+            signals += RuntimeSignal.Connected(handle = handle)
+            val runtimeInfoResult = runCatching {
+                transport.runtimeInfo(handle)
+            }.getOrElse { error ->
+                signals += RuntimeSignal.Notice(
+                    message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Warning,
+                )
+                null
+            }
+
+            if (runtimeInfoResult?.result?.isOk() == true) {
+                signals += RuntimeSignal.RuntimeInfoAvailable(
+                    cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
+                    gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
+                    workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
+                    interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
+                )
+            }
+
+            val initialSignals = refreshSignalsForHandle(
+                handle,
+                includeSummary = true,
+                traceLabel = "loadScenario.initial-refresh",
+            )
+            signals += initialSignals
+            var latestSummary = extractLatestSnapshotSummary(initialSignals)
+
+            if (extractBodyCountFrom(initialSignals) == 0L) {
+                logInfo("loadScenario.seed.begin handle=$handle scenario=${scenarioPack.scenarioId}")
+                signals += ensureStartupSeedApplied(handle)
+                val seededSignals = refreshSignalsForHandle(
+                    handle,
+                    includeSummary = true,
+                    traceLabel = "loadScenario.seeded-refresh",
+                )
+                signals += seededSignals
+                latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
+            }
+
+            latestSummary?.let { summary ->
+                signals += ensureStartupScenarioConfigured(handle, scenarioPack, summary)
+            }
+
+            signals
         }
     }
 
     // Explicit pull refresh for currently bound session; reuses handle snapshot guard.
     override suspend fun refresh(): List<RuntimeSignal> {
-        val handle = synchronized(stateLock) { activeSessionHandle }
-        if (handle == 0L) {
-            return listOf(
-                RuntimeSignal.Notice(
-                    message = "Refresh skipped: no active runtime session",
-                    level = RuntimeNoticeLevel.Warning,
+        return synchronized(operationLock) {
+            val handle = synchronized(stateLock) { activeSessionHandle }
+            if (handle == 0L) {
+                return@synchronized listOf(
+                    RuntimeSignal.Notice(
+                        message = "Refresh skipped: no active runtime session",
+                        level = RuntimeNoticeLevel.Warning,
+                    )
                 )
-            )
-        }
+            }
 
-        return refreshSignalsForHandle(handle, includeSummary = true)
+            refreshSignalsForHandle(handle, includeSummary = true)
+        }
     }
 
     // Dispatches UI command into native runtime and returns resulting status + snapshot signals.
     override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> {
-        val handle = synchronized(stateLock) { activeSessionHandle }
-        if (handle == 0L) {
-            return listOf(
-                RuntimeSignal.Notice(
-                    message = "Command skipped: no active runtime session",
-                    level = RuntimeNoticeLevel.Warning,
+        return synchronized(operationLock) {
+            val handle = synchronized(stateLock) { activeSessionHandle }
+            if (handle == 0L) {
+                return@synchronized listOf(
+                    RuntimeSignal.Notice(
+                        message = "Command skipped: no active runtime session",
+                        level = RuntimeNoticeLevel.Warning,
+                    )
                 )
-            )
-        }
+            }
 
-        val commandResult = runCatching {
-            transport.applyCommand(handle, command.toNativePayload())
-        }.getOrElse { error ->
-            return listOf(
-                RuntimeSignal.Notice(
-                    message = "Command failed: ${error.message ?: error::class.java.simpleName}",
-                    level = RuntimeNoticeLevel.Error,
+            val commandResult = runCatching {
+                transport.applyCommand(handle, command.toNativePayload())
+            }.getOrElse { error ->
+                return@synchronized listOf(
+                    RuntimeSignal.Notice(
+                        message = "Command failed: ${error.message ?: error::class.java.simpleName}",
+                        level = RuntimeNoticeLevel.Error,
+                    )
                 )
-            )
-        }
+            }
 
-        if (!commandResult.result.isOk()) {
-            return listOf(
-                RuntimeSignal.Notice(
-                    message = "Command failed: ${commandResult.result.describe()}",
-                    level = RuntimeNoticeLevel.Error,
+            if (!commandResult.result.isOk()) {
+                return@synchronized listOf(
+                    RuntimeSignal.Notice(
+                        message = "Command failed: ${commandResult.result.describe()}",
+                        level = RuntimeNoticeLevel.Error,
+                    )
                 )
-            )
-        }
+            }
 
-        val signals = mutableListOf<RuntimeSignal>()
-        signals += RuntimeSignal.CommandApplied(
-            command = command,
-            commandLabel = command.label,
-            summary = commandResult,
-        )
-        signals += refreshSignalsForHandle(handle, includeSummary = false)
-        return signals
+            val signals = mutableListOf<RuntimeSignal>()
+            signals += RuntimeSignal.CommandApplied(
+                command = command,
+                commandLabel = command.label,
+                summary = commandResult,
+            )
+            signals += refreshSignalsForHandle(handle, includeSummary = false)
+            signals
+        }
     }
 
     // Collects one snapshot refresh bundle for one handle:
@@ -416,17 +569,14 @@ internal class JniRuntimeBridge(
         return signals
     }
 
-    private fun releaseActiveSession(expectedHandle: Long) {
+    private fun releaseCurrentSession() {
         synchronized(stateLock) {
-            if (activeSessionHandle != expectedHandle) {
+            val handle = activeSessionHandle
+            if (handle == 0L) {
                 return
             }
-            // Session teardown order is host-defined:
-            // lease -> native transport release -> zero active handle.
-            // Packet-backed ByteBuffer views are only valid while the native packet handle is alive.
-            // Release packet leases before tearing down the owning runtime session.
             renderHostAdapter.releasePacket()
-            transport.destroySession(expectedHandle)
+            transport.destroySession(handle)
             activeSessionHandle = 0L
         }
     }
@@ -452,94 +602,111 @@ internal class JniRuntimeBridge(
             ?.summary
     }
 
-    private fun ensureStartupPlaybackConfigured(
+    private fun ensureStartupScenarioConfigured(
         handle: Long,
+        scenarioPack: RuntimeScenarioPack,
         summary: NativeSnapshotSummaryResult,
     ): List<RuntimeSignal> {
         logInfo(
-            "ensureStartupPlaybackConfigured.begin handle=$handle paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
+            "ensureStartupScenarioConfigured.begin handle=$handle scenario=${scenarioPack.scenarioId} paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
         )
         val signals = mutableListOf<RuntimeSignal>()
         var shouldRefresh = false
 
-        if (summary.paused) {
-            val resumeResult = runCatching {
-                transport.applyCommand(
-                    handle,
-                    NativeRuntimeCommandPayload(
-                        kind = NATIVE_COMMAND_RESUME_PLAYBACK,
-                    ),
-                )
-            }.getOrElse { error ->
-                signals += RuntimeSignal.Notice(
-                    message = "Startup playback resume failed: ${error.message ?: error::class.java.simpleName}",
-                    level = RuntimeNoticeLevel.Warning,
-                )
-                null
-            }
-
-            if (resumeResult != null) {
-                if (resumeResult.result.isOk()) {
-                    shouldRefresh = true
-                    signals += RuntimeSignal.Notice(
-                        message = "Startup playback resumed to keep the solar-system view in motion",
-                        level = RuntimeNoticeLevel.Success,
-                    )
-                } else {
-                    signals += RuntimeSignal.Notice(
-                        message = "Startup playback resume rejected: ${resumeResult.result.describe()}",
-                        level = RuntimeNoticeLevel.Warning,
-                    )
-                }
-            }
+        if (summary.simSecondsPerRealSecond != scenarioPack.simSecondsPerRealSecond) {
+            shouldRefresh = applyStartupCommand(
+                handle = handle,
+                command = RuntimeCommand.SetPlaybackRate(scenarioPack.simSecondsPerRealSecond),
+                successMessage = "Startup playback rate set for ${scenarioPack.title}",
+                signals = signals,
+            ) || shouldRefresh
         }
 
-        if (summary.simSecondsPerRealSecond < STARTUP_MIN_VISIBLE_PLAYBACK_RATE) {
-            val rateResult = runCatching {
-                transport.applyCommand(
-                    handle,
-                    NativeRuntimeCommandPayload(
-                        kind = NATIVE_COMMAND_SET_PLAYBACK_RATE,
-                        simSecondsPerRealSecond = STARTUP_DEFAULT_PLAYBACK_RATE,
-                    ),
-                )
-            }.getOrElse { error ->
-                signals += RuntimeSignal.Notice(
-                    message = "Startup playback rate update failed: ${error.message ?: error::class.java.simpleName}",
-                    level = RuntimeNoticeLevel.Warning,
-                )
-                null
-            }
+        scenarioPack.defaultFocusBodyId?.let { focusBodyId ->
+            shouldRefresh = applyStartupCommand(
+                handle = handle,
+                command = RuntimeCommand.FocusBody(focusBodyId),
+                successMessage = "Scenario focus set to $focusBodyId",
+                signals = signals,
+            ) || shouldRefresh
+        }
 
-            if (rateResult != null) {
-                if (rateResult.result.isOk()) {
-                    shouldRefresh = true
-                    signals += RuntimeSignal.Notice(
-                        message = "Startup playback rate set to ${STARTUP_DEFAULT_PLAYBACK_RATE.toLong()} sim-seconds per real-second",
-                        level = RuntimeNoticeLevel.Info,
-                    )
+        if (summary.observerMode != scenarioPack.defaultObserverMode.nativeCode) {
+            shouldRefresh = applyStartupCommand(
+                handle = handle,
+                command = RuntimeCommand.SetObserverMode(scenarioPack.defaultObserverMode),
+                successMessage = "Scenario observer mode set to ${scenarioPack.defaultObserverMode.startupDisplayLabel()}",
+                signals = signals,
+            ) || shouldRefresh
+        }
+
+        val playbackCommand = when {
+            scenarioPack.startPaused && !summary.paused -> RuntimeCommand.PausePlayback
+            !scenarioPack.startPaused && summary.paused -> RuntimeCommand.ResumePlayback
+            else -> null
+        }
+        playbackCommand?.let { command ->
+            shouldRefresh = applyStartupCommand(
+                handle = handle,
+                command = command,
+                successMessage = if (scenarioPack.startPaused) {
+                    "Scenario pack started paused for inspection"
                 } else {
-                    signals += RuntimeSignal.Notice(
-                        message = "Startup playback rate update rejected: ${rateResult.result.describe()}",
-                        level = RuntimeNoticeLevel.Warning,
-                    )
-                }
-            }
+                    "Scenario pack playback started for visible motion"
+                },
+                signals = signals,
+            ) || shouldRefresh
         }
 
         if (shouldRefresh) {
             signals += refreshSignalsForHandle(
                 handle,
                 includeSummary = true,
-                traceLabel = "connect.playback-refresh",
+                traceLabel = "scenario.startup-refresh",
             )
         }
 
         logInfo(
-            "ensureStartupPlaybackConfigured.end handle=$handle shouldRefresh=$shouldRefresh signalCount=${signals.size}"
+            "ensureStartupScenarioConfigured.end handle=$handle shouldRefresh=$shouldRefresh signalCount=${signals.size}"
         )
 
         return signals
+    }
+
+    private fun applyStartupCommand(
+        handle: Long,
+        command: RuntimeCommand,
+        successMessage: String,
+        signals: MutableList<RuntimeSignal>,
+    ): Boolean {
+        val commandResult = runCatching {
+            transport.applyCommand(handle, command.toNativePayload())
+        }.getOrElse { error ->
+            signals += RuntimeSignal.Notice(
+                message = "Scenario startup command failed: ${error.message ?: error::class.java.simpleName}",
+                level = RuntimeNoticeLevel.Warning,
+            )
+            return false
+        }
+
+        if (!commandResult.result.isOk()) {
+            signals += RuntimeSignal.Notice(
+                message = "Scenario startup command rejected: ${commandResult.result.describe()}",
+                level = RuntimeNoticeLevel.Warning,
+            )
+            return false
+        }
+
+        signals += RuntimeSignal.CommandApplied(
+            command = command,
+            commandLabel = command.label,
+            summary = commandResult,
+        )
+        signals += RuntimeSignal.Notice(
+            message = successMessage,
+            level = RuntimeNoticeLevel.Success,
+        )
+        return true
     }
 
     private fun ensureStartupSeedApplied(handle: Long): List<RuntimeSignal> {
@@ -553,7 +720,7 @@ internal class JniRuntimeBridge(
                 error,
             )
             signals += RuntimeSignal.Notice(
-                message = "Startup canonical seed command failed: ${error.message ?: error::class.java.simpleName}",
+                message = "Startup scenario seed command failed: ${error.message ?: error::class.java.simpleName}",
                 level = RuntimeNoticeLevel.Error,
             )
             return signals
@@ -564,14 +731,14 @@ internal class JniRuntimeBridge(
 
         if (!commandResult.result.isOk()) {
             signals += RuntimeSignal.Notice(
-                message = "Startup canonical seed command rejected: ${commandResult.result.describe()}",
+                message = "Startup scenario seed command rejected: ${commandResult.result.describe()}",
                 level = RuntimeNoticeLevel.Warning,
             )
             return signals
         }
 
         signals += RuntimeSignal.Notice(
-            message = "Seeded canonical solar system via Rust authority for session $handle",
+            message = "Seeded scenario pack via Rust authority for session $handle",
             level = RuntimeNoticeLevel.Info,
         )
 
@@ -583,11 +750,8 @@ internal class JniRuntimeBridge(
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
         private const val ABI_VERSION = 3
-        private const val DEFAULT_SCENARIO_ID = "sol-system"
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
-        private const val STARTUP_MIN_VISIBLE_PLAYBACK_RATE = 3_600.0
-        private const val STARTUP_DEFAULT_PLAYBACK_RATE = 21_600.0
 
         private fun logInfo(message: String) {
             if (runCatching { Log.i(LOG_TAG, message) }.isFailure) {
@@ -824,6 +988,13 @@ private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when
         checkpointIdUtf8 = checkpointId.toByteArray(StandardCharsets.UTF_8),
         newBranchIdUtf8 = newBranchId?.toByteArray(StandardCharsets.UTF_8),
     )
+}
+
+private fun RuntimeObserverMode.startupDisplayLabel(): String = when (this) {
+    RuntimeObserverMode.Free -> "Free"
+    RuntimeObserverMode.FollowSelected -> "Follow selected"
+    RuntimeObserverMode.FollowHost -> "Follow host"
+    RuntimeObserverMode.SystemFrame -> "System frame"
 }
 
 internal interface NativeRuntimeTransport {

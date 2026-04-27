@@ -91,8 +91,9 @@ The highest-value live gaps are:
 10. [`docs/performance-and-scaling-strategy.md`](docs/performance-and-scaling-strategy.md)
 11. [`docs/frame-lifecycle.md`](docs/frame-lifecycle.md)
 12. [`docs/compute-compaction-reintroduction-plan.md`](docs/compute-compaction-reintroduction-plan.md)
-13. [`docs/v2/architecture.md`](docs/v2/architecture.md)
-14. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
+13. [`docs/scenario-packs.md`](docs/scenario-packs.md)
+14. [`docs/v2/architecture.md`](docs/v2/architecture.md)
+15. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
 
 The `docs/v2/*` paths remain named that way because they were written during
 the reset, but they now describe the architecture that lives on `main`.
@@ -116,6 +117,11 @@ Refresh and command semantics in this canonical Rust line:
 - `sl_v2_session_snapshot_summary` is a read-only observation of the current runtime state.
 - `sl_v2_session_refresh` exists as an explicit read refresh point for shell callers that want a consistent control flow between “command + observe” turns.
 - `sl_v2_session_export_vulkan_scene` is also read-only; it returns a separate packet handle whose backing buffer must be consumed via `sl_v2_vulkan_scene_packet_buffer` and must be released with `sl_v2_vulkan_scene_packet_release`.
+
+Scenario packs provide deterministic startup scenes for fast Android visual
+iteration. They choose the starting catalog slice and presentation defaults, but
+the Rust runtime remains authoritative after the pack is loaded. See
+[`docs/scenario-packs.md`](docs/scenario-packs.md).
 
 ## Operational truth on `main`
 

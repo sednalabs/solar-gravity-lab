@@ -73,6 +73,8 @@ import com.sednalabs.solarlab.runtime.RenderStatusPresentation
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
+import com.sednalabs.solarlab.runtime.RuntimeScenarioPack
+import com.sednalabs.solarlab.runtime.RuntimeScenarioPacks
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.toShareText
@@ -169,6 +171,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         var stepQuantumPreset by remember { mutableStateOf(StepQuantumPreset.SIX_HOURS) }
         var playbackSpeedPreset by remember { mutableStateOf(PlaybackSpeedPreset.SIX_HOURS_PER_SECOND) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
+        var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive runtime mirror.") }
@@ -182,7 +185,21 @@ internal fun StageFirstRuntimeMirrorExperience(
         val selectedBody = remember(searchableBodies, selectedBodyId) {
             searchableBodies.firstOrNull { it.id == selectedBodyId }
         }
+        val scenarioPacks = runtimeFacade?.scenarioPacks.orEmpty()
+        val activeScenarioPack = remember(uiState.snapshot?.scenarioId, scenarioPacks) {
+            RuntimeScenarioPacks.byId(uiState.snapshot?.scenarioId)
+                ?: scenarioPacks.firstOrNull { it.scenarioId == uiState.snapshot?.scenarioId }
+                ?: RuntimeScenarioPacks.default
+        }
         val runtimeSessionHandle = uiState.sessionHandle ?: 0L
+        val timelineText = remember(uiState.snapshot, stepQuantumPreset, playbackSpeedPreset, activeScenarioPack) {
+            buildRuntimeTimelineText(
+                uiState = uiState,
+                stepQuantumPreset = stepQuantumPreset,
+                fallbackSpeedPreset = playbackSpeedPreset,
+                scenarioPack = activeScenarioPack,
+            )
+        }
         val selectionCard = remember(uiState, selectedBody) {
             buildRuntimeSelectionCard(
                 uiState = uiState,
@@ -256,9 +273,26 @@ internal fun StageFirstRuntimeMirrorExperience(
             syncObserver(bodyId, ObserverMode.FOLLOW_SELECTED)
         }
 
-        BackHandler(enabled = searchVisible || debugVisible) {
+        fun loadScenarioPack(scenarioId: String) {
+            val facade = runtimeFacade ?: return
+            val knownScenario = scenarioPacks.any { it.scenarioId == scenarioId }
+            if (knownScenario) {
+                selectedBodyId = null
+                observerMode = ObserverMode.FREE
+                searchVisible = false
+                scenarioPickerVisible = false
+                debugVisible = false
+                renderHostView?.resetCamera()
+            }
+            coroutineScope.launch {
+                facade.loadScenario(scenarioId)
+            }
+        }
+
+        BackHandler(enabled = searchVisible || scenarioPickerVisible || debugVisible) {
             when {
                 searchVisible -> searchVisible = false
+                scenarioPickerVisible -> scenarioPickerVisible = false
                 debugVisible -> debugVisible = false
             }
         }
@@ -305,7 +339,7 @@ internal fun StageFirstRuntimeMirrorExperience(
             }
         }
 
-        LaunchedEffect(pendingSemanticAction?.token, searchableBodies, renderHostView) {
+        LaunchedEffect(pendingSemanticAction?.token, searchableBodies, renderHostView, uiState.connectionState) {
             if (pendingSemanticAction?.token == appliedSemanticActionToken) {
                 return@LaunchedEffect
             }
@@ -326,6 +360,14 @@ internal fun StageFirstRuntimeMirrorExperience(
                 SolarLabSemanticAction.ResetCamera -> {
                     renderHostView ?: return@LaunchedEffect
                     renderHostView?.resetCamera()
+                    appliedSemanticActionToken = pendingSemanticAction.token
+                }
+
+                is SolarLabSemanticAction.LoadScenario -> {
+                    if (uiState.connectionState != SessionConnectionState.Active) {
+                        return@LaunchedEffect
+                    }
+                    loadScenarioPack(action.scenarioId)
                     appliedSemanticActionToken = pendingSemanticAction.token
                 }
 
@@ -380,6 +422,13 @@ internal fun StageFirstRuntimeMirrorExperience(
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
                     emphasized = searchVisible,
                     enabled = searchableBodies.isNotEmpty(),
+                )
+                StageActionButton(
+                    label = if (scenarioPickerVisible) "Scenarios" else "Scenario",
+                    onClick = { scenarioPickerVisible = true },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON),
+                    emphasized = scenarioPickerVisible,
+                    enabled = scenarioPacks.isNotEmpty(),
                 )
                 StageActionButton(
                     label = if (debugVisible) "Debugging" else "Debug",
@@ -575,6 +624,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         selectedBody = selectedBody,
                         observerMode = observerMode,
                         renderProcessingMode = renderProcessingMode,
+                        scenarioLabel = timelineText,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
@@ -599,6 +649,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                             selectedBody = selectedBody,
                             observerMode = observerMode,
                             renderProcessingMode = renderProcessingMode,
+                            scenarioLabel = timelineText,
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
@@ -654,6 +705,15 @@ internal fun StageFirstRuntimeMirrorExperience(
                     searchVisible = false
                     focusAndFrameRuntimeBody(bodyId)
                 },
+            )
+        }
+
+        if (scenarioPickerVisible) {
+            RuntimeMirrorScenarioDialog(
+                scenarioPacks = scenarioPacks,
+                activeScenarioId = uiState.snapshot?.scenarioId,
+                onDismiss = { scenarioPickerVisible = false },
+                onLoadScenario = ::loadScenarioPack,
             )
         }
 
@@ -729,6 +789,7 @@ private fun RuntimeMirrorMissionPanel(
     selectedBody: RuntimeMirrorBody?,
     observerMode: ObserverMode,
     renderProcessingMode: RenderProcessingMode,
+    scenarioLabel: String,
     modifier: Modifier = Modifier,
 ) {
     val revision = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision ?: "waiting"
@@ -776,6 +837,12 @@ private fun RuntimeMirrorMissionPanel(
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
+            Text(
+                text = scenarioLabel,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
+                color = RuntimeMirrorGold,
+                style = MaterialTheme.typography.labelLarge,
+            )
             Text(
                 text = selectionCard.title,
                 modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
@@ -1084,6 +1151,97 @@ private fun RuntimeMirrorSearchDialog(
 }
 
 @Composable
+private fun RuntimeMirrorScenarioDialog(
+    scenarioPacks: List<RuntimeScenarioPack>,
+    activeScenarioId: String?,
+    onDismiss: () -> Unit,
+    onLoadScenario: (String) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG),
+        title = { Text("Scenario packs") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 500.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Jump to deterministic scenes for visual polish, camera checks, and fast Android tool iteration.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                scenarioPacks.forEach { pack ->
+                    val selected = pack.scenarioId == activeScenarioId
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(
+                                BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+                                RoundedCornerShape(14.dp),
+                            ),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        },
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Text(
+                                    text = pack.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = pack.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = listOf(
+                                        pack.scenarioId,
+                                        "focus=${pack.defaultFocusBodyId ?: "none"}",
+                                        if (pack.startPaused) "paused" else "live",
+                                    ).joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                )
+                            }
+                            TextButton(
+                                onClick = { onLoadScenario(pack.scenarioId) },
+                                modifier = Modifier.testTag(SolarLabTestTags.stageFirstScenarioLoadTag(pack.scenarioId)),
+                                enabled = !selected,
+                            ) {
+                                Text(if (selected) "Loaded" else "Load")
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
 private fun RuntimeMirrorDebugDialog(
     uiState: ShellUiState,
     hostRendererStatus: String,
@@ -1156,11 +1314,13 @@ private fun buildRuntimeTimelineText(
     uiState: ShellUiState,
     stepQuantumPreset: StepQuantumPreset,
     fallbackSpeedPreset: PlaybackSpeedPreset,
+    scenarioPack: RuntimeScenarioPack,
 ): String {
     val snapshot = uiState.snapshot ?: return "Runtime mirror\nWaiting for authoritative snapshot"
     val speedLabel = formatPlaybackRateLabel(snapshot.simSecondsPerRealSecond, fallbackSpeedPreset)
     return buildString {
-        append("Runtime mirror | branch=")
+        append(scenarioPack.title)
+        append(" | branch=")
         append(snapshot.activeBranchId)
         append('\n')
         append("Epoch ")

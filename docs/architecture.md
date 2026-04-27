@@ -128,8 +128,9 @@ Read the durable architecture in this order:
 10. `performance-and-scaling-strategy.md`
 11. `frame-lifecycle.md`
 12. `compute-compaction-reintroduction-plan.md`
-13. `v2/architecture.md`
-14. `v2/roadmap.md`
+13. `scenario-packs.md`
+14. `v2/architecture.md`
+15. `v2/roadmap.md`
 
 ## Operational repo truth
 
