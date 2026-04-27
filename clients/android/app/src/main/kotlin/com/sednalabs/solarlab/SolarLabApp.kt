@@ -49,9 +49,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -80,6 +82,36 @@ import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.sqrt
+
+private val MissionVoid = Color(0xFF02050B)
+private val MissionNight = Color(0xFF07101C)
+private val MissionGlass = Color(0xE6070D18)
+private val MissionGlassSoft = Color(0xB40B1424)
+private val MissionCyan = Color(0xFF76F7FF)
+private val MissionCyanDim = Color(0xFF2A9DAC)
+private val MissionGold = Color(0xFFFFD36B)
+private val MissionBlue = Color(0xFF5E8CFF)
+private val MissionInkLine = Color(0xFF19324B)
+private val MissionText = Color(0xFFE8F7FF)
+private val MissionTextDim = Color(0xFF9FB6C9)
+private const val MISSION_SIGNAL_BODY_NORMALIZATION = 18f
+private const val MISSION_SIGNAL_TRACER_NORMALIZATION = 120f
+private const val MISSION_SIGNAL_TRAIL_NORMALIZATION = 28f
+private const val MISSION_SIGNAL_FOCUS_LIFT = 0.18f
+private const val MISSION_SIGNAL_L1_BASE = 0.24f
+private const val MISSION_SIGNAL_L1_BODY_COEFF = 0.34f
+private const val MISSION_SIGNAL_L2_BASE = 0.18f
+private const val MISSION_SIGNAL_L2_TRACER_COEFF = 0.52f
+private const val MISSION_SIGNAL_L2_FOCUS_COEFF = 0.24f
+private const val MISSION_SIGNAL_L3_BASE = 0.30f
+private const val MISSION_SIGNAL_L3_TRAIL_COEFF = 0.42f
+private const val MISSION_SIGNAL_L4_BASE = 0.22f
+private const val MISSION_SIGNAL_L4_TIME_COEFF = 0.48f
+private const val MISSION_SIGNAL_L5_BASE = 0.32f
+private const val MISSION_SIGNAL_L5_BODY_COEFF = 0.22f
+private const val MISSION_SIGNAL_L5_TRAIL_COEFF = 0.24f
+private const val MISSION_SIGNAL_L6_BASE = 0.28f
+private const val MISSION_SIGNAL_L6_TRACER_COEFF = 0.34f
 
 @Composable
 fun SolarLabApp(runtimeFacade: RuntimeFacade) {
@@ -112,9 +144,10 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                     .background(
                         brush = Brush.verticalGradient(
                             colors = listOf(
-                                Color(0xFF040711),
-                                Color(0xFF07111E),
-                                Color(0xFF0A1626),
+                                MissionVoid,
+                                Color(0xFF050B15),
+                                MissionNight,
+                                Color(0xFF0B1829),
                             )
                         )
                     )
@@ -237,9 +270,9 @@ private fun ImmersiveStageShell(
                     .background(
                         brush = Brush.verticalGradient(
                             colors = listOf(
-                                Color(0xFF08111C),
-                                Color(0xFF0B1827),
-                                Color(0xFF13243A),
+                                MissionVoid,
+                                Color(0xFF06101E),
+                                Color(0xFF0A1A2C),
                             )
                         )
                     ),
@@ -296,14 +329,29 @@ private fun ImmersiveStageShell(
             }
 
             if (!showOverlay && uiState.renderFrame != null) {
-                focusedBodyHero?.let { model ->
-                    FocusedBodyHeroCard(
-                        model = model,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(start = 18.dp, top = 18.dp),
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(start = 18.dp, top = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    MissionStageTelemetryCard(
+                        uiState = uiState,
+                        modifier = Modifier.widthIn(max = 300.dp),
                     )
+                    focusedBodyHero?.let { model ->
+                        FocusedBodyHeroCard(
+                            model = model,
+                        )
+                    }
                 }
+                MissionTimelineRail(
+                    uiState = uiState,
+                    compact = true,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 18.dp, vertical = 84.dp),
+                )
                 StageCameraModeDock(
                     selectedCameraMode = stageCameraMode,
                     onCameraModeSelected = { mode ->
@@ -433,8 +481,8 @@ private fun ImmersiveStageHud(
     Surface(
         modifier = modifier.widthIn(max = 260.dp),
         shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.28f)),
         shadowElevation = 14.dp,
     ) {
         Column(
@@ -444,18 +492,18 @@ private fun ImmersiveStageHud(
             Text(
                 text = readinessLabel,
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
+                color = MissionCyan,
             )
             Text(
                 text = "Stage-first solar system",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
             supportingLine?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MissionTextDim,
                 )
             }
         }
@@ -466,43 +514,66 @@ private fun ImmersiveStageHud(
 private fun OrbitalBackdrop() {
     Canvas(modifier = Modifier.fillMaxSize()) {
         drawCircle(
-            color = Color(0xFF173C68).copy(alpha = 0.26f),
-            radius = size.minDimension * 0.35f,
-            center = Offset(size.width * 0.18f, size.height * 0.16f),
+            color = MissionCyanDim.copy(alpha = 0.16f),
+            radius = size.minDimension * 0.42f,
+            center = Offset(size.width * 0.10f, size.height * 0.08f),
         )
         drawCircle(
-            color = Color(0xFF7B5BFF).copy(alpha = 0.12f),
-            radius = size.minDimension * 0.25f,
-            center = Offset(size.width * 0.82f, size.height * 0.2f),
+            color = MissionBlue.copy(alpha = 0.10f),
+            radius = size.minDimension * 0.32f,
+            center = Offset(size.width * 0.86f, size.height * 0.18f),
         )
         drawCircle(
-            color = Color(0xFFF8C15C).copy(alpha = 0.08f),
-            radius = size.minDimension * 0.4f,
-            center = Offset(size.width * 0.75f, size.height * 0.85f),
+            color = MissionGold.copy(alpha = 0.07f),
+            radius = size.minDimension * 0.48f,
+            center = Offset(size.width * 0.78f, size.height * 0.88f),
         )
 
-        val orbitColor = Color(0xFF6EA8FF).copy(alpha = 0.14f)
+        val orbitCenter = Offset(size.width * 0.74f, size.height * 0.70f)
+        val orbitStroke = Stroke(width = 1.3.dp.toPx(), cap = StrokeCap.Round)
         drawCircle(
-            color = orbitColor,
-            radius = size.minDimension * 0.28f,
-            center = Offset(size.width * 0.72f, size.height * 0.72f),
-            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.4.dp.toPx()),
+            color = MissionCyan.copy(alpha = 0.10f),
+            radius = size.minDimension * 0.30f,
+            center = orbitCenter,
+            style = orbitStroke,
         )
         drawCircle(
-            color = orbitColor,
+            color = MissionCyanDim.copy(alpha = 0.12f),
             radius = size.minDimension * 0.18f,
-            center = Offset(size.width * 0.72f, size.height * 0.72f),
-            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx()),
+            center = orbitCenter,
+            style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round),
+        )
+        drawArc(
+            color = MissionGold.copy(alpha = 0.16f),
+            startAngle = 214f,
+            sweepAngle = 64f,
+            useCenter = false,
+            topLeft = Offset(
+                orbitCenter.x - size.minDimension * 0.30f,
+                orbitCenter.y - size.minDimension * 0.30f,
+            ),
+            size = Size(size.minDimension * 0.60f, size.minDimension * 0.60f),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
         )
 
-        repeat(18) { index ->
-            val fraction = index / 18f
+        repeat(16) { index ->
+            val fraction = index / 15f
             drawLine(
-                color = Color(0xFFE8EEF9).copy(alpha = 0.05f),
+                color = MissionInkLine.copy(alpha = 0.32f),
                 start = Offset(size.width * fraction, 0f),
-                end = Offset(size.width * fraction, size.height * 0.4f),
+                end = Offset(size.width * (fraction + 0.10f), size.height * 0.46f),
                 strokeWidth = 1.dp.toPx(),
                 cap = StrokeCap.Round,
+            )
+        }
+        repeat(30) { index ->
+            val x = size.width * ((index * 37 % 97) / 97f)
+            val y = size.height * ((index * 53 % 89) / 89f)
+            val alpha = if (index % 5 == 0) 0.34f else 0.16f
+            drawCircle(
+                color = Color.White.copy(alpha = alpha),
+                radius = if (index % 7 == 0) 1.5.dp.toPx() else 0.8.dp.toPx(),
+                center = Offset(x, y),
             )
         }
     }
@@ -518,8 +589,8 @@ private fun HeroPanel(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(if (compact) 26.dp else 32.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.24f)),
         shadowElevation = 16.dp,
     ) {
         Column(
@@ -528,9 +599,9 @@ private fun HeroPanel(
                 .background(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.68f),
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f),
+                            MissionCyanDim.copy(alpha = 0.18f),
+                            MissionGlass,
+                            MissionGold.copy(alpha = 0.07f),
                         ),
                     )
                 )
@@ -547,8 +618,8 @@ private fun HeroPanel(
                             enabled = canRefresh,
                             shape = RoundedCornerShape(18.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                containerColor = MissionCyan.copy(alpha = 0.18f),
+                                contentColor = MissionText,
                             ),
                         ) {
                             Text("Refresh snapshot")
@@ -571,8 +642,8 @@ private fun HeroPanel(
                             enabled = canRefresh,
                             shape = RoundedCornerShape(18.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                containerColor = MissionCyan.copy(alpha = 0.18f),
+                                contentColor = MissionText,
                             ),
                         ) {
                             Text("Refresh snapshot")
@@ -585,14 +656,14 @@ private fun HeroPanel(
                 Text(
                     text = uiState.statusLine,
                     style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MissionText,
                     modifier = Modifier.testTag(SolarLabTestTags.STATUS_LINE),
                 )
                 uiState.detailLine?.let { detail ->
                     Text(
                         text = detail,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MissionTextDim,
                         modifier = Modifier.testTag(SolarLabTestTags.DETAIL_LINE),
                     )
                 }
@@ -607,24 +678,24 @@ private fun HeroPanel(
 private fun HeroCopy(compact: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = if (compact) "Rust-authoritative stage shell" else "Canonical Android shell",
+            text = if (compact) "Trajectory workbench" else "Live trajectory workbench",
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.secondary,
+            color = MissionCyan,
         )
         Text(
             text = "Solar Gravity Lab",
             style = if (compact) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displaySmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MissionText,
             modifier = Modifier.testTag(SolarLabTestTags.TITLE),
         )
         Text(
             text = if (compact) {
-                "A stage-first mobile shell for exploring the live solar system before dropping into the deeper controls."
+                "A touch-first stage for reading live gravity, focus changes, and orbit traces at a glance."
             } else {
-                "A host-first mobile surface for the Rust runtime boundary, tuned for clarity, confidence, and touch use."
+                "Packet-backed telemetry, focus tools, and orbital controls arranged like a compact flight dynamics console."
             },
             style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MissionTextDim,
         )
     }
 }
@@ -729,18 +800,18 @@ private fun RenderStagePanel(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "Solar system stage",
+                        text = "Trajectory stage",
                         style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = MissionText,
                     )
                     Text(
                         text = if (compactStage) {
-                            "Live overhead teaching view from Rust-authoritative scene packets."
+                            "Live packet-backed orbit view with focus telemetry and touch controls."
                         } else {
-                            "Live overhead orbital view from Rust-authoritative scene packets."
+                            "Live packet-backed orbit view with mission-clock telemetry and path overlays."
                         },
                         style = if (compactStage) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MissionTextDim,
                     )
                     Text(
                         text = if (compactStage) {
@@ -749,7 +820,7 @@ private fun RenderStagePanel(
                             "Pinch to zoom, drag to pan, tap a body to focus, double-tap to reset the view."
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
+                        color = MissionCyan,
                     )
                 }
                 StatusPill(
@@ -780,9 +851,9 @@ private fun RenderStagePanel(
                     .background(
                         brush = Brush.verticalGradient(
                             colors = listOf(
-                                Color(0xFF08111C),
-                                Color(0xFF0B1827),
-                                Color(0xFF13243A),
+                                MissionVoid,
+                                Color(0xFF06101E),
+                                Color(0xFF0D1E31),
                             )
                         )
                     ),
@@ -811,19 +882,21 @@ private fun RenderStagePanel(
                         },
                     )
 
-                    if (compactStage) {
-                        StatusPill(
-                            label = uiState.focusedBodyId?.let { "Focused: $it" } ?: "Tap a body to focus",
-                            tone = if (uiState.focusedBodyId != null) {
-                                ShellNoticeTone.Positive
-                            } else {
-                                ShellNoticeTone.Neutral
-                            },
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(16.dp),
-                        )
-                    } else {
+                    MissionStageTelemetryCard(
+                        uiState = uiState,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(16.dp),
+                    )
+                    MissionTimelineRail(
+                        uiState = uiState,
+                        compact = compactStage,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 16.dp, vertical = 16.dp),
+                    )
+
+                    if (!compactStage) {
                         TrackedOrbitHistoryPanel(
                             trackedBodyIds = uiState.recentFocusedBodyIds.take(trackedOrbitLimit),
                             showTrackedOrbits = showTrackedOrbits,
@@ -836,13 +909,6 @@ private fun RenderStagePanel(
                                 .align(Alignment.TopEnd)
                                 .padding(16.dp),
                         )
-
-                        RenderStageSummaryCard(
-                            uiState = uiState,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(16.dp),
-                        )
                     }
                 } else {
                     EmptyRenderStage(
@@ -851,6 +917,10 @@ private fun RenderStagePanel(
                         canRefresh = canRefresh,
                     )
                 }
+            }
+
+            if (uiState.renderFrame != null && !compactStage) {
+                RenderStageSummaryCard(uiState = uiState)
             }
 
             if (uiState.renderFrame != null && compactStage) {
@@ -892,8 +962,8 @@ private fun RenderStageSummaryCard(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        color = MissionGlassSoft,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.20f)),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -902,27 +972,256 @@ private fun RenderStageSummaryCard(
             Text(
                 text = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision.orEmpty(),
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
+                color = MissionCyan,
             )
             Text(
                 text = "${uiState.renderStatus.renderedBodyCount} bodies · ${uiState.renderStatus.renderedTracerCount} tracers · ${uiState.renderStatus.renderedTrailCount} trails",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
             uiState.renderStatus.summary?.let { summary ->
                 Text(
                     text = summary,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MissionTextDim,
                 )
             }
             if (uiState.renderStatus.readiness == RenderHostReadiness.Unavailable) {
                 Text(
                     text = "Showing the last decoded frame while packet export catches up.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MissionGold,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun MissionStageTelemetryCard(
+    uiState: ShellUiState,
+    modifier: Modifier = Modifier,
+) {
+    val epochSeconds = uiState.snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds
+    val revision = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision ?: "waiting"
+    val focusLabel = uiState.focusedBodyId?.ifBlank { null } ?: "free camera"
+    val bodyCount = uiState.renderStatus.renderedBodyCount
+    val tracerCount = uiState.renderStatus.renderedTracerCount
+    val trailCount = uiState.renderStatus.renderedTrailCount
+    val signalValues = missionSignalValues(uiState)
+
+    Surface(
+        modifier = modifier.widthIn(max = 320.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionCyan.copy(alpha = 0.28f)),
+        shadowElevation = 14.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            MissionCyanDim.copy(alpha = 0.18f),
+                            MissionGlass,
+                            MissionVoid.copy(alpha = 0.84f),
+                        )
+                    )
+                )
+                .padding(horizontal = 15.dp, vertical = 13.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Text(
+                text = "MISSION CLOCK",
+                style = MaterialTheme.typography.labelLarge,
+                color = MissionCyan,
+            )
+            Text(
+                text = epochSeconds?.let { "MET ${it.asEpochLabel()}" } ?: "Awaiting epoch",
+                style = MaterialTheme.typography.titleLarge,
+                color = MissionText,
+            )
+            MissionMetricRow(label = "Focus", value = focusLabel)
+            MissionMetricRow(label = "Revision", value = revision)
+            MissionMetricRow(label = "Scene", value = "$bodyCount bodies · $tracerCount tracers · $trailCount trails")
+            MissionMiniSignalChart(
+                values = signalValues,
+                accent = MissionCyan,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(34.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MissionMetricRow(
+    label: String,
+    value: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label.uppercase(Locale.US),
+            style = MaterialTheme.typography.labelMedium,
+            color = MissionTextDim,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelMedium,
+            color = MissionText,
+            textAlign = TextAlign.End,
+            modifier = Modifier.widthIn(max = 178.dp),
+        )
+    }
+}
+
+@Composable
+private fun MissionTimelineRail(
+    uiState: ShellUiState,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val epochSeconds = uiState.snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds
+    val progress = missionRailProgress(uiState)
+    val playback = uiState.snapshot?.let { snapshot ->
+        if (snapshot.paused) "Paused" else snapshot.simSecondsPerRealSecond.asRateLabel()
+    } ?: "Packet time"
+
+    Surface(
+        modifier = modifier
+            .widthIn(max = if (compact) 480.dp else 640.dp)
+            .fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.24f)),
+        shadowElevation = 10.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = epochSeconds?.let { "MET ${it.asEpochLabel()}" } ?: "Awaiting mission time",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MissionText,
+                )
+                Text(
+                    text = playback,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MissionGold,
+                )
+            }
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 24.dp else 28.dp),
+            ) {
+                val railY = size.height * 0.58f
+                val startX = 4.dp.toPx()
+                val endX = size.width - 4.dp.toPx()
+                val activeX = startX + (endX - startX) * progress
+                drawLine(
+                    color = MissionInkLine.copy(alpha = 0.86f),
+                    start = Offset(startX, railY),
+                    end = Offset(endX, railY),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = MissionCyan.copy(alpha = 0.88f),
+                    start = Offset(startX, railY),
+                    end = Offset(activeX, railY),
+                    strokeWidth = 2.4.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                repeat(9) { index ->
+                    val tickX = startX + ((endX - startX) * (index / 8f))
+                    val tickHeight = if (index % 2 == 0) 8.dp.toPx() else 5.dp.toPx()
+                    drawLine(
+                        color = MissionTextDim.copy(alpha = 0.42f),
+                        start = Offset(tickX, railY - (tickHeight * 0.5f)),
+                        end = Offset(tickX, railY + (tickHeight * 0.5f)),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+                drawCircle(
+                    color = MissionGold.copy(alpha = 0.26f),
+                    radius = 8.dp.toPx(),
+                    center = Offset(activeX, railY),
+                )
+                drawCircle(
+                    color = MissionGold,
+                    radius = 3.dp.toPx(),
+                    center = Offset(activeX, railY),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MissionMiniSignalChart(
+    values: List<Float>,
+    accent: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        if (values.isEmpty()) {
+            return@Canvas
+        }
+        val left = 2.dp.toPx()
+        val right = size.width - 2.dp.toPx()
+        val top = 4.dp.toPx()
+        val bottom = size.height - 4.dp.toPx()
+        val baseline = bottom - (bottom - top) * 0.18f
+        drawLine(
+            color = MissionInkLine.copy(alpha = 0.72f),
+            start = Offset(left, baseline),
+            end = Offset(right, baseline),
+            strokeWidth = 1.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        var previous: Offset? = null
+        values.forEachIndexed { index, value ->
+            val fraction = if (values.size == 1) 1f else index / (values.lastIndex.toFloat())
+            val x = left + (right - left) * fraction
+            val y = bottom - (bottom - top) * value.coerceIn(0f, 1f)
+            val current = Offset(x, y)
+            previous?.let { last ->
+                drawLine(
+                    color = accent.copy(alpha = 0.32f),
+                    start = last,
+                    end = current,
+                    strokeWidth = 5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = accent.copy(alpha = 0.88f),
+                    start = last,
+                    end = current,
+                    strokeWidth = 1.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+            previous = current
+        }
+        previous?.let { head ->
+            drawCircle(
+                color = MissionGold.copy(alpha = 0.88f),
+                radius = 2.4.dp.toPx(),
+                center = head,
+            )
         }
     }
 }
@@ -943,8 +1242,8 @@ private fun StageInteractionDock(
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        color = MissionGlassSoft,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.20f)),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -953,7 +1252,7 @@ private fun StageInteractionDock(
             Text(
                 text = focusedBodyId?.let { "Stage tools · focused on $it" } ?: "Stage tools",
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
+                color = MissionCyan,
             )
             StageCameraModeDock(
                 selectedCameraMode = selectedCameraMode,
@@ -1044,8 +1343,8 @@ private fun StageCameraModeDock(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+        color = MissionGlassSoft,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.18f)),
     ) {
         FlowRow(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -1075,8 +1374,8 @@ private fun FocusedBodyHeroCard(
             .widthIn(max = 290.dp)
             .testTag(SolarLabTestTags.FOCUSED_BODY_CARD),
         shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.76f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.24f)),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionCyan.copy(alpha = 0.24f)),
         shadowElevation = 16.dp,
     ) {
         Column(
@@ -1085,8 +1384,8 @@ private fun FocusedBodyHeroCard(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.28f),
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                            MissionBlue.copy(alpha = 0.14f),
+                            MissionGlass,
                         )
                     )
                 )
@@ -1096,22 +1395,22 @@ private fun FocusedBodyHeroCard(
             Text(
                 text = model.cameraModeLabel,
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
+                color = MissionCyan,
             )
             Text(
                 text = model.displayName,
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
             Text(
                 text = model.detailLine,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MissionTextDim,
             )
             Text(
                 text = model.contextLine,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = MissionGold,
             )
         }
     }
@@ -1131,8 +1430,8 @@ private fun TrackedOrbitHistoryPanel(
     Surface(
         modifier = modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_LEGEND_PANEL),
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.20f)),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -1141,7 +1440,7 @@ private fun TrackedOrbitHistoryPanel(
             Text(
                 text = "Tracked orbits",
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
+                color = MissionCyan,
             )
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1170,14 +1469,14 @@ private fun TrackedOrbitHistoryPanel(
                     Text(
                         text = "No tracked bodies yet.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = MissionText,
                     )
                 } else {
                     trackedBodyIds.forEachIndexed { index, bodyId ->
                         Text(
                             text = "${index + 1}. $bodyId",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = MissionText,
                         )
                     }
                 }
@@ -1186,7 +1485,7 @@ private fun TrackedOrbitHistoryPanel(
                     text = "Tracked orbits are hidden.",
                     modifier = Modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MissionText,
                 )
             }
             if (showTrackedOrbits) {
@@ -1194,14 +1493,14 @@ private fun TrackedOrbitHistoryPanel(
                     text = "History trails · last $trackedOrbitLimit focused bodies stay visible behind the stage.",
                     modifier = Modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_HISTORY_SUMMARY),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MissionTextDim,
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "Forecast paths",
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
+                color = MissionCyan,
             )
             Text(
                 text = if (showForecastPaths) {
@@ -1211,7 +1510,7 @@ private fun TrackedOrbitHistoryPanel(
                 },
                 modifier = Modifier.testTag(SolarLabTestTags.ORBIT_OVERLAY_FORECAST_SUMMARY),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
             Text(
                 text = overlayBodySummary(
@@ -1219,7 +1518,7 @@ private fun TrackedOrbitHistoryPanel(
                     emptyText = "Forecast follows the current focus when one is selected.",
                 ),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MissionTextDim,
             )
         }
     }
@@ -1276,8 +1575,8 @@ private fun EmptyRenderStage(
                 .background(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.46f),
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            MissionCyan.copy(alpha = 0.46f),
+                            MissionCyanDim.copy(alpha = 0.12f),
                             Color.Transparent,
                         )
                     )
@@ -1287,14 +1586,14 @@ private fun EmptyRenderStage(
         Text(
             text = title,
             style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MissionText,
             textAlign = TextAlign.Center,
         )
         Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = detail,
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MissionTextDim,
             textAlign = TextAlign.Center,
             modifier = Modifier.widthIn(max = 520.dp),
         )
@@ -1808,8 +2107,8 @@ private fun TeachingCatalogCard(
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.44f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        color = MissionGlassSoft,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.18f)),
     ) {
         Column(
             modifier = Modifier
@@ -1821,18 +2120,18 @@ private fun TeachingCatalogCard(
                 Text(
                     text = entry.displayName,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MissionText,
                 )
                 Text(
                     text = entry.bodyId,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = MissionCyan,
                 )
                 if (entry.aliases.isNotEmpty()) {
                     Text(
                         text = entry.aliases.joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MissionTextDim,
                     )
                 }
             }
@@ -1918,7 +2217,7 @@ private fun RuntimeDetailPanel(uiState: ShellUiState) {
             Text(
                 text = "Runtime and boundary details",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
 
             NoticeCard(uiState = uiState)
@@ -1964,7 +2263,7 @@ private fun NoticeCard(uiState: ShellUiState) {
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
         }
     }
@@ -2036,8 +2335,8 @@ private fun DetailCard(
 ) {
     Surface(
         shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        color = MissionGlassSoft,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.16f)),
     ) {
         Column(
             modifier = Modifier
@@ -2048,11 +2347,11 @@ private fun DetailCard(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
             entries.forEachIndexed { index, (label, value) ->
                 if (index > 0) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                    HorizontalDivider(color = MissionInkLine.copy(alpha = 0.68f))
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2062,13 +2361,13 @@ private fun DetailCard(
                     Text(
                         text = label,
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.secondary,
+                        color = MissionCyan,
                         modifier = Modifier.weight(0.38f),
                     )
                     Text(
                         text = value,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MissionTextDim,
                         textAlign = TextAlign.End,
                         modifier = Modifier
                             .weight(0.62f)
@@ -2093,8 +2392,8 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
 
     Surface(
         shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        color = MissionGlassSoft,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.16f)),
     ) {
         Column(
             modifier = Modifier
@@ -2105,7 +2404,7 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
             Text(
                 text = "Developer telemetry",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MissionText,
             )
             Text(
                 text = if (presentation.enabled) {
@@ -2114,13 +2413,13 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
                     "Developer telemetry is disabled for this build."
                 },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MissionTextDim,
             )
             streamingTarget?.let { target ->
                 Text(
                     text = "Remote stream target: $target",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = MissionCyan,
                 )
             }
 
@@ -2163,7 +2462,7 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
                 Text(
                     text = "Dropped oldest entries: ${presentation.droppedEntryCount}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = MissionGold,
                 )
             }
 
@@ -2175,7 +2474,7 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
                         "Use a debug or internal build to enable live device telemetry."
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MissionTextDim,
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2195,13 +2494,13 @@ private fun DeveloperTelemetryCard(presentation: DeveloperTelemetryPresentation)
 private fun DeveloperTelemetryEntry(event: DeveloperTelemetryEvent) {
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionInkLine.copy(alpha = 0.72f)),
     ) {
         Text(
             text = event.toDisplayLine(locale = Locale.getDefault()),
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MissionTextDim,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -2217,8 +2516,8 @@ private fun LabPanel(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(30.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        color = MissionGlass,
+        border = BorderStroke(1.dp, MissionCyanDim.copy(alpha = 0.18f)),
         shadowElevation = 12.dp,
     ) {
         Box(
@@ -2227,8 +2526,8 @@ private fun LabPanel(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f),
+                            MissionGlass,
+                            MissionGlassSoft,
                         )
                     )
                 )
@@ -2353,6 +2652,33 @@ private fun ShellUiState.resolveFocusTarget(): String = cameraFacingSummary ?: "
 private fun ShellUiState.deriveActiveCheckpoint(): String = snapshotSummary?.parseActiveCheckpoint()
     ?: "Not exposed by this state slice"
 
+private fun missionRailProgress(uiState: ShellUiState): Float {
+    val epochSeconds = uiState.snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds ?: return 0.08f
+    val missionDaySeconds = 86_400.0
+    val normalized = ((epochSeconds % missionDaySeconds) + missionDaySeconds) % missionDaySeconds
+    return (normalized / missionDaySeconds).toFloat().coerceIn(0.04f, 0.96f)
+}
+
+private fun missionSignalValues(uiState: ShellUiState): List<Float> {
+    val epochProgress = missionRailProgress(uiState)
+    val bodySignal = (uiState.renderStatus.renderedBodyCount / MISSION_SIGNAL_BODY_NORMALIZATION)
+        .coerceIn(0.08f, 0.92f)
+    val tracerSignal = (uiState.renderStatus.renderedTracerCount / MISSION_SIGNAL_TRACER_NORMALIZATION)
+        .coerceIn(0.06f, 0.86f)
+    val trailSignal = (uiState.renderStatus.renderedTrailCount / MISSION_SIGNAL_TRAIL_NORMALIZATION)
+        .coerceIn(0.10f, 0.90f)
+    val focusLift = if (uiState.focusedBodyId != null) MISSION_SIGNAL_FOCUS_LIFT else 0f
+
+    return listOf(
+        MISSION_SIGNAL_L1_BASE + (bodySignal * MISSION_SIGNAL_L1_BODY_COEFF),
+        MISSION_SIGNAL_L2_BASE + (tracerSignal * MISSION_SIGNAL_L2_TRACER_COEFF) + (focusLift * MISSION_SIGNAL_L2_FOCUS_COEFF),
+        MISSION_SIGNAL_L3_BASE + (trailSignal * MISSION_SIGNAL_L3_TRAIL_COEFF),
+        MISSION_SIGNAL_L4_BASE + (epochProgress * MISSION_SIGNAL_L4_TIME_COEFF),
+        MISSION_SIGNAL_L5_BASE + (bodySignal * MISSION_SIGNAL_L5_BODY_COEFF) + (trailSignal * MISSION_SIGNAL_L5_TRAIL_COEFF),
+        MISSION_SIGNAL_L6_BASE + (tracerSignal * MISSION_SIGNAL_L6_TRACER_COEFF) + focusLift,
+    ).map { value -> value.coerceIn(0.05f, 0.95f) }
+}
+
 private fun String.parseActiveCheckpoint(): String {
     val capture = Regex("checkpoint=([^,;]+)").find(this)
     return capture?.groupValues
@@ -2385,23 +2711,23 @@ private fun RuntimeObserverMode.displayLabel(): String = when (this) {
 
 @Composable
 private fun ShellNoticeTone.containerColor(): Color = when (this) {
-    ShellNoticeTone.Neutral -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
-    ShellNoticeTone.Positive -> Color(0xFF153728).copy(alpha = 0.92f)
-    ShellNoticeTone.Caution -> Color(0xFF43310F).copy(alpha = 0.92f)
+    ShellNoticeTone.Neutral -> MissionGlassSoft
+    ShellNoticeTone.Positive -> Color(0xFF0E3A31).copy(alpha = 0.92f)
+    ShellNoticeTone.Caution -> Color(0xFF473410).copy(alpha = 0.92f)
     ShellNoticeTone.Critical -> Color(0xFF4A1820).copy(alpha = 0.94f)
 }
 
 @Composable
 private fun ShellNoticeTone.borderColor(): Color = when (this) {
-    ShellNoticeTone.Neutral -> MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)
+    ShellNoticeTone.Neutral -> MissionCyanDim.copy(alpha = 0.22f)
     ShellNoticeTone.Positive -> Color(0xFF4FD39A).copy(alpha = 0.42f)
-    ShellNoticeTone.Caution -> Color(0xFFF8C15C).copy(alpha = 0.42f)
+    ShellNoticeTone.Caution -> MissionGold.copy(alpha = 0.42f)
     ShellNoticeTone.Critical -> Color(0xFFFF8B8B).copy(alpha = 0.42f)
 }
 
 @Composable
 private fun ShellNoticeTone.textColor(): Color = when (this) {
-    ShellNoticeTone.Neutral -> MaterialTheme.colorScheme.onSurface
+    ShellNoticeTone.Neutral -> MissionText
     ShellNoticeTone.Positive -> Color(0xFFD6FFE9)
     ShellNoticeTone.Caution -> Color(0xFFFFECB8)
     ShellNoticeTone.Critical -> Color(0xFFFFD7DC)
