@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCHEMA_VERSION = "2026-04-27"
+SCHEMA_VERSION = "2026-04-27.1"
 AT_HWCAP = 16
 AT_HWCAP2 = 26
 
@@ -112,7 +112,7 @@ FEATURE_ORDER = (
 )
 
 FEATURE_WORKLOADS = {
-    "neon": "active authoritative f64 pairwise gravity solver when runtime dispatch selects simd.arm64.neon-f64-pairwise",
+    "neon": "active authoritative f64 pairwise gravity solver when runtime dispatch selects simd.arm64.neon-f64-pairwise or simd.arm64.neon-f64-tiled-pairwise",
     "fp": "baseline floating-point substrate for authoritative simulation",
     "fp16": "reserved for visualization, quantization, or tracer-assist paths with an explicit precision policy",
     "fhm": "reserved for fp16 visualization/tracer-assist kernels after parity and error-budget proof",
@@ -465,7 +465,10 @@ def collect_census(args: argparse.Namespace) -> dict[str, object]:
             "detected_features": detected,
         },
         "runtime_truth": {
-            "implemented_solver_paths": ["simd.arm64.neon-f64-pairwise"],
+            "implemented_solver_paths": [
+                "simd.arm64.neon-f64-pairwise",
+                "simd.arm64.neon-f64-tiled-pairwise",
+            ],
             "candidate_kernel_paths": list(CANDIDATE_KERNEL_PATHS),
             "eligible_candidate_kernel_paths": eligible_candidate_kernel_paths,
             "blocked_candidate_kernel_paths": blocked_candidate_kernel_paths,
@@ -504,7 +507,7 @@ def write_summary(path: str | None, census: dict[str, object]) -> None:
         f"device-label: {census['device_label']}",
         f"detected-features: {','.join(detected) if detected else 'none'}",
         f"uncataloged-detected-tokens-count: {len(cpu['uncataloged_detected_tokens'])}",
-        "implemented-solver-paths: simd.arm64.neon-f64-pairwise",
+        "implemented-solver-paths: simd.arm64.neon-f64-pairwise,simd.arm64.neon-f64-tiled-pairwise",
         "candidate-kernel-paths: " + ",".join(census["runtime_truth"]["candidate_kernel_paths"]),
         "eligible-candidate-kernel-paths: "
         + ",".join(census["runtime_truth"]["eligible_candidate_kernel_paths"]),
@@ -548,7 +551,10 @@ def write_legacy_capabilities(path: str | None, census: dict[str, object]) -> No
             )
         },
         "implemented_solver_paths": {
-            "active_when_supported": ["simd.arm64.neon-f64-pairwise"],
+            "active_when_supported": [
+                "simd.arm64.neon-f64-pairwise",
+                "simd.arm64.neon-f64-tiled-pairwise",
+            ],
             "reported_but_reserved_until_kernel_exists": [
                 "sve",
                 "sve2",

@@ -22,7 +22,9 @@ export.
 - `showcase.comet-flyby`: planets plus curated comets and a probe for cinematic
   small-body flyby checks.
 - `stress.trail-density`: a denser tracer field for legibility and render
-  pressure checks.
+  pressure checks. It also crosses the large-scene threshold used by the Arm64
+  NEON tiled gravity kernel, making it the preferred built-in pack for checking
+  whether large-scene solver-path telemetry becomes visible after load.
 
 ## Runtime contract
 

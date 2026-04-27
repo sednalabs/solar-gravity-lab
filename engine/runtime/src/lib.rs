@@ -379,6 +379,11 @@ impl WorldRuntime {
         &self.active_branch_id
     }
 
+    #[must_use]
+    pub fn active_solver_execution_report(&self) -> &SolverExecutionReport {
+        &self.active_branch().world.solver_execution
+    }
+
     /// Apply a package manifest to the active branch data state.
     /// This can change installed package state and mounted-package visibility, but
     /// does not directly mutate simulation motion state.

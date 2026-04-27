@@ -28,8 +28,8 @@ use solarlab_hardware::{
 };
 use solarlab_physics::{
     arm64_kernel_availability, arm64_kernel_catalog, cpu_feature_flags, detect_cpu_features,
-    solver_execution_report_for_backend, CollisionModel, IntegratorKind, PhysicsPolicy,
-    SolverBackend, SolverExecutionReport, SolverFallbackCode, SolverScheduleMode,
+    solver_execution_report_for_backend, Arm64KernelReadiness, CollisionModel, IntegratorKind,
+    PhysicsPolicy, SolverBackend, SolverExecutionReport, SolverFallbackCode, SolverScheduleMode,
 };
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_scene::SceneTrailFamily;
@@ -674,7 +674,7 @@ pub fn runtime_info(
     let kernel_availability = arm64_kernel_availability(&solver_execution.active_cpu_features);
     let active_kernel_count =
         if matches!(solver_execution.effective_backend, SolverBackend::SimdArm64)
-            && solver_execution.path_id == "simd.arm64.neon-f64-pairwise"
+            && is_active_arm64_kernel_path(&solver_execution.path_id)
         {
             1
         } else {
@@ -705,11 +705,10 @@ pub fn runtime_info(
 }
 
 fn live_runtime_info_for_session(session: &RuntimeSession) -> SlRuntimeInfo {
-    let snapshot = session.runtime.snapshot();
     runtime_info(
         sl_cpu_backend_to_cpu_backend(session.runtime_info.requested_cpu_backend),
         sl_gpu_backend_to_gpu_backend(session.runtime_info.gpu_backend),
-        &snapshot.solver_execution,
+        session.runtime.active_solver_execution_report(),
     )
 }
 
@@ -892,8 +891,6 @@ pub extern "C" fn sl_v2_session_apply_command(
             };
         }
     };
-    session.runtime_info = live_runtime_info_for_session(session);
-
     SlSessionSnapshotSummaryResult {
         result: status(SlStatusCode::Ok),
         summary,
@@ -1566,8 +1563,15 @@ fn cpu_solver_path_code(path_id: &str) -> u32 {
         "scalar.reference" => 0,
         "simd.arm64.neon-f64-pairwise" => 1,
         "simd.x64.scalar-fallback" => 2,
+        "simd.arm64.neon-f64-tiled-pairwise" => 3,
         _ => u32::MAX,
     }
+}
+
+fn is_active_arm64_kernel_path(path_id: &str) -> bool {
+    arm64_kernel_catalog()
+        .iter()
+        .any(|entry| entry.readiness == Arm64KernelReadiness::Active && entry.path_id == path_id)
 }
 
 fn cpu_fallback_code(fallback_code: &SolverFallbackCode) -> u32 {
@@ -2663,7 +2667,7 @@ mod tests {
         assert_eq!(runtime_info.info.cpu_fallback_code, 0);
         assert_eq!(runtime_info.info.cpu_schedule_body_count, 0);
         assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 0);
-        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 13);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 14);
         assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
         assert_eq!(
             runtime_info.info.cpu_kernel_eligible_candidate_count
@@ -2711,7 +2715,10 @@ mod tests {
         let has_neon = create.runtime_info.cpu_feature_flags & 1 != 0;
         if cfg!(target_arch = "aarch64") && has_neon {
             assert_eq!(create.runtime_info.cpu_backend, SlCpuBackend::SimdArm64);
-            assert_eq!(create.runtime_info.cpu_solver_path, 1);
+            assert!(
+                create.runtime_info.cpu_solver_path == 1
+                    || create.runtime_info.cpu_solver_path == 3
+            );
             assert_eq!(create.runtime_info.cpu_fallback_code, 0);
             assert_eq!(create.runtime_info.cpu_kernel_active_count, 1);
         } else {
@@ -2731,7 +2738,7 @@ mod tests {
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info, create.runtime_info);
-        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 13);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 14);
         assert_eq!(
             runtime_info.info.cpu_kernel_eligible_candidate_count
                 + runtime_info.info.cpu_kernel_blocked_candidate_count,
@@ -3259,6 +3266,39 @@ mod tests {
             second_seed_result.summary.body_count,
             seed_result.summary.body_count
         );
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn large_seeded_arm64_session_reports_tiled_solver_path_when_available() {
+        let mut params = new_params("sol-system", "main");
+        params.cpu_backend = 1;
+        let create = sl_v2_session_create(params);
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let seed_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::SeedCanonicalSolarSystem, |_command| {}),
+        );
+        assert_eq!(seed_result.result.code, SlStatusCode::Ok);
+        assert_eq!(seed_result.summary.body_count, 365);
+
+        let runtime_info = sl_v2_session_runtime_info(create.handle);
+        assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
+        assert_eq!(runtime_info.info.cpu_schedule_body_count, 365);
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+
+        let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;
+        if cfg!(target_arch = "aarch64") && has_neon {
+            assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::SimdArm64);
+            assert_eq!(runtime_info.info.cpu_solver_path, 3);
+            assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
+        } else {
+            assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::ReferenceScalar);
+            assert_eq!(runtime_info.info.cpu_solver_path, 0);
+            assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
+        }
 
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }

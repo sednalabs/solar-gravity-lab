@@ -45,17 +45,20 @@ these fields separately:
 - The Arm64 capability census artifact is real. It records detected CPU
   features separately from active SGL workload claims, and preserves uncataloged
   feature tokens for follow-up instead of silently dropping them.
-- The implemented Arm64 solver path is `simd.arm64.neon-f64-pairwise`: a
-  double-precision NEON pairwise gravity acceleration kernel guarded by runtime
-  feature detection and scalar-oracle parity tests.
+- The implemented Arm64 solver paths are `simd.arm64.neon-f64-pairwise` and
+  `simd.arm64.neon-f64-tiled-pairwise`: double-precision NEON pairwise gravity
+  acceleration kernels guarded by runtime feature detection and scalar-oracle
+  parity tests. Runtime dispatch selects the tiled path only for larger body
+  sets.
 - The Arm64 kernel registry also names candidate lanes for SVE, SVE2, SME,
   SME2, SVE-I8MM, DotProd, I8MM, BF16, FP16, FHM, RDM, and FCMA so future
   acceleration work has stable path IDs before those paths become active.
 - Runtime info and the capability census now count active, eligible candidate,
   and blocked candidate kernel lanes against the detected CPU feature set.
-- Runtime info reports scheduler truth separately from kernel truth. Adaptive
-  tiled scheduling may be reported as a candidate worker budget, but the active
-  worker count remains single-worker until a tiled solver is actually selected.
+- Runtime info reports scheduler truth separately from kernel truth. The active
+  worker count remains single-worker; larger Arm64 scenes may select the tiled
+  NEON kernel path, while adaptive multi-worker scheduling remains candidate
+  truth until a parallel solver is actually selected.
 
 ## What Must Stay Honest
 

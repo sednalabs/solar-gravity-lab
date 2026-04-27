@@ -1116,6 +1116,7 @@ internal const val NATIVE_GPU_BACKEND_OPENCL = 4
 private const val NATIVE_CPU_SOLVER_PATH_SCALAR_REFERENCE = 0
 private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PAIRWISE = 1
 private const val NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK = 2
+private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_TILED_PAIRWISE = 3
 private const val NATIVE_CPU_FALLBACK_NONE = 0
 private const val NATIVE_CPU_FALLBACK_ARM64_NON_AARCH64_HOST = 1
 private const val NATIVE_CPU_FALLBACK_ARM64_MISSING_NEON = 2
@@ -1388,6 +1389,7 @@ internal data class NativeRuntimeInfoResult(
     fun cpuSolverPathLabel(): String = when (cpuSolverPath) {
         NATIVE_CPU_SOLVER_PATH_SCALAR_REFERENCE -> "scalar.reference"
         NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PAIRWISE -> "simd.arm64.neon-f64-pairwise"
+        NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_TILED_PAIRWISE -> "simd.arm64.neon-f64-tiled-pairwise"
         NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK -> "simd.x64.scalar-fallback"
         else -> "unknown($cpuSolverPath)"
     }

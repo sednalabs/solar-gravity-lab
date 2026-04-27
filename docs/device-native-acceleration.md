@@ -37,6 +37,12 @@ must earn its way into active runtime selection.
 The current active authoritative Arm64 solver path is:
 
 - `simd.arm64.neon-f64-pairwise`
+- `simd.arm64.neon-f64-tiled-pairwise`
+
+Both active paths use NEON double-precision gravity math. The tiled path is
+selected only for larger body sets where the dispatch policy can make use of
+the large-scene kernel shape without overclaiming SVE, SME, or packed-integer
+extensions.
 
 The registry also names experimental candidate lanes so the project does not
 forget the intended breadth:

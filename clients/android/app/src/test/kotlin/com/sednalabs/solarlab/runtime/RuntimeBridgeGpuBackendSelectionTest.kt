@@ -122,6 +122,31 @@ class RuntimeBridgeGpuBackendSelectionTest {
     }
 
     @Test
+    fun nativeRuntimeInfoResult_labelsLargeSceneTiledNeonSolverPath() {
+        val info = NativeRuntimeInfoResult(
+            result = NativeResult(code = 0),
+            abiVersion = 6,
+            requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
+            cpuFeatureFlags = 1L shl 0,
+            cpuSolverPath = 3,
+            cpuFallbackCode = 0,
+            cpuScheduleMode = 1,
+            cpuScheduleActiveWorkers = 1,
+            cpuScheduleCandidateWorkers = 8,
+            cpuScheduleBodyCount = 192,
+            cpuScheduleEstimatedPairCount = 18_336,
+        )
+
+        assertEquals("simd.arm64.neon-f64-tiled-pairwise", info.cpuSolverPathLabel())
+        assertEquals(
+            "single-worker active, adaptive tiled candidate 8 workers (192 bodies, 18336 pairs)",
+            info.cpuScheduleSummary(),
+        )
+    }
+
+    @Test
     fun nativeRuntimeInfoResult_surfacesCpuKernelCatalogTruth() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
@@ -132,14 +157,14 @@ class RuntimeBridgeGpuBackendSelectionTest {
             cpuFeatureFlags = (1L shl 0) or (1L shl 7) or (1L shl 9),
             cpuSolverPath = 1,
             cpuFallbackCode = 0,
-            cpuKernelCatalogCount = 13,
+            cpuKernelCatalogCount = 14,
             cpuKernelActiveCount = 1,
             cpuKernelEligibleCandidateCount = 2,
             cpuKernelBlockedCandidateCount = 10,
         )
 
         assertEquals(
-            "kernel catalog: 13 paths, active 1, eligible candidates 2, blocked candidates 10",
+            "kernel catalog: 14 paths, active 1, eligible candidates 2, blocked candidates 10",
             info.cpuKernelCatalogSummary(),
         )
     }
