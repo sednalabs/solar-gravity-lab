@@ -73,6 +73,11 @@ Normal Codex-driven use of the hosted session uses Codex's native
 provider-side runtime adapter below that boundary. This path does not require
 an OpenAI API key in the session.
 
+In that native flow, screenshots should reach Codex as native image content in
+the computer-use response. Solar Lab artifacts and paths remain evidence for
+workflow replay, provider diagnostics, and debugging, not instructions for the
+model to fetch local files during normal visual interaction.
+
 ## Provider Manifest
 
 The provider manifest is emitted by the selected Android provider ref and stored
