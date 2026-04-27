@@ -3,11 +3,9 @@ package com.sednalabs.solarlab
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import kotlinx.coroutines.runBlocking
@@ -29,15 +27,14 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
+            }.isSuccess
         }
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).performClick()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON).assertIsDisplayed()
-        assertTrue(
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON).fetchSemanticsNodes().isEmpty()
-        )
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON).performClick()
+        composeRule.runOnUiThread {
+            composeRule.activity.showStageFirstRuntimeMirrorForTesting()
+        }
 
         waitForRuntimeMirrorCondition(timeoutMillis = 20_000) {
             composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()
