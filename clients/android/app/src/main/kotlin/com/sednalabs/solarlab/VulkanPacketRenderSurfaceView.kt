@@ -1057,21 +1057,17 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         val originY = screenY(0f, centerY, scale, viewportHeight)
 
         var x = positiveModulo(originX, gridSpacingPx)
-        var x = positiveModulo(-centerX * scale, gridSpacingPx)
         while (x <= viewportWidth) {
             canvas.drawLine(x, 0f, x, viewportHeight, referenceGridPaint)
             x += gridSpacingPx
         }
 
         var y = positiveModulo(originY, gridSpacingPx)
-        var y = positiveModulo(centerY * scale, gridSpacingPx)
         while (y <= viewportHeight) {
             canvas.drawLine(0f, y, viewportWidth, y, referenceGridPaint)
             y += gridSpacingPx
         }
 
-        val originX = screenX(0f, centerX, scale, viewportWidth)
-        val originY = screenY(0f, centerY, scale, viewportHeight)
         val margin = minDimension * 0.28f
         if (originX in -margin..(viewportWidth + margin)) {
             referenceAxisPaint.color = Color.argb(54, 118, 247, 255)
@@ -1085,7 +1081,6 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         }
 
         if (originX in -margin..(viewportWidth + margin) && originY in -margin..(viewportHeight + margin)) {
-            val referenceRadiusBase = minDimension * 0.46f
             val referenceRadiusBase = (halfWorldSpan * scale).coerceAtLeast(minDimension * 0.16f)
             listOf(0.34f, 0.58f, 0.82f).forEachIndexed { index, radiusScale ->
                 val radius = (referenceRadiusBase * radiusScale).coerceIn(minDimension * 0.10f, minDimension * 0.48f)
