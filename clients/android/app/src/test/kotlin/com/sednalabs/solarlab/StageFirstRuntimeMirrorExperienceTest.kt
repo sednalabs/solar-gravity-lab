@@ -144,6 +144,25 @@ class StageFirstRuntimeMirrorExperienceTest {
         )
 
         assertTrue(compacted.endsWith("... [truncated]"))
-        assertTrue(compacted.length <= 235)
+        assertTrue(compacted.length <= 155)
+    }
+
+    @Test
+    fun runtimeMirrorCompactRevisionText_summarizesScenarioPayloadRevision() {
+        assertEquals(
+            "sol-system / main / t+6.0h / payload 89693 chars",
+            runtimeMirrorCompactRevisionText(
+                "scenario=sol-system|branch=main|epoch=21600.000000|" +
+                    "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)"
+            ),
+        )
+    }
+
+    @Test
+    fun runtimeMirrorCompactRevisionText_fallsBackToStatusCompaction() {
+        val compacted = runtimeMirrorCompactRevisionText("revision-" + "segment-".repeat(80))
+
+        assertTrue(compacted.endsWith("... [truncated]"))
+        assertTrue(compacted.length <= 155)
     }
 }

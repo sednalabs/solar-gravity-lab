@@ -149,9 +149,13 @@ private val RuntimeMirrorEligibleKernelCountRegex =
 private val RuntimeMirrorBlockedKernelCountRegex =
     Regex("""\bblocked candidates (\d+)""", RegexOption.IGNORE_CASE)
 private val RuntimeMirrorHugePayloadMarkerRegex = Regex("""\(\d+ chars\)""")
+private val RuntimeMirrorHugePayloadCharCountRegex = Regex("""\((\d+) chars\)""")
+private val RuntimeMirrorRevisionScenarioRegex = Regex("""(?:^|\|)scenario=([^|]+)""")
+private val RuntimeMirrorRevisionBranchRegex = Regex("""(?:^|\|)branch=([^|]+)""")
+private val RuntimeMirrorRevisionEpochRegex = Regex("""(?:^|\|)epoch=([^|]+)""")
 private val RuntimeMirrorWhitespaceRegex = Regex("""\s+""")
 private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
-private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 220
+private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 140
 private const val RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION = 18f
 private const val RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION = 28f
 private const val RUNTIME_MIRROR_SIGNAL_FOCUS_LIFT = 0.16f
@@ -1614,7 +1618,9 @@ internal fun buildRuntimeBackendStatus(
         SessionConnectionState.Connecting -> "Connecting to runtime"
         SessionConnectionState.Unavailable -> "Runtime unavailable"
     }
-    val revision = uiState.renderStatus.sceneRevision ?: "waiting-for-packet"
+    val revision = uiState.renderStatus.sceneRevision
+        ?.let(::runtimeMirrorCompactRevisionText)
+        ?: "waiting-for-packet"
     return listOfNotNull(
         connectionSummary,
         uiState.statusLine
@@ -1627,11 +1633,35 @@ internal fun buildRuntimeBackendStatus(
     ).joinToString(separator = " · ")
 }
 
+internal fun runtimeMirrorCompactRevisionText(value: String): String {
+    val normalized = runtimeMirrorNormalizeStatusText(value)
+    if (normalized.isBlank()) {
+        return "waiting-for-packet"
+    }
+    val scenario = RuntimeMirrorRevisionScenarioRegex.find(normalized)?.groupValues?.getOrNull(1)
+    val branch = RuntimeMirrorRevisionBranchRegex.find(normalized)?.groupValues?.getOrNull(1)
+    val epochHours = RuntimeMirrorRevisionEpochRegex.find(normalized)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toDoubleOrNull()
+        ?.div(3_600.0)
+    val payloadChars = RuntimeMirrorHugePayloadCharCountRegex.find(normalized)
+        ?.groupValues
+        ?.getOrNull(1)
+    val summary = listOfNotNull(
+        scenario?.takeIf(String::isNotBlank),
+        branch?.takeIf(String::isNotBlank),
+        epochHours?.let { hours -> String.format(Locale.US, "t+%.1fh", hours) },
+        payloadChars?.let { chars -> "payload $chars chars" },
+    )
+    if (summary.isNotEmpty()) {
+        return summary.joinToString(" / ")
+    }
+    return runtimeMirrorCompactStatusText(normalized)
+}
+
 internal fun runtimeMirrorCompactStatusText(value: String): String {
-    val normalized = value
-        .replace('\n', ' ')
-        .replace(RuntimeMirrorWhitespaceRegex, " ")
-        .trim()
+    val normalized = runtimeMirrorNormalizeStatusText(value)
     if (normalized.length <= RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT) {
         return normalized
     }
@@ -1649,6 +1679,12 @@ internal fun runtimeMirrorCompactStatusText(value: String): String {
         .trimEnd()
         .plus("... [truncated]")
 }
+
+private fun runtimeMirrorNormalizeStatusText(value: String): String =
+    value
+        .replace('\n', ' ')
+        .replace(RuntimeMirrorWhitespaceRegex, " ")
+        .trim()
 
 private fun buildRuntimeDiagnosticsText(
     uiState: ShellUiState,
