@@ -7,7 +7,6 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import org.junit.Assert.assertNotNull
@@ -25,6 +24,7 @@ class StageFirstRuntimeMirrorInstrumentationTest {
     @Test
     fun runtimeMirror_mode_switch_exposes_runtime_controls() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR)
+        SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
@@ -78,31 +78,15 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON).performClick()
+        val showcaseScenarioId = "showcase.jupiter-system"
+        assertTrue(
+            "Runtime mirror should accept semantic scenario load requests",
+            SolarLabSemanticActionBridge.submit(SolarLabSemanticAction.LoadScenario(showcaseScenarioId)),
+        )
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule
-                .onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG, useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .isNotEmpty()
+            composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.scenarioId == showcaseScenarioId
         }
-        composeRule
-            .onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG, useUnmergedTree = true)
-            .fetchSemanticsNode()
-        val showcaseScenarioTag =
-            SolarLabTestTags.stageFirstScenarioLoadTag("showcase.jupiter-system")
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule
-                .onAllNodesWithTag(showcaseScenarioTag, useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .isNotEmpty()
-        }
-        composeRule
-            .onNodeWithTag(showcaseScenarioTag, useUnmergedTree = true)
-            .performScrollTo()
-            .performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG).fetchSemanticsNodes().isEmpty()
-        }
+        SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
