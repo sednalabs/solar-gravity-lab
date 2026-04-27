@@ -131,6 +131,21 @@ presentation, interact with scenario packs, and help tune the stage visually and
 ergonomically while keeping screenshots and tool events in the Codex-native
 transcript path.
 
+The stage-first runtime mirror should therefore present acceleration telemetry
+as a device cockpit, not only as raw debug text. The live Android readout should
+name the active solver/kernel lane, the eligible future lanes, blocked lanes,
+scheduler tile plan, GPU backend, and workload split in a way that can be read
+from screenshots and native computer-use observations. The dense backend summary
+should remain available underneath as audit text, but it should not be the only
+surface a human or agent can use during the S25 Ultra optimization loop.
+
+The cockpit should stay visually expressive without weakening the truth model:
+active lanes can glow, eligible lanes can look reserved or charged, blocked
+lanes can be visibly distinct, and fallback lanes can look cautionary. Those
+colors are presentation, not proof. The labels and audit string remain the
+source of truth, and they must continue to separate active execution from
+candidate capability.
+
 The long-term loop is:
 
 - implement or expose a device-native capability;

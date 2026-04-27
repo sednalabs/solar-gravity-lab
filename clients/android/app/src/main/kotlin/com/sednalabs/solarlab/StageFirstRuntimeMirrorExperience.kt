@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -83,6 +84,7 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 private data class RuntimeMirrorBody(
     val id: String,
@@ -108,7 +110,23 @@ internal data class RuntimeAccelerationReadout(
     val headline: String,
     val chips: List<String>,
     val detail: String,
+    val lanes: List<RuntimeAccelerationLane> = emptyList(),
+    val signal: Float = 0f,
 )
+
+internal data class RuntimeAccelerationLane(
+    val label: String,
+    val value: String,
+    val tone: RuntimeAccelerationLaneTone = RuntimeAccelerationLaneTone.Neutral,
+)
+
+internal enum class RuntimeAccelerationLaneTone {
+    Active,
+    Eligible,
+    Blocked,
+    Fallback,
+    Neutral,
+}
 
 private val RuntimeMirrorCompactWidthBreakpoint = 720.dp
 private val RuntimeMirrorVoid = Color(0xFF02050B)
@@ -121,6 +139,15 @@ private val RuntimeMirrorBlue = Color(0xFF5E8CFF)
 private val RuntimeMirrorInkLine = Color(0xFF19324B)
 private val RuntimeMirrorText = Color(0xFFE8F7FF)
 private val RuntimeMirrorTextDim = Color(0xFF9FB6C9)
+private val RuntimeMirrorKernelLaneRegex =
+    Regex(
+        """\b(active|eligible candidates|blocked candidates) \d+(?: \[([^\]]+)])?""",
+        RegexOption.IGNORE_CASE,
+    )
+private val RuntimeMirrorEligibleKernelCountRegex =
+    Regex("""\beligible candidates (\d+)""", RegexOption.IGNORE_CASE)
+private val RuntimeMirrorBlockedKernelCountRegex =
+    Regex("""\bblocked candidates (\d+)""", RegexOption.IGNORE_CASE)
 private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
 private const val RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION = 18f
 private const val RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION = 28f
@@ -844,12 +871,159 @@ private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) 
                 RuntimeMirrorMetricPill(label = "ACCEL", value = chip)
             }
         }
+        RuntimeMirrorAccelerationSpectrum(readout = readout)
+        readout.lanes.takeIf { it.isNotEmpty() }?.let { lanes ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = RuntimeMirrorGlassSoft,
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.22f)),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    lanes.forEach { lane ->
+                        RuntimeMirrorAccelerationLaneRow(lane = lane)
+                    }
+                }
+            }
+        }
         Text(
             text = readout.detail,
             color = RuntimeMirrorTextDim,
             style = MaterialTheme.typography.bodySmall,
         )
     }
+}
+
+@Composable
+private fun RuntimeMirrorAccelerationSpectrum(readout: RuntimeAccelerationReadout) {
+    val activeCount = readout.lanes.count { it.tone == RuntimeAccelerationLaneTone.Active }
+    val eligibleCount = readout.lanes.count { it.tone == RuntimeAccelerationLaneTone.Eligible }
+    val blockedCount = readout.lanes.count { it.tone == RuntimeAccelerationLaneTone.Blocked }
+    val fallbackCount = readout.lanes.count { it.tone == RuntimeAccelerationLaneTone.Fallback }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = RuntimeMirrorVoid.copy(alpha = 0.42f),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.18f)),
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            val railLeft = 4.dp.toPx()
+            val railRight = size.width - 4.dp.toPx()
+            val railWidth = (railRight - railLeft).coerceAtLeast(1f)
+            val signal = readout.signal.coerceIn(0.08f, 1f)
+            val baselineY = size.height * 0.64f
+            drawLine(
+                color = RuntimeMirrorInkLine.copy(alpha = 0.76f),
+                start = Offset(railLeft, baselineY),
+                end = Offset(railRight, baselineY),
+                strokeWidth = 1.5.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+            drawLine(
+                color = RuntimeMirrorCyan.copy(alpha = 0.88f),
+                start = Offset(railLeft, baselineY),
+                end = Offset(railLeft + railWidth * signal, baselineY),
+                strokeWidth = 3.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+
+            val markers = listOf(
+                RuntimeAccelerationLaneTone.Active to activeCount,
+                RuntimeAccelerationLaneTone.Eligible to eligibleCount,
+                RuntimeAccelerationLaneTone.Blocked to blockedCount,
+                RuntimeAccelerationLaneTone.Fallback to fallbackCount,
+            ).filter { (_, count) -> count > 0 }
+            markers.forEachIndexed { index, (tone, count) ->
+                val x = railLeft + railWidth * ((index + 1f) / (markers.size + 1f))
+                val color = tone.accentColor()
+                val pulseRadius = (6.dp.toPx() + count.coerceAtMost(4) * 1.4.dp.toPx())
+                drawCircle(
+                    color = color.copy(alpha = 0.18f),
+                    radius = pulseRadius,
+                    center = Offset(x, baselineY),
+                )
+                drawCircle(
+                    color = color.copy(alpha = 0.92f),
+                    radius = 2.7.dp.toPx(),
+                    center = Offset(x, baselineY),
+                )
+                drawLine(
+                    color = color.copy(alpha = 0.32f),
+                    start = Offset(x, baselineY - 15.dp.toPx()),
+                    end = Offset(x, baselineY + 12.dp.toPx()),
+                    strokeWidth = 1.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+
+            repeat(6) { index ->
+                val x = railLeft + railWidth * (index / 5f)
+                drawLine(
+                    color = RuntimeMirrorTextDim.copy(alpha = 0.20f),
+                    start = Offset(x, baselineY - 6.dp.toPx()),
+                    end = Offset(x, baselineY + 6.dp.toPx()),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorAccelerationLaneRow(lane: RuntimeAccelerationLane) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Canvas(
+            modifier = Modifier
+                .width(12.dp)
+                .height(18.dp),
+        ) {
+            drawCircle(
+                color = lane.tone.accentColor().copy(alpha = 0.92f),
+                radius = 3.dp.toPx(),
+                center = Offset(size.width * 0.5f, 7.dp.toPx()),
+            )
+            drawLine(
+                color = lane.tone.accentColor().copy(alpha = 0.28f),
+                start = Offset(size.width * 0.5f, 12.dp.toPx()),
+                end = Offset(size.width * 0.5f, size.height),
+                strokeWidth = 1.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+        Text(
+            modifier = Modifier.widthIn(min = 92.dp, max = 128.dp),
+            text = lane.label.uppercase(Locale.US),
+            color = lane.tone.accentColor().copy(alpha = 0.90f),
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Text(
+            modifier = Modifier.weight(1f),
+            text = lane.value,
+            color = RuntimeMirrorText,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+private fun RuntimeAccelerationLaneTone.accentColor(): Color = when (this) {
+    RuntimeAccelerationLaneTone.Active -> RuntimeMirrorCyan
+    RuntimeAccelerationLaneTone.Eligible -> RuntimeMirrorGold
+    RuntimeAccelerationLaneTone.Blocked -> Color(0xFFFF8C6B)
+    RuntimeAccelerationLaneTone.Fallback -> Color(0xFFFFB37A)
+    RuntimeAccelerationLaneTone.Neutral -> RuntimeMirrorTextDim
 }
 
 @Composable
@@ -1534,20 +1708,47 @@ internal fun buildRuntimeAccelerationReadout(
         }
         ?.takeIf { it.contains("vulkan", ignoreCase = true) }
         ?.let { "Vulkan" }
+    val solverKernel = solver
+        ?.substringAfter("solver:", missingDelimiterValue = solver)
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+    val activeKernel = runtimeMirrorKernelLaneNames(kernels, "active")
+        ?: solverKernel?.let(::runtimeMirrorShortKernelName)
+    val eligibleKernelCount = kernels
+        ?.let { RuntimeMirrorEligibleKernelCountRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+    val eligibleKernelChip = eligibleKernelCount
+        ?.takeIf { it > 0 }
+        ?.let { "$it eligible lanes" }
+    val blockedKernelCount = kernels
+        ?.let { RuntimeMirrorBlockedKernelCountRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+    val tileWorkerCount = tileWorkers
+        ?.substringBefore(' ', missingDelimiterValue = tileWorkers)
+        ?.toIntOrNull()
 
     val chips = buildList {
         if (scenarioId == "stress.s25-tile-swarm") {
             add("S25 swarm")
         }
         bodyCount?.takeIf { it > 0 }?.let { add("$it bodies") }
+        activeKernel?.let { add("Active $it") }
         schedulerMode?.let(::add)
         tilePlan?.let(::add)
         tileWorkers?.let(::add)
+        eligibleKernelChip?.let(::add)
         gpuChip?.let(::add)
     }.distinct()
+    val signal = runtimeMirrorAccelerationSignal(
+        bodyCount = bodyCount,
+        activeKernel = activeKernel,
+        eligibleKernelCount = eligibleKernelCount,
+        blockedKernelCount = blockedKernelCount,
+        tileWorkerCount = tileWorkerCount,
+        gpuActive = gpuChip != null,
+        fallback = fallback,
+    )
 
     val headline = if (scenarioId == "stress.s25-tile-swarm") {
-        "S25 tile swarm acceleration probe"
+        "Galaxy S25 Ultra acceleration cockpit"
     } else {
         "Runtime acceleration truth"
     }
@@ -1560,12 +1761,133 @@ internal fun buildRuntimeAccelerationReadout(
         kernels,
         workloads,
     ).joinToString(separator = " | ").ifBlank { summary }
+    val lanes = buildList {
+        cpu?.let { add(RuntimeAccelerationLane("CPU", segmentValue(it, "cpu="))) }
+        gpu?.let {
+            add(RuntimeAccelerationLane("GPU", segmentValue(it, "gpu="), RuntimeAccelerationLaneTone.Active))
+        }
+        solverKernel?.let {
+            add(
+                RuntimeAccelerationLane(
+                    "Solver",
+                    runtimeMirrorShortKernelName(it),
+                    RuntimeAccelerationLaneTone.Active,
+                )
+            )
+        }
+        scheduler?.let {
+            add(
+                RuntimeAccelerationLane(
+                    "Scheduler",
+                    segmentValue(it, "cpu scheduler:"),
+                    RuntimeAccelerationLaneTone.Active,
+                )
+            )
+        }
+        activeKernel?.let { add(RuntimeAccelerationLane("Active", it, RuntimeAccelerationLaneTone.Active)) }
+        runtimeMirrorKernelLaneSummary(kernels, "eligible candidates")
+            ?.let { add(RuntimeAccelerationLane("Eligible", it, RuntimeAccelerationLaneTone.Eligible)) }
+        runtimeMirrorKernelLaneSummary(kernels, "blocked candidates")
+            ?.let { add(RuntimeAccelerationLane("Blocked", it, RuntimeAccelerationLaneTone.Blocked)) }
+        workloads?.let {
+            add(
+                RuntimeAccelerationLane(
+                    "Workload",
+                    segmentValue(it, "workloads:"),
+                    RuntimeAccelerationLaneTone.Active,
+                )
+            )
+        }
+        fallback?.let {
+            add(
+                RuntimeAccelerationLane(
+                    "Fallback",
+                    segmentValue(it, "cpu fallback:"),
+                    RuntimeAccelerationLaneTone.Fallback,
+                )
+            )
+        }
+    }
 
     return RuntimeAccelerationReadout(
         headline = headline,
         chips = chips.ifEmpty { listOf("Backend reported") },
         detail = detail,
+        lanes = lanes,
+        signal = signal,
     )
+}
+
+private fun runtimeMirrorAccelerationSignal(
+    bodyCount: Int?,
+    activeKernel: String?,
+    eligibleKernelCount: Int?,
+    blockedKernelCount: Int?,
+    tileWorkerCount: Int?,
+    gpuActive: Boolean,
+    fallback: String?,
+): Float {
+    val bodyPressure = min((bodyCount ?: 0) / 750f, 1f) * 0.20f
+    val activeWeight = if (activeKernel != null) 0.30f else 0f
+    val gpuWeight = if (gpuActive) 0.18f else 0f
+    val workerWeight = min((tileWorkerCount ?: 0) / 8f, 1f) * 0.16f
+    val eligibleWeight = min((eligibleKernelCount ?: 0) / 6f, 1f) * 0.12f
+    val blockedPenalty = min((blockedKernelCount ?: 0) / 12f, 1f) * 0.05f
+    val fallbackPenalty = if (fallback != null) 0.22f else 0f
+    return (0.08f + bodyPressure + activeWeight + gpuWeight + workerWeight + eligibleWeight - blockedPenalty - fallbackPenalty)
+        .coerceIn(0.08f, 1f)
+}
+
+private fun segmentValue(segment: String, prefix: String): String =
+    segment.substringAfter(prefix, missingDelimiterValue = segment).trim()
+
+private fun runtimeMirrorKernelLaneSummary(kernels: String?, lane: String): String? =
+    kernels
+        ?.let { runtimeMirrorKernelLaneMatch(it, lane) }
+        ?.let { match ->
+            runtimeMirrorKernelLaneNames(match)
+                ?: match.value
+        }
+
+private fun runtimeMirrorKernelLaneNames(kernels: String?, lane: String): String? =
+    kernels
+        ?.let { runtimeMirrorKernelLaneMatch(it, lane) }
+        ?.let(::runtimeMirrorKernelLaneNames)
+
+private fun runtimeMirrorKernelLaneMatch(kernels: String, lane: String): MatchResult? =
+    RuntimeMirrorKernelLaneRegex.findAll(kernels).firstOrNull { match ->
+        match.groupValues.getOrNull(1)?.equals(lane, ignoreCase = true) == true
+    }
+
+private fun runtimeMirrorKernelLaneNames(match: MatchResult): String? =
+    match.groupValues.getOrNull(2)
+        ?.takeIf(String::isNotBlank)
+        ?.split(',')
+        ?.map { runtimeMirrorShortKernelName(it.trim()) }
+        ?.joinToString()
+
+private fun runtimeMirrorShortKernelName(path: String): String {
+    val normalized = path
+        .substringAfter("simd.arm64.", missingDelimiterValue = path)
+        .removeSuffix("-candidate")
+    return when (normalized) {
+        "neon-f64-pairwise" -> "NEON f64 pairwise"
+        "neon-f64-tiled-pairwise" -> "NEON f64 tiled"
+        "neon-f64-parallel-tiled-pairwise" -> "NEON f64 parallel tiled"
+        "sve-f64-batch" -> "SVE f64 batch"
+        "sve2-f64-batch" -> "SVE2 f64 batch"
+        "sve-i8mm-packed-assist" -> "SVE I8MM packed assist"
+        "sme-tiled-f64" -> "SME tiled f64"
+        "sme2-tiled-f64" -> "SME2 tiled f64"
+        "dotprod-packed-assist" -> "DotProd packed assist"
+        "i8mm-packed-assist" -> "I8MM packed assist"
+        "bf16-forecast-assist" -> "BF16 forecast assist"
+        "fp16-visual-assist" -> "FP16 visual assist"
+        "fhm-visual-assist" -> "FHM visual assist"
+        "rdm-vector-assist" -> "RDM vector assist"
+        "fcma-vector-assist" -> "FCMA vector assist"
+        else -> normalized
+    }
 }
 
 private fun RenderFrame.toRuntimeMirrorScene(): RuntimeMirrorScene {
