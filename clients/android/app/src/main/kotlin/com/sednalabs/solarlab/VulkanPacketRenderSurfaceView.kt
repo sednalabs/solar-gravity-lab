@@ -1053,20 +1053,20 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
         referenceGridPaint.color = Color.argb(gridAlpha, 118, 247, 255)
         referenceGridPaint.strokeWidth = 1f
 
-        var x = positiveModulo(-centerX * scale, gridSpacingPx)
+        val originX = screenX(0f, centerX, scale, viewportWidth)
+        val originY = screenY(0f, centerY, scale, viewportHeight)
+
+        var x = positiveModulo(originX, gridSpacingPx)
         while (x <= viewportWidth) {
             canvas.drawLine(x, 0f, x, viewportHeight, referenceGridPaint)
             x += gridSpacingPx
         }
 
-        var y = positiveModulo(centerY * scale, gridSpacingPx)
+        var y = positiveModulo(originY, gridSpacingPx)
         while (y <= viewportHeight) {
             canvas.drawLine(0f, y, viewportWidth, y, referenceGridPaint)
             y += gridSpacingPx
         }
-
-        val originX = screenX(0f, centerX, scale, viewportWidth)
-        val originY = screenY(0f, centerY, scale, viewportHeight)
         val margin = minDimension * 0.28f
         if (originX in -margin..(viewportWidth + margin)) {
             referenceAxisPaint.color = Color.argb(54, 118, 247, 255)
