@@ -967,7 +967,8 @@ private fun RuntimeMirrorTimelineRail(
                     cap = StrokeCap.Round,
                 )
                 repeat(9) { index ->
-                    val tickX = startX + (endX - startX) * (index / 8f)
+                    val tickProgress = index / 8f
+                    val tickX = startX + ((endX - startX) * tickProgress)
                     val tickHeight = if (index % 2 == 0) 8.dp.toPx() else 5.dp.toPx()
                     drawLine(
                         color = RuntimeMirrorTextDim.copy(alpha = 0.42f),
