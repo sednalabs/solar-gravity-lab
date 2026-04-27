@@ -815,7 +815,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 6
+        private const val ABI_VERSION = 7
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
@@ -1372,6 +1372,9 @@ internal data class NativeRuntimeInfoResult(
     val cpuScheduleCandidateWorkers: Int = 1,
     val cpuScheduleBodyCount: Int = 0,
     val cpuScheduleEstimatedPairCount: Long = 0,
+    val cpuScheduleTileSizeBodies: Int = 0,
+    val cpuScheduleTileCount: Int = 0,
+    val cpuScheduleParallelTileWorkers: Int = 0,
     val cpuKernelCatalogCount: Int = 0,
     val cpuKernelActiveCount: Int = 0,
     val cpuKernelEligibleCandidateCount: Int = 0,
@@ -1418,7 +1421,26 @@ internal data class NativeRuntimeInfoResult(
 
     private fun cpuScheduleWorkloadSuffix(): String =
         if (cpuScheduleBodyCount > 0) {
-            " (${cpuScheduleBodyCount} bodies, ${cpuScheduleEstimatedPairCount} pairs)"
+            buildString {
+                append(" (")
+                append(cpuScheduleBodyCount)
+                append(" bodies, ")
+                append(cpuScheduleEstimatedPairCount)
+                append(" pairs")
+                if (cpuScheduleTileCount > 0 && cpuScheduleTileSizeBodies > 0) {
+                    append(", ")
+                    append(cpuScheduleTileCount)
+                    append("x")
+                    append(cpuScheduleTileSizeBodies)
+                    append("-body tiles")
+                    if (cpuScheduleParallelTileWorkers > 0) {
+                        append(", ")
+                        append(cpuScheduleParallelTileWorkers)
+                        append(" tile workers")
+                    }
+                }
+                append(")")
+            }
         } else {
             ""
         }

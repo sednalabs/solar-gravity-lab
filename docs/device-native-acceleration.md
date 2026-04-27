@@ -87,6 +87,13 @@ select the active parallel tiled kernel when worker budget is available, and
 telemetry can still show candidate worker budget when a workload is large
 enough but a parallel path is not selected.
 
+Runtime info also exposes the tile plan used by the large-scene scheduler:
+tile size, tile count, and parallel tile-worker slots. This is intentionally
+practical telemetry for the S25 Ultra optimization loop: when a scenario pack
+is meant to stress the device, the Android UI and validation artifacts should
+show not just that the parallel path is selected, but how much tile work the
+runtime planned to distribute.
+
 This gives the project a safe way to plan the next solver stage:
 
 - introduce target-tiled or pairwise-tiled kernels behind explicit path IDs;
