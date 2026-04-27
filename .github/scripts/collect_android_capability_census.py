@@ -149,6 +149,21 @@ FEATURE_WORKLOADS = {
     "ssbs": "speculative-store-bypass control capability; not a solver path",
 }
 
+CANDIDATE_KERNEL_PATHS = (
+    "simd.arm64.sve-f64-batch-candidate",
+    "simd.arm64.sve2-f64-batch-candidate",
+    "simd.arm64.sve-i8mm-packed-assist-candidate",
+    "simd.arm64.sme-tiled-f64-candidate",
+    "simd.arm64.sme2-tiled-f64-candidate",
+    "simd.arm64.dotprod-packed-assist-candidate",
+    "simd.arm64.i8mm-packed-assist-candidate",
+    "simd.arm64.bf16-forecast-assist-candidate",
+    "simd.arm64.fp16-visual-assist-candidate",
+    "simd.arm64.fhm-visual-assist-candidate",
+    "simd.arm64.rdm-vector-assist-candidate",
+    "simd.arm64.fcma-vector-assist-candidate",
+)
+
 RESERVED_FEATURES = {
     "fp16",
     "fhm",
@@ -440,6 +455,7 @@ def collect_census(args: argparse.Namespace) -> dict[str, object]:
         },
         "runtime_truth": {
             "implemented_solver_paths": ["simd.arm64.neon-f64-pairwise"],
+            "candidate_kernel_paths": list(CANDIDATE_KERNEL_PATHS),
             "active_solver_feature_claims_when_detected": ["neon"],
             "baseline_feature_claims_when_detected": ["fp"],
             "reserved_feature_claims": sorted(RESERVED_FEATURES),
@@ -476,6 +492,7 @@ def write_summary(path: str | None, census: dict[str, object]) -> None:
         f"detected-features: {','.join(detected) if detected else 'none'}",
         f"uncataloged-detected-tokens-count: {len(cpu['uncataloged_detected_tokens'])}",
         "implemented-solver-paths: simd.arm64.neon-f64-pairwise",
+        "candidate-kernel-paths: " + ",".join(census["runtime_truth"]["candidate_kernel_paths"]),
         "reserved-kernel-features: " + ",".join(census["runtime_truth"]["reserved_feature_claims"]),
     ]
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")

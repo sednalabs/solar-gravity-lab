@@ -144,11 +144,23 @@ class ValidationLabPlanTests(unittest.TestCase):
 
         self.assertEqual(outputs["rust_workspace"], "true")
         self.assertEqual(outputs["rust_workspace_arm64"], "true")
+        self.assertEqual(outputs["arm64_capability_census"], "true")
         self.assertEqual(outputs["ffi_abi"], "true")
         self.assertEqual(outputs["android_unit"], "true")
         self.assertEqual(outputs["android_lint"], "true")
         self.assertEqual(outputs["android_shell"], "true")
         self.assertEqual(outputs["runtime_scene_telemetry"], "true")
+
+    def test_explicit_arm64_capability_census_lane_is_runnable(self) -> None:
+        outputs = run_plan(
+            ["docs/android-arm64-capability-census.md"],
+            lane_set="arm64-capability-census",
+        )
+
+        self.assertEqual(outputs["arm64_capability_census"], "true")
+        self.assertEqual(outputs["arm64_isa_proof"], "false")
+        self.assertEqual(outputs["rust_workspace_arm64"], "false")
+        self.assertIn("arm64_capability_census=true", outputs["lane_summary"])
 
     def test_same_pr_prior_evidence_routes_from_latest_delta(self) -> None:
         outputs = run_plan(

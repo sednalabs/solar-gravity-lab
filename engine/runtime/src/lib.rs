@@ -24,7 +24,8 @@ use solarlab_history::{
     HistoryEvent, OrbitArchive, OrbitArchiveFamily, OrbitArchiveQuery, OrbitSample,
 };
 use solarlab_physics::{
-    advance_authoritative_with_features, compute_invariants, MassiveBodyState, PhysicsInvariants,
+    advance_authoritative_with_features, compute_invariants,
+    solver_execution_report_for_backend_with_body_count, MassiveBodyState, PhysicsInvariants,
     PhysicsPolicy, SolverExecutionReport,
 };
 use solarlab_scene::{
@@ -318,6 +319,11 @@ impl WorldRuntime {
         hardware_profile: HardwareProfile,
         created_at_unix_ms: i64,
     ) -> Self {
+        let initial_solver_execution = solver_execution_report_for_backend_with_body_count(
+            &config.physics.solver_backend,
+            &hardware_profile.cpu_features,
+            0,
+        );
         let root_descriptor = BranchDescriptor {
             branch_id: root_branch_id.clone(),
             scenario_id: scenario_id.clone(),
@@ -342,7 +348,7 @@ impl WorldRuntime {
                 local_data_state: LocalDataState::empty(),
                 mounted_package_ids: BTreeSet::new(),
                 trail_history_by_body: HashMap::new(),
-                solver_execution: SolverExecutionReport::reference_scalar(),
+                solver_execution: initial_solver_execution,
             },
             command_log: Vec::new(),
             checkpoints: Vec::new(),
@@ -478,6 +484,8 @@ impl WorldRuntime {
         let summary = self.command_summary(&command);
         let is_branch_creation =
             matches!(&command, WorldCommand::CreateBranchFromCheckpoint { .. });
+        let refresh_solver_execution_after_command =
+            !matches!(&command, WorldCommand::AdvanceEpoch { .. });
         self.next_command_ordinal += 1;
 
         match &command {
@@ -705,6 +713,10 @@ impl WorldRuntime {
             }
         }
 
+        if refresh_solver_execution_after_command {
+            self.refresh_active_solver_execution_report();
+        }
+
         self.active_branch_mut().command_log.push(CommandRecord {
             header: header.clone(),
             summary,
@@ -725,6 +737,17 @@ impl WorldRuntime {
         }
 
         Ok(events)
+    }
+
+    fn refresh_active_solver_execution_report(&mut self) {
+        let requested_backend = self.config.physics.solver_backend.clone();
+        let active_cpu_features = self.hardware_profile.cpu_features.clone();
+        let branch = self.active_branch_mut();
+        branch.world.solver_execution = solver_execution_report_for_backend_with_body_count(
+            &requested_backend,
+            &active_cpu_features,
+            branch.world.bodies.len(),
+        );
     }
 
     /// Return an ownership-safe world snapshot for host-visible status and

@@ -160,7 +160,7 @@ internal class JniRuntimeBridge(
             }
             runtimeInfoResult?.let { result ->
                 logInfo(
-                    "connect.runtimeInfo.result handle=$handle status=${result.result.describe()} requestedCpu=${result.requestedCpuBackendLabel()} cpu=${result.cpuBackendLabel()} solver=${result.cpuSolverPathLabel()} features=${result.cpuFeatureSummary() ?: "none"} gpu=${result.gpuBackendLabel()}"
+                    "connect.runtimeInfo.result handle=$handle status=${result.result.describe()} requestedCpu=${result.requestedCpuBackendLabel()} cpu=${result.cpuBackendLabel()} solver=${result.cpuSolverPathLabel()} scheduler=${result.cpuScheduleSummary()} features=${result.cpuFeatureSummary() ?: "none"} gpu=${result.gpuBackendLabel()}"
                 )
             }
 
@@ -172,6 +172,7 @@ internal class JniRuntimeBridge(
                         cpuSolverPathLabel = runtimeInfoResult.cpuSolverPathLabel(),
                         cpuFeatureSummary = runtimeInfoResult.cpuFeatureSummary(),
                         cpuFallbackSummary = runtimeInfoResult.cpuFallbackSummary(),
+                        cpuScheduleSummary = runtimeInfoResult.cpuScheduleSummary(),
                         requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
                         gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
                         workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
@@ -339,7 +340,13 @@ internal class JniRuntimeBridge(
 
             if (runtimeInfoResult?.result?.isOk() == true) {
                 signals += RuntimeSignal.RuntimeInfoAvailable(
+                    requestedCpuBackendLabel = runtimeInfoResult.requestedCpuBackendLabel(),
                     cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
+                    cpuSolverPathLabel = runtimeInfoResult.cpuSolverPathLabel(),
+                    cpuFeatureSummary = runtimeInfoResult.cpuFeatureSummary(),
+                    cpuFallbackSummary = runtimeInfoResult.cpuFallbackSummary(),
+                    cpuScheduleSummary = runtimeInfoResult.cpuScheduleSummary(),
+                    requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
                     gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
                     workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
                     interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
@@ -364,6 +371,10 @@ internal class JniRuntimeBridge(
                 )
                 signals += seededSignals
                 latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
+                signals += runtimeInfoSignalsForHandle(
+                    handle,
+                    traceLabel = "loadScenario.seeded-runtime-info",
+                )
             }
 
             latestSummary?.let { summary ->
@@ -569,6 +580,58 @@ internal class JniRuntimeBridge(
         return signals
     }
 
+    private fun runtimeInfoSignalsForHandle(
+        handle: Long,
+        traceLabel: String? = null,
+    ): List<RuntimeSignal> {
+        traceLabel?.let { label ->
+            logInfo("$label.runtimeInfo.begin handle=$handle")
+        }
+        val result = runCatching {
+            transport.runtimeInfo(handle)
+        }.getOrElse { error ->
+            traceLabel?.let { label ->
+                logError(
+                    "$label.runtimeInfo.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
+                    error,
+                )
+            }
+            return listOf(
+                RuntimeSignal.Notice(
+                    message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
+                    level = RuntimeNoticeLevel.Warning,
+                ),
+            )
+        }
+        traceLabel?.let { label ->
+            logInfo(
+                "$label.runtimeInfo.result handle=$handle status=${result.result.describe()} scheduler=${result.cpuScheduleSummary()}"
+            )
+        }
+        if (!result.result.isOk()) {
+            return listOf(
+                RuntimeSignal.Notice(
+                    message = "Runtime info rejected: ${result.result.describe()}",
+                    level = RuntimeNoticeLevel.Warning,
+                ),
+            )
+        }
+        return listOf(
+            RuntimeSignal.RuntimeInfoAvailable(
+                requestedCpuBackendLabel = result.requestedCpuBackendLabel(),
+                cpuBackendLabel = result.cpuBackendLabel(),
+                cpuSolverPathLabel = result.cpuSolverPathLabel(),
+                cpuFeatureSummary = result.cpuFeatureSummary(),
+                cpuFallbackSummary = result.cpuFallbackSummary(),
+                cpuScheduleSummary = result.cpuScheduleSummary(),
+                requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
+                gpuBackendLabel = result.gpuBackendLabel(),
+                workloadSummary = result.gpuWorkloadSummary(),
+                interopErrorBudgetSummary = result.gpuInteropErrorBudgetSummary(),
+            ),
+        )
+    }
+
     private fun releaseCurrentSession() {
         synchronized(stateLock) {
             val handle = activeSessionHandle
@@ -749,7 +812,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 4
+        private const val ABI_VERSION = 5
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
@@ -784,6 +847,7 @@ internal sealed interface RuntimeSignal {
         val cpuSolverPathLabel: String? = null,
         val cpuFeatureSummary: String? = null,
         val cpuFallbackSummary: String? = null,
+        val cpuScheduleSummary: String? = null,
         val gpuBackendLabel: String,
         val requestedGpuBackendLabel: String? = null,
         val workloadSummary: String? = null,
@@ -1052,6 +1116,8 @@ private const val NATIVE_CPU_FALLBACK_NONE = 0
 private const val NATIVE_CPU_FALLBACK_ARM64_NON_AARCH64_HOST = 1
 private const val NATIVE_CPU_FALLBACK_ARM64_MISSING_NEON = 2
 private const val NATIVE_CPU_FALLBACK_X64_UNAVAILABLE = 3
+private const val NATIVE_CPU_SCHEDULE_SINGLE_WORKER = 0
+private const val NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_CANDIDATE = 1
 private const val CPU_FEATURE_NEON = 1L shl 0
 private const val CPU_FEATURE_FP = 1L shl 1
 private const val CPU_FEATURE_FP16 = 1L shl 2
@@ -1294,6 +1360,11 @@ internal data class NativeRuntimeInfoResult(
     val cpuFeatureFlags: Long,
     val cpuSolverPath: Int,
     val cpuFallbackCode: Int,
+    val cpuScheduleMode: Int = NATIVE_CPU_SCHEDULE_SINGLE_WORKER,
+    val cpuScheduleActiveWorkers: Int = 1,
+    val cpuScheduleCandidateWorkers: Int = 1,
+    val cpuScheduleBodyCount: Int = 0,
+    val cpuScheduleEstimatedPairCount: Long = 0,
 ) {
     fun requestedCpuBackendLabel(): String = cpuBackendLabel(requestedCpuBackend)
 
@@ -1320,6 +1391,21 @@ internal data class NativeRuntimeInfoResult(
         NATIVE_CPU_FALLBACK_X64_UNAVAILABLE -> "simd-x64 requested but no dedicated x64 kernel is active"
         else -> "unknown fallback($cpuFallbackCode)"
     }
+
+    fun cpuScheduleSummary(): String = when (cpuScheduleMode) {
+        NATIVE_CPU_SCHEDULE_SINGLE_WORKER ->
+            "single-worker${cpuScheduleWorkloadSuffix()}"
+        NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_CANDIDATE ->
+            "single-worker active, adaptive tiled candidate ${cpuScheduleCandidateWorkers.coerceAtLeast(cpuScheduleActiveWorkers)} workers${cpuScheduleWorkloadSuffix()}"
+        else -> "unknown scheduler($cpuScheduleMode)"
+    }
+
+    private fun cpuScheduleWorkloadSuffix(): String =
+        if (cpuScheduleBodyCount > 0) {
+            " (${cpuScheduleBodyCount} bodies, ${cpuScheduleEstimatedPairCount} pairs)"
+        } else {
+            ""
+        }
 
     fun cpuFeatureSummary(): String? {
         val features = mutableListOf<String>()

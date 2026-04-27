@@ -39,7 +39,8 @@ It emits JSON with these top-level sections:
   normalized tokens, uncataloged detected tokens, auxv values when available,
   and a feature matrix.
 - `runtime_truth`: active solver paths, active solver feature claims, baseline
-  feature claims, reserved feature claims, and utility feature claims.
+  feature claims, candidate kernel paths, reserved feature claims, and utility
+  feature claims.
 - `gpu_truth`: expected public GPU APIs for the S25 platform plus a reminder
   that hosted Arm64 runners do not prove OEM GPU behavior.
 
@@ -70,7 +71,8 @@ should include:
 - Vulkan physical-device features and extensions.
 - OpenCL platform/device/provider details.
 - Solar Gravity Lab runtime info: requested/effective CPU backend, solver path,
-  CPU feature flags, requested/effective GPU backend, and fallback reason.
+  CPU feature flags, CPU scheduler truth, requested/effective GPU backend, and
+  fallback reason.
 
 ## Activation Rules
 
@@ -81,6 +83,11 @@ The current active Arm64 solver claim is
 DotProd, I8MM, BF16, RDM, and FCMA are reserved until a concrete workload lands
 with runtime dispatch, scalar-oracle or error-budget parity, and measured device
 behavior.
+
+The runtime also keeps named candidate kernel lanes for those extensions. A
+candidate lane is useful backlog and telemetry shape, not an active claim. It
+becomes an active path only after implementation, parity proof, runtime
+eligibility, and device-visible selection all land.
 
 Utility features such as LSE/LSE2, MOPS, CRC, AES, SHA, BTI, MTE, and RNG may
 matter to compiler output, memory throughput, hardening, checksums, or future

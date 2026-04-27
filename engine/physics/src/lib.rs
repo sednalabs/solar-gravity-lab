@@ -66,6 +66,7 @@ pub struct SolverExecutionReport {
     pub fallback_code: SolverFallbackCode,
     pub fallback_reason: Option<String>,
     pub active_cpu_features: Vec<String>,
+    pub schedule: SolverScheduleReport,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +75,21 @@ pub enum SolverFallbackCode {
     SimdArm64OnNonAarch64Host,
     SimdArm64MissingNeon,
     SimdX64Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SolverScheduleMode {
+    SingleWorker,
+    AdaptiveTiledCandidate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SolverScheduleReport {
+    pub mode: SolverScheduleMode,
+    pub active_workers: u32,
+    pub candidate_workers: u32,
+    pub body_count: u32,
+    pub estimated_pair_count: u64,
 }
 
 impl SolverExecutionReport {
@@ -86,6 +102,7 @@ impl SolverExecutionReport {
             fallback_code: SolverFallbackCode::None,
             fallback_reason: None,
             active_cpu_features: detect_cpu_features(),
+            schedule: solver_schedule_report(0, false),
         }
     }
 }
@@ -180,6 +197,104 @@ pub struct CpuFeatureCatalogEntry {
     pub status: CpuFeatureUseStatus,
     pub current_workload: &'static str,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arm64KernelReadiness {
+    Candidate,
+    Implemented,
+    ParityProven,
+    Eligible,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arm64KernelCatalogEntry {
+    pub path_id: &'static str,
+    pub required_features: &'static [&'static str],
+    pub readiness: Arm64KernelReadiness,
+    pub workload: &'static str,
+}
+
+pub const ARM64_KERNEL_CATALOG: &[Arm64KernelCatalogEntry] = &[
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.neon-f64-pairwise",
+        required_features: &["neon"],
+        readiness: Arm64KernelReadiness::Active,
+        workload: "authoritative f64 pairwise gravity",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.sve-f64-batch-candidate",
+        required_features: &["sve"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "wider f64 batch gravity/tracer sweep",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.sve2-f64-batch-candidate",
+        required_features: &["sve2"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "wider f64 batch gravity/tracer sweep",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.sve-i8mm-packed-assist-candidate",
+        required_features: &["sve-i8mm"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "packed integer assist for render/tracer prediction",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.sme-tiled-f64-candidate",
+        required_features: &["sme"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "tile-oriented f64 gravity/tracer assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.sme2-tiled-f64-candidate",
+        required_features: &["sme2"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "tile-oriented f64 gravity/tracer assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.dotprod-packed-assist-candidate",
+        required_features: &["dotprod"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "packed render/tracer assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.i8mm-packed-assist-candidate",
+        required_features: &["i8mm"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "packed integer/matrix assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.bf16-forecast-assist-candidate",
+        required_features: &["bf16"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "approximate long-horizon forecast assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.fp16-visual-assist-candidate",
+        required_features: &["fp16"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "visual/tracer precision assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.fhm-visual-assist-candidate",
+        required_features: &["fhm"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "fp16 fused multiply-add visual/tracer assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.rdm-vector-assist-candidate",
+        required_features: &["rdm"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "rounding multiply vector assist",
+    },
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.fcma-vector-assist-candidate",
+        required_features: &["fcma"],
+        readiness: Arm64KernelReadiness::Candidate,
+        workload: "complex/vector math assist",
+    },
+];
 
 pub const ARM64_CPU_FEATURE_CATALOG: &[CpuFeatureCatalogEntry] = &[
     CpuFeatureCatalogEntry {
@@ -399,6 +514,11 @@ pub fn arm64_cpu_feature_catalog() -> &'static [CpuFeatureCatalogEntry] {
     ARM64_CPU_FEATURE_CATALOG
 }
 
+#[must_use]
+pub fn arm64_kernel_catalog() -> &'static [Arm64KernelCatalogEntry] {
+    ARM64_KERNEL_CATALOG
+}
+
 const G_M3_PER_KG_S2: f64 = 6.67430e-11;
 const MIN_DISTANCE_M2: f64 = 1.0e-12;
 const MAX_SIMULATION_SUBSTEP_SECONDS: f64 = 3_600.0;
@@ -410,6 +530,7 @@ const PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: f64 = 32_400.0;
 const HIGH_SPEED_PLAYBACK_MAX_EFFECTIVE_SUBSTEP_SECONDS: f64 = 21_600.0;
 const HIGH_SPEED_PLAYBACK_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: f64 = 604_800.0;
 const HOST_RELATIVE_SHORT_WINDOW_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: f64 = 2_592_000.0;
+const ADAPTIVE_TILED_SCHEDULER_MIN_BODIES: usize = 96;
 
 pub fn advance_authoritative_scalar(
     policy: &PhysicsPolicy,
@@ -453,6 +574,10 @@ pub fn advance_authoritative_with_features(
 ) -> (PhysicsInvariants, SolverExecutionReport) {
     let normalized_features = normalize_cpu_features(active_cpu_features);
     let decision = dispatch_solver_backend(&policy.solver_backend, &normalized_features);
+    let schedule = solver_schedule_report(
+        bodies.len(),
+        decision.effective_backend == SolverBackend::SimdArm64,
+    );
     let invariants = match decision.effective_backend {
         SolverBackend::ReferenceScalar => {
             advance_authoritative_scalar(policy, bodies, delta_seconds)
@@ -477,6 +602,7 @@ pub fn advance_authoritative_with_features(
             fallback_code: decision.fallback_code,
             fallback_reason: decision.fallback_reason,
             active_cpu_features: normalized_features,
+            schedule,
         },
     )
 }
@@ -485,6 +611,15 @@ pub fn advance_authoritative_with_features(
 pub fn solver_execution_report_for_backend(
     requested_backend: &SolverBackend,
     active_cpu_features: &[String],
+) -> SolverExecutionReport {
+    solver_execution_report_for_backend_with_body_count(requested_backend, active_cpu_features, 0)
+}
+
+#[must_use]
+pub fn solver_execution_report_for_backend_with_body_count(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    body_count: usize,
 ) -> SolverExecutionReport {
     let normalized_features = normalize_cpu_features(active_cpu_features);
     let decision = dispatch_solver_backend(requested_backend, &normalized_features);
@@ -495,6 +630,45 @@ pub fn solver_execution_report_for_backend(
         fallback_code: decision.fallback_code,
         fallback_reason: decision.fallback_reason,
         active_cpu_features: normalized_features,
+        schedule: solver_schedule_report(
+            body_count,
+            decision.effective_backend == SolverBackend::SimdArm64,
+        ),
+    }
+}
+
+#[must_use]
+pub fn solver_schedule_report(
+    body_count: usize,
+    arm64_solver_active: bool,
+) -> SolverScheduleReport {
+    let active_workers = 1;
+    let worker_budget = std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(1)
+        .max(1);
+    let candidate_workers =
+        if arm64_solver_active && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES {
+            worker_budget
+        } else {
+            1
+        };
+    let mode = if candidate_workers > active_workers {
+        SolverScheduleMode::AdaptiveTiledCandidate
+    } else {
+        SolverScheduleMode::SingleWorker
+    };
+    let estimated_pair_count = body_count
+        .saturating_mul(body_count.saturating_sub(1))
+        .checked_div(2)
+        .unwrap_or(0) as u64;
+
+    SolverScheduleReport {
+        mode,
+        active_workers: active_workers as u32,
+        candidate_workers: candidate_workers as u32,
+        body_count: body_count as u32,
+        estimated_pair_count,
     }
 }
 
@@ -1211,12 +1385,13 @@ fn norm_squared(v: Vector3d) -> f64 {
 mod tests {
     use super::{
         advance_authoritative, advance_authoritative_scalar, arm64_cpu_feature_catalog,
-        arm64_neon_runtime_available, compare_arm64_kernel_to_scalar, compute_invariants,
-        cpu_feature_flags, detect_cpu_features, dispatch_solver_backend_for_host,
-        effective_playback_max_substep_seconds, norm, pairwise_gravity_accelerations,
-        playback_substep_plan, solver_execution_report_for_backend, subtract, Arm64GravityKernel,
-        CollisionModel, CpuFeatureUseStatus, IntegratorKind, MassiveBodyState, PhysicsPolicy,
-        SolverBackend, SolverFallbackCode, CPU_FEATURE_AES, CPU_FEATURE_BF16, CPU_FEATURE_CRC,
+        arm64_kernel_catalog, arm64_neon_runtime_available, compare_arm64_kernel_to_scalar,
+        compute_invariants, cpu_feature_flags, detect_cpu_features,
+        dispatch_solver_backend_for_host, effective_playback_max_substep_seconds, norm,
+        pairwise_gravity_accelerations, playback_substep_plan, solver_execution_report_for_backend,
+        solver_schedule_report, subtract, Arm64GravityKernel, Arm64KernelReadiness, CollisionModel,
+        CpuFeatureUseStatus, IntegratorKind, MassiveBodyState, PhysicsPolicy, SolverBackend,
+        SolverFallbackCode, SolverScheduleMode, CPU_FEATURE_AES, CPU_FEATURE_BF16, CPU_FEATURE_CRC,
         CPU_FEATURE_DOTPROD, CPU_FEATURE_FCMA, CPU_FEATURE_FHM, CPU_FEATURE_FP, CPU_FEATURE_FP16,
         CPU_FEATURE_I8MM, CPU_FEATURE_JSCVT, CPU_FEATURE_LSE, CPU_FEATURE_MOPS, CPU_FEATURE_NEON,
         CPU_FEATURE_RDM, CPU_FEATURE_SME, CPU_FEATURE_SME2, CPU_FEATURE_SVE, CPU_FEATURE_SVE2,
@@ -1564,6 +1739,53 @@ mod tests {
             mops.status,
             CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath
         );
+    }
+
+    #[test]
+    fn arm64_kernel_catalog_tracks_broad_experimental_isa_lanes() {
+        let catalog = arm64_kernel_catalog();
+        let neon = catalog
+            .iter()
+            .find(|entry| entry.path_id == "simd.arm64.neon-f64-pairwise")
+            .expect("active neon kernel entry");
+        let candidate_paths = catalog
+            .iter()
+            .filter(|entry| entry.readiness == Arm64KernelReadiness::Candidate)
+            .map(|entry| entry.path_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(neon.readiness, Arm64KernelReadiness::Active);
+        assert_eq!(neon.required_features, &["neon"]);
+        assert!(candidate_paths.contains(&"simd.arm64.sve-f64-batch-candidate"));
+        assert!(candidate_paths.contains(&"simd.arm64.sve2-f64-batch-candidate"));
+        assert!(candidate_paths.contains(&"simd.arm64.sme-tiled-f64-candidate"));
+        assert!(candidate_paths.contains(&"simd.arm64.sme2-tiled-f64-candidate"));
+        assert!(candidate_paths.contains(&"simd.arm64.dotprod-packed-assist-candidate"));
+        assert!(candidate_paths.contains(&"simd.arm64.i8mm-packed-assist-candidate"));
+        assert!(candidate_paths.contains(&"simd.arm64.bf16-forecast-assist-candidate"));
+        assert!(candidate_paths.contains(&"simd.arm64.fp16-visual-assist-candidate"));
+    }
+
+    #[test]
+    fn solver_schedule_report_truthfully_marks_adaptive_tiling_as_candidate() {
+        let scalar_schedule = solver_schedule_report(192, false);
+        let arm64_tiny_schedule = solver_schedule_report(8, true);
+        let arm64_large_schedule = solver_schedule_report(192, true);
+
+        assert_eq!(scalar_schedule.mode, SolverScheduleMode::SingleWorker);
+        assert_eq!(arm64_tiny_schedule.mode, SolverScheduleMode::SingleWorker);
+        assert_eq!(arm64_large_schedule.active_workers, 1);
+        assert_eq!(arm64_large_schedule.body_count, 192);
+        assert_eq!(arm64_large_schedule.estimated_pair_count, 18_336);
+
+        if arm64_large_schedule.candidate_workers > 1 {
+            assert_eq!(
+                arm64_large_schedule.mode,
+                SolverScheduleMode::AdaptiveTiledCandidate
+            );
+        } else {
+            assert_eq!(arm64_large_schedule.mode, SolverScheduleMode::SingleWorker);
+        }
     }
 
     #[test]

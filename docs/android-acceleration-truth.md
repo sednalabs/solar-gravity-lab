@@ -32,7 +32,8 @@ these fields separately:
 - effective CPU backend;
 - active solver path;
 - normalized CPU feature flags; and
-- fallback code when the requested backend is not active.
+- fallback code when the requested backend is not active; and
+- CPU scheduler mode and worker budget.
 
 ## What Is Real Today
 
@@ -47,6 +48,12 @@ these fields separately:
 - The implemented Arm64 solver path is `simd.arm64.neon-f64-pairwise`: a
   double-precision NEON pairwise gravity acceleration kernel guarded by runtime
   feature detection and scalar-oracle parity tests.
+- The Arm64 kernel registry also names candidate lanes for SVE, SVE2, SME,
+  SME2, SVE-I8MM, DotProd, I8MM, BF16, FP16, FHM, RDM, and FCMA so future
+  acceleration work has stable path IDs before those paths become active.
+- Runtime info reports scheduler truth separately from kernel truth. Adaptive
+  tiled scheduling may be reported as a candidate worker budget, but the active
+  worker count remains single-worker until a tiled solver is actually selected.
 
 ## What Must Stay Honest
 
@@ -64,6 +71,9 @@ these fields separately:
 - Lower-precision and matrix/vector extensions are reserved for future
   visualization, tracer-assist, or explicitly bounded compute slices until a
   precision policy and scalar-oracle equivalence gate exists.
+- Candidate scheduler or kernel registry entries are not active acceleration
+  claims. They are engineering handles for future implementation, proof, and
+  device measurement.
 - Hosted emulator proof can validate Vulkan/runtime wiring, but real device
   claims need a Galaxy-class Android device artifact.
 
@@ -92,4 +102,6 @@ Use the local sandbox lane only for local authoring surface checks. Do not use a
 local sandbox smoke as proof that the accelerated runtime mirror is healthy.
 
 See [`Android Arm64 Capability Census`](android-arm64-capability-census.md) for
-the census schema and S25-specific proof contract.
+the census schema and S25-specific proof contract, and
+[`Device-Native Acceleration Program`](device-native-acceleration.md) for the
+broader ISA-kernel and native computer-use direction.

@@ -23,7 +23,7 @@ cargo test -p solarlab-runtime --lib telemetry_report
 {
   echo "arm64-isa-proof: passed"
   echo "active-arm64-solver-path: simd.arm64.neon-f64-pairwise"
-  echo "reserved-arm64-extensions: sve,sve2,sve-i8mm,sme,sme2"
+  echo "reserved-arm64-extensions: sve,sve2,sve-i8mm,sme,sme2,dotprod,i8mm,bf16,fp16,fhm,rdm,fcma"
   echo "capability-census: dist/arm64-isa-proof/capability-census.json"
   echo "physics-tests: solarlab-physics --lib"
   echo "runtime-tests: solarlab-runtime telemetry_report"
