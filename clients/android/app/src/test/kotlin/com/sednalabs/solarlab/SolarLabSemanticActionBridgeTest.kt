@@ -118,6 +118,46 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
+    fun shouldAttachRuntimeMirrorRenderHost_allowsNormalRuntimeWhenReady() {
+        assertTrue(
+            shouldAttachRuntimeMirrorRenderHost(
+                runtimeSessionHandle = 42L,
+                hasMirrorScene = false,
+                hostedDebugModeEnabled = false,
+                hostedDebugModeApplied = false,
+            )
+        )
+        assertTrue(
+            shouldAttachRuntimeMirrorRenderHost(
+                runtimeSessionHandle = 0L,
+                hasMirrorScene = true,
+                hostedDebugModeEnabled = false,
+                hostedDebugModeApplied = false,
+            )
+        )
+    }
+
+    @Test
+    fun shouldAttachRuntimeMirrorRenderHost_defersHostedDebugUntilPauseIsApplied() {
+        assertFalse(
+            shouldAttachRuntimeMirrorRenderHost(
+                runtimeSessionHandle = 42L,
+                hasMirrorScene = true,
+                hostedDebugModeEnabled = true,
+                hostedDebugModeApplied = false,
+            )
+        )
+        assertTrue(
+            shouldAttachRuntimeMirrorRenderHost(
+                runtimeSessionHandle = 42L,
+                hasMirrorScene = true,
+                hostedDebugModeEnabled = true,
+                hostedDebugModeApplied = true,
+            )
+        )
+    }
+
+    @Test
     fun semanticActionsEnabled_tracksDebugBuildGate() {
         assertEquals(BuildConfig.DEBUG, SolarLabSemanticActionBridge.semanticActionsEnabled())
         assertFalse(BuildConfig.BUILD_TYPE == "prerelease" && SolarLabSemanticActionBridge.semanticActionsEnabled())

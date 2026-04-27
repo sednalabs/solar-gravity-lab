@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCHEMA_VERSION = "2026-04-26"
+SCHEMA_VERSION = "2026-04-27.1"
 AT_HWCAP = 16
 AT_HWCAP2 = 26
 
@@ -112,7 +112,7 @@ FEATURE_ORDER = (
 )
 
 FEATURE_WORKLOADS = {
-    "neon": "active authoritative f64 pairwise gravity solver when runtime dispatch selects simd.arm64.neon-f64-pairwise",
+    "neon": "active authoritative f64 pairwise gravity solver when runtime dispatch selects simd.arm64.neon-f64-pairwise or simd.arm64.neon-f64-tiled-pairwise",
     "fp": "baseline floating-point substrate for authoritative simulation",
     "fp16": "reserved for visualization, quantization, or tracer-assist paths with an explicit precision policy",
     "fhm": "reserved for fp16 visualization/tracer-assist kernels after parity and error-budget proof",
@@ -148,6 +148,22 @@ FEATURE_WORKLOADS = {
     "sb": "speculation barrier capability; not a solver path",
     "ssbs": "speculative-store-bypass control capability; not a solver path",
 }
+
+CANDIDATE_KERNEL_REQUIREMENTS = {
+    "simd.arm64.sve-f64-batch-candidate": ("sve",),
+    "simd.arm64.sve2-f64-batch-candidate": ("sve2",),
+    "simd.arm64.sve-i8mm-packed-assist-candidate": ("sve-i8mm",),
+    "simd.arm64.sme-tiled-f64-candidate": ("sme",),
+    "simd.arm64.sme2-tiled-f64-candidate": ("sme2",),
+    "simd.arm64.dotprod-packed-assist-candidate": ("dotprod",),
+    "simd.arm64.i8mm-packed-assist-candidate": ("i8mm",),
+    "simd.arm64.bf16-forecast-assist-candidate": ("bf16",),
+    "simd.arm64.fp16-visual-assist-candidate": ("fp16",),
+    "simd.arm64.fhm-visual-assist-candidate": ("fhm",),
+    "simd.arm64.rdm-vector-assist-candidate": ("rdm",),
+    "simd.arm64.fcma-vector-assist-candidate": ("fcma",),
+}
+CANDIDATE_KERNEL_PATHS = tuple(CANDIDATE_KERNEL_REQUIREMENTS)
 
 RESERVED_FEATURES = {
     "fp16",
@@ -421,6 +437,16 @@ def collect_census(args: argparse.Namespace) -> dict[str, object]:
     uncataloged_tokens = sorted(set(normalized_tokens) - set(FEATURE_ORDER))
     matrix = build_matrix(evidence)
     detected = [row["feature"] for row in matrix if row["detected"]]
+    detected_set = set(detected)
+    eligible_candidate_kernel_paths = [
+        path
+        for path, requirements in CANDIDATE_KERNEL_REQUIREMENTS.items()
+        if all(requirement in detected_set for requirement in requirements)
+    ]
+    eligible_candidate_kernel_path_set = set(eligible_candidate_kernel_paths)
+    blocked_candidate_kernel_paths = [
+        path for path in CANDIDATE_KERNEL_PATHS if path not in eligible_candidate_kernel_path_set
+    ]
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -439,7 +465,13 @@ def collect_census(args: argparse.Namespace) -> dict[str, object]:
             "detected_features": detected,
         },
         "runtime_truth": {
-            "implemented_solver_paths": ["simd.arm64.neon-f64-pairwise"],
+            "implemented_solver_paths": [
+                "simd.arm64.neon-f64-pairwise",
+                "simd.arm64.neon-f64-tiled-pairwise",
+            ],
+            "candidate_kernel_paths": list(CANDIDATE_KERNEL_PATHS),
+            "eligible_candidate_kernel_paths": eligible_candidate_kernel_paths,
+            "blocked_candidate_kernel_paths": blocked_candidate_kernel_paths,
             "active_solver_feature_claims_when_detected": ["neon"],
             "baseline_feature_claims_when_detected": ["fp"],
             "reserved_feature_claims": sorted(RESERVED_FEATURES),
@@ -475,7 +507,12 @@ def write_summary(path: str | None, census: dict[str, object]) -> None:
         f"device-label: {census['device_label']}",
         f"detected-features: {','.join(detected) if detected else 'none'}",
         f"uncataloged-detected-tokens-count: {len(cpu['uncataloged_detected_tokens'])}",
-        "implemented-solver-paths: simd.arm64.neon-f64-pairwise",
+        "implemented-solver-paths: simd.arm64.neon-f64-pairwise,simd.arm64.neon-f64-tiled-pairwise",
+        "candidate-kernel-paths: " + ",".join(census["runtime_truth"]["candidate_kernel_paths"]),
+        "eligible-candidate-kernel-paths: "
+        + ",".join(census["runtime_truth"]["eligible_candidate_kernel_paths"]),
+        "blocked-candidate-kernel-paths: "
+        + ",".join(census["runtime_truth"]["blocked_candidate_kernel_paths"]),
         "reserved-kernel-features: " + ",".join(census["runtime_truth"]["reserved_feature_claims"]),
     ]
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -514,7 +551,10 @@ def write_legacy_capabilities(path: str | None, census: dict[str, object]) -> No
             )
         },
         "implemented_solver_paths": {
-            "active_when_supported": ["simd.arm64.neon-f64-pairwise"],
+            "active_when_supported": [
+                "simd.arm64.neon-f64-pairwise",
+                "simd.arm64.neon-f64-tiled-pairwise",
+            ],
             "reported_but_reserved_until_kernel_exists": [
                 "sve",
                 "sve2",

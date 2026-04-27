@@ -92,8 +92,9 @@ The highest-value live gaps are:
 11. [`docs/frame-lifecycle.md`](docs/frame-lifecycle.md)
 12. [`docs/compute-compaction-reintroduction-plan.md`](docs/compute-compaction-reintroduction-plan.md)
 13. [`docs/scenario-packs.md`](docs/scenario-packs.md)
-14. [`docs/v2/architecture.md`](docs/v2/architecture.md)
-15. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
+14. [`docs/device-native-acceleration.md`](docs/device-native-acceleration.md)
+15. [`docs/v2/architecture.md`](docs/v2/architecture.md)
+16. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
 
 The `docs/v2/*` paths remain named that way because they were written during
 the reset, but they now describe the architecture that lives on `main`.

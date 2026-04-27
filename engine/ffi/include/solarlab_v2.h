@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 // ABI version of the runtime/session contract.
-#define SOLARLAB_V2_ABI_VERSION 4u
+#define SOLARLAB_V2_ABI_VERSION 6u
 // Fixed-size inline capacity for identifier payloads carried by value in structs.
 #define SL_V2_ID_CAPACITY 96u
 
@@ -123,6 +123,15 @@ typedef struct SlRuntimeInfo {
   uint64_t cpu_feature_flags;
   uint32_t cpu_solver_path;
   uint32_t cpu_fallback_code;
+  uint32_t cpu_schedule_mode;
+  uint32_t cpu_schedule_active_workers;
+  uint32_t cpu_schedule_candidate_workers;
+  uint32_t cpu_schedule_body_count;
+  uint64_t cpu_schedule_estimated_pair_count;
+  uint32_t cpu_kernel_catalog_count;
+  uint32_t cpu_kernel_active_count;
+  uint32_t cpu_kernel_eligible_candidate_count;
+  uint32_t cpu_kernel_blocked_candidate_count;
 } SlRuntimeInfo;
 
 typedef struct SlVector3d {

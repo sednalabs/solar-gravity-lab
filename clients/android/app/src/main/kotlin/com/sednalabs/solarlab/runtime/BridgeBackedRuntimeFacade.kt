@@ -267,6 +267,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     cpuSolverPathLabel = signal.cpuSolverPathLabel,
                     cpuFeatureSummary = signal.cpuFeatureSummary,
                     cpuFallbackSummary = signal.cpuFallbackSummary,
+                    cpuScheduleSummary = signal.cpuScheduleSummary,
+                    cpuKernelCatalogSummary = signal.cpuKernelCatalogSummary,
                     requestedGpuBackendLabel = signal.requestedGpuBackendLabel,
                     gpuBackendLabel = signal.gpuBackendLabel,
                     workloadSummary = signal.workloadSummary,
@@ -809,6 +811,8 @@ private fun backendSummaryLabel(
     cpuSolverPathLabel: String?,
     cpuFeatureSummary: String?,
     cpuFallbackSummary: String?,
+    cpuScheduleSummary: String?,
+    cpuKernelCatalogSummary: String?,
     requestedGpuBackendLabel: String?,
     gpuBackendLabel: String,
     workloadSummary: String?,
@@ -844,6 +848,12 @@ private fun backendSummaryLabel(
     cpuFallbackSummary?.takeIf { it.isNotBlank() }?.let {
         segments += "cpu fallback: $it"
     }
+    cpuScheduleSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu scheduler: $it"
+    }
+    cpuKernelCatalogSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu kernels: $it"
+    }
     workloadSummary?.takeIf { it.isNotBlank() }?.let {
         segments += "workloads: $it"
     }
@@ -866,6 +876,12 @@ private fun runtimeInfoTelemetryMessage(signal: RuntimeSignal.RuntimeInfoAvailab
     }
     signal.cpuFallbackSummary?.takeIf { it.isNotBlank() }?.let {
         segments += "cpu-fallback=$it"
+    }
+    signal.cpuScheduleSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu-scheduler=$it"
+    }
+    signal.cpuKernelCatalogSummary?.takeIf { it.isNotBlank() }?.let {
+        segments += "cpu-kernels=$it"
     }
     signal.workloadSummary?.takeIf { it.isNotBlank() }?.let {
         segments += "workloads=$it"

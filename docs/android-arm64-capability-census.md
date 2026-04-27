@@ -39,7 +39,8 @@ It emits JSON with these top-level sections:
   normalized tokens, uncataloged detected tokens, auxv values when available,
   and a feature matrix.
 - `runtime_truth`: active solver paths, active solver feature claims, baseline
-  feature claims, reserved feature claims, and utility feature claims.
+  feature claims, candidate kernel paths, reserved feature claims, and utility
+  feature claims.
 - `gpu_truth`: expected public GPU APIs for the S25 platform plus a reminder
   that hosted Arm64 runners do not prove OEM GPU behavior.
 
@@ -70,17 +71,30 @@ should include:
 - Vulkan physical-device features and extensions.
 - OpenCL platform/device/provider details.
 - Solar Gravity Lab runtime info: requested/effective CPU backend, solver path,
-  CPU feature flags, requested/effective GPU backend, and fallback reason.
+  CPU feature flags, CPU scheduler truth, requested/effective GPU backend, and
+  fallback reason.
 
 ## Activation Rules
 
 Detection does not imply activation.
 
-The current active Arm64 solver claim is
-`simd.arm64.neon-f64-pairwise`. SVE, SVE2, SVE-I8MM, SME, SME2, FP16, FHM,
-DotProd, I8MM, BF16, RDM, and FCMA are reserved until a concrete workload lands
-with runtime dispatch, scalar-oracle or error-budget parity, and measured device
-behavior.
+The current active Arm64 solver claims are
+`simd.arm64.neon-f64-pairwise` and
+`simd.arm64.neon-f64-tiled-pairwise`. Both are double-precision NEON gravity
+paths; runtime dispatch selects the tiled path only for larger body sets. SVE,
+SVE2, SVE-I8MM, SME, SME2, FP16, FHM, DotProd, I8MM, BF16, RDM, and FCMA are
+reserved until a concrete workload lands with runtime dispatch, scalar-oracle
+or error-budget parity, and measured device behavior.
+
+The runtime also keeps named candidate kernel lanes for those extensions. A
+candidate lane is useful backlog and telemetry shape, not an active claim. It
+becomes an active path only after implementation, parity proof, runtime
+eligibility, and device-visible selection all land.
+
+The census summary separates all candidate paths from the feature-qualified
+subset that is eligible on the captured device or runner. This is the bridge
+between "cataloged ambition" and "worth compiling or benchmarking on this
+hardware" while still keeping active solver claims limited to selected paths.
 
 Utility features such as LSE/LSE2, MOPS, CRC, AES, SHA, BTI, MTE, and RNG may
 matter to compiler output, memory throughput, hardening, checksums, or future

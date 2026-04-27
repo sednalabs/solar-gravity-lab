@@ -27,8 +27,9 @@ use solarlab_hardware::{
     HardwareProfile,
 };
 use solarlab_physics::{
-    cpu_feature_flags, detect_cpu_features, solver_execution_report_for_backend, CollisionModel,
-    IntegratorKind, PhysicsPolicy, SolverBackend, SolverExecutionReport, SolverFallbackCode,
+    arm64_kernel_availability, arm64_kernel_catalog, cpu_feature_flags, detect_cpu_features,
+    solver_execution_report_for_backend, Arm64KernelReadiness, CollisionModel, IntegratorKind,
+    PhysicsPolicy, SolverBackend, SolverExecutionReport, SolverFallbackCode, SolverScheduleMode,
 };
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
 use solarlab_scene::SceneTrailFamily;
@@ -37,7 +38,7 @@ use solarlab_vulkan_adapter::{
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 4;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 6;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -181,6 +182,15 @@ pub struct SlRuntimeInfo {
     pub cpu_feature_flags: u64,
     pub cpu_solver_path: u32,
     pub cpu_fallback_code: u32,
+    pub cpu_schedule_mode: u32,
+    pub cpu_schedule_active_workers: u32,
+    pub cpu_schedule_candidate_workers: u32,
+    pub cpu_schedule_body_count: u32,
+    pub cpu_schedule_estimated_pair_count: u64,
+    pub cpu_kernel_catalog_count: u32,
+    pub cpu_kernel_active_count: u32,
+    pub cpu_kernel_eligible_candidate_count: u32,
+    pub cpu_kernel_blocked_candidate_count: u32,
 }
 
 #[repr(C)]
@@ -661,6 +671,15 @@ pub fn runtime_info(
     solver_execution: &SolverExecutionReport,
 ) -> SlRuntimeInfo {
     let effective_cpu_backend = cpu_backend_for_solver_backend(&solver_execution.effective_backend);
+    let kernel_availability = arm64_kernel_availability(&solver_execution.active_cpu_features);
+    let active_kernel_count =
+        if matches!(solver_execution.effective_backend, SolverBackend::SimdArm64)
+            && is_active_arm64_kernel_path(&solver_execution.path_id)
+        {
+            1
+        } else {
+            0
+        };
     SlRuntimeInfo {
         abi_version: SOLARLAB_V2_ABI_VERSION,
         requested_cpu_backend: encode_cpu_backend(&requested_cpu_backend),
@@ -669,7 +688,28 @@ pub fn runtime_info(
         cpu_feature_flags: cpu_feature_flags(&solver_execution.active_cpu_features),
         cpu_solver_path: cpu_solver_path_code(&solver_execution.path_id),
         cpu_fallback_code: cpu_fallback_code(&solver_execution.fallback_code),
+        cpu_schedule_mode: cpu_schedule_mode_code(&solver_execution.schedule.mode),
+        cpu_schedule_active_workers: solver_execution.schedule.active_workers,
+        cpu_schedule_candidate_workers: solver_execution.schedule.candidate_workers,
+        cpu_schedule_body_count: solver_execution.schedule.body_count,
+        cpu_schedule_estimated_pair_count: solver_execution.schedule.estimated_pair_count,
+        cpu_kernel_catalog_count: usize_to_u32(arm64_kernel_catalog().len()),
+        cpu_kernel_active_count: active_kernel_count,
+        cpu_kernel_eligible_candidate_count: usize_to_u32(
+            kernel_availability.eligible_candidate_paths.len(),
+        ),
+        cpu_kernel_blocked_candidate_count: usize_to_u32(
+            kernel_availability.blocked_candidate_paths.len(),
+        ),
     }
+}
+
+fn live_runtime_info_for_session(session: &RuntimeSession) -> SlRuntimeInfo {
+    runtime_info(
+        sl_cpu_backend_to_cpu_backend(session.runtime_info.requested_cpu_backend),
+        sl_gpu_backend_to_gpu_backend(session.runtime_info.gpu_backend),
+        session.runtime.active_solver_execution_report(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -742,7 +782,7 @@ pub extern "C" fn sl_v2_session_destroy(handle: SlRuntimeHandle) -> SlResult {
 }
 
 #[unsafe(no_mangle)]
-/// Query static runtime config metadata; no mutation.
+/// Query current runtime config and solver metadata; no mutation.
 pub extern "C" fn sl_v2_session_runtime_info(handle: SlRuntimeHandle) -> SlRuntimeInfoResult {
     if handle.raw == 0 {
         return SlRuntimeInfoResult {
@@ -770,7 +810,7 @@ pub extern "C" fn sl_v2_session_runtime_info(handle: SlRuntimeHandle) -> SlRunti
 
     SlRuntimeInfoResult {
         result: status(SlStatusCode::Ok),
-        info: session.runtime_info,
+        info: live_runtime_info_for_session(session),
     }
 }
 
@@ -851,7 +891,6 @@ pub extern "C" fn sl_v2_session_apply_command(
             };
         }
     };
-
     SlSessionSnapshotSummaryResult {
         result: status(SlStatusCode::Ok),
         summary,
@@ -1524,8 +1563,15 @@ fn cpu_solver_path_code(path_id: &str) -> u32 {
         "scalar.reference" => 0,
         "simd.arm64.neon-f64-pairwise" => 1,
         "simd.x64.scalar-fallback" => 2,
+        "simd.arm64.neon-f64-tiled-pairwise" => 3,
         _ => u32::MAX,
     }
+}
+
+fn is_active_arm64_kernel_path(path_id: &str) -> bool {
+    arm64_kernel_catalog()
+        .iter()
+        .any(|entry| entry.readiness == Arm64KernelReadiness::Active && entry.path_id == path_id)
 }
 
 fn cpu_fallback_code(fallback_code: &SolverFallbackCode) -> u32 {
@@ -1534,6 +1580,31 @@ fn cpu_fallback_code(fallback_code: &SolverFallbackCode) -> u32 {
         SolverFallbackCode::SimdArm64OnNonAarch64Host => 1,
         SolverFallbackCode::SimdArm64MissingNeon => 2,
         SolverFallbackCode::SimdX64Unavailable => 3,
+    }
+}
+
+fn cpu_schedule_mode_code(schedule_mode: &SolverScheduleMode) -> u32 {
+    match schedule_mode {
+        SolverScheduleMode::SingleWorker => 0,
+        SolverScheduleMode::AdaptiveTiledCandidate => 1,
+    }
+}
+
+fn sl_cpu_backend_to_cpu_backend(cpu_backend: SlCpuBackend) -> CpuBackend {
+    match cpu_backend {
+        SlCpuBackend::ReferenceScalar => CpuBackend::ReferenceScalar,
+        SlCpuBackend::SimdArm64 => CpuBackend::SimdArm64,
+        SlCpuBackend::SimdX64 => CpuBackend::SimdX64,
+    }
+}
+
+fn sl_gpu_backend_to_gpu_backend(gpu_backend: SlGpuBackend) -> GpuBackend {
+    match gpu_backend {
+        SlGpuBackend::None => GpuBackend::None,
+        SlGpuBackend::Vulkan => GpuBackend::Vulkan,
+        SlGpuBackend::Metal => GpuBackend::Metal,
+        SlGpuBackend::WebGpuClass => GpuBackend::WebGpuClass,
+        SlGpuBackend::OpenCl => GpuBackend::OpenCl,
     }
 }
 
@@ -1595,6 +1666,15 @@ fn empty_runtime_info() -> SlRuntimeInfo {
         cpu_feature_flags: 0,
         cpu_solver_path: 0,
         cpu_fallback_code: 0,
+        cpu_schedule_mode: 0,
+        cpu_schedule_active_workers: 0,
+        cpu_schedule_candidate_workers: 0,
+        cpu_schedule_body_count: 0,
+        cpu_schedule_estimated_pair_count: 0,
+        cpu_kernel_catalog_count: 0,
+        cpu_kernel_active_count: 0,
+        cpu_kernel_eligible_candidate_count: 0,
+        cpu_kernel_blocked_candidate_count: 0,
     }
 }
 
@@ -2194,7 +2274,7 @@ mod android_jni {
         let native_result = create_native_result(env, result.result)?;
         env.new_object(
             CLASS_NATIVE_RUNTIME_INFO_RESULT,
-            "(Lcom/sednalabs/solarlab/runtime/NativeResult;IIIIJII)V",
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;IIIIJIIIIIIJIIII)V",
             &[
                 JValue::Object(&native_result),
                 JValue::Int(i32::try_from(result.info.abi_version).unwrap_or(i32::MAX)),
@@ -2204,6 +2284,30 @@ mod android_jni {
                 JValue::Long(i64::try_from(result.info.cpu_feature_flags).unwrap_or(i64::MAX)),
                 JValue::Int(i32::try_from(result.info.cpu_solver_path).unwrap_or(i32::MAX)),
                 JValue::Int(i32::try_from(result.info.cpu_fallback_code).unwrap_or(i32::MAX)),
+                JValue::Int(i32::try_from(result.info.cpu_schedule_mode).unwrap_or(i32::MAX)),
+                JValue::Int(
+                    i32::try_from(result.info.cpu_schedule_active_workers).unwrap_or(i32::MAX),
+                ),
+                JValue::Int(
+                    i32::try_from(result.info.cpu_schedule_candidate_workers).unwrap_or(i32::MAX),
+                ),
+                JValue::Int(i32::try_from(result.info.cpu_schedule_body_count).unwrap_or(i32::MAX)),
+                JValue::Long(
+                    i64::try_from(result.info.cpu_schedule_estimated_pair_count)
+                        .unwrap_or(i64::MAX),
+                ),
+                JValue::Int(
+                    i32::try_from(result.info.cpu_kernel_catalog_count).unwrap_or(i32::MAX),
+                ),
+                JValue::Int(i32::try_from(result.info.cpu_kernel_active_count).unwrap_or(i32::MAX)),
+                JValue::Int(
+                    i32::try_from(result.info.cpu_kernel_eligible_candidate_count)
+                        .unwrap_or(i32::MAX),
+                ),
+                JValue::Int(
+                    i32::try_from(result.info.cpu_kernel_blocked_candidate_count)
+                        .unwrap_or(i32::MAX),
+                ),
             ],
         )
     }
@@ -2486,7 +2590,7 @@ mod tests {
 
     #[test]
     fn runtime_info_layout_matches_c_header_contract() {
-        assert_eq!(size_of::<SlRuntimeInfo>(), 32);
+        assert_eq!(size_of::<SlRuntimeInfo>(), 72);
         assert_eq!(align_of::<SlRuntimeInfo>(), 8);
         assert_eq!(offset_of!(SlRuntimeInfo, abi_version), 0);
         assert_eq!(offset_of!(SlRuntimeInfo, requested_cpu_backend), 4);
@@ -2495,8 +2599,29 @@ mod tests {
         assert_eq!(offset_of!(SlRuntimeInfo, cpu_feature_flags), 16);
         assert_eq!(offset_of!(SlRuntimeInfo, cpu_solver_path), 24);
         assert_eq!(offset_of!(SlRuntimeInfo, cpu_fallback_code), 28);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_schedule_mode), 32);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_schedule_active_workers), 36);
+        assert_eq!(
+            offset_of!(SlRuntimeInfo, cpu_schedule_candidate_workers),
+            40
+        );
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_schedule_body_count), 44);
+        assert_eq!(
+            offset_of!(SlRuntimeInfo, cpu_schedule_estimated_pair_count),
+            48
+        );
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_kernel_catalog_count), 56);
+        assert_eq!(offset_of!(SlRuntimeInfo, cpu_kernel_active_count), 60);
+        assert_eq!(
+            offset_of!(SlRuntimeInfo, cpu_kernel_eligible_candidate_count),
+            64
+        );
+        assert_eq!(
+            offset_of!(SlRuntimeInfo, cpu_kernel_blocked_candidate_count),
+            68
+        );
 
-        assert_eq!(size_of::<SlRuntimeInfoResult>(), 40);
+        assert_eq!(size_of::<SlRuntimeInfoResult>(), 80);
         assert_eq!(align_of::<SlRuntimeInfoResult>(), 8);
         assert_eq!(offset_of!(SlRuntimeInfoResult, result), 0);
         assert_eq!(offset_of!(SlRuntimeInfoResult, info), 8);
@@ -2540,6 +2665,15 @@ mod tests {
         assert_eq!(runtime_info.info.gpu_backend, SlGpuBackend::None);
         assert_eq!(runtime_info.info.cpu_solver_path, 0);
         assert_eq!(runtime_info.info.cpu_fallback_code, 0);
+        assert_eq!(runtime_info.info.cpu_schedule_body_count, 0);
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 0);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 14);
+        assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
+        assert_eq!(
+            runtime_info.info.cpu_kernel_eligible_candidate_count
+                + runtime_info.info.cpu_kernel_blocked_candidate_count,
+            12
+        );
 
         let destroy = sl_v2_session_destroy(create.handle);
         assert_eq!(destroy.code, SlStatusCode::Ok);
@@ -2581,14 +2715,19 @@ mod tests {
         let has_neon = create.runtime_info.cpu_feature_flags & 1 != 0;
         if cfg!(target_arch = "aarch64") && has_neon {
             assert_eq!(create.runtime_info.cpu_backend, SlCpuBackend::SimdArm64);
-            assert_eq!(create.runtime_info.cpu_solver_path, 1);
+            assert!(
+                create.runtime_info.cpu_solver_path == 1
+                    || create.runtime_info.cpu_solver_path == 3
+            );
             assert_eq!(create.runtime_info.cpu_fallback_code, 0);
+            assert_eq!(create.runtime_info.cpu_kernel_active_count, 1);
         } else {
             assert_eq!(
                 create.runtime_info.cpu_backend,
                 SlCpuBackend::ReferenceScalar
             );
             assert_eq!(create.runtime_info.cpu_solver_path, 0);
+            assert_eq!(create.runtime_info.cpu_kernel_active_count, 0);
             if cfg!(target_arch = "aarch64") {
                 assert_eq!(create.runtime_info.cpu_fallback_code, 2);
             } else {
@@ -2599,6 +2738,12 @@ mod tests {
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info, create.runtime_info);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 14);
+        assert_eq!(
+            runtime_info.info.cpu_kernel_eligible_candidate_count
+                + runtime_info.info.cpu_kernel_blocked_candidate_count,
+            12
+        );
 
         let destroy = sl_v2_session_destroy(create.handle);
         assert_eq!(destroy.code, SlStatusCode::Ok);
@@ -3104,6 +3249,14 @@ mod tests {
         assert!(seed_result.summary.body_count > 0);
         assert_eq!(seed_result.summary.body_count, 365);
 
+        let runtime_info = sl_v2_session_runtime_info(create.handle);
+        assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            runtime_info.info.cpu_schedule_body_count,
+            seed_result.summary.body_count
+        );
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+
         let second_seed_result = sl_v2_session_apply_command(
             create.handle,
             test_session_command(SlCommandKind::SeedCanonicalSolarSystem, |_command| {}),
@@ -3113,6 +3266,39 @@ mod tests {
             second_seed_result.summary.body_count,
             seed_result.summary.body_count
         );
+
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn large_seeded_arm64_session_reports_tiled_solver_path_when_available() {
+        let mut params = new_params("sol-system", "main");
+        params.cpu_backend = 1;
+        let create = sl_v2_session_create(params);
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+
+        let seed_result = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::SeedCanonicalSolarSystem, |_command| {}),
+        );
+        assert_eq!(seed_result.result.code, SlStatusCode::Ok);
+        assert_eq!(seed_result.summary.body_count, 365);
+
+        let runtime_info = sl_v2_session_runtime_info(create.handle);
+        assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
+        assert_eq!(runtime_info.info.cpu_schedule_body_count, 365);
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+
+        let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;
+        if cfg!(target_arch = "aarch64") && has_neon {
+            assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::SimdArm64);
+            assert_eq!(runtime_info.info.cpu_solver_path, 3);
+            assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
+        } else {
+            assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::ReferenceScalar);
+            assert_eq!(runtime_info.info.cpu_solver_path, 0);
+            assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
+        }
 
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
