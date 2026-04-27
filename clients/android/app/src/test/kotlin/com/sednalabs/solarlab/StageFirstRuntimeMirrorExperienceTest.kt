@@ -120,7 +120,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     @Test
     fun runtimeMirrorCompactStatusText_normalizesShortStatusText() {
         assertEquals(
-            "Runtime connected · Vulkan ready · 8 tile workers",
+            "Runtime connected Vulkan ready · 8 tile workers",
             runtimeMirrorCompactStatusText(
                 "Runtime connected\n\tVulkan ready   ·   8 tile workers"
             ),
