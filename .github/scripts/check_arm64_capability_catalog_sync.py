@@ -42,6 +42,19 @@ def python_candidate_kernel_requirements() -> dict[str, tuple[str, ...]]:
     raise AssertionError("CANDIDATE_KERNEL_REQUIREMENTS not found in Python collector")
 
 
+def python_implemented_solver_paths() -> list[str]:
+    contents = PYTHON_COLLECTOR.read_text(encoding="utf-8")
+    match = re.search(
+        r'"implemented_solver_paths":\s*(\[[^\]]*\])',
+        contents,
+        flags=re.MULTILINE,
+    )
+    if not match:
+        raise AssertionError("implemented_solver_paths not found in Python collector")
+    value = ast.literal_eval(match.group(1))
+    return list(value)
+
+
 def rust_catalog() -> dict[str, int]:
     contents = RUST_PHYSICS.read_text(encoding="utf-8")
     constants = {
@@ -62,6 +75,22 @@ def rust_catalog() -> dict[str, int]:
     if not entries:
         raise AssertionError("No Rust Arm64 CPU feature catalog entries found")
     return entries
+
+
+def rust_active_kernel_paths() -> list[str]:
+    contents = RUST_PHYSICS.read_text(encoding="utf-8")
+    paths = [
+        path
+        for path, readiness in re.findall(
+            r'path_id: "([^"]+)",\s+required_features: &\[[^\]]*\],\s+readiness: Arm64KernelReadiness::([A-Za-z]+),',
+            contents,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        if readiness == "Active"
+    ]
+    if not paths:
+        raise AssertionError("No Rust active Arm64 kernel catalog entries found")
+    return paths
 
 
 def rust_candidate_kernel_requirements() -> dict[str, tuple[str, ...]]:
@@ -102,8 +131,10 @@ def kotlin_summary_catalog() -> dict[str, int]:
 
 def main() -> int:
     python_features = python_feature_order()
+    python_implemented_paths = python_implemented_solver_paths()
     python_candidate_requirements = python_candidate_kernel_requirements()
     rust_features = rust_catalog()
+    rust_active_paths = rust_active_kernel_paths()
     rust_candidate_requirements = rust_candidate_kernel_requirements()
     kotlin_features = kotlin_summary_catalog()
 
@@ -123,6 +154,13 @@ def main() -> int:
             "Rust/Kotlin feature names differ: "
             f"rust_only={sorted(rust_set - kotlin_set)} "
             f"kotlin_only={sorted(kotlin_set - rust_set)}"
+        )
+
+    if set(python_implemented_paths) != set(rust_active_paths):
+        errors.append(
+            "Python implemented solver paths differ from Rust active kernel paths: "
+            f"python_only={sorted(set(python_implemented_paths) - set(rust_active_paths))} "
+            f"rust_only={sorted(set(rust_active_paths) - set(python_implemented_paths))}"
         )
 
     python_candidate_paths = set(python_candidate_requirements)
@@ -156,6 +194,7 @@ def main() -> int:
     print(
         "arm64 capability catalog sync: "
         f"{len(python_features)} features aligned across Python/Rust/Kotlin; "
+        f"{len(python_implemented_paths)} active kernels aligned across Python/Rust; "
         f"{len(python_candidate_requirements)} candidate kernels aligned across Python/Rust"
     )
     return 0
