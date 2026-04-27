@@ -2605,33 +2605,6 @@ private fun deriveFocusedBodyHeroModel(
 
 private const val ASTRONOMICAL_UNIT_M_DOUBLE = 149_597_870_700.0
 
-private object MissionSignalTuning {
-    const val BodyNormalization = 18f
-    const val TracerNormalization = 120f
-    const val TrailNormalization = 28f
-    const val FocusLift = 0.18f
-
-    const val L1_Base = 0.24f
-    const val L1_BodyCoeff = 0.34f
-
-    const val L2_Base = 0.18f
-    const val L2_TracerCoeff = 0.52f
-    const val L2_FocusCoeff = 0.24f
-
-    const val L3_Base = 0.30f
-    const val L3_TrailCoeff = 0.42f
-
-    const val L4_Base = 0.22f
-    const val L4_TimeCoeff = 0.48f
-
-    const val L5_Base = 0.32f
-    const val L5_BodyCoeff = 0.22f
-    const val L5_TrailCoeff = 0.24f
-
-    const val L6_Base = 0.28f
-    const val L6_TracerCoeff = 0.34f
-}
-
 private fun SnapshotPresentation?.toSnapshotEntries(): List<Pair<String, String>> {
     if (this == null) {
         return listOf(
