@@ -124,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.nextest-archive.outputs.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -185,7 +185,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.nextest-archive.outputs.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
