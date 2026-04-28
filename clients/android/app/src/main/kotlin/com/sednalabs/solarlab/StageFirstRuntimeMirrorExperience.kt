@@ -1274,8 +1274,8 @@ private fun RuntimeMirrorFocusGlyph(
         )
         drawLine(
             color = RuntimeMirrorCyan.copy(alpha = 0.70f),
-            start = Offset(center.x + radius * 1.55f, center.y),
-            end = Offset(center.x + size.width * 0.34f, center.y),
+            start = Offset(center.x + size.width * 0.34f, center.y),
+            end = Offset(center.x + radius * 1.55f, center.y),
             strokeWidth = 1.dp.toPx(),
             cap = StrokeCap.Round,
         )
@@ -1856,7 +1856,7 @@ internal fun runtimeMirrorFocusDisplayName(
         .split(' ')
         .joinToString(" ") { token ->
             token.replaceFirstChar { character ->
-                if (character.isLowerCase()) character.titlecase(Locale.US) else character.toString()
+                character.titlecase(Locale.US)
             }
         }
         .ifBlank { bodyId }
