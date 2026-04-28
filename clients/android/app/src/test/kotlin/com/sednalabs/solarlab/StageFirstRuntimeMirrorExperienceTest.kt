@@ -154,7 +154,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     @Test
     fun runtimeMirrorAccelerationStatusLine_keepsHudMissionReadable() {
         assertEquals(
-            "ARM64 solver lane online · Vulkan render path · kernel catalogue steady",
+            "ARM64 solver lane online · Vulkan render path · kernel catalog steady",
             runtimeMirrorAccelerationStatusLine(
                 activeKernel = "NEON f64 tiled",
                 schedulerMode = "Scheduler reported",

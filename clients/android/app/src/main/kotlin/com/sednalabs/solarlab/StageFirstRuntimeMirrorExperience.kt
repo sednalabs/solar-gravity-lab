@@ -115,6 +115,7 @@ internal data class RuntimeAccelerationReadout(
     val lanes: List<RuntimeAccelerationLane> = emptyList(),
     val signal: Float = 0f,
     val auditSummary: String = detail,
+    val drivePercentage: Int = (signal.coerceIn(0f, 1f) * 100).toInt(),
 )
 
 internal data class RuntimeAccelerationLane(
@@ -893,7 +894,7 @@ private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) 
             }
             RuntimeMirrorMetricPill(
                 label = "DRIVE",
-                value = "${(readout.signal.coerceIn(0f, 1f) * 100).toInt()}%",
+                value = "${readout.drivePercentage}%",
             )
         }
         Row(
@@ -2010,7 +2011,7 @@ internal fun runtimeMirrorAccelerationStatusLine(
     val catalogue = when {
         eligibleKernelCount != null && eligibleKernelCount > 0 -> "$eligibleKernelCount future ISA lanes scouted"
         blockedKernelCount != null && blockedKernelCount > 0 -> "$blockedKernelCount device-only ISA lanes in audit"
-        else -> "kernel catalogue steady"
+        else -> "kernel catalog steady"
     }
     return listOf(drive, render, catalogue).joinToString(" · ")
 }
