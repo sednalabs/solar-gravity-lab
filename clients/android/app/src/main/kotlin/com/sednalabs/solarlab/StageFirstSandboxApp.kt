@@ -657,7 +657,7 @@ private fun StageFirstSandboxLocalExperience(
                         },
                         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON),
                     ) {
-                        Text("Open immersive view")
+                        Text("Enter mission renderer")
                     }
                 },
                 dismissButton = {
@@ -668,10 +668,11 @@ private fun StageFirstSandboxLocalExperience(
                         Text("Stay in sandbox")
                     }
                 },
-                title = { Text("Open immersive view?") },
+                title = { Text("Enter mission renderer?") },
                 text = {
                     Text(
-                        "Immersive view switches from the sandbox authoring surface into the Rust-authoritative stage renderer. Sandbox remains the place for editing and quick object authoring.",
+                        "Switch from the editable sandbox into the Rust-authoritative trajectory renderer. " +
+                            "The live view keeps Vulkan rendering and acceleration telemetry visible while the sandbox remains ready for object editing.",
                     )
                 },
             )
