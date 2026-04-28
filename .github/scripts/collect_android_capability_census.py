@@ -429,7 +429,7 @@ def build_matrix(evidence: Iterable[Evidence]) -> list[dict[str, object]]:
 
 
 def collect_census(args: argparse.Namespace) -> dict[str, object]:
-    serial = validate_adb_serial(args.adb_serial) if args.adb_serial else ""
+    serial = validate_adb_serial(args.adb_serial) if args.adb_serial else None
     if serial:
         cpuinfo = adb_command(serial, "cat /proc/cpuinfo", required=True)
         auxv_values: dict[str, int | None] = {"AT_HWCAP": None, "AT_HWCAP2": None}
