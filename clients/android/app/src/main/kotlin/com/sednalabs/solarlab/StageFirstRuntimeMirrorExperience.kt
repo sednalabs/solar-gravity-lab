@@ -2496,6 +2496,7 @@ internal fun runtimeMirrorCompactAccelerationAuditSummary(value: String): String
         .replace("scalar.reference", "scalar")
         .replace("blocked lanes retained in debug audit", "blocked ISA")
         .replace("fallback simd-arm64 requested on non-aarch64 host", "fallback scalar on emulator")
+        .replace(" · fallback scalar on emulator", "")
         .replace("GPU vulkan", "GPU Vulkan")
 
 private fun runtimeMirrorCompactAccelerationChip(value: String): RuntimeAccelerationChipPresentation {

@@ -202,6 +202,13 @@ class StageFirstRuntimeMirrorExperienceTest {
                 "CPU simd-arm64 -> scalar · GPU vulkan · active scalar.reference"
             ),
         )
+        assertEquals(
+            "CPU scalar · GPU Vulkan · active scalar",
+            runtimeMirrorCompactAccelerationAuditSummary(
+                "CPU simd-arm64 -> scalar · GPU vulkan · active scalar.reference · " +
+                    "fallback simd-arm64 requested on non-aarch64 host"
+            ),
+        )
     }
 
     @Test
