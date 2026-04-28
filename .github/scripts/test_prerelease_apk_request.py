@@ -133,6 +133,14 @@ class PrereleaseApkRequestTests(unittest.TestCase):
 
         self.assertIn("SolarLab-Release must be an ordinary semver version", stderr)
 
+    def test_invalid_version_code_trailer_fails_before_heavy_work(self) -> None:
+        _outputs, stderr = run_request(
+            head_message="release\n\nSolarLab-Release: 0.1.0\nSolarLab-Version-Code: 0\n",
+            expect_success=False,
+        )
+
+        self.assertIn("SolarLab-Version-Code must be a positive integer", stderr)
+
     def test_duplicate_release_trailers_fail_before_heavy_work(self) -> None:
         _outputs, stderr = run_request(
             head_message=(
@@ -146,11 +154,12 @@ class PrereleaseApkRequestTests(unittest.TestCase):
         self.assertIn("commit has more than one SolarLab-Release trailer", stderr)
 
     def test_manual_dispatch_preserves_explicit_inputs(self) -> None:
+        target_sha = "b" * 40
         outputs, _stderr = run_request(
             event_name="workflow_dispatch",
             event_ref="refs/heads/main",
             event_sha="a" * 40,
-            input_ref="main",
+            input_ref=target_sha,
             input_version_name="0.1.0",
             input_version_code="1",
             input_release_channel="stable",
@@ -160,12 +169,38 @@ class PrereleaseApkRequestTests(unittest.TestCase):
 
         self.assertEqual(outputs["release_requested"], "true")
         self.assertEqual(outputs["reason"], "workflow_dispatch")
-        self.assertEqual(outputs["checkout_ref"], "main")
+        self.assertEqual(outputs["checkout_ref"], target_sha)
+        self.assertEqual(outputs["target_sha"], target_sha)
         self.assertEqual(outputs["version_name"], "0.1.0")
         self.assertEqual(outputs["version_code"], "1")
         self.assertEqual(outputs["release_channel"], "stable")
         self.assertEqual(outputs["build_variant"], "prerelease")
         self.assertEqual(outputs["publish_release"], "true")
+
+    def test_manual_dispatch_rejects_newline_injection_inputs(self) -> None:
+        _outputs, stderr = run_request(
+            event_name="workflow_dispatch",
+            event_ref="refs/heads/main",
+            event_sha="a" * 40,
+            input_ref="main\nINJECTED=value",
+            input_version_name="0.1.0",
+            expect_success=False,
+        )
+
+        self.assertIn("ref must be a single-line value", stderr)
+
+    def test_manual_dispatch_rejects_invalid_version_code(self) -> None:
+        _outputs, stderr = run_request(
+            event_name="workflow_dispatch",
+            event_ref="refs/heads/main",
+            event_sha="a" * 40,
+            input_ref="main",
+            input_version_name="0.1.0",
+            input_version_code="zero",
+            expect_success=False,
+        )
+
+        self.assertIn("SolarLab-Version-Code must be a positive integer", stderr)
 
     def test_release_branch_push_keeps_legacy_auto_path(self) -> None:
         outputs, _stderr = run_request(

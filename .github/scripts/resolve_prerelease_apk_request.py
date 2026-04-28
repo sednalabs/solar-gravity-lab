@@ -7,9 +7,10 @@ import sys
 
 
 RELEASE_TRAILER_RE = re.compile(r"^SolarLab-Release:\s*(?P<version>[^\s]+)\s*$")
-VERSION_CODE_TRAILER_RE = re.compile(r"^SolarLab-Version-Code:\s*(?P<version_code>[1-9][0-9]*)\s*$")
+VERSION_CODE_TRAILER_RE = re.compile(r"^SolarLab-Version-Code:\s*(?P<version_code>\S+)\s*$")
 CHANNEL_TRAILER_RE = re.compile(r"^SolarLab-Release-Channel:\s*(?P<channel>[A-Za-z0-9_.-]+)\s*$")
 BUILD_VARIANT_TRAILER_RE = re.compile(r"^SolarLab-Build-Variant:\s*(?P<variant>[A-Za-z0-9_.-]+)\s*$")
+FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 SEMVER_RE = re.compile(
     r"^(?P<major>0|[1-9][0-9]*)\."
     r"(?P<minor>0|[1-9][0-9]*)\."
@@ -27,7 +28,7 @@ def parse_unique_trailer(message: str, pattern: re.Pattern[str], label: str) -> 
     for line in message.splitlines():
         match = pattern.match(line.strip())
         if match:
-            values.append(next(iter(match.groupdict().values())))
+            values.append(match.group(1))
 
     if len(values) > 1:
         raise RequestError(f"commit has more than one {label} trailer")
@@ -35,7 +36,21 @@ def parse_unique_trailer(message: str, pattern: re.Pattern[str], label: str) -> 
     return values[0] if values else None
 
 
+def require_single_line(value: str, label: str) -> str:
+    if "\n" in value or "\r" in value:
+        raise RequestError(f"{label} must be a single-line value")
+    return value
+
+
+def validate_ref(value: str) -> str:
+    value = require_single_line(value.strip(), "ref")
+    if any(character.isspace() for character in value):
+        raise RequestError("ref must not contain whitespace")
+    return value
+
+
 def validate_semver(version_name: str) -> re.Match[str]:
+    require_single_line(version_name, "SolarLab-Release")
     match = SEMVER_RE.fullmatch(version_name)
     if not match:
         raise RequestError(
@@ -43,6 +58,13 @@ def validate_semver(version_name: str) -> re.Match[str]:
             "0.1.0 or 0.1.1-alpha.1"
         )
     return match
+
+
+def validate_version_code(version_code: str) -> str:
+    version_code = require_single_line(version_code.strip(), "SolarLab-Version-Code")
+    if version_code and not re.fullmatch(r"[1-9][0-9]*", version_code):
+        raise RequestError("SolarLab-Version-Code must be a positive integer")
+    return version_code
 
 
 def infer_channel(version_match: re.Match[str], explicit_channel: str | None) -> str:
@@ -60,6 +82,15 @@ def infer_channel(version_match: re.Match[str], explicit_channel: str | None) ->
     return channel
 
 
+def validate_manual_channel(value: str) -> str:
+    channel = require_single_line(value.strip(), "release_channel").lower()
+    if channel == "":
+        return "auto"
+    if channel not in {"auto", "stable", "prerelease"}:
+        raise RequestError("release_channel must be 'auto', 'stable', or 'prerelease'")
+    return channel
+
+
 def infer_build_variant(channel: str, explicit_variant: str | None) -> str:
     if explicit_variant is None:
         return "prerelease" if channel == "prerelease" else "release"
@@ -68,6 +99,22 @@ def infer_build_variant(channel: str, explicit_variant: str | None) -> str:
     if variant not in {"prerelease", "release"}:
         raise RequestError("SolarLab-Build-Variant must be either 'prerelease' or 'release'")
     return variant
+
+
+def validate_manual_build_variant(value: str) -> str:
+    variant = require_single_line(value.strip(), "build_variant").lower()
+    if variant == "":
+        return "prerelease"
+    if variant not in {"prerelease", "release"}:
+        raise RequestError("build_variant must be either 'prerelease' or 'release'")
+    return variant
+
+
+def validate_publish_release(value: str) -> str:
+    normalized = require_single_line(value.strip(), "publish_release").lower()
+    if normalized not in {"true", "false"}:
+        raise RequestError("publish_release must be either 'true' or 'false'")
+    return normalized
 
 
 def branch_name(event_ref: str) -> str:
@@ -82,16 +129,21 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
     input_ref = args.input_ref.strip()
 
     if event_name == "workflow_dispatch":
+        checkout_ref = validate_ref(input_ref) if input_ref else validate_ref(event_sha)
+        version_name = require_single_line(args.input_version_name.strip(), "version_name")
+        if version_name:
+            validate_semver(version_name)
+        version_code = validate_version_code(args.input_version_code)
         return {
             "release_requested": "true",
             "reason": "workflow_dispatch",
-            "checkout_ref": input_ref or event_sha,
-            "target_sha": event_sha,
-            "version_name": args.input_version_name.strip(),
-            "version_code": args.input_version_code.strip(),
-            "release_channel": args.input_release_channel.strip() or "auto",
-            "build_variant": args.input_build_variant.strip() or "prerelease",
-            "publish_release": args.input_publish_release.lower(),
+            "checkout_ref": checkout_ref,
+            "target_sha": checkout_ref if FULL_SHA_RE.fullmatch(checkout_ref) else validate_ref(event_sha),
+            "version_name": version_name,
+            "version_code": version_code,
+            "release_channel": validate_manual_channel(args.input_release_channel),
+            "build_variant": validate_manual_build_variant(args.input_build_variant),
+            "publish_release": validate_publish_release(args.input_publish_release),
         }
 
     if event_name != "push":
@@ -166,7 +218,8 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
         args.head_message,
         VERSION_CODE_TRAILER_RE,
         "SolarLab-Version-Code",
-    ) or ""
+    )
+    version_code = validate_version_code(version_code or "")
     channel = infer_channel(
         version_match,
         parse_unique_trailer(args.head_message, CHANNEL_TRAILER_RE, "SolarLab-Release-Channel"),
