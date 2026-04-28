@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -492,7 +491,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                 ),
         ) {
             val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
-            val actionButtons: @Composable RowScope.() -> Unit = {
+            val actionButtons: @Composable () -> Unit = {
                 StageControlsButton(
                     label = "Hide controls",
                     onClick = { chromeModeName = chromeMode.toggle().name },
@@ -784,12 +783,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                                 .fillMaxWidth()
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                         )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                             content = actionButtons,
                         )
                     } else {
@@ -813,8 +810,9 @@ internal fun StageFirstRuntimeMirrorExperience(
 
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                content = actionButtons,
-                            )
+                            ) {
+                                actionButtons()
+                            }
                         }
                     }
                 }

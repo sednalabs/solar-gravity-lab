@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -870,7 +869,7 @@ private fun BoxScope.StageOverlay(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
-        val actionButtons: @Composable RowScope.() -> Unit = {
+        val actionButtons: @Composable () -> Unit = {
             StageControlsButton(
                 label = "Hide controls",
                 onClick = onToggleChrome,
@@ -1033,12 +1032,10 @@ private fun BoxScope.StageOverlay(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         content = actionButtons,
                     )
                 } else {
@@ -1080,8 +1077,9 @@ private fun BoxScope.StageOverlay(
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            content = actionButtons,
-                        )
+                        ) {
+                            actionButtons()
+                        }
                     }
                 }
             }
