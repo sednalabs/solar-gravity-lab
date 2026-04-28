@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -685,6 +686,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         observerMode = observerMode,
                         renderProcessingMode = renderProcessingMode,
                         scenarioLabel = timelineText,
+                        compact = true,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
@@ -710,6 +712,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                             observerMode = observerMode,
                             renderProcessingMode = renderProcessingMode,
                             scenarioLabel = timelineText,
+                            compact = false,
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
@@ -1043,12 +1046,24 @@ private fun RuntimeMirrorMissionPanel(
     observerMode: ObserverMode,
     renderProcessingMode: RenderProcessingMode,
     scenarioLabel: String,
+    compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val revision = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision ?: "waiting"
+    val revision = remember(uiState.renderStatus.sceneRevision, uiState.renderFrame?.sceneRevision) {
+        (uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision)
+            ?.let { runtimeMirrorCompactRevisionText(it, includePayloadSize = false) }
+            ?: "waiting"
+    }
     val bodyCount = uiState.renderStatus.renderedBodyCount
     val trailCount = uiState.renderStatus.renderedTrailCount
     val focusLabel = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: "Free camera"
+    val scenarioHeadline = remember(scenarioLabel, compact) {
+        if (compact) {
+            runtimeMirrorCompactScenarioLabel(scenarioLabel)
+        } else {
+            scenarioLabel
+        }
+    }
 
     Surface(
         modifier = modifier.widthIn(max = 760.dp),
@@ -1091,21 +1106,27 @@ private fun RuntimeMirrorMissionPanel(
                 )
             }
             Text(
-                text = scenarioLabel,
+                text = scenarioHeadline,
                 modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
                 color = RuntimeMirrorGold,
                 style = MaterialTheme.typography.labelLarge,
+                maxLines = if (compact) 1 else Int.MAX_VALUE,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = selectionCard.title,
                 modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
                 color = RuntimeMirrorText,
                 style = MaterialTheme.typography.titleLarge,
+                maxLines = if (compact) 1 else Int.MAX_VALUE,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = selectionCard.detail,
                 color = RuntimeMirrorTextDim,
-                style = MaterialTheme.typography.bodyMedium,
+                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                maxLines = if (compact) 2 else Int.MAX_VALUE,
+                overflow = TextOverflow.Ellipsis,
             )
             Row(
                 modifier = Modifier
@@ -1117,13 +1138,15 @@ private fun RuntimeMirrorMissionPanel(
                 RuntimeMirrorMetricPill(label = "Focus", value = focusLabel)
                 RuntimeMirrorMetricPill(label = "Rev", value = revision)
                 RuntimeMirrorMetricPill(label = "Scene", value = "$bodyCount bodies / $trailCount trails")
-                RuntimeMirrorMetricPill(label = "Camera", value = observerMode.runtimeDisplayLabel().removePrefix("Observer: "))
+                if (!compact) {
+                    RuntimeMirrorMetricPill(label = "Camera", value = observerMode.runtimeDisplayLabel().removePrefix("Observer: "))
+                }
             }
             RuntimeMirrorMiniSignalChart(
                 values = runtimeMirrorSignalValues(uiState = uiState, selectedBody = selectedBody),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(34.dp),
+                    .height(if (compact) 22.dp else 34.dp),
             )
         }
     }
@@ -1584,6 +1607,14 @@ private fun buildRuntimeTimelineText(
         append(" • Step ")
         append(stepQuantumPreset.label)
     }
+}
+
+internal fun runtimeMirrorCompactScenarioLabel(value: String): String {
+    val normalized = runtimeMirrorNormalizeStatusText(value)
+    val headline = normalized
+        .substringBefore(" | branch=")
+        .trim()
+    return headline.ifBlank { "Runtime mission" }
 }
 
 private fun buildRuntimeSelectionCard(

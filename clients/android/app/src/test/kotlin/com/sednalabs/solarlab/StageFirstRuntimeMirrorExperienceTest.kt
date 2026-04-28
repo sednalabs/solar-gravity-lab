@@ -188,6 +188,17 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactScenarioLabel_keepsPortraitHudMissionFirst() {
+        assertEquals(
+            "Canonical solar system",
+            runtimeMirrorCompactScenarioLabel(
+                "Canonical solar system | branch=main\n" +
+                    "Epoch 0.0h • Speed 6 h/s • Step 6 h",
+            ),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactRevisionText_fallsBackToStatusCompaction() {
         val compacted = runtimeMirrorCompactRevisionText("revision-" + "segment-".repeat(80))
 
