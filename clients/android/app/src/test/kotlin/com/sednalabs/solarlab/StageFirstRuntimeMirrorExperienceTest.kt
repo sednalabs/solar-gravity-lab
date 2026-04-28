@@ -231,6 +231,12 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorFocusDisplayName_promotesRawBodyIdsForHud() {
+        assertEquals("Earth", runtimeMirrorFocusDisplayName(bodyId = "earth", displayName = "earth"))
+        assertEquals("Probe Alpha", runtimeMirrorFocusDisplayName(bodyId = "probe-alpha", displayName = "probe-alpha"))
+    }
+
+    @Test
     fun runtimeMirrorCompactRevisionText_fallsBackToStatusCompaction() {
         val compacted = runtimeMirrorCompactRevisionText("revision-" + "segment-".repeat(80))
 
