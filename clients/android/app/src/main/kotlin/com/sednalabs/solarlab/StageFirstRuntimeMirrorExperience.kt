@@ -57,7 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.graciousgazelles.solarlab.core.math.PhysicalConstants.DAY_SECONDS
+import com.graciousgazelles.solarlab.core.model.PhysicalConstants.DAY_SECONDS
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.feature.lab.PlaybackSpeedPreset
 import com.graciousgazelles.solarlab.feature.lab.StepQuantumPreset
