@@ -1784,7 +1784,7 @@ private fun RuntimeMirrorSearchDialog(
                 )
                 Text(
                     text = if (filteredBodies.size == 32) {
-                        "Showing first 32 matches; type to narrow the catalogue."
+                        "32 shown · type to filter"
                     } else {
                         "${filteredBodies.size} matches"
                     },
@@ -1836,11 +1836,15 @@ private fun RuntimeMirrorSearchDialog(
                                         text = body.displayName,
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
                                         text = "${body.id} · ${formatDistance(body.positionM.magnitude())} from frame origin",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 TextButton(onClick = { onSelectBody(body.id) }) {

@@ -1318,7 +1318,7 @@ private fun SearchDialog(
                 )
                 Text(
                     text = if (bodies.size == 24) {
-                        "Showing first 24 matches; type to narrow the catalogue."
+                        "24 shown · type to filter"
                     } else {
                         "${bodies.size} matches"
                     },
@@ -1370,11 +1370,15 @@ private fun SearchDialog(
                                         text = body.name,
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
                                         text = "${body.prettyCategoryLabel()} · ${body.id}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 TextButton(
