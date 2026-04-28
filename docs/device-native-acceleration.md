@@ -156,6 +156,9 @@ The always-visible HUD should go one step further: keep packet hashes, byte
 counts, path counters, and large payload sizes in debug/audit surfaces, while
 the flight status line stays focused on connection state, render readiness,
 scenario time, and the active graphics/compute capability.
+The same rule applies to long kernel-lane lists: the cockpit can show a bounded
+preview such as the blocked-lane count plus the first few lane names, while the
+full candidate-path catalogue remains in the audit detail.
 This applies to both the runtime mirror cockpit and the pre-immersive stage
 shell. Debug dialogs can keep the raw renderer callback, but the visible stage
 surface should not make humans or native computer-use agents read packet

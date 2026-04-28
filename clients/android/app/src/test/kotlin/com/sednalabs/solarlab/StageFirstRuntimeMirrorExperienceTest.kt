@@ -74,6 +74,14 @@ class StageFirstRuntimeMirrorExperienceTest {
                     "gpu=vulkan",
                     "cpu fallback: simd-arm64 requested on non-aarch64 host",
                     "cpu scheduler: single-worker (365 bodies, 66430 pairs)",
+                    "cpu kernels: kernel catalog: 15 paths, active 0, eligible candidates 0, " +
+                        "blocked candidates 12 [simd.arm64.sve-f64-batch-candidate, " +
+                        "simd.arm64.sve2-f64-batch-candidate, simd.arm64.sve-i8mm-packed-assist-candidate, " +
+                        "simd.arm64.sme-tiled-f64-candidate, simd.arm64.sme2-tiled-f64-candidate, " +
+                        "simd.arm64.dotprod-packed-assist-candidate, simd.arm64.i8mm-packed-assist-candidate, " +
+                        "simd.arm64.bf16-forecast-assist-candidate, simd.arm64.fp16-visual-assist-candidate, " +
+                        "simd.arm64.fhm-visual-assist-candidate, simd.arm64.rdm-vector-assist-candidate, " +
+                        "simd.arm64.fcma-vector-assist-candidate]",
                 ).joinToString(" | "),
                 scenarioId = "sol-system",
                 bodyCount = 365,
@@ -88,10 +96,16 @@ class StageFirstRuntimeMirrorExperienceTest {
                 RuntimeAccelerationLane("CPU", "requested simd-arm64 -> effective reference-scalar"),
                 RuntimeAccelerationLane("GPU", "vulkan", RuntimeAccelerationLaneTone.Active),
                 RuntimeAccelerationLane("Scheduler", "single-worker (365 bodies, 66430 pairs)"),
+                RuntimeAccelerationLane(
+                    "Blocked",
+                    "12 blocked lanes · SVE f64 batch, SVE2 f64 batch, SVE I8MM packed assist · 9 more in audit",
+                    RuntimeAccelerationLaneTone.Blocked,
+                ),
                 RuntimeAccelerationLane("Fallback", "simd-arm64 requested on non-aarch64 host", RuntimeAccelerationLaneTone.Fallback),
             ),
             readout.lanes,
         )
+        assertTrue(readout.detail.contains("simd.arm64.fcma-vector-assist-candidate"))
         assertTrue(readout.signal < 0.35f)
     }
 
