@@ -33,12 +33,15 @@ The default collapsed chrome shows:
 - `Fast`
 - `More`
 
-The expanded chrome is still available through `Controls`, but it should be a
+The expanded chrome is still available through `More`, but it should be a
 temporary command deck rather than the default view. Search, scenarios, debug,
 camera framing, render detail, collision, and full transport controls belong in
 that expanded state. On phone-width viewports the collapsed rail should keep
 all five default controls visible at once, so the user does not need a
-system-edge horizontal swipe just to open the expanded command deck.
+system-edge horizontal swipe just to open the expanded command deck. The
+expanded compact command deck should wrap dense controls instead of hiding
+primary actions behind sideways scrolling; if a control is present only after a
+horizontal swipe, it is not discoverable enough for the stage-first surface.
 
 Trace presentation is intentionally user-switchable:
 

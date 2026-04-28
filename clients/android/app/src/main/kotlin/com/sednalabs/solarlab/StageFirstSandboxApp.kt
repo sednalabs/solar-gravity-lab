@@ -897,7 +897,7 @@ private fun BoxScope.StageOverlay(
                 emphasized = debugVisible,
             )
         }
-        val primaryControls: @Composable RowScope.() -> Unit = {
+        val primaryControls: @Composable () -> Unit = {
             StageActionButton(
                 label = if (isRunning) "Pause" else "Start",
                 onClick = onStartPause,
@@ -914,7 +914,7 @@ private fun BoxScope.StageOverlay(
             )
             StageActionButton(label = "Reset", onClick = onReset)
         }
-        val secondaryControls: @Composable RowScope.() -> Unit = {
+        val secondaryControls: @Composable () -> Unit = {
             StageActionButton(
                 label = addButtonLabel,
                 onClick = onAddObject,
@@ -1159,27 +1159,39 @@ private fun BoxScope.StageOverlay(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun StageControlRail(
     compact: Boolean = false,
-    content: @Composable RowScope.() -> Unit,
+    content: @Composable () -> Unit,
 ) {
     Surface(
         color = ControlRail,
         shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(
-                    horizontal = if (compact) 4.dp else 10.dp,
-                    vertical = if (compact) 7.dp else 10.dp,
-                ),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = content,
-        )
+        val railModifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = if (compact) 4.dp else 10.dp,
+                vertical = if (compact) 7.dp else 10.dp,
+            )
+        if (compact) {
+            FlowRow(
+                modifier = railModifier,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                content()
+            }
+        } else {
+            Row(
+                modifier = railModifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                content()
+            }
+        }
     }
 }
 

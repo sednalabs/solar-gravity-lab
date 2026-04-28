@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -522,7 +524,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     emphasized = debugVisible,
                 )
             }
-            val primaryControls: @Composable RowScope.() -> Unit = {
+            val primaryControls: @Composable () -> Unit = {
                 StageActionButton(
                     label = if (compactLayout) "In" else "Zoom +",
                     onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
@@ -564,7 +566,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     dense = compactLayout,
                 )
                 StageActionButton(
-                    label = if (compactLayout) "Advance" else "Forward step",
+                    label = if (compactLayout) "Next" else "Forward step",
                     onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
                     enabled = canSendCommands && !isRunning,
                     dense = compactLayout,
@@ -594,7 +596,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     dense = compactLayout,
                 )
             }
-            val secondaryControls: @Composable RowScope.() -> Unit = {
+            val secondaryControls: @Composable () -> Unit = {
                 StageActionButton(
                     label = if (compactLayout) stepQuantumPreset.label else "Step ${stepQuantumPreset.label}",
                     onClick = { stepQuantumPreset = stepQuantumPreset.shifted(1) },
@@ -1446,10 +1448,11 @@ private fun RuntimeMirrorMetricPill(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun RuntimeMirrorCommandDeck(
     compact: Boolean,
-    primaryControls: @Composable RowScope.() -> Unit,
-    secondaryControls: @Composable RowScope.() -> Unit,
+    primaryControls: @Composable () -> Unit,
+    secondaryControls: @Composable () -> Unit,
 ) {
     Surface(
         color = RuntimeMirrorGlass,
@@ -1464,7 +1467,7 @@ private fun RuntimeMirrorCommandDeck(
             verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
         ) {
             RuntimeMirrorCommandDeckRow(
-                label = "Camera",
+                label = "Stage",
                 compact = compact,
                 content = primaryControls,
             )
@@ -1478,10 +1481,11 @@ private fun RuntimeMirrorCommandDeck(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun RuntimeMirrorCommandDeckRow(
     label: String,
     compact: Boolean,
-    content: @Composable RowScope.() -> Unit,
+    content: @Composable () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1496,14 +1500,14 @@ private fun RuntimeMirrorCommandDeckRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Row(
+        FlowRow(
             modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState()),
+                .weight(1f),
             horizontalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = content,
-        )
+            verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
+        ) {
+            content()
+        }
     }
 }
 
