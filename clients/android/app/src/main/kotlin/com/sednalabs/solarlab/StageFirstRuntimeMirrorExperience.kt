@@ -868,7 +868,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                             dense = true,
                         )
                         StageControlsButton(
-                            label = "Controls",
+                            label = "More",
                             onClick = { chromeModeName = chromeMode.toggle().name },
                             dense = true,
                         )

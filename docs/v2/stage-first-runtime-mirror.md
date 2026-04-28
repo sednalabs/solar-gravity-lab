@@ -31,14 +31,14 @@ The default collapsed chrome shows:
 - `Slow`
 - trace-layer cycling
 - `Fast`
-- `Controls`
+- `More`
 
 The expanded chrome is still available through `Controls`, but it should be a
 temporary command deck rather than the default view. Search, scenarios, debug,
 camera framing, render detail, collision, and full transport controls belong in
 that expanded state. On phone-width viewports the collapsed rail should keep
 all five default controls visible at once, so the user does not need a
-system-edge horizontal swipe just to open `Controls`.
+system-edge horizontal swipe just to open the expanded command deck.
 
 Trace presentation is intentionally user-switchable:
 
