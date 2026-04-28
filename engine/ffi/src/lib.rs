@@ -271,13 +271,25 @@ impl Default for SlVulkanBodyInstance {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlVulkanTracerInstance {
     pub position_from_origin_m: SlPackedVec3,
     pub color: SlPackedColor,
     pub size_px: f32,
     pub source_body_id: [u8; SL_V2_ID_CAPACITY],
     pub source_body_id_len: u32,
+}
+
+impl Default for SlVulkanTracerInstance {
+    fn default() -> Self {
+        Self {
+            position_from_origin_m: SlPackedVec3::default(),
+            color: SlPackedColor::default(),
+            size_px: 0.0,
+            source_body_id: [0; SL_V2_ID_CAPACITY],
+            source_body_id_len: 0,
+        }
+    }
 }
 
 #[repr(C)]
