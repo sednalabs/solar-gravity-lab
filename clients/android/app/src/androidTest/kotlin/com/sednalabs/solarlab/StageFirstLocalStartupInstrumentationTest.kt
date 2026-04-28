@@ -2,6 +2,7 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -31,10 +32,10 @@ class StageFirstLocalStartupInstrumentationTest {
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
             .performClick()
 
@@ -43,18 +44,18 @@ class StageFirstLocalStartupInstrumentationTest {
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
 
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-                .performScrollTo()
+                .performScrollToIfPossible()
                 .assertIsDisplayed()
         } else {
             assertTrue(composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isEmpty())
@@ -87,4 +88,15 @@ class StageFirstLocalStartupInstrumentationTest {
         }
         return null
     }
+
+    private fun SemanticsNodeInteraction.performScrollToIfPossible(): SemanticsNodeInteraction =
+        try {
+            performScrollTo()
+        } catch (error: AssertionError) {
+            if (error.message?.contains("Scroll SemanticsAction") == true) {
+                this
+            } else {
+                throw error
+            }
+        }
 }
