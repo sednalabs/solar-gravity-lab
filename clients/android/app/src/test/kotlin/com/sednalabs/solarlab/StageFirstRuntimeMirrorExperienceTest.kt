@@ -31,6 +31,10 @@ class StageFirstRuntimeMirrorExperienceTest {
 
         assertEquals("Galaxy S25 Ultra acceleration cockpit", readout.headline)
         assertEquals(
+            "Parallel ARM64 drive online · Vulkan render path · 3 future ISA lanes scouted",
+            readout.statusLine,
+        )
+        assertEquals(
             listOf(
                 "S25 swarm",
                 "749 bodies",
@@ -62,6 +66,10 @@ class StageFirstRuntimeMirrorExperienceTest {
             ),
             readout.lanes,
         )
+        assertEquals(
+            "CPU simd.arm64 · GPU vulkan · active NEON f64 parallel tiled",
+            readout.auditSummary,
+        )
         assertTrue(readout.signal > 0.80f)
     }
 
@@ -88,7 +96,11 @@ class StageFirstRuntimeMirrorExperienceTest {
             )
         )
 
-        assertEquals("Runtime acceleration truth", readout.headline)
+        assertEquals("Mission acceleration cockpit", readout.headline)
+        assertEquals(
+            "Emulator scalar truth mode · Vulkan render path · 12 device-only ISA lanes in audit",
+            readout.statusLine,
+        )
         assertEquals(listOf("365 bodies", "Single worker", "Vulkan"), readout.chips)
         assertTrue(readout.detail.contains("effective reference-scalar"))
         assertEquals(
@@ -104,6 +116,11 @@ class StageFirstRuntimeMirrorExperienceTest {
                 RuntimeAccelerationLane("Fallback", "simd-arm64 requested on non-aarch64 host", RuntimeAccelerationLaneTone.Fallback),
             ),
             readout.lanes,
+        )
+        assertEquals(
+            "CPU requested simd-arm64 -> effective reference-scalar · GPU vulkan · " +
+                "12 blocked lanes retained in debug audit · fallback simd-arm64 requested on non-aarch64 host",
+            readout.auditSummary,
         )
         assertTrue(readout.detail.contains("simd.arm64.fcma-vector-assist-candidate"))
         assertTrue(readout.signal < 0.35f)
@@ -131,6 +148,21 @@ class StageFirstRuntimeMirrorExperienceTest {
             readout.lanes.contains(
                 RuntimeAccelerationLane("Eligible", "eligible candidates 2", RuntimeAccelerationLaneTone.Eligible)
             )
+        )
+    }
+
+    @Test
+    fun runtimeMirrorAccelerationStatusLine_keepsHudMissionReadable() {
+        assertEquals(
+            "ARM64 solver lane online · Vulkan render path · kernel catalogue steady",
+            runtimeMirrorAccelerationStatusLine(
+                activeKernel = "NEON f64 tiled",
+                schedulerMode = "Scheduler reported",
+                gpuChip = "Vulkan",
+                fallback = null,
+                eligibleKernelCount = 0,
+                blockedKernelCount = 0,
+            ),
         )
     }
 
