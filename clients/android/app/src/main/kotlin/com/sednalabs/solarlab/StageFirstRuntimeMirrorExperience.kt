@@ -1948,6 +1948,9 @@ private fun runtimeMirrorKernelLaneSummary(
     kernels
         ?.let { runtimeMirrorKernelLaneMatch(it, lane) }
         ?.let { match ->
+            if (runtimeMirrorKernelLaneCount(match) == 0) {
+                return@let null
+            }
             runtimeMirrorKernelLaneNames(
                 match = match,
                 compactHud = compactHud,
@@ -1983,11 +1986,18 @@ private fun runtimeMirrorKernelLaneNames(
     if (!compactHud || names.size <= RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT) {
         return names.joinToString()
     }
-    val count = match.groupValues.getOrNull(0)
-        ?.let { RuntimeMirrorBlockedKernelCountRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
-        ?: names.size
+    val count = runtimeMirrorKernelLaneCount(match) ?: names.size
     val preview = names.take(RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT).joinToString()
     return "$count blocked lanes · $preview · ${names.size - RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT} more in audit"
+}
+
+private fun runtimeMirrorKernelLaneCount(match: MatchResult): Int? {
+    val laneLabel = match.groupValues.getOrNull(1) ?: return null
+    return match.value
+        .substringAfter(laneLabel, missingDelimiterValue = "")
+        .trimStart()
+        .substringBefore(' ', missingDelimiterValue = "")
+        .toIntOrNull()
 }
 
 private fun runtimeMirrorShortKernelName(path: String): String {
