@@ -955,26 +955,39 @@ private fun BoxScope.StageOverlay(
                     .widthIn(max = if (compactLayout) 360.dp else 420.dp)
                     .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
             ) {
-                Text(
-                    text = timelineText,
-                    color = TimelineText,
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = selectionCard.title,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                    color = SelectionText,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 1,
-                )
-                Text(
-                    text = selectionCard.eyebrow,
-                    color = MissionText,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    StageTrajectoryGlyph(
+                        orbitColor = TimelineText,
+                        probeColor = SelectionText,
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(1.dp),
+                    ) {
+                        Text(
+                            text = timelineText,
+                            color = TimelineText,
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = selectionCard.title,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                            color = SelectionText,
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = selectionCard.eyebrow,
+                            color = MissionText,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
         }
 
