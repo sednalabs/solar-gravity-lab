@@ -1884,7 +1884,7 @@ private fun RuntimeMirrorScenarioDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "Jump to deterministic scenes for visual polish, camera checks, and fast Android tool iteration.",
+                    text = "Deterministic scenes for visual polish, camera checks, and fast Android tool iteration.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1919,11 +1919,15 @@ private fun RuntimeMirrorScenarioDialog(
                                     text = pack.title,
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = pack.description,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = listOf(
@@ -1933,6 +1937,8 @@ private fun RuntimeMirrorScenarioDialog(
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.secondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                             TextButton(
