@@ -24,6 +24,7 @@ from typing import Iterable
 
 SCHEMA_VERSION = "2026-04-27.1"
 AT_HWCAP = 16
+ADB_SERIAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 AT_HWCAP2 = 26
 
 FEATURE_ALIASES = {
@@ -282,6 +283,18 @@ def adb_command(serial: str, command: str, *, required: bool = False) -> str:
     )
 
 
+def validate_adb_serial(serial: str) -> str:
+    normalized = serial.strip()
+    if not normalized:
+        raise CommandFailure("ADB serial cannot be empty")
+    if normalized.startswith("-") or not ADB_SERIAL_RE.fullmatch(normalized):
+        raise CommandFailure(
+            "Invalid ADB serial format; expected up to 128 chars of [A-Za-z0-9._:-] "
+            "and must not start with '-'"
+        )
+    return normalized
+
+
 def parse_cpuinfo_tokens(contents: str) -> set[str]:
     tokens: set[str] = set()
     for line in contents.splitlines():
@@ -416,7 +429,7 @@ def build_matrix(evidence: Iterable[Evidence]) -> list[dict[str, object]]:
 
 
 def collect_census(args: argparse.Namespace) -> dict[str, object]:
-    serial = args.adb_serial
+    serial = validate_adb_serial(args.adb_serial) if args.adb_serial else ""
     if serial:
         cpuinfo = adb_command(serial, "cat /proc/cpuinfo", required=True)
         auxv_values: dict[str, int | None] = {"AT_HWCAP": None, "AT_HWCAP2": None}
