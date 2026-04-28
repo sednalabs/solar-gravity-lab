@@ -24,6 +24,8 @@ object SolarLabTestTags {
     const val STAGE_FIRST_SCENARIO_DIALOG = "stage_first.scenario.dialog"
     const val STAGE_FIRST_SCENARIO_BADGE = "stage_first.scenario.badge"
     const val STAGE_FIRST_DEBUG_BUTTON = "stage_first.debug_button"
+    const val STAGE_FIRST_CONTROLS_BUTTON = "stage_first.controls_button"
+    const val STAGE_FIRST_TRACE_LAYER_BUTTON = "stage_first.trace_layer_button"
     const val STAGE_FIRST_ADD_OBJECT_BUTTON = "stage_first.add_object_button"
     const val STAGE_FIRST_SELECTION_PANEL = "stage_first.selection_panel"
     const val STAGE_FIRST_SELECTION_TITLE = "stage_first.selection.title"

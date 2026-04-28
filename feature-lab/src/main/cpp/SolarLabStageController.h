@@ -66,6 +66,7 @@ public:
     void SetRuntimeProcessingMode(int processingModeCode);
     void SetRuntimeObserverMode(int observerModeCode);
     void SetRuntimeSelectedBodyId(const std::string& bodyId);
+    void SetRuntimeTraceLayerMode(int traceLayerModeCode);
     void ResetRuntimeCamera();
     void PanRuntimeCamera(float distanceXPx, float distanceYPx, int viewportWidthPx, int viewportHeightPx);
     void ZoomRuntimeCamera(float scaleFactor);
@@ -126,6 +127,7 @@ private:
     uint64_t boundRuntimeSessionHandle_ = 0;
     int runtimeProcessingModeCode_ = 0;
     int runtimeObserverModeCode_ = 0;
+    int runtimeTraceLayerModeCode_ = 0;
     std::string runtimeSelectedBodyId_;
 
     double cameraCenterX_ = 0.0;

@@ -44,6 +44,9 @@ constexpr int kObserverModeFollowSelected = 1;
 constexpr int kObserverModeFollowSelectedHost = 2;
 constexpr int kProcessingModeDefault = 0;
 constexpr int kProcessingModeLow = 1;
+constexpr int kTraceLayerModeFocus = 0;
+constexpr int kTraceLayerModeAll = 1;
+constexpr int kTraceLayerModeOff = 2;
 
 void LogInfo(const std::string& message) {
     __android_log_print(ANDROID_LOG_INFO, kLogTag, "%s", message.c_str());
@@ -106,6 +109,17 @@ float ClampFloat(float value, float lower, float upper) {
     return std::max(lower, std::min(value, upper));
 }
 
+int NormalizeTraceLayerModeCode(int traceLayerModeCode) {
+    switch (traceLayerModeCode) {
+        case kTraceLayerModeFocus:
+        case kTraceLayerModeAll:
+        case kTraceLayerModeOff:
+            return traceLayerModeCode;
+        default:
+            return kTraceLayerModeFocus;
+    }
+}
+
 float KindMinimumBillboardDiameterPx(uint32_t kind) {
     switch (kind) {
         case kKindStar:
@@ -138,6 +152,13 @@ std::string DecodeInlineUtf8(const uint8_t* bytes, uint32_t length) {
         return {};
     }
     return std::string(reinterpret_cast<const char*>(bytes), reinterpret_cast<const char*>(bytes) + length);
+}
+
+std::string LowercaseAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
 }
 
 std::string DecodeBytesView(const SlBytesView& view) {
@@ -255,11 +276,17 @@ ProjectedBody ProjectBody(
     return result;
 }
 
-uint64_t MakeSyntheticRevision(int64_t packetRevision, uint64_t cameraRevisionCounter, int processingModeCode, int observerModeCode) {
+uint64_t MakeSyntheticRevision(
+    int64_t packetRevision,
+    uint64_t cameraRevisionCounter,
+    int processingModeCode,
+    int observerModeCode,
+    int traceLayerModeCode) {
     uint64_t revision = static_cast<uint64_t>(packetRevision < 0 ? 0 : packetRevision);
     revision ^= (cameraRevisionCounter + 0x9E3779B97F4A7C15ULL + (revision << 6U) + (revision >> 2U));
     revision ^= (static_cast<uint64_t>(processingModeCode & 0xFFFF) << 16U);
     revision ^= (static_cast<uint64_t>(observerModeCode & 0xFFFF) << 32U);
+    revision ^= (static_cast<uint64_t>(traceLayerModeCode & 0xFFFF) << 48U);
     if (revision == 0) {
         revision = 1;
     }
@@ -568,6 +595,16 @@ void SolarLabStageController::SetRuntimeSelectedBodyId(const std::string& bodyId
     ++cameraRevisionCounter_;
 }
 
+void SolarLabStageController::SetRuntimeTraceLayerMode(int traceLayerModeCode) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    const int normalizedModeCode = NormalizeTraceLayerModeCode(traceLayerModeCode);
+    if (runtimeTraceLayerModeCode_ == normalizedModeCode) {
+        return;
+    }
+    runtimeTraceLayerModeCode_ = normalizedModeCode;
+    ++cameraRevisionCounter_;
+}
+
 void SolarLabStageController::ResetRuntimeCamera() {
     std::lock_guard<std::mutex> lock(stateMutex_);
     runtimeCameraInitialized_ = false;
@@ -801,6 +838,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
 
     const SimplificationPolicy policy = PolicyForCamera(cameraViewRadiusM_, runtimeProcessingModeCode_);
     const bool cameraLocked = runtimeObserverModeCode_ != kObserverModeFree;
+    const bool traceLayerEnabled = runtimeTraceLayerModeCode_ != kTraceLayerModeOff;
+    const bool focusTraceLayer = runtimeTraceLayerModeCode_ == kTraceLayerModeFocus;
+    const std::string selectedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
     if (cameraLocked) {
         InitializeFreeCameraFromRuntimePacketLocked(
             packetResult.info.camera.frame_origin_m.x,
@@ -893,7 +933,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         }
     }
 
-    if (tracersView.has_value() && tracersView->data != nullptr && tracersView->element_count > 0) {
+    if (traceLayerEnabled && tracersView.has_value() && tracersView->data != nullptr && tracersView->element_count > 0) {
         const uint8_t* raw = reinterpret_cast<const uint8_t*>(tracersView->data);
         const uint32_t tracerCount = tracersView->element_count;
         const uint32_t stride = tracersView->stride_bytes == 0 ? sizeof(SlVulkanTracerInstance) : tracersView->stride_bytes;
@@ -904,6 +944,11 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             cameraCenterZ_ - runtimeScene_.sceneOriginZ);
         for (uint32_t index = 0; index < tracerCount; ++index) {
             const auto* tracer = reinterpret_cast<const SlVulkanTracerInstance*>(raw + (stride * index));
+            const std::string sourceBodyId = LowercaseAscii(
+                DecodeInlineUtf8(tracer->source_body_id, tracer->source_body_id_len));
+            if (focusTraceLayer && !selectedBodyId.empty() && sourceBodyId != selectedBodyId) {
+                continue;
+            }
             const Float3 position = MakeFloat3(
                 tracer->position_from_origin_m.x,
                 tracer->position_from_origin_m.y,
@@ -948,7 +993,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         }
     }
 
-    if (trailSpansView.has_value() && trailVerticesView.has_value() && trailSpansView->data != nullptr && trailVerticesView->data != nullptr) {
+    if (traceLayerEnabled && trailSpansView.has_value() && trailVerticesView.has_value() && trailSpansView->data != nullptr && trailVerticesView->data != nullptr) {
         const uint8_t* spansRaw = reinterpret_cast<const uint8_t*>(trailSpansView->data);
         const uint8_t* verticesRaw = reinterpret_cast<const uint8_t*>(trailVerticesView->data);
         const uint32_t spanCount = trailSpansView->element_count;
@@ -957,6 +1002,13 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         const uint32_t totalVertexCount = trailVerticesView->element_count;
         for (uint32_t spanIndex = 0; spanIndex < spanCount; ++spanIndex) {
             const auto* span = reinterpret_cast<const SlVulkanTrailSpan*>(spansRaw + (spanStride * spanIndex));
+            const std::string sourceBodyId = LowercaseAscii(
+                DecodeInlineUtf8(span->source_body_id, span->source_body_id_len));
+            if (focusTraceLayer &&
+                !selectedBodyId.empty() &&
+                sourceBodyId != selectedBodyId) {
+                continue;
+            }
             const uint32_t start = std::min(span->vertex_offset, totalVertexCount);
             const uint32_t count = std::min(span->vertex_count, totalVertexCount - start);
             if (count < 2U) {
@@ -995,7 +1047,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         static_cast<int64_t>(revisionSeed ^ static_cast<uint64_t>(packetResult.info.diagnostics.frame_number)),
         cameraRevisionCounter_,
         runtimeProcessingModeCode_,
-        runtimeObserverModeCode_);
+        runtimeObserverModeCode_,
+        runtimeTraceLayerModeCode_);
 
     renderer_.SubmitScene(
         static_cast<int64_t>(syntheticRevision),

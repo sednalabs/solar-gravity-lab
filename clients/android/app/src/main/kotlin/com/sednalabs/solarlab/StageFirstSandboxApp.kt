@@ -83,6 +83,8 @@ import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import com.graciousgazelles.solarlab.render.core.ObserverMode
+import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
+import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.flow.Flow
@@ -253,6 +255,8 @@ private fun StageFirstSandboxLocalExperience(
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
         var collisionMode by remember { mutableStateOf(CollisionMode.MERGE) }
         var renderProcessingMode by remember { mutableStateOf(HostedDebugMode.initialRenderProcessingMode) }
+        var chromeModeName by rememberSaveable { mutableStateOf(StageChromeMode.COLLAPSED.name) }
+        var traceLayerModeName by rememberSaveable { mutableStateOf(TraceLayerMode.FOCUS.name) }
         var isRunning by remember { mutableStateOf(!HostedDebugMode.enabled) }
         var resumeSimulationOnForeground by remember { mutableStateOf(false) }
         var resumeSimulationAfterModalInteraction by remember { mutableStateOf(false) }
@@ -273,6 +277,14 @@ private fun StageFirstSandboxLocalExperience(
         }
         val session = remember(context) {
             LabSession.createDefault(context = context, listener = frameListener)
+        }
+        val chromeMode = stageChromeModeFromName(chromeModeName)
+        val traceLayerMode = traceLayerModeFromName(traceLayerModeName)
+        val renderLayerOptions = remember(traceLayerMode, selectedBodyId) {
+            RenderLayerOptions(
+                traceLayerMode = traceLayerMode,
+                focusedBodyIds = setOfNotNull(selectedBodyId),
+            )
         }
 
         val prepareForModalInteraction = {
@@ -380,8 +392,9 @@ private fun StageFirstSandboxLocalExperience(
             renderHostView?.onHostResume()
         }
 
-        LaunchedEffect(latestFrame?.snapshot, renderHostView) {
+        LaunchedEffect(latestFrame?.snapshot, renderHostView, renderLayerOptions) {
             latestFrame?.snapshot?.let { snapshot ->
+                renderHostView?.setRenderLayerOptions(renderLayerOptions)
                 renderHostView?.submitSnapshot(snapshot)
             }
         }
@@ -536,6 +549,8 @@ private fun StageFirstSandboxLocalExperience(
                 interactionHintText = interactionHintText,
                 collisionMode = collisionMode,
                 renderProcessingMode = renderProcessingMode,
+                chromeMode = chromeMode,
+                traceLayerMode = traceLayerMode,
                 isRunning = isRunning,
                 canStepBackward = pendingAddDraft == null && !isRunning && (frame?.timeline?.canStepBackward == true),
                 canStepForward = pendingAddDraft == null && !isRunning,
@@ -557,6 +572,12 @@ private fun StageFirstSandboxLocalExperience(
                     }
                 } else {
                     null
+                },
+                onToggleChrome = {
+                    chromeModeName = chromeMode.toggle().name
+                },
+                onCycleTraceLayer = {
+                    traceLayerModeName = traceLayerMode.next().name
                 },
                 onSearch = { searchVisible = true },
                 onDebug = { debugVisible = true },
@@ -809,6 +830,8 @@ private fun BoxScope.StageOverlay(
     interactionHintText: String,
     collisionMode: CollisionMode,
     renderProcessingMode: RenderProcessingMode,
+    chromeMode: StageChromeMode,
+    traceLayerMode: TraceLayerMode,
     isRunning: Boolean,
     canStepBackward: Boolean,
     canStepForward: Boolean,
@@ -823,6 +846,8 @@ private fun BoxScope.StageOverlay(
     authoringActive: Boolean,
     modeButtonLabel: String? = null,
     onToggleMode: (() -> Unit)? = null,
+    onToggleChrome: () -> Unit,
+    onCycleTraceLayer: () -> Unit,
     onSearch: () -> Unit,
     onDebug: () -> Unit,
     onAddObject: () -> Unit,
@@ -844,6 +869,10 @@ private fun BoxScope.StageOverlay(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
         val actionButtons: @Composable RowScope.() -> Unit = {
+            StageControlsButton(
+                label = "Hide controls",
+                onClick = onToggleChrome,
+            )
             modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
                 StageActionButton(
                     label = label,
@@ -898,6 +927,12 @@ private fun BoxScope.StageOverlay(
             StageActionButton(label = "Step $stepQuantumLabel", onClick = onCycleStepQuantum, enabled = !authoringActive)
             StageActionButton(label = "Slower", onClick = onSlower, enabled = !authoringActive)
             StageActionButton(label = "Faster · $speedLabel", onClick = onFaster, enabled = !authoringActive)
+            StageTraceLayerButton(
+                mode = traceLayerMode,
+                compact = compactLayout,
+                onClick = onCycleTraceLayer,
+                enabled = !authoringActive,
+            )
             StageActionButton(
                 label = renderProcessingMode.displayLabel(),
                 onClick = onToggleProcessingMode,
@@ -911,62 +946,51 @@ private fun BoxScope.StageOverlay(
             )
         }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            if (compactLayout) {
-                StagePanel(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                ) {
-                    Text(
-                        text = selectionCard.eyebrow,
-                        color = MissionText,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = timelineText,
-                        color = TimelineText,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = selectionCard.title,
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                        color = SelectionText,
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = selectionCard.detail,
-                        color = HintText,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    content = actionButtons,
+        if (chromeMode == StageChromeMode.COLLAPSED) {
+            StagePanel(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
+                    .widthIn(max = if (compactLayout) 360.dp else 420.dp)
+                    .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+            ) {
+                Text(
+                    text = timelineText,
+                    color = TimelineText,
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
                 )
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = selectionCard.title,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                    color = SelectionText,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                )
+                Text(
+                    text = selectionCard.eyebrow,
+                    color = MissionText,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        if (chromeMode == StageChromeMode.EXPANDED) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (compactLayout) {
                     StagePanel(
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                     ) {
                         Text(
@@ -994,46 +1018,126 @@ private fun BoxScope.StageOverlay(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                         content = actionButtons,
                     )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        StagePanel(
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                        ) {
+                            Text(
+                                text = selectionCard.eyebrow,
+                                color = MissionText,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = timelineText,
+                                color = TimelineText,
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = selectionCard.title,
+                                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                                color = SelectionText,
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = selectionCard.detail,
+                                color = HintText,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            content = actionButtons,
+                        )
+                    }
                 }
             }
         }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (compactLayout) {
-                StageControlRail(compact = true) {
-                    primaryControls()
-                    secondaryControls()
-                }
-            } else {
-                StageControlRail(content = primaryControls)
-                StageControlRail(content = secondaryControls)
-            }
-            StagePanel(
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+        if (chromeMode == StageChromeMode.COLLAPSED) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = backendStatus,
-                    color = TimelineText,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = interactionHintText,
-                    color = HintText,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                StageControlRail(compact = true) {
+                    StageActionButton(
+                        label = if (isRunning) "Pause" else "Start",
+                        onClick = onStartPause,
+                        emphasized = isRunning,
+                        enabled = !authoringActive,
+                        dense = true,
+                    )
+                    StageActionButton(label = "Slow", onClick = onSlower, enabled = !authoringActive, dense = true)
+                    StageTraceLayerButton(
+                        mode = traceLayerMode,
+                        compact = true,
+                        onClick = onCycleTraceLayer,
+                        enabled = !authoringActive,
+                        dense = true,
+                    )
+                    StageActionButton(label = "Fast · $speedLabel", onClick = onFaster, enabled = !authoringActive, dense = true)
+                    StageControlsButton(
+                        label = "Controls",
+                        onClick = onToggleChrome,
+                        dense = true,
+                    )
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (compactLayout) {
+                    StageControlRail(compact = true) {
+                        primaryControls()
+                        secondaryControls()
+                    }
+                } else {
+                    StageControlRail(content = primaryControls)
+                    StageControlRail(content = secondaryControls)
+                }
+                StagePanel(
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+                ) {
+                    Text(
+                        text = backendStatus,
+                        color = TimelineText,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = interactionHintText,
+                        color = HintText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }

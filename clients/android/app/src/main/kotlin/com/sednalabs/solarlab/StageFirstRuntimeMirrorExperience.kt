@@ -65,10 +65,12 @@ import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import com.graciousgazelles.solarlab.render.core.ObserverMode
+import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.RenderBody as StageRenderBody
 import com.graciousgazelles.solarlab.render.core.RenderBodyKind
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.RenderTrail as StageRenderTrail
+import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RenderStatusPresentation
@@ -220,6 +222,8 @@ internal fun StageFirstRuntimeMirrorExperience(
         var renderProcessingMode by remember { mutableStateOf(HostedDebugMode.initialRenderProcessingMode) }
         var stepQuantumPreset by remember { mutableStateOf(StepQuantumPreset.SIX_HOURS) }
         var playbackSpeedPreset by remember { mutableStateOf(PlaybackSpeedPreset.SIX_HOURS_PER_SECOND) }
+        var chromeModeName by rememberSaveable { mutableStateOf(StageChromeMode.COLLAPSED.name) }
+        var traceLayerModeName by rememberSaveable { mutableStateOf(TraceLayerMode.FOCUS.name) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
@@ -231,9 +235,21 @@ internal fun StageFirstRuntimeMirrorExperience(
         val mirrorScene = remember(uiState.renderFrame) {
             uiState.renderFrame?.toRuntimeMirrorScene()
         }
+        val chromeMode = stageChromeModeFromName(chromeModeName)
+        val traceLayerMode = traceLayerModeFromName(traceLayerModeName)
         val searchableBodies = mirrorScene?.searchableBodies.orEmpty()
         val selectedBody = remember(searchableBodies, selectedBodyId) {
             searchableBodies.firstOrNull { it.id == selectedBodyId }
+        }
+        val renderLayerOptions = remember(traceLayerMode, selectedBodyId, uiState.focusedBodyId, uiState.recentFocusedBodyIds) {
+            RenderLayerOptions(
+                traceLayerMode = traceLayerMode,
+                focusedBodyIds = buildSet {
+                    selectedBodyId?.let(::add)
+                    uiState.focusedBodyId?.let(::add)
+                    uiState.recentFocusedBodyIds.take(3).forEach(::add)
+                },
+            )
         }
         val scenarioPacks = runtimeFacade?.scenarioPacks.orEmpty()
         val activeScenarioPack = remember(uiState.snapshot?.scenarioId, scenarioPacks) {
@@ -475,6 +491,10 @@ internal fun StageFirstRuntimeMirrorExperience(
         ) {
             val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
             val actionButtons: @Composable RowScope.() -> Unit = {
+                StageControlsButton(
+                    label = "Hide controls",
+                    onClick = { chromeModeName = chromeMode.toggle().name },
+                )
                 StageActionButton(
                     label = "Sandbox",
                     onClick = onReturnToSandbox,
@@ -600,6 +620,12 @@ internal fun StageFirstRuntimeMirrorExperience(
                     enabled = canSendCommands,
                     dense = compactLayout,
                 )
+                StageTraceLayerButton(
+                    mode = traceLayerMode,
+                    compact = compactLayout,
+                    onClick = { traceLayerModeName = traceLayerMode.next().name },
+                    dense = compactLayout,
+                )
                 StageActionButton(
                     label = when (renderProcessingMode) {
                         RenderProcessingMode.DEFAULT -> if (compactLayout) "Detail" else "Rendering: Standard"
@@ -649,6 +675,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         renderHostView = view
                         view.bindRuntimeSessionHandle(runtimeSessionHandle)
                         view.setProcessingMode(renderProcessingMode)
+                        view.setRenderLayerOptions(renderLayerOptions)
                         view.setObserverMode(observerMode)
                         view.setSelectedBodyId(selectedBodyId)
                         view.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
@@ -686,41 +713,50 @@ internal fun StageFirstRuntimeMirrorExperience(
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (compactLayout) {
-                    RuntimeMirrorMissionPanel(
-                        uiState = uiState,
-                        selectionCard = selectionCard,
-                        selectedBody = selectedBody,
-                        observerMode = observerMode,
-                        renderProcessingMode = renderProcessingMode,
-                        scenarioLabel = timelineText,
-                        compact = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+            if (chromeMode == StageChromeMode.COLLAPSED) {
+                StagePanel(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 12.dp)
+                        .widthIn(max = if (compactLayout) 360.dp else 420.dp)
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                ) {
+                    Text(
+                        text = "Trajectory stage",
+                        color = RuntimeMirrorCyan,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        content = actionButtons,
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = selectionCard.title,
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                        color = RuntimeMirrorGold,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.Top,
-                    ) {
+                    Text(
+                        text = runtimeMirrorCompactScenarioLabel(timelineText),
+                        color = RuntimeMirrorTextDim,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            if (chromeMode == StageChromeMode.EXPANDED) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (compactLayout) {
                         RuntimeMirrorMissionPanel(
                             uiState = uiState,
                             selectionCard = selectionCard,
@@ -728,56 +764,141 @@ internal fun StageFirstRuntimeMirrorExperience(
                             observerMode = observerMode,
                             renderProcessingMode = renderProcessingMode,
                             scenarioLabel = timelineText,
-                            compact = false,
+                            compact = true,
                             modifier = Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                         )
-
                         Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                             content = actionButtons,
                         )
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            RuntimeMirrorMissionPanel(
+                                uiState = uiState,
+                                selectionCard = selectionCard,
+                                selectedBody = selectedBody,
+                                observerMode = observerMode,
+                                renderProcessingMode = renderProcessingMode,
+                                scenarioLabel = timelineText,
+                                compact = false,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
+                            )
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                content = actionButtons,
+                            )
+                        }
                     }
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                RuntimeMirrorTimelineRail(
-                    uiState = uiState,
-                    fallbackSpeedPreset = playbackSpeedPreset,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                RuntimeMirrorCommandDeck(
-                    compact = compactLayout,
-                    primaryControls = primaryControls,
-                    secondaryControls = secondaryControls,
-                )
-                StagePanel(
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+            if (chromeMode == StageChromeMode.COLLAPSED) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        text = backendStatus,
-                        color = RuntimeMirrorCyan,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    accelerationReadout?.let { readout ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        RuntimeMirrorAccelerationPanel(readout = readout)
+                    StageControlRail(compact = true) {
+                        StageActionButton(
+                            label = if (isRunning) "Pause" else "Start",
+                            onClick = {
+                                if (isRunning) {
+                                    sendRuntimeCommand(RuntimeCommand.PausePlayback)
+                                } else {
+                                    sendRuntimeCommand(RuntimeCommand.ResumePlayback)
+                                }
+                            },
+                            emphasized = isRunning,
+                            enabled = canSendCommands,
+                            dense = true,
+                        )
+                        StageActionButton(
+                            label = "Slow",
+                            onClick = {
+                                val nextPreset = playbackSpeedPreset.shifted(-1)
+                                playbackSpeedPreset = nextPreset
+                                sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
+                            },
+                            enabled = canSendCommands,
+                            dense = true,
+                        )
+                        StageTraceLayerButton(
+                            mode = traceLayerMode,
+                            compact = true,
+                            onClick = { traceLayerModeName = traceLayerMode.next().name },
+                            dense = true,
+                        )
+                        StageActionButton(
+                            label = "Fast · ${playbackSpeedPreset.label}",
+                            onClick = {
+                                val nextPreset = playbackSpeedPreset.shifted(1)
+                                playbackSpeedPreset = nextPreset
+                                sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
+                            },
+                            enabled = canSendCommands,
+                            dense = true,
+                        )
+                        StageControlsButton(
+                            label = "Controls",
+                            onClick = { chromeModeName = chromeMode.toggle().name },
+                            dense = true,
+                        )
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = interactionHintText,
-                        color = RuntimeMirrorTextDim,
-                        style = MaterialTheme.typography.bodySmall,
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    RuntimeMirrorTimelineRail(
+                        uiState = uiState,
+                        fallbackSpeedPreset = playbackSpeedPreset,
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                    RuntimeMirrorCommandDeck(
+                        compact = compactLayout,
+                        primaryControls = primaryControls,
+                        secondaryControls = secondaryControls,
+                    )
+                    StagePanel(
+                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
+                    ) {
+                        Text(
+                            text = backendStatus,
+                            color = RuntimeMirrorCyan,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        accelerationReadout?.let { readout ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            RuntimeMirrorAccelerationPanel(readout = readout)
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = interactionHintText,
+                            color = RuntimeMirrorTextDim,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
         }
@@ -2387,7 +2508,7 @@ private fun RenderFrame.toRuntimeMirrorScene(): RuntimeMirrorScene {
             colorArgb = argbFrom(tracer.colorR, tracer.colorG, tracer.colorB, tracer.colorA),
             kind = RenderBodyKind.TEST_OBJECT,
             isMassive = false,
-            hostBodyId = null,
+            hostBodyId = tracer.sourceBodyId.takeIf(String::isNotBlank),
         )
     }
     val trails = trails.map { trail ->

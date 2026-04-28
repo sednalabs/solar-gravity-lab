@@ -1,6 +1,7 @@
 package com.graciousgazelles.solarlab.feature.lab.render
 
 import com.graciousgazelles.solarlab.render.core.ObserverMode
+import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 
 internal interface SolarRenderSurface {
@@ -15,6 +16,7 @@ internal interface SolarRenderSurface {
     fun setSelectedBodyId(bodyId: String?) {}
     fun setObserverMode(mode: ObserverMode) {}
     fun setPlacementPlaneZ(worldZ: Double) {}
+    fun setRenderLayerOptions(options: RenderLayerOptions) {}
     fun onHostResume() {}
     fun onHostPause() {}
     fun release() {}

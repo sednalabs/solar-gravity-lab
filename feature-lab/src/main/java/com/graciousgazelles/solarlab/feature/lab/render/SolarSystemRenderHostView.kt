@@ -8,8 +8,10 @@ import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
+import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.RenderSceneAssembler
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
+import com.graciousgazelles.solarlab.render.core.withLayerOptions
 
 class SolarSystemRenderHostView @JvmOverloads constructor(
     context: Context,
@@ -30,6 +32,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var placementPlaneZ: Double = 0.0
+    private var renderLayerOptions: RenderLayerOptions = RenderLayerOptions()
     private var runtimeSessionHandle: Long = 0L
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
@@ -50,7 +53,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
 
     fun submitSceneFrame(frame: RenderSceneFrame) {
         latestScene = frame
-        activeSurface?.submitScene(frame)
+        activeSurface?.submitScene(frame.withLayerOptions(renderLayerOptions))
     }
 
     fun resetScene() {
@@ -110,6 +113,13 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     fun setPlacementPlaneZ(worldZ: Double) {
         placementPlaneZ = worldZ
         activeSurface?.setPlacementPlaneZ(worldZ)
+    }
+
+    fun setRenderLayerOptions(options: RenderLayerOptions) {
+        if (renderLayerOptions == options) return
+        renderLayerOptions = options
+        activeSurface?.setRenderLayerOptions(options)
+        latestScene?.let { activeSurface?.submitScene(it.withLayerOptions(options)) }
     }
 
     fun observerMode(): ObserverMode = observerMode
@@ -193,6 +203,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setSelectedBodyId(selectedBodyId)
         activeSurface?.setObserverMode(observerMode)
         activeSurface?.setPlacementPlaneZ(placementPlaneZ)
+        activeSurface?.setRenderLayerOptions(renderLayerOptions)
         addView(
             view,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
@@ -200,7 +211,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         if (hostResumed) {
             activeSurface?.onHostResume()
         }
-        latestScene?.let { activeSurface?.submitScene(it) }
+        latestScene?.let { activeSurface?.submitScene(it.withLayerOptions(renderLayerOptions)) }
     }
 
     private fun updateStatus(status: RenderBackendStatus) {

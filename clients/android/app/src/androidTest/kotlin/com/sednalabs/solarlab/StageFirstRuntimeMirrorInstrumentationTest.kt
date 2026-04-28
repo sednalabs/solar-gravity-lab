@@ -4,7 +4,10 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import kotlinx.coroutines.runBlocking
@@ -26,10 +29,18 @@ class StageFirstRuntimeMirrorInstrumentationTest {
         SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
-            }.isSuccess
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
+            .performScrollTo()
+            .performClick()
+
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
+            .performScrollTo()
+            .assertIsDisplayed()
 
         composeRule.runOnUiThread {
             composeRule.activity.showStageFirstRuntimeMirrorForTesting()

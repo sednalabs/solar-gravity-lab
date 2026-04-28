@@ -8,9 +8,12 @@ The current Android entrypoint can now boot a restored immersive sandbox surface
 
 - full-screen render surface
 - lightweight HUD overlays instead of card-heavy shell framing
+- collapsed-by-default stage chrome so the rendered scene remains primary
 - real Vulkan renderer instead of the packet painter becoming the main experience
 - direct pinch-to-zoom, pan, tap-to-select, and follow modes
 - searchable body focus and debug transport controls
+- compact speed and trace controls that remain reachable without opening the
+  full command deck
 - catalog / ephemeris assets pulled from the shared root asset bundle
 
 ## How it is wired

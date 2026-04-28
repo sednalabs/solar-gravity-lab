@@ -56,8 +56,9 @@ human operator.
 Recommended visual iteration loop:
 
 1. Load a focused scenario pack.
-2. Use camera, focus, speed, search, and rendering controls until the problem is
-   visible.
+2. Use camera, focus, speed, trace, search, and rendering controls until the
+   problem is visible. The default compact rail should be enough for speed and
+   trace iteration; open `Controls` only when the full command deck is needed.
 3. Capture Android screenshots/logs through the hosted session or
    `validation-lab`.
 4. Patch the UI/renderer/runtime seam.
