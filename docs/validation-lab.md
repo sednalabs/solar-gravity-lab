@@ -191,6 +191,19 @@ development because it lets interactive investigation happen against a real
 hosted Android environment without paying full rebuild-and-boot cost for every
 inspection turn.
 
+Use that interactive path, or the native Android computer-use connector, for
+visual acceptance. `validation-lab` proves that code builds, tests pass, Android
+shell flows execute, and instrumentation contracts hold. It does not prove that
+an immersive or stage-first screen has the right composition on a device-sized
+viewport.
+
+For Android UI changes, especially stage-first, runtime mirror, scenario-pack,
+or visual-polish work, include a visual acceptance note alongside the hosted CI
+run. The note should identify the observed surface and confirm the relevant
+collapsed/expanded or controls-open states. If live Android observation is not
+available, record that visual proof is blocked rather than treating the
+validation run as a substitute.
+
 When the selected Android provider ref supports the native Codex Android
 provider contract, the interactive session also publishes Codex bridge status
 and a provider manifest under `dist/interactive-session/codex-bridge/`. Those

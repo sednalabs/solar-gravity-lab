@@ -27,7 +27,7 @@ Put Rust unit tests near the owning crate and prefer deterministic physics, tele
 
 ## Commit & Pull Request Guidelines
 
-Use imperative, scoped commit messages consistent with current history, for example `scene: add backend-neutral packet metadata`. PRs should state the user-visible effect, the authoritative validation run, and any remaining gaps. Include screenshots only for shell/UI changes.
+Use imperative, scoped commit messages consistent with current history, for example `scene: add backend-neutral packet metadata`. PRs should state the user-visible effect, the authoritative validation run, and any remaining gaps. Include visual evidence for shell/UI changes, preferably from native Android computer-use observation or the hosted interactive Android session; if live visual proof is unavailable, say so explicitly instead of treating CI as visual acceptance.
 
 ## Remote-First Workflow
 

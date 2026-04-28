@@ -130,3 +130,28 @@ Use the hosted workflows for different questions:
 For documentation-only changes, prefer the docs sanity checks described in
 [`validation-lab`](validation-lab.md) instead of dispatching heavy Android
 validation.
+
+## Visual Acceptance
+
+Build and test proof is not the same thing as visual acceptance. When a change
+affects Android layout, stage-first presentation, runtime mirror controls,
+scenario-pack interaction, or visual polish, the acceptance path must include a
+real Android observation loop.
+
+For those changes:
+
+- use the native `android_observe` / `android_step` path when available, or the
+  hosted interactive Android session when a live hosted emulator is the active
+  surface
+- navigate the actual user path being claimed, not just the default launch
+  screen
+- inspect both the stage-first sandbox and runtime mirror when the change can
+  affect either surface
+- check collapsed and expanded/control states before claiming that the 3D stage
+  remains visually dominant
+- record the observation source in the PR or validation notes
+
+If the Android provider or hosted interactive session is unavailable, mark the
+visual proof as blocked. `validation-lab`, test tags, and code inspection can
+prove important behavior, but they do not prove composition, density, or
+beauty.
