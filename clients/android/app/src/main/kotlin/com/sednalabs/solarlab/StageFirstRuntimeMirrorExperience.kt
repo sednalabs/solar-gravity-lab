@@ -491,11 +491,9 @@ internal fun StageFirstRuntimeMirrorExperience(
         ) {
             val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
             val actionButtons: @Composable RowScope.() -> Unit = {
-                StageActionButton(
+                StageControlsButton(
                     label = "Hide controls",
                     onClick = { chromeModeName = chromeMode.toggle().name },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON),
-                    secondary = true,
                 )
                 StageActionButton(
                     label = "Sandbox",
@@ -622,11 +620,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                     enabled = canSendCommands,
                     dense = compactLayout,
                 )
-                StageActionButton(
-                    label = traceLayerButtonLabel(traceLayerMode, compact = compactLayout),
+                StageTraceLayerButton(
+                    mode = traceLayerMode,
+                    compact = compactLayout,
                     onClick = { traceLayerModeName = traceLayerMode.next().name },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON),
-                    secondary = true,
                     dense = compactLayout,
                 )
                 StageActionButton(
@@ -841,11 +838,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                             enabled = canSendCommands,
                             dense = true,
                         )
-                        StageActionButton(
-                            label = traceLayerButtonLabel(traceLayerMode, compact = true),
+                        StageTraceLayerButton(
+                            mode = traceLayerMode,
+                            compact = true,
                             onClick = { traceLayerModeName = traceLayerMode.next().name },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON),
-                            secondary = true,
                             dense = true,
                         )
                         StageActionButton(
@@ -858,11 +854,9 @@ internal fun StageFirstRuntimeMirrorExperience(
                             enabled = canSendCommands,
                             dense = true,
                         )
-                        StageActionButton(
+                        StageControlsButton(
                             label = "Controls",
                             onClick = { chromeModeName = chromeMode.toggle().name },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON),
-                            secondary = true,
                             dense = true,
                         )
                     }

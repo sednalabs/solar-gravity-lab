@@ -392,10 +392,6 @@ private fun StageFirstSandboxLocalExperience(
             renderHostView?.onHostResume()
         }
 
-        LaunchedEffect(renderHostView, renderLayerOptions) {
-            renderHostView?.setRenderLayerOptions(renderLayerOptions)
-        }
-
         LaunchedEffect(latestFrame?.snapshot, renderHostView, renderLayerOptions) {
             latestFrame?.snapshot?.let { snapshot ->
                 renderHostView?.setRenderLayerOptions(renderLayerOptions)
@@ -873,11 +869,9 @@ private fun BoxScope.StageOverlay(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
         val actionButtons: @Composable RowScope.() -> Unit = {
-            StageActionButton(
+            StageControlsButton(
                 label = "Hide controls",
                 onClick = onToggleChrome,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON),
-                secondary = true,
             )
             modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
                 StageActionButton(
@@ -933,11 +927,10 @@ private fun BoxScope.StageOverlay(
             StageActionButton(label = "Step $stepQuantumLabel", onClick = onCycleStepQuantum, enabled = !authoringActive)
             StageActionButton(label = "Slower", onClick = onSlower, enabled = !authoringActive)
             StageActionButton(label = "Faster · $speedLabel", onClick = onFaster, enabled = !authoringActive)
-            StageActionButton(
-                label = traceLayerButtonLabel(traceLayerMode, compact = compactLayout),
+            StageTraceLayerButton(
+                mode = traceLayerMode,
+                compact = compactLayout,
                 onClick = onCycleTraceLayer,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON),
-                secondary = true,
                 enabled = !authoringActive,
             )
             StageActionButton(
@@ -1097,20 +1090,17 @@ private fun BoxScope.StageOverlay(
                         dense = true,
                     )
                     StageActionButton(label = "Slow", onClick = onSlower, enabled = !authoringActive, dense = true)
-                    StageActionButton(
-                        label = traceLayerButtonLabel(traceLayerMode, compact = true),
+                    StageTraceLayerButton(
+                        mode = traceLayerMode,
+                        compact = true,
                         onClick = onCycleTraceLayer,
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON),
-                        secondary = true,
                         enabled = !authoringActive,
                         dense = true,
                     )
                     StageActionButton(label = "Fast · $speedLabel", onClick = onFaster, enabled = !authoringActive, dense = true)
-                    StageActionButton(
+                    StageControlsButton(
                         label = "Controls",
                         onClick = onToggleChrome,
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON),
-                        secondary = true,
                         dense = true,
                     )
                 }

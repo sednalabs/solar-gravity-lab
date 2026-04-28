@@ -1,5 +1,8 @@
 package com.sednalabs.solarlab
 
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 
 internal enum class StageChromeMode {
@@ -31,4 +34,37 @@ internal fun traceLayerButtonLabel(mode: TraceLayerMode, compact: Boolean): Stri
         TraceLayerMode.OFF -> "Off"
     }
     return if (compact) "Trace $label" else "Traces: $label"
+}
+
+@Composable
+internal fun StageControlsButton(
+    label: String,
+    onClick: () -> Unit,
+    dense: Boolean = false,
+) {
+    StageActionButton(
+        label = label,
+        onClick = onClick,
+        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON),
+        secondary = true,
+        dense = dense,
+    )
+}
+
+@Composable
+internal fun StageTraceLayerButton(
+    mode: TraceLayerMode,
+    compact: Boolean,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    dense: Boolean = false,
+) {
+    StageActionButton(
+        label = traceLayerButtonLabel(mode, compact = compact),
+        onClick = onClick,
+        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON),
+        secondary = true,
+        enabled = enabled,
+        dense = dense,
+    )
 }
