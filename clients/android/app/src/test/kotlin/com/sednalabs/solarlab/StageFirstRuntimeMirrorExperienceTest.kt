@@ -265,6 +265,17 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactSelectionDetail_keepsRawRevisionOutOfFocusCard() {
+        assertEquals(
+            "Scene sol-system / main / t+0.0h",
+            runtimeMirrorCompactSelectionDetail(
+                "Scene revision scenario=sol-system|branch=main|epoch=0.000000|" +
+                    "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89676 chars)"
+            ),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactScenarioLabel_keepsPortraitHudMissionFirst() {
         assertEquals(
             "Canonical solar system",

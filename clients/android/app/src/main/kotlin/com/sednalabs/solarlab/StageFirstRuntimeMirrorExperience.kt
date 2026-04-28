@@ -2047,7 +2047,9 @@ private fun buildRuntimeSelectionCard(
             } else {
                 "No body selected"
             },
-            detail = uiState.detailLine ?: "Tap a moving body to select it, then use Follow to keep the authoritative scene in view.",
+            detail = uiState.detailLine
+                ?.let(::runtimeMirrorCompactSelectionDetail)
+                ?: "Tap a moving body to select it, then use Follow to keep the authoritative scene in view.",
             eyebrow = if (uiState.connectionState == SessionConnectionState.Unavailable) {
                 "MISSION STATUS"
             } else {
@@ -2068,6 +2070,15 @@ private fun buildRuntimeSelectionCard(
         ).joinToString(separator = " · "),
         eyebrow = "FOCUS LOCK",
     )
+}
+
+internal fun runtimeMirrorCompactSelectionDetail(value: String): String {
+    val normalized = runtimeMirrorNormalizeStatusText(value)
+    val revision = normalized.substringAfter("Scene revision ", missingDelimiterValue = normalized)
+    if (revision.contains("scenario=") || revision.contains("packet=")) {
+        return "Scene ${runtimeMirrorCompactRevisionText(revision, includePayloadSize = false)}"
+    }
+    return runtimeMirrorCompactStatusText(normalized)
 }
 
 internal fun runtimeMirrorFocusDisplayName(
