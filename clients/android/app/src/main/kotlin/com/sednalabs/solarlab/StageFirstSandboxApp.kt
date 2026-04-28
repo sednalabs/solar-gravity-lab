@@ -1091,6 +1091,7 @@ internal fun StageActionButton(
     enabled: Boolean = true,
     emphasized: Boolean = false,
     secondary: Boolean = false,
+    dense: Boolean = false,
 ) {
     val container = when {
         emphasized -> MaterialTheme.colorScheme.primaryContainer
@@ -1105,10 +1106,10 @@ internal fun StageActionButton(
     Button(
         onClick = onClick,
         modifier = modifier
-            .defaultMinSize(minHeight = 46.dp)
-            .sizeIn(minWidth = 88.dp),
+            .defaultMinSize(minHeight = if (dense) 36.dp else 46.dp)
+            .sizeIn(minWidth = if (dense) 72.dp else 88.dp),
         enabled = enabled,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(if (dense) 13.dp else 16.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = container,
             contentColor = contentColor,
@@ -1118,7 +1119,7 @@ internal fun StageActionButton(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
+            style = if (dense) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
         )
     }
