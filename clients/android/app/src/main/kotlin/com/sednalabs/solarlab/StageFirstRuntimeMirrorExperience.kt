@@ -858,7 +858,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                             dense = true,
                         )
                         StageActionButton(
-                            label = "Fast · ${playbackSpeedPreset.label}",
+                            label = "Fast",
                             onClick = {
                                 val nextPreset = playbackSpeedPreset.shifted(1)
                                 playbackSpeedPreset = nextPreset

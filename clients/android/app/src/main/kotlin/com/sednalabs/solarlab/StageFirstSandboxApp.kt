@@ -1110,7 +1110,7 @@ private fun BoxScope.StageOverlay(
                         enabled = !authoringActive,
                         dense = true,
                     )
-                    StageActionButton(label = "Fast · $speedLabel", onClick = onFaster, enabled = !authoringActive, dense = true)
+                    StageActionButton(label = "Fast", onClick = onFaster, enabled = !authoringActive, dense = true)
                     StageControlsButton(
                         label = "Controls",
                         onClick = onToggleChrome,
@@ -1171,10 +1171,10 @@ internal fun StageControlRail(
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
                 .padding(
-                    horizontal = if (compact) 8.dp else 10.dp,
-                    vertical = if (compact) 8.dp else 10.dp,
+                    horizontal = if (compact) 6.dp else 10.dp,
+                    vertical = if (compact) 7.dp else 10.dp,
                 ),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content,
         )
@@ -1224,7 +1224,7 @@ internal fun StageActionButton(
         onClick = onClick,
         modifier = modifier
             .defaultMinSize(minHeight = if (dense) 36.dp else 46.dp)
-            .sizeIn(minWidth = if (dense) 72.dp else 88.dp),
+            .sizeIn(minWidth = if (dense) 54.dp else 88.dp),
         enabled = enabled,
         shape = RoundedCornerShape(if (dense) 13.dp else 16.dp),
         colors = ButtonDefaults.buttonColors(

@@ -42,7 +42,7 @@ internal fun traceLayerButtonLabel(mode: TraceLayerMode, compact: Boolean): Stri
         TraceLayerMode.ALL -> "All"
         TraceLayerMode.OFF -> "Off"
     }
-    return if (compact) "Trace $label" else "Traces: $label"
+    return if (compact) label else "Traces: $label"
 }
 
 private object StageTrajectoryGlyphMetrics {
