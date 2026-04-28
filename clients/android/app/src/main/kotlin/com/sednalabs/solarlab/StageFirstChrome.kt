@@ -45,6 +45,46 @@ internal fun traceLayerButtonLabel(mode: TraceLayerMode, compact: Boolean): Stri
     return if (compact) "Trace $label" else "Traces: $label"
 }
 
+private object StageTrajectoryGlyphMetrics {
+    val width = 78.dp
+    val height = 36.dp
+    val backgroundArcStrokeWidth = 1.dp
+    val activeArcStrokeWidth = 1.6.dp
+    val probeArcStrokeWidth = 2.dp
+    val transferLineStrokeWidth = 1.dp
+    val probeHaloRadius = 6.dp
+    val probeRadius = 2.4.dp
+    val anchorRadius = 2.dp
+
+    const val centerXFraction = 0.45f
+    const val centerYFraction = 0.55f
+    const val orbitWidthFraction = 0.86f
+    const val orbitHeightFraction = 1.16f
+    const val orbitCenterOffsetFraction = 0.5f
+    const val backgroundArcAlpha = 0.18f
+    const val backgroundArcStartAngle = 186f
+    const val backgroundArcSweepAngle = 228f
+    const val activeArcAlpha = 0.82f
+    const val activeArcStartAngle = 210f
+    const val activeArcSweepAngle = 92f
+    const val probeArcAlpha = 0.74f
+    const val probeArcStartAngle = 312f
+    const val probeArcSweepAngle = 34f
+    const val probeArcInsetFraction = 0.08f
+    const val probeArcScale = 1.16f
+    const val transferLineAlpha = 0.40f
+    const val transferLineStartXFraction = 0.10f
+    const val transferLineStartYFraction = 0.14f
+    const val transferLineEndXFraction = 0.90f
+    const val transferLineEndYFraction = -0.28f
+    const val probeHaloAlpha = 0.26f
+    const val probeXFraction = 0.70f
+    const val probeYFraction = 0.34f
+    const val anchorAlpha = 0.88f
+    const val anchorXFraction = 0.30f
+    const val anchorYFraction = 0.66f
+}
+
 @Composable
 internal fun StageTrajectoryGlyph(
     orbitColor: Color,
@@ -53,66 +93,97 @@ internal fun StageTrajectoryGlyph(
 ) {
     Canvas(
         modifier = modifier
-            .width(78.dp)
-            .height(36.dp),
+            .width(StageTrajectoryGlyphMetrics.width)
+            .height(StageTrajectoryGlyphMetrics.height),
     ) {
-        val center = Offset(size.width * 0.45f, size.height * 0.55f)
-        val orbitSize = Size(size.width * 0.86f, size.height * 1.16f)
+        val center = Offset(
+            x = size.width * StageTrajectoryGlyphMetrics.centerXFraction,
+            y = size.height * StageTrajectoryGlyphMetrics.centerYFraction,
+        )
+        val orbitSize = Size(
+            width = size.width * StageTrajectoryGlyphMetrics.orbitWidthFraction,
+            height = size.height * StageTrajectoryGlyphMetrics.orbitHeightFraction,
+        )
         val orbitTopLeft = Offset(
-            x = center.x - orbitSize.width * 0.5f,
-            y = center.y - orbitSize.height * 0.5f,
+            x = center.x - orbitSize.width * StageTrajectoryGlyphMetrics.orbitCenterOffsetFraction,
+            y = center.y - orbitSize.height * StageTrajectoryGlyphMetrics.orbitCenterOffsetFraction,
         )
         drawArc(
-            color = orbitColor.copy(alpha = 0.18f),
-            startAngle = 186f,
-            sweepAngle = 228f,
+            color = orbitColor.copy(alpha = StageTrajectoryGlyphMetrics.backgroundArcAlpha),
+            startAngle = StageTrajectoryGlyphMetrics.backgroundArcStartAngle,
+            sweepAngle = StageTrajectoryGlyphMetrics.backgroundArcSweepAngle,
             useCenter = false,
             topLeft = orbitTopLeft,
             size = orbitSize,
-            style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round),
+            style = Stroke(
+                width = StageTrajectoryGlyphMetrics.backgroundArcStrokeWidth.toPx(),
+                cap = StrokeCap.Round,
+            ),
         )
         drawArc(
-            color = orbitColor.copy(alpha = 0.82f),
-            startAngle = 210f,
-            sweepAngle = 92f,
+            color = orbitColor.copy(alpha = StageTrajectoryGlyphMetrics.activeArcAlpha),
+            startAngle = StageTrajectoryGlyphMetrics.activeArcStartAngle,
+            sweepAngle = StageTrajectoryGlyphMetrics.activeArcSweepAngle,
             useCenter = false,
             topLeft = orbitTopLeft,
             size = orbitSize,
-            style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round),
+            style = Stroke(
+                width = StageTrajectoryGlyphMetrics.activeArcStrokeWidth.toPx(),
+                cap = StrokeCap.Round,
+            ),
         )
         drawArc(
-            color = probeColor.copy(alpha = 0.74f),
-            startAngle = 312f,
-            sweepAngle = 34f,
+            color = probeColor.copy(alpha = StageTrajectoryGlyphMetrics.probeArcAlpha),
+            startAngle = StageTrajectoryGlyphMetrics.probeArcStartAngle,
+            sweepAngle = StageTrajectoryGlyphMetrics.probeArcSweepAngle,
             useCenter = false,
             topLeft = Offset(
-                x = orbitTopLeft.x - (orbitSize.width * 0.08f),
-                y = orbitTopLeft.y - (orbitSize.height * 0.08f),
+                x = orbitTopLeft.x - (orbitSize.width * StageTrajectoryGlyphMetrics.probeArcInsetFraction),
+                y = orbitTopLeft.y - (orbitSize.height * StageTrajectoryGlyphMetrics.probeArcInsetFraction),
             ),
-            size = Size(orbitSize.width * 1.16f, orbitSize.height * 1.16f),
-            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+            size = Size(
+                width = orbitSize.width * StageTrajectoryGlyphMetrics.probeArcScale,
+                height = orbitSize.height * StageTrajectoryGlyphMetrics.probeArcScale,
+            ),
+            style = Stroke(
+                width = StageTrajectoryGlyphMetrics.probeArcStrokeWidth.toPx(),
+                cap = StrokeCap.Round,
+            ),
         )
         drawLine(
-            color = orbitColor.copy(alpha = 0.40f),
-            start = Offset(size.width * 0.10f, center.y + size.height * 0.14f),
-            end = Offset(size.width * 0.90f, center.y - size.height * 0.28f),
-            strokeWidth = 1.dp.toPx(),
+            color = orbitColor.copy(alpha = StageTrajectoryGlyphMetrics.transferLineAlpha),
+            start = Offset(
+                x = size.width * StageTrajectoryGlyphMetrics.transferLineStartXFraction,
+                y = center.y + size.height * StageTrajectoryGlyphMetrics.transferLineStartYFraction,
+            ),
+            end = Offset(
+                x = size.width * StageTrajectoryGlyphMetrics.transferLineEndXFraction,
+                y = center.y + size.height * StageTrajectoryGlyphMetrics.transferLineEndYFraction,
+            ),
+            strokeWidth = StageTrajectoryGlyphMetrics.transferLineStrokeWidth.toPx(),
             cap = StrokeCap.Round,
         )
+        val probeCenter = Offset(
+            x = size.width * StageTrajectoryGlyphMetrics.probeXFraction,
+            y = size.height * StageTrajectoryGlyphMetrics.probeYFraction,
+        )
         drawCircle(
-            color = probeColor.copy(alpha = 0.26f),
-            radius = 6.dp.toPx(),
-            center = Offset(size.width * 0.70f, size.height * 0.34f),
+            color = probeColor.copy(alpha = StageTrajectoryGlyphMetrics.probeHaloAlpha),
+            radius = StageTrajectoryGlyphMetrics.probeHaloRadius.toPx(),
+            center = probeCenter,
         )
         drawCircle(
             color = probeColor,
-            radius = 2.4.dp.toPx(),
-            center = Offset(size.width * 0.70f, size.height * 0.34f),
+            radius = StageTrajectoryGlyphMetrics.probeRadius.toPx(),
+            center = probeCenter,
         )
         drawCircle(
-            color = orbitColor.copy(alpha = 0.88f),
-            radius = 2.dp.toPx(),
-            center = Offset(size.width * 0.30f, size.height * 0.66f),
+            color = orbitColor.copy(alpha = StageTrajectoryGlyphMetrics.anchorAlpha),
+            radius = StageTrajectoryGlyphMetrics.anchorRadius.toPx(),
+            center = Offset(
+                x = size.width * StageTrajectoryGlyphMetrics.anchorXFraction,
+                y = size.height * StageTrajectoryGlyphMetrics.anchorYFraction,
+            ),
         )
     }
 }
