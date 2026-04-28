@@ -507,18 +507,21 @@ internal fun StageFirstRuntimeMirrorExperience(
                     onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
                     enabled = cameraControlsEnabled,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
+                    dense = compactLayout,
                 )
                 StageActionButton(
                     label = "Zoom -",
                     onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR) },
                     enabled = cameraControlsEnabled,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
+                    dense = compactLayout,
                 )
                 StageActionButton(
-                    label = "Frame selected",
+                    label = if (compactLayout) "Frame" else "Frame selected",
                     onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
                     enabled = cameraControlsEnabled && selectedBodyId != null,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                    dense = compactLayout,
                 )
                 StageActionButton(
                     label = if (isRunning) "Pause" else "Start",
@@ -531,16 +534,19 @@ internal fun StageFirstRuntimeMirrorExperience(
                     },
                     emphasized = isRunning,
                     enabled = canSendCommands,
+                    dense = compactLayout,
                 )
                 StageActionButton(
-                    label = "Step once",
+                    label = if (compactLayout) "Step" else "Step once",
                     onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
                     enabled = canSendCommands && !isRunning,
+                    dense = compactLayout,
                 )
                 StageActionButton(
-                    label = "Forward step",
+                    label = if (compactLayout) "Advance" else "Forward step",
                     onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
                     enabled = canSendCommands && !isRunning,
+                    dense = compactLayout,
                 )
                 StageActionButton(
                     label = observerMode.runtimeDisplayLabel(),
@@ -553,6 +559,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         syncObserver(selectedBodyId, observerMode)
                     },
                     enabled = selectedBodyId != null || observerMode != ObserverMode.FREE,
+                    dense = compactLayout,
                 )
                 StageActionButton(
                     label = "Refresh",
@@ -563,12 +570,14 @@ internal fun StageFirstRuntimeMirrorExperience(
                         refreshRuntime()
                     },
                     enabled = runtimeFacade != null,
+                    dense = compactLayout,
                 )
             }
             val secondaryControls: @Composable RowScope.() -> Unit = {
                 StageActionButton(
-                    label = "Step ${stepQuantumPreset.label}",
+                    label = if (compactLayout) stepQuantumPreset.label else "Step ${stepQuantumPreset.label}",
                     onClick = { stepQuantumPreset = stepQuantumPreset.shifted(1) },
+                    dense = compactLayout,
                 )
                 StageActionButton(
                     label = "Slower",
@@ -578,20 +587,22 @@ internal fun StageFirstRuntimeMirrorExperience(
                         sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
                     },
                     enabled = canSendCommands,
+                    dense = compactLayout,
                 )
                 StageActionButton(
-                    label = "Faster · ${playbackSpeedPreset.label}",
+                    label = if (compactLayout) "Faster" else "Faster · ${playbackSpeedPreset.label}",
                     onClick = {
                         val nextPreset = playbackSpeedPreset.shifted(1)
                         playbackSpeedPreset = nextPreset
                         sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
                     },
                     enabled = canSendCommands,
+                    dense = compactLayout,
                 )
                 StageActionButton(
                     label = when (renderProcessingMode) {
-                        RenderProcessingMode.DEFAULT -> "Rendering: Standard"
-                        RenderProcessingMode.LOW -> "Rendering: Simplified"
+                        RenderProcessingMode.DEFAULT -> if (compactLayout) "Full render" else "Rendering: Standard"
+                        RenderProcessingMode.LOW -> if (compactLayout) "Lite render" else "Rendering: Simplified"
                     },
                     onClick = {
                         renderProcessingMode = when (renderProcessingMode) {
@@ -600,6 +611,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         }
                     },
                     secondary = true,
+                    dense = compactLayout,
                 )
             }
 
@@ -742,8 +754,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                     fallbackSpeedPreset = playbackSpeedPreset,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                StageControlRail(compact = compactLayout, content = primaryControls)
-                StageControlRail(compact = compactLayout, content = secondaryControls)
+                RuntimeMirrorCommandDeck(
+                    compact = compactLayout,
+                    primaryControls = primaryControls,
+                    secondaryControls = secondaryControls,
+                )
                 StagePanel(
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
                 ) {
@@ -1205,6 +1220,68 @@ private fun RuntimeMirrorMetricPill(
                 style = MaterialTheme.typography.labelMedium,
             )
         }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorCommandDeck(
+    compact: Boolean,
+    primaryControls: @Composable RowScope.() -> Unit,
+    secondaryControls: @Composable RowScope.() -> Unit,
+) {
+    Surface(
+        color = RuntimeMirrorGlass,
+        shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
+        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.28f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(
+                horizontal = if (compact) 8.dp else 10.dp,
+                vertical = if (compact) 7.dp else 10.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
+        ) {
+            RuntimeMirrorCommandDeckRow(
+                label = "Camera",
+                compact = compact,
+                content = primaryControls,
+            )
+            RuntimeMirrorCommandDeckRow(
+                label = "Time",
+                compact = compact,
+                content = secondaryControls,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorCommandDeckRow(
+    label: String,
+    compact: Boolean,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            modifier = Modifier.width(if (compact) 48.dp else 62.dp),
+            text = label.uppercase(Locale.US),
+            color = RuntimeMirrorCyan.copy(alpha = 0.82f),
+            style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
     }
 }
 
