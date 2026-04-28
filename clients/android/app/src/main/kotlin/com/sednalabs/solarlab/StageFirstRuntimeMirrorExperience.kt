@@ -195,6 +195,7 @@ internal fun StageFirstRuntimeMirrorExperience(
     pendingSemanticAction: PendingSemanticAction?,
     onReturnToSandbox: () -> Unit,
     runtimeMirrorMountedState: androidx.compose.runtime.MutableState<Boolean>? = null,
+    runtimeMirrorRenderHostState: androidx.compose.runtime.MutableState<SolarSystemRenderHostView?>? = null,
 ) {
     SolarLabTheme {
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -459,7 +460,14 @@ internal fun StageFirstRuntimeMirrorExperience(
             runtimeMirrorMountedState?.value = true
             onDispose {
                 runtimeMirrorMountedState?.value = false
+                runtimeMirrorRenderHostState?.value = null
                 renderHostView?.release()
+            }
+        }
+
+        LaunchedEffect(attachRenderHost) {
+            if (!attachRenderHost) {
+                runtimeMirrorRenderHostState?.value = null
             }
         }
 
@@ -670,10 +678,12 @@ internal fun StageFirstRuntimeMirrorExperience(
                                 }
                             )
                             renderHostView = view
+                            runtimeMirrorRenderHostState?.value = view
                         }
                     },
                     update = { view ->
                         renderHostView = view
+                        runtimeMirrorRenderHostState?.value = view
                         view.bindRuntimeSessionHandle(runtimeSessionHandle)
                         view.setProcessingMode(renderProcessingMode)
                         view.setRenderLayerOptions(renderLayerOptions)

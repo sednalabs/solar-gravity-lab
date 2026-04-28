@@ -151,6 +151,7 @@ internal fun StageFirstSandboxApp(
     semanticActions: Flow<SolarLabSemanticAction> = SolarLabSemanticActionBridge.commands,
     experienceModeState: MutableState<StageFirstExperienceMode>? = null,
     runtimeMirrorMountedState: MutableState<Boolean>? = null,
+    runtimeMirrorRenderHostState: MutableState<SolarSystemRenderHostView?>? = null,
 ) {
     val localExperienceModeState = rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
     val resolvedExperienceModeState = experienceModeState ?: localExperienceModeState
@@ -213,6 +214,7 @@ internal fun StageFirstSandboxApp(
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
             SideEffect {
                 runtimeMirrorMountedState?.value = false
+                runtimeMirrorRenderHostState?.value = null
             }
             StageFirstSandboxLocalExperience(
                 pendingSemanticAction = pendingSemanticAction,
@@ -230,6 +232,7 @@ internal fun StageFirstSandboxApp(
             pendingSemanticAction = pendingSemanticAction,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
             runtimeMirrorMountedState = runtimeMirrorMountedState,
+            runtimeMirrorRenderHostState = runtimeMirrorRenderHostState,
         )
     }
 }

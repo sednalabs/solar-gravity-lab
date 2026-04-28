@@ -9,6 +9,7 @@ import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
+import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,7 @@ class MainActivity : ComponentActivity() {
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
     private val stageFirstExperienceModeState = mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX)
     private val stageFirstRuntimeMirrorMountedState = mutableStateOf(false)
+    private val stageFirstRuntimeMirrorRenderHostState = mutableStateOf<SolarSystemRenderHostView?>(null)
 
     @VisibleForTesting
     internal val runtimeFacadeForTesting: RuntimeFacade
@@ -46,6 +48,10 @@ class MainActivity : ComponentActivity() {
     @VisibleForTesting
     internal fun isStageFirstRuntimeMirrorMountedForTesting(): Boolean =
         stageFirstRuntimeMirrorMountedState.value
+
+    @VisibleForTesting
+    internal fun stageFirstRuntimeMirrorRenderHostForTesting(): SolarSystemRenderHostView? =
+        stageFirstRuntimeMirrorRenderHostState.value
 
     override fun onCreate(savedInstanceState: Bundle?) {
         stageFirstExperienceModeState.value = savedInstanceState
@@ -75,6 +81,7 @@ class MainActivity : ComponentActivity() {
                     },
                     experienceModeState = stageFirstExperienceModeState,
                     runtimeMirrorMountedState = stageFirstRuntimeMirrorMountedState,
+                    runtimeMirrorRenderHostState = stageFirstRuntimeMirrorRenderHostState,
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
