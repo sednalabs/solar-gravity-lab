@@ -2491,6 +2491,9 @@ internal fun runtimeMirrorAccelerationAuditSummary(
 internal fun runtimeMirrorCompactAccelerationAuditSummary(value: String): String =
     value
         .replace("requested simd-arm64 -> effective reference-scalar", "simd-arm64 -> scalar")
+        .replace("CPU simd-arm64 -> scalar", "CPU scalar")
+        .replace("active scalar.reference", "active scalar")
+        .replace("scalar.reference", "scalar")
         .replace("blocked lanes retained in debug audit", "blocked ISA")
         .replace("fallback simd-arm64 requested on non-aarch64 host", "fallback scalar on emulator")
         .replace("GPU vulkan", "GPU Vulkan")

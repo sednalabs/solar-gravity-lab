@@ -195,6 +195,16 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactAccelerationAuditSummary_keepsScalarAuditReadable() {
+        assertEquals(
+            "CPU scalar · GPU Vulkan · active scalar",
+            runtimeMirrorCompactAccelerationAuditSummary(
+                "CPU simd-arm64 -> scalar · GPU vulkan · active scalar.reference"
+            ),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactStatusText_normalizesShortStatusText() {
         assertEquals(
             "Runtime connected Vulkan ready · 8 tile workers",
