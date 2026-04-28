@@ -499,6 +499,8 @@ internal fun StageFirstRuntimeMirrorExperience(
                 ),
         ) {
             val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
+            val expandedCockpitMaxHeight = maxHeight * if (compactLayout) 0.52f else 0.46f
+            val expandedCockpitScrollState = rememberScrollState()
             val actionButtons: @Composable () -> Unit = {
                 StageControlsButton(
                     label = "Hide controls",
@@ -887,6 +889,8 @@ internal fun StageFirstRuntimeMirrorExperience(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
+                        .heightIn(max = expandedCockpitMaxHeight)
+                        .verticalScroll(expandedCockpitScrollState)
                         .navigationBarsPadding()
                         .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
