@@ -1049,16 +1049,20 @@ private fun RuntimeMirrorMissionPanel(
     compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val revision = (uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision)
-        ?.let { runtimeMirrorCompactRevisionText(it, includePayloadSize = false) }
-        ?: "waiting"
+    val revision = remember(uiState.renderStatus.sceneRevision, uiState.renderFrame?.sceneRevision) {
+        (uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision)
+            ?.let { runtimeMirrorCompactRevisionText(it, includePayloadSize = false) }
+            ?: "waiting"
+    }
     val bodyCount = uiState.renderStatus.renderedBodyCount
     val trailCount = uiState.renderStatus.renderedTrailCount
     val focusLabel = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: "Free camera"
-    val scenarioHeadline = if (compact) {
-        runtimeMirrorCompactScenarioLabel(scenarioLabel)
-    } else {
-        scenarioLabel
+    val scenarioHeadline = remember(scenarioLabel, compact) {
+        if (compact) {
+            runtimeMirrorCompactScenarioLabel(scenarioLabel)
+        } else {
+            scenarioLabel
+        }
     }
 
     Surface(
@@ -1608,11 +1612,8 @@ private fun buildRuntimeTimelineText(
 internal fun runtimeMirrorCompactScenarioLabel(value: String): String {
     val normalized = runtimeMirrorNormalizeStatusText(value)
     val headline = normalized
-        .lineSequence()
-        .firstOrNull()
-        ?.substringBefore(" | branch=")
-        ?.trim()
-        .orEmpty()
+        .substringBefore(" | branch=")
+        .trim()
     return headline.ifBlank { "Runtime mission" }
 }
 
