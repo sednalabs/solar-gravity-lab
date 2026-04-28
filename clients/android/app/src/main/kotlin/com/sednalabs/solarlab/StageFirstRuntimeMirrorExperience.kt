@@ -109,10 +109,13 @@ private data class RuntimeSelectionCard(
 
 internal data class RuntimeAccelerationReadout(
     val headline: String,
+    val statusLine: String,
     val chips: List<String>,
     val detail: String,
     val lanes: List<RuntimeAccelerationLane> = emptyList(),
     val signal: Float = 0f,
+    val auditSummary: String = detail,
+    val drivePercentage: Int = (signal.coerceIn(0f, 1f) * 100).toInt(),
 )
 
 internal data class RuntimeAccelerationLane(
@@ -867,11 +870,33 @@ private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) 
             .testTag(SolarLabTestTags.STAGE_FIRST_ACCELERATION_PANEL),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            text = readout.headline,
-            color = RuntimeMirrorGold,
-            style = MaterialTheme.typography.labelLarge,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = readout.headline,
+                    color = RuntimeMirrorGold,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(
+                    text = readout.statusLine,
+                    color = RuntimeMirrorCyan,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            RuntimeMirrorMetricPill(
+                label = "DRIVE",
+                value = "${readout.drivePercentage}%",
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -880,7 +905,7 @@ private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) 
             verticalAlignment = Alignment.CenterVertically,
         ) {
             readout.chips.forEach { chip ->
-                RuntimeMirrorMetricPill(label = "ACCEL", value = chip)
+                RuntimeMirrorMetricPill(label = "VECTOR", value = chip)
             }
         }
         RuntimeMirrorAccelerationSpectrum(readout = readout)
@@ -902,9 +927,11 @@ private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) 
             }
         }
         Text(
-            text = readout.detail,
+            text = readout.auditSummary,
             color = RuntimeMirrorTextDim,
             style = MaterialTheme.typography.bodySmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -1876,7 +1903,7 @@ internal fun buildRuntimeAccelerationReadout(
     val headline = if (scenarioId == "stress.s25-tile-swarm") {
         "Galaxy S25 Ultra acceleration cockpit"
     } else {
-        "Runtime acceleration truth"
+        "Mission acceleration cockpit"
     }
     val detail = listOfNotNull(
         cpu,
@@ -1887,6 +1914,22 @@ internal fun buildRuntimeAccelerationReadout(
         kernels,
         workloads,
     ).joinToString(separator = " | ").ifBlank { summary }
+    val statusLine = runtimeMirrorAccelerationStatusLine(
+        activeKernel = activeKernel,
+        schedulerMode = schedulerMode,
+        gpuChip = gpuChip,
+        fallback = fallback,
+        eligibleKernelCount = eligibleKernelCount,
+        blockedKernelCount = blockedKernelCount,
+    )
+    val auditSummary = runtimeMirrorAccelerationAuditSummary(
+        cpu = cpu,
+        gpu = gpu,
+        activeKernel = activeKernel,
+        eligibleKernelCount = eligibleKernelCount,
+        blockedKernelCount = blockedKernelCount,
+        fallback = fallback,
+    )
     val lanes = buildList {
         cpu?.let { add(RuntimeAccelerationLane("CPU", segmentValue(it, "cpu="))) }
         gpu?.let {
@@ -1941,11 +1984,58 @@ internal fun buildRuntimeAccelerationReadout(
 
     return RuntimeAccelerationReadout(
         headline = headline,
+        statusLine = statusLine,
         chips = chips.ifEmpty { listOf("Backend reported") },
         detail = detail,
         lanes = lanes,
         signal = signal,
+        auditSummary = auditSummary,
     )
+}
+
+internal fun runtimeMirrorAccelerationStatusLine(
+    activeKernel: String?,
+    schedulerMode: String?,
+    gpuChip: String?,
+    fallback: String?,
+    eligibleKernelCount: Int?,
+    blockedKernelCount: Int?,
+): String {
+    val drive = when {
+        activeKernel != null && schedulerMode == "Parallel tiled" -> "Parallel ARM64 drive online"
+        activeKernel != null -> "ARM64 solver lane online"
+        fallback != null -> "Emulator scalar truth mode"
+        else -> "Runtime solver awaiting acceleration"
+    }
+    val render = if (gpuChip != null) "Vulkan render path" else "render path pending"
+    val catalogue = when {
+        eligibleKernelCount != null && eligibleKernelCount > 0 -> "$eligibleKernelCount future ISA lanes scouted"
+        blockedKernelCount != null && blockedKernelCount > 0 -> "$blockedKernelCount device-only ISA lanes in audit"
+        else -> "kernel catalog steady"
+    }
+    return listOf(drive, render, catalogue).joinToString(" · ")
+}
+
+internal fun runtimeMirrorAccelerationAuditSummary(
+    cpu: String?,
+    gpu: String?,
+    activeKernel: String?,
+    eligibleKernelCount: Int?,
+    blockedKernelCount: Int?,
+    fallback: String?,
+): String {
+    val cpuSummary = cpu?.let { "CPU ${segmentValue(it, "cpu=")}" }
+    val gpuSummary = gpu?.let { "GPU ${segmentValue(it, "gpu=")}" }
+    val laneSummary = when {
+        activeKernel != null -> "active $activeKernel"
+        eligibleKernelCount != null && eligibleKernelCount > 0 -> "$eligibleKernelCount eligible lanes"
+        blockedKernelCount != null && blockedKernelCount > 0 -> "$blockedKernelCount blocked lanes retained in debug audit"
+        else -> null
+    }
+    val fallbackSummary = fallback?.let { "fallback ${segmentValue(it, "cpu fallback:")}" }
+    return listOfNotNull(cpuSummary, gpuSummary, laneSummary, fallbackSummary)
+        .joinToString(" · ")
+        .ifBlank { "Acceleration audit available in debug" }
 }
 
 private fun runtimeMirrorAccelerationSignal(
