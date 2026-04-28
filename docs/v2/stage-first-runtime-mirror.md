@@ -14,7 +14,37 @@ Concretely, this slice adds:
 - a runtime-mirror surface that translates `RenderFrame` packets into `render-core` scene frames
 - immersive focus / follow / search inside the authoritative runtime scene
 - pause, resume, refresh, step, and playback-rate controls from the stage-first surface
+- a collapsed-by-default stage chrome that keeps the 3D view visible while
+  leaving speed, trace, and controls access available on a compact rail
+- trace-layer controls for `Focus`, `All`, and `Off` presentation modes
 - runtime status and debug visibility without promoting the packet-viewer shell back to primary UI
+
+## Stage visibility contract
+
+The runtime mirror and local sandbox are stage-first surfaces. Their default
+state should therefore prioritize the rendered world over menus.
+
+The default collapsed chrome shows:
+
+- a compact mission/selection card
+- `Start` / `Pause`
+- `Slow`
+- trace-layer cycling
+- `Fast`
+- `Controls`
+
+The expanded chrome is still available through `Controls`, but it should be a
+temporary command deck rather than the default view. Search, scenarios, debug,
+camera framing, render detail, collision, and full transport controls belong in
+that expanded state.
+
+Trace presentation is intentionally user-switchable:
+
+- `Focus` keeps the selected or recently focused body readable without flooding
+  the stage with every assist path.
+- `All` restores the complete trace and trail layer for inspection.
+- `Off` hides the assist layer when the user wants the bodies and lighting to
+  carry the scene.
 
 ## What it does not pretend to solve yet
 

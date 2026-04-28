@@ -1,6 +1,7 @@
 package com.graciousgazelles.solarlab.render.core
 
 import com.graciousgazelles.solarlab.core.math.Vector3d
+import java.util.Locale
 
 enum class RenderBodyKind {
     STAR,
@@ -32,6 +33,17 @@ data class RenderTrail(
     val pointsM: List<Vector3d>,
 )
 
+enum class TraceLayerMode {
+    FOCUS,
+    ALL,
+    OFF,
+}
+
+data class RenderLayerOptions(
+    val traceLayerMode: TraceLayerMode = TraceLayerMode.FOCUS,
+    val focusedBodyIds: Set<String> = emptySet(),
+)
+
 data class RenderSceneFrame(
     val epochSeconds: Double,
     val authoritativeBodies: List<RenderBody>,
@@ -39,3 +51,36 @@ data class RenderSceneFrame(
     val trails: List<RenderTrail>,
     val sourceRevision: Long = 0L,
 )
+
+fun RenderSceneFrame.withLayerOptions(options: RenderLayerOptions): RenderSceneFrame {
+    val focusIds = options.focusedBodyIds
+        .map { it.lowercase(Locale.US) }
+        .filter { it.isNotBlank() }
+        .toSet()
+
+    return when (options.traceLayerMode) {
+        TraceLayerMode.ALL -> this
+        TraceLayerMode.OFF -> copy(
+            tracerBodies = emptyList(),
+            trails = emptyList(),
+        )
+        TraceLayerMode.FOCUS -> {
+            if (focusIds.isEmpty()) {
+                this
+            } else {
+                val focusedTracerBodies = tracerBodies.filter { body ->
+                    val bodyId = body.id.lowercase(Locale.US)
+                    val hostId = body.hostBodyId?.lowercase(Locale.US)
+                    bodyId in focusIds || (hostId != null && hostId in focusIds)
+                }
+                val focusedTrailIds = focusIds + focusedTracerBodies.map { it.id.lowercase(Locale.US) }
+                copy(
+                    tracerBodies = focusedTracerBodies,
+                    trails = trails.filter { trail ->
+                        trail.bodyId.lowercase(Locale.US) in focusedTrailIds
+                    },
+                )
+            }
+        }
+    }
+}

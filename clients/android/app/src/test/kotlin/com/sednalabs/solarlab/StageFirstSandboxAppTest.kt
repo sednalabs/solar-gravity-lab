@@ -1,10 +1,33 @@
 package com.sednalabs.solarlab
 
+import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StageFirstSandboxAppTest {
+    @Test
+    fun stageChromeModeToggleCyclesBetweenCollapsedAndExpanded() {
+        assertEquals(StageChromeMode.EXPANDED, StageChromeMode.COLLAPSED.toggle())
+        assertEquals(StageChromeMode.COLLAPSED, StageChromeMode.EXPANDED.toggle())
+        assertEquals(StageChromeMode.COLLAPSED, stageChromeModeFromName("missing"))
+    }
+
+    @Test
+    fun traceLayerModeNextCyclesFocusAllOff() {
+        assertEquals(TraceLayerMode.ALL, TraceLayerMode.FOCUS.next())
+        assertEquals(TraceLayerMode.OFF, TraceLayerMode.ALL.next())
+        assertEquals(TraceLayerMode.FOCUS, TraceLayerMode.OFF.next())
+        assertEquals(TraceLayerMode.FOCUS, traceLayerModeFromName("missing"))
+    }
+
+    @Test
+    fun traceLayerButtonLabelKeepsCompactHudShort() {
+        assertEquals("Trace Focus", traceLayerButtonLabel(TraceLayerMode.FOCUS, compact = true))
+        assertEquals("Traces: All", traceLayerButtonLabel(TraceLayerMode.ALL, compact = false))
+        assertEquals("Trace Off", traceLayerButtonLabel(TraceLayerMode.OFF, compact = true))
+    }
+
     @Test
     fun buildIdleMissionTrajectoryDetail_namesSceneBodyCount() {
         assertEquals(

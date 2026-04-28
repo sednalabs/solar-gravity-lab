@@ -38,7 +38,7 @@ use solarlab_vulkan_adapter::{
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 8;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 9;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -276,6 +276,8 @@ pub struct SlVulkanTracerInstance {
     pub position_from_origin_m: SlPackedVec3,
     pub color: SlPackedColor,
     pub size_px: f32,
+    pub source_body_id: [u8; SL_V2_ID_CAPACITY],
+    pub source_body_id_len: u32,
 }
 
 #[repr(C)]
@@ -1308,6 +1310,9 @@ fn encode_tracer_instance(value: VulkanTracerInstance) -> SlVulkanTracerInstance
         position_from_origin_m: encode_packed_vec3(value.position_from_origin_m),
         color: encode_packed_color(value.color),
         size_px: value.size_px,
+        source_body_id: encode_identifier(&value.source_body_id.0)
+            .expect("source body id should fit into packet"),
+        source_body_id_len: string_length_to_u32(&value.source_body_id.0),
     }
 }
 
@@ -2630,7 +2635,7 @@ mod tests {
         SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlRuntimeInfo,
         SlRuntimeInfoResult, SlSessionCommand, SlSessionCreateParams, SlStatusCode,
         SlTimelineSemantics, SlVector3d, SlVulkanBodyInstance, SlVulkanSceneBufferKind,
-        SlVulkanTrailSpan, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
+        SlVulkanTracerInstance, SlVulkanTrailSpan, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
 
     #[test]
@@ -2956,6 +2961,7 @@ mod tests {
         assert_eq!(create.result.code, SlStatusCode::Ok);
         seed_runtime_with_body(create.handle, "earth", 10.0);
         seed_runtime_with_body(create.handle, "moon", 12.0);
+        seed_runtime_with_body_class(create.handle, "probe", 14.0, BodyClass::Tracer);
         focus_body(create.handle, "moon");
 
         let direct_packet = {
@@ -3009,6 +3015,28 @@ mod tests {
             decode_identifier(&exported_bodies[1].body_id, exported_bodies[1].body_id_len)
                 .expect("body id should decode"),
             direct_packet.body_instances[1].body_id.0,
+        );
+
+        let tracer_view = sl_v2_vulkan_scene_packet_buffer(
+            exported.handle,
+            SlVulkanSceneBufferKind::TracerInstances,
+        );
+        assert_eq!(tracer_view.result.code, SlStatusCode::Ok);
+        let exported_tracers = unsafe {
+            std::slice::from_raw_parts(
+                tracer_view.view.data.cast::<SlVulkanTracerInstance>(),
+                usize::try_from(tracer_view.view.element_count).expect("element count fits"),
+            )
+        };
+        assert_eq!(exported_tracers.len(), direct_packet.tracer_instances.len());
+        assert!(!exported_tracers.is_empty());
+        assert_eq!(
+            decode_identifier(
+                &exported_tracers[0].source_body_id,
+                exported_tracers[0].source_body_id_len,
+            )
+            .expect("tracer source body id should decode"),
+            direct_packet.tracer_instances[0].source_body_id.0,
         );
 
         let trail_view =
@@ -3399,10 +3427,19 @@ mod tests {
     }
 
     fn seed_runtime_with_body(handle: super::SlRuntimeHandle, body_id: &str, position_x: f64) {
+        seed_runtime_with_body_class(handle, body_id, position_x, BodyClass::Planet);
+    }
+
+    fn seed_runtime_with_body_class(
+        handle: super::SlRuntimeHandle,
+        body_id: &str,
+        position_x: f64,
+        body_class: BodyClass,
+    ) {
         let mut registry = registry().lock().expect("session registry lock");
         let body = BodyState {
             body_id: BodyId(body_id.to_owned()),
-            body_class: BodyClass::Planet,
+            body_class,
             mass_kg: 1.0,
             radius_m: 1.0,
             position_m: Vector3d {

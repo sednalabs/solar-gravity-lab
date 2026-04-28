@@ -47,7 +47,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesOpenClWorkloadsAndInteropPolicy() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 8,
+            abiVersion = 9,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_OPENCL,
@@ -64,7 +64,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_returnsNoInteropPolicy_forNonOpenClBackends() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 8,
+            abiVersion = 9,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
@@ -81,7 +81,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesCpuIsaTruth() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 8,
+            abiVersion = 9,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = 0,
             gpuBackend = NATIVE_GPU_BACKEND_NONE,
@@ -101,7 +101,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesCpuSchedulerTruth() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 8,
+            abiVersion = 9,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
@@ -128,7 +128,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_labelsLargeSceneTiledNeonSolverPath() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 8,
+            abiVersion = 9,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
@@ -156,7 +156,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_labelsParallelTiledNeonSolverPath() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 8,
+            abiVersion = 9,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,
@@ -184,7 +184,7 @@ class RuntimeBridgeGpuBackendSelectionTest {
     fun nativeRuntimeInfoResult_surfacesCpuKernelCatalogTruth() {
         val info = NativeRuntimeInfoResult(
             result = NativeResult(code = 0),
-            abiVersion = 8,
+            abiVersion = 9,
             requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
             gpuBackend = NATIVE_GPU_BACKEND_VULKAN,

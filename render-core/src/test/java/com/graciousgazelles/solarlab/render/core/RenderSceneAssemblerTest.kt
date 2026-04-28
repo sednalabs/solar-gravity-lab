@@ -393,6 +393,101 @@ class RenderSceneAssemblerTest {
         assertTrue("probe" in trailIds)
     }
 
+    @Test
+    fun renderLayerOptionsOffKeepsAuthoritativeBodiesWhileHidingTraceLayers() {
+        val frame = renderLayerFrame()
+
+        val filtered = frame.withLayerOptions(
+            RenderLayerOptions(
+                traceLayerMode = TraceLayerMode.OFF,
+                focusedBodyIds = setOf("earth"),
+            )
+        )
+
+        assertEquals(frame.authoritativeBodies, filtered.authoritativeBodies)
+        assertTrue(filtered.tracerBodies.isEmpty())
+        assertTrue(filtered.trails.isEmpty())
+        assertEquals(frame.sourceRevision, filtered.sourceRevision)
+        assertEquals(frame.epochSeconds, filtered.epochSeconds, 0.0)
+    }
+
+    @Test
+    fun renderLayerOptionsFocusKeepsFocusedHostTracersAndTheirTrails() {
+        val frame = renderLayerFrame()
+
+        val filtered = frame.withLayerOptions(
+            RenderLayerOptions(
+                traceLayerMode = TraceLayerMode.FOCUS,
+                focusedBodyIds = setOf("Earth"),
+            )
+        )
+
+        assertEquals(listOf("moon"), filtered.tracerBodies.map { it.id })
+        assertEquals(listOf("moon"), filtered.trails.map { it.bodyId })
+    }
+
+    @Test
+    fun renderLayerOptionsFocusFallsBackToFullTraceLayerWhenNothingIsFocused() {
+        val frame = renderLayerFrame()
+
+        val filtered = frame.withLayerOptions(
+            RenderLayerOptions(traceLayerMode = TraceLayerMode.FOCUS)
+        )
+
+        assertEquals(frame, filtered)
+    }
+
+    private fun renderLayerFrame(): RenderSceneFrame = RenderSceneFrame(
+        epochSeconds = 42.0,
+        authoritativeBodies = listOf(
+            RenderBody(
+                id = "earth",
+                name = "Earth",
+                positionM = Vector3d.ZERO,
+                radiusM = 6_371_000.0,
+                colorArgb = 0xFF2E7DFF.toInt(),
+                kind = RenderBodyKind.PLANET,
+                isMassive = true,
+            ),
+        ),
+        tracerBodies = listOf(
+            RenderBody(
+                id = "moon",
+                name = "Moon",
+                positionM = Vector3d(384_400_000.0, 0.0, 0.0),
+                radiusM = 1_737_000.0,
+                colorArgb = 0xFFE9EDF6.toInt(),
+                kind = RenderBodyKind.DWARF_PLANET,
+                isMassive = false,
+                hostBodyId = "earth",
+            ),
+            RenderBody(
+                id = "probe",
+                name = "Probe",
+                positionM = Vector3d(600_000_000.0, 0.0, 0.0),
+                radiusM = 12.0,
+                colorArgb = 0xFFFFD36B.toInt(),
+                kind = RenderBodyKind.PROBE,
+                isMassive = false,
+            ),
+        ),
+        trails = listOf(
+            RenderTrail(
+                bodyId = "moon",
+                colorArgb = 0xFFE9EDF6.toInt(),
+                alpha = 0.45f,
+                pointsM = listOf(Vector3d.ZERO, Vector3d(1.0, 0.0, 0.0)),
+            ),
+            RenderTrail(
+                bodyId = "probe",
+                colorArgb = 0xFFFFD36B.toInt(),
+                alpha = 0.45f,
+                pointsM = listOf(Vector3d.ZERO, Vector3d(2.0, 0.0, 0.0)),
+            ),
+        ),
+        sourceRevision = 99L,
+    )
+
     private fun body(id: String, role: GravitationalRole, category: BodyCategory): BodyState = BodyState(
         id = id,
         name = id,

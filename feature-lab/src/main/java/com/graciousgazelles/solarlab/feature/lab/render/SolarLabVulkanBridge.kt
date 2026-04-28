@@ -4,6 +4,7 @@ import android.content.res.AssetManager
 import android.view.Surface
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
 import com.graciousgazelles.solarlab.render.core.ObserverMode
+import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 
 internal object SolarLabVulkanBridge {
     private const val LIBRARY_NAME = "solarlab_vulkan"
@@ -139,6 +140,12 @@ internal object SolarLabVulkanBridge {
         }
     }
 
+    fun setRuntimeTraceLayerMode(handle: Long, mode: TraceLayerMode) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativeSetRuntimeTraceLayerMode(handle, mode.toNativeCode())
+        }
+    }
+
     fun resetRuntimeCamera(handle: Long) {
         if (isLibraryLoaded && handle != 0L) {
             nativeResetRuntimeCamera(handle)
@@ -250,6 +257,12 @@ internal object SolarLabVulkanBridge {
         ObserverMode.FOLLOW_SELECTED_HOST -> 2
     }
 
+    private fun TraceLayerMode.toNativeCode(): Int = when (this) {
+        TraceLayerMode.FOCUS -> 0
+        TraceLayerMode.ALL -> 1
+        TraceLayerMode.OFF -> 2
+    }
+
     private external fun nativeIsVulkanRuntimeAvailable(): Boolean
     private external fun nativeGetCpuCapabilitySummary(): String
     private external fun nativeCreateRenderer(assetManager: AssetManager): Long
@@ -302,6 +315,7 @@ internal object SolarLabVulkanBridge {
     private external fun nativeSetRuntimeProcessingMode(handle: Long, processingModeCode: Int)
     private external fun nativeSetRuntimeObserverMode(handle: Long, observerModeCode: Int)
     private external fun nativeSetRuntimeSelectedBodyId(handle: Long, bodyId: String?)
+    private external fun nativeSetRuntimeTraceLayerMode(handle: Long, traceLayerModeCode: Int)
     private external fun nativeResetRuntimeCamera(handle: Long)
     private external fun nativePanRuntimeCamera(
         handle: Long,

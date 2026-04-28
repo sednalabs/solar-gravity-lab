@@ -284,6 +284,18 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeTraceLayerMode(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jint traceLayerModeCode) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->SetRuntimeTraceLayerMode(static_cast<int>(traceLayerModeCode));
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeResetRuntimeCamera(
     JNIEnv*,
     jclass,

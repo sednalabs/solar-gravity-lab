@@ -19,9 +19,11 @@ import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.OrbitCameraMath
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
+import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.SceneInteractionMath
 import com.graciousgazelles.solarlab.render.core.ScenePacketBuildPolicy
+import com.graciousgazelles.solarlab.render.core.withLayerOptions
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -50,6 +52,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
+    private var renderLayerOptions: RenderLayerOptions = RenderLayerOptions()
     private var placementStartScreen: Pair<Float, Float>? = null
     private var placementPlaneZ: Double = 0.0
     private var orbitGestureState: OrbitGestureState? = null
@@ -289,6 +292,18 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         placementPlaneZ = worldZ
     }
 
+    override fun setRenderLayerOptions(options: RenderLayerOptions) {
+        if (renderLayerOptions == options) return
+        renderLayerOptions = options
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.setRuntimeTraceLayerMode(rendererHandle, options.traceLayerMode)
+            renderLatestScene()
+            return
+        }
+        packetDirty = true
+        renderLatestScene()
+    }
+
     override fun release() {
         surfaceReady = false
         latestPacket = null
@@ -474,6 +489,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             SolarLabVulkanBridge.setRuntimeProcessingMode(rendererHandle, processingMode)
             SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, observerMode)
             SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, selectedBodyId)
+            SolarLabVulkanBridge.setRuntimeTraceLayerMode(rendererHandle, renderLayerOptions.traceLayerMode)
         } else {
             SolarLabVulkanBridge.unbindRuntimeSession(rendererHandle)
             pushCamera()
@@ -523,7 +539,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         pushCamera()
         if (packetDirty || latestPacket == null) {
             latestPacket = NativeScenePacket.fromScene(
-                frame = latestScene,
+                frame = latestScene.withLayerOptions(renderLayerOptions),
                 selectedBodyId = selectedBodyId,
                 cameraState = cameraState,
                 viewportWidthPx = width.coerceAtLeast(1),
