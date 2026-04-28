@@ -23,9 +23,9 @@ class StageFirstSandboxAppTest {
 
     @Test
     fun traceLayerButtonLabelKeepsCompactHudShort() {
-        assertEquals("Trace Focus", traceLayerButtonLabel(TraceLayerMode.FOCUS, compact = true))
+        assertEquals("Focus", traceLayerButtonLabel(TraceLayerMode.FOCUS, compact = true))
         assertEquals("Traces: All", traceLayerButtonLabel(TraceLayerMode.ALL, compact = false))
-        assertEquals("Trace Off", traceLayerButtonLabel(TraceLayerMode.OFF, compact = true))
+        assertEquals("Off", traceLayerButtonLabel(TraceLayerMode.OFF, compact = true))
     }
 
     @Test
