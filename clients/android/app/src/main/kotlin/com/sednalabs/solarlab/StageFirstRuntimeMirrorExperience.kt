@@ -503,14 +503,14 @@ internal fun StageFirstRuntimeMirrorExperience(
             }
             val primaryControls: @Composable RowScope.() -> Unit = {
                 StageActionButton(
-                    label = "Zoom +",
+                    label = if (compactLayout) "In" else "Zoom +",
                     onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
                     enabled = cameraControlsEnabled,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
                     dense = compactLayout,
                 )
                 StageActionButton(
-                    label = "Zoom -",
+                    label = if (compactLayout) "Out" else "Zoom -",
                     onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR) },
                     enabled = cameraControlsEnabled,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
@@ -580,7 +580,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     dense = compactLayout,
                 )
                 StageActionButton(
-                    label = "Slower",
+                    label = if (compactLayout) "Slow" else "Slower",
                     onClick = {
                         val nextPreset = playbackSpeedPreset.shifted(-1)
                         playbackSpeedPreset = nextPreset
@@ -590,7 +590,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     dense = compactLayout,
                 )
                 StageActionButton(
-                    label = if (compactLayout) "Faster" else "Faster · ${playbackSpeedPreset.label}",
+                    label = if (compactLayout) "Fast" else "Faster · ${playbackSpeedPreset.label}",
                     onClick = {
                         val nextPreset = playbackSpeedPreset.shifted(1)
                         playbackSpeedPreset = nextPreset
@@ -601,8 +601,8 @@ internal fun StageFirstRuntimeMirrorExperience(
                 )
                 StageActionButton(
                     label = when (renderProcessingMode) {
-                        RenderProcessingMode.DEFAULT -> if (compactLayout) "Full render" else "Rendering: Standard"
-                        RenderProcessingMode.LOW -> if (compactLayout) "Lite render" else "Rendering: Simplified"
+                        RenderProcessingMode.DEFAULT -> if (compactLayout) "Detail" else "Rendering: Standard"
+                        RenderProcessingMode.LOW -> if (compactLayout) "Lite" else "Rendering: Simplified"
                     },
                     onClick = {
                         renderProcessingMode = when (renderProcessingMode) {
