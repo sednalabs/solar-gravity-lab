@@ -2,8 +2,11 @@ package com.sednalabs.solarlab
 
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import org.junit.Assert.assertNotNull
@@ -23,17 +26,25 @@ class StageFirstLocalStartupInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
 
-        assertTrue(composeRule.onAllNodesWithText("Search").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(composeRule.onAllNodesWithText("Debug").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(composeRule.onAllNodesWithText("Add object").fetchSemanticsNodes().isNotEmpty())
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
+
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON).assertIsDisplayed()
 
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            assertTrue(composeRule.onAllNodesWithText("Immersive").fetchSemanticsNodes().isNotEmpty())
+            assertTrue(composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty())
         } else {
-            assertTrue(composeRule.onAllNodesWithText("Immersive").fetchSemanticsNodes().isEmpty())
+            assertTrue(composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isEmpty())
         }
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
