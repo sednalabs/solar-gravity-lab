@@ -105,8 +105,8 @@ internal fun StageTrajectoryGlyph(
             height = size.height * StageTrajectoryGlyphMetrics.orbitHeightFraction,
         )
         val orbitTopLeft = Offset(
-            x = center.x - orbitSize.width * StageTrajectoryGlyphMetrics.orbitCenterOffsetFraction,
-            y = center.y - orbitSize.height * StageTrajectoryGlyphMetrics.orbitCenterOffsetFraction,
+            x = center.x - (orbitSize.width * StageTrajectoryGlyphMetrics.orbitCenterOffsetFraction),
+            y = center.y - (orbitSize.height * StageTrajectoryGlyphMetrics.orbitCenterOffsetFraction),
         )
         drawArc(
             color = orbitColor.copy(alpha = StageTrajectoryGlyphMetrics.backgroundArcAlpha),
@@ -154,11 +154,11 @@ internal fun StageTrajectoryGlyph(
             color = orbitColor.copy(alpha = StageTrajectoryGlyphMetrics.transferLineAlpha),
             start = Offset(
                 x = size.width * StageTrajectoryGlyphMetrics.transferLineStartXFraction,
-                y = center.y + size.height * StageTrajectoryGlyphMetrics.transferLineStartYFraction,
+                y = center.y + (size.height * StageTrajectoryGlyphMetrics.transferLineStartYFraction),
             ),
             end = Offset(
                 x = size.width * StageTrajectoryGlyphMetrics.transferLineEndXFraction,
-                y = center.y + size.height * StageTrajectoryGlyphMetrics.transferLineEndYFraction,
+                y = center.y + (size.height * StageTrajectoryGlyphMetrics.transferLineEndYFraction),
             ),
             strokeWidth = StageTrajectoryGlyphMetrics.transferLineStrokeWidth.toPx(),
             cap = StrokeCap.Round,
