@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -62,6 +63,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -1112,7 +1114,7 @@ private fun BoxScope.StageOverlay(
                     )
                     StageActionButton(label = "Fast", onClick = onFaster, enabled = !authoringActive, dense = true)
                     StageControlsButton(
-                        label = "Controls",
+                        label = "More",
                         onClick = onToggleChrome,
                         dense = true,
                     )
@@ -1171,10 +1173,10 @@ internal fun StageControlRail(
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
                 .padding(
-                    horizontal = if (compact) 6.dp else 10.dp,
+                    horizontal = if (compact) 4.dp else 10.dp,
                     vertical = if (compact) 7.dp else 10.dp,
                 ),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content,
         )
@@ -1233,11 +1235,17 @@ internal fun StageActionButton(
             disabledContainerColor = container.copy(alpha = 0.45f),
             disabledContentColor = contentColor.copy(alpha = 0.55f),
         ),
+        contentPadding = PaddingValues(
+            horizontal = if (dense) 6.dp else 16.dp,
+            vertical = 0.dp,
+        ),
     ) {
         Text(
             text = label,
             style = if (dense) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
