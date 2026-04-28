@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.graciousgazelles.solarlab.core.math.PhysicalConstants.DAY_SECONDS
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.feature.lab.PlaybackSpeedPreset
 import com.graciousgazelles.solarlab.feature.lab.StepQuantumPreset
@@ -162,7 +163,7 @@ private val RuntimeMirrorRevisionBranchRegex = Regex("""(?:^|\|)branch=([^|]+)""
 private val RuntimeMirrorRevisionEpochRegex = Regex("""(?:^|\|)epoch=([^|]+)""")
 private val RuntimeMirrorRendererPacketTelemetryRegex = Regex("""\s+(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[.=]).*""")
 private val RuntimeMirrorWhitespaceRegex = Regex("""\s+""")
-private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
+private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = DAY_SECONDS
 private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 140
 private const val RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT = 3
 private const val RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION = 18f
