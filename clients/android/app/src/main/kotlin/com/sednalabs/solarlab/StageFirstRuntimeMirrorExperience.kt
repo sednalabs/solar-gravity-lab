@@ -1996,7 +1996,7 @@ private fun runtimeMirrorKernelLaneCount(match: MatchResult): Int? {
     return match.value
         .substringAfter(laneLabel, missingDelimiterValue = "")
         .trimStart()
-        .substringBefore(' ', missingDelimiterValue = "")
+        .substringBefore(' ')
         .toIntOrNull()
 }
 
