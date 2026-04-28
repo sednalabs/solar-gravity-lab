@@ -1,4 +1,4 @@
-# Stage-first restoration (third recovery slice)
+# Stage-first runtime mirror (third recovery slice)
 
 This slice reconnects the restored immersive client to the Rust-authoritative runtime without falling back to the packet-viewer shell as the main experience.
 
