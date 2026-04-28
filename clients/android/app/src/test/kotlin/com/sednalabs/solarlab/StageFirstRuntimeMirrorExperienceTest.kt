@@ -167,6 +167,22 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactAccelerationStatusLine_keepsPhoneHudGlanceable() {
+        assertEquals(
+            "ARM64 tiled · Vulkan · 3 future ISA",
+            runtimeMirrorCompactAccelerationStatusLine(
+                "Parallel ARM64 drive online · Vulkan render path · 3 future ISA lanes scouted"
+            ),
+        )
+        assertEquals(
+            "Scalar truth · Vulkan · 12 device ISA",
+            runtimeMirrorCompactAccelerationStatusLine(
+                "Emulator scalar truth mode · Vulkan render path · 12 device-only ISA lanes in audit"
+            ),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactStatusText_normalizesShortStatusText() {
         assertEquals(
             "Runtime connected Vulkan ready · 8 tile workers",
@@ -251,6 +267,17 @@ class StageFirstRuntimeMirrorExperienceTest {
             runtimeMirrorCompactRendererStatusText(
                 "Vulkan SPIR-V graphics pipelines + compute compaction active. " +
                     "rev=-485007626274543117 A=355/AI=355 TN=0 TM=0 TF=0 TL=768/8 bytes=32400 paths..."
+            ),
+        )
+    }
+
+    @Test
+    fun runtimeMirrorCompactBackendStatus_keepsPhoneHudOutOfSentenceMode() {
+        assertEquals(
+            "Connected · Host ready · rev=sol-system / main / t+6.0h · Vulkan + compute",
+            runtimeMirrorCompactBackendStatus(
+                "Runtime connected · Render host ready · rev=sol-system / main / t+6.0h · " +
+                    "Vulkan SPIR-V + compute compaction active"
             ),
         )
     }

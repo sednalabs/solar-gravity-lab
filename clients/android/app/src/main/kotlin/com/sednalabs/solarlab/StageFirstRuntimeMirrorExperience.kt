@@ -128,6 +128,11 @@ internal data class RuntimeAccelerationLane(
     val tone: RuntimeAccelerationLaneTone = RuntimeAccelerationLaneTone.Neutral,
 )
 
+private data class RuntimeAccelerationChipPresentation(
+    val label: String,
+    val value: String,
+)
+
 internal enum class RuntimeAccelerationLaneTone {
     Active,
     Eligible,
@@ -166,6 +171,7 @@ private val RuntimeMirrorWhitespaceRegex = Regex("""\s+""")
 private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
 private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 140
 private const val RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT = 3
+private const val RUNTIME_MIRROR_COMPACT_ACCELERATION_CHIP_LIMIT = 5
 private const val RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION = 18f
 private const val RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION = 28f
 private const val RUNTIME_MIRROR_SIGNAL_FOCUS_LIFT = 0.16f
@@ -501,6 +507,11 @@ internal fun StageFirstRuntimeMirrorExperience(
             val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
             val expandedCockpitMaxHeight = maxHeight * if (compactLayout) 0.52f else 0.46f
             val expandedCockpitScrollState = rememberScrollState()
+            val cockpitBackendStatus = if (compactLayout) {
+                runtimeMirrorCompactBackendStatus(backendStatus)
+            } else {
+                backendStatus
+            }
             val actionButtons: @Composable () -> Unit = {
                 StageControlsButton(
                     label = "Hide controls",
@@ -909,7 +920,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
                     ) {
                         Text(
-                            text = backendStatus,
+                            text = cockpitBackendStatus,
                             color = RuntimeMirrorCyan,
                             style = MaterialTheme.typography.bodyMedium,
                             maxLines = if (compactLayout) 2 else Int.MAX_VALUE,
@@ -1032,10 +1043,21 @@ private fun RuntimeMirrorBackdropOverlay(compact: Boolean) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun RuntimeMirrorAccelerationPanel(
     readout: RuntimeAccelerationReadout,
     compact: Boolean = false,
 ) {
+    val statusLine = if (compact) {
+        runtimeMirrorCompactAccelerationStatusLine(readout.statusLine)
+    } else {
+        readout.statusLine
+    }
+    val auditSummary = if (compact) {
+        runtimeMirrorCompactAccelerationAuditSummary(readout.auditSummary)
+    } else {
+        readout.auditSummary
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1055,9 +1077,11 @@ private fun RuntimeMirrorAccelerationPanel(
                     text = readout.headline,
                     color = RuntimeMirrorGold,
                     style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = readout.statusLine,
+                    text = statusLine,
                     color = RuntimeMirrorCyan,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
@@ -1067,17 +1091,45 @@ private fun RuntimeMirrorAccelerationPanel(
             RuntimeMirrorMetricPill(
                 label = "DRIVE",
                 value = "${readout.drivePercentage}%",
+                compact = compact,
             )
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            readout.chips.forEach { chip ->
-                RuntimeMirrorMetricPill(label = "VECTOR", value = chip)
+        if (compact) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val visibleChips = readout.chips.take(RUNTIME_MIRROR_COMPACT_ACCELERATION_CHIP_LIMIT)
+                visibleChips.forEach { chip ->
+                    val presentation = runtimeMirrorCompactAccelerationChip(chip)
+                    RuntimeMirrorMetricPill(
+                        label = presentation.label,
+                        value = presentation.value,
+                        modifier = Modifier.widthIn(max = 154.dp),
+                        compact = true,
+                    )
+                }
+                val hiddenChipCount = readout.chips.size - visibleChips.size
+                if (hiddenChipCount > 0) {
+                    RuntimeMirrorMetricPill(
+                        label = "More",
+                        value = "+$hiddenChipCount",
+                        compact = true,
+                    )
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                readout.chips.forEach { chip ->
+                    RuntimeMirrorMetricPill(label = "VECTOR", value = chip)
+                }
             }
         }
         RuntimeMirrorAccelerationSpectrum(
@@ -1102,7 +1154,7 @@ private fun RuntimeMirrorAccelerationPanel(
             }
         }
         Text(
-            text = readout.auditSummary,
+            text = auditSummary,
             color = RuntimeMirrorTextDim,
             style = MaterialTheme.typography.bodySmall,
             maxLines = if (compact) 1 else 2,
@@ -1448,26 +1500,37 @@ private fun RuntimeMirrorFocusGlyph(
 private fun RuntimeMirrorMetricPill(
     label: String,
     value: String,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     Surface(
+        modifier = modifier,
         color = RuntimeMirrorGlassSoft,
         shape = RoundedCornerShape(999.dp),
         border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.24f)),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(
+                horizontal = if (compact) 8.dp else 10.dp,
+                vertical = if (compact) 5.dp else 6.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = label.uppercase(Locale.US),
                 color = RuntimeMirrorTextDim,
-                style = MaterialTheme.typography.labelMedium,
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = value,
+                modifier = if (compact) Modifier.widthIn(max = 78.dp) else Modifier,
                 color = RuntimeMirrorText,
-                style = MaterialTheme.typography.labelMedium,
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -2060,6 +2123,15 @@ internal fun buildRuntimeBackendStatus(
     ).joinToString(separator = " · ")
 }
 
+internal fun runtimeMirrorCompactBackendStatus(value: String): String =
+    value
+        .replace("Runtime connected", "Connected")
+        .replace("Connecting to runtime", "Connecting")
+        .replace("Runtime unavailable", "Unavailable")
+        .replace("Render host ready", "Host ready")
+        .replace("Vulkan SPIR-V + compute compaction active", "Vulkan + compute")
+        .replace("waiting-for-packet", "waiting")
+
 internal fun runtimeMirrorCompactRevisionText(value: String, includePayloadSize: Boolean = true): String {
     val normalized = runtimeMirrorNormalizeStatusText(value)
     if (normalized.isBlank()) {
@@ -2383,6 +2455,17 @@ internal fun runtimeMirrorAccelerationStatusLine(
     return listOf(drive, render, catalogue).joinToString(" · ")
 }
 
+internal fun runtimeMirrorCompactAccelerationStatusLine(value: String): String =
+    value
+        .replace("Parallel ARM64 drive online", "ARM64 tiled")
+        .replace("ARM64 solver lane online", "ARM64 solver")
+        .replace("Emulator scalar truth mode", "Scalar truth")
+        .replace("Runtime solver awaiting acceleration", "Solver pending")
+        .replace("Vulkan render path", "Vulkan")
+        .replace(Regex("""(\d+) future ISA lanes scouted"""), "$1 future ISA")
+        .replace(Regex("""(\d+) device-only ISA lanes in audit"""), "$1 device ISA")
+        .replace("kernel catalog steady", "catalog steady")
+
 internal fun runtimeMirrorAccelerationAuditSummary(
     cpu: String?,
     gpu: String?,
@@ -2404,6 +2487,60 @@ internal fun runtimeMirrorAccelerationAuditSummary(
         .joinToString(" · ")
         .ifBlank { "Acceleration audit available in debug" }
 }
+
+internal fun runtimeMirrorCompactAccelerationAuditSummary(value: String): String =
+    value
+        .replace("requested simd-arm64 -> effective reference-scalar", "simd-arm64 -> scalar")
+        .replace("blocked lanes retained in debug audit", "blocked ISA")
+        .replace("fallback simd-arm64 requested on non-aarch64 host", "fallback scalar on emulator")
+        .replace("GPU vulkan", "GPU Vulkan")
+
+private fun runtimeMirrorCompactAccelerationChip(value: String): RuntimeAccelerationChipPresentation {
+    val chip = value.trim()
+    return when {
+        chip.equals("S25 swarm", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("Pack", "S25")
+
+        chip.endsWith(" bodies", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("Bodies", chip.substringBefore(" bodies"))
+
+        chip.startsWith("Active ", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation(
+                label = "ISA",
+                value = runtimeMirrorCompactAccelerationChipValue(chip.substringAfter(' ', missingDelimiterValue = chip)),
+            )
+
+        chip.equals("Parallel tiled", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("CPU", "tiled")
+
+        chip.equals("Single worker", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("CPU", "single")
+
+        chip.endsWith(" tile workers", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("Workers", chip.substringBefore(' '))
+
+        chip.endsWith("-body tiles", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("Tiles", chip.substringBefore("-body tiles"))
+
+        chip.endsWith(" eligible lanes", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("Future", chip.substringBefore(" eligible lanes"))
+
+        chip.equals("Vulkan", ignoreCase = true) ->
+            RuntimeAccelerationChipPresentation("GPU", "Vulkan")
+
+        else ->
+            RuntimeAccelerationChipPresentation("Signal", runtimeMirrorCompactAccelerationChipValue(chip))
+    }
+}
+
+private fun runtimeMirrorCompactAccelerationChipValue(value: String): String =
+    value
+        .replace("NEON f64 parallel tiled", "NEON tiled")
+        .replace("NEON f64 tiled", "NEON tiled")
+        .replace("NEON f64 pairwise", "NEON")
+        .replace("reference-scalar", "scalar")
+        .replace("requested simd-arm64 -> effective ", "")
+        .take(18)
 
 private fun runtimeMirrorAccelerationSignal(
     bodyCount: Int?,
