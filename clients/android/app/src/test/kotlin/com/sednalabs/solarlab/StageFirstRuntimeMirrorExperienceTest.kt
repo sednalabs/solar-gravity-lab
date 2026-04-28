@@ -183,6 +183,18 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactAccelerationChipValue_keepsScalarIsaReadable() {
+        assertEquals(
+            "scalar",
+            runtimeMirrorCompactAccelerationChipValue("scalar.reference"),
+        )
+        assertEquals(
+            "NEON tiled",
+            runtimeMirrorCompactAccelerationChipValue("NEON f64 parallel tiled"),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactStatusText_normalizesShortStatusText() {
         assertEquals(
             "Runtime connected Vulkan ready · 8 tile workers",

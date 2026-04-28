@@ -2533,14 +2533,17 @@ private fun runtimeMirrorCompactAccelerationChip(value: String): RuntimeAccelera
     }
 }
 
-private fun runtimeMirrorCompactAccelerationChipValue(value: String): String =
-    value
+internal fun runtimeMirrorCompactAccelerationChipValue(value: String): String {
+    if (value.contains("scalar", ignoreCase = true)) {
+        return "scalar"
+    }
+    return value
         .replace("NEON f64 parallel tiled", "NEON tiled")
         .replace("NEON f64 tiled", "NEON tiled")
         .replace("NEON f64 pairwise", "NEON")
-        .replace("reference-scalar", "scalar")
         .replace("requested simd-arm64 -> effective ", "")
         .take(18)
+}
 
 private fun runtimeMirrorAccelerationSignal(
     bodyCount: Int?,
