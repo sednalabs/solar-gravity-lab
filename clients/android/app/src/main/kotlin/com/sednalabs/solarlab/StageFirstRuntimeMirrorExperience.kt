@@ -1782,10 +1782,19 @@ private fun RuntimeMirrorSearchDialog(
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
+                Text(
+                    text = if (filteredBodies.size == 32) {
+                        "Showing first 32 matches; type to narrow the catalogue."
+                    } else {
+                        "${filteredBodies.size} matches"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 360.dp)
+                        .heightIn(max = 300.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {

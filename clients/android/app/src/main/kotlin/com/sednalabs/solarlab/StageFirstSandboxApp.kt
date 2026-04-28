@@ -1316,10 +1316,19 @@ private fun SearchDialog(
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
+                Text(
+                    text = if (bodies.size == 24) {
+                        "Showing first 24 matches; type to narrow the catalogue."
+                    } else {
+                        "${bodies.size} matches"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 360.dp)
+                        .heightIn(max = 300.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
