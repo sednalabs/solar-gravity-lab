@@ -6,6 +6,24 @@ import org.junit.Test
 
 class StageFirstSandboxAppTest {
     @Test
+    fun buildIdleMissionTrajectoryDetail_namesSceneBodyCount() {
+        assertEquals(
+            "Tracking 39 bodies with live fly paths. " +
+                "Tap a luminous body to focus, or open Immersive for the accelerated runtime view.",
+            buildIdleMissionTrajectoryDetail(39),
+        )
+    }
+
+    @Test
+    fun buildIdleMissionTrajectoryDetail_handlesSceneWarmup() {
+        assertEquals(
+            "Acquiring ephemeris scene and live fly paths. " +
+                "Tap a luminous body to focus, or open Immersive for the accelerated runtime view.",
+            buildIdleMissionTrajectoryDetail(null),
+        )
+    }
+
+    @Test
     fun compactStageBackendHudStatusText_removesRendererPacketTelemetry() {
         assertEquals(
             "Vulkan SPIR-V + compute compaction active. Wide orbit 63° / yaw -34°",

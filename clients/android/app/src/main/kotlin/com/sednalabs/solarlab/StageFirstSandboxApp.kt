@@ -95,6 +95,7 @@ private val OverlayStroke = Color(0x5C76F7FF)
 private val PrimaryAction = Color(0xFF17344A)
 private val SecondaryAction = Color(0xFF0E1B29)
 private val TimelineText = Color(0xFF76F7FF)
+private val MissionText = Color(0xFFEAFBFF)
 private val SelectionText = Color(0xFFFFD36B)
 private val HintText = Color(0xC29FB6C9)
 private val BodyText = Color(0xE6E8F7FF)
@@ -924,6 +925,12 @@ private fun BoxScope.StageOverlay(
                         .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                 ) {
                     Text(
+                        text = selectionCard.eyebrow,
+                        color = MissionText,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
                         text = timelineText,
                         color = TimelineText,
                         style = MaterialTheme.typography.labelLarge,
@@ -961,6 +968,12 @@ private fun BoxScope.StageOverlay(
                             .weight(1f)
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                     ) {
+                        Text(
+                            text = selectionCard.eyebrow,
+                            color = MissionText,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = timelineText,
                             color = TimelineText,
@@ -1735,6 +1748,7 @@ private fun buildSelectionCard(
             "Save will add the body immediately using the values below."
         }
         return SelectionCardText(
+            eyebrow = "OBJECT PLACEMENT",
             title = "Placement armed · ${pendingAddDraft.name}",
             detail = listOf(
                 "${pendingAddDraft.prettyCategoryLabel()} · ${pendingAddDraft.prettyRoleLabel()}",
@@ -1743,16 +1757,10 @@ private fun buildSelectionCard(
         )
     }
     if (selectedBodyId == null) {
-        return SelectionCardText(
-            title = "No body selected",
-            detail = "Tap a moving body to select it, then use Follow to keep it in view.",
-        )
+        return buildIdleMissionTrajectoryCard(frame)
     }
     val body = frame?.snapshot?.bodies?.firstOrNull { it.id == selectedBodyId }
-        ?: return SelectionCardText(
-            title = "No body selected",
-            detail = "Tap a moving body to select it, then use Follow to keep it in view.",
-        )
+        ?: return buildIdleMissionTrajectoryCard(frame)
     val hostName = body.hostBodyId?.let { hostBodyId ->
         frame.snapshot.bodies.firstOrNull { it.id == hostBodyId }?.name ?: hostBodyId
     }
@@ -1761,9 +1769,26 @@ private fun buildSelectionCard(
     } ?: body.prettyRoleLabel()
     val motionLine = "Speed ${formatSpeed(body.velocityMps.magnitude())} • ${formatDistance(body.positionM.magnitude())} from center"
     return SelectionCardText(
+        eyebrow = "TRACKING TARGET",
         title = "${body.name} · ${body.prettyCategoryLabel()}",
         detail = listOf(roleLine, motionLine).joinToString(separator = "\n"),
     )
+}
+
+private fun buildIdleMissionTrajectoryCard(frame: LabFrame?): SelectionCardText = SelectionCardText(
+    eyebrow = "MISSION TRAJECTORY",
+    title = "Flight path workbench",
+    detail = buildIdleMissionTrajectoryDetail(frame?.snapshot?.bodies?.size),
+)
+
+internal fun buildIdleMissionTrajectoryDetail(bodyCount: Int?): String {
+    val sceneLine = when {
+        bodyCount == null -> "Acquiring ephemeris scene and live fly paths."
+        bodyCount <= 0 -> "Waiting for the first trajectory body to enter the scene."
+        bodyCount == 1 -> "Tracking 1 body with live fly paths."
+        else -> "Tracking $bodyCount bodies with live fly paths."
+    }
+    return "$sceneLine Tap a luminous body to focus, or open Immersive for the accelerated runtime view."
 }
 
 private fun buildDiagnosticsText(frame: LabFrame?): String {
@@ -1885,6 +1910,7 @@ private fun CollisionMode.displayLabel(): String = when (this) {
 }
 
 private data class SelectionCardText(
+    val eyebrow: String,
     val title: String,
     val detail: String,
 )
