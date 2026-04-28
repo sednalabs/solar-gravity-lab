@@ -105,6 +105,7 @@ private data class RuntimeMirrorScene(
 private data class RuntimeSelectionCard(
     val title: String,
     val detail: String,
+    val eyebrow: String,
 )
 
 internal data class RuntimeAccelerationReadout(
@@ -1155,20 +1156,10 @@ private fun RuntimeMirrorMissionPanel(
                 maxLines = if (compact) 1 else Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = selectionCard.title,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                color = RuntimeMirrorText,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = if (compact) 1 else Int.MAX_VALUE,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = selectionCard.detail,
-                color = RuntimeMirrorTextDim,
-                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                maxLines = if (compact) 2 else Int.MAX_VALUE,
-                overflow = TextOverflow.Ellipsis,
+            RuntimeMirrorFocusIdentity(
+                selectionCard = selectionCard,
+                selectedBody = selectedBody,
+                compact = compact,
             )
             Row(
                 modifier = Modifier
@@ -1191,6 +1182,103 @@ private fun RuntimeMirrorMissionPanel(
                     .height(if (compact) 22.dp else 34.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorFocusIdentity(
+    selectionCard: RuntimeSelectionCard,
+    selectedBody: RuntimeMirrorBody?,
+    compact: Boolean,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RuntimeMirrorFocusGlyph(
+            selectedBody = selectedBody,
+            compact = compact,
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = selectionCard.eyebrow,
+                color = RuntimeMirrorGold,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = selectionCard.title,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                color = RuntimeMirrorText,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = selectionCard.detail,
+                color = RuntimeMirrorTextDim,
+                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                maxLines = if (compact) 2 else 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorFocusGlyph(
+    selectedBody: RuntimeMirrorBody?,
+    compact: Boolean,
+) {
+    val bodyColor = selectedBody?.colorArgb?.let(::Color) ?: RuntimeMirrorCyan
+    Canvas(
+        modifier = Modifier
+            .width(if (compact) 40.dp else 48.dp)
+            .height(if (compact) 40.dp else 48.dp),
+    ) {
+        val center = Offset(size.width * 0.5f, size.height * 0.5f)
+        val radius = size.minDimension * 0.23f
+        drawCircle(
+            color = RuntimeMirrorCyanDim.copy(alpha = 0.18f),
+            radius = size.minDimension * 0.46f,
+            center = center,
+        )
+        drawCircle(
+            color = RuntimeMirrorGold.copy(alpha = 0.18f),
+            radius = size.minDimension * 0.34f,
+            center = center,
+            style = Stroke(width = 1.2.dp.toPx()),
+        )
+        drawCircle(
+            color = bodyColor.copy(alpha = 0.88f),
+            radius = radius,
+            center = center,
+        )
+        drawCircle(
+            color = RuntimeMirrorText.copy(alpha = 0.72f),
+            radius = radius * 1.18f,
+            center = center,
+            style = Stroke(width = 1.dp.toPx()),
+        )
+        drawLine(
+            color = RuntimeMirrorCyan.copy(alpha = 0.70f),
+            start = Offset(center.x - size.width * 0.34f, center.y),
+            end = Offset(center.x - radius * 1.55f, center.y),
+            strokeWidth = 1.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = RuntimeMirrorCyan.copy(alpha = 0.70f),
+            start = Offset(center.x + size.width * 0.34f, center.y),
+            end = Offset(center.x + radius * 1.55f, center.y),
+            strokeWidth = 1.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
     }
 }
 
@@ -1733,17 +1821,55 @@ private fun buildRuntimeSelectionCard(
                 "No body selected"
             },
             detail = uiState.detailLine ?: "Tap a moving body to select it, then use Follow to keep the authoritative scene in view.",
+            eyebrow = if (uiState.connectionState == SessionConnectionState.Unavailable) {
+                "MISSION STATUS"
+            } else {
+                "FREE CAMERA"
+            },
         )
     }
     val hostLine = selectedBody.hostBodyId?.let { "Host ${displayNameForBodyId(it)}" }
     return RuntimeSelectionCard(
-        title = "${selectedBody.displayName} · runtime body",
+        title = runtimeMirrorFocusDisplayName(
+            bodyId = selectedBody.id,
+            displayName = selectedBody.displayName,
+        ),
         detail = listOfNotNull(
-            selectedBody.id,
             hostLine,
-            "Radius ${formatDistance(selectedBody.radiusM)} • ${formatDistance(selectedBody.positionM.magnitude())} from frame origin",
-        ).joinToString(separator = "\n"),
+            "${runtimeMirrorBodyKindLabel(selectedBody.kind)} • Radius ${formatDistance(selectedBody.radiusM)}",
+            "${formatDistance(selectedBody.positionM.magnitude())} from frame origin",
+        ).joinToString(separator = " · "),
+        eyebrow = "FOCUS LOCK",
     )
+}
+
+internal fun runtimeMirrorFocusDisplayName(
+    bodyId: String,
+    displayName: String,
+): String {
+    val catalogName = displayNameForBodyId(bodyId)
+    val preferredName = catalogName.takeIf { name ->
+        !name.equals(bodyId, ignoreCase = true) || name.any { character -> character.isUpperCase() }
+    } ?: displayName
+    return preferredName
+        .replace('-', ' ')
+        .split(' ')
+        .joinToString(" ") { token ->
+            token.replaceFirstChar { character ->
+                character.titlecase(Locale.US)
+            }
+        }
+        .ifBlank { bodyId }
+}
+
+private fun runtimeMirrorBodyKindLabel(kind: RenderBodyKind): String = when (kind) {
+    RenderBodyKind.STAR -> "Stellar anchor"
+    RenderBodyKind.PLANET -> "Planetary target"
+    RenderBodyKind.DWARF_PLANET -> "Dwarf-planet target"
+    RenderBodyKind.COMET -> "Comet target"
+    RenderBodyKind.ASTEROID -> "Small-body target"
+    RenderBodyKind.PROBE -> "Probe target"
+    RenderBodyKind.TEST_OBJECT -> "Runtime body"
 }
 
 internal fun buildRuntimeBackendStatus(
