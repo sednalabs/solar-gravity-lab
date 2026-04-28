@@ -7,7 +7,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import kotlinx.coroutines.runBlocking
@@ -32,14 +31,14 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .performClick()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
 
         composeRule.runOnUiThread {
