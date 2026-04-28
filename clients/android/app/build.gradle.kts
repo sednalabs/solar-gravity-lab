@@ -339,9 +339,9 @@ val workspaceRootDir = rootProject.projectDir.resolve("../..").canonicalFile
 val solarlabGeneratedJniLibsDir = layout.buildDirectory.dir("generated/jniLibs/solarlab_v2")
 val solarlabVersionCode = project.stringPropertyOrEnv("solarlab.versionCode", "SOLARLAB_VERSION_CODE")
     ?.toIntOrNull()
-    ?: 11
+    ?: 1
 val solarlabVersionName = project.stringPropertyOrEnv("solarlab.versionName", "SOLARLAB_VERSION_NAME")
-    ?: "0.1.0-alpha.10"
+    ?: "0.1.0"
 val solarlabDevTelemetryEndpoint = project.stringPropertyOrEnv(
     "solarlab.devTelemetryEndpoint",
     "SOLARLAB_DEV_TELEMETRY_ENDPOINT",

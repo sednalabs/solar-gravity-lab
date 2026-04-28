@@ -1,14 +1,16 @@
 name: prerelease-apk
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch' && 'manual APK release request' ||
+    github.ref_name == 'main' && 'main APK release gate' ||
+    format('APK release {0}', github.ref_name)
+  }}
 
 on:
   push:
     branches:
+      - main
       - release/**
-    paths-ignore:
-      - "README.md"
-      - "docs/**"
-      - ".github/workflows/docs-sanity.yml"
-      - ".github/scripts/check_markdown_links.py"
   workflow_dispatch:
     inputs:
       ref:
@@ -16,7 +18,7 @@ on:
         required: false
         type: string
       version_name:
-        description: Optional versionName override (for example 0.1.0-alpha.11 or 0.1.0)
+        description: Optional semver versionName override (for example 0.1.0 or 0.1.1-alpha.1)
         required: false
         type: string
       version_code:
@@ -99,8 +101,97 @@ env:
   SCCACHE_CREDENTIAL_SOURCE: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && 'dedicated-sccache-secrets' || 'shared-r2-secrets' }}
 
 jobs:
+  route:
+    name: Release request gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release_requested: ${{ steps.route.outputs.release_requested }}
+      reason: ${{ steps.route.outputs.reason }}
+      checkout_ref: ${{ steps.route.outputs.checkout_ref }}
+      target_sha: ${{ steps.route.outputs.target_sha }}
+      version_name: ${{ steps.route.outputs.version_name }}
+      version_code: ${{ steps.route.outputs.version_code }}
+      release_channel: ${{ steps.route.outputs.release_channel }}
+      build_variant: ${{ steps.route.outputs.build_variant }}
+      publish_release: ${{ steps.route.outputs.publish_release }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Resolve release request
+        id: route
+        shell: bash
+        env:
+          EVENT_AFTER: ${{ github.event.after || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          EVENT_SHA: ${{ github.sha }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message || '' }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_VERSION_NAME: ${{ inputs.version_name }}
+          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+          INPUT_RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          INPUT_BUILD_VARIANT: ${{ inputs.build_variant }}
+          INPUT_PUBLISH_RELEASE: ${{ inputs.publish_release == true && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/resolve_prerelease_apk_request.py \
+            --event-name "${EVENT_NAME}" \
+            --event-ref "${EVENT_REF}" \
+            --event-sha "${EVENT_SHA}" \
+            --event-after "${EVENT_AFTER}" \
+            --head-message "${HEAD_MESSAGE}" \
+            --input-ref "${INPUT_REF}" \
+            --input-version-name "${INPUT_VERSION_NAME}" \
+            --input-version-code "${INPUT_VERSION_CODE}" \
+            --input-release-channel "${INPUT_RELEASE_CHANNEL}" \
+            --input-build-variant "${INPUT_BUILD_VARIANT}" \
+            --input-publish-release "${INPUT_PUBLISH_RELEASE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Summarize release gate
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RELEASE_REQUESTED: ${{ steps.route.outputs.release_requested }}
+          ROUTE_REASON: ${{ steps.route.outputs.reason }}
+          CHECKOUT_REF: ${{ steps.route.outputs.checkout_ref }}
+          VERSION_NAME: ${{ steps.route.outputs.version_name }}
+          VERSION_CODE: ${{ steps.route.outputs.version_code }}
+          RELEASE_CHANNEL: ${{ steps.route.outputs.release_channel }}
+          BUILD_VARIANT: ${{ steps.route.outputs.build_variant }}
+          PUBLISH_RELEASE: ${{ steps.route.outputs.publish_release }}
+        run: |
+          set -euo pipefail
+          if [[ "${RELEASE_REQUESTED:-false}" == "true" ]]; then
+            decision="package"
+            package_job="will run"
+          else
+            decision="skip"
+            package_job="skipped"
+          fi
+
+          {
+            echo "## prerelease-apk release gate"
+            echo
+            echo "- decision: \`${decision}\`"
+            echo "- reason: \`${ROUTE_REASON:-unknown}\`"
+            echo "- package job: \`${package_job}\`"
+            if [[ "${RELEASE_REQUESTED:-false}" == "true" ]]; then
+              echo "- checkout ref: \`${CHECKOUT_REF}\`"
+              echo "- version: \`${VERSION_NAME:-auto}\`"
+              echo "- versionCode: \`${VERSION_CODE:-auto}\`"
+              echo "- release channel: \`${RELEASE_CHANNEL:-auto}\`"
+              echo "- build variant: \`${BUILD_VARIANT:-prerelease}\`"
+              echo "- publish release: \`${PUBLISH_RELEASE:-false}\`"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   build-prerelease-apk:
     name: Build internal dev preview APK
+    needs: route
+    if: ${{ needs.route.outputs.release_requested == 'true' }}
     outputs:
       head_sha: ${{ steps.git_meta.outputs.head_sha }}
       version_name: ${{ steps.meta.outputs.version_name }}
@@ -134,7 +225,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
 
       - name: Initialize prerelease timing
         id: prerelease_timing
@@ -253,8 +344,8 @@ jobs:
         id: resolved_version
         shell: bash
         env:
-          INPUT_VERSION_NAME: ${{ inputs.version_name }}
-          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+          INPUT_VERSION_NAME: ${{ needs.route.outputs.version_name != '' && needs.route.outputs.version_name || inputs.version_name }}
+          INPUT_VERSION_CODE: ${{ needs.route.outputs.version_code != '' && needs.route.outputs.version_code || inputs.version_code }}
         run: |
           set -euo pipefail
           version_name_override="${INPUT_VERSION_NAME:-}"
@@ -262,9 +353,7 @@ jobs:
 
           if [[ -z "${version_name_override}" ]]; then
             git fetch --force --prune origin '+refs/tags/v*:refs/tags/v*'
-            version_name_override="$(
-              python3 -c 'import re, subprocess; tags = subprocess.check_output(["git", "tag", "--list", "v*"], text=True).splitlines(); pattern = re.compile(r"^v(\d+)\.(\d+)\.(\d+)-alpha\.(\d+)$"); alpha_versions = [tuple(map(int, m.groups())) for tag in tags if (m := pattern.match(tag.strip()))]; print("0.1.0-alpha.1" if not alpha_versions else f"{max(alpha_versions)[0]}.{max(alpha_versions)[1]}.{max(alpha_versions)[2]}-alpha.{max(alpha_versions)[3] + 1}")'
-            )"
+            version_name_override="0.1.0"
           fi
 
           {
@@ -282,7 +371,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/gradle
           phase_start="$(date +%s)"
-          build_variant="${{ inputs.build_variant != '' && inputs.build_variant || 'prerelease' }}"
+          build_variant="${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
           mapfile -t gradle_configuration_cache_args < <(
             bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )
@@ -311,8 +400,9 @@ jobs:
           import json
           from pathlib import Path
 
+          build_variant = "${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
           metadata = json.loads(
-              Path("clients/android/app/build/outputs/apk/prerelease/output-metadata.json").read_text()
+              Path(f"clients/android/app/build/outputs/apk/{build_variant}/output-metadata.json").read_text()
           )
           element = metadata["elements"][0]
           version_name = element["versionName"]
@@ -320,8 +410,7 @@ jobs:
               ch if ch.isalnum() or ch in "._-" else "-"
               for ch in version_name
           )
-          build_variant = "${{ inputs.build_variant != '' && inputs.build_variant || 'prerelease' }}"
-          release_channel_input = "${{ inputs.release_channel != '' && inputs.release_channel || 'auto' }}"
+          release_channel_input = "${{ needs.route.outputs.release_channel != '' && needs.route.outputs.release_channel || inputs.release_channel || 'auto' }}"
           if release_channel_input == "auto":
               inferred_channel = "prerelease" if "-" in version_name else "stable"
           else:
@@ -422,7 +511,7 @@ jobs:
               "workflow": "${{ github.workflow }}",
               "run_id": "${{ github.run_id }}",
               "run_attempt": "${{ github.run_attempt }}",
-              "checkout_ref": "${{ inputs.ref != '' && inputs.ref || github.ref_name }}",
+              "checkout_ref": "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}",
               "commit_sha": "${{ steps.git_meta.outputs.head_sha }}",
               "version_name": "${{ steps.meta.outputs.version_name }}",
               "version_code": "${{ steps.meta.outputs.version_code }}",
@@ -507,7 +596,9 @@ jobs:
 
   isa-prerelease-proof:
     name: ARM64 ISA prerelease proof
-    needs: build-prerelease-apk
+    needs:
+      - route
+      - build-prerelease-apk
     if: needs.build-prerelease-apk.result == 'success'
     runs-on: ubuntu-24.04-arm
     env:
@@ -517,7 +608,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -565,13 +656,14 @@ jobs:
   publish-prerelease-apk:
     name: Publish GitHub release
     needs:
+      - route
       - build-prerelease-apk
       - isa-prerelease-proof
     if: |
       always() &&
       needs.build-prerelease-apk.result == 'success' &&
       needs.isa-prerelease-proof.result == 'success' &&
-      (github.event_name == 'push' || inputs.publish_release == true)
+      needs.route.outputs.publish_release == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -608,7 +700,7 @@ jobs:
       - name: Validate promoted release target
         shell: bash
         env:
-          INPUT_REF: ${{ inputs.ref }}
+          INPUT_REF: ${{ needs.route.outputs.checkout_ref }}
           RELEASE_TARGET: ${{ needs.build-prerelease-apk.outputs.head_sha }}
         run: |
           set -euo pipefail
@@ -621,6 +713,10 @@ jobs:
               ;;
           esac
 
+          if [[ "${requested_ref}" =~ ^[0-9a-fA-F]{40}$ && "${requested_ref}" == "${RELEASE_TARGET}" ]]; then
+            exit 0
+          fi
+
           if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
             echo "Release publishing is only allowed from release pushes or explicitly validated manual dispatches." >&2
             exit 1
@@ -631,10 +727,6 @@ jobs:
               exit 0
               ;;
           esac
-
-          if [[ "${requested_ref}" =~ ^[0-9a-fA-F]{40}$ && "${requested_ref}" == "${RELEASE_TARGET}" ]]; then
-            exit 0
-          fi
 
           echo "Refuses to publish a release from unpromoted ref: ${requested_ref}" >&2
           exit 1
@@ -662,7 +754,7 @@ jobs:
               "run_attempt": "${{ github.run_attempt }}",
               "release_tag": "${{ needs.build-prerelease-apk.outputs.tag_name }}",
               "release_target": "${{ needs.build-prerelease-apk.outputs.head_sha }}",
-              "checkout_ref": "${{ inputs.ref != '' && inputs.ref || github.ref_name }}",
+              "checkout_ref": "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}",
               "version_name": "${{ needs.build-prerelease-apk.outputs.version_name }}",
               "version_code": "${{ needs.build-prerelease-apk.outputs.version_code }}",
               "build_variant": "${{ needs.build-prerelease-apk.outputs.build_variant }}",
@@ -753,7 +845,7 @@ jobs:
           {
             echo "## prerelease-apk"
             echo
-            echo "- ref: \`${{ inputs.ref != '' && inputs.ref || github.ref_name }}\`"
+            echo "- ref: \`${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}\`"
             echo "- git head: \`${{ needs.build-prerelease-apk.outputs.head_sha }}\`"
             echo "- version: \`${{ needs.build-prerelease-apk.outputs.version_name }}\`"
             echo "- versionCode: \`${{ needs.build-prerelease-apk.outputs.version_code }}\`"
@@ -768,7 +860,7 @@ jobs:
             echo "- arm64 ISA proof: \`${{ needs.isa-prerelease-proof.result }}\`"
             echo "- emulator boot strategy: \`${{ inputs.emulator_boot_strategy }}\`"
             echo "- launch artifact mode: \`${{ inputs.android_artifact_mode }}\`"
-            echo "- publish release: \`${{ (github.event_name == 'push' || inputs.publish_release == true) && 'enabled' || 'disabled' }}\`"
+            echo "- publish release: \`${{ needs.route.outputs.publish_release == 'true' && 'enabled' || 'disabled' }}\`"
             echo "- changelog baseline: \`${{ needs.build-prerelease-apk.outputs.changelog_baseline_tag }}\`"
             echo "- changelog commits: \`${{ needs.build-prerelease-apk.outputs.changelog_commit_count }}\`"
             echo "- changelog (JSON): \`${{ steps.release_artifacts.outputs.changelog_json }}\`"
@@ -779,6 +871,7 @@ jobs:
   summary:
     name: Publish prerelease summary
     needs:
+      - route
       - build-prerelease-apk
       - isa-prerelease-proof
       - publish-prerelease-apk
@@ -788,7 +881,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
 
       - name: Build prerelease summary payload
         shell: bash
@@ -801,12 +894,12 @@ jobs:
             --run-attempt "${{ github.run_attempt }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
-            --checkout-ref "${{ inputs.ref != '' && inputs.ref || github.ref_name }}" \
+            --checkout-ref "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}" \
             --profile "prerelease" \
             --profile-intent "checkpoint" \
             --profile-notes "Packages installable artifacts and launch-smoke evidence for remote validation." \
             --lane-set "prerelease-apk" \
-            --lane-summary "build_variant=${{ needs.build-prerelease-apk.outputs.build_variant || 'n/a' }}, release_channel=${{ needs.build-prerelease-apk.outputs.release_channel || 'n/a' }}, publish_release=${{ github.event_name == 'push' || inputs.publish_release == true }}" \
+            --lane-summary "build_variant=${{ needs.build-prerelease-apk.outputs.build_variant || 'n/a' }}, release_channel=${{ needs.build-prerelease-apk.outputs.release_channel || 'n/a' }}, publish_release=${{ needs.route.outputs.publish_release == 'true' }}" \
             --android-test-scope "launch-smoke" \
             --android-validation-mode "${{ needs.build-prerelease-apk.outputs.build_variant || 'prerelease' }}" \
             --android-artifact-mode "${{ inputs.android_artifact_mode }}" \
