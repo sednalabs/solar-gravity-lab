@@ -36,10 +36,11 @@ class StageFirstRuntimeMirrorInstrumentationTest {
             .performClick()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).assertIsDisplayed()
-            }.isSuccess
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
+            .performScrollTo()
+            .assertIsDisplayed()
 
         composeRule.runOnUiThread {
             composeRule.activity.showStageFirstRuntimeMirrorForTesting()
