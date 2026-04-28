@@ -783,10 +783,8 @@ internal fun StageFirstRuntimeMirrorExperience(
                                 .fillMaxWidth()
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                         )
-                        FlowRow(
+                        StageFloatingActionRow(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
                             content = actionButtons,
                         )
                     } else {

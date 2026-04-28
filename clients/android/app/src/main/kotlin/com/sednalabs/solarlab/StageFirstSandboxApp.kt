@@ -1032,10 +1032,8 @@ private fun BoxScope.StageOverlay(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                    FlowRow(
+                    StageFloatingActionRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         content = actionButtons,
                     )
                 } else {
@@ -1153,6 +1151,21 @@ private fun BoxScope.StageOverlay(
                 }
             }
         }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+internal fun StageFloatingActionRow(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        content()
     }
 }
 
