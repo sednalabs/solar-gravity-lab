@@ -722,28 +722,41 @@ internal fun StageFirstRuntimeMirrorExperience(
                         .widthIn(max = if (compactLayout) 360.dp else 420.dp)
                         .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                 ) {
-                    Text(
-                        text = "Trajectory stage",
-                        color = RuntimeMirrorCyan,
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = selectionCard.title,
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                        color = RuntimeMirrorGold,
-                        style = MaterialTheme.typography.titleLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = runtimeMirrorCompactScenarioLabel(timelineText),
-                        color = RuntimeMirrorTextDim,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StageTrajectoryGlyph(
+                            orbitColor = RuntimeMirrorCyan,
+                            probeColor = RuntimeMirrorGold,
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(1.dp),
+                        ) {
+                            Text(
+                                text = "Trajectory stage",
+                                color = RuntimeMirrorCyan,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = selectionCard.title,
+                                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                                color = RuntimeMirrorGold,
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = runtimeMirrorCompactScenarioLabel(timelineText),
+                                color = RuntimeMirrorTextDim,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
 

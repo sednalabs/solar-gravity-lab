@@ -26,7 +26,7 @@ state should therefore prioritize the rendered world over menus.
 
 The default collapsed chrome shows:
 
-- a compact mission/selection card
+- a compact mission/selection card with a lightweight trajectory glyph
 - `Start` / `Pause`
 - `Slow`
 - trace-layer cycling
