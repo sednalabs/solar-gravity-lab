@@ -912,16 +912,23 @@ internal fun StageFirstRuntimeMirrorExperience(
                             text = backendStatus,
                             color = RuntimeMirrorCyan,
                             style = MaterialTheme.typography.bodyMedium,
+                            maxLines = if (compactLayout) 2 else Int.MAX_VALUE,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         accelerationReadout?.let { readout ->
                             Spacer(modifier = Modifier.height(8.dp))
-                            RuntimeMirrorAccelerationPanel(readout = readout)
+                            RuntimeMirrorAccelerationPanel(
+                                readout = readout,
+                                compact = compactLayout,
+                            )
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = interactionHintText,
                             color = RuntimeMirrorTextDim,
                             style = MaterialTheme.typography.bodySmall,
+                            maxLines = if (compactLayout) 1 else Int.MAX_VALUE,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -1025,7 +1032,10 @@ private fun RuntimeMirrorBackdropOverlay(compact: Boolean) {
 }
 
 @Composable
-private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) {
+private fun RuntimeMirrorAccelerationPanel(
+    readout: RuntimeAccelerationReadout,
+    compact: Boolean = false,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1070,8 +1080,11 @@ private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) 
                 RuntimeMirrorMetricPill(label = "VECTOR", value = chip)
             }
         }
-        RuntimeMirrorAccelerationSpectrum(readout = readout)
-        readout.lanes.takeIf { it.isNotEmpty() }?.let { lanes ->
+        RuntimeMirrorAccelerationSpectrum(
+            readout = readout,
+            compact = compact,
+        )
+        if (!compact) readout.lanes.takeIf { it.isNotEmpty() }?.let { lanes ->
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = RuntimeMirrorGlassSoft,
@@ -1092,14 +1105,17 @@ private fun RuntimeMirrorAccelerationPanel(readout: RuntimeAccelerationReadout) 
             text = readout.auditSummary,
             color = RuntimeMirrorTextDim,
             style = MaterialTheme.typography.bodySmall,
-            maxLines = 2,
+            maxLines = if (compact) 1 else 2,
             overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
 @Composable
-private fun RuntimeMirrorAccelerationSpectrum(readout: RuntimeAccelerationReadout) {
+private fun RuntimeMirrorAccelerationSpectrum(
+    readout: RuntimeAccelerationReadout,
+    compact: Boolean = false,
+) {
     val activeCount = readout.lanes.count { it.tone == RuntimeAccelerationLaneTone.Active }
     val eligibleCount = readout.lanes.count { it.tone == RuntimeAccelerationLaneTone.Eligible }
     val blockedCount = readout.lanes.count { it.tone == RuntimeAccelerationLaneTone.Blocked }
@@ -1114,7 +1130,7 @@ private fun RuntimeMirrorAccelerationSpectrum(readout: RuntimeAccelerationReadou
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .height(if (compact) 38.dp else 52.dp)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             val railLeft = 4.dp.toPx()
