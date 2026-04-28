@@ -148,8 +148,7 @@ jobs:
             --input-version-code "${INPUT_VERSION_CODE}" \
             --input-release-channel "${INPUT_RELEASE_CHANNEL}" \
             --input-build-variant "${INPUT_BUILD_VARIANT}" \
-            --input-publish-release "${INPUT_PUBLISH_RELEASE}" \
-            --output "${GITHUB_OUTPUT}"
+            --input-publish-release "${INPUT_PUBLISH_RELEASE}" >> "${GITHUB_OUTPUT}"
 
       - name: Summarize release gate
         if: ${{ always() }}

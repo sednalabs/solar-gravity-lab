@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -25,45 +24,41 @@ def run_request(
     input_publish_release: str = "false",
     expect_success: bool = True,
 ) -> tuple[dict[str, str], str]:
-    with tempfile.TemporaryDirectory() as tmp:
-        output = Path(tmp) / "outputs.env"
-        command = [
-            sys.executable,
-            str(SCRIPT),
-            "--event-name",
-            event_name,
-            "--event-ref",
-            event_ref,
-            "--event-sha",
-            event_sha,
-            "--event-after",
-            event_after,
-            "--head-message",
-            head_message,
-            "--input-ref",
-            input_ref,
-            "--input-version-name",
-            input_version_name,
-            "--input-version-code",
-            input_version_code,
-            "--input-release-channel",
-            input_release_channel,
-            "--input-build-variant",
-            input_build_variant,
-            "--input-publish-release",
-            input_publish_release,
-            "--output",
-            str(output),
-        ]
-        result = subprocess.run(command, text=True, capture_output=True)
-        if expect_success:
-            if result.returncode != 0:
-                raise AssertionError(result.stderr)
-            return parse_outputs(output.read_text(encoding="utf-8")), result.stderr
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "--event-name",
+        event_name,
+        "--event-ref",
+        event_ref,
+        "--event-sha",
+        event_sha,
+        "--event-after",
+        event_after,
+        "--head-message",
+        head_message,
+        "--input-ref",
+        input_ref,
+        "--input-version-name",
+        input_version_name,
+        "--input-version-code",
+        input_version_code,
+        "--input-release-channel",
+        input_release_channel,
+        "--input-build-variant",
+        input_build_variant,
+        "--input-publish-release",
+        input_publish_release,
+    ]
+    result = subprocess.run(command, text=True, capture_output=True)
+    if expect_success:
+        if result.returncode != 0:
+            raise AssertionError(result.stderr)
+        return parse_outputs(result.stdout), result.stderr
 
-        if result.returncode == 0:
-            raise AssertionError("command unexpectedly succeeded")
-        return {}, result.stderr
+    if result.returncode == 0:
+        raise AssertionError("command unexpectedly succeeded")
+    return {}, result.stderr
 
 
 def parse_outputs(text: str) -> dict[str, str]:

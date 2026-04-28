@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from pathlib import Path
 
 
 RELEASE_TRAILER_RE = re.compile(r"^SolarLab-Release:\s*(?P<version>[^\s]+)\s*$")
@@ -190,14 +189,9 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
-def write_outputs(path: Path | None, outputs: dict[str, str]) -> None:
+def write_outputs(outputs: dict[str, str]) -> None:
     lines = [f"{key}={value}" for key, value in outputs.items()]
-    text = "\n".join(lines) + "\n"
-    if path is None:
-        print(text, end="")
-    else:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(text)
+    print("\n".join(lines))
 
 
 def main() -> int:
@@ -213,7 +207,6 @@ def main() -> int:
     parser.add_argument("--input-release-channel", default="")
     parser.add_argument("--input-build-variant", default="")
     parser.add_argument("--input-publish-release", default="false")
-    parser.add_argument("--output")
     args = parser.parse_args()
 
     try:
@@ -222,7 +215,7 @@ def main() -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    write_outputs(Path(args.output) if args.output else None, outputs)
+    write_outputs(outputs)
     return 0
 
 
