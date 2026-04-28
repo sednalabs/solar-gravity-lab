@@ -341,7 +341,7 @@ val solarlabVersionCode = project.stringPropertyOrEnv("solarlab.versionCode", "S
     ?.toIntOrNull()
     ?: 1
 val solarlabVersionName = project.stringPropertyOrEnv("solarlab.versionName", "SOLARLAB_VERSION_NAME")
-    ?: "0.1.0-alpha.1"
+    ?: "0.1.0"
 val solarlabDevTelemetryEndpoint = project.stringPropertyOrEnv(
     "solarlab.devTelemetryEndpoint",
     "SOLARLAB_DEV_TELEMETRY_ENDPOINT",

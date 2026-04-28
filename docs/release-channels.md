@@ -7,21 +7,22 @@ to stay honest about what is actually being shipped.
 
 Use ordinary SemVer for release identity:
 
-- Android `versionName`: `0.1.0-alpha.1`
-- GitHub tag: `v0.1.0-alpha.1`
-- GitHub release channel: prerelease when the version has a prerelease suffix
-- Artifact name: `solar-gravity-lab-0.1.0-alpha.1-internal-dev-preview.apk`
+- Android `versionName`: `0.1.0`
+- GitHub tag: `v0.1.0`
+- GitHub release channel: stable when the version has no prerelease suffix
+- Artifact name: `solar-gravity-lab-0.1.0-internal-dev-preview.apk`
 
-The first phone-installable alpha uses the `prerelease` Android build type. It
-is debug-signed for sideloading and keeps the `.internal` package id suffix so
+The first phone-installable build can still use the `prerelease` Android build
+type while carrying the stable `0.1.0` version identity. That variant is
+debug-signed for sideloading and keeps the `.internal` package id suffix so
 device-testing builds remain separate from future stable installs.
 
 If maintaining an existing published tag, rerun the workflow only when the
 maintainer intends to update that GitHub Release's APK and provenance assets.
-For a new public alpha after `v0.1.0-alpha.1`, use the next SemVer prerelease
-number rather than reusing a tag.
+For a new public release after `v0.1.0`, use the next SemVer number rather than
+reusing a tag.
 
-## Cutting `0.1.0-alpha.1`
+## Cutting `0.1.0`
 
 Always cut an installable release from the exact commit that passed the hosted
 proof lane. The manual path is:
@@ -31,9 +32,9 @@ gh workflow run prerelease-apk.yml \
   --repo sednalabs/solar-gravity-lab \
   --ref main \
   -f ref=<validated-commit-sha> \
-  -f version_name=0.1.0-alpha.1 \
+  -f version_name=0.1.0 \
   -f version_code=1 \
-  -f release_channel=prerelease \
+  -f release_channel=stable \
   -f build_variant=prerelease \
   -f publish_release=true \
   -f android_artifact_mode=failures-only \
@@ -43,7 +44,7 @@ gh workflow run prerelease-apk.yml \
 
 That workflow builds the APK, runs the packaged launch smoke, runs the ARM64 ISA
 proof, uploads the workflow artifact, and publishes or updates the GitHub
-Prerelease only after both proof jobs pass.
+Release only after both proof jobs pass.
 
 ## Release trailers
 
@@ -53,8 +54,9 @@ commit or squash-merge commit request an automatic APK release, put exactly one
 release trailer in the final commit message:
 
 ```text
-SolarLab-Release: 0.1.0-alpha.1
+SolarLab-Release: 0.1.0
 SolarLab-Version-Code: 1
+SolarLab-Build-Variant: prerelease
 ```
 
 Optional trailers:
@@ -63,9 +65,10 @@ Optional trailers:
 - `SolarLab-Build-Variant: prerelease` or `SolarLab-Build-Variant: release`
 
 The channel is inferred from the SemVer string when the channel trailer is
-omitted. A prerelease SemVer such as `0.1.0-alpha.1` defaults to the
-phone-installable `prerelease` build variant; a stable SemVer such as `0.1.0`
-defaults to the `release` build variant.
+omitted. A stable SemVer such as `0.1.0` defaults to the `release` build
+variant; add `SolarLab-Build-Variant: prerelease` when cutting a sideloadable
+phone build before stable signing is ready. A prerelease SemVer such as
+`0.1.1-alpha.1` defaults to the phone-installable `prerelease` build variant.
 
 Trailer validation happens before the Android build. Duplicate release trailers,
 malformed versions, unsupported channels, and unsupported build variants fail in
@@ -75,7 +78,7 @@ the gate job instead of starting the heavy APK lane.
 
 ### Internal dev preview
 
-- Version line: `0.1.0-alpha.1`
+- Version line: `0.1.0`
 - Android build type: `prerelease`
 - Build path: `clients/android`
 - Base application id: `com.sednalabs.solarlab`

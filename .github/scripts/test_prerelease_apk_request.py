@@ -77,11 +77,11 @@ class PrereleaseApkRequestTests(unittest.TestCase):
         self.assertEqual(outputs["reason"], "missing_solarlab_release_trailer")
         self.assertEqual(outputs["publish_release"], "false")
 
-    def test_main_push_release_trailer_supplies_semver_prerelease_inputs(self) -> None:
+    def test_main_push_release_trailer_supplies_semver_stable_inputs(self) -> None:
         outputs, _stderr = run_request(
             head_message=(
-                "release: prepare alpha\n\n"
-                "SolarLab-Release: 0.1.0-alpha.1\n"
+                "release: prepare phone build\n\n"
+                "SolarLab-Release: 0.1.0\n"
                 "SolarLab-Version-Code: 1\n"
             )
         )
@@ -89,10 +89,10 @@ class PrereleaseApkRequestTests(unittest.TestCase):
         self.assertEqual(outputs["release_requested"], "true")
         self.assertEqual(outputs["reason"], "release_trailer")
         self.assertEqual(outputs["checkout_ref"], "f" * 40)
-        self.assertEqual(outputs["version_name"], "0.1.0-alpha.1")
+        self.assertEqual(outputs["version_name"], "0.1.0")
         self.assertEqual(outputs["version_code"], "1")
-        self.assertEqual(outputs["release_channel"], "prerelease")
-        self.assertEqual(outputs["build_variant"], "prerelease")
+        self.assertEqual(outputs["release_channel"], "stable")
+        self.assertEqual(outputs["build_variant"], "release")
         self.assertEqual(outputs["publish_release"], "true")
 
     def test_stable_trailer_defaults_to_release_variant(self) -> None:
@@ -105,11 +105,24 @@ class PrereleaseApkRequestTests(unittest.TestCase):
         outputs, _stderr = run_request(
             head_message=(
                 "release\n\n"
-                "SolarLab-Release: 0.1.0-alpha.1\n"
+                "SolarLab-Release: 0.1.1-alpha.1\n"
                 "SolarLab-Build-Variant: prerelease\n"
             )
         )
 
+        self.assertEqual(outputs["build_variant"], "prerelease")
+
+    def test_explicit_build_variant_can_keep_phone_installable_package_for_stable_version(self) -> None:
+        outputs, _stderr = run_request(
+            head_message=(
+                "release\n\n"
+                "SolarLab-Release: 0.1.0\n"
+                "SolarLab-Build-Variant: prerelease\n"
+            )
+        )
+
+        self.assertEqual(outputs["version_name"], "0.1.0")
+        self.assertEqual(outputs["release_channel"], "stable")
         self.assertEqual(outputs["build_variant"], "prerelease")
 
     def test_invalid_release_trailer_fails_before_heavy_work(self) -> None:
@@ -124,8 +137,8 @@ class PrereleaseApkRequestTests(unittest.TestCase):
         _outputs, stderr = run_request(
             head_message=(
                 "release\n\n"
-                "SolarLab-Release: 0.1.0-alpha.1\n"
-                "SolarLab-Release: 0.1.0-alpha.2\n"
+                "SolarLab-Release: 0.1.0\n"
+                "SolarLab-Release: 0.1.1-alpha.1\n"
             ),
             expect_success=False,
         )
@@ -138,9 +151,9 @@ class PrereleaseApkRequestTests(unittest.TestCase):
             event_ref="refs/heads/main",
             event_sha="a" * 40,
             input_ref="main",
-            input_version_name="0.1.0-alpha.1",
+            input_version_name="0.1.0",
             input_version_code="1",
-            input_release_channel="prerelease",
+            input_release_channel="stable",
             input_build_variant="prerelease",
             input_publish_release="true",
         )
@@ -148,9 +161,9 @@ class PrereleaseApkRequestTests(unittest.TestCase):
         self.assertEqual(outputs["release_requested"], "true")
         self.assertEqual(outputs["reason"], "workflow_dispatch")
         self.assertEqual(outputs["checkout_ref"], "main")
-        self.assertEqual(outputs["version_name"], "0.1.0-alpha.1")
+        self.assertEqual(outputs["version_name"], "0.1.0")
         self.assertEqual(outputs["version_code"], "1")
-        self.assertEqual(outputs["release_channel"], "prerelease")
+        self.assertEqual(outputs["release_channel"], "stable")
         self.assertEqual(outputs["build_variant"], "prerelease")
         self.assertEqual(outputs["publish_release"], "true")
 

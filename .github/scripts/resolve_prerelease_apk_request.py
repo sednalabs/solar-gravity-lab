@@ -40,7 +40,7 @@ def validate_semver(version_name: str) -> re.Match[str]:
     if not match:
         raise RequestError(
             "SolarLab-Release must be an ordinary semver version like "
-            "0.1.0-alpha.1 or 0.1.0"
+            "0.1.0 or 0.1.1-alpha.1"
         )
     return match
 
