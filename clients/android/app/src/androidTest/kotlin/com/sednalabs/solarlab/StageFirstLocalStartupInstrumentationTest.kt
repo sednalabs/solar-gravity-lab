@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import org.junit.Assert.assertNotNull
@@ -29,9 +30,13 @@ class StageFirstLocalStartupInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON)
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performClick()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
