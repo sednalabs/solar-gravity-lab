@@ -1,1 +1,2 @@
-- queries: ../queries
+- description: Solar Gravity Lab repository-specific GitHub Actions product invariants.
+- queries: queries
