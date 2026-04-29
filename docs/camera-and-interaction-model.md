@@ -44,13 +44,19 @@ expected flow is:
 - stage a visual-only preview on the selected placement plane
 - refine position and initial velocity through tap/drag gestures or exact
   numeric fields
-- show a short forecast path that updates with the staged state
+- show a proximity-scaled near-term forecast path that updates with the staged
+  state
 - keep placement previews visible even when ordinary trace layers are hidden
 - keep live drag previews non-committable until the gesture finishes
 - commit explicitly once the user accepts the initial conditions
 
 The staged preview must not mutate simulation body count, invariants,
 checkpoints, collision state, or trail history. It is a render aid until commit.
+
+Forecasts are intentionally preview aids rather than authoritative long-range
+propagation. The default horizon should scale with the nearest massive body so
+low-orbit placement uses a short, dense forecast, while system-scale placement
+is capped to a modest near-term window.
 
 ## Interaction principle
 

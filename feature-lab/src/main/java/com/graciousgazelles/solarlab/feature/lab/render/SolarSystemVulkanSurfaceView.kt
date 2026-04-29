@@ -346,9 +346,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     )
                 }
                 placementStartScreen = null
-                val orbitHandled = handleOrbitTouch(event)
-                val scaled = scaleDetector.onTouchEvent(event)
-                return orbitHandled || scaled || true
+                handleOrbitTouch(event)
+                scaleDetector.onTouchEvent(event)
+                return true
             }
             return handlePlacementTouch(event)
         }

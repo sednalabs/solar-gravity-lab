@@ -113,9 +113,9 @@ private val StageRendererWhitespaceRegex = Regex("""\s+""")
 
 private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
 private val BodyPlacementSessionSaver: Saver<BodyPlacementSession?, Any> = Saver(
-    save = { session -> session?.toSaveableValues() ?: emptyList<Any?>() },
+    save = { session -> session?.toSaveableMap() ?: emptyMap<String, Any?>() },
     restore = { values ->
-        (values as? List<*>)
+        (values as? Map<*, *>)
             ?.takeIf { it.isNotEmpty() }
             ?.let(BodyPlacementSession::restore)
     },

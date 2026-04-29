@@ -5,6 +5,7 @@ import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.BodyFactory
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
+import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.feature.lab.render.PlacementGesturePhase
 import com.graciousgazelles.solarlab.feature.lab.render.PlacementGestureUpdate
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
@@ -223,6 +224,43 @@ class StageFirstSandboxAppTest {
     }
 
     @Test
+    fun placementSessionSaveableMapRestoresRoundTrip() {
+        val staged = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault().copy(
+                name = "Draft probe",
+                existingHostBodyId = "earth",
+                positionM = Vector3d(1.0, 2.0, 3.0),
+                velocityMps = Vector3d(4.0, 5.0, 6.0),
+            ),
+            bodyId = "custom:test",
+        ).applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Ended,
+                startWorldPositionM = Vector3d(10.0, 20.0, 3.0),
+                endWorldPositionM = Vector3d(11.0, 20.0, 3.0),
+                gestureDistancePx = PLACEMENT_DRAG_THRESHOLD_PX + 1f,
+            ),
+        )
+
+        val restored = BodyPlacementSession.restore(staged.toSaveableMap())
+
+        assertEquals(staged, restored)
+        assertTrue(restored?.canCommit == true)
+    }
+
+    @Test
+    fun placementSessionRestoreRejectsUnknownSaveableVersion() {
+        val payload = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault(),
+            bodyId = "custom:test",
+        ).toSaveableMap().toMutableMap()
+
+        payload["version"] = 999
+
+        assertNull(BodyPlacementSession.restore(payload))
+    }
+
+    @Test
     fun draftTrajectoryProjectorBendsPreviewTowardMassiveBody() {
         val attractor = body(
             id = "sun",
@@ -245,6 +283,39 @@ class StageFirstSandboxAppTest {
     }
 
     @Test
+    fun draftTrajectoryProjectorScalesDefaultHorizonForLowOrbit() {
+        val earth = body(
+            id = "earth",
+            massKg = 5.972e24,
+            positionM = Vector3d.ZERO,
+        )
+
+        val horizonSeconds = DraftTrajectoryProjector.forecastHorizonSeconds(
+            startPositionM = Vector3d(6_778_000.0, 0.0, 0.0),
+            massiveBodies = listOf(earth),
+        )
+
+        assertTrue(horizonSeconds >= MIN_PLACEMENT_FORECAST_HORIZON_SECONDS)
+        assertTrue(horizonSeconds < PhysicalConstants.DAY_SECONDS)
+    }
+
+    @Test
+    fun draftTrajectoryProjectorCapsDefaultHorizonForSystemScalePlacement() {
+        val sun = body(
+            id = "sun",
+            massKg = 1.989e30,
+            positionM = Vector3d.ZERO,
+        )
+
+        val horizonSeconds = DraftTrajectoryProjector.forecastHorizonSeconds(
+            startPositionM = Vector3d(149_597_870_700.0, 0.0, 0.0),
+            massiveBodies = listOf(sun),
+        )
+
+        assertEquals(MAX_PLACEMENT_FORECAST_HORIZON_SECONDS, horizonSeconds, 0.0)
+    }
+
+    @Test
     fun placementPreviewIsVisualOnlyUntilCommit() {
         val staged = BodyPlacementSession.fromDraft(
             draft = EditableBodyDraft.newDefault(),
@@ -264,7 +335,7 @@ class StageFirstSandboxAppTest {
         assertEquals("custom:test", preview?.bodyId)
         assertEquals(Vector3d(1.0, 2.0, 0.0), preview?.positionM)
         assertEquals(staged.draft.massKg, preview?.sourceMassKg ?: 0.0, 0.0)
-        assertEquals(32, preview?.forecastPointsM?.size)
+        assertEquals(PLACEMENT_FORECAST_SAMPLE_COUNT, preview?.forecastPointsM?.size)
     }
 
     private fun body(
