@@ -510,7 +510,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                 ),
         ) {
             val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
-            val expandedCockpitMaxHeight = maxHeight * if (compactLayout) 0.52f else 0.46f
+            val expandedCockpitMaxHeight = maxHeight * if (compactLayout) 0.42f else 0.38f
             val expandedCockpitScrollState = rememberScrollState()
             val cockpitBackendStatus = if (compactLayout) {
                 runtimeMirrorCompactBackendStatus(backendStatus)
@@ -519,8 +519,8 @@ internal fun StageFirstRuntimeMirrorExperience(
             }
             val actionButtons: @Composable () -> Unit = {
                 StageControlsButton(
-                    label = "Hide controls",
-                    onClick = { chromeModeName = chromeMode.toggle().name },
+                    label = "Clean stage",
+                    onClick = { chromeModeName = StageChromeMode.MINIMAL.name },
                 )
                 StageActionButton(
                     label = "Sandbox",
@@ -893,6 +893,12 @@ internal fun StageFirstRuntimeMirrorExperience(
                             enabled = canSendCommands,
                             dense = true,
                         )
+                        StageActionButton(
+                            label = "Hide",
+                            onClick = { chromeModeName = StageChromeMode.MINIMAL.name },
+                            secondary = true,
+                            dense = true,
+                        )
                         StageControlsButton(
                             label = "More",
                             onClick = { chromeModeName = chromeMode.toggle().name },
@@ -900,7 +906,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         )
                     }
                 }
-            } else {
+            } else if (chromeMode == StageChromeMode.EXPANDED) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -947,6 +953,21 @@ internal fun StageFirstRuntimeMirrorExperience(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                }
+            }
+
+            if (chromeMode == StageChromeMode.MINIMAL) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                ) {
+                    StageControlsButton(
+                        label = "Controls",
+                        onClick = { chromeModeName = StageChromeMode.COLLAPSED.name },
+                        dense = true,
+                    )
                 }
             }
         }

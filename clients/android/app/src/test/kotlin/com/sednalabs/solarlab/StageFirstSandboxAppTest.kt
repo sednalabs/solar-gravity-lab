@@ -7,7 +7,8 @@ import org.junit.Test
 
 class StageFirstSandboxAppTest {
     @Test
-    fun stageChromeModeToggleCyclesBetweenCollapsedAndExpanded() {
+    fun stageChromeModeToggleRestoresCollapsedHudFromMinimalMode() {
+        assertEquals(StageChromeMode.COLLAPSED, StageChromeMode.MINIMAL.toggle())
         assertEquals(StageChromeMode.EXPANDED, StageChromeMode.COLLAPSED.toggle())
         assertEquals(StageChromeMode.COLLAPSED, StageChromeMode.EXPANDED.toggle())
         assertEquals(StageChromeMode.COLLAPSED, stageChromeModeFromName("missing"))
