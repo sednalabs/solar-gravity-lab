@@ -167,7 +167,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactAccelerationStatusLine_keepsPhoneHudGlanceable() {
+    fun runtimeMirrorCompactAccelerationStatusLine_keepsPhoneHUDGlanceable() {
         assertEquals(
             "ARM64 tiled · Vulkan · 3 future ISA",
             runtimeMirrorCompactAccelerationStatusLine(
