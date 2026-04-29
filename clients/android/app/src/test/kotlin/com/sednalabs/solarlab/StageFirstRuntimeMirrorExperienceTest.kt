@@ -265,6 +265,25 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactRevisionMetricText_prefersMissionElapsedTime() {
+        assertEquals(
+            "t+6.0h",
+            runtimeMirrorCompactRevisionMetricText(
+                "scenario=sol-system|branch=main|epoch=21600.000000|" +
+                    "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)"
+            ),
+        )
+    }
+
+    @Test
+    fun runtimeMirrorCompactRevisionMetricText_fallsBackToShortSceneLabel() {
+        assertEquals(
+            "sol-system",
+            runtimeMirrorCompactRevisionMetricText("scenario=sol-system|branch=main"),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactSelectionDetail_keepsRawRevisionOutOfFocusCard() {
         assertEquals(
             "Scene sol-system / main / t+0.0h",

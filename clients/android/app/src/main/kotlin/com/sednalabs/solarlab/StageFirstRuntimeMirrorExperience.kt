@@ -1296,6 +1296,7 @@ private fun RuntimeAccelerationLaneTone.accentColor(): Color = when (this) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun RuntimeMirrorMissionPanel(
     uiState: ShellUiState,
     selectionCard: RuntimeSelectionCard,
@@ -1306,14 +1307,21 @@ private fun RuntimeMirrorMissionPanel(
     compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val revision = remember(uiState.renderStatus.sceneRevision, uiState.renderFrame?.sceneRevision) {
-        (uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision)
+    val revisionSeed = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision
+    val revision = remember(revisionSeed) {
+        revisionSeed
             ?.let { runtimeMirrorCompactRevisionText(it, includePayloadSize = false) }
+            ?: "waiting"
+    }
+    val compactRevision = remember(revisionSeed) {
+        revisionSeed
+            ?.let(::runtimeMirrorCompactRevisionMetricText)
             ?: "waiting"
     }
     val bodyCount = uiState.renderStatus.renderedBodyCount
     val trailCount = uiState.renderStatus.renderedTrailCount
     val focusLabel = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: "Free camera"
+    val focusMetricLabel = if (selectedBody == null && uiState.focusedBodyId != null) "Runtime" else "Focus"
     val scenarioHeadline = remember(scenarioLabel, compact) {
         if (compact) {
             runtimeMirrorCompactScenarioLabel(scenarioLabel)
@@ -1375,17 +1383,35 @@ private fun RuntimeMirrorMissionPanel(
                 selectedBody = selectedBody,
                 compact = compact,
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RuntimeMirrorMetricPill(label = "Focus", value = focusLabel)
-                RuntimeMirrorMetricPill(label = "Rev", value = revision)
-                RuntimeMirrorMetricPill(label = "Scene", value = "$bodyCount bodies / $trailCount trails")
-                if (!compact) {
+            if (compact) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RuntimeMirrorMetricPill(
+                        label = focusMetricLabel,
+                        value = focusLabel,
+                        modifier = Modifier.widthIn(max = 154.dp),
+                        compact = true,
+                    )
+                    RuntimeMirrorMetricPill(label = "MET", value = compactRevision, compact = true)
+                    RuntimeMirrorMetricPill(label = "Bodies", value = bodyCount.toString(), compact = true)
+                    if (trailCount > 0) {
+                        RuntimeMirrorMetricPill(label = "Trails", value = trailCount.toString(), compact = true)
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RuntimeMirrorMetricPill(label = focusMetricLabel, value = focusLabel)
+                    RuntimeMirrorMetricPill(label = "Rev", value = revision)
+                    RuntimeMirrorMetricPill(label = "Scene", value = "$bodyCount bodies / $trailCount trails")
                     RuntimeMirrorMetricPill(label = "Camera", value = observerMode.runtimeDisplayLabel().removePrefix("Observer: "))
                 }
             }
@@ -2187,6 +2213,20 @@ internal fun runtimeMirrorCompactRevisionText(value: String, includePayloadSize:
         return summary.joinToString(" / ")
     }
     return runtimeMirrorCompactStatusText(normalized)
+}
+
+internal fun runtimeMirrorCompactRevisionMetricText(value: String): String {
+    val normalized = runtimeMirrorNormalizeStatusText(value)
+    val epochHours = RuntimeMirrorRevisionEpochRegex.find(normalized)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toDoubleOrNull()
+        ?.div(3_600.0)
+
+    return epochHours?.let { hours -> String.format(Locale.US, "t+%.1fh", hours) }
+        ?: runtimeMirrorCompactRevisionText(normalized, includePayloadSize = false)
+            .substringBefore(" / ")
+            .ifBlank { "waiting" }
 }
 
 internal fun runtimeMirrorCompactRendererStatusText(value: String): String {
