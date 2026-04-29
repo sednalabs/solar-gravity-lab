@@ -13,7 +13,7 @@
 import actions
 
 predicate interactiveSessionWorkflow(Workflow workflow) {
-  workflow.getName() = "interactive-android-session"
+  workflow.getFile().getRelativePath() = ".github/workflows/interactive-android-session.yml"
 }
 
 predicate uploadsInteractiveEvidence(Workflow workflow) {
