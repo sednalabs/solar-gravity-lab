@@ -737,6 +737,7 @@ private fun StageFirstSandboxLocalExperience(
                             onEnterRuntimeMirror?.invoke()
                         },
                         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON),
+                        colors = ButtonDefaults.textButtonColors(contentColor = SelectionText),
                     ) {
                         Text("Enter renderer")
                     }
@@ -745,6 +746,7 @@ private fun StageFirstSandboxLocalExperience(
                     TextButton(
                         onClick = { immersivePromptVisible = false },
                         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CANCEL_BUTTON),
+                        colors = ButtonDefaults.textButtonColors(contentColor = HintText),
                     ) {
                         Text("Stay in sandbox")
                     }
@@ -756,6 +758,11 @@ private fun StageFirstSandboxLocalExperience(
                             "The live view keeps Vulkan rendering and acceleration telemetry visible while the sandbox remains ready for object editing.",
                     )
                 },
+                shape = RoundedCornerShape(34.dp),
+                containerColor = OverlayPanel,
+                tonalElevation = 0.dp,
+                titleContentColor = MissionText,
+                textContentColor = HintText,
             )
         }
 
