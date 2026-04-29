@@ -8,6 +8,13 @@ needs to change.
 This is not a replacement for merge readiness. It is the inner loop before the
 final pull request checkpoint.
 
+Do not let pull request mechanics become the iteration clock. If a PR already
+exists, CI, review comments, and merge-readiness checks may run in parallel, but
+they should not block the next visual or interaction hypothesis unless they
+reveal that the current observation surface is untrustworthy. Open or update a
+PR only when the work has become a coherent checkpoint; otherwise keep using the
+branch, snapshot refs, targeted hosted proof, and the live Android session.
+
 ## Loop tiers
 
 Use the narrowest tier that answers the current question.

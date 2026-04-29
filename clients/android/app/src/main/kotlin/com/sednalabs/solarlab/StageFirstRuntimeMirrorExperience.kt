@@ -510,7 +510,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                 ),
         ) {
             val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
-            val expandedCockpitMaxHeight = maxHeight * if (compactLayout) 0.42f else 0.38f
+            val expandedCockpitMaxHeight = maxHeight * expandedStageDeckMaxHeightFraction(compactLayout)
             val expandedCockpitScrollState = rememberScrollState()
             val cockpitBackendStatus = if (compactLayout) {
                 runtimeMirrorCompactBackendStatus(backendStatus)
@@ -521,6 +521,10 @@ internal fun StageFirstRuntimeMirrorExperience(
                 StageControlsButton(
                     label = "Clean stage",
                     onClick = { chromeModeName = StageChromeMode.MINIMAL.name },
+                )
+                StageControlsButton(
+                    label = "Less",
+                    onClick = { chromeModeName = chromeMode.toggle().name },
                 )
                 StageActionButton(
                     label = "Sandbox",
@@ -765,21 +769,12 @@ internal fun StageFirstRuntimeMirrorExperience(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (compactLayout) {
-                        RuntimeMirrorMissionPanel(
-                            uiState = uiState,
+                        RuntimeMirrorCollapsedStageChip(
                             selectionCard = selectionCard,
-                            selectedBody = selectedBody,
-                            observerMode = observerMode,
-                            renderProcessingMode = renderProcessingMode,
                             scenarioLabel = timelineText,
-                            compact = true,
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .widthIn(max = 360.dp)
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                        )
-                        StageFloatingActionRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            content = actionButtons,
                         )
                     } else {
                         Row(
@@ -887,6 +882,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                         .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    if (compactLayout) {
+                        StageControlRail(compact = true) {
+                            actionButtons()
+                        }
+                    }
                     RuntimeMirrorTimelineRail(
                         uiState = uiState,
                         fallbackSpeedPreset = playbackSpeedPreset,
