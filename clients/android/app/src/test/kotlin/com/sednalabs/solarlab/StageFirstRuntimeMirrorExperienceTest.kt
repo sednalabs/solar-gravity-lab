@@ -276,10 +276,29 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
+    fun runtimeMirrorCompactRevisionMetric_labelsMissionElapsedTime() {
+        assertEquals(
+            RuntimeMirrorCompactRevisionMetric(label = "MET", value = "t+6.0h"),
+            runtimeMirrorCompactRevisionMetric(
+                "scenario=sol-system|branch=main|epoch=21600.000000|" +
+                    "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)"
+            ),
+        )
+    }
+
+    @Test
     fun runtimeMirrorCompactRevisionMetricText_fallsBackToShortSceneLabel() {
         assertEquals(
             "sol-system",
             runtimeMirrorCompactRevisionMetricText("scenario=sol-system|branch=main"),
+        )
+    }
+
+    @Test
+    fun runtimeMirrorCompactRevisionMetric_labelsFallbackAsRevision() {
+        assertEquals(
+            RuntimeMirrorCompactRevisionMetric(label = "Rev", value = "sol-system"),
+            runtimeMirrorCompactRevisionMetric("scenario=sol-system|branch=main"),
         )
     }
 

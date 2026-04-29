@@ -141,6 +141,11 @@ internal enum class RuntimeAccelerationLaneTone {
     Neutral,
 }
 
+internal data class RuntimeMirrorCompactRevisionMetric(
+    val label: String,
+    val value: String,
+)
+
 private val RuntimeMirrorCompactWidthBreakpoint = 720.dp
 private val RuntimeMirrorVoid = Color(0xFF02050B)
 private val RuntimeMirrorGlass = Color(0xE6070D18)
@@ -1313,10 +1318,10 @@ private fun RuntimeMirrorMissionPanel(
             ?.let { runtimeMirrorCompactRevisionText(it, includePayloadSize = false) }
             ?: "waiting"
     }
-    val compactRevision = remember(revisionSeed) {
+    val compactRevisionMetric = remember(revisionSeed) {
         revisionSeed
-            ?.let(::runtimeMirrorCompactRevisionMetricText)
-            ?: "waiting"
+            ?.let(::runtimeMirrorCompactRevisionMetric)
+            ?: RuntimeMirrorCompactRevisionMetric(label = "Rev", value = "waiting")
     }
     val bodyCount = uiState.renderStatus.renderedBodyCount
     val trailCount = uiState.renderStatus.renderedTrailCount
@@ -1395,7 +1400,11 @@ private fun RuntimeMirrorMissionPanel(
                         modifier = Modifier.widthIn(max = 154.dp),
                         compact = true,
                     )
-                    RuntimeMirrorMetricPill(label = "MET", value = compactRevision, compact = true)
+                    RuntimeMirrorMetricPill(
+                        label = compactRevisionMetric.label,
+                        value = compactRevisionMetric.value,
+                        compact = true,
+                    )
                     RuntimeMirrorMetricPill(label = "Bodies", value = bodyCount.toString(), compact = true)
                     if (trailCount > 0) {
                         RuntimeMirrorMetricPill(label = "Trails", value = trailCount.toString(), compact = true)
@@ -2195,11 +2204,7 @@ internal fun runtimeMirrorCompactRevisionText(value: String, includePayloadSize:
     }
     val scenario = RuntimeMirrorRevisionScenarioRegex.find(normalized)?.groupValues?.getOrNull(1)
     val branch = RuntimeMirrorRevisionBranchRegex.find(normalized)?.groupValues?.getOrNull(1)
-    val epochHours = RuntimeMirrorRevisionEpochRegex.find(normalized)
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.toDoubleOrNull()
-        ?.div(3_600.0)
+    val epochHours = runtimeMirrorRevisionEpochHours(normalized)
     val payloadChars = RuntimeMirrorHugePayloadCharCountRegex.find(normalized)
         ?.groupValues
         ?.getOrNull(1)
@@ -2215,18 +2220,34 @@ internal fun runtimeMirrorCompactRevisionText(value: String, includePayloadSize:
     return runtimeMirrorCompactStatusText(normalized)
 }
 
-internal fun runtimeMirrorCompactRevisionMetricText(value: String): String {
-    val normalized = runtimeMirrorNormalizeStatusText(value)
-    val epochHours = RuntimeMirrorRevisionEpochRegex.find(normalized)
+private fun runtimeMirrorRevisionEpochHours(normalizedRevision: String): Double? =
+    RuntimeMirrorRevisionEpochRegex.find(normalizedRevision)
         ?.groupValues
         ?.getOrNull(1)
         ?.toDoubleOrNull()
         ?.div(3_600.0)
 
-    return epochHours?.let { hours -> String.format(Locale.US, "t+%.1fh", hours) }
-        ?: runtimeMirrorCompactRevisionText(normalized, includePayloadSize = false)
-            .substringBefore(" / ")
-            .ifBlank { "waiting" }
+internal fun runtimeMirrorCompactRevisionMetric(value: String): RuntimeMirrorCompactRevisionMetric {
+    val normalized = runtimeMirrorNormalizeStatusText(value)
+    val epochHours = runtimeMirrorRevisionEpochHours(normalized)
+
+    return epochHours
+        ?.let { hours ->
+            RuntimeMirrorCompactRevisionMetric(
+                label = "MET",
+                value = String.format(Locale.US, "t+%.1fh", hours),
+            )
+        }
+        ?: RuntimeMirrorCompactRevisionMetric(
+            label = "Rev",
+            value = runtimeMirrorCompactRevisionText(normalized, includePayloadSize = false)
+                .substringBefore(" / ")
+                .ifBlank { "waiting" },
+        )
+}
+
+internal fun runtimeMirrorCompactRevisionMetricText(value: String): String {
+    return runtimeMirrorCompactRevisionMetric(value).value
 }
 
 internal fun runtimeMirrorCompactRendererStatusText(value: String): String {
