@@ -1629,6 +1629,7 @@ private fun BodyEditorDialog(
     val colorPreview = remember(colorHex) {
         parseColorArgb(colorHex) ?: editorState.draft.colorArgb
     }
+    val editorBodyMaxHeight = if (editorState.isNewBody) 360.dp else 520.dp
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1669,7 +1670,7 @@ private fun BodyEditorDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 520.dp)
+                        .heightIn(max = editorBodyMaxHeight)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
