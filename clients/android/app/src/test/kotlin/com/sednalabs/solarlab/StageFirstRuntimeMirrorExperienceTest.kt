@@ -350,7 +350,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactBackendStatus_keepsPhoneHudOutOfSentenceMode() {
+    fun runtimeMirrorCompactBackendStatus_keepsPhoneHUDOutOfSentenceMode() {
         assertEquals(
             "Connected · Host ready · rev=sol-system / main / t+6.0h · Vulkan + compute",
             runtimeMirrorCompactBackendStatus(
