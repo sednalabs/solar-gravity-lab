@@ -29,6 +29,14 @@ class StageFirstSandboxAppTest {
     fun expandedStageDeckMaxHeightFractionKeepsPhoneStageDominant() {
         assertEquals(0.34f, expandedStageDeckMaxHeightFraction(compactLayout = true))
         assertEquals(0.38f, expandedStageDeckMaxHeightFraction(compactLayout = false))
+        assertEquals(
+            0.26f,
+            expandedStageDeckMaxHeightFraction(compactLayout = true, authoringActive = true),
+        )
+        assertEquals(
+            0.30f,
+            expandedStageDeckMaxHeightFraction(compactLayout = false, authoringActive = true),
+        )
     }
 
     @Test

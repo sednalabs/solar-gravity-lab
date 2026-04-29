@@ -37,6 +37,7 @@ object SolarLabTestTags {
     const val STAGE_FIRST_ADJUST_PLACEMENT_BUTTON = "stage_first.placement.adjust_button"
     const val STAGE_FIRST_REPOSITION_PLACEMENT_BUTTON = "stage_first.placement.reposition_button"
     const val STAGE_FIRST_CANCEL_PLACEMENT_BUTTON = "stage_first.placement.cancel_button"
+    const val STAGE_FIRST_PLACEMENT_COMPOSER_PANEL = "stage_first.placement.composer_panel"
     const val STAGE_FIRST_SEARCH_FIELD = "stage_first.search.field"
     const val STAGE_FIRST_RUNTIME_SANDBOX_BUTTON = "stage_first.runtime.sandbox_button"
     const val STAGE_FIRST_RUNTIME_REFRESH_BUTTON = "stage_first.runtime.refresh_button"

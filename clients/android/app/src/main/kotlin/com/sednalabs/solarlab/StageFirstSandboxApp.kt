@@ -114,6 +114,8 @@ private val StageRendererWhitespaceRegex = Regex("""\s+""")
 private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
 private const val COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.34f
 private const val WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.38f
+private const val COMPACT_AUTHORING_STAGE_DECK_MAX_FRACTION = 0.26f
+private const val WIDE_AUTHORING_STAGE_DECK_MAX_FRACTION = 0.30f
 private val BodyPlacementSessionSaver: Saver<BodyPlacementSession?, Any> = Saver(
     save = { session -> session?.toSaveableMap() ?: emptyMap<String, Any?>() },
     restore = { values ->
@@ -123,8 +125,15 @@ private val BodyPlacementSessionSaver: Saver<BodyPlacementSession?, Any> = Saver
     },
 )
 
-internal fun expandedStageDeckMaxHeightFraction(compactLayout: Boolean): Float =
-    if (compactLayout) COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION else WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION
+internal fun expandedStageDeckMaxHeightFraction(
+    compactLayout: Boolean,
+    authoringActive: Boolean = false,
+): Float = when {
+    authoringActive && compactLayout -> COMPACT_AUTHORING_STAGE_DECK_MAX_FRACTION
+    authoringActive -> WIDE_AUTHORING_STAGE_DECK_MAX_FRACTION
+    compactLayout -> COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION
+    else -> WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION
+}
 
 /**
  * Restored stage-first client that brings the interactive feature-lab surface back into the
@@ -921,7 +930,10 @@ private fun BoxScope.StageOverlay(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
-        val expandedDeckMaxHeight = maxHeight * expandedStageDeckMaxHeightFraction(compactLayout)
+        val expandedDeckMaxHeight = maxHeight * expandedStageDeckMaxHeightFraction(
+            compactLayout = compactLayout,
+            authoringActive = authoringActive,
+        )
         val expandedDeckScrollState = rememberScrollState()
         val actionButtons: @Composable () -> Unit = {
             StageControlsButton(
@@ -940,19 +952,21 @@ private fun BoxScope.StageOverlay(
                     secondary = true,
                 )
             }
-            StageActionButton(
-                label = if (searchVisible) "Searching" else "Search",
-                onClick = onSearch,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
-                emphasized = searchVisible,
-                enabled = searchEnabled,
-            )
-            StageActionButton(
-                label = if (debugVisible) "Debugging" else "Debug",
-                onClick = onDebug,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
-                emphasized = debugVisible,
-            )
+            if (!authoringActive) {
+                StageActionButton(
+                    label = if (searchVisible) "Searching" else "Search",
+                    onClick = onSearch,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
+                    emphasized = searchVisible,
+                    enabled = searchEnabled,
+                )
+                StageActionButton(
+                    label = if (debugVisible) "Debugging" else "Debug",
+                    onClick = onDebug,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
+                    emphasized = debugVisible,
+                )
+            }
         }
         val primaryControls: @Composable () -> Unit = {
             StageActionButton(
@@ -971,45 +985,52 @@ private fun BoxScope.StageOverlay(
             )
             StageActionButton(label = "Reset", onClick = onReset)
         }
+        val placementControls: @Composable (Boolean) -> Unit = { dense ->
+            StageActionButton(
+                label = if (placementReady) {
+                    if (dense) "Commit" else "Commit object"
+                } else {
+                    if (dense) "Place" else "Tap stage first"
+                },
+                onClick = onCommitPlacement,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_COMMIT_PLACEMENT_BUTTON),
+                emphasized = true,
+                enabled = placementReady,
+                dense = dense,
+            )
+            StageActionButton(
+                label = "Adjust",
+                onClick = onAdjustPlacement,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADJUST_PLACEMENT_BUTTON),
+                enabled = placementReady,
+                dense = dense,
+            )
+            StageActionButton(
+                label = if (dense) "Move" else "Reposition",
+                onClick = onRepositionPlacement,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_REPOSITION_PLACEMENT_BUTTON),
+                enabled = placementReady,
+                dense = dense,
+            )
+            StageActionButton(
+                label = "Cancel",
+                onClick = onCancelPlacement,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CANCEL_PLACEMENT_BUTTON),
+                secondary = true,
+                dense = dense,
+            )
+        }
         val secondaryControls: @Composable () -> Unit = {
-            if (authoringActive) {
-                StageActionButton(
-                    label = if (placementReady) "Commit object" else "Tap stage first",
-                    onClick = onCommitPlacement,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_COMMIT_PLACEMENT_BUTTON),
-                    emphasized = true,
-                    enabled = placementReady,
-                )
-                StageActionButton(
-                    label = "Adjust",
-                    onClick = onAdjustPlacement,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADJUST_PLACEMENT_BUTTON),
-                    enabled = placementReady,
-                )
-                StageActionButton(
-                    label = "Reposition",
-                    onClick = onRepositionPlacement,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_REPOSITION_PLACEMENT_BUTTON),
-                    enabled = placementReady,
-                )
-                StageActionButton(
-                    label = "Cancel",
-                    onClick = onCancelPlacement,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CANCEL_PLACEMENT_BUTTON),
-                    secondary = true,
-                )
-            } else {
-                StageActionButton(
-                    label = addButtonLabel,
-                    onClick = onAddObject,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON),
-                )
-                StageActionButton(
-                    label = "Edit selected",
-                    onClick = onEditSelected,
-                    enabled = editButtonEnabled,
-                )
-            }
+            StageActionButton(
+                label = addButtonLabel,
+                onClick = onAddObject,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON),
+            )
+            StageActionButton(
+                label = "Edit selected",
+                onClick = onEditSelected,
+                enabled = editButtonEnabled,
+            )
             StageActionButton(label = "Step $stepQuantumLabel", onClick = onCycleStepQuantum, enabled = !authoringActive)
             StageActionButton(label = "Slower", onClick = onSlower, enabled = !authoringActive)
             StageActionButton(label = "Faster · $speedLabel", onClick = onFaster, enabled = !authoringActive)
@@ -1017,7 +1038,6 @@ private fun BoxScope.StageOverlay(
                 mode = traceLayerMode,
                 compact = compactLayout,
                 onClick = onCycleTraceLayer,
-                enabled = !authoringActive,
             )
             StageActionButton(
                 label = renderProcessingMode.displayLabel(),
@@ -1124,26 +1144,7 @@ private fun BoxScope.StageOverlay(
                     fillMaxWidth = false,
                 ) {
                     if (authoringActive) {
-                        StageActionButton(
-                            label = if (placementReady) "Commit" else "Place",
-                            onClick = onCommitPlacement,
-                            emphasized = true,
-                            enabled = placementReady,
-                            dense = true,
-                        )
-                        StageActionButton(
-                            label = "Adjust",
-                            onClick = onAdjustPlacement,
-                            enabled = placementReady,
-                            dense = true,
-                        )
-                        StageActionButton(
-                            label = "Move",
-                            onClick = onRepositionPlacement,
-                            enabled = placementReady,
-                            dense = true,
-                        )
-                        StageActionButton(label = "Cancel", onClick = onCancelPlacement, secondary = true, dense = true)
+                        placementControls(true)
                     } else {
                         StageActionButton(
                             label = if (isRunning) "Pause" else "Start",
@@ -1185,16 +1186,48 @@ private fun BoxScope.StageOverlay(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (compactLayout) {
-                    StageControlRail(compact = true) {
-                        actionButtons()
-                    }
-                    StageControlRail(compact = true) {
-                        secondaryControls()
-                        primaryControls()
+                    if (authoringActive) {
+                        StagePlacementComposerPanel(
+                            placementReady = placementReady,
+                            traceLayerMode = traceLayerMode,
+                            compact = true,
+                            onCycleTraceLayer = onCycleTraceLayer,
+                            onHideChrome = onHideChrome,
+                            onToggleChrome = onToggleChrome,
+                        ) {
+                            placementControls(true)
+                        }
+                    } else {
+                        StageControlRail(compact = true) {
+                            actionButtons()
+                        }
+                        StageControlRail(compact = true) {
+                            secondaryControls()
+                            primaryControls()
+                        }
                     }
                 } else {
-                    StageControlRail(content = primaryControls)
-                    StageControlRail(content = secondaryControls)
+                    if (authoringActive) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            StagePlacementComposerPanel(
+                                placementReady = placementReady,
+                                traceLayerMode = traceLayerMode,
+                                compact = false,
+                                onCycleTraceLayer = onCycleTraceLayer,
+                                onHideChrome = onHideChrome,
+                                onToggleChrome = onToggleChrome,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                placementControls(false)
+                            }
+                        }
+                    } else {
+                        StageControlRail(content = primaryControls)
+                        StageControlRail(content = secondaryControls)
+                    }
                 }
                 StagePanel(
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
@@ -1357,6 +1390,86 @@ internal fun StagePanel(
             verticalArrangement = Arrangement.spacedBy(2.dp),
             content = content,
         )
+    }
+}
+
+@Composable
+private fun StagePlacementComposerPanel(
+    placementReady: Boolean,
+    traceLayerMode: TraceLayerMode,
+    compact: Boolean,
+    onCycleTraceLayer: () -> Unit,
+    onHideChrome: () -> Unit,
+    onToggleChrome: () -> Unit,
+    modifier: Modifier = Modifier,
+    placementControls: @Composable () -> Unit,
+) {
+    StagePanel(
+        modifier = modifier.testTag(SolarLabTestTags.STAGE_FIRST_PLACEMENT_COMPOSER_PANEL),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StageTrajectoryGlyph(
+                orbitColor = TimelineText,
+                probeColor = SelectionText,
+                modifier = Modifier.size(width = 70.dp, height = 34.dp),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+                Text(
+                    text = "LAUNCH COMPOSER",
+                    color = TimelineText,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (placementReady) "Ghost preview locked" else "Tap or drag on the stage",
+                    color = SelectionText,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (placementReady) {
+                        "Tune the launch, keep traces visible, then commit deliberately."
+                    } else {
+                        "Place first, then refine position, trajectory, and initial conditions."
+                    },
+                    color = HintText,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = if (compact) 2 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        StageControlRail(
+            compact = compact,
+            fillMaxWidth = true,
+        ) {
+            placementControls()
+            StageTraceLayerButton(
+                mode = traceLayerMode,
+                compact = true,
+                onClick = onCycleTraceLayer,
+                dense = compact,
+            )
+            StageControlsButton(
+                label = "Clean stage",
+                onClick = onHideChrome,
+                dense = compact,
+            )
+            StageControlsButton(
+                label = "Less",
+                onClick = onToggleChrome,
+                dense = compact,
+            )
+        }
     }
 }
 
