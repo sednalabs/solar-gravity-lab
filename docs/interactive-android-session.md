@@ -234,15 +234,15 @@ window is reached.
 
 The session does not need to be restarted for every app-only change. Build a
 new reusable artifact with `.github/workflows/interactive-android-build.yml`,
-then use the live Android provider tool
-`interactive_session.install_build_from_run` with the build run id and artifact
-name.
+then submit the build run id and artifact name as arguments to the live Android
+provider MCP tool named `interactive_session.install_build_from_run`.
 
 That tool verifies the build manifest, installs the APK, relaunches the
 configured app, writes the new active build state, and appends install history
-to the session evidence bundle. Restart the hosted session only when the
-session workflow, emulator lifecycle, tunnel, or provider process itself needs
-to change.
+to the session evidence bundle. The artifact name must match the build artifact
+emitted by the selected `interactive-android-build` inputs. Restart the hosted
+session only when the session workflow, emulator lifecycle, tunnel, or provider
+process itself needs to change.
 
 ## Codex native Android tools
 

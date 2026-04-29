@@ -70,7 +70,9 @@ sentinel.
 
 After a later app change, do not restart the session just to see the new APK.
 Build a new reusable artifact, then ask the Android provider in the live
-session to install it:
+session to install it. Submit this payload as the arguments for the provider
+MCP tool named `interactive_session.install_build_from_run`; it is not a
+standalone shell command:
 
 ```json
 {
@@ -80,11 +82,12 @@ session to install it:
 }
 ```
 
-The provider tool for that operation is
-`interactive_session.install_build_from_run`. It verifies the artifact
-manifest, installs the APK, relaunches the configured package/activity, updates
-`dist/interactive-session/active-build.json`, and appends install history for
-the evidence bundle.
+The `artifact_name` must match the artifact emitted by the build run. The
+example above matches the `stage-first-mirror-on` /
+`hosted-debug-lite` command shown in this runbook. The provider verifies the
+artifact manifest, installs the APK, relaunches the configured
+package/activity, updates `dist/interactive-session/active-build.json`, and
+appends install history for the evidence bundle.
 
 ## Targeted validation choices
 
@@ -118,8 +121,8 @@ Change only the lane and inputs needed for the question:
 
 Avoid starting several `validation-lab` dispatches on the same ref at once.
 The workflow concurrency group cancels older same-ref runs. If two independent
-proofs must run in parallel, use separate snapshot refs or a bundled lane such
-as `runtime-cpu-truth`.
+proofs must be evaluated, use separate snapshot refs to run them in parallel,
+or use a bundled lane such as `runtime-cpu-truth` to check them in a single run.
 
 ## Snapshot refs
 
@@ -127,7 +130,7 @@ When the work is not ready to commit to the feature branch, create a disposable
 remote snapshot ref and validate that:
 
 ```bash
-.github/scripts/validation_snapshot_ref.sh create android-iteration
+.github/scripts/validation_snapshot_ref.sh create <unique-snapshot-name>
 ```
 
 Use the reported `snapshot_ref` as the `ref` input for `validation-lab` or
