@@ -491,6 +491,7 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    // (line referenced by CodeQL) ... "earth" ...
     fun renderLayerOptionsFocusFallsBackToFullTraceLayerWhenNothingIsFocused() {
         val frame = renderLayerFrame()
 
