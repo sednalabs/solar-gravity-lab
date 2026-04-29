@@ -11,6 +11,11 @@ Documentation-only updates should normally rely on `docs-sanity` instead of
 manually dispatching `validation-lab` unless the docs change is coupled to real
 build or workflow behavior.
 
+For rapid Android UI and interaction work, use
+[`Rapid Android iteration`](rapid-android-iteration.md) to choose between a live
+visual loop, reusable APK install loop, targeted validation lane, and final
+checkpoint.
+
 ## Workflow files
 
 - `.github/workflows/validation-lab.yml`
@@ -190,6 +195,11 @@ This is useful for human debugging, and it is also useful for AI-assisted
 development because it lets interactive investigation happen against a real
 hosted Android environment without paying full rebuild-and-boot cost for every
 inspection turn.
+
+During rapid iteration, do not wait for full pull request greenness before
+checking the next visual or interaction hypothesis. Use targeted hosted lanes
+and the interactive APK replacement path, then reserve full PR rollup and
+review-thread completion for checkpoint/merge readiness.
 
 Use that interactive path, or the native Android computer-use connector, for
 visual acceptance. `validation-lab` proves that code builds, tests pass, Android

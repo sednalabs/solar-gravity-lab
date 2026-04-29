@@ -189,6 +189,10 @@ For the Solar-side boundary, see
 
 For the public workflow overview, see
 [`docs/hosted-ai-development.md`](docs/hosted-ai-development.md).
+For the rapid Android inner loop that combines targeted validation,
+reusable APK builds, live session install/relaunch, and native visual
+observation, see
+[`docs/rapid-android-iteration.md`](docs/rapid-android-iteration.md).
 
 ## License
 
