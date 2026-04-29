@@ -1657,6 +1657,15 @@ private fun BodyEditorDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (editorState.isNewBody) {
+                    StagePlacementPrimer(
+                        checked = placeOnSceneAfterSave,
+                        onCheckedChange = {
+                            placeOnSceneAfterSave = it
+                            errorMessage = null
+                        },
+                    )
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1680,10 +1689,7 @@ private fun BodyEditorDialog(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
+                    StageEditorChipRow {
                         BodyCategory.entries.forEach { entry ->
                             FilterChip(
                                 selected = category == entry,
@@ -1700,10 +1706,7 @@ private fun BodyEditorDialog(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
+                    StageEditorChipRow {
                         GravitationalRole.entries.forEach { entry ->
                             FilterChip(
                                 selected = gravitationalRole == entry,
@@ -1836,34 +1839,6 @@ private fun BodyEditorDialog(
                         )
                     }
 
-                    if (editorState.isNewBody) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Checkbox(
-                                checked = placeOnSceneAfterSave,
-                                onCheckedChange = {
-                                    placeOnSceneAfterSave = it
-                                    errorMessage = null
-                                },
-                            )
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    text = "Stage placement before commit",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    text = "Stage first, refine position and initial velocity on the stage, then commit.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-
                     if (!errorMessage.isNullOrBlank()) {
                         Text(
                             text = errorMessage.orEmpty(),
@@ -1971,6 +1946,55 @@ private fun BodyEditorDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun StagePlacementPrimer(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = PrimaryAction.copy(alpha = 0.34f),
+        border = BorderStroke(1.dp, OverlayStroke),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Checkbox(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "Stage placement first",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = SurfaceText,
+                )
+                Text(
+                    text = "Save the draft, then tap or drag on the stage to refine position and launch velocity.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HintText,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StageEditorChipRow(content: @Composable () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        content()
     }
 }
 
