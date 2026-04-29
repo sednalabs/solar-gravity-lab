@@ -692,6 +692,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                                         syncObserver(selectedBodyId, observerMode)
                                     }
 
+                                    override fun onCameraNavigationModeChanged(mode: ObserverMode) {
+                                        observerMode = mode
+                                        syncObserver(selectedBodyId, mode)
+                                    }
+
                                     override fun onPlacementGesture(
                                         startWorldPositionM: Vector3d,
                                         endWorldPositionM: Vector3d,

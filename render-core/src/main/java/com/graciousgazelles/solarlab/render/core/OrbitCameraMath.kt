@@ -138,6 +138,23 @@ object OrbitCameraMath {
         )
     }
 
+    fun focusPlanePoint(
+        screenXPx: Float,
+        screenYPx: Float,
+        cameraState: CameraState,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ): Vector3d {
+        val frame = frame(cameraState, viewportWidthPx, viewportHeightPx)
+        val width = viewportWidthPx.coerceAtLeast(1)
+        val height = viewportHeightPx.coerceAtLeast(1)
+        val normalizedX = ((screenXPx / width.toFloat()) * 2.0) - 1.0
+        val normalizedY = 1.0 - ((screenYPx / height.toFloat()) * 2.0)
+        return frame.centerM +
+            frame.rightM * (normalizedX * frame.halfSpanXM) +
+            frame.upM * (normalizedY * frame.halfSpanYM)
+    }
+
     fun intersectRayWithPlane(
         ray: CameraRay,
         planePointM: Vector3d,

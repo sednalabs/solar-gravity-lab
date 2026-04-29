@@ -66,7 +66,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                return zoomByInternal(detector.scaleFactor)
+                return zoomByInternal(
+                    scaleFactor = detector.scaleFactor,
+                    focusXPx = detector.focusX,
+                    focusYPx = detector.focusY,
+                    manualGesture = true,
+                )
             }
         },
     )
@@ -108,8 +113,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             ): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
                 if (e2.pointerCount > 1) return false
+                switchToFreeCameraForManualNavigation()
                 if (isRuntimeBound()) {
-                    if (observerMode != ObserverMode.FREE) return false
                     SolarLabVulkanBridge.panRuntimeCamera(
                         handle = rendererHandle,
                         distanceXPx = distanceX,
@@ -120,7 +125,6 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     renderLatestScene()
                     return true
                 }
-                if (ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)) return false
                 val frame = OrbitCameraMath.frame(
                     cameraState = cameraState,
                     viewportWidthPx = width.coerceAtLeast(1),
@@ -456,11 +460,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     return false
                 }
                 if (isRuntimeBound()) {
-                    if (observerMode != ObserverMode.FREE) return false
+                    switchToFreeCameraForManualNavigation()
                     SolarLabVulkanBridge.orbitRuntimeCamera(rendererHandle, deltaX, deltaY)
                     renderLatestScene()
                     return true
                 }
+                switchToFreeCameraForManualNavigation()
                 cameraState = cameraState.copy(
                     yawRadians = cameraState.yawRadians - (deltaX * ORBIT_YAW_RADIANS_PER_PIXEL),
                     pitchRadians = cameraState.pitchRadians - (deltaY * ORBIT_PITCH_RADIANS_PER_PIXEL),
@@ -480,21 +485,62 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         return false
     }
 
-    private fun zoomByInternal(scaleFactor: Float): Boolean {
+    private fun zoomByInternal(
+        scaleFactor: Float,
+        focusXPx: Float = width.coerceAtLeast(1) * 0.5f,
+        focusYPx: Float = height.coerceAtLeast(1) * 0.5f,
+        manualGesture: Boolean = false,
+    ): Boolean {
         if (scaleFactor <= 0f) {
             return false
+        }
+        if (manualGesture) {
+            switchToFreeCameraForManualNavigation()
         }
         if (isRuntimeBound()) {
             SolarLabVulkanBridge.zoomRuntimeCamera(rendererHandle, scaleFactor)
             renderLatestScene()
             return true
         }
+        val cameraLocked = ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)
+        val anchorBeforeZoom = if (cameraLocked) {
+            null
+        } else {
+            cameraFocusPlanePoint(focusXPx, focusYPx, cameraState)
+        }
         cameraState = cameraState.copy(
             viewRadiusM = (cameraState.viewRadiusM / scaleFactor.toDouble()).coerceIn(minViewRadiusM, maxViewRadiusM),
         ).sanitized()
+        anchorBeforeZoom?.let { anchor ->
+            val anchorAfterZoom = cameraFocusPlanePoint(focusXPx, focusYPx, cameraState)
+            cameraState = cameraState.copy(
+                centerM = cameraState.centerM + (anchor - anchorAfterZoom),
+            ).sanitized()
+        }
         onCameraChanged()
         return true
     }
+
+    private fun switchToFreeCameraForManualNavigation() {
+        if (observerMode == ObserverMode.FREE) return
+        observerMode = ObserverMode.FREE
+        interactionListener?.onCameraNavigationModeChanged(ObserverMode.FREE)
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, ObserverMode.FREE)
+        }
+    }
+
+    private fun cameraFocusPlanePoint(
+        screenXPx: Float,
+        screenYPx: Float,
+        camera: CameraState,
+    ): Vector3d = OrbitCameraMath.focusPlanePoint(
+        screenXPx = screenXPx,
+        screenYPx = screenYPx,
+        cameraState = camera,
+        viewportWidthPx = width.coerceAtLeast(1),
+        viewportHeightPx = height.coerceAtLeast(1),
+    )
 
     private fun applyObserverTargetIfNeeded(
         frame: RenderSceneFrame,
