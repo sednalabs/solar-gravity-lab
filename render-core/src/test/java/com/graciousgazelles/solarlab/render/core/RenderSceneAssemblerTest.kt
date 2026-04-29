@@ -37,6 +37,39 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
+    fun assembleAddsPlacementPreviewWithoutMutatingSnapshotTrailHistory() {
+        val assembler = RenderSceneAssembler(maxTrailPointsPerBody = 4)
+        val snapshot = SimulationSnapshot(
+            epochSeconds = 1.0,
+            bodies = listOf(body("sun", GravitationalRole.MASSIVE, BodyCategory.STAR)),
+        )
+        val preview = RenderPlacementPreview(
+            bodyId = "custom:preview",
+            name = "Preview",
+            positionM = Vector3d(10.0, 20.0, 0.0),
+            velocityMps = Vector3d(1.0, 0.0, 0.0),
+            radiusM = 3.0,
+            colorArgb = 0xCCFFA726.toInt(),
+            kind = RenderBodyKind.TEST_OBJECT,
+            isMassive = false,
+            sourceMassKg = 0.0,
+            forecastPointsM = listOf(
+                Vector3d(10.0, 20.0, 0.0),
+                Vector3d(11.0, 20.0, 0.0),
+            ),
+        )
+
+        val frameWithPreview = assembler.assemble(snapshot, placementPreview = preview)
+        val frameWithoutPreview = assembler.assemble(snapshot.copy(epochSeconds = 2.0))
+
+        assertEquals(1, snapshot.bodies.size)
+        assertEquals("custom:preview", frameWithPreview.tracerBodies.single().id)
+        assertEquals("custom:preview", frameWithPreview.trails.single().bodyId)
+        assertTrue(frameWithoutPreview.tracerBodies.isEmpty())
+        assertTrue(frameWithoutPreview.trails.none { it.bodyId == "custom:preview" })
+    }
+
+    @Test
     fun nativePacketPacksSceneDataAndTracerTiers() {
         val frame = RenderSceneFrame(
             epochSeconds = 0.0,
@@ -409,6 +442,37 @@ class RenderSceneAssemblerTest {
         assertTrue(filtered.trails.isEmpty())
         assertEquals(frame.sourceRevision, filtered.sourceRevision)
         assertEquals(frame.epochSeconds, filtered.epochSeconds, 0.0)
+    }
+
+    @Test
+    fun renderLayerOptionsOffKeepsPlacementPreviewVisible() {
+        val base = renderLayerFrame()
+        val frame = base.copy(
+            tracerBodies = base.tracerBodies + RenderBody(
+                id = "custom:preview",
+                name = "Preview",
+                positionM = Vector3d(3.0, 4.0, 0.0),
+                radiusM = 1.0,
+                colorArgb = 0xCCFFA726.toInt(),
+                kind = RenderBodyKind.TEST_OBJECT,
+                isMassive = false,
+                alwaysVisible = true,
+            ),
+            trails = base.trails + RenderTrail(
+                bodyId = "custom:preview",
+                colorArgb = 0xCCFFA726.toInt(),
+                alpha = 0.78f,
+                pointsM = listOf(Vector3d(3.0, 4.0, 0.0), Vector3d(4.0, 4.0, 0.0)),
+                alwaysVisible = true,
+            ),
+        )
+
+        val filtered = frame.withLayerOptions(
+            RenderLayerOptions(traceLayerMode = TraceLayerMode.OFF)
+        )
+
+        assertEquals(listOf("custom:preview"), filtered.tracerBodies.map { it.id })
+        assertEquals(listOf("custom:preview"), filtered.trails.map { it.bodyId })
     }
 
     @Test

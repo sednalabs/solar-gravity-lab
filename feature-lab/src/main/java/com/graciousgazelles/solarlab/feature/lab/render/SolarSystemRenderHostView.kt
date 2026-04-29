@@ -9,6 +9,7 @@ import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
+import com.graciousgazelles.solarlab.render.core.RenderPlacementPreview
 import com.graciousgazelles.solarlab.render.core.RenderSceneAssembler
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.withLayerOptions
@@ -47,8 +48,16 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         installVulkanOnlySurface(reason = "Renderer host initialised.")
     }
 
-    fun submitSnapshot(snapshot: SimulationSnapshot) {
-        submitSceneFrame(sceneAssembler.assemble(snapshot))
+    fun submitSnapshot(
+        snapshot: SimulationSnapshot,
+        placementPreview: RenderPlacementPreview? = null,
+    ) {
+        submitSceneFrame(
+            sceneAssembler.assemble(
+                snapshot = snapshot,
+                placementPreview = placementPreview,
+            ),
+        )
     }
 
     fun submitSceneFrame(frame: RenderSceneFrame) {

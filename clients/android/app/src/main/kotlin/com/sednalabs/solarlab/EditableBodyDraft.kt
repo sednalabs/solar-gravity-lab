@@ -23,6 +23,7 @@ data class EditableBodyDraft(
     val placeOnSceneAfterSave: Boolean,
 ) {
     fun toBodyState(
+        bodyIdOverride: String? = null,
         positionOverrideM: Vector3d? = null,
         velocityOverrideMps: Vector3d? = null,
     ): BodyState {
@@ -33,7 +34,7 @@ data class EditableBodyDraft(
             radiusM = resolvedRadius,
         )
         return BodyState(
-            id = existingBodyId ?: "custom:${UUID.randomUUID()}",
+            id = existingBodyId ?: bodyIdOverride ?: "custom:${UUID.randomUUID()}",
             name = name.trim(),
             category = category,
             gravitationalRole = gravitationalRole,
