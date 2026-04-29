@@ -13,7 +13,7 @@
 import actions
 
 predicate codeqlQueryTestWorkflow(Workflow workflow) {
-  workflow.getRelativePath() = ".github/workflows/codeql-query-tests.yml"
+  workflow.toString() = ".github/workflows/codeql-query-tests.yml"
 }
 
 predicate compilesActionsProductPack(Workflow workflow) {
