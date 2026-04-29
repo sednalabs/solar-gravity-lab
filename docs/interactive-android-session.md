@@ -14,6 +14,10 @@ It is intentionally separate from `validation-lab`:
 - `prerelease-apk` remains the installable artifact lane
 - `interactive-android-session` is the operator-facing live debug lane
 
+For the recommended rapid UI loop that combines this workflow with reusable
+APK builds, targeted validation lanes, and native Android observation, see
+[`Rapid Android iteration`](rapid-android-iteration.md).
+
 ## Why this workflow exists
 
 This public repository already uses GitHub Actions as the main remote compute
@@ -225,6 +229,20 @@ touch dist/interactive-session/finish-session
 
 If that file is not created, the workflow ends automatically when the timeout
 window is reached.
+
+## Replacing the app during a live session
+
+The session does not need to be restarted for every app-only change. Build a
+new reusable artifact with `.github/workflows/interactive-android-build.yml`,
+then use the live Android provider tool
+`interactive_session.install_build_from_run` with the build run id and artifact
+name.
+
+That tool verifies the build manifest, installs the APK, relaunches the
+configured app, writes the new active build state, and appends install history
+to the session evidence bundle. Restart the hosted session only when the
+session workflow, emulator lifecycle, tunnel, or provider process itself needs
+to change.
 
 ## Codex native Android tools
 

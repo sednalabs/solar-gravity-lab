@@ -28,6 +28,10 @@ Those questions are expensive enough that GitHub-hosted runners are a better
 default measurement surface than repeatedly rebuilding everything on a local
 machine.
 
+For the day-to-day loop that combines live Android observation, reusable APK
+builds, targeted validation, and final checkpoints, see
+[`Rapid Android iteration`](rapid-android-iteration.md).
+
 For AI-assisted development, the benefits are even more direct:
 
 - the proof surface is remote, clean, and shareable
@@ -181,6 +185,7 @@ The current implementation should instead be read as:
 
 - [README.md](../README.md)
 - [Validation Lab](validation-lab.md)
+- [Rapid Android iteration](rapid-android-iteration.md)
 - [Interactive Android Session](interactive-android-session.md)
 - [Android Codex Computer-Use Harness](android-codex-computer-use.md)
 - [CI Cache Rollout](ci-cache-rollout.md)
