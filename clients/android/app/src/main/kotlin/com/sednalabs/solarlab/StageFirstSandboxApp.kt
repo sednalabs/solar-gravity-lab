@@ -74,6 +74,7 @@ import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
+import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.TimelineMode
 import com.graciousgazelles.solarlab.feature.lab.LabFrame
 import com.graciousgazelles.solarlab.feature.lab.LabFrameListener
@@ -522,6 +523,7 @@ private fun StageFirstSandboxLocalExperience(
                     isNewBody = true,
                 )
             }
+            Unit
         }
         val repositionPlacement = {
             placementSession = placementSession?.reposition()
