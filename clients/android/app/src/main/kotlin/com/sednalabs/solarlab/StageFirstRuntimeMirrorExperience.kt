@@ -711,13 +711,15 @@ internal fun StageFirstRuntimeMirrorExperience(
                     update = { view ->
                         renderHostView = view
                         runtimeMirrorRenderHostState?.value = view
-                        view.bindRuntimeSessionHandle(runtimeSessionHandle)
-                        view.setProcessingMode(renderProcessingMode)
-                        view.setRenderLayerOptions(renderLayerOptions)
-                        view.setObserverMode(observerMode)
-                        view.setSelectedBodyId(selectedBodyId)
-                        view.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
-                        mirrorScene?.scene?.let(view::submitSceneFrame)
+                        view.updateRuntimeMirrorState(
+                            sessionHandle = runtimeSessionHandle,
+                            processingMode = renderProcessingMode,
+                            renderLayerOptions = renderLayerOptions,
+                            observerMode = observerMode,
+                            selectedBodyId = selectedBodyId,
+                            interactionMode = SceneInteractionMode.NAVIGATE_AND_SELECT,
+                            sceneFrame = mirrorScene?.scene,
+                        )
                     },
                 )
                 RuntimeMirrorBackdropOverlay(compact = compactLayout)
@@ -990,7 +992,7 @@ internal fun shouldAttachRuntimeMirrorRenderHost(
     hostedDebugModeEnabled: Boolean,
     hostedDebugModeApplied: Boolean,
 ): Boolean {
-    val runtimeReady = runtimeSessionHandle != 0L || hasMirrorScene
+    val runtimeReady = runtimeSessionHandle != 0L && hasMirrorScene
     return runtimeReady && (!hostedDebugModeEnabled || hostedDebugModeApplied)
 }
 

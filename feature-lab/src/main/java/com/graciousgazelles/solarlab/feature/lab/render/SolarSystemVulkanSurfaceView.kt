@@ -57,6 +57,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var placementPlaneZ: Double = 0.0
     private var orbitGestureState: OrbitGestureState? = null
     private var runtimeSessionHandle: Long = 0L
+    private var deferredRenderDepth: Int = 0
+    private var renderDeferred: Boolean = false
 
     private var scenePacketPolicy = defaultScenePacketPolicy()
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
@@ -201,6 +203,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             packetDirty = true
         }
         renderLatestScene()
+    }
+
+    override fun deferRendering(block: () -> Unit) {
+        deferredRenderDepth += 1
+        try {
+            block()
+        } finally {
+            deferredRenderDepth -= 1
+            if (deferredRenderDepth == 0 && renderDeferred) {
+                renderDeferred = false
+                renderLatestScene()
+            }
+        }
     }
 
     override fun resetCamera() {
@@ -619,6 +634,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private fun renderLatestScene() {
         if (rendererHandle == 0L || !surfaceReady) return
+        if (deferredRenderDepth > 0) {
+            renderDeferred = true
+            return
+        }
         if (isRuntimeBound()) {
             if (!SolarLabVulkanBridge.render(rendererHandle)) {
                 fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
