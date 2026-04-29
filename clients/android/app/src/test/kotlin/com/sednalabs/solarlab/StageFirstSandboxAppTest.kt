@@ -156,6 +156,52 @@ class StageFirstSandboxAppTest {
     }
 
     @Test
+    fun placementSessionAdjustmentBeforeStageDoesNotBypassStageTap() {
+        val adjusted = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault(),
+            bodyId = "custom:test",
+        ).withDraftValues(
+            EditableBodyDraft.newDefault().copy(
+                positionM = Vector3d(5.0, 6.0, 7.0),
+                velocityMps = Vector3d(8.0, 9.0, 10.0),
+            ),
+        )
+
+        assertFalse(adjusted.canCommit)
+        assertEquals(Vector3d(5.0, 6.0, 7.0), adjusted.stagedPositionM)
+        assertEquals(Vector3d(8.0, 9.0, 10.0), adjusted.stagedVelocityMps)
+        assertNull(adjusted.toPlacementPreview(massiveBodies = emptyList()))
+    }
+
+    @Test
+    fun placementSessionAdjustmentAfterStageKeepsExactValuesCommittable() {
+        val staged = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault(),
+            bodyId = "custom:test",
+        ).applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Ended,
+                startWorldPositionM = Vector3d(1.0, 2.0, 0.0),
+                endWorldPositionM = Vector3d(1.0, 2.0, 0.0),
+                gestureDistancePx = 0f,
+            ),
+        )
+
+        val adjusted = staged.withDraftValues(
+            staged.draft.copy(
+                positionM = Vector3d(10.0, 20.0, 30.0),
+                velocityMps = Vector3d(40.0, 50.0, 60.0),
+            ),
+        )
+
+        assertTrue(adjusted.canCommit)
+        assertEquals(Vector3d(10.0, 20.0, 30.0), adjusted.stagedPositionM)
+        assertEquals(Vector3d(40.0, 50.0, 60.0), adjusted.stagedVelocityMps)
+        assertEquals(Vector3d(10.0, 20.0, 30.0), adjusted.toBodyState().positionM)
+        assertEquals(Vector3d(40.0, 50.0, 60.0), adjusted.toBodyState().velocityMps)
+    }
+
+    @Test
     fun placementSessionRepositionClearsCommitReadinessButKeepsDraft() {
         val staged = BodyPlacementSession.fromDraft(
             draft = EditableBodyDraft.newDefault(),

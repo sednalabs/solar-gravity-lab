@@ -781,13 +781,13 @@ private fun StageFirstSandboxLocalExperience(
                             renderHostView?.setInteractionMode(SceneInteractionMode.PLACE_BODY)
                             maybeResumeAfterModalInteraction()
                         } else {
-                            val stagedPlacement = placementSession?.withDraftValues(draft)
-                            val body = stagedPlacement?.toBodyState() ?: draft.toBodyState()
+                            val priorPlacementSession = placementSession
+                            val body = draft.toBodyState(bodyIdOverride = priorPlacementSession?.bodyId)
                             placementSession = null
                             renderHostView?.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
                             session.addBody(body)
                             selectedBodyId = body.id
-                            if (stagedPlacement != null) {
+                            if (priorPlacementSession != null) {
                                 observerMode = ObserverMode.FOLLOW_SELECTED
                             }
                             bodyEditorState = null
@@ -975,6 +975,7 @@ private fun BoxScope.StageOverlay(
                     label = "Adjust",
                     onClick = onAdjustPlacement,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADJUST_PLACEMENT_BUTTON),
+                    enabled = placementReady,
                 )
                 StageActionButton(
                     label = "Reposition",
@@ -1148,7 +1149,12 @@ private fun BoxScope.StageOverlay(
                             enabled = placementReady,
                             dense = true,
                         )
-                        StageActionButton(label = "Adjust", onClick = onAdjustPlacement, dense = true)
+                        StageActionButton(
+                            label = "Adjust",
+                            onClick = onAdjustPlacement,
+                            enabled = placementReady,
+                            dense = true,
+                        )
                         StageActionButton(
                             label = "Move",
                             onClick = onRepositionPlacement,

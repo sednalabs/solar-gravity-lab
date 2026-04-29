@@ -32,13 +32,20 @@ internal data class BodyPlacementSession(
     val canCommit: Boolean
         get() = hasStagePlacement && phase == BodyPlacementPhase.Staged
 
-    fun withDraftValues(nextDraft: EditableBodyDraft): BodyPlacementSession = copy(
-        draft = nextDraft.copy(placeOnSceneAfterSave = true),
-        stagedPositionM = nextDraft.positionM,
-        stagedVelocityMps = nextDraft.velocityMps,
-        hasStagePlacement = true,
-        phase = BodyPlacementPhase.Staged,
-    )
+    fun withDraftValues(nextDraft: EditableBodyDraft): BodyPlacementSession {
+        val updatedDraft = nextDraft.copy(placeOnSceneAfterSave = true)
+        return copy(
+            draft = updatedDraft,
+            stagedPositionM = updatedDraft.positionM,
+            stagedVelocityMps = updatedDraft.velocityMps,
+            hasStagePlacement = hasStagePlacement,
+            phase = if (hasStagePlacement) {
+                BodyPlacementPhase.Staged
+            } else {
+                BodyPlacementPhase.AwaitingStagePoint
+            },
+        )
+    }
 
     fun draftForAdjustment(): EditableBodyDraft = draft.copy(
         positionM = stagedPositionM,
