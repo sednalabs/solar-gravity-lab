@@ -339,7 +339,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactRendererStatusText_removesPacketCountersForHud() {
+    fun runtimeMirrorCompactRendererStatusText_removesPacketCountersForHUD() {
         assertEquals(
             "Vulkan SPIR-V + compute compaction active",
             runtimeMirrorCompactRendererStatusText(
