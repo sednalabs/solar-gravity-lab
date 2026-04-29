@@ -1190,8 +1190,6 @@ private fun BoxScope.StageOverlay(
                     }
                     StageControlRail(compact = true) {
                         primaryControls()
-                    }
-                    StageControlRail(compact = true) {
                         secondaryControls()
                     }
                 } else {
