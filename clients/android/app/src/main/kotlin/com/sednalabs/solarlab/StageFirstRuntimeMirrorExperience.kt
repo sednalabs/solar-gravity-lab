@@ -743,50 +743,16 @@ internal fun StageFirstRuntimeMirrorExperience(
             }
 
             if (chromeMode == StageChromeMode.COLLAPSED) {
-                StagePanel(
+                RuntimeMirrorCollapsedStageChip(
+                    selectionCard = selectionCard,
+                    scenarioLabel = timelineText,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .statusBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp)
-                        .widthIn(max = if (compactLayout) 360.dp else 420.dp)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .widthIn(max = if (compactLayout) 300.dp else 380.dp)
                         .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        StageTrajectoryGlyph(
-                            orbitColor = RuntimeMirrorCyan,
-                            probeColor = RuntimeMirrorGold,
-                        )
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(1.dp),
-                        ) {
-                            Text(
-                                text = "Trajectory stage",
-                                color = RuntimeMirrorCyan,
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1,
-                            )
-                            Text(
-                                text = selectionCard.title,
-                                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                                color = RuntimeMirrorGold,
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = runtimeMirrorCompactScenarioLabel(timelineText),
-                                color = RuntimeMirrorTextDim,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
+                )
             }
 
             if (chromeMode == StageChromeMode.EXPANDED) {
@@ -853,7 +819,11 @@ internal fun StageFirstRuntimeMirrorExperience(
                         .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    StageControlRail(compact = true) {
+                    StageControlRail(
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        compact = true,
+                        fillMaxWidth = false,
+                    ) {
                         StageActionButton(
                             label = if (isRunning) "Pause" else "Start",
                             onClick = {
@@ -1496,6 +1466,58 @@ private fun RuntimeMirrorFocusIdentity(
                 maxLines = if (compact) 2 else 3,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeMirrorCollapsedStageChip(
+    selectionCard: RuntimeSelectionCard,
+    scenarioLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = RuntimeMirrorGlassSoft.copy(alpha = 0.78f),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.34f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StageTrajectoryGlyph(
+                orbitColor = RuntimeMirrorCyan,
+                probeColor = RuntimeMirrorGold,
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                Text(
+                    text = "Trajectory stage",
+                    color = RuntimeMirrorCyan.copy(alpha = 0.92f),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = selectionCard.title,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                    color = RuntimeMirrorGold,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = runtimeMirrorCompactScenarioLabel(scenarioLabel),
+                    color = RuntimeMirrorTextDim.copy(alpha = 0.86f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
