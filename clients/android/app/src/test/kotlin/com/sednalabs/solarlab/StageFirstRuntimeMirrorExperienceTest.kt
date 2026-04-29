@@ -9,7 +9,7 @@ import org.junit.Test
 
 class StageFirstRuntimeMirrorExperienceTest {
     @Test
-    fun buildRuntimeAccelerationReadout_promotesS25TilePlanIntoChips() {
+    fun buildRuntimeAccelerationReadout_promotesGalaxyS25TilePlanIntoChips() {
         val readout = requireNotNull(
             buildRuntimeAccelerationReadout(
                 backendSummary = listOf(
