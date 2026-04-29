@@ -2,6 +2,6 @@ name: sednalabs/solar-python-product-invariants
 version: 0.0.1
 library: false
 dependencies:
-  codeql/python-all: "*"
+  codeql/python-all: ^7.0.4
 suites: suites
 defaultSuiteFile: suites/solar-python-product-invariants.qls

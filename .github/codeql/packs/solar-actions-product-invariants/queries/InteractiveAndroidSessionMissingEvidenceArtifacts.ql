@@ -17,12 +17,15 @@ predicate interactiveSessionWorkflow(Workflow workflow) {
 }
 
 predicate uploadsInteractiveEvidence(Workflow workflow) {
-  exists(UsesStep step, string path |
+  exists(UsesStep step |
     step.getEnclosingWorkflow() = workflow and
     step.getCallee().regexpMatch("actions/upload-artifact(@.*)?") and
-    path = step.getArgument("path") and
-    path.regexpMatch("(?s).*dist/interactive-session/\\*\\*.*") and
-    path.regexpMatch("(?s).*dist/interactive-session-summary/\\*\\*.*")
+    step.getArgument("path").regexpMatch("(?s).*dist/interactive-session/\\*\\*.*")
+  ) and
+  exists(UsesStep step |
+    step.getEnclosingWorkflow() = workflow and
+    step.getCallee().regexpMatch("actions/upload-artifact(@.*)?") and
+    step.getArgument("path").regexpMatch("(?s).*dist/interactive-session-summary/\\*\\*.*")
   )
 }
 

@@ -27,9 +27,9 @@ from Workflow workflow
 where
   validationLabWorkflow(workflow) and
   not (
-    workflow.toString().regexpMatch("(?s).*android_validation_mode.*") and
-    workflow.toString().regexpMatch("(?s).*stage-first-mirror-on.*") and
-    workflowScriptMentions(workflow, "(?s).*stage_first_runtime_mirror.*")
+    workflowScriptMentions(workflow, "(?s).*android[-_]validation[-_]mode.*") and
+    workflowScriptMentions(workflow, "(?s).*stage_first_runtime_mirror.*") and
+    workflowScriptMentions(workflow, "(?s).*preferred_gpu_backend.*")
   )
 select workflow,
   "validation-lab does not appear to preserve stage-first runtime-mirror proof. Android visual or camera changes need this hosted proof route before visual claims are made."
