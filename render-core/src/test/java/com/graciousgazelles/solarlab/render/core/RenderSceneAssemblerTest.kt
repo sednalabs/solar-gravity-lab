@@ -482,7 +482,7 @@ class RenderSceneAssemblerTest {
         val filtered = frame.withLayerOptions(
             RenderLayerOptions(
                 traceLayerMode = TraceLayerMode.FOCUS,
-                focusedBodyIds = setOf("Earth"),
+                focusedBodyIds = setOf("earth"),
             )
         )
 
