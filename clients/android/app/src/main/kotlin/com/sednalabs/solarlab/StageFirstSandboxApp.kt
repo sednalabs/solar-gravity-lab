@@ -957,48 +957,16 @@ private fun BoxScope.StageOverlay(
         }
 
         if (chromeMode == StageChromeMode.COLLAPSED) {
-            StagePanel(
+            StageCollapsedSelectionChip(
+                selectionCard = selectionCard,
+                timelineText = timelineText,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .statusBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 12.dp)
-                    .widthIn(max = if (compactLayout) 360.dp else 420.dp)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .widthIn(max = if (compactLayout) 300.dp else 380.dp)
                     .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    StageTrajectoryGlyph(
-                        orbitColor = TimelineText,
-                        probeColor = SelectionText,
-                    )
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(1.dp),
-                    ) {
-                        Text(
-                            text = timelineText,
-                            color = TimelineText,
-                            style = MaterialTheme.typography.labelLarge,
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = selectionCard.title,
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                            color = SelectionText,
-                            style = MaterialTheme.typography.titleLarge,
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = selectionCard.eyebrow,
-                            color = MissionText,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
+            )
         }
 
         if (chromeMode == StageChromeMode.EXPANDED) {
@@ -1101,7 +1069,11 @@ private fun BoxScope.StageOverlay(
                     .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                StageControlRail(compact = true) {
+                StageControlRail(
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    compact = true,
+                    fillMaxWidth = false,
+                ) {
                     StageActionButton(
                         label = if (isRunning) "Pause" else "Start",
                         onClick = onStartPause,
@@ -1204,20 +1176,26 @@ internal fun StageFloatingActionRow(
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 internal fun StageControlRail(
+    modifier: Modifier = Modifier,
     compact: Boolean = false,
+    fillMaxWidth: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Surface(
+        modifier = modifier,
         color = ControlRail,
         shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
-        val railModifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                horizontal = if (compact) 4.dp else 10.dp,
-                vertical = if (compact) 7.dp else 10.dp,
-            )
+        val widthModifier = if (fillMaxWidth) {
+            Modifier.fillMaxWidth()
+        } else {
+            Modifier
+        }
+        val railModifier = widthModifier.padding(
+            horizontal = if (compact) 4.dp else 10.dp,
+            vertical = if (compact) 7.dp else 10.dp,
+        )
         if (compact) {
             FlowRow(
                 modifier = railModifier,
@@ -1233,6 +1211,58 @@ internal fun StageControlRail(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun StageCollapsedSelectionChip(
+    selectionCard: SelectionCardText,
+    timelineText: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = OverlayPanel.copy(alpha = 0.78f),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, OverlayStroke),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StageTrajectoryGlyph(
+                orbitColor = TimelineText,
+                probeColor = SelectionText,
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                Text(
+                    text = compactStageTimelineLabel(timelineText),
+                    color = TimelineText.copy(alpha = 0.92f),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = selectionCard.title,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                    color = SelectionText,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = selectionCard.eyebrow,
+                    color = MissionText.copy(alpha = 0.90f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -1930,6 +1960,15 @@ private fun buildTimelineText(timeline: TimelineStatus?): String {
         )
     }
 }
+
+internal fun compactStageTimelineLabel(timelineText: String): String =
+    timelineText
+        .lineSequence()
+        .firstOrNull()
+        ?.substringBefore("|")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: "Trajectory stage"
 
 private fun buildSelectionCard(
     frame: LabFrame?,

@@ -75,4 +75,13 @@ class StageFirstSandboxAppTest {
             compactStageBackendHudStatusText(" \n\t "),
         )
     }
+
+    @Test
+    fun compactStageTimelineLabel_removesDenseTimelineDetailForCollapsedChrome() {
+        assertEquals(
+            "Catalog timeline",
+            compactStageTimelineLabel("Catalog timeline | JD(TDB) 2451550.15640\nSpeed 6 h/s • Step 6 h"),
+        )
+        assertEquals("Trajectory stage", compactStageTimelineLabel(" \n\t "))
+    }
 }
