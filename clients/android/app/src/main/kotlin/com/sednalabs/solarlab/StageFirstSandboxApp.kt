@@ -124,31 +124,24 @@ private const val STAGE_FIELD_GRID_TOP_FRACTION = 0.08f
 private const val STAGE_FIELD_GRID_EXPANDED_BOTTOM_FRACTION = 0.58f
 private const val STAGE_FIELD_GRID_COLLAPSED_BOTTOM_FRACTION = 0.64f
 private const val STAGE_FIELD_GRID_ACTIVE_ALPHA = 0.24f
-private const val STAGE_FIELD_GRID_IDLE_ALPHA = 0.16f
 private const val STAGE_FIELD_GRID_SKEW_FRACTION = 0.10f
 private const val STAGE_FIELD_PRIMARY_CENTER_X_FRACTION = 0.70f
 private const val STAGE_FIELD_PRIMARY_CENTER_Y_FRACTION = 0.45f
 private const val STAGE_FIELD_ACTIVE_RADIUS_FRACTION = 0.42f
-private const val STAGE_FIELD_IDLE_RADIUS_FRACTION = 0.36f
 private const val STAGE_FIELD_PRIMARY_HALO_RADIUS_FACTOR = 1.25f
 private const val STAGE_FIELD_PRIMARY_HALO_ACTIVE_ALPHA = 0.055f
-private const val STAGE_FIELD_PRIMARY_HALO_IDLE_ALPHA = 0.035f
 private const val STAGE_FIELD_SECONDARY_HALO_RADIUS_FACTOR = 0.62f
 private const val STAGE_FIELD_SECONDARY_HALO_X_FRACTION = 0.26f
 private const val STAGE_FIELD_SECONDARY_HALO_Y_FRACTION = 0.24f
 private const val STAGE_FIELD_SECONDARY_HALO_ACTIVE_ALPHA = 0.050f
-private const val STAGE_FIELD_SECONDARY_HALO_IDLE_ALPHA = 0.030f
 private const val STAGE_FIELD_PRIMARY_ARC_START_DEGREES = 198f
 private const val STAGE_FIELD_PRIMARY_ARC_SWEEP_DEGREES = 122f
 private const val STAGE_FIELD_PRIMARY_ARC_ACTIVE_ALPHA = 0.18f
-private const val STAGE_FIELD_PRIMARY_ARC_IDLE_ALPHA = 0.11f
 private const val STAGE_FIELD_SECONDARY_ARC_RADIUS_FACTOR = 1.22f
 private const val STAGE_FIELD_SECONDARY_ARC_START_DEGREES = 246f
 private const val STAGE_FIELD_SECONDARY_ARC_SWEEP_DEGREES = 38f
 private const val STAGE_FIELD_SECONDARY_ARC_ACTIVE_ALPHA = 0.24f
-private const val STAGE_FIELD_SECONDARY_ARC_IDLE_ALPHA = 0.14f
 private const val STAGE_FIELD_SIGNAL_LINE_ACTIVE_ALPHA = 0.28f
-private const val STAGE_FIELD_SIGNAL_LINE_IDLE_ALPHA = 0.16f
 private const val STAGE_FIELD_SIGNAL_LINE_START_X_FRACTION = 0.18f
 private const val STAGE_FIELD_SIGNAL_LINE_START_Y_FRACTION = 0.33f
 private const val STAGE_FIELD_SIGNAL_LINE_END_X_FRACTION = 0.58f
@@ -633,10 +626,9 @@ private fun StageFirstSandboxLocalExperience(
                 },
             )
 
-            StageTrajectoryFieldOverlay(
-                chromeMode = chromeMode,
-                authoringActive = placementSession != null,
-            )
+            if (shouldShowStagePlacementFieldOverlay(placementSession != null)) {
+                StagePlacementFieldOverlay(chromeMode = chromeMode)
+            }
 
             StageOverlay(
                 timelineText = timelineText,
@@ -891,10 +883,11 @@ private fun StageFirstSandboxLocalExperience(
     }
 }
 
+internal fun shouldShowStagePlacementFieldOverlay(authoringActive: Boolean): Boolean = authoringActive
+
 @Composable
-private fun StageTrajectoryFieldOverlay(
+private fun StagePlacementFieldOverlay(
     chromeMode: StageChromeMode,
-    authoringActive: Boolean,
 ) {
     Canvas(modifier = Modifier.fillMaxSize()) {
         val gridTop = size.height * STAGE_FIELD_GRID_TOP_FRACTION
@@ -903,11 +896,7 @@ private fun StageTrajectoryFieldOverlay(
         } else {
             STAGE_FIELD_GRID_COLLAPSED_BOTTOM_FRACTION
         }
-        val gridAlpha = if (authoringActive) {
-            STAGE_FIELD_GRID_ACTIVE_ALPHA
-        } else {
-            STAGE_FIELD_GRID_IDLE_ALPHA
-        }
+        val gridAlpha = STAGE_FIELD_GRID_ACTIVE_ALPHA
         val gridStroke = 0.9.dp.toPx()
 
         repeat(STAGE_FIELD_GRID_LINE_COUNT) { index ->
@@ -925,30 +914,14 @@ private fun StageTrajectoryFieldOverlay(
             size.width * STAGE_FIELD_PRIMARY_CENTER_X_FRACTION,
             size.height * STAGE_FIELD_PRIMARY_CENTER_Y_FRACTION,
         )
-        val fieldRadius = size.minDimension * if (authoringActive) {
-            STAGE_FIELD_ACTIVE_RADIUS_FRACTION
-        } else {
-            STAGE_FIELD_IDLE_RADIUS_FRACTION
-        }
+        val fieldRadius = size.minDimension * STAGE_FIELD_ACTIVE_RADIUS_FRACTION
         drawCircle(
-            color = TimelineText.copy(
-                alpha = if (authoringActive) {
-                    STAGE_FIELD_PRIMARY_HALO_ACTIVE_ALPHA
-                } else {
-                    STAGE_FIELD_PRIMARY_HALO_IDLE_ALPHA
-                },
-            ),
+            color = TimelineText.copy(alpha = STAGE_FIELD_PRIMARY_HALO_ACTIVE_ALPHA),
             radius = fieldRadius * STAGE_FIELD_PRIMARY_HALO_RADIUS_FACTOR,
             center = fieldCenter,
         )
         drawCircle(
-            color = StageFieldBlue.copy(
-                alpha = if (authoringActive) {
-                    STAGE_FIELD_SECONDARY_HALO_ACTIVE_ALPHA
-                } else {
-                    STAGE_FIELD_SECONDARY_HALO_IDLE_ALPHA
-                },
-            ),
+            color = StageFieldBlue.copy(alpha = STAGE_FIELD_SECONDARY_HALO_ACTIVE_ALPHA),
             radius = fieldRadius * STAGE_FIELD_SECONDARY_HALO_RADIUS_FACTOR,
             center = Offset(
                 size.width * STAGE_FIELD_SECONDARY_HALO_X_FRACTION,
@@ -959,13 +932,7 @@ private fun StageTrajectoryFieldOverlay(
         val orbitBox = Size(fieldRadius * 2f, fieldRadius * 2f)
         val orbitTopLeft = Offset(fieldCenter.x - fieldRadius, fieldCenter.y - fieldRadius)
         drawArc(
-            color = TimelineText.copy(
-                alpha = if (authoringActive) {
-                    STAGE_FIELD_PRIMARY_ARC_ACTIVE_ALPHA
-                } else {
-                    STAGE_FIELD_PRIMARY_ARC_IDLE_ALPHA
-                },
-            ),
+            color = TimelineText.copy(alpha = STAGE_FIELD_PRIMARY_ARC_ACTIVE_ALPHA),
             startAngle = STAGE_FIELD_PRIMARY_ARC_START_DEGREES,
             sweepAngle = STAGE_FIELD_PRIMARY_ARC_SWEEP_DEGREES,
             useCenter = false,
@@ -975,13 +942,7 @@ private fun StageTrajectoryFieldOverlay(
         )
         val secondaryArcRadius = fieldRadius * STAGE_FIELD_SECONDARY_ARC_RADIUS_FACTOR
         drawArc(
-            color = SelectionText.copy(
-                alpha = if (authoringActive) {
-                    STAGE_FIELD_SECONDARY_ARC_ACTIVE_ALPHA
-                } else {
-                    STAGE_FIELD_SECONDARY_ARC_IDLE_ALPHA
-                },
-            ),
+            color = SelectionText.copy(alpha = STAGE_FIELD_SECONDARY_ARC_ACTIVE_ALPHA),
             startAngle = STAGE_FIELD_SECONDARY_ARC_START_DEGREES,
             sweepAngle = STAGE_FIELD_SECONDARY_ARC_SWEEP_DEGREES,
             useCenter = false,
@@ -991,13 +952,7 @@ private fun StageTrajectoryFieldOverlay(
         )
 
         drawLine(
-            color = TimelineText.copy(
-                alpha = if (authoringActive) {
-                    STAGE_FIELD_SIGNAL_LINE_ACTIVE_ALPHA
-                } else {
-                    STAGE_FIELD_SIGNAL_LINE_IDLE_ALPHA
-                },
-            ),
+            color = TimelineText.copy(alpha = STAGE_FIELD_SIGNAL_LINE_ACTIVE_ALPHA),
             start = Offset(
                 size.width * STAGE_FIELD_SIGNAL_LINE_START_X_FRACTION,
                 size.height * STAGE_FIELD_SIGNAL_LINE_START_Y_FRACTION,

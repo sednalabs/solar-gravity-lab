@@ -55,6 +55,12 @@ class StageFirstSandboxAppTest {
     }
 
     @Test
+    fun placementFieldOverlayOnlyAppearsDuringAuthoring() {
+        assertFalse(shouldShowStagePlacementFieldOverlay(authoringActive = false))
+        assertTrue(shouldShowStagePlacementFieldOverlay(authoringActive = true))
+    }
+
+    @Test
     fun buildIdleMissionTrajectoryDetail_namesSceneBodyCount() {
         assertEquals(
             "Tracking 39 bodies with live fly paths. " +
