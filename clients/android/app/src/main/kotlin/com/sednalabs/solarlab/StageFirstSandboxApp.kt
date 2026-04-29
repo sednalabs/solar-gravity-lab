@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -152,6 +151,7 @@ internal fun StageFirstSandboxApp(
     semanticActions: Flow<SolarLabSemanticAction> = SolarLabSemanticActionBridge.commands,
     experienceModeState: MutableState<StageFirstExperienceMode>? = null,
     runtimeMirrorMountedState: MutableState<Boolean>? = null,
+    runtimeMirrorRenderHostState: MutableState<SolarSystemRenderHostView?>? = null,
 ) {
     val localExperienceModeState = rememberSaveable { mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX) }
     val resolvedExperienceModeState = experienceModeState ?: localExperienceModeState
@@ -214,6 +214,7 @@ internal fun StageFirstSandboxApp(
         !runtimeMirrorAvailable || experienceMode == StageFirstExperienceMode.LOCAL_SANDBOX -> {
             SideEffect {
                 runtimeMirrorMountedState?.value = false
+                runtimeMirrorRenderHostState?.value = null
             }
             StageFirstSandboxLocalExperience(
                 pendingSemanticAction = pendingSemanticAction,
@@ -231,6 +232,7 @@ internal fun StageFirstSandboxApp(
             pendingSemanticAction = pendingSemanticAction,
             onReturnToSandbox = { experienceMode = StageFirstExperienceMode.LOCAL_SANDBOX },
             runtimeMirrorMountedState = runtimeMirrorMountedState,
+            runtimeMirrorRenderHostState = runtimeMirrorRenderHostState,
         )
     }
 }
@@ -870,7 +872,7 @@ private fun BoxScope.StageOverlay(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
-        val actionButtons: @Composable RowScope.() -> Unit = {
+        val actionButtons: @Composable () -> Unit = {
             StageControlsButton(
                 label = "Hide controls",
                 onClick = onToggleChrome,
@@ -897,7 +899,7 @@ private fun BoxScope.StageOverlay(
                 emphasized = debugVisible,
             )
         }
-        val primaryControls: @Composable RowScope.() -> Unit = {
+        val primaryControls: @Composable () -> Unit = {
             StageActionButton(
                 label = if (isRunning) "Pause" else "Start",
                 onClick = onStartPause,
@@ -914,7 +916,7 @@ private fun BoxScope.StageOverlay(
             )
             StageActionButton(label = "Reset", onClick = onReset)
         }
-        val secondaryControls: @Composable RowScope.() -> Unit = {
+        val secondaryControls: @Composable () -> Unit = {
             StageActionButton(
                 label = addButtonLabel,
                 onClick = onAddObject,
@@ -1033,12 +1035,8 @@ private fun BoxScope.StageOverlay(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    StageFloatingActionRow(
+                        modifier = Modifier.fillMaxWidth(),
                         content = actionButtons,
                     )
                 } else {
@@ -1080,8 +1078,9 @@ private fun BoxScope.StageOverlay(
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            content = actionButtons,
-                        )
+                        ) {
+                            actionButtons()
+                        }
                     }
                 }
             }
@@ -1159,27 +1158,54 @@ private fun BoxScope.StageOverlay(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
+internal fun StageFloatingActionRow(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        content()
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun StageControlRail(
     compact: Boolean = false,
-    content: @Composable RowScope.() -> Unit,
+    content: @Composable () -> Unit,
 ) {
     Surface(
         color = ControlRail,
         shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(
-                    horizontal = if (compact) 4.dp else 10.dp,
-                    vertical = if (compact) 7.dp else 10.dp,
-                ),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = content,
-        )
+        val railModifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = if (compact) 4.dp else 10.dp,
+                vertical = if (compact) 7.dp else 10.dp,
+            )
+        if (compact) {
+            FlowRow(
+                modifier = railModifier,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                content()
+            }
+        } else {
+            Row(
+                modifier = railModifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                content()
+            }
+        }
     }
 }
 
@@ -1290,10 +1316,19 @@ private fun SearchDialog(
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
+                Text(
+                    text = if (bodies.size == 24) {
+                        "24 shown · type to filter"
+                    } else {
+                        "${bodies.size} matches"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 360.dp)
+                        .heightIn(max = 300.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -1335,11 +1370,15 @@ private fun SearchDialog(
                                         text = body.name,
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
                                         text = "${body.prettyCategoryLabel()} · ${body.id}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 TextButton(

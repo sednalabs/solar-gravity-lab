@@ -7,7 +7,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import org.junit.Assert.assertNotNull
@@ -31,10 +30,10 @@ class StageFirstLocalStartupInstrumentationTest {
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
             .performClick()
 
@@ -43,18 +42,18 @@ class StageFirstLocalStartupInstrumentationTest {
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON)
-            .performScrollTo()
+            .performScrollToIfPossible()
             .assertIsDisplayed()
 
         if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-                .performScrollTo()
+                .performScrollToIfPossible()
                 .assertIsDisplayed()
         } else {
             assertTrue(composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isEmpty())
