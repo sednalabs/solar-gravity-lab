@@ -482,7 +482,7 @@ class RenderSceneAssemblerTest {
         val filtered = frame.withLayerOptions(
             RenderLayerOptions(
                 traceLayerMode = TraceLayerMode.FOCUS,
-                focusedBodyIds = setOf("Earth"),
+                focusedBodyIds = setOf("earth"),
             )
         )
 
@@ -491,7 +491,6 @@ class RenderSceneAssemblerTest {
     }
 
     @Test
-    // (line referenced by CodeQL) ... "earth" ...
     fun renderLayerOptionsFocusFallsBackToFullTraceLayerWhenNothingIsFocused() {
         val frame = renderLayerFrame()
 
