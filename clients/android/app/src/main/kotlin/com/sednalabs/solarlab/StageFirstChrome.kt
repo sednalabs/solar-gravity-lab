@@ -38,7 +38,7 @@ internal fun traceLayerModeFromName(value: String): TraceLayerMode =
 
 internal fun traceLayerButtonLabel(mode: TraceLayerMode, compact: Boolean): String {
     val label = when (mode) {
-        TraceLayerMode.FOCUS -> "Focus"
+        TraceLayerMode.FOCUS -> if (compact) "Trace" else "Focus"
         TraceLayerMode.ALL -> "All"
         TraceLayerMode.OFF -> "Off"
     }
