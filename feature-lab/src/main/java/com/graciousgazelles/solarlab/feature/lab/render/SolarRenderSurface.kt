@@ -6,6 +6,9 @@ import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 
 internal interface SolarRenderSurface {
     fun submitScene(frame: RenderSceneFrame)
+    fun deferRendering(block: () -> Unit) {
+        block()
+    }
     fun resetCamera()
     fun zoomBy(scaleFactor: Float) {}
     fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {}

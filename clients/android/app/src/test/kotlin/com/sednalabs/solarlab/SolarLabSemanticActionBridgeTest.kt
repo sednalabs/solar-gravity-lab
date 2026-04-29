@@ -118,8 +118,8 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
-    fun shouldAttachRuntimeMirrorRenderHost_allowsNormalRuntimeWhenReady() {
-        assertTrue(
+    fun shouldAttachRuntimeMirrorRenderHost_waitsForSessionAndFirstScene() {
+        assertFalse(
             shouldAttachRuntimeMirrorRenderHost(
                 runtimeSessionHandle = 42L,
                 hasMirrorScene = false,
@@ -127,9 +127,17 @@ class SolarLabSemanticActionBridgeTest {
                 hostedDebugModeApplied = false,
             )
         )
-        assertTrue(
+        assertFalse(
             shouldAttachRuntimeMirrorRenderHost(
                 runtimeSessionHandle = 0L,
+                hasMirrorScene = true,
+                hostedDebugModeEnabled = false,
+                hostedDebugModeApplied = false,
+            )
+        )
+        assertTrue(
+            shouldAttachRuntimeMirrorRenderHost(
+                runtimeSessionHandle = 42L,
                 hasMirrorScene = true,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,

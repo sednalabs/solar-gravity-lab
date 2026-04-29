@@ -65,6 +65,34 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.submitScene(frame.withLayerOptions(renderLayerOptions))
     }
 
+    fun updateRuntimeMirrorState(
+        sessionHandle: Long,
+        processingMode: RenderProcessingMode,
+        renderLayerOptions: RenderLayerOptions,
+        observerMode: ObserverMode,
+        selectedBodyId: String?,
+        interactionMode: SceneInteractionMode,
+        sceneFrame: RenderSceneFrame?,
+    ) {
+        activeSurface?.deferRendering {
+            bindRuntimeSessionHandle(sessionHandle)
+            setProcessingMode(processingMode)
+            setRenderLayerOptions(renderLayerOptions)
+            setObserverMode(observerMode)
+            setSelectedBodyId(selectedBodyId)
+            setInteractionMode(interactionMode)
+            sceneFrame?.let(::submitSceneFrame)
+        } ?: run {
+            bindRuntimeSessionHandle(sessionHandle)
+            setProcessingMode(processingMode)
+            setRenderLayerOptions(renderLayerOptions)
+            setObserverMode(observerMode)
+            setSelectedBodyId(selectedBodyId)
+            setInteractionMode(interactionMode)
+            sceneFrame?.let(::submitSceneFrame)
+        }
+    }
+
     fun resetScene() {
         sceneAssembler.clear()
         latestScene = null

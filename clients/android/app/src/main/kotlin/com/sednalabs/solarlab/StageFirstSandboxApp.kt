@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import android.graphics.Color as AndroidColor
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -56,7 +57,11 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
@@ -105,11 +110,49 @@ private val SelectionText = Color(0xFFFFD36B)
 private val HintText = Color(0xC29FB6C9)
 private val BodyText = Color(0xE6E8F7FF)
 private val SurfaceText = Color(0xFFF4FBFF)
+private val StageFieldBlue = Color(0xFF5E8CFF)
+private val StageFieldLine = Color(0xFF19324B)
 
 private val StageCompactWidthBreakpoint = 720.dp
 private val StageRendererTelemetryTailRegex =
     Regex("""\s*(?:[·|]\s*)?(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[=\[].*|compute[=\[].*|gp[=\[].*|cp[=\[].*|cam[=\[].*).*$""")
 private val StageRendererWhitespaceRegex = Regex("""\s+""")
+
+private const val STAGE_FIELD_GRID_LINE_COUNT = 10
+private const val STAGE_FIELD_GRID_LAST_INDEX = STAGE_FIELD_GRID_LINE_COUNT - 1
+private const val STAGE_FIELD_GRID_TOP_FRACTION = 0.08f
+private const val STAGE_FIELD_GRID_EXPANDED_BOTTOM_FRACTION = 0.58f
+private const val STAGE_FIELD_GRID_COLLAPSED_BOTTOM_FRACTION = 0.64f
+private const val STAGE_FIELD_GRID_ACTIVE_ALPHA = 0.24f
+private const val STAGE_FIELD_GRID_IDLE_ALPHA = 0.16f
+private const val STAGE_FIELD_GRID_SKEW_FRACTION = 0.10f
+private const val STAGE_FIELD_PRIMARY_CENTER_X_FRACTION = 0.70f
+private const val STAGE_FIELD_PRIMARY_CENTER_Y_FRACTION = 0.45f
+private const val STAGE_FIELD_ACTIVE_RADIUS_FRACTION = 0.42f
+private const val STAGE_FIELD_IDLE_RADIUS_FRACTION = 0.36f
+private const val STAGE_FIELD_PRIMARY_HALO_RADIUS_FACTOR = 1.25f
+private const val STAGE_FIELD_PRIMARY_HALO_ACTIVE_ALPHA = 0.055f
+private const val STAGE_FIELD_PRIMARY_HALO_IDLE_ALPHA = 0.035f
+private const val STAGE_FIELD_SECONDARY_HALO_RADIUS_FACTOR = 0.62f
+private const val STAGE_FIELD_SECONDARY_HALO_X_FRACTION = 0.26f
+private const val STAGE_FIELD_SECONDARY_HALO_Y_FRACTION = 0.24f
+private const val STAGE_FIELD_SECONDARY_HALO_ACTIVE_ALPHA = 0.050f
+private const val STAGE_FIELD_SECONDARY_HALO_IDLE_ALPHA = 0.030f
+private const val STAGE_FIELD_PRIMARY_ARC_START_DEGREES = 198f
+private const val STAGE_FIELD_PRIMARY_ARC_SWEEP_DEGREES = 122f
+private const val STAGE_FIELD_PRIMARY_ARC_ACTIVE_ALPHA = 0.18f
+private const val STAGE_FIELD_PRIMARY_ARC_IDLE_ALPHA = 0.11f
+private const val STAGE_FIELD_SECONDARY_ARC_RADIUS_FACTOR = 1.22f
+private const val STAGE_FIELD_SECONDARY_ARC_START_DEGREES = 246f
+private const val STAGE_FIELD_SECONDARY_ARC_SWEEP_DEGREES = 38f
+private const val STAGE_FIELD_SECONDARY_ARC_ACTIVE_ALPHA = 0.24f
+private const val STAGE_FIELD_SECONDARY_ARC_IDLE_ALPHA = 0.14f
+private const val STAGE_FIELD_SIGNAL_LINE_ACTIVE_ALPHA = 0.28f
+private const val STAGE_FIELD_SIGNAL_LINE_IDLE_ALPHA = 0.16f
+private const val STAGE_FIELD_SIGNAL_LINE_START_X_FRACTION = 0.18f
+private const val STAGE_FIELD_SIGNAL_LINE_START_Y_FRACTION = 0.33f
+private const val STAGE_FIELD_SIGNAL_LINE_END_X_FRACTION = 0.58f
+private const val STAGE_FIELD_SIGNAL_LINE_END_Y_FRACTION = 0.28f
 
 private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
 private const val COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.34f
@@ -567,6 +610,10 @@ private fun StageFirstSandboxLocalExperience(
                                     }
                                 }
 
+                                override fun onCameraNavigationModeChanged(mode: ObserverMode) {
+                                    observerMode = mode
+                                }
+
                                 override fun onPlacementGesture(
                                     startWorldPositionM: Vector3d,
                                     endWorldPositionM: Vector3d,
@@ -584,6 +631,11 @@ private fun StageFirstSandboxLocalExperience(
                 update = { view ->
                     renderHostView = view
                 },
+            )
+
+            StageTrajectoryFieldOverlay(
+                chromeMode = chromeMode,
+                authoringActive = placementSession != null,
             )
 
             StageOverlay(
@@ -725,14 +777,16 @@ private fun StageFirstSandboxLocalExperience(
                             onEnterRuntimeMirror?.invoke()
                         },
                         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON),
+                        colors = ButtonDefaults.textButtonColors(contentColor = SelectionText),
                     ) {
-                        Text("Enter mission renderer")
+                        Text("Enter renderer")
                     }
                 },
                 dismissButton = {
                     TextButton(
                         onClick = { immersivePromptVisible = false },
                         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CANCEL_BUTTON),
+                        colors = ButtonDefaults.textButtonColors(contentColor = HintText),
                     ) {
                         Text("Stay in sandbox")
                     }
@@ -744,6 +798,11 @@ private fun StageFirstSandboxLocalExperience(
                             "The live view keeps Vulkan rendering and acceleration telemetry visible while the sandbox remains ready for object editing.",
                     )
                 },
+                shape = RoundedCornerShape(34.dp),
+                containerColor = OverlayPanel,
+                tonalElevation = 0.dp,
+                titleContentColor = MissionText,
+                textContentColor = HintText,
             )
         }
 
@@ -829,6 +888,127 @@ private fun StageFirstSandboxLocalExperience(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun StageTrajectoryFieldOverlay(
+    chromeMode: StageChromeMode,
+    authoringActive: Boolean,
+) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val gridTop = size.height * STAGE_FIELD_GRID_TOP_FRACTION
+        val gridBottom = size.height * if (chromeMode == StageChromeMode.EXPANDED) {
+            STAGE_FIELD_GRID_EXPANDED_BOTTOM_FRACTION
+        } else {
+            STAGE_FIELD_GRID_COLLAPSED_BOTTOM_FRACTION
+        }
+        val gridAlpha = if (authoringActive) {
+            STAGE_FIELD_GRID_ACTIVE_ALPHA
+        } else {
+            STAGE_FIELD_GRID_IDLE_ALPHA
+        }
+        val gridStroke = 0.9.dp.toPx()
+
+        repeat(STAGE_FIELD_GRID_LINE_COUNT) { index ->
+            val fraction = index / STAGE_FIELD_GRID_LAST_INDEX.toFloat()
+            drawLine(
+                color = StageFieldLine.copy(alpha = gridAlpha),
+                start = Offset(size.width * fraction, gridTop),
+                end = Offset(size.width * (fraction + STAGE_FIELD_GRID_SKEW_FRACTION), gridBottom),
+                strokeWidth = gridStroke,
+                cap = StrokeCap.Round,
+            )
+        }
+
+        val fieldCenter = Offset(
+            size.width * STAGE_FIELD_PRIMARY_CENTER_X_FRACTION,
+            size.height * STAGE_FIELD_PRIMARY_CENTER_Y_FRACTION,
+        )
+        val fieldRadius = size.minDimension * if (authoringActive) {
+            STAGE_FIELD_ACTIVE_RADIUS_FRACTION
+        } else {
+            STAGE_FIELD_IDLE_RADIUS_FRACTION
+        }
+        drawCircle(
+            color = TimelineText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_PRIMARY_HALO_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_PRIMARY_HALO_IDLE_ALPHA
+                },
+            ),
+            radius = fieldRadius * STAGE_FIELD_PRIMARY_HALO_RADIUS_FACTOR,
+            center = fieldCenter,
+        )
+        drawCircle(
+            color = StageFieldBlue.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_SECONDARY_HALO_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_SECONDARY_HALO_IDLE_ALPHA
+                },
+            ),
+            radius = fieldRadius * STAGE_FIELD_SECONDARY_HALO_RADIUS_FACTOR,
+            center = Offset(
+                size.width * STAGE_FIELD_SECONDARY_HALO_X_FRACTION,
+                size.height * STAGE_FIELD_SECONDARY_HALO_Y_FRACTION,
+            ),
+        )
+
+        val orbitBox = Size(fieldRadius * 2f, fieldRadius * 2f)
+        val orbitTopLeft = Offset(fieldCenter.x - fieldRadius, fieldCenter.y - fieldRadius)
+        drawArc(
+            color = TimelineText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_PRIMARY_ARC_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_PRIMARY_ARC_IDLE_ALPHA
+                },
+            ),
+            startAngle = STAGE_FIELD_PRIMARY_ARC_START_DEGREES,
+            sweepAngle = STAGE_FIELD_PRIMARY_ARC_SWEEP_DEGREES,
+            useCenter = false,
+            topLeft = orbitTopLeft,
+            size = orbitBox,
+            style = Stroke(width = 1.35.dp.toPx(), cap = StrokeCap.Round),
+        )
+        val secondaryArcRadius = fieldRadius * STAGE_FIELD_SECONDARY_ARC_RADIUS_FACTOR
+        drawArc(
+            color = SelectionText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_SECONDARY_ARC_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_SECONDARY_ARC_IDLE_ALPHA
+                },
+            ),
+            startAngle = STAGE_FIELD_SECONDARY_ARC_START_DEGREES,
+            sweepAngle = STAGE_FIELD_SECONDARY_ARC_SWEEP_DEGREES,
+            useCenter = false,
+            topLeft = Offset(fieldCenter.x - secondaryArcRadius, fieldCenter.y - secondaryArcRadius),
+            size = Size(secondaryArcRadius * 2f, secondaryArcRadius * 2f),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+        )
+
+        drawLine(
+            color = TimelineText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_SIGNAL_LINE_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_SIGNAL_LINE_IDLE_ALPHA
+                },
+            ),
+            start = Offset(
+                size.width * STAGE_FIELD_SIGNAL_LINE_START_X_FRACTION,
+                size.height * STAGE_FIELD_SIGNAL_LINE_START_Y_FRACTION,
+            ),
+            end = Offset(
+                size.width * STAGE_FIELD_SIGNAL_LINE_END_X_FRACTION,
+                size.height * STAGE_FIELD_SIGNAL_LINE_END_Y_FRACTION,
+            ),
+            strokeWidth = 1.1.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
     }
 }
 
