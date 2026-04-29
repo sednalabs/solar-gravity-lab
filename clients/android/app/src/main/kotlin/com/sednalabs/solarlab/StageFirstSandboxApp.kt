@@ -118,6 +118,42 @@ private val StageRendererTelemetryTailRegex =
     Regex("""\s*(?:[·|]\s*)?(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[=\[].*|compute[=\[].*|gp[=\[].*|cp[=\[].*|cam[=\[].*).*$""")
 private val StageRendererWhitespaceRegex = Regex("""\s+""")
 
+private const val STAGE_FIELD_GRID_LINE_COUNT = 10
+private const val STAGE_FIELD_GRID_LAST_INDEX = STAGE_FIELD_GRID_LINE_COUNT - 1
+private const val STAGE_FIELD_GRID_TOP_FRACTION = 0.08f
+private const val STAGE_FIELD_GRID_EXPANDED_BOTTOM_FRACTION = 0.58f
+private const val STAGE_FIELD_GRID_COLLAPSED_BOTTOM_FRACTION = 0.64f
+private const val STAGE_FIELD_GRID_ACTIVE_ALPHA = 0.24f
+private const val STAGE_FIELD_GRID_IDLE_ALPHA = 0.16f
+private const val STAGE_FIELD_GRID_SKEW_FRACTION = 0.10f
+private const val STAGE_FIELD_PRIMARY_CENTER_X_FRACTION = 0.70f
+private const val STAGE_FIELD_PRIMARY_CENTER_Y_FRACTION = 0.45f
+private const val STAGE_FIELD_ACTIVE_RADIUS_FRACTION = 0.42f
+private const val STAGE_FIELD_IDLE_RADIUS_FRACTION = 0.36f
+private const val STAGE_FIELD_PRIMARY_HALO_RADIUS_FACTOR = 1.25f
+private const val STAGE_FIELD_PRIMARY_HALO_ACTIVE_ALPHA = 0.055f
+private const val STAGE_FIELD_PRIMARY_HALO_IDLE_ALPHA = 0.035f
+private const val STAGE_FIELD_SECONDARY_HALO_RADIUS_FACTOR = 0.62f
+private const val STAGE_FIELD_SECONDARY_HALO_X_FRACTION = 0.26f
+private const val STAGE_FIELD_SECONDARY_HALO_Y_FRACTION = 0.24f
+private const val STAGE_FIELD_SECONDARY_HALO_ACTIVE_ALPHA = 0.050f
+private const val STAGE_FIELD_SECONDARY_HALO_IDLE_ALPHA = 0.030f
+private const val STAGE_FIELD_PRIMARY_ARC_START_DEGREES = 198f
+private const val STAGE_FIELD_PRIMARY_ARC_SWEEP_DEGREES = 122f
+private const val STAGE_FIELD_PRIMARY_ARC_ACTIVE_ALPHA = 0.18f
+private const val STAGE_FIELD_PRIMARY_ARC_IDLE_ALPHA = 0.11f
+private const val STAGE_FIELD_SECONDARY_ARC_RADIUS_FACTOR = 1.22f
+private const val STAGE_FIELD_SECONDARY_ARC_START_DEGREES = 246f
+private const val STAGE_FIELD_SECONDARY_ARC_SWEEP_DEGREES = 38f
+private const val STAGE_FIELD_SECONDARY_ARC_ACTIVE_ALPHA = 0.24f
+private const val STAGE_FIELD_SECONDARY_ARC_IDLE_ALPHA = 0.14f
+private const val STAGE_FIELD_SIGNAL_LINE_ACTIVE_ALPHA = 0.28f
+private const val STAGE_FIELD_SIGNAL_LINE_IDLE_ALPHA = 0.16f
+private const val STAGE_FIELD_SIGNAL_LINE_START_X_FRACTION = 0.18f
+private const val STAGE_FIELD_SIGNAL_LINE_START_Y_FRACTION = 0.33f
+private const val STAGE_FIELD_SIGNAL_LINE_END_X_FRACTION = 0.58f
+private const val STAGE_FIELD_SIGNAL_LINE_END_Y_FRACTION = 0.28f
+
 private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
 private const val COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.34f
 private const val WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.38f
@@ -861,60 +897,115 @@ private fun StageTrajectoryFieldOverlay(
     authoringActive: Boolean,
 ) {
     Canvas(modifier = Modifier.fillMaxSize()) {
-        val gridTop = size.height * 0.08f
-        val gridBottom = size.height * if (chromeMode == StageChromeMode.EXPANDED) 0.58f else 0.64f
-        val gridAlpha = if (authoringActive) 0.24f else 0.16f
+        val gridTop = size.height * STAGE_FIELD_GRID_TOP_FRACTION
+        val gridBottom = size.height * if (chromeMode == StageChromeMode.EXPANDED) {
+            STAGE_FIELD_GRID_EXPANDED_BOTTOM_FRACTION
+        } else {
+            STAGE_FIELD_GRID_COLLAPSED_BOTTOM_FRACTION
+        }
+        val gridAlpha = if (authoringActive) {
+            STAGE_FIELD_GRID_ACTIVE_ALPHA
+        } else {
+            STAGE_FIELD_GRID_IDLE_ALPHA
+        }
         val gridStroke = 0.9.dp.toPx()
 
-        repeat(10) { index ->
-            val fraction = index / 9f
+        repeat(STAGE_FIELD_GRID_LINE_COUNT) { index ->
+            val fraction = index / STAGE_FIELD_GRID_LAST_INDEX.toFloat()
             drawLine(
                 color = StageFieldLine.copy(alpha = gridAlpha),
                 start = Offset(size.width * fraction, gridTop),
-                end = Offset(size.width * (fraction + 0.10f), gridBottom),
+                end = Offset(size.width * (fraction + STAGE_FIELD_GRID_SKEW_FRACTION), gridBottom),
                 strokeWidth = gridStroke,
                 cap = StrokeCap.Round,
             )
         }
 
-        val fieldCenter = Offset(size.width * 0.70f, size.height * 0.45f)
-        val fieldRadius = size.minDimension * if (authoringActive) 0.42f else 0.36f
+        val fieldCenter = Offset(
+            size.width * STAGE_FIELD_PRIMARY_CENTER_X_FRACTION,
+            size.height * STAGE_FIELD_PRIMARY_CENTER_Y_FRACTION,
+        )
+        val fieldRadius = size.minDimension * if (authoringActive) {
+            STAGE_FIELD_ACTIVE_RADIUS_FRACTION
+        } else {
+            STAGE_FIELD_IDLE_RADIUS_FRACTION
+        }
         drawCircle(
-            color = TimelineText.copy(alpha = if (authoringActive) 0.055f else 0.035f),
-            radius = fieldRadius * 1.25f,
+            color = TimelineText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_PRIMARY_HALO_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_PRIMARY_HALO_IDLE_ALPHA
+                },
+            ),
+            radius = fieldRadius * STAGE_FIELD_PRIMARY_HALO_RADIUS_FACTOR,
             center = fieldCenter,
         )
         drawCircle(
-            color = StageFieldBlue.copy(alpha = if (authoringActive) 0.050f else 0.030f),
-            radius = fieldRadius * 0.62f,
-            center = Offset(size.width * 0.26f, size.height * 0.24f),
+            color = StageFieldBlue.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_SECONDARY_HALO_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_SECONDARY_HALO_IDLE_ALPHA
+                },
+            ),
+            radius = fieldRadius * STAGE_FIELD_SECONDARY_HALO_RADIUS_FACTOR,
+            center = Offset(
+                size.width * STAGE_FIELD_SECONDARY_HALO_X_FRACTION,
+                size.height * STAGE_FIELD_SECONDARY_HALO_Y_FRACTION,
+            ),
         )
 
         val orbitBox = Size(fieldRadius * 2f, fieldRadius * 2f)
         val orbitTopLeft = Offset(fieldCenter.x - fieldRadius, fieldCenter.y - fieldRadius)
         drawArc(
-            color = TimelineText.copy(alpha = if (authoringActive) 0.18f else 0.11f),
-            startAngle = 198f,
-            sweepAngle = 122f,
+            color = TimelineText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_PRIMARY_ARC_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_PRIMARY_ARC_IDLE_ALPHA
+                },
+            ),
+            startAngle = STAGE_FIELD_PRIMARY_ARC_START_DEGREES,
+            sweepAngle = STAGE_FIELD_PRIMARY_ARC_SWEEP_DEGREES,
             useCenter = false,
             topLeft = orbitTopLeft,
             size = orbitBox,
             style = Stroke(width = 1.35.dp.toPx(), cap = StrokeCap.Round),
         )
+        val secondaryArcRadius = fieldRadius * STAGE_FIELD_SECONDARY_ARC_RADIUS_FACTOR
         drawArc(
-            color = SelectionText.copy(alpha = if (authoringActive) 0.24f else 0.14f),
-            startAngle = 246f,
-            sweepAngle = 38f,
+            color = SelectionText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_SECONDARY_ARC_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_SECONDARY_ARC_IDLE_ALPHA
+                },
+            ),
+            startAngle = STAGE_FIELD_SECONDARY_ARC_START_DEGREES,
+            sweepAngle = STAGE_FIELD_SECONDARY_ARC_SWEEP_DEGREES,
             useCenter = false,
-            topLeft = Offset(fieldCenter.x - fieldRadius * 1.22f, fieldCenter.y - fieldRadius * 1.22f),
-            size = Size(fieldRadius * 2.44f, fieldRadius * 2.44f),
+            topLeft = Offset(fieldCenter.x - secondaryArcRadius, fieldCenter.y - secondaryArcRadius),
+            size = Size(secondaryArcRadius * 2f, secondaryArcRadius * 2f),
             style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
         )
 
         drawLine(
-            color = TimelineText.copy(alpha = if (authoringActive) 0.28f else 0.16f),
-            start = Offset(size.width * 0.18f, size.height * 0.33f),
-            end = Offset(size.width * 0.58f, size.height * 0.28f),
+            color = TimelineText.copy(
+                alpha = if (authoringActive) {
+                    STAGE_FIELD_SIGNAL_LINE_ACTIVE_ALPHA
+                } else {
+                    STAGE_FIELD_SIGNAL_LINE_IDLE_ALPHA
+                },
+            ),
+            start = Offset(
+                size.width * STAGE_FIELD_SIGNAL_LINE_START_X_FRACTION,
+                size.height * STAGE_FIELD_SIGNAL_LINE_START_Y_FRACTION,
+            ),
+            end = Offset(
+                size.width * STAGE_FIELD_SIGNAL_LINE_END_X_FRACTION,
+                size.height * STAGE_FIELD_SIGNAL_LINE_END_Y_FRACTION,
+            ),
             strokeWidth = 1.1.dp.toPx(),
             cap = StrokeCap.Round,
         )
