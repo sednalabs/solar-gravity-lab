@@ -580,6 +580,9 @@ private fun StageFirstSandboxLocalExperience(
                 onToggleChrome = {
                     chromeModeName = chromeMode.toggle().name
                 },
+                onHideChrome = {
+                    chromeModeName = StageChromeMode.MINIMAL.name
+                },
                 onCycleTraceLayer = {
                     traceLayerModeName = traceLayerMode.next().name
                 },
@@ -851,6 +854,7 @@ private fun BoxScope.StageOverlay(
     modeButtonLabel: String? = null,
     onToggleMode: (() -> Unit)? = null,
     onToggleChrome: () -> Unit,
+    onHideChrome: () -> Unit,
     onCycleTraceLayer: () -> Unit,
     onSearch: () -> Unit,
     onDebug: () -> Unit,
@@ -872,10 +876,12 @@ private fun BoxScope.StageOverlay(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
+        val expandedDeckMaxHeight = maxHeight * if (compactLayout) 0.42f else 0.38f
+        val expandedDeckScrollState = rememberScrollState()
         val actionButtons: @Composable () -> Unit = {
             StageControlsButton(
-                label = "Hide controls",
-                onClick = onToggleChrome,
+                label = "Clean stage",
+                onClick = onHideChrome,
             )
             modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
                 StageActionButton(
@@ -1112,6 +1118,12 @@ private fun BoxScope.StageOverlay(
                         dense = true,
                     )
                     StageActionButton(label = "Fast", onClick = onFaster, enabled = !authoringActive, dense = true)
+                    StageActionButton(
+                        label = "Hide",
+                        onClick = onHideChrome,
+                        secondary = true,
+                        dense = true,
+                    )
                     StageControlsButton(
                         label = "More",
                         onClick = onToggleChrome,
@@ -1119,11 +1131,13 @@ private fun BoxScope.StageOverlay(
                     )
                 }
             }
-        } else {
+        } else if (chromeMode == StageChromeMode.EXPANDED) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    .heightIn(max = expandedDeckMaxHeight)
+                    .verticalScroll(expandedDeckScrollState)
                     .navigationBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1152,6 +1166,21 @@ private fun BoxScope.StageOverlay(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+            }
+        }
+
+        if (chromeMode == StageChromeMode.MINIMAL) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+            ) {
+                StageControlsButton(
+                    label = "Controls",
+                    onClick = onToggleChrome,
+                    dense = true,
+                )
             }
         }
     }

@@ -15,11 +15,13 @@ import androidx.compose.ui.unit.dp
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 
 internal enum class StageChromeMode {
+    MINIMAL,
     COLLAPSED,
     EXPANDED,
 }
 
 internal fun StageChromeMode.toggle(): StageChromeMode = when (this) {
+    StageChromeMode.MINIMAL -> StageChromeMode.COLLAPSED
     StageChromeMode.COLLAPSED -> StageChromeMode.EXPANDED
     StageChromeMode.EXPANDED -> StageChromeMode.COLLAPSED
 }
