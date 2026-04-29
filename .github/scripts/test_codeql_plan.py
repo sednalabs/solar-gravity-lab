@@ -89,6 +89,20 @@ class CodeqlPlanTests(unittest.TestCase):
         self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-actions-security.yml")
         self.assertEqual(rows[3]["config_file"], "./.github/codeql/codeql-python-security.yml")
 
+    def test_product_invariant_pack_change_forces_full_scan(self) -> None:
+        plan = run_plan(
+            [
+                ".github/codeql/packs/solar-actions-product-invariants/queries/"
+                "ValidationLabMissingStageFirstProofSurface.ql"
+            ]
+        )
+
+        self.assertEqual(plan["run_all_languages"], "true")
+        self.assertEqual(
+            matrix_languages(plan),
+            ["actions", "c-cpp", "java-kotlin", "python", "rust"],
+        )
+
     def test_incomplete_pr_metadata_forces_full_scan(self) -> None:
         plan = run_plan(["engine/physics/src/lib.rs"], expected_changed_files="2")
 
