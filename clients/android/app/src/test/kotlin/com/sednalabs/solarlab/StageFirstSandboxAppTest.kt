@@ -26,6 +26,12 @@ class StageFirstSandboxAppTest {
     }
 
     @Test
+    fun expandedStageDeckMaxHeightFractionKeepsPhoneStageDominant() {
+        assertEquals(0.34f, expandedStageDeckMaxHeightFraction(compactLayout = true))
+        assertEquals(0.38f, expandedStageDeckMaxHeightFraction(compactLayout = false))
+    }
+
+    @Test
     fun traceLayerModeNextCyclesFocusAllOff() {
         assertEquals(TraceLayerMode.ALL, TraceLayerMode.FOCUS.next())
         assertEquals(TraceLayerMode.OFF, TraceLayerMode.ALL.next())

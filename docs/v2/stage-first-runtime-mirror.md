@@ -42,6 +42,10 @@ system-edge horizontal swipe just to open the expanded command deck. The
 expanded compact command deck should wrap dense controls instead of hiding
 primary actions behind sideways scrolling; if a control is present only after a
 horizontal swipe, it is not discoverable enough for the stage-first surface.
+The expanded phone-width state should still leave the renderer dominant: keep a
+small mission chip near the top of the stage, put the cockpit actions in the
+bottom command deck, and provide an explicit `Less` control so the user can
+return to the collapsed rail without hiding the whole stage.
 
 Trace presentation is intentionally user-switchable:
 

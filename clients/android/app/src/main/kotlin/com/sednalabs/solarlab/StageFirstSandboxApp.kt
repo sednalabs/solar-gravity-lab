@@ -112,6 +112,8 @@ private val StageRendererTelemetryTailRegex =
 private val StageRendererWhitespaceRegex = Regex("""\s+""")
 
 private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
+private const val COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.34f
+private const val WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.38f
 private val BodyPlacementSessionSaver: Saver<BodyPlacementSession?, Any> = Saver(
     save = { session -> session?.toSaveableMap() ?: emptyMap<String, Any?>() },
     restore = { values ->
@@ -120,6 +122,9 @@ private val BodyPlacementSessionSaver: Saver<BodyPlacementSession?, Any> = Saver
             ?.let(BodyPlacementSession::restore)
     },
 )
+
+internal fun expandedStageDeckMaxHeightFraction(compactLayout: Boolean): Float =
+    if (compactLayout) COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION else WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION
 
 /**
  * Restored stage-first client that brings the interactive feature-lab surface back into the
@@ -916,12 +921,16 @@ private fun BoxScope.StageOverlay(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactLayout = maxWidth < StageCompactWidthBreakpoint
-        val expandedDeckMaxHeight = maxHeight * if (compactLayout) 0.42f else 0.38f
+        val expandedDeckMaxHeight = maxHeight * expandedStageDeckMaxHeightFraction(compactLayout)
         val expandedDeckScrollState = rememberScrollState()
         val actionButtons: @Composable () -> Unit = {
             StageControlsButton(
                 label = "Clean stage",
                 onClick = onHideChrome,
+            )
+            StageControlsButton(
+                label = "Less",
+                onClick = onToggleChrome,
             )
             modeButtonLabel?.takeIf { onToggleMode != null }?.let { label ->
                 StageActionButton(
@@ -1046,39 +1055,12 @@ private fun BoxScope.StageOverlay(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (compactLayout) {
-                    StagePanel(
+                    StageCollapsedSelectionChip(
+                        selectionCard = selectionCard,
+                        timelineText = timelineText,
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .widthIn(max = 360.dp)
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                    ) {
-                        Text(
-                            text = selectionCard.eyebrow,
-                            color = MissionText,
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = timelineText,
-                            color = TimelineText,
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = selectionCard.title,
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                            color = SelectionText,
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = selectionCard.detail,
-                            color = HintText,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    StageFloatingActionRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        content = actionButtons,
                     )
                 } else {
                     Row(
@@ -1204,7 +1186,12 @@ private fun BoxScope.StageOverlay(
             ) {
                 if (compactLayout) {
                     StageControlRail(compact = true) {
+                        actionButtons()
+                    }
+                    StageControlRail(compact = true) {
                         primaryControls()
+                    }
+                    StageControlRail(compact = true) {
                         secondaryControls()
                     }
                 } else {
