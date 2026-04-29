@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import android.graphics.Color as AndroidColor
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -56,7 +57,11 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
@@ -105,6 +110,8 @@ private val SelectionText = Color(0xFFFFD36B)
 private val HintText = Color(0xC29FB6C9)
 private val BodyText = Color(0xE6E8F7FF)
 private val SurfaceText = Color(0xFFF4FBFF)
+private val StageFieldBlue = Color(0xFF5E8CFF)
+private val StageFieldLine = Color(0xFF19324B)
 
 private val StageCompactWidthBreakpoint = 720.dp
 private val StageRendererTelemetryTailRegex =
@@ -586,6 +593,11 @@ private fun StageFirstSandboxLocalExperience(
                 },
             )
 
+            StageTrajectoryFieldOverlay(
+                chromeMode = chromeMode,
+                authoringActive = placementSession != null,
+            )
+
             StageOverlay(
                 timelineText = timelineText,
                 selectionCard = selectionCard,
@@ -726,7 +738,7 @@ private fun StageFirstSandboxLocalExperience(
                         },
                         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_IMMERSIVE_CONFIRM_BUTTON),
                     ) {
-                        Text("Enter mission renderer")
+                        Text("Enter renderer")
                     }
                 },
                 dismissButton = {
@@ -829,6 +841,72 @@ private fun StageFirstSandboxLocalExperience(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun StageTrajectoryFieldOverlay(
+    chromeMode: StageChromeMode,
+    authoringActive: Boolean,
+) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val gridTop = size.height * 0.08f
+        val gridBottom = size.height * if (chromeMode == StageChromeMode.EXPANDED) 0.58f else 0.64f
+        val gridAlpha = if (authoringActive) 0.24f else 0.16f
+        val gridStroke = 0.9.dp.toPx()
+
+        repeat(10) { index ->
+            val fraction = index / 9f
+            drawLine(
+                color = StageFieldLine.copy(alpha = gridAlpha),
+                start = Offset(size.width * fraction, gridTop),
+                end = Offset(size.width * (fraction + 0.10f), gridBottom),
+                strokeWidth = gridStroke,
+                cap = StrokeCap.Round,
+            )
+        }
+
+        val fieldCenter = Offset(size.width * 0.70f, size.height * 0.45f)
+        val fieldRadius = size.minDimension * if (authoringActive) 0.42f else 0.36f
+        drawCircle(
+            color = TimelineText.copy(alpha = if (authoringActive) 0.055f else 0.035f),
+            radius = fieldRadius * 1.25f,
+            center = fieldCenter,
+        )
+        drawCircle(
+            color = StageFieldBlue.copy(alpha = if (authoringActive) 0.050f else 0.030f),
+            radius = fieldRadius * 0.62f,
+            center = Offset(size.width * 0.26f, size.height * 0.24f),
+        )
+
+        val orbitBox = Size(fieldRadius * 2f, fieldRadius * 2f)
+        val orbitTopLeft = Offset(fieldCenter.x - fieldRadius, fieldCenter.y - fieldRadius)
+        drawArc(
+            color = TimelineText.copy(alpha = if (authoringActive) 0.18f else 0.11f),
+            startAngle = 198f,
+            sweepAngle = 122f,
+            useCenter = false,
+            topLeft = orbitTopLeft,
+            size = orbitBox,
+            style = Stroke(width = 1.35.dp.toPx(), cap = StrokeCap.Round),
+        )
+        drawArc(
+            color = SelectionText.copy(alpha = if (authoringActive) 0.24f else 0.14f),
+            startAngle = 246f,
+            sweepAngle = 38f,
+            useCenter = false,
+            topLeft = Offset(fieldCenter.x - fieldRadius * 1.22f, fieldCenter.y - fieldRadius * 1.22f),
+            size = Size(fieldRadius * 2.44f, fieldRadius * 2.44f),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+        )
+
+        drawLine(
+            color = TimelineText.copy(alpha = if (authoringActive) 0.28f else 0.16f),
+            start = Offset(size.width * 0.18f, size.height * 0.33f),
+            end = Offset(size.width * 0.58f, size.height * 0.28f),
+            strokeWidth = 1.1.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
     }
 }
 
