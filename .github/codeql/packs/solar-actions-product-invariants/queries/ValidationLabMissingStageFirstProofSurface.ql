@@ -13,7 +13,7 @@
 import actions
 
 predicate validationLabWorkflow(Workflow workflow) {
-  workflow.getFile().getRelativePath() = ".github/workflows/validation-lab.yml"
+  workflow.getRelativePath() = ".github/workflows/validation-lab.yml"
 }
 
 predicate mentionsAndroidValidationMode(Workflow workflow) {
