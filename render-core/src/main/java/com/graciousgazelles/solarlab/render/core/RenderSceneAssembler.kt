@@ -18,7 +18,10 @@ class RenderSceneAssembler(
         revisionCounter = 0L
     }
 
-    fun assemble(snapshot: SimulationSnapshot): RenderSceneFrame {
+    fun assemble(
+        snapshot: SimulationSnapshot,
+        placementPreview: RenderPlacementPreview? = null,
+    ): RenderSceneFrame {
         updateTrailHistory(snapshot)
         val revision = ++revisionCounter
 
@@ -44,6 +47,13 @@ class RenderSceneAssembler(
                 authoritative += renderBody
             }
         }
+        placementPreview?.toRenderBody()?.let { previewBody ->
+            if (placementPreview.isMassive) {
+                authoritative += previewBody
+            } else {
+                tracers += previewBody
+            }
+        }
 
         val trails = trackedTrailHistory.mapNotNull { (id, history) ->
             if (history.size < 2) {
@@ -57,7 +67,8 @@ class RenderSceneAssembler(
                     pointsM = history.toList(),
                 )
             }
-        }
+        }.toMutableList()
+        placementPreview?.toPreviewTrail()?.let(trails::add)
 
         return RenderSceneFrame(
             epochSeconds = snapshot.epochSeconds,
@@ -81,6 +92,30 @@ class RenderSceneAssembler(
             }
         }
     }
+}
+
+private fun RenderPlacementPreview.toRenderBody(): RenderBody = RenderBody(
+    id = bodyId,
+    name = name,
+    positionM = positionM,
+    velocityMps = velocityMps,
+    radiusM = radiusM,
+    colorArgb = colorArgb,
+    kind = kind,
+    isMassive = isMassive,
+    sourceMassKg = sourceMassKg,
+    alwaysVisible = true,
+)
+
+private fun RenderPlacementPreview.toPreviewTrail(): RenderTrail? {
+    if (forecastPointsM.size < 2) return null
+    return RenderTrail(
+        bodyId = bodyId,
+        colorArgb = colorArgb,
+        alpha = 0.78f,
+        pointsM = forecastPointsM,
+        alwaysVisible = true,
+    )
 }
 
 private fun BodyState.shouldTrackTrail(): Boolean = when {

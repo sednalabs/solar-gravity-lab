@@ -37,6 +37,21 @@ surface. The correct long-term direction is selectable placement planes:
 - host orbital plane
 - explicit numeric Z where needed
 
+Object insertion should also be staged, not committed on first touch. The
+expected flow is:
+
+- define the object's physical and visual parameters
+- stage a visual-only preview on the selected placement plane
+- refine position and initial velocity through tap/drag gestures or exact
+  numeric fields
+- show a short forecast path that updates with the staged state
+- keep placement previews visible even when ordinary trace layers are hidden
+- keep live drag previews non-committable until the gesture finishes
+- commit explicitly once the user accepts the initial conditions
+
+The staged preview must not mutate simulation body count, invariants,
+checkpoints, collision state, or trail history. It is a render aid until commit.
+
 ## Interaction principle
 
 Camera, picking, and placement should all preserve the same worldview as the

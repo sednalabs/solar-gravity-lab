@@ -52,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,12 +74,12 @@ import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.BodyState
 import com.graciousgazelles.solarlab.core.model.CollisionMode
 import com.graciousgazelles.solarlab.core.model.GravitationalRole
-import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.graciousgazelles.solarlab.core.model.TimelineMode
 import com.graciousgazelles.solarlab.feature.lab.LabFrame
 import com.graciousgazelles.solarlab.feature.lab.LabFrameListener
 import com.graciousgazelles.solarlab.feature.lab.LabSession
 import com.graciousgazelles.solarlab.feature.lab.TimelineStatus
+import com.graciousgazelles.solarlab.feature.lab.render.PlacementGestureUpdate
 import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListener
 import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
@@ -109,9 +110,15 @@ private val StageRendererTelemetryTailRegex =
     Regex("""\s*(?:[·|]\s*)?(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[=\[].*|compute[=\[].*|gp[=\[].*|cp[=\[].*|cam[=\[].*).*$""")
 private val StageRendererWhitespaceRegex = Regex("""\s+""")
 
-private const val PLACEMENT_DRAG_THRESHOLD_PX: Float = 24f
-private const val PLACEMENT_DRAG_LOOKAHEAD_SECONDS: Double = 30.0 * PhysicalConstants.DAY_SECONDS
 private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
+private val BodyPlacementSessionSaver: Saver<BodyPlacementSession?, Any> = Saver(
+    save = { session -> session?.toSaveableValues() ?: emptyList<Any?>() },
+    restore = { values ->
+        (values as? List<*>)
+            ?.takeIf { it.isNotEmpty() }
+            ?.let(BodyPlacementSession::restore)
+    },
+)
 
 /**
  * Restored stage-first client that brings the interactive feature-lab surface back into the
@@ -267,7 +274,9 @@ private fun StageFirstSandboxLocalExperience(
         var searchVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
         var immersivePromptVisible by rememberSaveable { mutableStateOf(false) }
-        var pendingAddDraft by remember { mutableStateOf<EditableBodyDraft?>(null) }
+        var placementSession by rememberSaveable(stateSaver = BodyPlacementSessionSaver) {
+            mutableStateOf<BodyPlacementSession?>(null)
+        }
         var bodyEditorState by remember { mutableStateOf<BodyEditorDialogState?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
@@ -284,10 +293,10 @@ private fun StageFirstSandboxLocalExperience(
         }
         val chromeMode = stageChromeModeFromName(chromeModeName)
         val traceLayerMode = traceLayerModeFromName(traceLayerModeName)
-        val renderLayerOptions = remember(traceLayerMode, selectedBodyId) {
+        val renderLayerOptions = remember(traceLayerMode, selectedBodyId, placementSession?.bodyId) {
             RenderLayerOptions(
                 traceLayerMode = traceLayerMode,
-                focusedBodyIds = setOfNotNull(selectedBodyId),
+                focusedBodyIds = setOfNotNull(selectedBodyId, placementSession?.bodyId),
             )
         }
 
@@ -299,7 +308,7 @@ private fun StageFirstSandboxLocalExperience(
             }
         }
         val maybeResumeAfterModalInteraction = {
-            if (pendingAddDraft != null || bodyEditorState != null) {
+            if (placementSession != null || bodyEditorState != null) {
                 Unit
             } else {
                 if (resumeSimulationAfterModalInteraction && !session.isRunning()) {
@@ -310,7 +319,7 @@ private fun StageFirstSandboxLocalExperience(
             }
         }
         val cancelPendingPlacement: (Boolean) -> Unit = { shouldResume ->
-            pendingAddDraft = null
+            placementSession = null
             renderHostView?.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
             if (shouldResume) {
                 maybeResumeAfterModalInteraction()
@@ -326,17 +335,17 @@ private fun StageFirstSandboxLocalExperience(
             )
         }
 
-        BackHandler(enabled = searchVisible || debugVisible || immersivePromptVisible || pendingAddDraft != null || bodyEditorState != null) {
+        BackHandler(enabled = searchVisible || debugVisible || immersivePromptVisible || placementSession != null || bodyEditorState != null) {
             when {
                 bodyEditorState != null -> {
                     bodyEditorState = null
-                    if (pendingAddDraft == null) {
+                    if (placementSession == null) {
                         maybeResumeAfterModalInteraction()
                     }
                 }
 
                 searchVisible -> searchVisible = false
-                pendingAddDraft != null -> cancelPendingPlacement(true)
+                placementSession != null -> cancelPendingPlacement(true)
                 immersivePromptVisible -> immersivePromptVisible = false
                 debugVisible -> debugVisible = false
             }
@@ -396,20 +405,27 @@ private fun StageFirstSandboxLocalExperience(
             renderHostView?.onHostResume()
         }
 
-        LaunchedEffect(latestFrame?.snapshot, renderHostView, renderLayerOptions) {
+        val placementPreview = remember(placementSession, latestFrame?.snapshot) {
+            placementSession?.toPlacementPreview(latestFrame?.snapshot?.bodies.orEmpty())
+        }
+
+        LaunchedEffect(latestFrame?.snapshot, renderHostView, renderLayerOptions, placementPreview) {
             latestFrame?.snapshot?.let { snapshot ->
                 renderHostView?.setRenderLayerOptions(renderLayerOptions)
-                renderHostView?.submitSnapshot(snapshot)
+                renderHostView?.submitSnapshot(
+                    snapshot = snapshot,
+                    placementPreview = placementPreview,
+                )
             }
         }
 
-        LaunchedEffect(selectedBodyId, observerMode, renderProcessingMode, pendingAddDraft, renderHostView) {
+        LaunchedEffect(selectedBodyId, observerMode, renderProcessingMode, placementSession, renderHostView) {
             renderHostView?.setSelectedBodyId(selectedBodyId)
             renderHostView?.setObserverMode(observerMode)
             renderHostView?.setProcessingMode(renderProcessingMode)
-            renderHostView?.setPlacementPlaneZ(pendingAddDraft?.positionM?.z ?: 0.0)
+            renderHostView?.setPlacementPlaneZ(placementSession?.draft?.positionM?.z ?: 0.0)
             renderHostView?.setInteractionMode(
-                if (pendingAddDraft == null) {
+                if (placementSession == null) {
                     SceneInteractionMode.NAVIGATE_AND_SELECT
                 } else {
                     SceneInteractionMode.PLACE_BODY
@@ -452,25 +468,30 @@ private fun StageFirstSandboxLocalExperience(
         }
 
         val frame = latestFrame
-        val selectionCard = remember(frame, selectedBodyId, pendingAddDraft) {
+        val selectionCard = remember(frame, selectedBodyId, placementSession) {
             buildSelectionCard(
                 frame = frame,
                 selectedBodyId = selectedBodyId,
-                pendingAddDraft = pendingAddDraft,
+                placementSession = placementSession,
             )
         }
         val timelineText = remember(frame) { buildTimelineText(frame?.timeline) }
         val diagnosticsText = remember(frame) { buildDiagnosticsText(frame) }
-        val interactionHintText = remember(pendingAddDraft) {
-            if (pendingAddDraft == null) {
-                "Pinch through Close→Deep scale bands, drag to pan, and use two fingers to orbit/tilt the stage. Tap a body to select it."
-            } else {
-                "Placement armed at the draft Z plane. Tap to place the new body, or drag to seed initial velocity."
+        val interactionHintText = remember(placementSession) {
+            when {
+                placementSession == null ->
+                    "Pinch through Close→Deep scale bands, drag to pan, and use two fingers to orbit/tilt the stage. Tap a body to select it."
+
+                placementSession?.hasStagePlacement == true ->
+                    "Preview staged. Tap or drag again to refine launch, use Adjust for exact values, then Commit object."
+
+                else ->
+                    "Placement staged at the draft Z plane. Tap to preview the object, or drag to seed initial velocity."
             }
         }
-        val authoringStatusText = remember(pendingAddDraft) {
-            pendingAddDraft?.let { draft ->
-                "Placement armed for ${draft.name} · ${draft.prettyRoleLabel()} · ${draft.prettyCategoryLabel()}"
+        val authoringStatusText = remember(placementSession) {
+            placementSession?.let { session ->
+                "Staging ${session.draft.name} · ${session.draft.prettyRoleLabel()} · ${session.draft.prettyCategoryLabel()}"
             } ?: "No pending authoring action."
         }
         val editorState = bodyEditorState
@@ -479,6 +500,31 @@ private fun StageFirstSandboxLocalExperience(
         }
         val backendHudStatus = remember(backendStatus) {
             compactStageBackendHudStatusText(backendStatus)
+        }
+        val commitPlacement = {
+            val stagedPlacement = placementSession
+            if (stagedPlacement?.canCommit == true) {
+                val body = stagedPlacement.toBodyState()
+                placementSession = null
+                renderHostView?.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
+                session.addBody(body)
+                selectedBodyId = body.id
+                observerMode = ObserverMode.FOLLOW_SELECTED
+                maybeResumeAfterModalInteraction()
+            }
+        }
+        val adjustPlacement = {
+            placementSession?.let { stagedPlacement ->
+                searchVisible = false
+                debugVisible = false
+                bodyEditorState = BodyEditorDialogState(
+                    draft = stagedPlacement.draftForAdjustment(),
+                    isNewBody = true,
+                )
+            }
+        }
+        val repositionPlacement = {
+            placementSession = placementSession?.reposition()
         }
 
         Box(
@@ -496,7 +542,7 @@ private fun StageFirstSandboxLocalExperience(
                         view.setInteractionListener(
                             object : RenderInteractionListener {
                                 override fun onBodySelectionChanged(bodyId: String?) {
-                                    if (pendingAddDraft != null) {
+                                    if (placementSession != null) {
                                         return
                                     }
                                     selectedBodyId = bodyId
@@ -509,32 +555,10 @@ private fun StageFirstSandboxLocalExperience(
                                     startWorldPositionM: Vector3d,
                                     endWorldPositionM: Vector3d,
                                     gestureDistancePx: Float,
-                                ) {
-                                    val draft = pendingAddDraft ?: return
-                                    val placedPosition = Vector3d(
-                                        x = startWorldPositionM.x,
-                                        y = startWorldPositionM.y,
-                                        z = draft.positionM.z,
-                                    )
-                                    val velocityFromDrag = if (gestureDistancePx >= PLACEMENT_DRAG_THRESHOLD_PX) {
-                                        val delta = endWorldPositionM - startWorldPositionM
-                                        Vector3d(
-                                            x = draft.velocityMps.x + (delta.x / PLACEMENT_DRAG_LOOKAHEAD_SECONDS),
-                                            y = draft.velocityMps.y + (delta.y / PLACEMENT_DRAG_LOOKAHEAD_SECONDS),
-                                            z = draft.velocityMps.z,
-                                        )
-                                    } else {
-                                        draft.velocityMps
-                                    }
-                                    val placedBody = draft.toBodyState(
-                                        positionOverrideM = placedPosition,
-                                        velocityOverrideMps = velocityFromDrag,
-                                    )
-                                    pendingAddDraft = null
-                                    view.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
-                                    session.addBody(placedBody)
-                                    selectedBodyId = placedBody.id
-                                    maybeResumeAfterModalInteraction()
+                                ) = Unit
+
+                                override fun onPlacementGestureUpdate(update: PlacementGestureUpdate) {
+                                    placementSession = placementSession?.applyGesture(update)
                                 }
                             },
                         )
@@ -556,17 +580,18 @@ private fun StageFirstSandboxLocalExperience(
                 chromeMode = chromeMode,
                 traceLayerMode = traceLayerMode,
                 isRunning = isRunning,
-                canStepBackward = pendingAddDraft == null && !isRunning && (frame?.timeline?.canStepBackward == true),
-                canStepForward = pendingAddDraft == null && !isRunning,
-                canStepOnce = pendingAddDraft == null && !isRunning,
+                canStepBackward = placementSession == null && !isRunning && (frame?.timeline?.canStepBackward == true),
+                canStepForward = placementSession == null && !isRunning,
+                canStepOnce = placementSession == null && !isRunning,
                 observerMode = observerMode,
-                observerButtonEnabled = pendingAddDraft == null && (selectedBodyId != null || observerMode != ObserverMode.FREE),
+                observerButtonEnabled = placementSession == null && (selectedBodyId != null || observerMode != ObserverMode.FREE),
                 searchVisible = searchVisible,
                 debugVisible = debugVisible,
-                searchEnabled = pendingAddDraft == null,
-                addButtonLabel = if (pendingAddDraft == null) "Add object" else "Cancel add",
-                editButtonEnabled = selectedBodyId != null && pendingAddDraft == null,
-                authoringActive = pendingAddDraft != null,
+                searchEnabled = placementSession == null,
+                addButtonLabel = "Add object",
+                editButtonEnabled = selectedBodyId != null && placementSession == null,
+                authoringActive = placementSession != null,
+                placementReady = placementSession?.canCommit == true,
                 modeButtonLabel = "Immersive",
                 onToggleMode = if (onEnterRuntimeMirror != null) {
                     {
@@ -589,12 +614,12 @@ private fun StageFirstSandboxLocalExperience(
                 onSearch = { searchVisible = true },
                 onDebug = { debugVisible = true },
                 onAddObject = {
-                    if (pendingAddDraft != null) {
-                        cancelPendingPlacement(true)
-                    } else {
-                        openAddBodyEditor()
-                    }
+                    openAddBodyEditor()
                 },
+                onCommitPlacement = commitPlacement,
+                onAdjustPlacement = adjustPlacement,
+                onRepositionPlacement = repositionPlacement,
+                onCancelPlacement = { cancelPendingPlacement(true) },
                 onEditSelected = {
                     selectedBody?.let { body ->
                         searchVisible = false
@@ -632,7 +657,7 @@ private fun StageFirstSandboxLocalExperience(
                     searchVisible = false
                     debugVisible = false
                     bodyEditorState = null
-                    pendingAddDraft = null
+                    placementSession = null
                     resumeSimulationAfterModalInteraction = false
                     selectedBodyId = null
                     observerMode = ObserverMode.FREE
@@ -740,21 +765,29 @@ private fun StageFirstSandboxLocalExperience(
                 editorState = editorState,
                 onDismiss = {
                     bodyEditorState = null
-                    if (pendingAddDraft == null) {
+                    if (placementSession == null) {
                         maybeResumeAfterModalInteraction()
                     }
                 },
                 onSave = { draft ->
                     if (editorState.isNewBody) {
                         if (draft.placeOnSceneAfterSave) {
-                            pendingAddDraft = draft
+                            placementSession = placementSession
+                                ?.withDraftValues(draft)
+                                ?: BodyPlacementSession.fromDraft(draft)
                             bodyEditorState = null
                             renderHostView?.setInteractionMode(SceneInteractionMode.PLACE_BODY)
                             maybeResumeAfterModalInteraction()
                         } else {
-                            val body = draft.toBodyState()
+                            val stagedPlacement = placementSession?.withDraftValues(draft)
+                            val body = stagedPlacement?.toBodyState() ?: draft.toBodyState()
+                            placementSession = null
+                            renderHostView?.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
                             session.addBody(body)
                             selectedBodyId = body.id
+                            if (stagedPlacement != null) {
+                                observerMode = ObserverMode.FOLLOW_SELECTED
+                            }
                             bodyEditorState = null
                             maybeResumeAfterModalInteraction()
                         }
@@ -851,6 +884,7 @@ private fun BoxScope.StageOverlay(
     addButtonLabel: String,
     editButtonEnabled: Boolean,
     authoringActive: Boolean,
+    placementReady: Boolean,
     modeButtonLabel: String? = null,
     onToggleMode: (() -> Unit)? = null,
     onToggleChrome: () -> Unit,
@@ -859,6 +893,10 @@ private fun BoxScope.StageOverlay(
     onSearch: () -> Unit,
     onDebug: () -> Unit,
     onAddObject: () -> Unit,
+    onCommitPlacement: () -> Unit,
+    onAdjustPlacement: () -> Unit,
+    onRepositionPlacement: () -> Unit,
+    onCancelPlacement: () -> Unit,
     onEditSelected: () -> Unit,
     onStartPause: () -> Unit,
     onStepOnce: () -> Unit,
@@ -923,17 +961,43 @@ private fun BoxScope.StageOverlay(
             StageActionButton(label = "Reset", onClick = onReset)
         }
         val secondaryControls: @Composable () -> Unit = {
-            StageActionButton(
-                label = addButtonLabel,
-                onClick = onAddObject,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON),
-                emphasized = authoringActive,
-            )
-            StageActionButton(
-                label = "Edit selected",
-                onClick = onEditSelected,
-                enabled = editButtonEnabled,
-            )
+            if (authoringActive) {
+                StageActionButton(
+                    label = if (placementReady) "Commit object" else "Tap stage first",
+                    onClick = onCommitPlacement,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_COMMIT_PLACEMENT_BUTTON),
+                    emphasized = true,
+                    enabled = placementReady,
+                )
+                StageActionButton(
+                    label = "Adjust",
+                    onClick = onAdjustPlacement,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADJUST_PLACEMENT_BUTTON),
+                )
+                StageActionButton(
+                    label = "Reposition",
+                    onClick = onRepositionPlacement,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_REPOSITION_PLACEMENT_BUTTON),
+                    enabled = placementReady,
+                )
+                StageActionButton(
+                    label = "Cancel",
+                    onClick = onCancelPlacement,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CANCEL_PLACEMENT_BUTTON),
+                    secondary = true,
+                )
+            } else {
+                StageActionButton(
+                    label = addButtonLabel,
+                    onClick = onAddObject,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON),
+                )
+                StageActionButton(
+                    label = "Edit selected",
+                    onClick = onEditSelected,
+                    enabled = editButtonEnabled,
+                )
+            }
             StageActionButton(label = "Step $stepQuantumLabel", onClick = onCycleStepQuantum, enabled = !authoringActive)
             StageActionButton(label = "Slower", onClick = onSlower, enabled = !authoringActive)
             StageActionButton(label = "Faster · $speedLabel", onClick = onFaster, enabled = !authoringActive)
@@ -1074,28 +1138,44 @@ private fun BoxScope.StageOverlay(
                     compact = true,
                     fillMaxWidth = false,
                 ) {
-                    StageActionButton(
-                        label = if (isRunning) "Pause" else "Start",
-                        onClick = onStartPause,
-                        emphasized = isRunning,
-                        enabled = !authoringActive,
-                        dense = true,
-                    )
-                    StageActionButton(label = "Slow", onClick = onSlower, enabled = !authoringActive, dense = true)
-                    StageTraceLayerButton(
-                        mode = traceLayerMode,
-                        compact = true,
-                        onClick = onCycleTraceLayer,
-                        enabled = !authoringActive,
-                        dense = true,
-                    )
-                    StageActionButton(label = "Fast", onClick = onFaster, enabled = !authoringActive, dense = true)
-                    StageActionButton(
-                        label = "Hide",
-                        onClick = onHideChrome,
-                        secondary = true,
-                        dense = true,
-                    )
+                    if (authoringActive) {
+                        StageActionButton(
+                            label = if (placementReady) "Commit" else "Place",
+                            onClick = onCommitPlacement,
+                            emphasized = true,
+                            enabled = placementReady,
+                            dense = true,
+                        )
+                        StageActionButton(label = "Adjust", onClick = onAdjustPlacement, dense = true)
+                        StageActionButton(
+                            label = "Move",
+                            onClick = onRepositionPlacement,
+                            enabled = placementReady,
+                            dense = true,
+                        )
+                        StageActionButton(label = "Cancel", onClick = onCancelPlacement, secondary = true, dense = true)
+                    } else {
+                        StageActionButton(
+                            label = if (isRunning) "Pause" else "Start",
+                            onClick = onStartPause,
+                            emphasized = isRunning,
+                            dense = true,
+                        )
+                        StageActionButton(label = "Slow", onClick = onSlower, dense = true)
+                        StageTraceLayerButton(
+                            mode = traceLayerMode,
+                            compact = true,
+                            onClick = onCycleTraceLayer,
+                            dense = true,
+                        )
+                        StageActionButton(label = "Fast", onClick = onFaster, dense = true)
+                        StageActionButton(
+                            label = "Hide",
+                            onClick = onHideChrome,
+                            secondary = true,
+                            dense = true,
+                        )
+                    }
                     StageControlsButton(
                         label = "More",
                         onClick = onToggleChrome,
@@ -1577,7 +1657,7 @@ private fun BodyEditorDialog(
                 )
                 Text(
                     text = if (editorState.isNewBody) {
-                        "Create a sandbox object, then either add it immediately or place it directly on the stage."
+                        "Define a sandbox object, then stage its placement before committing it to the simulation."
                     } else {
                         "Adjust the selected body without leaving the immersive stage."
                     },
@@ -1778,12 +1858,12 @@ private fun BodyEditorDialog(
                             )
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    text = "Place on scene after save",
+                                    text = "Stage placement before commit",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
-                                    text = "Save first, then tap or drag on the stage to place the new object.",
+                                    text = "Stage first, refine position and initial velocity on the stage, then commit.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1887,7 +1967,13 @@ private fun BodyEditorDialog(
                             )
                         },
                     ) {
-                        Text(if (editorState.isNewBody) "Save" else "Apply")
+                        Text(
+                            when {
+                                !editorState.isNewBody -> "Apply"
+                                placeOnSceneAfterSave -> "Stage placement"
+                                else -> "Add at coordinates"
+                            },
+                        )
                     }
                 }
             }
@@ -1973,19 +2059,19 @@ internal fun compactStageTimelineLabel(timelineText: String): String =
 private fun buildSelectionCard(
     frame: LabFrame?,
     selectedBodyId: String?,
-    pendingAddDraft: EditableBodyDraft?,
+    placementSession: BodyPlacementSession?,
 ): SelectionCardText {
-    if (pendingAddDraft != null) {
-        val placementLine = if (pendingAddDraft.placeOnSceneAfterSave) {
-            "Tap the stage to place it, or drag to seed initial velocity."
+    if (placementSession != null) {
+        val placementLine = if (placementSession.hasStagePlacement) {
+            "Ghost preview active. Drag again to tune launch, adjust exact values, or commit."
         } else {
-            "Save will add the body immediately using the values below."
+            "Tap to preview the object, or drag to stage position and initial velocity."
         }
         return SelectionCardText(
             eyebrow = "OBJECT PLACEMENT",
-            title = "Placement armed · ${pendingAddDraft.name}",
+            title = "Staging · ${placementSession.draft.name}",
             detail = listOf(
-                "${pendingAddDraft.prettyCategoryLabel()} · ${pendingAddDraft.prettyRoleLabel()}",
+                "${placementSession.draft.prettyCategoryLabel()} · ${placementSession.draft.prettyRoleLabel()}",
                 placementLine,
             ).joinToString(separator = "\n"),
         )

@@ -66,9 +66,6 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                if (interactionMode == SceneInteractionMode.PLACE_BODY) {
-                    return false
-                }
                 return zoomByInternal(detector.scaleFactor)
             }
         },
@@ -339,6 +336,20 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (interactionMode == SceneInteractionMode.PLACE_BODY) {
+            val multiTouchActive = event.pointerCount >= 2 || orbitGestureState != null
+            if (multiTouchActive) {
+                placementStartScreen?.let { activeStart ->
+                    dispatchPlacementUpdate(
+                        phase = PlacementGesturePhase.Cancelled,
+                        startScreen = activeStart,
+                        endScreen = event.x to event.y,
+                    )
+                }
+                placementStartScreen = null
+                val orbitHandled = handleOrbitTouch(event)
+                val scaled = scaleDetector.onTouchEvent(event)
+                return orbitHandled || scaled || true
+            }
             return handlePlacementTouch(event)
         }
         val multiTouchActive = event.pointerCount >= 2 || orbitGestureState != null
@@ -356,26 +367,63 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 placementStartScreen = event.x to event.y
+                dispatchPlacementUpdate(
+                    phase = PlacementGesturePhase.Started,
+                    startScreen = placementStartScreen ?: (event.x to event.y),
+                    endScreen = event.x to event.y,
+                )
+                return true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                dispatchPlacementUpdate(
+                    phase = PlacementGesturePhase.Changed,
+                    startScreen = placementStartScreen ?: (event.x to event.y),
+                    endScreen = event.x to event.y,
+                )
                 return true
             }
 
             MotionEvent.ACTION_UP -> {
-                val start = placementStartScreen ?: (event.x to event.y)
+                dispatchPlacementUpdate(
+                    phase = PlacementGesturePhase.Ended,
+                    startScreen = placementStartScreen ?: (event.x to event.y),
+                    endScreen = event.x to event.y,
+                )
                 placementStartScreen = null
-                val startWorld = screenToWorld(start)
-                val endWorld = screenToWorld(event.x to event.y)
-                val dx = event.x - start.first
-                val dy = event.y - start.second
-                interactionListener?.onPlacementGesture(startWorld, endWorld, sqrt((dx * dx) + (dy * dy)))
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                dispatchPlacementUpdate(
+                    phase = PlacementGesturePhase.Cancelled,
+                    startScreen = placementStartScreen ?: (event.x to event.y),
+                    endScreen = event.x to event.y,
+                )
                 placementStartScreen = null
                 return true
             }
         }
         return true
+    }
+
+    private fun dispatchPlacementUpdate(
+        phase: PlacementGesturePhase,
+        startScreen: Pair<Float, Float>,
+        endScreen: Pair<Float, Float>,
+    ) {
+        val startWorld = screenToWorld(startScreen)
+        val endWorld = screenToWorld(endScreen)
+        val dx = endScreen.first - startScreen.first
+        val dy = endScreen.second - startScreen.second
+        interactionListener?.onPlacementGestureUpdate(
+            PlacementGestureUpdate(
+                phase = phase,
+                startWorldPositionM = startWorld,
+                endWorldPositionM = endWorld,
+                gestureDistancePx = sqrt((dx * dx) + (dy * dy)),
+            ),
+        )
     }
 
     private fun handleOrbitTouch(event: MotionEvent): Boolean {

@@ -1,7 +1,17 @@
 package com.sednalabs.solarlab
 
+import com.graciousgazelles.solarlab.core.math.Vector3d
+import com.graciousgazelles.solarlab.core.model.BodyCategory
+import com.graciousgazelles.solarlab.core.model.BodyFactory
+import com.graciousgazelles.solarlab.core.model.BodyState
+import com.graciousgazelles.solarlab.core.model.GravitationalRole
+import com.graciousgazelles.solarlab.feature.lab.render.PlacementGesturePhase
+import com.graciousgazelles.solarlab.feature.lab.render.PlacementGestureUpdate
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -84,4 +94,147 @@ class StageFirstSandboxAppTest {
         )
         assertEquals("Trajectory stage", compactStageTimelineLabel(" \n\t "))
     }
+
+    @Test
+    fun placementSessionStagesGestureWithoutCommittingBody() {
+        val session = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault().copy(
+                positionM = Vector3d(0.0, 0.0, 12.0),
+                velocityMps = Vector3d(1.0, 2.0, 3.0),
+            ),
+            bodyId = "custom:test",
+        )
+
+        val staged = session.applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Ended,
+                startWorldPositionM = Vector3d(100.0, 200.0, 12.0),
+                endWorldPositionM = Vector3d(100.0 + PLACEMENT_DRAG_LOOKAHEAD_SECONDS, 200.0, 12.0),
+                gestureDistancePx = PLACEMENT_DRAG_THRESHOLD_PX + 1f,
+            ),
+        )
+
+        assertTrue(staged.canCommit)
+        assertEquals(Vector3d(100.0, 200.0, 12.0), staged.stagedPositionM)
+        assertEquals(2.0, staged.stagedVelocityMps.x, 0.0)
+        assertEquals(2.0, staged.stagedVelocityMps.y, 0.0)
+        assertEquals(3.0, staged.stagedVelocityMps.z, 0.0)
+
+        val committed = staged.toBodyState()
+        assertEquals("custom:test", committed.id)
+        assertEquals(staged.stagedPositionM, committed.positionM)
+        assertEquals(staged.stagedVelocityMps, committed.velocityMps)
+    }
+
+    @Test
+    fun placementSessionShowsDragPreviewButRequiresEndedGestureBeforeCommit() {
+        val dragging = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault(),
+            bodyId = "custom:test",
+        ).applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Changed,
+                startWorldPositionM = Vector3d(10.0, 20.0, 0.0),
+                endWorldPositionM = Vector3d(11.0, 20.0, 0.0),
+                gestureDistancePx = PLACEMENT_DRAG_THRESHOLD_PX + 1f,
+            ),
+        )
+
+        assertFalse(dragging.canCommit)
+        assertNotNull(dragging.toPlacementPreview(massiveBodies = emptyList()))
+
+        val cancelled = dragging.applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Cancelled,
+                startWorldPositionM = dragging.stagedPositionM,
+                endWorldPositionM = dragging.stagedPositionM,
+                gestureDistancePx = 0f,
+            ),
+        )
+        assertFalse(cancelled.canCommit)
+        assertNull(cancelled.toPlacementPreview(massiveBodies = emptyList()))
+    }
+
+    @Test
+    fun placementSessionRepositionClearsCommitReadinessButKeepsDraft() {
+        val staged = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault(),
+            bodyId = "custom:test",
+        ).applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Ended,
+                startWorldPositionM = Vector3d(1.0, 2.0, 0.0),
+                endWorldPositionM = Vector3d(1.0, 2.0, 0.0),
+                gestureDistancePx = 0f,
+            ),
+        )
+
+        val repositioning = staged.reposition()
+
+        assertFalse(repositioning.canCommit)
+        assertEquals("custom:test", repositioning.bodyId)
+        assertEquals(staged.draft, repositioning.draft)
+    }
+
+    @Test
+    fun draftTrajectoryProjectorBendsPreviewTowardMassiveBody() {
+        val attractor = body(
+            id = "sun",
+            massKg = 1.989e30,
+            positionM = Vector3d.ZERO,
+        )
+
+        val projected = DraftTrajectoryProjector.project(
+            startPositionM = Vector3d(149_597_870_700.0, 0.0, 0.0),
+            startVelocityMps = Vector3d(0.0, 29_780.0, 0.0),
+            massiveBodies = listOf(attractor),
+            horizonSeconds = 86_400.0,
+            sampleCount = 4,
+        )
+
+        assertEquals(Vector3d(149_597_870_700.0, 0.0, 0.0), projected.first())
+        assertEquals(4, projected.size)
+        assertTrue("Forecast should advance along the velocity vector", projected.last().y > 0.0)
+        assertTrue("Solar gravity should bend the preview inward", projected.last().x < projected.first().x)
+    }
+
+    @Test
+    fun placementPreviewIsVisualOnlyUntilCommit() {
+        val staged = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault(),
+            bodyId = "custom:test",
+        ).applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Ended,
+                startWorldPositionM = Vector3d(1.0, 2.0, 0.0),
+                endWorldPositionM = Vector3d(2.0, 2.0, 0.0),
+                gestureDistancePx = PLACEMENT_DRAG_THRESHOLD_PX + 1f,
+            ),
+        )
+
+        val preview = staged.toPlacementPreview(massiveBodies = emptyList())
+
+        assertNotNull(preview)
+        assertEquals("custom:test", preview?.bodyId)
+        assertEquals(Vector3d(1.0, 2.0, 0.0), preview?.positionM)
+        assertEquals(staged.draft.massKg, preview?.sourceMassKg ?: 0.0, 0.0)
+        assertEquals(32, preview?.forecastPointsM?.size)
+    }
+
+    private fun body(
+        id: String,
+        massKg: Double,
+        positionM: Vector3d,
+    ): BodyState = BodyState(
+        id = id,
+        name = id,
+        category = BodyCategory.STAR,
+        gravitationalRole = GravitationalRole.MASSIVE,
+        massKg = massKg,
+        radiusM = 1.0,
+        densityKgPerM3 = BodyFactory.densityFromMassAndRadius(massKg, 1.0),
+        positionM = positionM,
+        velocityMps = Vector3d.ZERO,
+        colorArgb = 0xFFFFFFFF.toInt(),
+    )
 }

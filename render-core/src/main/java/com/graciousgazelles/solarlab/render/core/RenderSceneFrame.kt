@@ -24,6 +24,7 @@ data class RenderBody(
     val isMassive: Boolean,
     val sourceMassKg: Double = 0.0,
     val hostBodyId: String? = null,
+    val alwaysVisible: Boolean = false,
 )
 
 data class RenderTrail(
@@ -31,6 +32,20 @@ data class RenderTrail(
     val colorArgb: Int,
     val alpha: Float,
     val pointsM: List<Vector3d>,
+    val alwaysVisible: Boolean = false,
+)
+
+data class RenderPlacementPreview(
+    val bodyId: String,
+    val name: String,
+    val positionM: Vector3d,
+    val velocityMps: Vector3d,
+    val radiusM: Double,
+    val colorArgb: Int,
+    val kind: RenderBodyKind,
+    val isMassive: Boolean,
+    val sourceMassKg: Double = 0.0,
+    val forecastPointsM: List<Vector3d>,
 )
 
 enum class TraceLayerMode {
@@ -61,8 +76,8 @@ fun RenderSceneFrame.withLayerOptions(options: RenderLayerOptions): RenderSceneF
     return when (options.traceLayerMode) {
         TraceLayerMode.ALL -> this
         TraceLayerMode.OFF -> copy(
-            tracerBodies = emptyList(),
-            trails = emptyList(),
+            tracerBodies = tracerBodies.filter { it.alwaysVisible },
+            trails = trails.filter { it.alwaysVisible },
         )
         TraceLayerMode.FOCUS -> {
             if (focusIds.isEmpty()) {
@@ -71,13 +86,13 @@ fun RenderSceneFrame.withLayerOptions(options: RenderLayerOptions): RenderSceneF
                 val focusedTracerBodies = tracerBodies.filter { body ->
                     val bodyId = body.id.lowercase(Locale.US)
                     val hostId = body.hostBodyId?.lowercase(Locale.US)
-                    bodyId in focusIds || (hostId != null && hostId in focusIds)
+                    body.alwaysVisible || bodyId in focusIds || (hostId != null && hostId in focusIds)
                 }
                 val focusedTrailIds = focusIds + focusedTracerBodies.map { it.id.lowercase(Locale.US) }
                 copy(
                     tracerBodies = focusedTracerBodies,
                     trails = trails.filter { trail ->
-                        trail.bodyId.lowercase(Locale.US) in focusedTrailIds
+                        trail.alwaysVisible || trail.bodyId.lowercase(Locale.US) in focusedTrailIds
                     },
                 )
             }
