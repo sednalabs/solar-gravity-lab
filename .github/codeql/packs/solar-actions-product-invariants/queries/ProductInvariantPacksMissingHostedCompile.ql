@@ -19,7 +19,7 @@ predicate codeqlQueryTestWorkflow(Workflow workflow) {
 predicate workflowScriptMentions(Workflow workflow, string pattern) {
   exists(Run run |
     run.getEnclosingWorkflow() = workflow and
-    run.getScript().regexpMatch(pattern)
+    run.getScript().getRawScript().regexpMatch(pattern)
   )
 }
 
