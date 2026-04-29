@@ -16,10 +16,17 @@ predicate codeqlQueryTestWorkflow(Workflow workflow) {
   workflow.getName() = "codeql-query-tests"
 }
 
-predicate workflowScriptMentions(Workflow workflow, string pattern) {
+predicate compilesActionsProductPack(Workflow workflow) {
   exists(Run run |
     run.getEnclosingWorkflow() = workflow and
-    run.getScript().getRawScript().regexpMatch(pattern)
+    run.getScript().getRawScript().regexpMatch("(?s).*solar-actions-product-invariants.*")
+  )
+}
+
+predicate compilesPythonProductPack(Workflow workflow) {
+  exists(Run run |
+    run.getEnclosingWorkflow() = workflow and
+    run.getScript().getRawScript().regexpMatch("(?s).*solar-python-product-invariants.*")
   )
 }
 
@@ -27,8 +34,8 @@ from Workflow workflow
 where
   codeqlQueryTestWorkflow(workflow) and
   not (
-    workflowScriptMentions(workflow, "(?s).*solar-actions-product-invariants.*") and
-    workflowScriptMentions(workflow, "(?s).*solar-python-product-invariants.*")
+    compilesActionsProductPack(workflow) and
+    compilesPythonProductPack(workflow)
   )
 select workflow,
   "The product-invariant CodeQL packs are not both covered by hosted query tests. Install, resolve, and compile them in codeql-query-tests before relying on their SARIF."

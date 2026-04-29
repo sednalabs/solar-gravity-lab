@@ -16,10 +16,24 @@ predicate validationPlanner(File file) {
   file.getRelativePath() = ".github/scripts/resolve_validation_lab_plan.py"
 }
 
-predicate fileMentions(File file, string pattern) {
+predicate plannerMentionsAndroid(File file) {
   exists(StringLiteral literal |
     literal.getEnclosingModule().getFile() = file and
-    literal.getText().regexpMatch(pattern)
+    literal.getText().regexpMatch("(?s).*android.*")
+  )
+}
+
+predicate plannerMentionsStage(File file) {
+  exists(StringLiteral literal |
+    literal.getEnclosingModule().getFile() = file and
+    literal.getText().regexpMatch("(?s).*stage.*")
+  )
+}
+
+predicate plannerMentionsStageFirstMirror(File file) {
+  exists(StringLiteral literal |
+    literal.getEnclosingModule().getFile() = file and
+    literal.getText().regexpMatch("(?s).*stage-first-mirror-on.*")
   )
 }
 
@@ -27,9 +41,9 @@ from File file
 where
   validationPlanner(file) and
   (
-    fileMentions(file, "(?s).*android.*") or
-    fileMentions(file, "(?s).*stage.*")
+    plannerMentionsAndroid(file) or
+    plannerMentionsStage(file)
   ) and
-  not fileMentions(file, "(?s).*stage-first-mirror-on.*")
+  not plannerMentionsStageFirstMirror(file)
 select file,
   "The validation planner handles Android or stage surfaces but does not preserve stage-first-mirror-on proof. Static CodeQL checks cannot replace visual acceptance."

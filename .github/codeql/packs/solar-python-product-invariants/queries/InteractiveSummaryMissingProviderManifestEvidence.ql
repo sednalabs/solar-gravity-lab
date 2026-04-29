@@ -17,10 +17,17 @@ predicate interactiveSummaryFile(File file) {
   file.getRelativePath() = ".github/scripts/test_interactive_session_summary.py"
 }
 
-predicate fileMentions(File file, string pattern) {
+predicate fileMentionsProviderManifest(File file) {
   exists(StringLiteral literal |
     literal.getEnclosingModule().getFile() = file and
-    literal.getText().regexpMatch(pattern)
+    literal.getText().regexpMatch("(?s).*provider_manifest.*")
+  )
+}
+
+predicate fileMentionsTaxonomySource(File file) {
+  exists(StringLiteral literal |
+    literal.getEnclosingModule().getFile() = file and
+    literal.getText().regexpMatch("(?s).*taxonomy_source.*")
   )
 }
 
@@ -28,8 +35,8 @@ from File file
 where
   interactiveSummaryFile(file) and
   not (
-    fileMentions(file, "(?s).*provider_manifest.*") and
-    fileMentions(file, "(?s).*taxonomy_source.*")
+    fileMentionsProviderManifest(file) and
+    fileMentionsTaxonomySource(file)
   )
 select file,
   "Interactive Android session summaries should preserve provider-manifest and taxonomy-source evidence for visual acceptance review."

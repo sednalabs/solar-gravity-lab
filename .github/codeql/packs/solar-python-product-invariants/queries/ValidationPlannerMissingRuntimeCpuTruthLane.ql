@@ -16,17 +16,24 @@ predicate validationPlanner(File file) {
   file.getRelativePath() = ".github/scripts/resolve_validation_lab_plan.py"
 }
 
-predicate fileMentions(File file, string pattern) {
+predicate plannerMentionsArm64(File file) {
   exists(StringLiteral literal |
     literal.getEnclosingModule().getFile() = file and
-    literal.getText().regexpMatch(pattern)
+    literal.getText().regexpMatch("(?s).*arm64.*")
+  )
+}
+
+predicate plannerMentionsRuntimeCpuTruth(File file) {
+  exists(StringLiteral literal |
+    literal.getEnclosingModule().getFile() = file and
+    literal.getText().regexpMatch("(?s).*runtime-cpu-truth.*")
   )
 }
 
 from File file
 where
   validationPlanner(file) and
-  fileMentions(file, "(?s).*arm64.*") and
-  not fileMentions(file, "(?s).*runtime-cpu-truth.*")
+  plannerMentionsArm64(file) and
+  not plannerMentionsRuntimeCpuTruth(file)
 select file,
   "The validation planner handles Arm64 surfaces but does not expose the runtime-cpu-truth lane. Hardware truth changes need a focused proof route."
