@@ -4,20 +4,20 @@ on:
   pull_request:
     paths:
       - ".github/codeql/**"
+      - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
-      - ".github/scripts/resolve_codeql_plan.py"
-      - ".github/scripts/test_codeql_plan.py"
       - ".github/scripts/inventory_claim_surfaces.py"
       - ".github/scripts/test_inventory_claim_surfaces.py"
+      - ".github/scripts/test_codeql_static_workflow.py"
   push:
     branches: ["main"]
     paths:
       - ".github/codeql/**"
+      - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
-      - ".github/scripts/resolve_codeql_plan.py"
-      - ".github/scripts/test_codeql_plan.py"
       - ".github/scripts/inventory_claim_surfaces.py"
       - ".github/scripts/test_inventory_claim_surfaces.py"
+      - ".github/scripts/test_codeql_static_workflow.py"
   workflow_dispatch:
 
 permissions:
@@ -126,9 +126,9 @@ jobs:
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-rust-claim-enforcement/queries/*.ql
 
-      - name: Run CodeQL planner tests
+      - name: Validate static CodeQL workflow
         shell: bash
-        run: python3 .github/scripts/test_codeql_plan.py
+        run: python3 .github/scripts/test_codeql_static_workflow.py
 
       - name: Run claim inventory tests
         shell: bash
@@ -193,6 +193,6 @@ jobs:
             echo "- resolved custom Actions, C/C++, Java/Kotlin, Python, and Rust claim-enforcement query suites"
             echo "- resolved custom Actions and Python product-invariant query suites"
             echo "- compiled custom CodeQL queries"
-            echo "- ran CodeQL planner unit tests"
+            echo "- validated static CodeQL workflow matrix"
             echo "- ran claim inventory tests, uploaded advisory baseline artifacts, and blocked PRs only on new missing-evidence claim surfaces"
           } >> "$GITHUB_STEP_SUMMARY"

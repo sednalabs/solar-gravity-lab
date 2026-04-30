@@ -18,146 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  plan:
-    name: CodeQL risk router
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      languages: ${{ steps.plan.outputs.languages }}
-      matrix: ${{ steps.plan.outputs.matrix }}
-      surfaces: ${{ steps.plan.outputs.surfaces }}
-      has_codeql_relevant_changes: ${{ steps.plan.outputs.has_codeql_relevant_changes }}
-      run_all_languages: ${{ steps.plan.outputs.run_all_languages }}
-      reason: ${{ steps.plan.outputs.reason }}
-    steps:
-      - name: Checkout trusted policy ref
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Resolve trusted PR file metadata
-        id: pr_files
-        if: ${{ github.event_name == 'pull_request' }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EXPECTED_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist/codeql-plan
-          raw_files="dist/codeql-plan/pr-files.jsonl"
-          : > "${raw_files}"
-
-          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
-              --jq '.[] | {filename, previous_filename}' > "${raw_files}"; then
-            python3 - "${raw_files}" >> "$GITHUB_OUTPUT" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          paths = []
-          for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-              if not line.strip():
-                  continue
-              payload = json.loads(line)
-              previous = payload.get("previous_filename")
-              filename = payload.get("filename")
-              if previous:
-                  paths.append(previous)
-              if filename:
-                  paths.append(filename)
-          unique_paths = sorted(set(paths))
-          print(f"changed_files_json={json.dumps(unique_paths, separators=(',', ':'))}")
-          PY
-          else
-            echo "changed_files_json=" >> "$GITHUB_OUTPUT"
-          fi
-
-          echo "expected_changed_files=${EXPECTED_CHANGED_FILES}" >> "$GITHUB_OUTPUT"
-
-      - name: Compute CodeQL plan
-        id: plan
-        shell: bash
-        env:
-          CHANGED_FILES_JSON: ${{ steps.pr_files.outputs.changed_files_json }}
-          EXPECTED_CHANGED_FILES: ${{ steps.pr_files.outputs.expected_changed_files }}
-        run: |
-          set -euo pipefail
-          if [[ -f .github/scripts/resolve_codeql_plan.py ]]; then
-            plan="$(
-              python3 .github/scripts/resolve_codeql_plan.py \
-                --event-name '${{ github.event_name }}' \
-                --changed-files-json "${CHANGED_FILES_JSON}" \
-                --expected-changed-files "${EXPECTED_CHANGED_FILES}"
-            )"
-          else
-            plan="$(python3 - <<'PY'
-          import json
-
-          languages = ("actions", "c-cpp", "java-kotlin", "python", "rust")
-          build_modes = {
-              "actions": "none",
-              "c-cpp": "none",
-              "java-kotlin": "manual",
-              "python": "none",
-              "rust": "none",
-          }
-          matrix = {
-              "include": [
-                  {
-                      "language": language,
-                      "build-mode": build_modes[language],
-                      "config_file": "./.github/codeql/codeql-config.yml",
-                  }
-                  for language in languages
-              ]
-          }
-          print(
-              json.dumps(
-                  {
-                      "matrix": json.dumps(matrix, separators=(",", ":")),
-                      "languages": ",".join(languages),
-                      "surfaces": "",
-                      "has_codeql_relevant_changes": "true",
-                      "run_all_languages": "true",
-                      "reason": "trusted CodeQL planner was absent on the base ref; full scan required",
-                  },
-                  separators=(",", ":"),
-              )
-          )
-          PY
-            )"
-          fi
-          PLAN_JSON="${plan}" python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import os
-
-          plan = json.loads(os.environ["PLAN_JSON"])
-          for key, value in plan.items():
-              print(f"{key}={value}")
-          PY
-
-      - name: Emit CodeQL routing summary
-        shell: bash
-        run: |
-          {
-            echo "## CodeQL routing"
-            echo "- languages: \`${{ steps.plan.outputs.languages || 'none' }}\`"
-            echo "- surfaces: \`${{ steps.plan.outputs.surfaces || 'none' }}\`"
-            echo "- full scan: \`${{ steps.plan.outputs.run_all_languages }}\`"
-            echo "- relevant changes: \`${{ steps.plan.outputs.has_codeql_relevant_changes }}\`"
-            echo "- reason: \`${{ steps.plan.outputs.reason }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
   analyze:
     name: Analyze (${{ matrix.language }})
-    needs: plan
-    if: ${{ needs.plan.outputs.has_codeql_relevant_changes == 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -166,7 +28,23 @@ jobs:
       security-events: write
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+            config_file: ./.github/codeql/codeql-actions-security.yml
+          - language: c-cpp
+            build-mode: none
+            config_file: ./.github/codeql/codeql-cpp-claim-enforcement.yml
+          - language: java-kotlin
+            build-mode: manual
+            config_file: ./.github/codeql/codeql-java-kotlin-claim-enforcement.yml
+          - language: python
+            build-mode: none
+            config_file: ./.github/codeql/codeql-python-security.yml
+          - language: rust
+            build-mode: none
+            config_file: ./.github/codeql/codeql-rust-claim-enforcement.yml
     env:
       ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
       ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -344,7 +222,6 @@ jobs:
   results:
     name: CodeQL required gate
     needs:
-      - plan
       - analyze
     if: always()
     runs-on: ubuntu-24.04
@@ -362,7 +239,7 @@ jobs:
             echo "### CodeQL timing"
             gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
               --jq '.jobs[]
-                | select(.name | test("^(CodeQL risk router|Analyze \\(|CodeQL required gate)"))
+                | select(.name | test("^(Analyze \\(|CodeQL required gate)"))
                 | "- \(.name): \(.status)/\(.conclusion // "") started=\(.started_at) completed=\(.completed_at // "")"'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -370,20 +247,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "languages: ${{ needs.plan.outputs.languages }}"
-          echo "surfaces : ${{ needs.plan.outputs.surfaces }}"
-          echo "full     : ${{ needs.plan.outputs.run_all_languages }}"
-          echo "reason   : ${{ needs.plan.outputs.reason }}"
           echo "analyze  : ${{ needs.analyze.result }}"
 
-          if [[ '${{ needs.plan.result }}' != 'success' ]]; then
-            echo 'CodeQL router failed.'
-            exit 1
-          fi
-          if [[ '${{ needs.plan.outputs.has_codeql_relevant_changes }}' != 'true' ]]; then
-            echo 'No CodeQL-relevant changes; analysis was not required.'
-            exit 0
-          fi
           if [[ '${{ needs.analyze.result }}' != 'success' ]]; then
             echo 'CodeQL analysis failed.'
             exit 1
