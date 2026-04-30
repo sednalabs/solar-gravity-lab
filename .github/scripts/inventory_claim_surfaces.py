@@ -24,7 +24,7 @@ CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 EVIDENCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("no_signature_generation_or_verification", re.compile(r"\b(signature|signed|cosign|signing)\b", re.IGNORECASE)),
-    ("no_digest_or_manifest_check", re.compile(r"\b(sha256|checksum|digest|manifest).*\b(check|validat|verify|match|mismatch)\b|\b(check|validat|verify|match|mismatch).*\b(sha256|checksum|digest|manifest)\b", re.IGNORECASE)),
+    ("no_digest_or_manifest_check", re.compile(r"\b(sha256|checksum|digest|manifest).*\b(check|validat|verify|match|mismatch)\b|\b(check|validat|verify|match|mismatch).*\b(sha256|checksum|digest|manifest)\b", re.IGNORECASE | re.DOTALL)),
     ("no_authz_or_identity_gate", re.compile(r"\b(auth|authorization|token|identity|commit_sha|artifact_name|target_sha|release_target|GITHUB_SHA)\b", re.IGNORECASE)),
     ("no_exact_ref_or_permission_guard", re.compile(r"\b(refs/heads/|github\.sha|GITHUB_SHA|permissions:|persist-credentials:\s*false|release_target)\b", re.IGNORECASE)),
     ("no_release_or_artifact_provenance", re.compile(r"\b(provenance|attestation|release-provenance|build-provenance)\b", re.IGNORECASE)),

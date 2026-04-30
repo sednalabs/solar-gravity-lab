@@ -123,30 +123,64 @@ predicate artifactOrReleaseContext(File file) {
   file.getRelativePath().regexpMatch("(?is).*(artifact|apk|release|publish|provenance|manifest|digest|sha256|checksum|asset|ref|commit).*")
 }
 
+predicate expressionText(File file, string text) {
+  exists(StringLiteral literal |
+    file = literal.getEnclosingModule().getFile() and
+    text = literal.getText()
+  )
+  or
+  exists(Function function |
+    file = function.getEnclosingModule().getFile() and
+    text = function.getName()
+  )
+  or
+  exists(Call call, Name name |
+    file = call.getEnclosingModule().getFile() and
+    call.getFunc() = name and
+    text = name.getId()
+  )
+  or
+  exists(Call call, Attribute attribute |
+    file = call.getEnclosingModule().getFile() and
+    call.getFunc() = attribute and
+    text = attribute.getName()
+  )
+  or
+  exists(Name name |
+    file = name.getEnclosingModule().getFile() and
+    text = name.getId()
+  )
+  or
+  exists(Attribute attribute |
+    file = attribute.getEnclosingModule().getFile() and
+    text = attribute.getName()
+  )
+}
+
 predicate hasDigestOrManifestEvidence(File file) {
-  exists(StringLiteral digestLiteral, StringLiteral guardLiteral |
-    file = digestLiteral.getEnclosingModule().getFile() and
-    file = guardLiteral.getEnclosingModule().getFile() and
-    digestLiteral.getText().regexpMatch("(?is).*(hashlib\\.sha256|sha256_file|apk_sha256|sha256sum).*") and
-    guardLiteral.getText().regexpMatch("(?is).*(mismatch|match|verify|validat|check|expected).*")
+  exists(string digestText, string guardText |
+    expressionText(file, digestText) and
+    expressionText(file, guardText) and
+    digestText.regexpMatch("(?is).*(hashlib\\.sha256|sha256|sha256_file|apk_sha256|sha256sum|checksum|digest|manifest|hexdigest).*") and
+    guardText.regexpMatch("(?is).*(compare_digest|mismatch|match|verify|validat|check|expected|raise|assert|SystemExit).*")
   )
 }
 
 predicate hasIdentityGateEvidence(File file) {
-  exists(StringLiteral identityLiteral, StringLiteral guardLiteral |
-    file = identityLiteral.getEnclosingModule().getFile() and
-    file = guardLiteral.getEnclosingModule().getFile() and
-    identityLiteral.getText().regexpMatch("(?is).*(commit_sha|artifact_name|workflow_file|run_id|github_sha|target_sha|release_target).*") and
-    guardLiteral.getText().regexpMatch("(?is).*(mismatch|must match|validate|expected|raise|SystemExit).*")
+  exists(string identityText, string guardText |
+    expressionText(file, identityText) and
+    expressionText(file, guardText) and
+    identityText.regexpMatch("(?is).*(commit_sha|artifact_name|workflow_file|run_id|github_sha|target_sha|release_target).*") and
+    guardText.regexpMatch("(?is).*(mismatch|must match|validate|expected|raise|assert|SystemExit).*")
   )
 }
 
 predicate hasProvenanceEvidence(File file) {
-  exists(StringLiteral provenanceLiteral, StringLiteral evidenceLiteral |
-    file = provenanceLiteral.getEnclosingModule().getFile() and
-    file = evidenceLiteral.getEnclosingModule().getFile() and
-    provenanceLiteral.getText().regexpMatch("(?is).*provenance.*") and
-    evidenceLiteral.getText().regexpMatch("(?is).*(json|manifest|sha256|digest|commit|artifact).*")
+  exists(string provenanceText, string evidenceText |
+    expressionText(file, provenanceText) and
+    expressionText(file, evidenceText) and
+    provenanceText.regexpMatch("(?is).*provenance.*") and
+    evidenceText.regexpMatch("(?is).*(json|manifest|sha256|digest|commit|artifact).*")
   )
 }
 

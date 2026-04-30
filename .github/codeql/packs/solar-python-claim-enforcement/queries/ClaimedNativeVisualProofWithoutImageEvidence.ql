@@ -24,13 +24,42 @@ predicate hasNativeVisualClaim(File file) {
   )
 }
 
-predicate hasNativeImageEvidence(File file) {
+predicate expressionText(File file, string text) {
   exists(StringLiteral literal |
     file = literal.getEnclosingModule().getFile() and
+    text = literal.getText()
+  )
+  or
+  exists(Call call, Name name |
+    file = call.getEnclosingModule().getFile() and
+    call.getFunc() = name and
+    text = name.getId()
+  )
+  or
+  exists(Call call, Attribute attribute |
+    file = call.getEnclosingModule().getFile() and
+    call.getFunc() = attribute and
+    text = attribute.getName()
+  )
+  or
+  exists(Name name |
+    file = name.getEnclosingModule().getFile() and
+    text = name.getId()
+  )
+  or
+  exists(Attribute attribute |
+    file = attribute.getEnclosingModule().getFile() and
+    text = attribute.getName()
+  )
+}
+
+predicate hasNativeImageEvidence(File file) {
+  exists(string text |
+    expressionText(file, text) and
     (
-      literal.getText().regexpMatch("(?is).*(inputImage|input_image|native image content|native-image).*") or
-      literal.getText().regexpMatch("(?is).*(android_observe|android_step).*(image|screenshot).*") or
-      literal.getText().regexpMatch("(?is).*(assert|verify|require).*(image|screenshot).*")
+      text.regexpMatch("(?is).*(inputImage|input_image|native image content|native-image).*") or
+      text.regexpMatch("(?is).*(android_observe|android_step).*") or
+      text.regexpMatch("(?is).*(image|screenshot|bitmap|pixel).*")
     )
   )
 }

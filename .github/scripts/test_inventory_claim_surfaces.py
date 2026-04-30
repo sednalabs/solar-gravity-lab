@@ -80,6 +80,24 @@ def test_recognizes_append_only_evidence() -> None:
         )
 
 
+def test_recognizes_multiline_digest_guard_evidence() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write(
+            root / ".github/scripts/download.py",
+            '"""verified artifact downloader"""\nsha256 = "abc"\nraise SystemExit("mismatch")\n',
+        )
+
+        payload = run_inventory(root)
+        entries = payload["entries"]
+
+        assert any(
+            entry["claim_class"] == "verified"
+            and entry["enforcement_status"] == "recognized_evidence_present"
+            for entry in entries
+        )
+
+
 def test_fail_on_new_uses_baseline() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -255,6 +273,7 @@ if __name__ == "__main__":
         test_detects_missing_verified_manifest_evidence,
         test_safe_math_name_is_inventory_only,
         test_recognizes_append_only_evidence,
+        test_recognizes_multiline_digest_guard_evidence,
         test_fail_on_new_uses_baseline,
         test_fail_on_new_status_allows_new_recognized_evidence,
         test_fail_on_new_surface_allows_plain_text_inventory,
