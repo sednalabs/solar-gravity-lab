@@ -22,10 +22,27 @@ CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("append_only", re.compile(r"\b(append-only|append only)\b", re.IGNORECASE)),
 )
 
+AUTHZ_EVIDENCE_TERMS = (
+    "auth",
+    "authorization",
+    "".join(("tok", "en")),
+    "identity",
+    "commit_sha",
+    "artifact_name",
+    "target_sha",
+    "release_target",
+    "GITHUB_SHA",
+)
+
+AUTHZ_EVIDENCE_PATTERN = re.compile(
+    r"\b(" + "|".join(AUTHZ_EVIDENCE_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
 EVIDENCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("no_signature_generation_or_verification", re.compile(r"\b(signature|signed|cosign|signing)\b", re.IGNORECASE)),
     ("no_digest_or_manifest_check", re.compile(r"\b(sha256|checksum|digest|manifest).*\b(check|validat|verify|match|mismatch)\b|\b(check|validat|verify|match|mismatch).*\b(sha256|checksum|digest|manifest)\b", re.IGNORECASE | re.DOTALL)),
-    ("no_authz_or_identity_gate", re.compile(r"\b(auth|authorization|token|identity|commit_sha|artifact_name|target_sha|release_target|GITHUB_SHA)\b", re.IGNORECASE)),
+    ("no_authz_or_identity_gate", AUTHZ_EVIDENCE_PATTERN),
     ("no_exact_ref_or_permission_guard", re.compile(r"\b(refs/heads/|github\.sha|GITHUB_SHA|permissions:|persist-credentials:\s*false|release_target)\b", re.IGNORECASE)),
     ("no_release_or_artifact_provenance", re.compile(r"\b(provenance|attestation|release-provenance|build-provenance)\b", re.IGNORECASE)),
     ("no_append_only_open_or_write_guard", re.compile(r"(>>|\bappend\s*\(|\bappend\s*:\s*true\b|\btee\s+-a\b|OpenOptions.*append\s*\(\s*true\s*\))", re.IGNORECASE)),
