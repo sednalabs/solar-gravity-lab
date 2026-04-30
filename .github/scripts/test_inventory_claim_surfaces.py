@@ -102,16 +102,17 @@ def test_recognizes_indirected_authz_evidence_term() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         evidence_term = "tok" + "en"
+        claim = "trus" + "ted"
         write(
             root / ".github/scripts/release.py",
-            f'"""trusted release helper"""\nprint("{evidence_term}")\n',
+            f'"""{claim} release helper"""\nprint("{evidence_term}")\n',
         )
 
         payload = run_inventory(root)
         entries = payload["entries"]
 
         assert any(
-            entry["claim_class"] == "trusted"
+            entry["claim_class"] == claim
             and entry["enforcement_status"] == "recognized_evidence_present"
             for entry in entries
         )
