@@ -120,7 +120,11 @@ internal data class BodyPlacementSession(
             colorArgb = draft.colorArgb.withAlpha(0xD9),
             kind = draft.category.toRenderBodyKind(),
             isMassive = draft.gravitationalRole == GravitationalRole.MASSIVE,
-            sourceMassKg = draft.massKg.coerceAtLeast(0.0),
+            sourceMassKg = if (draft.gravitationalRole == GravitationalRole.MASSIVE) {
+                draft.massKg.coerceAtLeast(0.0)
+            } else {
+                0.0
+            },
             forecastPointsM = DraftTrajectoryProjector.project(
                 startPositionM = stagedPositionM,
                 startVelocityMps = stagedVelocityMps,

@@ -23,6 +23,48 @@ The native world should own:
 - divergence / provenance bookkeeping
 - snapshot export for UI / persistence
 
+The Sandbox remains a first-class experience, not a disposable setup screen for
+Runtime. If the immersive view is hidden, unavailable, or removed from a given
+build, the Sandbox must still stand on its own as a polished teaching workbench
+over the same Rust-owned physics world.
+
+The physics authority is Rust-only. Kotlin may keep temporary oracle/reference
+tests while this migration lands, but production stepping, mutation, history,
+diagnostics, and render export should not be split between a Kotlin world and a
+Rust world.
+
+## Accuracy north star
+
+The long-term bar is an app that a NASA/JPL engineer would be happy to use to
+teach a precocious child about gravity and orbital mechanics. That means the app
+must be beautiful, interactive, and honest:
+
+- canonical teaching scenarios should be checked against committed
+  JPL/Horizons- or SPICE-derived reference fixtures;
+- every visible trajectory should be identifiable as authoritative integration,
+  short-horizon preview, historical trail, or visual guide;
+- solver and acceleration paths must publish their active backend and declared
+  accuracy profile;
+- outside a validated envelope, the app should say so rather than implying
+  mission-planning precision.
+
+In the unified world, tracer/probe bodies are allowed to carry display or
+inertial mass, but they must not silently perturb the canonical solar-system
+state unless the user explicitly creates them as massive bodies.
+
+The Rust runtime and FFI boundary therefore carry two separate masses:
+
+- `mass_kg`: the body's inertial/display mass used for density, labels, and
+  teaching affordances.
+- `source_mass_kg`: the mass that participates as a gravitational source in
+  authoritative integration.
+
+This distinction must survive every boundary crossing. Android/Kotlin
+`GravitationalRole.TRACER` maps to `source_mass_kg = 0`; massive bodies map to
+their physical mass unless the authoring UI or scenario pack explicitly asks for
+a different source mass. The visual class of a body must never be the only
+authority for whether it perturbs the world.
+
 ## Concrete migration seam
 
 Introduce a `NativeSimulationWorld` abstraction and make `LabSession` own an `AuthoritativeWorld` rather than directly owning the Kotlin simulation engine in the hot path.
@@ -87,11 +129,16 @@ sealed interface WorldCommand {
 
 1. Introduce `AuthoritativeWorld` seam in Kotlin.
 2. Add `NativeSimulationWorld` handle + JNI bridge.
+   The current ABI 10 bridge already exposes explicit spawn-body source mass;
+   future command surfaces should preserve this instead of deriving gravity
+   role from body class.
 3. Move Sandbox commands (add/edit/delete) onto native command batches.
 4. Move checkpoints / rewind / diagnostics fully native.
 5. Move timeline stepping + provenance / divergence tracking fully native.
 6. Switch Runtime and Sandbox to the same native world implementation.
 7. Keep Kotlin simulation as the reference/oracle path and test fallback, not the hot-path owner.
+8. Remove Kotlin simulation from production wiring once Rust-backed Sandbox,
+   Runtime, and reference-fixture validation all pass.
 
 ## Success condition
 

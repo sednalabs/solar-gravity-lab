@@ -815,7 +815,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 9
+        private const val ABI_VERSION = 10
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
@@ -921,6 +921,7 @@ sealed interface RuntimeCommand {
         val velocityZ: Double = 0.0,
         val massKg: Double,
         val radiusM: Double,
+        val sourceMassKg: Double = bodyClass.defaultSourceMassKg(massKg),
     ) : RuntimeCommand {
         override val label: String = "body.spawn"
     }
@@ -967,6 +968,17 @@ enum class RuntimeBodyClass(val nativeCode: Int) {
     Custom(7),
 }
 
+private fun RuntimeBodyClass.defaultSourceMassKg(massKg: Double): Double = when (this) {
+    RuntimeBodyClass.Tracer,
+    RuntimeBodyClass.Spacecraft,
+    RuntimeBodyClass.SmallBody -> 0.0
+    RuntimeBodyClass.Star,
+    RuntimeBodyClass.Planet,
+    RuntimeBodyClass.DwarfPlanet,
+    RuntimeBodyClass.Moon,
+    RuntimeBodyClass.Custom -> massKg
+}
+
 enum class RuntimeObserverMode(val nativeCode: Int) {
     Free(0),
     FollowSelected(1),
@@ -985,6 +997,7 @@ internal data class NativeRuntimeCommandPayload(
     val bodyVelocityY: Double = 0.0,
     val bodyVelocityZ: Double = 0.0,
     val bodyMassKg: Double = 0.0,
+    val bodySourceMassKg: Double = -1.0,
     val bodyRadiusM: Double = 0.0,
     val checkpointIdUtf8: ByteArray? = null,
     val checkpointLabelUtf8: ByteArray? = null,
@@ -1039,6 +1052,7 @@ private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when
         bodyVelocityY = velocityY,
         bodyVelocityZ = velocityZ,
         bodyMassKg = massKg,
+        bodySourceMassKg = sourceMassKg,
         bodyRadiusM = radiusM,
     )
 
@@ -1255,6 +1269,7 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         bodyVelocityY = command.bodyVelocityY,
         bodyVelocityZ = command.bodyVelocityZ,
         bodyMassKg = command.bodyMassKg,
+        bodySourceMassKg = command.bodySourceMassKg,
         bodyRadiusM = command.bodyRadiusM,
         checkpointIdUtf8 = command.checkpointIdUtf8,
         checkpointLabelUtf8 = command.checkpointLabelUtf8,
@@ -1312,6 +1327,7 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         bodyVelocityY: Double,
         bodyVelocityZ: Double,
         bodyMassKg: Double,
+        bodySourceMassKg: Double,
         bodyRadiusM: Double,
         checkpointIdUtf8: ByteArray?,
         checkpointLabelUtf8: ByteArray?,

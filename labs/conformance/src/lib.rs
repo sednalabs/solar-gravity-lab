@@ -648,6 +648,7 @@ fn propagate_with_added_body() -> WorldSnapshot {
                     body_id: BodyId("teacher-probe".into()),
                     body_class: BodyClass::Custom,
                     mass_kg: 5.0e10,
+                    source_mass_kg: 0.0,
                     radius_m: 50_000.0,
                     position_m: Vector3d {
                         x: 1.496e11 + 550_000_000.0,
@@ -844,13 +845,17 @@ fn seed_major_bodies(runtime: &mut WorldRuntime) {
         .bodies
         .into_iter()
         .filter(|body| body.body_class != BodyClass::SmallBody)
-        .map(|body| BodyState {
-            body_id: BodyId(body.body_id),
-            body_class: body.body_class,
-            mass_kg: body.mass_kg,
-            radius_m: body.radius_m,
-            position_m: body.position_m,
-            velocity_mps: body.velocity_mps,
+        .map(|body| {
+            let source_mass_kg = BodyState::default_source_mass_kg(&body.body_class, body.mass_kg);
+            BodyState {
+                body_id: BodyId(body.body_id),
+                body_class: body.body_class,
+                mass_kg: body.mass_kg,
+                source_mass_kg,
+                radius_m: body.radius_m,
+                position_m: body.position_m,
+                velocity_mps: body.velocity_mps,
+            }
         });
 
     for (index, body) in major_bodies.enumerate() {
