@@ -22,6 +22,8 @@ CODEQL_POLICY_PATHS = {
     ".github/scripts/test_codeql_plan.py",
     ".github/codeql/codeql-config.yml",
     ".github/codeql/codeql-rust-pr.yml",
+    ".github/codeql/codeql-actions-security.yml",
+    ".github/codeql/codeql-python-security.yml",
 }
 
 C_CPP_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}

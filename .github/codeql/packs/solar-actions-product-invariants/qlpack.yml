@@ -1,0 +1,7 @@
+name: sednalabs/solar-actions-product-invariants
+version: 0.0.1
+library: false
+dependencies:
+  codeql/actions-all: ^0.4.32
+suites: suites
+defaultSuiteFile: suites/solar-actions-product-invariants.qls

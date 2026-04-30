@@ -49,10 +49,12 @@ jobs:
           set -euo pipefail
           "${CODEQL}" pack install .github/codeql/packs/solar-actions-security
           "${CODEQL}" pack install .github/codeql/packs/solar-actions-claim-enforcement
+          "${CODEQL}" pack install .github/codeql/packs/solar-actions-product-invariants
           "${CODEQL}" pack install .github/codeql/packs/solar-cpp-claim-enforcement
           "${CODEQL}" pack install .github/codeql/packs/solar-java-kotlin-claim-enforcement
           "${CODEQL}" pack install .github/codeql/packs/solar-python-security
           "${CODEQL}" pack install .github/codeql/packs/solar-python-claim-enforcement
+          "${CODEQL}" pack install .github/codeql/packs/solar-python-product-invariants
           "${CODEQL}" pack install .github/codeql/packs/solar-rust-claim-enforcement
 
       - name: Resolve custom query suites
@@ -69,6 +71,9 @@ jobs:
             .github/codeql/packs/solar-actions-claim-enforcement/suites/solar-actions-claim-enforcement.qls
           "${CODEQL}" resolve queries \
             --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-actions-product-invariants/suites/solar-actions-product-invariants.qls
+          "${CODEQL}" resolve queries \
+            --search-path .github/codeql/packs \
             .github/codeql/packs/solar-cpp-claim-enforcement/suites/solar-cpp-claim-enforcement.qls
           "${CODEQL}" resolve queries \
             --search-path .github/codeql/packs \
@@ -79,6 +84,9 @@ jobs:
           "${CODEQL}" resolve queries \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-python-claim-enforcement/suites/solar-python-claim-enforcement.qls
+          "${CODEQL}" resolve queries \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-python-product-invariants/suites/solar-python-product-invariants.qls
           "${CODEQL}" resolve queries \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-rust-claim-enforcement/suites/solar-rust-claim-enforcement.qls
@@ -97,6 +105,9 @@ jobs:
             .github/codeql/packs/solar-actions-claim-enforcement/queries/*.ql
           "${CODEQL}" query compile \
             --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-actions-product-invariants/queries/*.ql
+          "${CODEQL}" query compile \
+            --search-path .github/codeql/packs \
             .github/codeql/packs/solar-cpp-claim-enforcement/queries/*.ql
           "${CODEQL}" query compile \
             --search-path .github/codeql/packs \
@@ -107,6 +118,9 @@ jobs:
           "${CODEQL}" query compile \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-python-claim-enforcement/queries/*.ql
+          "${CODEQL}" query compile \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-python-product-invariants/queries/*.ql
           "${CODEQL}" query compile \
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-rust-claim-enforcement/queries/*.ql
@@ -146,6 +160,7 @@ jobs:
             echo
             echo "- resolved custom Actions and Python security query suites"
             echo "- resolved custom Actions, C/C++, Java/Kotlin, Python, and Rust claim-enforcement query suites"
+            echo "- resolved custom Actions and Python product-invariant query suites"
             echo "- compiled custom CodeQL queries"
             echo "- ran CodeQL planner unit tests"
             echo "- ran claim inventory tests and uploaded advisory baseline artifacts"
