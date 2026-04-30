@@ -127,17 +127,20 @@ class StageFirstSandboxAppTest {
             bodyId = "custom:test",
         )
 
+        val startWorldPosition = Vector3d(100.0, 200.0, 12.0)
+        val endWorldPosition = startWorldPosition.copy(x = startWorldPosition.x + PLACEMENT_DRAG_LOOKAHEAD_SECONDS)
         val staged = session.applyGesture(
             PlacementGestureUpdate(
                 phase = PlacementGesturePhase.Ended,
-                startWorldPositionM = Vector3d(100.0, 200.0, 12.0),
-                endWorldPositionM = Vector3d(100.0 + PLACEMENT_DRAG_LOOKAHEAD_SECONDS, 200.0, 12.0),
+                startWorldPositionM = startWorldPosition,
+                endWorldPositionM = endWorldPosition,
                 gestureDistancePx = PLACEMENT_DRAG_THRESHOLD_PX + 1f,
             ),
         )
 
         assertTrue(staged.canCommit)
         assertEquals(Vector3d(100.0, 200.0, 12.0), staged.stagedPositionM)
+        // Gesture drag defines planar staged velocity; z remains from the draft velocity.
         assertEquals(2.0, staged.stagedVelocityMps.x, 0.0)
         assertEquals(2.0, staged.stagedVelocityMps.y, 0.0)
         assertEquals(3.0, staged.stagedVelocityMps.z, 0.0)
@@ -299,8 +302,13 @@ class StageFirstSandboxAppTest {
 
         assertEquals(Vector3d(149_597_870_700.0, 0.0, 0.0), projected.first())
         assertEquals(4, projected.size)
+        val inwardDisplacementM = projected.first().x - projected.last().x
         assertTrue("Forecast should advance along the velocity vector", projected.last().y > 0.0)
         assertTrue("Solar gravity should bend the preview inward", projected.last().x < projected.first().x)
+        assertTrue(
+            "Solar gravity should produce a meaningful inward deflection over one day",
+            inwardDisplacementM > 1_000_000.0,
+        )
     }
 
     @Test
