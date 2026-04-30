@@ -140,9 +140,12 @@ class StageFirstSandboxAppTest {
 
         assertTrue(staged.canCommit)
         assertEquals(Vector3d(100.0, 200.0, 12.0), staged.stagedPositionM)
-        // Gesture drag defines planar staged velocity; z remains from the draft velocity.
-        assertEquals(2.0, staged.stagedVelocityMps.x, 0.0)
-        assertEquals(2.0, staged.stagedVelocityMps.y, 0.0)
+        // Gesture drag defines planar staged velocity as (end - start) / lookahead;
+        // z remains from the draft velocity.
+        val expectedVelocityX = (endWorldPosition.x - startWorldPosition.x) / PLACEMENT_DRAG_LOOKAHEAD_SECONDS
+        val expectedVelocityY = (endWorldPosition.y - startWorldPosition.y) / PLACEMENT_DRAG_LOOKAHEAD_SECONDS
+        assertEquals(expectedVelocityX, staged.stagedVelocityMps.x, 0.0)
+        assertEquals(expectedVelocityY, staged.stagedVelocityMps.y, 0.0)
         assertEquals(3.0, staged.stagedVelocityMps.z, 0.0)
 
         val committed = staged.toBodyState()
