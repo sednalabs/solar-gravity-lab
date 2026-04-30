@@ -45,18 +45,21 @@ class CodeqlPlanTests(unittest.TestCase):
         self.assertEqual(plan["has_codeql_relevant_changes"], "false")
         self.assertEqual(matrix_languages(plan), [])
 
-    def test_rust_only_pr_uses_rust_fast_config(self) -> None:
+    def test_rust_only_pr_uses_full_category_parity(self) -> None:
         plan = run_plan(["engine/physics/src/lib.rs"])
         rows = json.loads(plan["matrix"])["include"]
 
-        self.assertEqual(matrix_languages(plan), ["rust"])
-        self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-rust-pr.yml")
-        self.assertEqual(plan["run_all_languages"], "false")
+        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
+        self.assertEqual(rows[4]["config_file"], "./.github/codeql/codeql-config.yml")
+        self.assertEqual(plan["run_all_languages"], "true")
+        self.assertIn("category parity", plan["reason"])
 
-    def test_android_pr_selects_java_kotlin(self) -> None:
+    def test_android_pr_uses_full_category_parity(self) -> None:
         plan = run_plan(["clients/android/app/src/main/java/com/example/Stage.kt"])
 
-        self.assertEqual(matrix_languages(plan), ["java-kotlin"])
+        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
+        self.assertEqual(plan["run_all_languages"], "true")
+        self.assertIn("category parity", plan["reason"])
 
     def test_actions_pr_uses_custom_actions_security_config(self) -> None:
         plan = run_plan([".github/workflows/prerelease-apk.yml"])
@@ -65,17 +68,19 @@ class CodeqlPlanTests(unittest.TestCase):
         self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
         self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-actions-security.yml")
 
-    def test_python_pr_uses_custom_python_security_config(self) -> None:
+    def test_python_pr_uses_full_category_parity_with_custom_python_security_config(self) -> None:
         plan = run_plan([".github/scripts/write_validation_summary.py"])
         rows = json.loads(plan["matrix"])["include"]
 
-        self.assertEqual(matrix_languages(plan), ["python"])
-        self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-python-security.yml")
+        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
+        self.assertEqual(rows[3]["config_file"], "./.github/codeql/codeql-python-security.yml")
+        self.assertEqual(plan["run_all_languages"], "true")
 
-    def test_proto_boundary_selects_android_and_rust_consumers(self) -> None:
+    def test_proto_boundary_uses_full_category_parity(self) -> None:
         plan = run_plan(["proto/runtime.proto"])
 
-        self.assertEqual(matrix_languages(plan), ["java-kotlin", "rust"])
+        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
+        self.assertEqual(plan["run_all_languages"], "true")
 
     def test_codeql_policy_change_forces_full_scan(self) -> None:
         plan = run_plan([".github/codeql/codeql-config.yml"])

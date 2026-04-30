@@ -144,10 +144,14 @@ def pull_request_plan(changed_files: list[str]) -> dict[str, str]:
         )
     return plan(
         event_name="pull_request",
-        languages=summary.codeql_languages,
-        full_scan=False,
+        languages=ALL_CODEQL_LANGUAGES,
+        full_scan=True,
         has_relevant_changes=True,
-        reason=f"matched changed surfaces for {','.join(summary.codeql_languages)}",
+        reason=(
+            "matched changed surfaces for "
+            f"{','.join(summary.codeql_languages)}; "
+            "full scan required for CodeQL category parity"
+        ),
         surfaces=surfaces,
     )
 
