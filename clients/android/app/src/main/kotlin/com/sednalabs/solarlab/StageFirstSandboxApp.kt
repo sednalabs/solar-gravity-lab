@@ -2316,13 +2316,12 @@ private fun StagePlacementPrimer(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun StageEditorChipRow(content: @Composable () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         content()
     }
