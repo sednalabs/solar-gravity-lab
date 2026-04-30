@@ -3,5 +3,6 @@ name: solar-gravity-lab-codeql-actions-security
 queries:
   - uses: security-and-quality
   - uses: ./.github/codeql/packs/solar-actions-security/suites/solar-actions-security.qls
+  - uses: ./.github/codeql/packs/solar-actions-claim-enforcement/suites/solar-actions-claim-enforcement.qls
 
 threat-models: local

@@ -3,5 +3,6 @@ name: solar-gravity-lab-codeql-python-security
 queries:
   - uses: security-and-quality
   - uses: ./.github/codeql/packs/solar-python-security/suites/solar-python-security.qls
+  - uses: ./.github/codeql/packs/solar-python-claim-enforcement/suites/solar-python-claim-enforcement.qls
 
 threat-models: local

@@ -7,6 +7,8 @@ on:
       - ".github/workflows/codeql-query-tests.yml"
       - ".github/scripts/resolve_codeql_plan.py"
       - ".github/scripts/test_codeql_plan.py"
+      - ".github/scripts/inventory_claim_surfaces.py"
+      - ".github/scripts/test_inventory_claim_surfaces.py"
   push:
     branches: ["main"]
     paths:
@@ -14,6 +16,8 @@ on:
       - ".github/workflows/codeql-query-tests.yml"
       - ".github/scripts/resolve_codeql_plan.py"
       - ".github/scripts/test_codeql_plan.py"
+      - ".github/scripts/inventory_claim_surfaces.py"
+      - ".github/scripts/test_inventory_claim_surfaces.py"
   workflow_dispatch:
 
 permissions:
@@ -44,7 +48,9 @@ jobs:
         run: |
           set -euo pipefail
           "${CODEQL}" pack install .github/codeql/packs/solar-actions-security
+          "${CODEQL}" pack install .github/codeql/packs/solar-actions-claim-enforcement
           "${CODEQL}" pack install .github/codeql/packs/solar-python-security
+          "${CODEQL}" pack install .github/codeql/packs/solar-python-claim-enforcement
 
       - name: Resolve custom query suites
         shell: bash
@@ -57,7 +63,13 @@ jobs:
             .github/codeql/packs/solar-actions-security/suites/solar-actions-security.qls
           "${CODEQL}" resolve queries \
             --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-actions-claim-enforcement/suites/solar-actions-claim-enforcement.qls
+          "${CODEQL}" resolve queries \
+            --search-path .github/codeql/packs \
             .github/codeql/packs/solar-python-security/suites/solar-python-security.qls
+          "${CODEQL}" resolve queries \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-python-claim-enforcement/suites/solar-python-claim-enforcement.qls
 
       - name: Compile custom queries
         shell: bash
@@ -70,11 +82,40 @@ jobs:
             .github/codeql/packs/solar-actions-security/queries/*.ql
           "${CODEQL}" query compile \
             --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-actions-claim-enforcement/queries/*.ql
+          "${CODEQL}" query compile \
+            --search-path .github/codeql/packs \
             .github/codeql/packs/solar-python-security/queries/*.ql
+          "${CODEQL}" query compile \
+            --search-path .github/codeql/packs \
+            .github/codeql/packs/solar-python-claim-enforcement/queries/*.ql
 
       - name: Run CodeQL planner tests
         shell: bash
         run: python3 .github/scripts/test_codeql_plan.py
+
+      - name: Run claim inventory tests
+        shell: bash
+        run: python3 .github/scripts/test_inventory_claim_surfaces.py
+
+      - name: Generate claim inventory baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 .github/scripts/inventory_claim_surfaces.py \
+            --format github-summary,json \
+            --output dist/claim-surfaces.json \
+            --baseline-output dist/claim-enforcement-baseline.json
+
+      - name: Upload claim inventory baseline
+        uses: actions/upload-artifact@v7
+        with:
+          name: claim-enforcement-baseline
+          path: |
+            dist/claim-surfaces.json
+            dist/claim-enforcement-baseline.json
+          if-no-files-found: error
 
       - name: Emit summary
         shell: bash
@@ -82,7 +123,9 @@ jobs:
           {
             echo "## codeql-query-tests"
             echo
-            echo "- resolved custom Actions and Python query suites"
+            echo "- resolved custom Actions and Python security query suites"
+            echo "- resolved custom Actions and Python claim-enforcement query suites"
             echo "- compiled custom CodeQL queries"
             echo "- ran CodeQL planner unit tests"
+            echo "- ran claim inventory tests and uploaded advisory baseline artifacts"
           } >> "$GITHUB_STEP_SUMMARY"
