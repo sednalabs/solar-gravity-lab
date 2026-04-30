@@ -22,12 +22,25 @@ architecture or validation target on this branch.
 
 - session and branch state
 - command application
+- the authoritative distinction between display/inertial mass and gravitational
+  source mass
 - checkpoints and history records
 - snapshot publication
 - scene extraction inputs
 
 All external integrations should treat the runtime as the single source of truth
 for mutable world semantics.
+
+Spawned bodies carry two mass values across the Rust/FFI/Android boundary:
+
+- `mass_kg` is the body's display/inertial mass for labels, density,
+  authoring, and teaching affordances.
+- `source_mass_kg` is the mass that participates as a gravitational source in
+  the authoritative solver.
+
+This is not a renderer or class-name convention. Tracers, probes, spacecraft,
+and small-body catalog markers can be visible and massive for teaching purposes
+without perturbing planets unless their source mass is explicitly nonzero.
 
 ### Contract ownership
 
@@ -101,14 +114,17 @@ What is intentionally still early:
 
 - the runtime is still a bring-up slice rather than a full parity replacement for the
   old Kotlin product line
-- physics implementation is not yet a deep authoritative solver surface
+- the physics surface is now authoritative for the canonical Rust path, but its
+  UI-facing product coverage and fixture depth are still growing
 - scene extraction is still bodies-first; richer tracer, trail, and light history
   surfaces remain thin
 - the legacy shell still has packet-decoding and software/debug presentation
   paths, but the stage-first runtime mirror is the canonical visual surface and
   hosts the native Vulkan stage directly
-- medium/far compute-compaction should be treated as a deliberate re-entry
-  decision, not an automatically active next step
+- medium/far compute-compaction is restored only as 3D camera-space,
+  non-authoritative renderer work; older XY-native compaction notes are
+  historical and must not guide new work without translation into the current
+  scene/packet contract
 
 That means this branch is strategically correct, but still in the phase where one
 real end-to-end vertical slice matters more than adding more abstract surface area.

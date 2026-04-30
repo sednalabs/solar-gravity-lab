@@ -22,6 +22,9 @@ Seam-level behavior expectations:
 - Command/refresh boundary:
   - Commands are applied in one place (`runtime` command application path).
   - Consumers that need latest view state after a command are expected to call refresh/snapshot, not rely on out-of-band mutation side channels.
+  - Body spawn commands preserve both `mass_kg` and `source_mass_kg`.
+    `mass_kg` is a display/inertial teaching value; `source_mass_kg` is the
+    gravitational source used by the authoritative solver.
 - Snapshot/render extraction boundary:
   - Snapshot summary types are intentionally compact for shell UX and diagnostics.
   - Render extraction (`render_scene`) is a pure projection into the `scene` contract, then copied/exported through `ffi` packet buffers.
@@ -29,6 +32,11 @@ Seam-level behavior expectations:
   - Handle `0` is invalid in this API contract.
   - Session handles: create, use, then destroy.
   - Packet handles: export, read buffer views, then release explicitly.
+- FFI ABI boundary:
+  - `SOLARLAB_V2_ABI_VERSION` is currently `10`.
+  - ABI 10 adds explicit spawn-body source mass through
+    `SlSessionCommand.body_source_mass_kg`; negative or non-finite values fall
+    back to the runtime's class-based default for compatibility.
 
 Crates:
 

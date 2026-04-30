@@ -9,6 +9,15 @@ truth, and renderer truth.
 
 Authoritative simulation state.
 
+Body mass semantics live here, not in renderer labels or visual classes:
+
+- `mass_kg` is display/inertial mass.
+- `source_mass_kg` is gravitational source mass.
+
+A body can be visible, selectable, dense-looking, and pedagogically "massive"
+while still carrying `source_mass_kg = 0` so it behaves as a probe/tracer that
+responds to the canonical system without perturbing it.
+
 ### Scene truth
 
 `RenderSceneFrame` is the renderer-facing structured view of that world.

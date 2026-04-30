@@ -31,8 +31,15 @@ The shell talks to Rust through the v2 FFI layer. In practice this means:
 - session handles are opaque capabilities
 - refresh / command / snapshot / export are explicit calls
 - exported Vulkan packets are borrowed native resources and must be released
+- spawn-body transport carries both display/inertial mass and gravitational
+  source mass so staged probes can remain non-perturbing unless the user makes
+  them massive
 - the shell should prefer thin transport / presentation logic over reshaping
   runtime semantics in Kotlin
+
+Temporary authoring previews may calculate local trajectory affordances, but
+they must use the runtime's source-mass semantics and must not become a second
+production physics authority.
 
 ## Render host seam
 
@@ -44,7 +51,7 @@ The current architecture should be read as:
 - **Kotlin** = shell / control plane
 - **render-core style policy** = camera / projection / packet shaping direction
 - **native Vulkan** = actual renderer seam
-- **Rust** = longer-term authoritative world ownership target
+- **Rust** = authoritative runtime truth
 
 ## Known renderer gap / forward direction
 

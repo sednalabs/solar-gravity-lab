@@ -43,6 +43,14 @@ those gains meaningful.
 
 ## Current compaction stance
 
-Medium/far compute-compaction is paused until it can come back in a 3D
-camera-space form. That pause is a deliberate performance trade-off in favor of
-architectural correctness.
+Medium/far compute-compaction has re-entered only through the native renderer's
+3D camera-space path. That keeps the performance win on the renderer side of the
+contract:
+
+- compaction may cull and thin already-built scene packets;
+- compaction must preserve camera-relative 3D truth; and
+- compaction must never become the authoritative simulation or source-mass
+  decision point.
+
+Older XY-native compaction notes remain useful history, but new work should
+start from the current 3D packet/renderer contract.

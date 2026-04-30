@@ -7,7 +7,7 @@ It intentionally starts small and deterministic:
 - `major-body-orbit-telemetry` checks coarse major-body propagation against the
   current legacy drift ceilings plus a finer baseline.
 - `added-body-repeatability` proves the authoritative command path stays
-  deterministic when a custom body is introduced.
+  deterministic when a custom probe body is introduced with zero source mass.
 - `collision-playback-cap` checks the conservative playback guard that keeps
   collision-enabled modes from silently stretching solver substeps.
 - `arm64-kernel-equivalence` checks the dedicated arm64 fused-step kernel
@@ -20,6 +20,11 @@ It intentionally starts small and deterministic:
   checked in the same report surface.
 - `host-relative-playback-policy` checks that the newer host-relative
   short-window playback cap stays more conservative than the coarse legacy path.
+
+The runtime crate also has focused regression coverage for source-mass
+semantics: teaching probes, tracers, spacecraft, and small-body markers can
+carry display mass without perturbing canonical bodies unless their source mass
+is explicitly nonzero.
 
 Run it with:
 

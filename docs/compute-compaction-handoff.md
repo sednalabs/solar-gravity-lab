@@ -3,10 +3,11 @@
 > **Historical snapshot: pre-3D-camera compaction path.**
 >
 > This document describes the earlier XY-native compaction direction.
-> The current project direction should treat that path as **paused pending a 3D
-> camera-space redesign** rather than as an automatically active next step.
+> The current project direction should treat that old path as paused. The
+> renderer has since re-entered compute compaction through a 3D camera-space
+> implementation rather than reviving the XY-native design unchanged.
 > See [`docs/compute-compaction-reintroduction-plan.md`](compute-compaction-reintroduction-plan.md)
-> for the current re-entry criteria and decision model.
+> for the current criteria and decision model.
 
 ## Historical context
 
@@ -26,7 +27,7 @@ The original direction was to reduce the cost of tracer-heavy scenes by:
 
 That direction is still valuable as history and as groundwork.
 
-## Why the old path is paused now
+## Why the old path stayed paused
 
 The older compaction direction assumed a flatter worldview in exactly the places
 that now matter most:
@@ -40,6 +41,9 @@ Once the project is read as a camera/render/interaction/compute migration,
 keeping that path active without redesign would risk reintroducing hidden
 flattening underneath the newer 3D renderer direction.
 
+The current renderer compaction path is therefore a replacement design, not a
+continuation of this older XY-native plan.
+
 ## What remains useful from this historical work
 
 The project still keeps the value of the earlier native direction:
@@ -47,7 +51,8 @@ The project still keeps the value of the earlier native direction:
 - stream separation
 - cheaper medium/far native representations as a design idea
 - revision-aware upload discipline
-- a clear future place where GPU-side compaction could slot back in
+- a clear explanation of why GPU-side compaction had to re-enter through a 3D
+  camera-space contract
 
 ## How to read this file now
 
