@@ -127,17 +127,20 @@ class StageFirstSandboxAppTest {
             bodyId = "custom:test",
         )
 
+        val startWorldPosition = Vector3d(100.0, 200.0, 12.0)
+        val endWorldPosition = Vector3d(100.0 + PLACEMENT_DRAG_LOOKAHEAD_SECONDS, 200.0, 12.0)
         val staged = session.applyGesture(
             PlacementGestureUpdate(
                 phase = PlacementGesturePhase.Ended,
-                startWorldPositionM = Vector3d(100.0, 200.0, 12.0),
-                endWorldPositionM = Vector3d(100.0 + PLACEMENT_DRAG_LOOKAHEAD_SECONDS, 200.0, 12.0),
+                startWorldPositionM = startWorldPosition,
+                endWorldPositionM = endWorldPosition,
                 gestureDistancePx = PLACEMENT_DRAG_THRESHOLD_PX + 1f,
             ),
         )
 
         assertTrue(staged.canCommit)
         assertEquals(Vector3d(100.0, 200.0, 12.0), staged.stagedPositionM)
+        // Gesture drag defines planar staged velocity; z remains from the draft velocity.
         assertEquals(2.0, staged.stagedVelocityMps.x, 0.0)
         assertEquals(2.0, staged.stagedVelocityMps.y, 0.0)
         assertEquals(3.0, staged.stagedVelocityMps.z, 0.0)
