@@ -1293,7 +1293,7 @@ private fun BoxScope.StageOverlay(
                         selectionCard = selectionCard,
                         timelineText = timelineText,
                         modifier = Modifier
-                            .widthIn(max = 360.dp)
+                            .widthIn(max = 300.dp)
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                     )
                 } else {
@@ -1630,7 +1630,6 @@ private fun StagePlacementComposerPanel(
             StageTrajectoryGlyph(
                 orbitColor = TimelineText,
                 probeColor = SelectionText,
-                modifier = Modifier.size(width = 70.dp, height = 34.dp),
             )
             Column(
                 modifier = Modifier.weight(1f),
