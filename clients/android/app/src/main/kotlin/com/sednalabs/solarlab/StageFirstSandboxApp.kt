@@ -1339,7 +1339,7 @@ private fun BoxScope.StageOverlay(
                             onClick = onCycleTraceLayer,
                             dense = true,
                         )
-                        StageActionButton(label = "Fast", onClick = onFaster, dense = true)
+                        StageActionButton(label = speedLabel, onClick = onFaster, dense = true)
                         StageActionButton(
                             label = "Hide",
                             onClick = onHideChrome,
