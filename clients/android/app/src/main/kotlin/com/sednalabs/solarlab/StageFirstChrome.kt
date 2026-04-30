@@ -35,6 +35,12 @@ internal fun TraceLayerMode.next(): TraceLayerMode = when (this) {
 internal fun stageChromeModeFromName(value: String): StageChromeMode =
     StageChromeMode.entries.firstOrNull { it.name == value } ?: StageChromeMode.COLLAPSED
 
+internal fun stageChromeModeAfterObjectCommit(current: StageChromeMode): StageChromeMode = when (current) {
+    StageChromeMode.MINIMAL,
+    StageChromeMode.COLLAPSED,
+    StageChromeMode.EXPANDED -> StageChromeMode.COLLAPSED
+}
+
 internal fun traceLayerModeFromName(value: String): TraceLayerMode =
     TraceLayerMode.entries.firstOrNull { it.name == value } ?: TraceLayerMode.FOCUS
 

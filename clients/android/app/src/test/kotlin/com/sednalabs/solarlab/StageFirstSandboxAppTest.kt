@@ -26,6 +26,13 @@ class StageFirstSandboxAppTest {
     }
 
     @Test
+    fun objectCommitReturnsToCompactStageChrome() {
+        assertEquals(StageChromeMode.COLLAPSED, stageChromeModeAfterObjectCommit(StageChromeMode.MINIMAL))
+        assertEquals(StageChromeMode.COLLAPSED, stageChromeModeAfterObjectCommit(StageChromeMode.COLLAPSED))
+        assertEquals(StageChromeMode.COLLAPSED, stageChromeModeAfterObjectCommit(StageChromeMode.EXPANDED))
+    }
+
+    @Test
     fun expandedStageDeckMaxHeightFractionKeepsPhoneStageDominant() {
         assertEquals(0.30f, expandedStageDeckMaxHeightFraction(compactLayout = true))
         assertEquals(0.34f, expandedStageDeckMaxHeightFraction(compactLayout = false))

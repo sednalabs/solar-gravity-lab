@@ -570,6 +570,7 @@ private fun StageFirstSandboxLocalExperience(
                 session.addBody(body)
                 selectedBodyId = body.id
                 observerMode = ObserverMode.FOLLOW_SELECTED
+                chromeModeName = stageChromeModeAfterObjectCommit(chromeMode).name
                 maybeResumeAfterModalInteraction()
             }
         }
@@ -874,6 +875,7 @@ private fun StageFirstSandboxLocalExperience(
                             if (priorPlacementSession != null) {
                                 observerMode = ObserverMode.FOLLOW_SELECTED
                             }
+                            chromeModeName = stageChromeModeAfterObjectCommit(chromeMode).name
                             bodyEditorState = null
                             maybeResumeAfterModalInteraction()
                         }
@@ -881,6 +883,7 @@ private fun StageFirstSandboxLocalExperience(
                         val updatedBody = draft.toBodyState()
                         session.updateBody(updatedBody)
                         selectedBodyId = updatedBody.id
+                        chromeModeName = stageChromeModeAfterObjectCommit(chromeMode).name
                         bodyEditorState = null
                         maybeResumeAfterModalInteraction()
                     }
