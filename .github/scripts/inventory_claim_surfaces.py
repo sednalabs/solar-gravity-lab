@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from collections import Counter
@@ -259,10 +258,6 @@ def summary_text(findings: list[ClaimFinding]) -> str:
 def emit_summary(findings: list[ClaimFinding]) -> None:
     text = summary_text(findings)
     print(text, end="")
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        with Path(summary_path).open("a", encoding="utf-8") as summary:
-            summary.write(text)
 
 
 def main() -> None:
