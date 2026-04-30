@@ -112,6 +112,8 @@ private val BodyText = Color(0xE6E8F7FF)
 private val SurfaceText = Color(0xFFF4FBFF)
 private val StageFieldBlue = Color(0xFF5E8CFF)
 private val StageFieldLine = Color(0xFF19324B)
+private const val STAGE_SANDBOX_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val STAGE_SANDBOX_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / STAGE_SANDBOX_CAMERA_ZOOM_IN_FACTOR
 
 private val StageCompactWidthBreakpoint = 720.dp
 private val StageRendererTelemetryTailRegex =
@@ -718,6 +720,15 @@ private fun StageFirstSandboxLocalExperience(
                         ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
                     }
                 },
+                onZoomIn = {
+                    renderHostView?.zoomBy(STAGE_SANDBOX_CAMERA_ZOOM_IN_FACTOR)
+                },
+                onZoomOut = {
+                    renderHostView?.zoomBy(STAGE_SANDBOX_CAMERA_ZOOM_OUT_FACTOR)
+                },
+                onFrameCamera = {
+                    selectedBodyId?.let(::focusAndFrameBody) ?: renderHostView?.resetCamera()
+                },
                 onCycleStepQuantum = { session.cycleStepQuantum(+1) },
                 onSlower = { session.cyclePlaybackSpeed(-1) },
                 onFaster = { session.cyclePlaybackSpeed(+1) },
@@ -1099,6 +1110,9 @@ private fun BoxScope.StageOverlay(
     onBackStep: () -> Unit,
     onForwardStep: () -> Unit,
     onCycleObserver: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onFrameCamera: () -> Unit,
     onCycleStepQuantum: () -> Unit,
     onSlower: () -> Unit,
     onFaster: () -> Unit,
@@ -1164,6 +1178,26 @@ private fun BoxScope.StageOverlay(
                 enabled = observerButtonEnabled,
             )
             StageActionButton(label = "Reset", onClick = onReset)
+        }
+        val cameraControls: @Composable () -> Unit = {
+            StageActionButton(
+                label = if (compactLayout) "Zoom +" else "Zoom in",
+                onClick = onZoomIn,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
+                enabled = !authoringActive,
+            )
+            StageActionButton(
+                label = if (compactLayout) "Zoom -" else "Zoom out",
+                onClick = onZoomOut,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
+                enabled = !authoringActive,
+            )
+            StageActionButton(
+                label = if (compactLayout) "Frame" else "Frame view",
+                onClick = onFrameCamera,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                enabled = !authoringActive,
+            )
         }
         val placementControls: @Composable (Boolean) -> Unit = { dense ->
             StageActionButton(
@@ -1382,6 +1416,7 @@ private fun BoxScope.StageOverlay(
                             actionButtons()
                         }
                         StageControlRail(compact = true) {
+                            cameraControls()
                             secondaryControls()
                             primaryControls()
                         }
@@ -1406,6 +1441,7 @@ private fun BoxScope.StageOverlay(
                         }
                     } else {
                         StageControlRail(content = primaryControls)
+                        StageControlRail(content = cameraControls)
                         StageControlRail(content = secondaryControls)
                     }
                 }
