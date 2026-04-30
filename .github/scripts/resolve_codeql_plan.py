@@ -149,7 +149,7 @@ def pull_request_plan(changed_files: list[str]) -> dict[str, str]:
         has_relevant_changes=True,
         reason=(
             "matched changed surfaces for "
-            f"{','.join(summary.codeql_languages)}; "
+            f"{','.join(sorted(summary.codeql_languages))}; "
             "full scan required for CodeQL category parity"
         ),
         surfaces=surfaces,

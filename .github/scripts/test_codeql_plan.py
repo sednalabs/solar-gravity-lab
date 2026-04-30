@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("resolve_codeql_plan.py")
+ALL_CODEQL_LANGUAGES = ["actions", "c-cpp", "java-kotlin", "python", "rust"]
 
 
 def run_plan(
@@ -38,6 +39,14 @@ def matrix_languages(plan: dict[str, str]) -> list[str]:
     return [row["language"] for row in json.loads(plan["matrix"])["include"]]
 
 
+def matrix_rows(plan: dict[str, str]) -> list[dict[str, str]]:
+    return json.loads(plan["matrix"])["include"]
+
+
+def matrix_config_file(plan: dict[str, str], language: str) -> str:
+    return next(row["config_file"] for row in matrix_rows(plan) if row["language"] == language)
+
+
 class CodeqlPlanTests(unittest.TestCase):
     def test_docs_only_pr_skips_analysis(self) -> None:
         plan = run_plan(["docs/validation-lab.md"])
@@ -47,52 +56,45 @@ class CodeqlPlanTests(unittest.TestCase):
 
     def test_rust_only_pr_uses_full_category_parity(self) -> None:
         plan = run_plan(["engine/physics/src/lib.rs"])
-        rows = json.loads(plan["matrix"])["include"]
 
-        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
-        self.assertEqual(rows[4]["config_file"], "./.github/codeql/codeql-config.yml")
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
+        self.assertEqual(matrix_config_file(plan, "rust"), "./.github/codeql/codeql-config.yml")
         self.assertEqual(plan["run_all_languages"], "true")
         self.assertIn("category parity", plan["reason"])
 
     def test_android_pr_uses_full_category_parity(self) -> None:
         plan = run_plan(["clients/android/app/src/main/java/com/example/Stage.kt"])
 
-        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
         self.assertEqual(plan["run_all_languages"], "true")
         self.assertIn("category parity", plan["reason"])
 
     def test_actions_pr_uses_custom_actions_security_config(self) -> None:
         plan = run_plan([".github/workflows/prerelease-apk.yml"])
-        rows = json.loads(plan["matrix"])["include"]
 
-        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
-        self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-actions-security.yml")
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
+        self.assertEqual(matrix_config_file(plan, "actions"), "./.github/codeql/codeql-actions-security.yml")
 
     def test_python_pr_uses_full_category_parity_with_custom_python_security_config(self) -> None:
         plan = run_plan([".github/scripts/write_validation_summary.py"])
-        rows = json.loads(plan["matrix"])["include"]
 
-        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
-        self.assertEqual(rows[3]["config_file"], "./.github/codeql/codeql-python-security.yml")
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
+        self.assertEqual(matrix_config_file(plan, "python"), "./.github/codeql/codeql-python-security.yml")
         self.assertEqual(plan["run_all_languages"], "true")
 
     def test_proto_boundary_uses_full_category_parity(self) -> None:
         plan = run_plan(["proto/runtime.proto"])
 
-        self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
         self.assertEqual(plan["run_all_languages"], "true")
 
     def test_codeql_policy_change_forces_full_scan(self) -> None:
         plan = run_plan([".github/codeql/codeql-config.yml"])
 
         self.assertEqual(plan["run_all_languages"], "true")
-        self.assertEqual(
-            matrix_languages(plan),
-            ["actions", "c-cpp", "java-kotlin", "python", "rust"],
-        )
-        rows = json.loads(plan["matrix"])["include"]
-        self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-actions-security.yml")
-        self.assertEqual(rows[3]["config_file"], "./.github/codeql/codeql-python-security.yml")
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
+        self.assertEqual(matrix_config_file(plan, "actions"), "./.github/codeql/codeql-actions-security.yml")
+        self.assertEqual(matrix_config_file(plan, "python"), "./.github/codeql/codeql-python-security.yml")
 
     def test_product_invariant_pack_change_forces_full_scan(self) -> None:
         plan = run_plan(
@@ -103,10 +105,7 @@ class CodeqlPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(plan["run_all_languages"], "true")
-        self.assertEqual(
-            matrix_languages(plan),
-            ["actions", "c-cpp", "java-kotlin", "python", "rust"],
-        )
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
 
     def test_incomplete_pr_metadata_forces_full_scan(self) -> None:
         plan = run_plan(["engine/physics/src/lib.rs"], expected_changed_files="2")
@@ -124,10 +123,7 @@ class CodeqlPlanTests(unittest.TestCase):
         plan = run_plan([], event_name="push")
 
         self.assertEqual(plan["run_all_languages"], "true")
-        self.assertEqual(
-            matrix_languages(plan),
-            ["actions", "c-cpp", "java-kotlin", "python", "rust"],
-        )
+        self.assertCountEqual(matrix_languages(plan), ALL_CODEQL_LANGUAGES)
 
 
 if __name__ == "__main__":
