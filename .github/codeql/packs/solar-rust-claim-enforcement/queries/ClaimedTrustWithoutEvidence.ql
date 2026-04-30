@@ -58,7 +58,7 @@ predicate evidenceText(string text, string claimClass) {
   )
 }
 
-predicate hasEvidence(SourceFile file, string claimClass) {
+predicate hasEvidence(File file, string claimClass) {
   exists(Function function |
     function.getFile() = file and
     evidenceText(function.getName().toString(), claimClass)

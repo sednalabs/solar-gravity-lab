@@ -39,13 +39,13 @@ predicate appendEvidenceText(string text) {
   text.regexpMatch("(?is).*(append\\s*\\(\\s*true\\s*\\)|OpenOptions|append).*")
 }
 
-predicate fileHasSafeEvidence(SourceFile file) {
+predicate fileHasSafeEvidence(File file) {
   exists(Function function | function.getFile() = file and safeEvidenceText(function.getName().toString()))
   or
   exists(StringLiteralExpr literal | literal.getFile() = file and safeEvidenceText(literal.getTextValue()))
 }
 
-predicate fileHasAppendEvidence(SourceFile file) {
+predicate fileHasAppendEvidence(File file) {
   exists(StringLiteralExpr literal | literal.getFile() = file and appendEvidenceText(literal.getTextValue()))
 }
 
