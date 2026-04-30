@@ -127,11 +127,15 @@ class JniRuntimeBridgeTest {
             transport = transport,
             renderHostAdapter = FakeRenderHostAdapter(),
         )
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val job = scope.launch {
+            bridge.connect().collect { /* keep native session alive for command dispatch */ }
+        }
 
-        collectSignalsUntil(bridge) { collected ->
-            collected
-                .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
-                .any { it.summary.bodyCount == 2 }
+        withTimeout(2_000) {
+            while (transport.refreshedHandles.isEmpty()) {
+                delay(25)
+            }
         }
         transport.appliedCommands.clear()
 
@@ -149,6 +153,10 @@ class JniRuntimeBridgeTest {
         assertEquals(COMMAND_KIND_SPAWN_BODY, command.kind)
         assertEquals(1.0e24, command.bodyMassKg, 0.0)
         assertEquals(0.0, command.bodySourceMassKg, 0.0)
+
+        job.cancel()
+        job.join()
+        scope.cancel()
     }
 
     @Test

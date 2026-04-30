@@ -3493,11 +3493,12 @@ mod tests {
         body_class: BodyClass,
     ) {
         let mut registry = registry().lock().expect("session registry lock");
+        let source_mass_kg = BodyState::default_source_mass_kg(&body_class, 1.0);
         let body = BodyState {
             body_id: BodyId(body_id.to_owned()),
             body_class,
             mass_kg: 1.0,
-            source_mass_kg: BodyState::default_source_mass_kg(&body_class, 1.0),
+            source_mass_kg,
             radius_m: 1.0,
             position_m: Vector3d {
                 x: position_x,
