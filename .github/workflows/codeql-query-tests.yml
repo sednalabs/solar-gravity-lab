@@ -4,16 +4,16 @@ on:
   pull_request:
     paths:
       - ".github/codeql/**"
+      - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
-      - ".github/scripts/resolve_codeql_plan.py"
-      - ".github/scripts/test_codeql_plan.py"
+      - ".github/scripts/test_codeql_static_workflow.py"
   push:
     branches: ["main"]
     paths:
       - ".github/codeql/**"
+      - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
-      - ".github/scripts/resolve_codeql_plan.py"
-      - ".github/scripts/test_codeql_plan.py"
+      - ".github/scripts/test_codeql_static_workflow.py"
   workflow_dispatch:
 
 permissions:
@@ -86,9 +86,9 @@ jobs:
             --search-path .github/codeql/packs \
             .github/codeql/packs/solar-python-product-invariants/queries/*.ql
 
-      - name: Run CodeQL planner tests
+      - name: Validate static CodeQL workflow
         shell: bash
-        run: python3 .github/scripts/test_codeql_plan.py
+        run: python3 .github/scripts/test_codeql_static_workflow.py
 
       - name: Emit summary
         shell: bash
@@ -99,5 +99,5 @@ jobs:
             echo "- resolved custom Actions and Python security query suites"
             echo "- resolved custom Actions and Python product-invariant query suites"
             echo "- compiled custom CodeQL queries"
-            echo "- ran CodeQL planner unit tests"
+            echo "- validated static CodeQL workflow matrix"
           } >> "$GITHUB_STEP_SUMMARY"
