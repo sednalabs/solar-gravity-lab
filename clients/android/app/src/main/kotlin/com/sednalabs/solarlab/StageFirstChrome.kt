@@ -48,8 +48,8 @@ internal fun traceLayerButtonLabel(mode: TraceLayerMode, compact: Boolean): Stri
 }
 
 private object StageTrajectoryGlyphMetrics {
-    val width = 78.dp
-    val height = 36.dp
+    val width = 62.dp
+    val height = 30.dp
     val backgroundArcStrokeWidth = 1.dp
     val activeArcStrokeWidth = 1.6.dp
     val probeArcStrokeWidth = 2.dp
