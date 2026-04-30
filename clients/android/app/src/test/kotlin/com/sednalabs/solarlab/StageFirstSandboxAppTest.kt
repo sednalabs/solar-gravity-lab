@@ -128,7 +128,7 @@ class StageFirstSandboxAppTest {
         )
 
         val startWorldPosition = Vector3d(100.0, 200.0, 12.0)
-        val endWorldPosition = startWorldPosition.copy(x = startWorldPosition.x + PLACEMENT_DRAG_LOOKAHEAD_SECONDS)
+        val endWorldPosition = startWorldPosition.copy(x = startWorldPosition.x + 2.0)
         val staged = session.applyGesture(
             PlacementGestureUpdate(
                 phase = PlacementGesturePhase.Ended,
