@@ -93,7 +93,7 @@ Use it when the question is:
 These sessions are intentionally bounded and operator-started. They are a
 development and proof surface, not a general-purpose public service.
 
-### 5. Static security analysis
+## Static security analysis
 
 `.github/workflows/codeql.yml` is the maintained advanced CodeQL setup for this
 repository. Keep the checked-in workflow authoritative so language coverage,
