@@ -14,7 +14,7 @@ quality:
 - `solar-actions-product-invariants` checks workflow proof obligations for
   CodeQL pack compilation, stage-first Android validation, and hosted
   interactive evidence artifacts. It also guards the advanced CodeQL workflow's
-  PR category-parity contract so alert comparison does not silently lose base
+  static category-matrix shape so alert comparison does not silently lose base
   branch categories.
 - `solar-python-product-invariants` checks planner and summary helpers for
   runtime CPU truth lanes, stage-first mirror proof, and provider-manifest

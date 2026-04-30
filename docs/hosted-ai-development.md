@@ -106,12 +106,11 @@ CodeQL's no-build Java mode. Rust and C/C++ use no-build analysis, which keeps
 the scan independent of Android emulator work while still covering the
 canonical Rust workspace and native source surfaces.
 
-Pull requests with CodeQL-relevant changes intentionally run the full
-default-branch category set. GitHub's PR alert comparison depends on matching
-SARIF categories between the base branch and PR head; a partial PR matrix can
-leave GitHub unable to tell which alerts the PR introduced. The plan-contract
-validator in the CodeQL workflow fails the router before analysis if a future
-change emits a partial category set for a relevant PR.
+Pull requests intentionally run the full default-branch category set. GitHub's
+PR alert comparison depends on matching SARIF categories between the base
+branch and PR head; a partial PR matrix can leave GitHub unable to tell which
+alerts the PR introduced. Keep this as a static advanced setup rather than a
+file-diff router so the configured categories stay obvious in the workflow.
 
 The shared CodeQL config uses the broad `security-and-quality` suite plus the
 local threat model. That is intentionally noisier than default setup, but it
