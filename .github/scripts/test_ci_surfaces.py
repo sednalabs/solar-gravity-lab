@@ -37,6 +37,17 @@ class CiSurfaceTests(unittest.TestCase):
         self.assertTrue(summary.is_codeql_critical)
         self.assertEqual(summary.codeql_languages, ALL_CODEQL_LANGUAGES)
 
+    def test_product_invariant_pack_is_critical(self) -> None:
+        summary = summarize_paths(
+            [
+                ".github/codeql/packs/solar-python-product-invariants/queries/"
+                "ValidationPlannerMissingRuntimeCpuTruthLane.ql"
+            ]
+        )
+
+        self.assertTrue(summary.is_codeql_critical)
+        self.assertEqual(summary.codeql_languages, ALL_CODEQL_LANGUAGES)
+
     def test_workflow_is_critical(self) -> None:
         summary = summarize_paths([".github/workflows/codeql.yml"])
 
