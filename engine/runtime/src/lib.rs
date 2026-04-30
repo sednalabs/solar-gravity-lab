@@ -43,6 +43,25 @@ pub struct BodyState {
     pub velocity_mps: Vector3d,
 }
 
+impl BodyState {
+    /// Mass that participates as a gravity source in the authoritative solver.
+    ///
+    /// `mass_kg` is still the body's physical/inertial display mass, but
+    /// teaching probes, tracer particles, and small-body catalog markers must
+    /// not silently perturb the canonical system just because they carry a mass
+    /// for UI, density, or momentum displays.
+    pub fn source_mass_kg(&self) -> f64 {
+        match self.body_class {
+            BodyClass::Tracer | BodyClass::Spacecraft | BodyClass::SmallBody => 0.0,
+            BodyClass::Star
+            | BodyClass::Planet
+            | BodyClass::DwarfPlanet
+            | BodyClass::Moon
+            | BodyClass::Custom => self.mass_kg,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaybackState {
     /// Playback controls are intentionally small and copy-friendly so shell snapshots
@@ -1910,7 +1929,7 @@ fn world_bodies_to_solver_state(bodies: &[BodyState]) -> Vec<MassiveBodyState> {
     bodies
         .iter()
         .map(|body| MassiveBodyState {
-            mass_kg: body.mass_kg,
+            mass_kg: body.source_mass_kg(),
             position_m: body.position_m,
             velocity_mps: body.velocity_mps,
         })
@@ -3040,6 +3059,61 @@ mod tests {
             .expect("advance should succeed");
 
         assert_eq!(runtime_a.snapshot(), runtime_b.snapshot());
+    }
+
+    #[test]
+    fn tracer_and_spacecraft_masses_do_not_perturb_authoritative_bodies() {
+        let mut baseline = new_runtime();
+        let mut with_tracer = new_runtime();
+        spawn_two_body_system(&mut baseline);
+        spawn_two_body_system(&mut with_tracer);
+
+        let tracer = BodyState {
+            body_id: BodyId("teaching-probe".into()),
+            body_class: BodyClass::Spacecraft,
+            mass_kg: 1.0e30,
+            radius_m: 10.0,
+            position_m: Vector3d {
+                x: 8.0e7,
+                y: 1.0e7,
+                z: 0.0,
+            },
+            velocity_mps: Vector3d {
+                x: 0.0,
+                y: -1_000.0,
+                z: 0.0,
+            },
+        };
+        assert_eq!(tracer.source_mass_kg(), 0.0);
+        with_tracer
+            .apply_command(WorldCommand::SpawnBody { body: tracer }, 3)
+            .expect("probe spawn should succeed");
+
+        for runtime in [&mut baseline, &mut with_tracer] {
+            runtime
+                .apply_command(
+                    WorldCommand::AdvanceEpoch {
+                        delta_seconds: 120.0,
+                    },
+                    4,
+                )
+                .expect("advance should succeed");
+        }
+
+        let baseline_snapshot = baseline.snapshot();
+        let tracer_snapshot = with_tracer.snapshot();
+        for body_id in [BodyId("primary".into()), BodyId("secondary".into())] {
+            assert_eq!(
+                body_position(&baseline_snapshot, &body_id),
+                body_position(&tracer_snapshot, &body_id),
+                "Massive body {body_id:?} must not be perturbed by teaching probes"
+            );
+        }
+        assert_ne!(
+            body_position(&tracer_snapshot, &BodyId("teaching-probe".into())).x,
+            8.0e7,
+            "The probe should still respond to massive-body gravity as a tracer"
+        );
     }
 
     #[test]
