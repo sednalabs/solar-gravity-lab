@@ -299,8 +299,13 @@ class StageFirstSandboxAppTest {
 
         assertEquals(Vector3d(149_597_870_700.0, 0.0, 0.0), projected.first())
         assertEquals(4, projected.size)
+        val inwardDisplacementM = projected.first().x - projected.last().x
         assertTrue("Forecast should advance along the velocity vector", projected.last().y > 0.0)
         assertTrue("Solar gravity should bend the preview inward", projected.last().x < projected.first().x)
+        assertTrue(
+            "Solar gravity should produce a meaningful inward deflection over one day",
+            inwardDisplacementM > 1_000_000.0,
+        )
     }
 
     @Test
