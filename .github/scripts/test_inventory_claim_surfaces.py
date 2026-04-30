@@ -107,11 +107,69 @@ def test_fail_on_new_uses_baseline() -> None:
         assert "not present in baseline" in proc.stderr
 
 
+def test_fail_on_new_detects_status_regression() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        baseline = root / "dist" / "claim-enforcement-baseline.json"
+        helper = root / ".github/scripts/download.py"
+        write(helper, '"""verified artifact downloader"""\nEXPECTED_SHA256 = "abc"\n# digest check\n')
+
+        run_inventory(root, "--baseline-output", str(baseline))
+        write(helper, '"""verified artifact downloader"""\nprint("download")\n')
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(root),
+                "--baseline",
+                str(baseline),
+                "--fail-on-new",
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        assert proc.returncode == 1
+        assert "not present in baseline" in proc.stderr
+        assert "missing_evidence" in proc.stderr
+
+
+def test_fail_on_new_allows_same_status_wording_change() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        baseline = root / "dist" / "claim-enforcement-baseline.json"
+        helper = root / ".github/scripts/download.py"
+        write(helper, '"""verified artifact downloader"""\n')
+
+        run_inventory(root, "--baseline-output", str(baseline))
+        write(helper, '"""verified artifact fetcher"""\n')
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(root),
+                "--baseline",
+                str(baseline),
+                "--fail-on-new",
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        assert proc.returncode == 0
+
+
 if __name__ == "__main__":
     for test in [
         test_detects_missing_verified_manifest_evidence,
         test_safe_math_name_is_inventory_only,
         test_recognizes_append_only_evidence,
         test_fail_on_new_uses_baseline,
+        test_fail_on_new_detects_status_regression,
+        test_fail_on_new_allows_same_status_wording_change,
     ]:
         test()

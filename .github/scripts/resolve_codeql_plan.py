@@ -9,7 +9,10 @@ from ci_surfaces import ALL_CODEQL_LANGUAGES, summarize_paths
 
 ADVANCED_CONFIG_FILE = "./.github/codeql/codeql-config.yml"
 ACTION_SECURITY_CONFIG_FILE = "./.github/codeql/codeql-actions-security.yml"
+CPP_CLAIM_CONFIG_FILE = "./.github/codeql/codeql-cpp-claim-enforcement.yml"
+JAVA_KOTLIN_CLAIM_CONFIG_FILE = "./.github/codeql/codeql-java-kotlin-claim-enforcement.yml"
 PYTHON_SECURITY_CONFIG_FILE = "./.github/codeql/codeql-python-security.yml"
+RUST_CLAIM_CONFIG_FILE = "./.github/codeql/codeql-rust-claim-enforcement.yml"
 RUST_PR_CONFIG_FILE = "./.github/codeql/codeql-rust-pr.yml"
 
 BUILD_MODES = {
@@ -62,10 +65,16 @@ def parse_changed_files_json(value: str, expected_count: int | None) -> tuple[li
 def config_file_for(language: str, event_name: str, full_scan: bool) -> str:
     if language == "actions":
         return ACTION_SECURITY_CONFIG_FILE
+    if language == "c-cpp":
+        return CPP_CLAIM_CONFIG_FILE
+    if language == "java-kotlin":
+        return JAVA_KOTLIN_CLAIM_CONFIG_FILE
     if language == "python":
         return PYTHON_SECURITY_CONFIG_FILE
     if language == "rust" and event_name == "pull_request" and not full_scan:
         return RUST_PR_CONFIG_FILE
+    if language == "rust":
+        return RUST_CLAIM_CONFIG_FILE
     return ADVANCED_CONFIG_FILE
 
 

@@ -79,6 +79,7 @@ SKIP_PARTS = {
     ".idea",
     ".tmp",
     "build",
+    "dist",
     "target",
     ".trusted-codeql-policy",
 }
@@ -95,7 +96,15 @@ class ClaimFinding:
     text: str
 
     def key(self) -> str:
-        return "|".join((self.path, str(self.line), self.claim_class, self.missing_evidence, self.text))
+        return "|".join(
+            (
+                self.path,
+                str(self.line),
+                self.claim_class,
+                self.missing_evidence,
+                self.enforcement_status,
+            )
+        )
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -199,7 +208,7 @@ def scan(root: Path) -> list[ClaimFinding]:
 
 def baseline_payload(findings: list[ClaimFinding]) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "entries": [finding.to_json() for finding in findings],
     }
 
@@ -225,7 +234,7 @@ def load_baseline_keys(path: Path) -> set[str]:
                     str(entry.get("line", "")),
                     str(entry.get("claim_class", "")),
                     str(entry.get("missing_evidence", "")),
-                    str(entry.get("text", "")),
+                    str(entry.get("enforcement_status", "")),
                 )
             )
         )

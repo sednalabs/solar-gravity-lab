@@ -1,6 +1,7 @@
-name: solar-gravity-lab-codeql-rust-pr
+name: solar-gravity-lab-codeql-rust-claim-enforcement
 
 queries:
+  - uses: security-and-quality
   - uses: ./.github/codeql/packs/solar-rust-claim-enforcement/suites/solar-rust-claim-enforcement.qls
 
 threat-models: local

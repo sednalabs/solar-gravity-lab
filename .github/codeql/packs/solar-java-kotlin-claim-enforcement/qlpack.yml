@@ -1,0 +1,7 @@
+name: sednalabs/solar-java-kotlin-claim-enforcement
+version: 0.0.1
+library: false
+dependencies:
+  codeql/java-all: "*"
+suites: suites
+defaultSuiteFile: suites/solar-java-kotlin-claim-enforcement.qls

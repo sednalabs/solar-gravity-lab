@@ -55,8 +55,10 @@ class CodeqlPlanTests(unittest.TestCase):
 
     def test_android_pr_selects_java_kotlin(self) -> None:
         plan = run_plan(["clients/android/app/src/main/java/com/example/Stage.kt"])
+        rows = json.loads(plan["matrix"])["include"]
 
         self.assertEqual(matrix_languages(plan), ["java-kotlin"])
+        self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-java-kotlin-claim-enforcement.yml")
 
     def test_actions_pr_uses_custom_actions_security_config(self) -> None:
         plan = run_plan([".github/workflows/prerelease-apk.yml"])
@@ -64,6 +66,8 @@ class CodeqlPlanTests(unittest.TestCase):
 
         self.assertEqual(matrix_languages(plan), ["actions", "c-cpp", "java-kotlin", "python", "rust"])
         self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-actions-security.yml")
+        self.assertEqual(rows[1]["config_file"], "./.github/codeql/codeql-cpp-claim-enforcement.yml")
+        self.assertEqual(rows[2]["config_file"], "./.github/codeql/codeql-java-kotlin-claim-enforcement.yml")
 
     def test_python_pr_uses_custom_python_security_config(self) -> None:
         plan = run_plan([".github/scripts/write_validation_summary.py"])
@@ -87,7 +91,10 @@ class CodeqlPlanTests(unittest.TestCase):
         )
         rows = json.loads(plan["matrix"])["include"]
         self.assertEqual(rows[0]["config_file"], "./.github/codeql/codeql-actions-security.yml")
+        self.assertEqual(rows[1]["config_file"], "./.github/codeql/codeql-cpp-claim-enforcement.yml")
+        self.assertEqual(rows[2]["config_file"], "./.github/codeql/codeql-java-kotlin-claim-enforcement.yml")
         self.assertEqual(rows[3]["config_file"], "./.github/codeql/codeql-python-security.yml")
+        self.assertEqual(rows[4]["config_file"], "./.github/codeql/codeql-rust-claim-enforcement.yml")
 
     def test_incomplete_pr_metadata_forces_full_scan(self) -> None:
         plan = run_plan(["engine/physics/src/lib.rs"], expected_changed_files="2")
