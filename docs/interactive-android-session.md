@@ -49,7 +49,7 @@ The workflow:
 - `android_emulator_mcp_ref`
   - branch, tag, or commit from the maintainer-configured Android provider
     repository
-  - default: `4c6f67d4929f20fd6f08a508a3e1bd50db21440a`
+  - default: `20c851bd93b76653443e1e06b99fb2b336e220f7`
   - this pinned provider ref returns screenshot bytes as native MCP image
     content for Codex computer-use observations; artifact paths remain
     diagnostics, not the model-facing visual channel
