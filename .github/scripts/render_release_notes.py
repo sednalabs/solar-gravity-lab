@@ -221,6 +221,15 @@ def parse_inventory(path: Path) -> dict:
     return payload
 
 
+def resolve_path_within_base(raw_path: str, base_dir: Path) -> Path:
+    candidate = (base_dir / raw_path).resolve()
+    try:
+        candidate.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError(f"Path escapes allowed base directory: {raw_path}") from exc
+    return candidate
+
+
 def to_commit_rows(payload: dict) -> list[CommitRow]:
     rows: list[CommitRow] = []
     for row in payload["commits"]:
@@ -304,10 +313,12 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="Path to write the rendered markdown.")
     args = parser.parse_args()
 
-    payload = parse_inventory(Path(args.inventory))
+    base_dir = Path.cwd().resolve()
+    inventory_path = resolve_path_within_base(args.inventory, base_dir)
+    payload = parse_inventory(inventory_path)
     markdown = build_markdown(payload, repo=args.repo)
 
-    output_path = Path(args.output)
+    output_path = resolve_path_within_base(args.output, base_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(markdown.rstrip() + "\n", encoding="utf-8")
     print(f"Rendered release notes to {output_path}")
