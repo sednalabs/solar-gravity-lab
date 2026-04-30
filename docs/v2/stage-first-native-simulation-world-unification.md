@@ -52,6 +52,19 @@ In the unified world, tracer/probe bodies are allowed to carry display or
 inertial mass, but they must not silently perturb the canonical solar-system
 state unless the user explicitly creates them as massive bodies.
 
+The Rust runtime and FFI boundary therefore carry two separate masses:
+
+- `mass_kg`: the body's inertial/display mass used for density, labels, and
+  teaching affordances.
+- `source_mass_kg`: the mass that participates as a gravitational source in
+  authoritative integration.
+
+This distinction must survive every boundary crossing. Android/Kotlin
+`GravitationalRole.TRACER` maps to `source_mass_kg = 0`; massive bodies map to
+their physical mass unless the authoring UI or scenario pack explicitly asks for
+a different source mass. The visual class of a body must never be the only
+authority for whether it perturbs the world.
+
 ## Concrete migration seam
 
 Introduce a `NativeSimulationWorld` abstraction and make `LabSession` own an `AuthoritativeWorld` rather than directly owning the Kotlin simulation engine in the hot path.
@@ -116,6 +129,9 @@ sealed interface WorldCommand {
 
 1. Introduce `AuthoritativeWorld` seam in Kotlin.
 2. Add `NativeSimulationWorld` handle + JNI bridge.
+   The current ABI 10 bridge already exposes explicit spawn-body source mass;
+   future command surfaces should preserve this instead of deriving gravity
+   role from body class.
 3. Move Sandbox commands (add/edit/delete) onto native command batches.
 4. Move checkpoints / rewind / diagnostics fully native.
 5. Move timeline stepping + provenance / divergence tracking fully native.

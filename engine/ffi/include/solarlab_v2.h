@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 // ABI version of the runtime/session contract.
-#define SOLARLAB_V2_ABI_VERSION 9u
+#define SOLARLAB_V2_ABI_VERSION 10u
 // Fixed-size inline capacity for identifier payloads carried by value in structs.
 #define SL_V2_ID_CAPACITY 96u
 
@@ -269,6 +269,7 @@ typedef struct SlSessionCommand {
   SlVector3d body_position;
   SlVector3d body_velocity;
   double body_mass_kg;
+  double body_source_mass_kg;
   double body_radius_m;
   uint8_t checkpoint_id[SL_V2_ID_CAPACITY];
   uint32_t checkpoint_id_len;

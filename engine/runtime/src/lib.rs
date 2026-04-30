@@ -38,12 +38,24 @@ pub struct BodyState {
     pub body_id: BodyId,
     pub body_class: BodyClass,
     pub mass_kg: f64,
+    pub source_mass_kg: f64,
     pub radius_m: f64,
     pub position_m: Vector3d,
     pub velocity_mps: Vector3d,
 }
 
 impl BodyState {
+    pub fn default_source_mass_kg(body_class: &BodyClass, mass_kg: f64) -> f64 {
+        match body_class {
+            BodyClass::Tracer | BodyClass::Spacecraft | BodyClass::SmallBody => 0.0,
+            BodyClass::Star
+            | BodyClass::Planet
+            | BodyClass::DwarfPlanet
+            | BodyClass::Moon
+            | BodyClass::Custom => mass_kg,
+        }
+    }
+
     /// Mass that participates as a gravity source in the authoritative solver.
     ///
     /// `mass_kg` is still the body's physical/inertial display mass, but
@@ -51,14 +63,7 @@ impl BodyState {
     /// not silently perturb the canonical system just because they carry a mass
     /// for UI, density, or momentum displays.
     pub fn source_mass_kg(&self) -> f64 {
-        match self.body_class {
-            BodyClass::Tracer | BodyClass::Spacecraft | BodyClass::SmallBody => 0.0,
-            BodyClass::Star
-            | BodyClass::Planet
-            | BodyClass::DwarfPlanet
-            | BodyClass::Moon
-            | BodyClass::Custom => self.mass_kg,
-        }
+        self.source_mass_kg
     }
 }
 
@@ -521,13 +526,18 @@ impl WorldRuntime {
                     branch.world.bodies = seed
                         .bodies
                         .into_iter()
-                        .map(|body| BodyState {
-                            body_id: BodyId(body.body_id),
-                            body_class: body.body_class,
-                            mass_kg: body.mass_kg,
-                            radius_m: body.radius_m,
-                            position_m: body.position_m,
-                            velocity_mps: body.velocity_mps,
+                        .map(|body| {
+                            let source_mass_kg =
+                                BodyState::default_source_mass_kg(&body.body_class, body.mass_kg);
+                            BodyState {
+                                body_id: BodyId(body.body_id),
+                                body_class: body.body_class,
+                                mass_kg: body.mass_kg,
+                                source_mass_kg,
+                                radius_m: body.radius_m,
+                                position_m: body.position_m,
+                                velocity_mps: body.velocity_mps,
+                            }
                         })
                         .collect();
                     branch.world.observer = ObserverState {
@@ -1982,6 +1992,7 @@ mod tests {
             body_id: BodyId("earth".into()),
             body_class: BodyClass::Planet,
             mass_kg: 5.972e24,
+            source_mass_kg: 5.972e24,
             radius_m: 6_371_000.0,
             position_m: Vector3d::default(),
             velocity_mps: Vector3d::default(),
@@ -2220,6 +2231,7 @@ mod tests {
                         body_id: earth.clone(),
                         body_class: BodyClass::Planet,
                         mass_kg: 5.972e24,
+                        source_mass_kg: 5.972e24,
                         radius_m: 6_371_000.0,
                         position_m: Vector3d {
                             x: 100.0,
@@ -2240,6 +2252,7 @@ mod tests {
                         body_id: moon.clone(),
                         body_class: BodyClass::Moon,
                         mass_kg: 7.35e22,
+                        source_mass_kg: 7.35e22,
                         radius_m: 1_737_000.0,
                         position_m: Vector3d {
                             x: 384_400_000.0,
@@ -2259,6 +2272,7 @@ mod tests {
                         body_id: spark.clone(),
                         body_class: BodyClass::Tracer,
                         mass_kg: 1.0,
+                        source_mass_kg: 0.0,
                         radius_m: 25.0,
                         position_m: Vector3d {
                             x: 410_000_000.0,
@@ -2278,6 +2292,7 @@ mod tests {
                         body_id: sun,
                         body_class: BodyClass::Star,
                         mass_kg: 1.989e30,
+                        source_mass_kg: 1.989e30,
                         radius_m: 696_000_000.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -2376,6 +2391,7 @@ mod tests {
                         body_id: earth.clone(),
                         body_class: BodyClass::Planet,
                         mass_kg: 5.972e24,
+                        source_mass_kg: 5.972e24,
                         radius_m: 6_371_000.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d {
@@ -2470,6 +2486,7 @@ mod tests {
                         body_id: BodyId("planet".into()),
                         body_class: BodyClass::Planet,
                         mass_kg: 5.972e24,
+                        source_mass_kg: 5.972e24,
                         radius_m: 6_371_000.0,
                         position_m: Vector3d {
                             x: 0.0,
@@ -2489,6 +2506,7 @@ mod tests {
                         body_id: BodyId("tracer".into()),
                         body_class: BodyClass::Tracer,
                         mass_kg: 1.0,
+                        source_mass_kg: 0.0,
                         radius_m: 10.0,
                         position_m: Vector3d {
                             x: 100.0,
@@ -2631,6 +2649,7 @@ mod tests {
                         body_id: BodyId("solo".into()),
                         body_class: BodyClass::Planet,
                         mass_kg: 1_000.0,
+                        source_mass_kg: 1_000.0,
                         radius_m: 1_000.0,
                         position_m: Vector3d {
                             x: 42.0,
@@ -2671,6 +2690,7 @@ mod tests {
                         body_id: body_id.clone(),
                         body_class: BodyClass::Spacecraft,
                         mass_kg: 1_500.0,
+                        source_mass_kg: 0.0,
                         radius_m: 2.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -2864,6 +2884,7 @@ mod tests {
                         body_id: BodyId("sun".into()),
                         body_class: BodyClass::Star,
                         mass_kg: 1.98847e30,
+                        source_mass_kg: 1.98847e30,
                         radius_m: 696_340_000.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -2880,6 +2901,7 @@ mod tests {
                         body_id: BodyId("moon".into()),
                         body_class: BodyClass::Moon,
                         mass_kg: 7.35e22,
+                        source_mass_kg: 7.35e22,
                         radius_m: 1_737_000.0,
                         position_m: Vector3d {
                             x: 384_400_000.0,
@@ -2930,6 +2952,7 @@ mod tests {
                         body_id: BodyId("sun".into()),
                         body_class: BodyClass::Star,
                         mass_kg: 1.98847e30,
+                        source_mass_kg: 1.98847e30,
                         radius_m: 696_340_000.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -2946,6 +2969,7 @@ mod tests {
                         body_id: BodyId("pluto".into()),
                         body_class: BodyClass::DwarfPlanet,
                         mass_kg: 1.309e22,
+                        source_mass_kg: 1.309e22,
                         radius_m: 1_188_000.0,
                         position_m: Vector3d {
                             x: 5_900_000_000_000.0,
@@ -3072,6 +3096,7 @@ mod tests {
             body_id: BodyId("teaching-probe".into()),
             body_class: BodyClass::Spacecraft,
             mass_kg: 1.0e30,
+            source_mass_kg: 0.0,
             radius_m: 10.0,
             position_m: Vector3d {
                 x: 8.0e7,
@@ -3625,6 +3650,7 @@ mod tests {
                         body_id: earth,
                         body_class: BodyClass::Planet,
                         mass_kg: 5.972e24,
+                        source_mass_kg: 5.972e24,
                         radius_m: 6_371_000.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -3640,6 +3666,7 @@ mod tests {
                         body_id: moon.clone(),
                         body_class: BodyClass::Moon,
                         mass_kg: 7.35e22,
+                        source_mass_kg: 7.35e22,
                         radius_m: 1_737_000.0,
                         position_m: Vector3d {
                             x: 384_400_000.0,
@@ -3696,6 +3723,7 @@ mod tests {
                         body_id: earth.clone(),
                         body_class: BodyClass::Planet,
                         mass_kg: 5.972e24,
+                        source_mass_kg: 5.972e24,
                         radius_m: 6_371_000.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -3711,6 +3739,7 @@ mod tests {
                         body_id: moon.clone(),
                         body_class: BodyClass::Moon,
                         mass_kg: 7.35e22,
+                        source_mass_kg: 7.35e22,
                         radius_m: 1_737_000.0,
                         position_m: Vector3d {
                             x: 384_400_000.0,
@@ -3757,6 +3786,7 @@ mod tests {
                         body_id: tracer.clone(),
                         body_class: BodyClass::Tracer,
                         mass_kg: 1.0,
+                        source_mass_kg: 0.0,
                         radius_m: 20.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -3860,6 +3890,7 @@ mod tests {
                         body_id: BodyId("planet-a".into()),
                         body_class: BodyClass::Planet,
                         mass_kg: 5.972e24,
+                        source_mass_kg: 5.972e24,
                         radius_m: 6_371_000.0,
                         position_m: Vector3d::default(),
                         velocity_mps: Vector3d::default(),
@@ -3877,6 +3908,7 @@ mod tests {
                         body_id: BodyId("tracer-a".into()),
                         body_class: BodyClass::Tracer,
                         mass_kg: 1.0,
+                        source_mass_kg: 0.0,
                         radius_m: 10.0,
                         position_m: Vector3d {
                             x: 10.0,
@@ -3899,6 +3931,7 @@ mod tests {
                         body_id: BodyId("star-a".into()),
                         body_class: BodyClass::Star,
                         mass_kg: 1.989e30,
+                        source_mass_kg: 1.989e30,
                         radius_m: 696_000_000.0,
                         position_m: Vector3d {
                             x: -10.0,
@@ -4290,6 +4323,7 @@ mod tests {
                         body_id: BodyId("primary".into()),
                         body_class: BodyClass::Planet,
                         mass_kg: 5.972e24,
+                        source_mass_kg: 5.972e24,
                         radius_m: 6_371_000.0,
                         position_m: Vector3d {
                             x: -2.0e7,
@@ -4310,6 +4344,7 @@ mod tests {
                         body_id: BodyId("secondary".into()),
                         body_class: BodyClass::Moon,
                         mass_kg: 7.348e22,
+                        source_mass_kg: 7.348e22,
                         radius_m: 1_737_000.0,
                         position_m: Vector3d {
                             x: 2.0e7,
@@ -4499,13 +4534,18 @@ mod tests {
             .bodies
             .into_iter()
             .filter(|body| body.body_class != BodyClass::SmallBody)
-            .map(|body| BodyState {
-                body_id: BodyId(body.body_id),
-                body_class: body.body_class,
-                mass_kg: body.mass_kg,
-                radius_m: body.radius_m,
-                position_m: body.position_m,
-                velocity_mps: body.velocity_mps,
+            .map(|body| {
+                let source_mass_kg =
+                    BodyState::default_source_mass_kg(&body.body_class, body.mass_kg);
+                BodyState {
+                    body_id: BodyId(body.body_id),
+                    body_class: body.body_class,
+                    mass_kg: body.mass_kg,
+                    source_mass_kg,
+                    radius_m: body.radius_m,
+                    position_m: body.position_m,
+                    velocity_mps: body.velocity_mps,
+                }
             })
             .collect();
 
@@ -4529,7 +4569,11 @@ mod tests {
     }
 
     fn total_mass_kg(snapshot: &WorldSnapshot) -> f64 {
-        snapshot.bodies.iter().map(|body| body.mass_kg).sum()
+        snapshot
+            .bodies
+            .iter()
+            .map(|body| body.source_mass_kg())
+            .sum()
     }
 
     fn expected_barycenter_after_seconds(

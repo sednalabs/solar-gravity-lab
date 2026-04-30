@@ -119,6 +119,39 @@ class JniRuntimeBridgeTest {
     }
 
     @Test
+    fun applyCommand_forwardsExplicitSpawnSourceMass() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            refreshResults = ArrayDeque(listOf(snapshotSummary(bodyCount = 2))),
+        )
+        val bridge = JniRuntimeBridge(
+            transport = transport,
+            renderHostAdapter = FakeRenderHostAdapter(),
+        )
+
+        collectSignalsUntil(bridge) { collected ->
+            collected
+                .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
+                .any { it.summary.bodyCount == 2 }
+        }
+        transport.appliedCommands.clear()
+
+        bridge.applyCommand(
+            RuntimeCommand.SpawnBody(
+                bodyId = "visual-probe",
+                bodyClass = RuntimeBodyClass.Planet,
+                massKg = 1.0e24,
+                radiusM = 1_000.0,
+                sourceMassKg = 0.0,
+            )
+        )
+
+        val command = transport.appliedCommands.single()
+        assertEquals(COMMAND_KIND_SPAWN_BODY, command.kind)
+        assertEquals(1.0e24, command.bodyMassKg, 0.0)
+        assertEquals(0.0, command.bodySourceMassKg, 0.0)
+    }
+
+    @Test
     fun connect_emitsOpenClRuntimeInfoLabel_whenNativeReportsOpenClBackend() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
@@ -361,7 +394,7 @@ class JniRuntimeBridgeTest {
             return NativeCreateSessionResult(
                 result = NativeResult(code = 0),
                 handle = sessionHandles.removeFirstOrNull() ?: 42L,
-                abiVersion = 9,
+                abiVersion = 10,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
             )
@@ -371,7 +404,7 @@ class JniRuntimeBridgeTest {
             runtimeInfoHandles += handle
             return NativeRuntimeInfoResult(
                 result = NativeResult(code = 0),
-                abiVersion = 9,
+                abiVersion = 10,
                 requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
@@ -432,6 +465,7 @@ class JniRuntimeBridgeTest {
         const val COMMAND_KIND_SET_PLAYBACK_RATE = 3
         const val COMMAND_KIND_SET_OBSERVER_MODE = 4
         const val COMMAND_KIND_FOCUS_BODY = 5
+        const val COMMAND_KIND_SPAWN_BODY = 6
 
         fun hasCommandKind(command: NativeRuntimeCommandPayload, kind: Int): Boolean =
             command.kind == kind

@@ -352,6 +352,29 @@ class StageFirstSandboxAppTest {
         assertEquals(PLACEMENT_FORECAST_SAMPLE_COUNT, preview?.forecastPointsM?.size)
     }
 
+    @Test
+    fun tracerPlacementPreviewDoesNotAdvertiseSourceMass() {
+        val staged = BodyPlacementSession.fromDraft(
+            draft = EditableBodyDraft.newDefault().copy(
+                gravitationalRole = GravitationalRole.TRACER,
+                massKg = 1.0e18,
+            ),
+            bodyId = "custom:tracer",
+        ).applyGesture(
+            PlacementGestureUpdate(
+                phase = PlacementGesturePhase.Ended,
+                startWorldPositionM = Vector3d(1.0, 2.0, 0.0),
+                endWorldPositionM = Vector3d(1.0, 2.0, 0.0),
+                gestureDistancePx = 0f,
+            ),
+        )
+
+        val preview = staged.toPlacementPreview(massiveBodies = emptyList())
+
+        assertNotNull(preview)
+        assertEquals(0.0, preview?.sourceMassKg ?: 1.0, 0.0)
+    }
+
     private fun body(
         id: String,
         massKg: Double,

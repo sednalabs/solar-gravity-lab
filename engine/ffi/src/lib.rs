@@ -38,7 +38,7 @@ use solarlab_vulkan_adapter::{
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 9;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 10;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -397,6 +397,7 @@ pub struct SlSessionCommand {
     pub body_position: SlVector3d,
     pub body_velocity: SlVector3d,
     pub body_mass_kg: f64,
+    pub body_source_mass_kg: f64,
     pub body_radius_m: f64,
     pub checkpoint_id: [u8; SL_V2_ID_CAPACITY],
     pub checkpoint_id_len: u32,
@@ -1475,11 +1476,17 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
         SlCommandKind::SpawnBody => {
             let body_id = decode_identifier(&command.body_id, command.body_id_len)?;
             let body_class = decode_body_class(command.body_class)?;
+            let source_mass_kg = decode_source_mass(
+                command.body_source_mass_kg,
+                &body_class,
+                command.body_mass_kg,
+            )?;
             Ok(WorldCommand::SpawnBody {
                 body: BodyState {
                     body_id: BodyId(body_id),
                     body_class,
                     mass_kg: command.body_mass_kg,
+                    source_mass_kg,
                     radius_m: command.body_radius_m,
                     position_m: decode_vector3d(command.body_position),
                     velocity_mps: decode_vector3d(command.body_velocity),
@@ -1535,6 +1542,16 @@ fn decode_optional_identifier(
     }
 
     decode_identifier(bytes, length).map(Some)
+}
+
+fn decode_source_mass(value: f64, body_class: &BodyClass, mass_kg: f64) -> Result<f64, SlResult> {
+    if value.is_nan() || value < 0.0 {
+        return Ok(BodyState::default_source_mass_kg(body_class, mass_kg));
+    }
+    if !value.is_finite() {
+        return Err(status(SlStatusCode::InvalidArgument));
+    }
+    Ok(value)
 }
 
 fn decode_body_class(value: SlBodyClass) -> Result<BodyClass, SlResult> {
@@ -1946,6 +1963,7 @@ mod android_jni {
         body_velocity_y: jdouble,
         body_velocity_z: jdouble,
         body_mass_kg: jdouble,
+        body_source_mass_kg: jdouble,
         body_radius_m: jdouble,
         checkpoint_id_utf8: jbyteArray,
         checkpoint_label_utf8: jbyteArray,
@@ -1968,6 +1986,7 @@ mod android_jni {
             body_velocity_y,
             body_velocity_z,
             body_mass_kg,
+            body_source_mass_kg,
             body_radius_m,
             checkpoint_id_utf8,
             checkpoint_label_utf8,
@@ -2097,6 +2116,7 @@ mod android_jni {
         body_velocity_y: jdouble,
         body_velocity_z: jdouble,
         body_mass_kg: jdouble,
+        body_source_mass_kg: jdouble,
         body_radius_m: jdouble,
         checkpoint_id_utf8: jbyteArray,
         checkpoint_label_utf8: jbyteArray,
@@ -2180,6 +2200,7 @@ mod android_jni {
                 body_position,
                 body_velocity,
                 body_mass_kg,
+                body_source_mass_kg,
                 body_radius_m,
                 checkpoint_id,
                 checkpoint_id_len,
@@ -3235,6 +3256,29 @@ mod tests {
     }
 
     #[test]
+    fn spawn_body_command_preserves_explicit_source_mass() {
+        let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+        body_id[..5].copy_from_slice(b"probe");
+        let command = test_session_command(SlCommandKind::SpawnBody, |command| {
+            command.body_id = body_id;
+            command.body_id_len = 5;
+            command.body_class = SlBodyClass::Planet;
+            command.body_mass_kg = 1.0e24;
+            command.body_source_mass_kg = 0.0;
+        });
+
+        let decoded = super::decode_world_command(command).expect("spawn command should decode");
+
+        match decoded {
+            WorldCommand::SpawnBody { body } => {
+                assert_eq!(body.mass_kg, 1.0e24);
+                assert_eq!(body.source_mass_kg(), 0.0);
+            }
+            other => panic!("expected spawn command, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn apply_command_remove_body_removes_existing_body() {
         let create = sl_v2_session_create(new_params("sol-system", "main"));
         assert_eq!(create.result.code, SlStatusCode::Ok);
@@ -3453,6 +3497,7 @@ mod tests {
             body_id: BodyId(body_id.to_owned()),
             body_class,
             mass_kg: 1.0,
+            source_mass_kg: BodyState::default_source_mass_kg(&body_class, 1.0),
             radius_m: 1.0,
             position_m: Vector3d {
                 x: position_x,
@@ -3484,6 +3529,7 @@ mod tests {
             body_position: SlVector3d::default(),
             body_velocity: SlVector3d::default(),
             body_mass_kg: 1.0,
+            body_source_mass_kg: -1.0,
             body_radius_m: 1.0,
             checkpoint_id: [0_u8; SL_V2_ID_CAPACITY],
             checkpoint_id_len: 0,
