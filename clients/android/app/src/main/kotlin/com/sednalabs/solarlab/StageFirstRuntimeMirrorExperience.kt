@@ -642,7 +642,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     dense = compactLayout,
                 )
                 StageActionButton(
-                    label = if (compactLayout) "Fast" else "Faster · ${playbackSpeedPreset.label}",
+                    label = if (compactLayout) playbackSpeedPreset.label else "Faster · ${playbackSpeedPreset.label}",
                     onClick = {
                         val nextPreset = playbackSpeedPreset.shifted(1)
                         playbackSpeedPreset = nextPreset
@@ -856,7 +856,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                             dense = true,
                         )
                         StageActionButton(
-                            label = "Fast",
+                            label = playbackSpeedPreset.label,
                             onClick = {
                                 val nextPreset = playbackSpeedPreset.shifted(1)
                                 playbackSpeedPreset = nextPreset
