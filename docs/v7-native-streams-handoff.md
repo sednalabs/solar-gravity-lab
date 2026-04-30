@@ -53,9 +53,9 @@ This was deliberate preparation for:
 - compute-driven tracer compaction
 - compute-driven tracer integration
 
-That preparation still matters, even though the old XY-native compaction path is
-now best read as paused until it is redesigned around the newer 3D camera-space
-contract.
+That preparation still matters. The old XY-native compaction path is historical;
+the current renderer compaction path re-entered through a 3D camera-space
+contract instead of reviving these older structs unchanged.
 
 ### 4. Command recording now binds the streams separately
 
@@ -79,5 +79,5 @@ For the current design target, pair it with:
 - `rendering-architecture-current-state.md`
 - `compute-compaction-reintroduction-plan.md`
 
-Those docs explain how this stream split fits into the newer 3D camera and
-compute-reentry framing.
+Those docs explain how this stream split fits into the current 3D camera and
+compute-compaction framing.

@@ -26,6 +26,8 @@ What is real on this canonical main line today:
 - an operational Android shell in [`clients/android`](clients/android) that can
   start a Rust runtime session, refresh/apply commands, and host the exported
   Vulkan render packet surface
+- a source-mass-aware runtime/FFI command path so probes, tracers, and teaching
+  bodies can carry display mass without silently perturbing canonical bodies
 - working Android native builds through `cargo-ndk` and the Android app Gradle
   pipeline
 
@@ -33,8 +35,9 @@ What is intentionally still transitional:
 
 - the existing `app`, `core-*`, `feature-lab`, and `render-core` modules are
   still present as v1 reference code
-- the runtime and scene export surface are still earlier in behavioral maturity
-  than the old product line; this branch is structurally ahead of feature parity
+- the runtime and scene export surface are still earlier in product maturity
+  than the old line; this branch is structurally ahead of feature parity, but
+  now owns the authoritative physics semantics for the canonical path
 - the render backend adapter stack is only implemented far enough for the
   current Vulkan packet host seam and still needs broader scene-history and
   capability work
@@ -52,9 +55,9 @@ The highest-value live gaps are:
   newer immersive-render directions
 - the authoritative rendering boundary needs to be read explicitly as
   `world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan`
-- medium/far compute-compaction is **not** an automatically active next step;
-  the older XY-native path is now best read as historical and any re-entry
-  should happen only through a 3D camera-space redesign
+- medium/far compute-compaction is active only in the restored 3D
+  camera-space renderer path; the older XY-native compaction notes are
+  historical and must not be treated as current design guidance
 - the repo now has a richer architecture corpus describing current rendering,
   camera, scene-contract, scaling, and frame-lifecycle seams under `docs/`
 
@@ -66,7 +69,7 @@ The highest-value live gaps are:
   Versioned cross-language schemas for packages, runtime, diagnostics, and
   render-scene contracts.
 - [`clients/android/`](clients/android)
-  The future Android Compose shell over the Rust core.
+  The Android Compose shell over the Rust core.
 - [`data/`](data)
   Data-pack, manifest, validation, and provenance model documentation.
 - [`services/`](services)
@@ -118,6 +121,11 @@ Refresh and command semantics in this canonical Rust line:
 - `sl_v2_session_snapshot_summary` is a read-only observation of the current runtime state.
 - `sl_v2_session_refresh` exists as an explicit read refresh point for shell callers that want a consistent control flow between “command + observe” turns.
 - `sl_v2_session_export_vulkan_scene` is also read-only; it returns a separate packet handle whose backing buffer must be consumed via `sl_v2_vulkan_scene_packet_buffer` and must be released with `sl_v2_vulkan_scene_packet_release`.
+- Spawn-body commands cross the current ABI with both `body_mass_kg` and
+  `body_source_mass_kg`. `body_mass_kg` is the display/inertial teaching value;
+  `body_source_mass_kg` is the mass that actually participates as a gravity
+  source. Tracers, probes, spacecraft, and small-body markers should default to
+  zero source mass unless the user explicitly creates them as massive bodies.
 
 Scenario packs provide deterministic startup scenes for fast Android visual
 iteration. They choose the starting catalog slice and presentation defaults, but

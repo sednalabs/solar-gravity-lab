@@ -4,12 +4,13 @@ This is the current decision document for medium/far compute-compaction.
 
 ## Current status
 
-Paused.
+Re-entered in the native renderer as 3D camera-space compute compaction for
+medium/far tracer streams.
 
 The older compaction direction should be read as historical and XY-native. It is
-not the automatic next implementation step on canonical `main`.
+not the current implementation path on canonical `main`.
 
-## Why it is paused
+## Why the old path stayed paused
 
 The earlier path assumed a flatter worldview in exactly the places that now
 matter most:
@@ -22,25 +23,29 @@ matter most:
 Reintroducing it unchanged would risk reintroducing hidden flattening underneath
 a newer 3D camera and renderer direction.
 
-## Re-entry options
+## Re-entry decision
 
-1. bring compaction back in a fully 3D form
-2. redesign compaction around a cleaner camera-space LOD model
-3. retire the old idea if direct draw + other optimizations are good enough
+The project chose the first safe option: bring compaction back only after moving
+it into the 3D orbit-camera basis and keeping it on the renderer side of the
+world/scene/packet boundary.
 
-## Re-entry criteria
+## Continuing criteria
 
-Only reintroduce compute-compaction if all of the following are true:
+Any future expansion of compute-compaction must keep all of the following true:
 
 - state is truly 3D (`vec3`, not `vec2`)
 - culling is camera/frustum aware
 - camera-relative precision is preserved
 - renderer truth is not compromised
+- authoritative world truth and source-mass semantics stay in the Rust runtime
 - the performance win is measured on real tracer-heavy scenes
 
-## Recommended order
+## Recommended next order
 
-1. benchmark the honest 3D renderer path first
-2. build the smallest viable 3D compaction prototype
-3. compare against direct draw on real scenes
-4. decide whether to reintroduce, redesign, or retire the path
+1. benchmark the current 3D compaction path against direct draw on real
+   tracer-heavy scenes
+2. measure visual stability while orbiting and zooming through dense belts
+3. decide whether density aggregation, tile compaction, or direct draw is the
+   right next step for each scale band
+4. keep compute-driven integration separate until it has its own accuracy
+   policy and scalar-oracle proof

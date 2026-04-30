@@ -34,15 +34,17 @@ This is the live renderer-focused phase.
 - replace older flat packet-host assumptions with a truthful 3D
   camera/render/interaction model
 
-## Phase 5: compaction and heavy-scene scaling decision
+## Phase 5: compaction and heavy-scene scaling
 
-This phase is now explicitly gated.
+This phase has begun through the native renderer's 3D camera-space compaction
+path. The gate remains closed for older XY-native assumptions and for any
+compute path that would move scientific truth out of the runtime.
 
-- benchmark tracer-heavy scenes on the 3D renderer path
-- decide whether medium/far compute-compaction returns, is redesigned, or is
-  retired
-- if reintroduced, require a 3D camera-space compaction model rather than the
-  older XY-native path
+- benchmark tracer-heavy scenes on the restored 3D renderer compaction path
+- decide whether medium/far density aggregation or tile compaction is worth the
+  added complexity
+- preserve the 3D camera-space compaction model rather than reviving the older
+  XY-native path
 - continue native stream/pipeline specialization only when it preserves the new
   rendering contract
 

@@ -1,5 +1,10 @@
 Stage-first restoration — slice 4: multiscale orbit camera + 3D immersive pipeline
 
+Historical note: this slice intentionally disabled the older XY-native
+medium/far compute-compaction path. Later renderer work restored compute
+compaction through the 3D orbit-camera basis rather than reusing the old
+flattened path unchanged.
+
 This slice is the first real camera/render migration away from the overhead XY contract.
 It keeps the restored stage-first client and the runtime mirror from slices 1–3, but replaces the
 camera math that was still flattening the immersive client.
@@ -44,7 +49,7 @@ compute shaders. Rather than pretending it was 3D-ready, this slice disables com
 uses direct draw buffers for medium/far streams. The next native bite can port those compute shaders
 cleanly into the new 3D camera basis.
 
-What still remains after slice 4
+What still remained after slice 4
 
 - richer camera controls / presets for jumping directly between scale bands
 - 3D compute compaction for medium/far tracer streams

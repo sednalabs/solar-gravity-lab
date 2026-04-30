@@ -47,7 +47,8 @@ checkpoint.
    activation truth, or scalar-oracle equivalence for Arm64.
 6. `ffi-abi`
    Runs a narrower `cargo test -p solarlab-ffi` proof slice when the active seam
-   is runtime/ABI/JNI-facing rather than the whole workspace.
+   is runtime/ABI/JNI-facing rather than the whole workspace. Use this for
+   ABI-version changes or command payload changes such as source-mass transport.
 7. `android-shell`
    Prepares the Android toolchain plus the Rust Android targets, then builds the
    real app under `clients/android` with `:app:assembleDebug`.
@@ -169,7 +170,9 @@ Current recommendation:
    canceling separate same-branch workflow dispatches while staying narrower
    than `full`.
 6. Use `profile=targeted`, `lane_set=ffi-abi` when the active seam is the C ABI,
-   JNI, or Android bridge contract.
+   JNI, or Android bridge contract. For source-mass or spawn-body payload
+   changes, pair it with the smallest Rust runtime proof that exercises the
+   solver semantics.
 7. Use `profile=frontier`, `lane_set=auto` when you want the Android shell lane
    alongside the Rust baseline.
 8. Reserve `profile=broad` or `profile=full` for milestone checkpoints; these
