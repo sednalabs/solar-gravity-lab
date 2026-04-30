@@ -647,7 +647,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          ref: ${{ needs.metadata.outputs.checkout_ref }}
+          ref: ${{ github.sha }}
 
       - name: Collect hosted Arm64 capability census
         shell: bash
