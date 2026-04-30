@@ -235,6 +235,19 @@ class CommandFailure(RuntimeError):
     """Raised when a required device-census command cannot collect evidence."""
 
 
+def validate_command_argv(command: list[str]) -> list[str]:
+    if not command:
+        raise CommandFailure("Refusing to execute an empty command")
+    validated: list[str] = []
+    for part in command:
+        if not isinstance(part, str):
+            raise CommandFailure("Command arguments must be strings")
+        if any(ch in part for ch in ("\x00", "\n", "\r")):
+            raise CommandFailure("Command arguments contain unsafe control characters")
+        validated.append(part)
+    return validated
+
+
 def run_command(
     command: list[str],
     timeout: int = 30,
@@ -242,9 +255,10 @@ def run_command(
     required: bool = False,
     description: str | None = None,
 ) -> str:
+    safe_command = validate_command_argv(command)
     try:
         result = subprocess.run(
-            command,
+            safe_command,
             check=False,
             capture_output=True,
             text=True,
