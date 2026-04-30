@@ -1,0 +1,7 @@
+name: sednalabs/solar-rust-claim-enforcement
+version: 0.0.1
+library: false
+dependencies:
+  codeql/rust-all: "*"
+suites: suites
+defaultSuiteFile: suites/solar-rust-claim-enforcement.qls

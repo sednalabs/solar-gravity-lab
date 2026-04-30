@@ -8,11 +8,31 @@ from pathlib import Path
 WORKFLOW = Path(__file__).parents[1] / "workflows" / "codeql.yml"
 
 EXPECTED_MATRIX_ROWS = {
-    "actions": ("none", "./.github/codeql/codeql-actions-security.yml"),
-    "c-cpp": ("none", "./.github/codeql/codeql-config.yml"),
-    "java-kotlin": ("manual", "./.github/codeql/codeql-config.yml"),
-    "python": ("none", "./.github/codeql/codeql-python-security.yml"),
-    "rust": ("none", "./.github/codeql/codeql-config.yml"),
+    "actions": (
+        "none",
+        "./.github/codeql/codeql-actions-security.yml",
+        "./.github/codeql/codeql-actions-security.yml",
+    ),
+    "c-cpp": (
+        "none",
+        "./.github/codeql/codeql-cpp-claim-enforcement.yml",
+        "./.github/codeql/codeql-config.yml",
+    ),
+    "java-kotlin": (
+        "manual",
+        "./.github/codeql/codeql-java-kotlin-claim-enforcement.yml",
+        "./.github/codeql/codeql-config.yml",
+    ),
+    "python": (
+        "none",
+        "./.github/codeql/codeql-python-security.yml",
+        "./.github/codeql/codeql-python-security.yml",
+    ),
+    "rust": (
+        "none",
+        "./.github/codeql/codeql-rust-claim-enforcement.yml",
+        "./.github/codeql/codeql-config.yml",
+    ),
 }
 
 
@@ -31,11 +51,12 @@ class CodeqlStaticWorkflowTests(unittest.TestCase):
     def test_static_matrix_covers_default_branch_categories(self) -> None:
         block = matrix_block(workflow_text())
 
-        for language, (build_mode, config_file) in EXPECTED_MATRIX_ROWS.items():
+        for language, (build_mode, config_file, pr_config_file) in EXPECTED_MATRIX_ROWS.items():
             row_pattern = (
                 rf"(?ms)- language: {re.escape(language)}\n"
                 rf"\s+build-mode: {re.escape(build_mode)}\n"
-                rf"\s+config_file: {re.escape(config_file)}"
+                rf"\s+config_file: {re.escape(config_file)}\n"
+                rf"\s+pr_config_file: {re.escape(pr_config_file)}"
             )
             self.assertRegex(block, row_pattern)
 
@@ -47,7 +68,10 @@ class CodeqlStaticWorkflowTests(unittest.TestCase):
     def test_advanced_setup_still_uses_custom_config_and_manual_kotlin_build(self) -> None:
         text = workflow_text()
 
-        self.assertIn("config-file: ${{ matrix.config_file }}", text)
+        self.assertIn(
+            "config-file: ${{ github.event_name == 'pull_request' && matrix.pr_config_file || matrix.config_file }}",
+            text,
+        )
         self.assertIn("build-mode: ${{ matrix.build-mode }}", text)
         self.assertIn("Build Java and Kotlin sources for CodeQL", text)
         self.assertIn("matrix.language == 'java-kotlin'", text)

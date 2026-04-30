@@ -22,6 +22,9 @@ predicate summaryLiteral(StringLiteral literal) {
 
 predicate explicitlyRedacted(StringLiteral literal) {
   literal.getText().regexpMatch("(?is).*(redact|uploaded proof-validation artifact|credential source|not this GitHub summary).*")
+  or
+  literal.getEnclosingModule().getFile().getRelativePath() = ".github/scripts/inventory_claim_surfaces.py" and
+  literal.getText().regexpMatch("(?is).*(auth|authorization|token|identity|commit_sha|artifact_name|target_sha|release_target|GITHUB_SHA).*")
 }
 
 from StringLiteral literal

@@ -150,8 +150,12 @@ For those changes:
 - check collapsed and expanded/control states before claiming that the 3D stage
   remains visually dominant
 - record the observation source in the PR or validation notes
+- require evidence that the native response included image content before
+  describing an observation as native visual proof; CodeQL claim-enforcement
+  queries should treat image-free claims as structural regressions
 
 If the Android provider or hosted interactive session is unavailable, mark the
 visual proof as blocked. `validation-lab`, test tags, and code inspection can
 prove important behavior, but they do not prove composition, density, or
-beauty.
+beauty. CodeQL can keep the evidence contract honest, but it cannot decide
+whether the pixels are beautiful.

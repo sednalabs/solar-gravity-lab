@@ -1,0 +1,7 @@
+name: sednalabs/solar-cpp-claim-enforcement
+version: 0.0.1
+library: false
+dependencies:
+  codeql/cpp-all: "*"
+suites: suites
+defaultSuiteFile: suites/solar-cpp-claim-enforcement.qls

@@ -133,7 +133,11 @@ class JniRuntimeBridgeTest {
         }
 
         withTimeout(2_000) {
-            while (transport.refreshedHandles.isEmpty()) {
+            while (
+                transport.refreshedHandles.isEmpty() ||
+                transport.appliedCommands.none { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) } ||
+                transport.appliedCommands.none { hasCommandKind(it, COMMAND_KIND_SET_PLAYBACK_RATE) }
+            ) {
                 delay(25)
             }
         }

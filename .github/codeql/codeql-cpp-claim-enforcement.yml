@@ -1,0 +1,7 @@
+name: solar-gravity-lab-codeql-cpp-claim-enforcement
+
+queries:
+  - uses: security-and-quality
+  - uses: ./.github/codeql/packs/solar-cpp-claim-enforcement/suites/solar-cpp-claim-enforcement.qls
+
+threat-models: local

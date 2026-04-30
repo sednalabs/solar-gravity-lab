@@ -33,18 +33,23 @@ jobs:
           - language: actions
             build-mode: none
             config_file: ./.github/codeql/codeql-actions-security.yml
+            pr_config_file: ./.github/codeql/codeql-actions-security.yml
           - language: c-cpp
             build-mode: none
-            config_file: ./.github/codeql/codeql-config.yml
+            config_file: ./.github/codeql/codeql-cpp-claim-enforcement.yml
+            pr_config_file: ./.github/codeql/codeql-config.yml
           - language: java-kotlin
             build-mode: manual
-            config_file: ./.github/codeql/codeql-config.yml
+            config_file: ./.github/codeql/codeql-java-kotlin-claim-enforcement.yml
+            pr_config_file: ./.github/codeql/codeql-config.yml
           - language: python
             build-mode: none
             config_file: ./.github/codeql/codeql-python-security.yml
+            pr_config_file: ./.github/codeql/codeql-python-security.yml
           - language: rust
             build-mode: none
-            config_file: ./.github/codeql/codeql-config.yml
+            config_file: ./.github/codeql/codeql-rust-claim-enforcement.yml
+            pr_config_file: ./.github/codeql/codeql-config.yml
     env:
       ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
       ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -178,7 +183,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          config-file: ${{ matrix.config_file }}
+          config-file: ${{ github.event_name == 'pull_request' && matrix.pr_config_file || matrix.config_file }}
           dependency-caching: ${{ github.event_name == 'pull_request' && 'restore' || 'full' }}
 
       - name: Build Java and Kotlin sources for CodeQL
