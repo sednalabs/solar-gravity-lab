@@ -16,6 +16,8 @@ import rust
 predicate rustText(string text) {
   exists(Function function | text = function.getName().toString())
   or
+  exists(Call call | text = call.getTargetName())
+  or
   exists(StringLiteralExpr literal | text = literal.getTextValue())
 }
 
@@ -58,10 +60,34 @@ predicate evidenceText(string text, string claimClass) {
   )
 }
 
-predicate hasEvidence(File file, string claimClass) {
+predicate functionHasLocalEvidence(Function function, string claimClass) {
+  evidenceText(function.getName().toString(), claimClass)
+  or
+  exists(Call call |
+    call.getEnclosingCallable() = function and
+    evidenceText(call.getTargetName(), claimClass)
+  )
+  or
+  exists(StringLiteralExpr literal |
+    literal.getEnclosingCallable() = function and
+    evidenceText(literal.getTextValue(), claimClass)
+  )
+}
+
+predicate hasEvidenceFor(Function function, string claimClass) {
+  functionHasLocalEvidence(function, claimClass)
+  or
+  exists(Call call, Function callee |
+    call.getEnclosingCallable() = function and
+    call.getStaticTarget() = callee and
+    functionHasLocalEvidence(callee, claimClass)
+  )
+}
+
+predicate fileHasEvidence(File file, string claimClass) {
   exists(Function function |
     function.getFile() = file and
-    evidenceText(function.getName().toString(), claimClass)
+    functionHasLocalEvidence(function, claimClass)
   )
   or
   exists(StringLiteralExpr literal |
@@ -84,12 +110,24 @@ predicate missingEvidence(string claimClass, string missingEvidence) {
   claimClass = "verified" and missingEvidence = "no_digest_or_manifest_check"
 }
 
+predicate literalHasEvidence(StringLiteralExpr literal, string claimClass) {
+  exists(Function function |
+    literal.getEnclosingCallable() = function and
+    hasEvidenceFor(function, claimClass)
+  )
+  or
+  (
+    not exists(Callable callable | literal.getEnclosingCallable() = callable) and
+    fileHasEvidence(literal.getFile(), claimClass)
+  )
+}
+
 from StringLiteralExpr literal, string claimClass, string missingEvidence
 where
   claimText(literal.getTextValue(), claimClass) and
   contextText(literal.getTextValue()) and
   missingEvidence(claimClass, missingEvidence) and
-  not hasEvidence(literal.getFile(), claimClass)
+  not literalHasEvidence(literal, claimClass)
 select literal,
-  "This Rust string literal makes a trust claim without recognized enforcement evidence in the same file. claim_class=" +
+  "This Rust string literal makes a trust claim without recognized enforcement evidence in the same function, a directly called helper, or the file for top-level literals. claim_class=" +
   claimClass + " missing_evidence=" + missingEvidence + "."

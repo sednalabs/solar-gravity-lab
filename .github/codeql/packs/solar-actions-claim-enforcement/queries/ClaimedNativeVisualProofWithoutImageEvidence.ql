@@ -20,9 +20,16 @@ predicate hasNativeVisualClaim(Run run) {
   )
 }
 
-predicate hasNativeImageEvidence(Job job) {
+predicate evidenceReachesClaim(Run evidence, Run claim) {
+  evidence = claim
+  or
+  evidence.getAFollowingStep() = claim
+}
+
+predicate hasNativeImageEvidence(Run claim) {
   exists(Run evidence, string script |
-    evidence.getEnclosingJob() = job and
+    evidence.getEnclosingJob() = claim.getEnclosingJob() and
+    evidenceReachesClaim(evidence, claim) and
     script = evidence.getScript().getRawScript() and
     (
       script.regexpMatch("(?is).*(inputImage|input_image|native image content|native-image).*") or
@@ -33,6 +40,6 @@ predicate hasNativeImageEvidence(Job job) {
 }
 
 from Run run
-where hasNativeVisualClaim(run) and not hasNativeImageEvidence(run.getEnclosingJob())
+where hasNativeVisualClaim(run) and not hasNativeImageEvidence(run)
 select run,
   "This workflow step claims native Android visual proof without recognized native-image evidence. Record an assertion that android_observe/android_step returned image content before making visual claims."

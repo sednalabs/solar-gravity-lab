@@ -16,6 +16,8 @@ import rust
 predicate rustText(string text) {
   exists(Function function | text = function.getName().toString())
   or
+  exists(Call call | text = call.getTargetName())
+  or
   exists(StringLiteralExpr literal | text = literal.getTextValue())
 }
 
@@ -58,15 +60,27 @@ predicate evidenceText(string text, string claimClass) {
   )
 }
 
-predicate hasEvidence(File file, string claimClass) {
-  exists(Function function |
-    function.getFile() = file and
-    evidenceText(function.getName().toString(), claimClass)
+predicate functionHasLocalEvidence(Function function, string claimClass) {
+  evidenceText(function.getName().toString(), claimClass)
+  or
+  exists(Call call |
+    call.getEnclosingCallable() = function and
+    evidenceText(call.getTargetName(), claimClass)
   )
   or
   exists(StringLiteralExpr literal |
-    literal.getFile() = file and
+    literal.getEnclosingCallable() = function and
     evidenceText(literal.getTextValue(), claimClass)
+  )
+}
+
+predicate hasEvidenceFor(Function function, string claimClass) {
+  functionHasLocalEvidence(function, claimClass)
+  or
+  exists(Call call, Function callee |
+    call.getEnclosingCallable() = function and
+    call.getStaticTarget() = callee and
+    functionHasLocalEvidence(callee, claimClass)
   )
 }
 
@@ -89,7 +103,7 @@ where
   claimText(function.getName().toString(), claimClass) and
   contextText(function.getName().toString()) and
   missingEvidence(claimClass, missingEvidence) and
-  not hasEvidence(function.getFile(), claimClass)
+  not hasEvidenceFor(function, claimClass)
 select function,
-  "This Rust function name makes a trust claim without recognized enforcement evidence in the same file. claim_class=" +
+  "This Rust function name makes a trust claim without recognized enforcement evidence in the same function or directly called helper. claim_class=" +
   claimClass + " missing_evidence=" + missingEvidence + "."

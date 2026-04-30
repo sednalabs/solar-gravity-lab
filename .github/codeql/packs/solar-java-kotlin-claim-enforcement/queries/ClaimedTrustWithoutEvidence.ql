@@ -58,7 +58,7 @@ predicate evidenceName(string text, string claimClass) {
   )
 }
 
-predicate hasEvidenceFor(Callable callable, string claimClass) {
+predicate callableHasLocalEvidence(Callable callable, string claimClass) {
   exists(Callable callee |
     callable.getACallee() = callee and
     evidenceName(callee.getName(), claimClass)
@@ -67,6 +67,15 @@ predicate hasEvidenceFor(Callable callable, string claimClass) {
   exists(StringLiteral literal |
     literal.getEnclosingCallable() = callable and
     evidenceName(literal.getValue(), claimClass)
+  )
+}
+
+predicate hasEvidenceFor(Callable callable, string claimClass) {
+  callableHasLocalEvidence(callable, claimClass)
+  or
+  exists(Callable callee |
+    callable.getACallee() = callee and
+    callableHasLocalEvidence(callee, claimClass)
   )
 }
 
@@ -91,5 +100,5 @@ where
   missingEvidence(claimClass, missingEvidence) and
   not hasEvidenceFor(callable, claimClass)
 select callable,
-  "This Java/Kotlin callable name makes a trust claim without recognized enforcement evidence in the same callable. claim_class=" +
+  "This Java/Kotlin callable name makes a trust claim without recognized enforcement evidence in the same callable or a directly called helper. claim_class=" +
   claimClass + " missing_evidence=" + missingEvidence + "."

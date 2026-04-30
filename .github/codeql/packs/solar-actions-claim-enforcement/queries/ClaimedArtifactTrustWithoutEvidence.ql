@@ -83,9 +83,15 @@ predicate hasClaim(Step step, string claimClass) {
   exists(UsesStep usesStep | usesStep = step and hasUsesClaim(usesStep, claimClass))
 }
 
-predicate hasDigestOrIdentityEvidence(Job job) {
+predicate evidenceReachesClaim(Step evidence, Step claim) {
+  evidence = claim
+  or
+  evidence.getAFollowingStep() = claim
+}
+
+predicate stepHasDigestOrIdentityEvidence(Step step) {
   exists(Run evidence, string script |
-    evidence.getEnclosingJob() = job and
+    evidence = step and
     script = evidence.getScript().getRawScript() and
     (
       script.regexpMatch("(?is).*sha256(sum)?\\b.*") or
@@ -96,7 +102,7 @@ predicate hasDigestOrIdentityEvidence(Job job) {
   )
   or
   exists(UsesStep evidence, string text |
-    evidence.getEnclosingJob() = job and
+    evidence = step and
     usesStepText(evidence, text) and
     (
       text.regexpMatch("(?is).*sha256(sum)?\\b.*") or
@@ -107,25 +113,42 @@ predicate hasDigestOrIdentityEvidence(Job job) {
   )
 }
 
-predicate hasProvenanceEvidence(Job job) {
+predicate hasDigestOrIdentityEvidence(Step claim) {
+  exists(Step evidence |
+    evidence.getEnclosingJob() = claim.getEnclosingJob() and
+    evidenceReachesClaim(evidence, claim) and
+    stepHasDigestOrIdentityEvidence(evidence)
+  )
+}
+
+predicate stepHasProvenanceEvidence(Step step) {
   exists(Run evidence, string script |
-    evidence.getEnclosingJob() = job and
+    evidence = step and
     script = evidence.getScript().getRawScript() and
     script.regexpMatch("(?is).*provenance.*") and
     script.regexpMatch("(?is).*(json|upload|release|artifact|sha256|digest|commit).*")
   )
   or
   exists(UsesStep evidence, string text |
-    evidence.getEnclosingJob() = job and
+    evidence = step and
     usesStepText(evidence, text) and
     text.regexpMatch("(?is).*provenance.*") and
     text.regexpMatch("(?is).*(json|upload|release|artifact|sha256|digest|commit|attest-build-provenance).*")
   )
 }
 
-predicate hasCheckoutGuard(Job job) {
+predicate hasProvenanceEvidence(Step claim) {
+  exists(Step evidence |
+    evidence.getEnclosingJob() = claim.getEnclosingJob() and
+    evidenceReachesClaim(evidence, claim) and
+    stepHasProvenanceEvidence(evidence)
+  )
+}
+
+predicate hasCheckoutGuard(Step claim) {
   exists(UsesStep evidence, string ref, string persistCredentials |
-    evidence.getEnclosingJob() = job and
+    evidence.getEnclosingJob() = claim.getEnclosingJob() and
+    evidenceReachesClaim(evidence, claim) and
     evidence.getCallee().regexpMatch("(?is)^actions/checkout($|@).*") and
     (
       ref = evidence.getArgument("ref") and
@@ -141,9 +164,9 @@ predicate hasCheckoutGuard(Job job) {
   )
 }
 
-predicate hasTrustedWorkflowEvidence(Job job) {
+predicate hasTrustedWorkflowEvidence(Step claim) {
   exists(Workflow workflow |
-    job.getEnclosingWorkflow() = workflow and
+    claim.getEnclosingWorkflow() = workflow and
     (
       workflow.toString().regexpMatch("(?is).*codeql.*") or
       workflow.toString().regexpMatch("(?is).*release.*") or
@@ -151,33 +174,36 @@ predicate hasTrustedWorkflowEvidence(Job job) {
     )
   )
   and
-  exists(Run evidence, string script |
-    evidence.getEnclosingJob() = job and
-    script = evidence.getScript().getRawScript() and
-    (
-      script.regexpMatch("(?is).*refs/heads/.*") or
-      script.regexpMatch("(?is).*github\\.sha.*") or
-      script.regexpMatch("(?is).*GITHUB_SHA.*") or
-      script.regexpMatch("(?is).*persist-credentials:\\s*false.*") or
-      script.regexpMatch("(?is).*(validate|check).*target.*")
+  (
+    exists(Run evidence, string script |
+      evidence.getEnclosingJob() = claim.getEnclosingJob() and
+      evidenceReachesClaim(evidence, claim) and
+      script = evidence.getScript().getRawScript() and
+      (
+        script.regexpMatch("(?is).*refs/heads/.*") or
+        script.regexpMatch("(?is).*github\\.sha.*") or
+        script.regexpMatch("(?is).*GITHUB_SHA.*") or
+        script.regexpMatch("(?is).*persist-credentials:\\s*false.*") or
+        script.regexpMatch("(?is).*(validate|check).*target.*")
+      )
     )
+    or
+    hasCheckoutGuard(claim)
   )
-  or
-  hasCheckoutGuard(job)
 }
 
-predicate hasEvidenceFor(Job job, string claimClass) {
-  claimClass = "signed" and hasDigestOrIdentityEvidence(job) and hasProvenanceEvidence(job)
+predicate hasEvidenceFor(Step claim, string claimClass) {
+  claimClass = "signed" and hasDigestOrIdentityEvidence(claim) and hasProvenanceEvidence(claim)
   or
-  claimClass = "attested" and hasProvenanceEvidence(job)
+  claimClass = "attested" and hasProvenanceEvidence(claim)
   or
-  claimClass = "approved" and hasTrustedWorkflowEvidence(job)
+  claimClass = "approved" and hasTrustedWorkflowEvidence(claim)
   or
-  claimClass = "sealed" and hasDigestOrIdentityEvidence(job) and hasProvenanceEvidence(job)
+  claimClass = "sealed" and hasDigestOrIdentityEvidence(claim) and hasProvenanceEvidence(claim)
   or
-  claimClass = "trusted" and (hasTrustedWorkflowEvidence(job) or hasDigestOrIdentityEvidence(job))
+  claimClass = "trusted" and (hasTrustedWorkflowEvidence(claim) or hasDigestOrIdentityEvidence(claim))
   or
-  claimClass = "verified" and hasDigestOrIdentityEvidence(job)
+  claimClass = "verified" and hasDigestOrIdentityEvidence(claim)
 }
 
 predicate missingEvidence(string claimClass, string missingEvidence) {
@@ -198,7 +224,7 @@ from Step step, string claimClass, string missingEvidence
 where
   hasClaim(step, claimClass) and
   missingEvidence(claimClass, missingEvidence) and
-  not hasEvidenceFor(step.getEnclosingJob(), claimClass)
+  not hasEvidenceFor(step, claimClass)
 select step,
   "This workflow step makes an artifact or release trust claim without recognized enforcement evidence. claim_class=" +
   claimClass + " missing_evidence=" + missingEvidence + "."

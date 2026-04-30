@@ -60,7 +60,7 @@ predicate evidenceName(string text, string claimClass) {
   )
 }
 
-predicate hasEvidenceFor(Function function, string claimClass) {
+predicate functionHasLocalEvidence(Function function, string claimClass) {
   exists(FunctionCall call |
     call.getEnclosingFunction() = function and
     evidenceName(call.getTarget().getName(), claimClass)
@@ -69,6 +69,16 @@ predicate hasEvidenceFor(Function function, string claimClass) {
   exists(StringLiteral literal |
     literal.getEnclosingFunction() = function and
     evidenceName(literal.getValueText(), claimClass)
+  )
+}
+
+predicate hasEvidenceFor(Function function, string claimClass) {
+  functionHasLocalEvidence(function, claimClass)
+  or
+  exists(FunctionCall call, Function callee |
+    call.getEnclosingFunction() = function and
+    call.getTarget() = callee and
+    functionHasLocalEvidence(callee, claimClass)
   )
 }
 
@@ -93,5 +103,5 @@ where
   missingEvidence(claimClass, missingEvidence) and
   not hasEvidenceFor(literal.getEnclosingFunction(), claimClass)
 select literal,
-  "This C/C++ string literal makes a trust claim without recognized enforcement evidence in the same function. claim_class=" +
+  "This C/C++ string literal makes a trust claim without recognized enforcement evidence in the same function or a directly called helper. claim_class=" +
   claimClass + " missing_evidence=" + missingEvidence + "."

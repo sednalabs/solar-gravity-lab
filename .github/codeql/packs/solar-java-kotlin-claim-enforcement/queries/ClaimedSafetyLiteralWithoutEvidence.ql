@@ -1,6 +1,6 @@
 /**
  * @name Java/Kotlin safety string literal without recognized evidence
- * @description Java or Kotlin safe/security-context string literals should have sanitizer, coercion, validation, or bounds evidence in the same callable.
+ * @description Java or Kotlin safe/security-context string literals should have sanitizer, coercion, validation, or bounds evidence in the same callable or a directly called helper.
  * @kind problem
  * @problem.severity warning
  * @precision medium
@@ -29,13 +29,22 @@ predicate safeEvidenceText(string text) {
   text.regexpMatch("(?is).*(sanitize|sanitized|coerceIn|coerceAtLeast|validate|validated|bounds|clamp|checked).*")
 }
 
-predicate callableHasSafeEvidence(Callable callable) {
+predicate callableHasLocalSafeEvidence(Callable callable) {
   exists(Callable callee | callable.getACallee() = callee and safeEvidenceText(callee.getName()))
   or
   exists(StringLiteral literal | literal.getEnclosingCallable() = callable and safeEvidenceText(literal.getValue()))
 }
 
+predicate callableHasSafeEvidence(Callable callable) {
+  callableHasLocalSafeEvidence(callable)
+  or
+  exists(Callable callee |
+    callable.getACallee() = callee and
+    callableHasLocalSafeEvidence(callee)
+  )
+}
+
 from StringLiteral literal
 where safeClaimText(literal.getValue()) and not callableHasSafeEvidence(literal.getEnclosingCallable())
 select literal,
-  "This Java/Kotlin string literal makes a safety claim in a trust-sensitive context without recognized sanitizer or bounds evidence. claim_class=safe missing_evidence=no_bounds_or_sanitizer_guard."
+  "This Java/Kotlin string literal makes a safety claim in a trust-sensitive context without recognized sanitizer or bounds evidence in the same callable or a directly called helper. claim_class=safe missing_evidence=no_bounds_or_sanitizer_guard."
