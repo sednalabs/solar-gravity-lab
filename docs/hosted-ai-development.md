@@ -106,6 +106,13 @@ CodeQL's no-build Java mode. Rust and C/C++ use no-build analysis, which keeps
 the scan independent of Android emulator work while still covering the
 canonical Rust workspace and native source surfaces.
 
+Pull requests with CodeQL-relevant changes intentionally run the full
+default-branch category set. GitHub's PR alert comparison depends on matching
+SARIF categories between the base branch and PR head; a partial PR matrix can
+leave GitHub unable to tell which alerts the PR introduced. The plan-contract
+validator in the CodeQL workflow fails the router before analysis if a future
+change emits a partial category set for a relevant PR.
+
 The shared CodeQL config uses the broad `security-and-quality` suite plus the
 local threat model. That is intentionally noisier than default setup, but it
 gives this repository the widest stable built-in signal. Cache writes stay

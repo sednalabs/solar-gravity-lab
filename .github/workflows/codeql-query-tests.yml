@@ -4,16 +4,26 @@ on:
   pull_request:
     paths:
       - ".github/codeql/**"
+      - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
+      - ".github/scripts/ci_surfaces.py"
       - ".github/scripts/resolve_codeql_plan.py"
+      - ".github/scripts/validate_codeql_plan_contract.py"
+      - ".github/scripts/test_ci_surfaces.py"
       - ".github/scripts/test_codeql_plan.py"
+      - ".github/scripts/test_codeql_plan_contract.py"
   push:
     branches: ["main"]
     paths:
       - ".github/codeql/**"
+      - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
+      - ".github/scripts/ci_surfaces.py"
       - ".github/scripts/resolve_codeql_plan.py"
+      - ".github/scripts/validate_codeql_plan_contract.py"
+      - ".github/scripts/test_ci_surfaces.py"
       - ".github/scripts/test_codeql_plan.py"
+      - ".github/scripts/test_codeql_plan_contract.py"
   workflow_dispatch:
 
 permissions:
@@ -88,7 +98,11 @@ jobs:
 
       - name: Run CodeQL planner tests
         shell: bash
-        run: python3 .github/scripts/test_codeql_plan.py
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/test_ci_surfaces.py
+          python3 .github/scripts/test_codeql_plan.py
+          python3 .github/scripts/test_codeql_plan_contract.py
 
       - name: Emit summary
         shell: bash
@@ -99,5 +113,5 @@ jobs:
             echo "- resolved custom Actions and Python security query suites"
             echo "- resolved custom Actions and Python product-invariant query suites"
             echo "- compiled custom CodeQL queries"
-            echo "- ran CodeQL planner unit tests"
+            echo "- ran CodeQL surface, planner, and plan-contract unit tests"
           } >> "$GITHUB_STEP_SUMMARY"

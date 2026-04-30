@@ -107,12 +107,19 @@ jobs:
               "python": "none",
               "rust": "none",
           }
+          config_files = {
+              "actions": "./.github/codeql/codeql-actions-security.yml",
+              "c-cpp": "./.github/codeql/codeql-config.yml",
+              "java-kotlin": "./.github/codeql/codeql-config.yml",
+              "python": "./.github/codeql/codeql-python-security.yml",
+              "rust": "./.github/codeql/codeql-config.yml",
+          }
           matrix = {
               "include": [
                   {
                       "language": language,
                       "build-mode": build_modes[language],
-                      "config_file": "./.github/codeql/codeql-config.yml",
+                      "config_file": config_files[language],
                   }
                   for language in languages
               ]
@@ -141,6 +148,24 @@ jobs:
           for key, value in plan.items():
               print(f"{key}={value}")
           PY
+
+      - name: Validate CodeQL plan contract
+        shell: bash
+        env:
+          PLAN_MATRIX: ${{ steps.plan.outputs.matrix }}
+          PLAN_LANGUAGES: ${{ steps.plan.outputs.languages }}
+          PLAN_HAS_RELEVANT: ${{ steps.plan.outputs.has_codeql_relevant_changes }}
+          PLAN_RUN_ALL: ${{ steps.plan.outputs.run_all_languages }}
+          PLAN_REASON: ${{ steps.plan.outputs.reason }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/validate_codeql_plan_contract.py \
+            --event-name '${{ github.event_name }}' \
+            --matrix-json "${PLAN_MATRIX}" \
+            --languages "${PLAN_LANGUAGES}" \
+            --has-codeql-relevant-changes "${PLAN_HAS_RELEVANT}" \
+            --run-all-languages "${PLAN_RUN_ALL}" \
+            --reason "${PLAN_REASON}"
 
       - name: Emit CodeQL routing summary
         shell: bash
