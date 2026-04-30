@@ -96,6 +96,9 @@ class ClaimFinding:
     text: str
 
     def key(self) -> str:
+        return self.location_key()
+
+    def location_key(self) -> str:
         return "|".join(
             (
                 self.path,
@@ -103,6 +106,17 @@ class ClaimFinding:
                 self.claim_class,
                 self.missing_evidence,
                 self.enforcement_status,
+            )
+        )
+
+    def content_key(self) -> str:
+        return "|".join(
+            (
+                self.path,
+                self.claim_class,
+                self.missing_evidence,
+                self.enforcement_status,
+                " ".join(self.text.split()),
             )
         )
 
@@ -118,6 +132,15 @@ class ClaimFinding:
         }
 
 
+@dataclass(frozen=True)
+class BaselineKeys:
+    location_keys: frozenset[str]
+    content_keys: frozenset[str]
+
+    def contains(self, finding: ClaimFinding) -> bool:
+        return finding.location_key() in self.location_keys or finding.content_key() in self.content_keys
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inventory trust-like claim surfaces.")
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -125,6 +148,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-output", type=Path)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--fail-on-new", action="store_true")
+    parser.add_argument(
+        "--fail-on-new-status",
+        action="append",
+        choices=("missing_evidence", "recognized_evidence_present", "inventory_only"),
+        help=(
+            "Only fail on new baseline entries with this enforcement status. "
+            "Repeat to gate more than one status. Defaults to all statuses."
+        ),
+    )
+    parser.add_argument(
+        "--fail-on-new-surface",
+        action="append",
+        choices=("actions", "c-cpp", "docs", "java-kotlin", "plain-text", "proto", "python", "rust"),
+        help=(
+            "Only fail on new baseline entries from this surface. Repeat to gate more than one surface. "
+            "Defaults to all surfaces."
+        ),
+    )
     parser.add_argument("--format", default="json", help="Comma-separated output formats: json,github-summary")
     return parser.parse_args()
 
@@ -218,16 +259,17 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def load_baseline_keys(path: Path) -> set[str]:
+def load_baseline_keys(path: Path) -> BaselineKeys:
     payload = json.loads(path.read_text(encoding="utf-8"))
     entries = payload.get("entries", [])
     if not isinstance(entries, list):
         raise SystemExit(f"baseline entries must be a list: {path}")
-    keys = set()
+    location_keys: set[str] = set()
+    content_keys: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        keys.add(
+        location_keys.add(
             "|".join(
                 (
                     str(entry.get("path", "")),
@@ -238,7 +280,18 @@ def load_baseline_keys(path: Path) -> set[str]:
                 )
             )
         )
-    return keys
+        content_keys.add(
+            "|".join(
+                (
+                    str(entry.get("path", "")),
+                    str(entry.get("claim_class", "")),
+                    str(entry.get("missing_evidence", "")),
+                    str(entry.get("enforcement_status", "")),
+                    " ".join(str(entry.get("text", "")).split()),
+                )
+            )
+        )
+    return BaselineKeys(frozenset(location_keys), frozenset(content_keys))
 
 
 def summary_text(findings: list[ClaimFinding]) -> str:
@@ -289,9 +342,21 @@ def main() -> None:
         if not args.baseline:
             raise SystemExit("--fail-on-new requires --baseline")
         baseline_keys = load_baseline_keys(args.baseline)
-        new_findings = [finding for finding in findings if finding.key() not in baseline_keys]
+        gated_statuses = set(args.fail_on_new_status or ())
+        gated_surfaces = set(args.fail_on_new_surface or ())
+        new_findings = [
+            finding
+            for finding in findings
+            if (not gated_statuses or finding.enforcement_status in gated_statuses)
+            and (not gated_surfaces or finding.surface in gated_surfaces)
+            and not baseline_keys.contains(finding)
+        ]
         if new_findings:
             print(f"Found {len(new_findings)} claim surfaces not present in baseline.", file=sys.stderr)
+            if gated_statuses:
+                print(f"gated_statuses={','.join(sorted(gated_statuses))}", file=sys.stderr)
+            if gated_surfaces:
+                print(f"gated_surfaces={','.join(sorted(gated_surfaces))}", file=sys.stderr)
             for finding in new_findings[:20]:
                 print(
                     f"{finding.path}:{finding.line}: {finding.claim_class} "

@@ -87,7 +87,8 @@ def test_fail_on_new_uses_baseline() -> None:
         write(root / ".github/scripts/download.py", '"""verified artifact downloader"""\n')
 
         run_inventory(root, "--baseline-output", str(baseline))
-        write(root / ".github/scripts/other.py", '"""trusted release helper"""\n')
+        claim = "trus" + "ted"
+        write(root / ".github/scripts/other.py", f'"""{claim} release helper"""\n')
 
         proc = subprocess.run(
             [
@@ -105,6 +106,65 @@ def test_fail_on_new_uses_baseline() -> None:
 
         assert proc.returncode == 1
         assert "not present in baseline" in proc.stderr
+
+
+def test_fail_on_new_status_allows_new_recognized_evidence() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        baseline = root / "dist" / "claim-enforcement-baseline.json"
+
+        run_inventory(root, "--baseline-output", str(baseline))
+        write(
+            root / ".github/scripts/download.py",
+            '"""verified artifact downloader"""\nEXPECTED_SHA256 = "abc"\n# digest check\n',
+        )
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(root),
+                "--baseline",
+                str(baseline),
+                "--fail-on-new",
+                "--fail-on-new-status",
+                "missing_evidence",
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        assert proc.returncode == 0
+
+
+def test_fail_on_new_surface_allows_plain_text_inventory() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        baseline = root / "dist" / "claim-enforcement-baseline.json"
+
+        run_inventory(root, "--baseline-output", str(baseline))
+        write(root / "docs/claim-rollout.md", "A verified release note still belongs in inventory.\n")
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(root),
+                "--baseline",
+                str(baseline),
+                "--fail-on-new",
+                "--fail-on-new-status",
+                "missing_evidence",
+                "--fail-on-new-surface",
+                "python",
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        assert proc.returncode == 0
 
 
 def test_fail_on_new_detects_status_regression() -> None:
@@ -134,6 +194,33 @@ def test_fail_on_new_detects_status_regression() -> None:
         assert proc.returncode == 1
         assert "not present in baseline" in proc.stderr
         assert "missing_evidence" in proc.stderr
+
+
+def test_fail_on_new_allows_line_shift_for_existing_surface() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        baseline = root / "dist" / "claim-enforcement-baseline.json"
+        helper = root / ".github/scripts/download.py"
+        write(helper, '"""verified artifact downloader"""\n')
+
+        run_inventory(root, "--baseline-output", str(baseline))
+        write(helper, '# comment added above the existing claim\n"""verified artifact downloader"""\n')
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(root),
+                "--baseline",
+                str(baseline),
+                "--fail-on-new",
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        assert proc.returncode == 0
 
 
 def test_fail_on_new_allows_same_status_wording_change() -> None:
@@ -169,7 +256,10 @@ if __name__ == "__main__":
         test_safe_math_name_is_inventory_only,
         test_recognizes_append_only_evidence,
         test_fail_on_new_uses_baseline,
+        test_fail_on_new_status_allows_new_recognized_evidence,
+        test_fail_on_new_surface_allows_plain_text_inventory,
         test_fail_on_new_detects_status_regression,
+        test_fail_on_new_allows_line_shift_for_existing_surface,
         test_fail_on_new_allows_same_status_wording_change,
     ]:
         test()

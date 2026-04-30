@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Set up CodeQL CLI
         id: setup_codeql
@@ -143,13 +144,43 @@ jobs:
             --output dist/claim-surfaces.json \
             --baseline-output dist/claim-enforcement-baseline.json
 
+      - name: Generate base claim inventory baseline
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_dir="${RUNNER_TEMP}/claim-enforcement-base"
+          git worktree add --detach "${base_dir}" "${{ github.event.pull_request.base.sha }}"
+          python3 .github/scripts/inventory_claim_surfaces.py \
+            --root "${base_dir}" \
+            --format json \
+            --output dist/claim-surfaces-base.json \
+            --baseline-output dist/claim-enforcement-base-baseline.json
+
+      - name: Check new missing-evidence claim surfaces
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/inventory_claim_surfaces.py \
+            --format json \
+            --output dist/claim-surfaces-pr-check.json \
+            --baseline dist/claim-enforcement-base-baseline.json \
+            --fail-on-new \
+            --fail-on-new-status missing_evidence \
+            --fail-on-new-surface actions \
+            --fail-on-new-surface c-cpp \
+            --fail-on-new-surface java-kotlin \
+            --fail-on-new-surface python \
+            --fail-on-new-surface rust
+
       - name: Upload claim inventory baseline
         uses: actions/upload-artifact@v7
         with:
           name: claim-enforcement-baseline
           path: |
-            dist/claim-surfaces.json
-            dist/claim-enforcement-baseline.json
+            dist/claim-surfaces*.json
+            dist/claim-enforcement*.json
           if-no-files-found: error
 
       - name: Emit summary
@@ -163,5 +194,5 @@ jobs:
             echo "- resolved custom Actions and Python product-invariant query suites"
             echo "- compiled custom CodeQL queries"
             echo "- ran CodeQL planner unit tests"
-            echo "- ran claim inventory tests and uploaded advisory baseline artifacts"
+            echo "- ran claim inventory tests, uploaded advisory baseline artifacts, and blocked PRs only on new missing-evidence claim surfaces"
           } >> "$GITHUB_STEP_SUMMARY"
