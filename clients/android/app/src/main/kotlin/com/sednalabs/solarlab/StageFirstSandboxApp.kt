@@ -157,8 +157,8 @@ private const val STAGE_FIELD_SIGNAL_LINE_END_X_FRACTION = 0.58f
 private const val STAGE_FIELD_SIGNAL_LINE_END_Y_FRACTION = 0.28f
 
 private const val STAGE_BACKEND_HUD_STATUS_CHAR_LIMIT = 120
-private const val COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.34f
-private const val WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.38f
+private const val COMPACT_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.30f
+private const val WIDE_EXPANDED_STAGE_DECK_MAX_FRACTION = 0.34f
 private const val COMPACT_AUTHORING_STAGE_DECK_MAX_FRACTION = 0.26f
 private const val WIDE_AUTHORING_STAGE_DECK_MAX_FRACTION = 0.30f
 private val BodyPlacementSessionSaver: Saver<BodyPlacementSession?, Any> = Saver(
@@ -570,6 +570,7 @@ private fun StageFirstSandboxLocalExperience(
                 session.addBody(body)
                 selectedBodyId = body.id
                 observerMode = ObserverMode.FOLLOW_SELECTED
+                chromeModeName = stageChromeModeAfterObjectCommit(chromeMode).name
                 maybeResumeAfterModalInteraction()
             }
         }
@@ -874,6 +875,7 @@ private fun StageFirstSandboxLocalExperience(
                             if (priorPlacementSession != null) {
                                 observerMode = ObserverMode.FOLLOW_SELECTED
                             }
+                            chromeModeName = stageChromeModeAfterObjectCommit(chromeMode).name
                             bodyEditorState = null
                             maybeResumeAfterModalInteraction()
                         }
@@ -881,6 +883,7 @@ private fun StageFirstSandboxLocalExperience(
                         val updatedBody = draft.toBodyState()
                         session.updateBody(updatedBody)
                         selectedBodyId = updatedBody.id
+                        chromeModeName = stageChromeModeAfterObjectCommit(chromeMode).name
                         bodyEditorState = null
                         maybeResumeAfterModalInteraction()
                     }
@@ -1274,7 +1277,7 @@ private fun BoxScope.StageOverlay(
                     .align(Alignment.TopStart)
                     .statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 10.dp)
-                    .widthIn(max = if (compactLayout) 300.dp else 380.dp)
+                    .widthIn(max = if (compactLayout) 264.dp else 340.dp)
                     .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
             )
         }
@@ -1293,7 +1296,7 @@ private fun BoxScope.StageOverlay(
                         selectionCard = selectionCard,
                         timelineText = timelineText,
                         modifier = Modifier
-                            .widthIn(max = 360.dp)
+                            .widthIn(max = 300.dp)
                             .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
                     )
                 } else {
@@ -1551,8 +1554,8 @@ private fun StageCollapsedSelectionChip(
         border = BorderStroke(1.dp, OverlayStroke),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             StageTrajectoryGlyph(
@@ -1574,7 +1577,7 @@ private fun StageCollapsedSelectionChip(
                     text = selectionCard.title,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
                     color = SelectionText,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1630,7 +1633,6 @@ private fun StagePlacementComposerPanel(
             StageTrajectoryGlyph(
                 orbitColor = TimelineText,
                 probeColor = SelectionText,
-                modifier = Modifier.size(width = 70.dp, height = 34.dp),
             )
             Column(
                 modifier = Modifier.weight(1f),
@@ -2316,13 +2318,12 @@ private fun StagePlacementPrimer(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun StageEditorChipRow(content: @Composable () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         content()
     }
@@ -2444,7 +2445,7 @@ private fun buildSelectionCard(
 
 private fun buildIdleMissionTrajectoryCard(frame: LabFrame?): SelectionCardText = SelectionCardText(
     eyebrow = "MISSION TRAJECTORY",
-    title = "Flight path workbench",
+    title = "Flight path",
     detail = buildIdleMissionTrajectoryDetail(frame?.snapshot?.bodies?.size),
 )
 

@@ -35,6 +35,12 @@ internal fun TraceLayerMode.next(): TraceLayerMode = when (this) {
 internal fun stageChromeModeFromName(value: String): StageChromeMode =
     StageChromeMode.entries.firstOrNull { it.name == value } ?: StageChromeMode.COLLAPSED
 
+internal fun stageChromeModeAfterObjectCommit(current: StageChromeMode): StageChromeMode = when (current) {
+    StageChromeMode.MINIMAL,
+    StageChromeMode.COLLAPSED,
+    StageChromeMode.EXPANDED -> StageChromeMode.COLLAPSED
+}
+
 internal fun traceLayerModeFromName(value: String): TraceLayerMode =
     TraceLayerMode.entries.firstOrNull { it.name == value } ?: TraceLayerMode.FOCUS
 
@@ -48,8 +54,8 @@ internal fun traceLayerButtonLabel(mode: TraceLayerMode, compact: Boolean): Stri
 }
 
 private object StageTrajectoryGlyphMetrics {
-    val width = 78.dp
-    val height = 36.dp
+    val width = 62.dp
+    val height = 30.dp
     val backgroundArcStrokeWidth = 1.dp
     val activeArcStrokeWidth = 1.6.dp
     val probeArcStrokeWidth = 2.dp
