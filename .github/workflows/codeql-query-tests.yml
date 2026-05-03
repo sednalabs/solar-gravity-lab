@@ -6,18 +6,28 @@ on:
       - ".github/codeql/**"
       - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
+      - ".github/workflows/interactive-android-session.yml"
       - ".github/scripts/inventory_claim_surfaces.py"
       - ".github/scripts/test_inventory_claim_surfaces.py"
       - ".github/scripts/test_codeql_static_workflow.py"
+      - ".github/scripts/test_interactive_android_tool_contract.py"
+      - ".github/scripts/test_interactive_session_summary.py"
+      - ".github/scripts/run_interactive_android_session.sh"
+      - ".github/scripts/write_interactive_session_summary.py"
   push:
     branches: ["main"]
     paths:
       - ".github/codeql/**"
       - ".github/workflows/codeql.yml"
       - ".github/workflows/codeql-query-tests.yml"
+      - ".github/workflows/interactive-android-session.yml"
       - ".github/scripts/inventory_claim_surfaces.py"
       - ".github/scripts/test_inventory_claim_surfaces.py"
       - ".github/scripts/test_codeql_static_workflow.py"
+      - ".github/scripts/test_interactive_android_tool_contract.py"
+      - ".github/scripts/test_interactive_session_summary.py"
+      - ".github/scripts/run_interactive_android_session.sh"
+      - ".github/scripts/write_interactive_session_summary.py"
   workflow_dispatch:
 
 permissions:
@@ -130,6 +140,10 @@ jobs:
         shell: bash
         run: python3 .github/scripts/test_codeql_static_workflow.py
 
+      - name: Validate interactive Android native tool contract
+        shell: bash
+        run: python3 .github/scripts/test_interactive_android_tool_contract.py
+
       - name: Run claim inventory tests
         shell: bash
         run: python3 .github/scripts/test_inventory_claim_surfaces.py
@@ -194,5 +208,6 @@ jobs:
             echo "- resolved custom Actions and Python product-invariant query suites"
             echo "- compiled custom CodeQL queries"
             echo "- validated static CodeQL workflow matrix"
+            echo "- validated interactive Android native tool schema and hosted proof wiring"
             echo "- ran claim inventory tests, uploaded advisory baseline artifacts, and blocked PRs only on new missing-evidence claim surfaces"
           } >> "$GITHUB_STEP_SUMMARY"

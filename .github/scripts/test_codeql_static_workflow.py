@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 WORKFLOW = Path(__file__).parents[1] / "workflows" / "codeql.yml"
+QUERY_TEST_WORKFLOW = Path(__file__).parents[1] / "workflows" / "codeql-query-tests.yml"
 
 EXPECTED_MATRIX_ROWS = {
     "actions": (
@@ -38,6 +39,10 @@ EXPECTED_MATRIX_ROWS = {
 
 def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+def query_test_workflow_text() -> str:
+    return QUERY_TEST_WORKFLOW.read_text(encoding="utf-8")
 
 
 def matrix_block(text: str) -> str:
@@ -84,6 +89,19 @@ class CodeqlStaticWorkflowTests(unittest.TestCase):
         self.assertNotIn("validate_codeql_plan_contract", text)
         self.assertNotIn("needs.plan", text)
         self.assertNotIn("fromJSON(needs.plan.outputs.matrix)", text)
+
+    def test_query_tests_cover_interactive_android_tool_contract(self) -> None:
+        text = query_test_workflow_text()
+
+        for expected in (
+            ".github/workflows/interactive-android-session.yml",
+            ".github/scripts/run_interactive_android_session.sh",
+            ".github/scripts/write_interactive_session_summary.py",
+            ".github/scripts/test_interactive_session_summary.py",
+            ".github/scripts/test_interactive_android_tool_contract.py",
+            "python3 .github/scripts/test_interactive_android_tool_contract.py",
+        ):
+            self.assertIn(expected, text)
 
 
 if __name__ == "__main__":

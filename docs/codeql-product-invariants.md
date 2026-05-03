@@ -15,10 +15,23 @@ quality:
   CodeQL pack compilation, stage-first Android validation, and hosted
   interactive evidence artifacts. It also guards the advanced CodeQL workflow's
   static category-matrix shape so alert comparison does not silently lose base
-  branch categories.
+  branch categories. The interactive Android rules now also check that the
+  hosted session preserves the native Android tool proof chain from provider
+  checkout/build through summary generation, artifact upload, and fail-closed
+  status gating.
 - `solar-python-product-invariants` checks planner and summary helpers for
   runtime CPU truth lanes, stage-first mirror proof, and provider-manifest
-  evidence in interactive session summaries.
+  evidence in interactive session summaries. It also checks that the summary
+  helper and tests preserve the native Android tool schema fields:
+  `android_observe`, `android_step`, dynamic-tool specs, proof validation,
+  outcome taxonomy, and response-success status.
+
+`codeql-query-tests` also runs
+`.github/scripts/test_interactive_android_tool_contract.py`, a static contract
+guard for the shell workflow pieces that CodeQL cannot inspect as source code.
+CodeQL keeps that guard wired into hosted query tests, while the guard checks the
+shell script, workflow, and summary handoff strings that make the native tool
+evidence end-to-end.
 
 These packs intentionally sit beside the existing security packs rather than
 inside them. The alerts are product-contract feedback, not vulnerability
