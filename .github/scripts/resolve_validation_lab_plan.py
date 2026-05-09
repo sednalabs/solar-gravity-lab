@@ -232,6 +232,9 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
         "runtime_scene_telemetry": False,
     }
 
+    if evidence_reused and not files:
+        return lanes, "exact same-PR validation evidence was reused; no validation-lab-owned runtime lanes changed"
+
     if not files:
         lanes["rust_workspace"] = True
         return lanes, "no changed files were available, so the Rust baseline is the conservative targeted fallback"
