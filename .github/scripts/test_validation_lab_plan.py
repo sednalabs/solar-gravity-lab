@@ -175,6 +175,22 @@ class ValidationLabPlanTests(unittest.TestCase):
         self.assertEqual(outputs["rust_workspace"], "false")
         self.assertEqual(outputs["android_shell"], "true")
 
+    def test_exact_same_pr_prior_evidence_skips_runtime_lanes(self) -> None:
+        outputs = run_plan(
+            ["engine/runtime/src/lib.rs"],
+            [],
+            evidence=successful_evidence(),
+        )
+
+        self.assertEqual(outputs["prior_evidence_reused"], "true")
+        self.assertEqual(outputs["effective_changed_files_source"], "latest_delta")
+        self.assertEqual(outputs["rust_workspace"], "false")
+        self.assertEqual(outputs["android_shell"], "false")
+        self.assertEqual(
+            outputs["route_reason"],
+            "same-PR prior evidence was reused and the latest delta has no validation-lab-owned runtime lanes",
+        )
+
     def test_prior_evidence_must_match_pr_number(self) -> None:
         outputs = run_plan(
             ["engine/runtime/src/lib.rs"],
@@ -195,6 +211,15 @@ class ValidationLabPlanTests(unittest.TestCase):
         self.assertEqual(outputs["effective_changed_files_source"], "checkpoint_event")
         self.assertEqual(outputs["rust_workspace"], "true")
         self.assertEqual(outputs["android_shell"], "true")
+
+    def test_workflow_opts_into_ready_for_review_exact_proof(self) -> None:
+        workflow = Path(__file__).parents[1] / "workflows" / "validation-lab.yml"
+        text = workflow.read_text(encoding="utf-8")
+
+        self.assertIn("- ready_for_review", text)
+        self.assertIn("github.event.action == 'ready_for_review'", text)
+        self.assertIn("candidate_reason=\"exact ready-for-review head\"", text)
+        self.assertIn("ci-proof-v1-validation-lab", text)
 
 
 if __name__ == "__main__":

@@ -204,6 +204,42 @@ def main() -> None:
                 "scope": "same-pr-immediate-prior-head",
             },
         },
+        "ci_proof_v1": {
+            "schema_version": "ci-proof-v1",
+            "repository": args.repository,
+            "workflow_file": "validation-lab.yml",
+            "lane": args.lane_set,
+            "profile": args.profile,
+            "head_sha": args.head_sha,
+            "base_sha": args.base_sha,
+            "pull_request_number": args.pull_request_number,
+            "event_policy": "pull_request_exact_head_base_lane_profile",
+            "inputs_hash": "|".join(
+                [
+                    args.profile,
+                    args.lane_set,
+                    args.android_test_scope,
+                    args.android_validation_mode,
+                    args.android_artifact_mode,
+                    args.emulator_boot_strategy,
+                    args.gradle_configuration_cache,
+                ]
+            ),
+            "conclusion": status,
+            "run_id": args.run_id,
+            "run_url": args.run_url,
+            "evidence_key": ":".join(
+                [
+                    args.repository,
+                    "validation-lab.yml",
+                    args.pull_request_number,
+                    args.base_sha,
+                    args.head_sha,
+                    args.profile,
+                    args.lane_set,
+                ]
+            ),
+        },
         "jobs": jobs,
         "summary": {
             "status": status,

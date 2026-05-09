@@ -28,6 +28,11 @@ on:
       - "gradle/**"
   merge_group:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
     paths:
       - ".github/workflows/**"
       - ".github/scripts/**"
@@ -273,14 +278,16 @@ jobs:
 
       - name: Resolve prior validation evidence
         id: prior_evidence
-        if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+        if: ${{ github.event_name == 'pull_request' && (github.event.action == 'synchronize' || github.event.action == 'ready_for_review') }}
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE_SHA: ${{ steps.files.outputs.before_sha }}
           BASE_SHA: ${{ steps.files.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.files.outputs.head_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
           CURRENT_RUN_ID: ${{ github.run_id }}
+          EVENT_ACTION: ${{ github.event.action }}
         shell: bash
         run: |
           set -euo pipefail
@@ -288,7 +295,15 @@ jobs:
           mkdir -p dist/validation-plan/prior-evidence
           : > dist/validation-plan/prior-evidence/validation-summary.json
 
-          if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" == '0000000000000000000000000000000000000000' ]]; then
+          candidate_sha="$BEFORE_SHA"
+          candidate_reason="immediate previous head"
+          if [[ "$EVENT_ACTION" == 'ready_for_review' ]]; then
+            candidate_sha="$HEAD_SHA"
+            candidate_reason="exact ready-for-review head"
+            : > dist/validation-plan/latest-files.txt
+          fi
+
+          if [[ -z "$candidate_sha" || "$candidate_sha" == '0000000000000000000000000000000000000000' ]]; then
             echo "No immediate previous PR head SHA is available."
             exit 0
           fi
@@ -307,15 +322,15 @@ jobs:
           fi
 
           candidate_run_id="$(
-            jq -r --arg before "$BEFORE_SHA" --arg current "$CURRENT_RUN_ID" '
+            jq -r --arg candidate "$candidate_sha" --arg current "$CURRENT_RUN_ID" '
               map(select((.databaseId|tostring) != $current))
-              | map(select(.headSha == $before and .status == "completed" and .conclusion == "success"))
+              | map(select(.headSha == $candidate and .status == "completed" and .conclusion == "success"))
               | .[0].databaseId // empty
             ' <<< "$run_list_json"
           )"
 
           if [[ -z "$candidate_run_id" ]]; then
-            echo "No successful validation-lab run found for immediate previous head ${BEFORE_SHA}."
+            echo "No successful validation-lab run found for ${candidate_reason} ${candidate_sha}."
             exit 0
           fi
 
@@ -335,13 +350,16 @@ jobs:
             exit 0
           fi
 
-          if jq -e --arg before "$BEFORE_SHA" --arg base "$BASE_SHA" '
+          if jq -e --arg candidate "$candidate_sha" --arg base "$BASE_SHA" --arg profile "${{ inputs.profile || 'targeted' }}" --arg lane_set "${{ inputs.lane_set || 'auto' }}" '
               .summary.status == "success" and
-              (.run.head_sha // .validation_context.head_sha // "") == $before and
-              (.run.base_sha // .validation_context.base_sha // "") == $base
+              (.run.head_sha // .validation_context.head_sha // .ci_proof_v1.head_sha // "") == $candidate and
+              (.run.base_sha // .validation_context.base_sha // .ci_proof_v1.base_sha // "") == $base and
+              (.ci_proof_v1.schema_version // "ci-proof-v1") == "ci-proof-v1" and
+              (.ci_proof_v1.profile // .validation_context.profile // "") == $profile and
+              (.ci_proof_v1.lane // .validation_context.lane_set // "") == $lane_set
             ' "$candidate_summary" >/dev/null; then
             if jq -e --arg pr "$PR_NUMBER" '
-                (.run.pull_request_number // .validation_context.pull_request_number // "") == $pr
+                (.run.pull_request_number // .validation_context.pull_request_number // .ci_proof_v1.pull_request_number // "") == $pr
               ' "$candidate_summary" >/dev/null; then
               cp "$candidate_summary" dist/validation-plan/prior-evidence/validation-summary.json
               echo "Reusing prior validation evidence from run ${candidate_run_id}."
@@ -1517,3 +1535,10 @@ jobs:
           name: validation-summary
           if-no-files-found: error
           path: dist/validation-summary/**
+
+      - name: Upload CI proof artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-proof-v1-validation-lab-pr${{ github.event.pull_request.number || 'none' }}-${{ needs.metadata.outputs.base_sha || 'no-base' }}-${{ needs.metadata.outputs.head_sha }}-${{ needs.metadata.outputs.profile }}-${{ needs.metadata.outputs.lane_set }}
+          if-no-files-found: error
+          path: dist/validation-summary/validation-summary.json
