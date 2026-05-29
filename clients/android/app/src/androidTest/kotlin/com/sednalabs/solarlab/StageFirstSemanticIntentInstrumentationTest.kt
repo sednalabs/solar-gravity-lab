@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab
 
 import android.content.Intent
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -14,13 +15,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class StageFirstSemanticIntentInstrumentationTest {
+    init {
+        SolarLabSemanticActionBridge.clearPendingReplay()
+    }
+
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
     fun semanticFocusIntent_updatesSandboxSelectionCard() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && SolarLabSemanticActionBridge.semanticActionsEnabled())
-        SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitForStageFirstControls()
         composeRule.dispatchSemanticIntent(
@@ -29,10 +33,10 @@ class StageFirstSemanticIntentInstrumentationTest {
         )
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                    .assertTextContains("Earth")
-            }.isSuccess
+            composeRule.hasNodeText(
+                tag = SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE,
+                text = "Earth",
+            )
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
             .assertTextContains("Earth")
@@ -45,7 +49,6 @@ class StageFirstSemanticIntentInstrumentationTest {
                 BuildConfig.STAGE_FIRST_RUNTIME_MIRROR &&
                 SolarLabSemanticActionBridge.semanticActionsEnabled(),
         )
-        SolarLabSemanticActionBridge.clearPendingReplay()
 
         composeRule.waitForStageFirstControls()
         assertFalse(composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting())
@@ -69,11 +72,26 @@ class StageFirstSemanticIntentInstrumentationTest {
         }
     }
 
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, MainActivity>.hasNodeText(
+        tag: String,
+        text: String,
+    ): Boolean {
+        return onAllNodesWithTag(tag)
+            .fetchSemanticsNodes()
+            .any { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    ?.any { annotated -> annotated.text.contains(text) }
+                    == true
+            }
+    }
+
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, MainActivity>.dispatchSemanticIntent(
         command: String,
         bodyQuery: String? = null,
     ) {
         val intent = Intent(SolarLabSemanticActionBridge.INTENT_ACTION)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(SolarLabSemanticActionBridge.EXTRA_COMMAND, command)
         if (bodyQuery != null) {
             intent.putExtra(SolarLabSemanticActionBridge.EXTRA_BODY_QUERY, bodyQuery)
