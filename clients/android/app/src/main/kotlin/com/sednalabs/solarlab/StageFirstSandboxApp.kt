@@ -581,6 +581,7 @@ private fun StageFirstSandboxLocalExperience(
                 bodyEditorState = BodyEditorDialogState(
                     draft = stagedPlacement.draftForAdjustment(),
                     isNewBody = true,
+                    isPlacementAdjustment = true,
                 )
             }
             Unit
@@ -1954,7 +1955,9 @@ private fun BodyEditorDialog(
     var colorHex by remember(editorState) {
         mutableStateOf(editorState.draft.colorArgb.toUInt().toString(16).uppercase().padStart(8, '0'))
     }
-    var placeOnSceneAfterSave by remember(editorState) { mutableStateOf(editorState.draft.placeOnSceneAfterSave) }
+    var placeOnSceneAfterSave by remember(editorState) {
+        mutableStateOf(editorState.isPlacementAdjustment || editorState.draft.placeOnSceneAfterSave)
+    }
     var errorMessage by remember(editorState) { mutableStateOf<String?>(null) }
 
     val colorPreview = remember(colorHex) {
@@ -1976,20 +1979,23 @@ private fun BodyEditorDialog(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text(
-                    text = if (editorState.isNewBody) "Add object" else "Edit ${editorState.draft.name}",
+                    text = bodyEditorTitle(
+                        isNewBody = editorState.isNewBody,
+                        isPlacementAdjustment = editorState.isPlacementAdjustment,
+                        draftName = editorState.draft.name,
+                    ),
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = if (editorState.isNewBody) {
-                        "Define a sandbox object, then stage its placement before committing it to the simulation."
-                    } else {
-                        "Adjust the selected body without leaving the immersive stage."
-                    },
+                    text = bodyEditorDetail(
+                        isNewBody = editorState.isNewBody,
+                        isPlacementAdjustment = editorState.isPlacementAdjustment,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (editorState.isNewBody) {
+                if (editorState.isNewBody && !editorState.isPlacementAdjustment) {
                     StagePlacementPrimer(
                         checked = placeOnSceneAfterSave,
                         onCheckedChange = {
@@ -2262,17 +2268,18 @@ private fun BodyEditorDialog(
                                     positionM = Vector3d(parsedPositionX, parsedPositionY, parsedPositionZ),
                                     velocityMps = Vector3d(parsedVelocityX, parsedVelocityY, parsedVelocityZ),
                                     colorArgb = parsedColorArgb,
-                                    placeOnSceneAfterSave = editorState.isNewBody && placeOnSceneAfterSave,
+                                    placeOnSceneAfterSave = editorState.isNewBody &&
+                                        (editorState.isPlacementAdjustment || placeOnSceneAfterSave),
                                 ),
                             )
                         },
                     ) {
                         Text(
-                            when {
-                                !editorState.isNewBody -> "Apply"
-                                placeOnSceneAfterSave -> "Stage placement"
-                                else -> "Add at coordinates"
-                            },
+                            bodyEditorPrimaryActionLabel(
+                                isNewBody = editorState.isNewBody,
+                                isPlacementAdjustment = editorState.isPlacementAdjustment,
+                                placeOnSceneAfterSave = placeOnSceneAfterSave,
+                            ),
                         )
                     }
                 }
@@ -2481,6 +2488,36 @@ private fun buildDiagnosticsText(frame: LabFrame?): String {
     return prefix + frame.diagnostics.toPrettyString() + collisionText
 }
 
+internal fun bodyEditorTitle(
+    isNewBody: Boolean,
+    isPlacementAdjustment: Boolean,
+    draftName: String,
+): String = when {
+    isPlacementAdjustment -> "Refine staged object"
+    isNewBody -> "Add object"
+    else -> "Edit $draftName"
+}
+
+internal fun bodyEditorDetail(
+    isNewBody: Boolean,
+    isPlacementAdjustment: Boolean,
+): String = when {
+    isPlacementAdjustment -> "Tune the staged ghost and launch values before committing it to the simulation."
+    isNewBody -> "Define a sandbox object, then stage its placement before committing it to the simulation."
+    else -> "Adjust the selected body without leaving the immersive stage."
+}
+
+internal fun bodyEditorPrimaryActionLabel(
+    isNewBody: Boolean,
+    isPlacementAdjustment: Boolean,
+    placeOnSceneAfterSave: Boolean,
+): String = when {
+    isPlacementAdjustment -> "Update preview"
+    !isNewBody -> "Apply"
+    placeOnSceneAfterSave -> "Stage placement"
+    else -> "Add at coordinates"
+}
+
 private fun formatSpeed(speedMps: Double): String = when {
     speedMps >= 1_000.0 -> "%.1f km/s".format(speedMps / 1_000.0)
     else -> "%.0f m/s".format(speedMps)
@@ -2586,6 +2623,7 @@ private data class SelectionCardText(
 private data class BodyEditorDialogState(
     val draft: EditableBodyDraft,
     val isNewBody: Boolean,
+    val isPlacementAdjustment: Boolean = false,
 )
 
 private data class EditorFieldState(

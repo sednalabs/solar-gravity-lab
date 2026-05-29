@@ -118,6 +118,77 @@ class StageFirstSandboxAppTest {
     }
 
     @Test
+    fun bodyEditorCopyTreatsStagedAdjustmentAsPreviewRefinement() {
+        assertEquals(
+            "Refine staged object",
+            bodyEditorTitle(
+                isNewBody = true,
+                isPlacementAdjustment = true,
+                draftName = "Draft probe",
+            ),
+        )
+        assertEquals(
+            "Tune the staged ghost and launch values before committing it to the simulation.",
+            bodyEditorDetail(
+                isNewBody = true,
+                isPlacementAdjustment = true,
+            ),
+        )
+        assertEquals(
+            "Update preview",
+            bodyEditorPrimaryActionLabel(
+                isNewBody = true,
+                isPlacementAdjustment = true,
+                placeOnSceneAfterSave = true,
+            ),
+        )
+    }
+
+    @Test
+    fun bodyEditorCopyKeepsNewObjectAndExistingBodyLabelsDistinct() {
+        assertEquals(
+            "Add object",
+            bodyEditorTitle(
+                isNewBody = true,
+                isPlacementAdjustment = false,
+                draftName = "Draft probe",
+            ),
+        )
+        assertEquals(
+            "Edit Earth",
+            bodyEditorTitle(
+                isNewBody = false,
+                isPlacementAdjustment = false,
+                draftName = "Earth",
+            ),
+        )
+        assertEquals(
+            "Stage placement",
+            bodyEditorPrimaryActionLabel(
+                isNewBody = true,
+                isPlacementAdjustment = false,
+                placeOnSceneAfterSave = true,
+            ),
+        )
+        assertEquals(
+            "Add at coordinates",
+            bodyEditorPrimaryActionLabel(
+                isNewBody = true,
+                isPlacementAdjustment = false,
+                placeOnSceneAfterSave = false,
+            ),
+        )
+        assertEquals(
+            "Apply",
+            bodyEditorPrimaryActionLabel(
+                isNewBody = false,
+                isPlacementAdjustment = false,
+                placeOnSceneAfterSave = false,
+            ),
+        )
+    }
+
+    @Test
     fun placementSessionStagesGestureWithoutCommittingBody() {
         val session = BodyPlacementSession.fromDraft(
             draft = EditableBodyDraft.newDefault().copy(
