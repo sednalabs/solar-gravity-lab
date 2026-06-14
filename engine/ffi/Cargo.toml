@@ -19,7 +19,7 @@ solarlab-scene = { path = "../scene" }
 solarlab-vulkan-adapter = { path = "../../render/vulkan-adapter" }
 
 [target.'cfg(target_os = "android")'.dependencies]
-jni = { version = "0.21", default-features = false }
+jni = { version = "0.22", default-features = false }
 
 [lints]
 workspace = true
