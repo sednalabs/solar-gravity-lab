@@ -1,0 +1,26 @@
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#package-ecosystem-
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /infra/gradle-cache-service
+    schedule:
+      interval: daily
+      time: "03:00"
+      timezone: Etc/UTC
+  - package-ecosystem: gradle
+    directories:
+      - /
+      - /clients/android
+    schedule:
+      interval: daily
+      time: "03:00"
+      timezone: Etc/UTC
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+      time: "03:00"
+      timezone: Etc/UTC
