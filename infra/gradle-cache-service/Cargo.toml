@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 aws-config = { version = "1.8.8", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
 aws-credential-types = "1.2.8"
-aws-sdk-s3 = { version = "1.102.0", default-features = false, features = ["rt-tokio", "rustls"] }
+aws-sdk-s3 = { version = "1.102.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 axum = { version = "0.8.6", default-features = false, features = ["http1", "tokio", "tracing"] }
 base64 = "0.22.1"
 bytes = "1.10.1"
