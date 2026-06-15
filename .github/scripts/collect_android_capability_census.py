@@ -239,55 +239,42 @@ class CommandFailure(RuntimeError):
     """Raised when a required device-census command cannot collect evidence."""
 
 
-def run_command(
-    command: list[str],
-    timeout: int = 30,
-    *,
-    required: bool = False,
-    description: str | None = None,
-) -> str:
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except FileNotFoundError as exc:
-        if required:
-            label = description or " ".join(command)
-            raise CommandFailure(f"Required command not found for {label}: {command[0]}") from exc
-        return ""
-    except subprocess.TimeoutExpired as exc:
-        if required:
-            label = description or " ".join(command)
-            raise CommandFailure(f"Required command timed out for {label}") from exc
-        return ""
-    if result.returncode != 0:
-        if required:
-            label = description or " ".join(command)
-            stderr = result.stderr.strip() or result.stdout.strip() or "no output"
-            raise CommandFailure(
-                f"Required command failed for {label} "
-                f"(exit {result.returncode}): {stderr}"
-            )
-        return ""
-    return result.stdout
-
-
 def adb_command(serial: str, command_name: str, *, required: bool = False) -> str:
     command = ADB_SHELL_COMMANDS.get(command_name)
     if command is None:
         raise CommandFailure(f"Unsupported adb census command: {command_name}")
-    base = ["adb"]
+    env = None
     if serial:
-        base += ["-s", serial]
-    return run_command(
-        base + ["shell", *command],
-        required=required,
-        description=f"adb shell {' '.join(command)}",
-    )
+        env = os.environ.copy()
+        env["ANDROID_SERIAL"] = serial
+    argv = ["adb", "shell", *command]
+    description = f"adb shell {' '.join(command)}"
+    try:
+        result = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            env=env,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError as exc:
+        if required:
+            raise CommandFailure(f"Required command not found for {description}: adb") from exc
+        return ""
+    except subprocess.TimeoutExpired as exc:
+        if required:
+            raise CommandFailure(f"Required command timed out for {description}") from exc
+        return ""
+    if result.returncode != 0:
+        if required:
+            stderr = result.stderr.strip() or result.stdout.strip() or "no output"
+            raise CommandFailure(
+                f"Required command failed for {description} "
+                f"(exit {result.returncode}): {stderr}"
+            )
+        return ""
+    return result.stdout
 
 
 def validate_adb_serial(serial: str) -> str:

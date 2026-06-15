@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -15,14 +16,24 @@ from pathlib import Path
 API_VERSION = "2022-11-28"
 USER_AGENT = "solar-gravity-lab-interactive-session/1.0"
 GITHUB_API_ORIGIN = "https://api.github.com"
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")
 
 
 class GitHubApiClient:
     def __init__(self, repository: str, token: str) -> None:
-        self.repository = repository
+        self.repository = validate_repository(repository)
         self.token = token
 
-    def _request(self, url: str, *, accept: str = "application/vnd.github+json") -> urllib.request.Request:
+    def _request(
+        self,
+        api_path: str,
+        *,
+        accept: str = "application/vnd.github+json",
+    ) -> urllib.request.Request:
+        if not api_path.startswith("/"):
+            raise SystemExit(f"GitHub API path must start with '/': {api_path}")
+        url = f"{GITHUB_API_ORIGIN}{api_path}"
         request = urllib.request.Request(url)
         request.add_header("Accept", accept)
         request.add_header("Authorization", f"Bearer {self.token}")
@@ -30,9 +41,8 @@ class GitHubApiClient:
         request.add_header("X-GitHub-Api-Version", API_VERSION)
         return request
 
-    def get_json(self, path_or_url: str) -> dict:
-        url = github_api_url(path_or_url)
-        with urllib.request.urlopen(self._request(url)) as response:
+    def get_json(self, api_path: str) -> dict:
+        with urllib.request.urlopen(self._request(api_path)) as response:
             return json.load(response)
 
     def download_artifact(self, run_id: str, artifact_name: str, output_dir: Path) -> None:
@@ -83,15 +93,16 @@ def require_token(env_name: str) -> str:
     return token
 
 
-def github_api_url(path_or_url: str) -> str:
-    if path_or_url.startswith("https://"):
-        parsed = urllib.parse.urlparse(path_or_url)
-        if parsed.scheme != "https" or parsed.netloc != "api.github.com":
-            raise SystemExit(f"Refusing non-GitHub API URL: {path_or_url}")
-        return path_or_url
-    if not path_or_url.startswith("/"):
-        raise SystemExit(f"GitHub API path must start with '/': {path_or_url}")
-    return f"{GITHUB_API_ORIGIN}{path_or_url}"
+def validate_repository(repository: str) -> str:
+    if not REPOSITORY_RE.fullmatch(repository):
+        raise SystemExit(f"Invalid GitHub repository: {repository!r}")
+    return repository
+
+
+def validate_run_id(run_id: str) -> str:
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise SystemExit(f"Invalid workflow run id: {run_id!r}")
+    return run_id
 
 
 def sha256_file(path: Path) -> str:
@@ -143,6 +154,7 @@ def resolve_run(client: GitHubApiClient, workflow_file: str, artifact_name: str,
 
 
 def resolve_run_artifact(client: GitHubApiClient, run_id: str, artifact_name: str) -> dict:
+    run_id = validate_run_id(run_id)
     run = client.get_json(f"/repos/{client.repository}/actions/runs/{run_id}")
     artifacts = client.get_json(
         f"/repos/{client.repository}/actions/runs/{run_id}/artifacts?per_page=100"
