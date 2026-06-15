@@ -797,6 +797,8 @@ void SolarLabStageController::InitializeFreeCameraFromRuntimePacketLocked(
     ++cameraRevisionCounter_;
 }
 
+// Pulls a fresh Vulkan scene packet from the Rust runtime, validates its ABI surface, and mirrors
+// the packet into controller-owned native buffers while the caller holds the stage lock.
 bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::string runtimeLoadError;
     if (runtimeAbi_ == nullptr || !runtimeAbi_->EnsureLoaded(runtimeLoadError)) {

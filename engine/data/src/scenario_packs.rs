@@ -390,7 +390,7 @@ fn marker_ring_around_primary(
         .map(|index| {
             orbiting_body(
                 primary,
-                &format!("{id_prefix}-{index:02}"),
+                &format!("{}-{index:02}", id_prefix),
                 BodyClass::Tracer,
                 0.0,
                 2_500.0,
