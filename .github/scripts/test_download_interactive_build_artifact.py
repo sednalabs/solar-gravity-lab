@@ -52,6 +52,14 @@ def main() -> int:
         expected_interactive_debug_profile=None,
         expected_preferred_gpu_backend=None,
     )
+    assert (
+        module.github_api_url("/repos/sednalabs/solar-gravity-lab/actions/runs/123")
+        == "https://api.github.com/repos/sednalabs/solar-gravity-lab/actions/runs/123"
+    )
+    assert (
+        module.github_api_url("https://api.github.com/repos/sednalabs/solar-gravity-lab")
+        == "https://api.github.com/repos/sednalabs/solar-gravity-lab"
+    )
 
     assert_system_exit_contains(
         lambda: module.validate_manifest_matches_request(
@@ -70,6 +78,14 @@ def main() -> int:
             expected_preferred_gpu_backend="none",
         ),
         "preferred_gpu_backend",
+    )
+    assert_system_exit_contains(
+        lambda: module.github_api_url("https://example.com/repos/sednalabs/solar-gravity-lab"),
+        "Refusing non-GitHub API URL",
+    )
+    assert_system_exit_contains(
+        lambda: module.github_api_url("repos/sednalabs/solar-gravity-lab"),
+        "must start with '/'",
     )
 
     print("interactive build artifact manifest tests passed")
