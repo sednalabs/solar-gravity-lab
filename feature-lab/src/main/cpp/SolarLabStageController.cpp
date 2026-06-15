@@ -910,6 +910,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     runtimeScene_.sceneOriginY = packetResult.info.camera.frame_origin_m.y;
     runtimeScene_.sceneOriginZ = packetResult.info.camera.frame_origin_m.z;
 
+    // Body packets feed both picking proxies and the authoritative billboard layer.
     if (bodiesView.has_value() && bodiesView->data != nullptr && bodiesView->element_count > 0) {
         const uint8_t* raw = reinterpret_cast<const uint8_t*>(bodiesView->data);
         const uint32_t bodyCount = bodiesView->element_count;
@@ -941,6 +942,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         }
     }
 
+    // Tracer packets are bucketed by camera-space extent to keep the renderer within budgets.
     if (traceLayerEnabled && tracersView.has_value() && tracersView->data != nullptr && tracersView->element_count > 0) {
         const uint8_t* raw = reinterpret_cast<const uint8_t*>(tracersView->data);
         const uint32_t tracerCount = tracersView->element_count;
@@ -968,12 +970,14 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const double maxExtent = std::max({xView, yView, zView});
             const double pseudoRadiusM = std::max<double>(tracer->size_px * frame.metersPerPixel * 0.8, 1000.0);
             const int32_t colorArgb = static_cast<int32_t>(PackArgb(tracer->color));
+            // Near tracers retain billboard sizing for close inspection.
             auto appendNear = [&]() {
                 tracerNearPositionsM.insert(tracerNearPositionsM.end(), {position.x, position.y, position.z});
                 tracerNearRadiiM.push_back(static_cast<float>(pseudoRadiusM));
                 tracerNearColorsArgb.push_back(colorArgb);
                 tracerNearKinds.push_back(static_cast<int32_t>(kKindProbe));
             };
+            // Medium tracers keep stable ids so GPU compaction can preserve temporal identity.
             auto appendMedium = [&]() {
                 tracerMediumPositionsM.insert(tracerMediumPositionsM.end(), {position.x, position.y, position.z});
                 tracerMediumVelocitiesMps.insert(tracerMediumVelocitiesMps.end(), {0.0, 0.0, 0.0});
@@ -982,6 +986,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 tracerMediumColorsArgb.push_back(colorArgb);
                 tracerMediumKinds.push_back(static_cast<int32_t>(kKindProbe));
             };
+            // Far tracers use cheaper density points for high-count overview rendering.
             auto appendFar = [&]() {
                 tracerFarPositionsM.insert(tracerFarPositionsM.end(), {position.x, position.y, position.z});
                 tracerFarVelocitiesMps.insert(tracerFarVelocitiesMps.end(), {0.0, 0.0, 0.0});
@@ -991,6 +996,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 tracerFarKinds.push_back(static_cast<int32_t>(kKindProbe));
             };
 
+            // Budget checks intentionally prefer nearer buckets before lower-detail fallbacks.
             if (maxExtent <= cameraViewRadiusM_ * policy.nearExtentFactor && tracerNearRadiiM.size() < policy.nearTracerBudget) {
                 appendNear();
             } else if (maxExtent <= cameraViewRadiusM_ * policy.mediumExtentFactor && tracerMediumRadiiM.size() < policy.mediumTracerBudget) {
@@ -1001,6 +1007,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         }
     }
 
+    // Trail spans are sampled down per trail while preserving a line-strip endpoint.
     if (traceLayerEnabled && trailSpansView.has_value() && trailVerticesView.has_value() && trailSpansView->data != nullptr && trailVerticesView->data != nullptr) {
         const uint8_t* spansRaw = reinterpret_cast<const uint8_t*>(trailSpansView->data);
         const uint8_t* verticesRaw = reinterpret_cast<const uint8_t*>(trailVerticesView->data);
@@ -1049,6 +1056,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         }
     }
 
+    // The synthetic revision changes when runtime data, camera, or visualization modes change.
     const std::string sceneRevision = DecodeBytesView(packetResult.info.scene_revision);
     const uint64_t revisionSeed = static_cast<uint64_t>(std::hash<std::string>{}(sceneRevision));
     const uint64_t syntheticRevision = MakeSyntheticRevision(
@@ -1058,6 +1066,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         runtimeObserverModeCode_,
         runtimeTraceLayerModeCode_);
 
+    // SubmitScene takes ownership of all freshly mirrored vectors for the Vulkan upload pass.
     renderer_.SubmitScene(
         static_cast<int64_t>(syntheticRevision),
         runtimeScene_.sceneOriginX,
@@ -1088,6 +1097,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         std::move(trailColorsArgb),
         std::move(trailVertexCounts));
 
+    // The Java-facing snapshot keeps lightweight diagnostics after the raw packet is released.
     runtimeScene_.packetRevision = static_cast<int64_t>(packetResult.info.diagnostics.frame_number);
     runtimeScene_.uploadedRevision = static_cast<int64_t>(syntheticRevision);
     runtimeScene_.pickBodies = std::move(pickBodies);
