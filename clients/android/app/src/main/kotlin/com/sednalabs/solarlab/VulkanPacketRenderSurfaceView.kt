@@ -372,7 +372,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             }
         }
 
-        return scaleHandled || gestureHandled || true
+        return true
     }
 
     /**
