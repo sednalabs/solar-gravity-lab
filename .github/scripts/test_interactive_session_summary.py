@@ -166,6 +166,34 @@ def main() -> int:
     assert "/home/runner/work/example" not in rendered_error
     assert "`raw stderr`" not in rendered_error
 
+    rendered_live_access = module.render_markdown(
+        base_payload(
+            None,
+            active_build=None,
+        )
+        | {
+            "summary": {
+                **base_payload(None)["summary"],
+                "live_access": {
+                    "status": "ready",
+                    "human_terminal": {
+                        "status": "ready",
+                        "hostname": "operator.example.invalid",
+                        "auth_mode": "browser",
+                    },
+                    "agent_mcp": {
+                        "status": "ready",
+                        "hostname": "mcp.example.invalid",
+                        "auth_mode": "bearer",
+                    },
+                },
+            },
+        },
+    )
+    assert "operator.example.invalid" not in rendered_live_access
+    assert "mcp.example.invalid" not in rendered_live_access
+    assert "- endpoint detail: `not this GitHub summary`" in rendered_live_access
+
     rendered_active_build = module.render_markdown(
         base_payload(
             None,
