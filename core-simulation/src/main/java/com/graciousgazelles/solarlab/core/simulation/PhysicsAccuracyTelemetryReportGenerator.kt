@@ -450,8 +450,9 @@ object PhysicsAccuracyTelemetryCli {
     @JvmStatic
     fun main(args: Array<String>) {
         val options = parseArgs(args)
-        val jsonOutput = Path.of(options.getValue("--json-output"))
-        val markdownOutput = Path.of(options.getValue("--markdown-output"))
+        val reportDirectory = Path.of("build", "reports", "physics-accuracy")
+        val jsonOutput = reportDirectory.resolve("physics-accuracy-report.json")
+        val markdownOutput = reportDirectory.resolve("physics-accuracy-report.md")
         val runLabel = options["--run-label"] ?: "validation-lab-physics-accuracy"
         val stepSeconds = options["--step-seconds"]?.toDouble() ?: PhysicsAccuracyTelemetryReportGenerator.DEFAULT_STEP_SECONDS
         val steps = options["--steps"]?.toInt() ?: PhysicsAccuracyTelemetryReportGenerator.DEFAULT_STEPS

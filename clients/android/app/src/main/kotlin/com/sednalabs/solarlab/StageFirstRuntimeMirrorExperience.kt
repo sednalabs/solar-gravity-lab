@@ -291,16 +291,6 @@ internal fun StageFirstRuntimeMirrorExperience(
                 selectedBody = selectedBody,
             )
         }
-        val diagnosticsText = remember(uiState, hostRendererStatus, observerMode, renderProcessingMode, stepQuantumPreset, playbackSpeedPreset) {
-            buildRuntimeDiagnosticsText(
-                uiState = uiState,
-                hostRendererStatus = hostRendererStatus,
-                observerMode = observerMode,
-                renderProcessingMode = renderProcessingMode,
-                stepQuantumPreset = stepQuantumPreset,
-                playbackSpeedPreset = playbackSpeedPreset,
-            )
-        }
         val backendStatus = remember(uiState, hostRendererStatus) {
             buildRuntimeBackendStatus(uiState = uiState, hostRendererStatus = hostRendererStatus)
         }

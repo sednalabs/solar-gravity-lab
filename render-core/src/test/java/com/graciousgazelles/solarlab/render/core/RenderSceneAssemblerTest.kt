@@ -262,7 +262,7 @@ class RenderSceneAssemblerTest {
                     alpha = 0.5f,
                     pointsM = List(400) { index ->
                         Vector3d(
-                            -0.3 * PhysicalConstants.ASTRONOMICAL_UNIT_M + index * 2.0e9,
+                            (-0.3 * PhysicalConstants.ASTRONOMICAL_UNIT_M) + (index * 2.0e9),
                             if (index % 2 == 0) 5.0e9 else -5.0e9,
                             0.0,
                         )
