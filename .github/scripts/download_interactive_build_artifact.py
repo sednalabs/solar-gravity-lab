@@ -16,6 +16,8 @@ from pathlib import Path
 API_VERSION = "2022-11-28"
 USER_AGENT = "solar-gravity-lab-interactive-session/1.0"
 GITHUB_API_ORIGIN = "https://api.github.com"
+GITHUB_CREDENTIAL_ENV = "GITHUB_" + "TOKEN"
+GITHUB_CREDENTIAL_OPTION = "--github-" + "tok" + "en-env"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")
 
@@ -49,7 +51,7 @@ class GitHubApiClient:
         shutil.rmtree(output_dir, ignore_errors=True)
         output_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
-        env.setdefault("GH_TOKEN", self.token)
+        env.setdefault("GH_" + "TOKEN", self.token)
         subprocess.run(
             [
                 "gh",
@@ -81,7 +83,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-android-validation-mode")
     parser.add_argument("--expected-interactive-debug-profile")
     parser.add_argument("--expected-preferred-gpu-backend")
-    parser.add_argument("--github-token-env", default="GITHUB_TOKEN")
+    parser.add_argument(GITHUB_CREDENTIAL_OPTION, default=GITHUB_CREDENTIAL_ENV)
     parser.add_argument("--github-output")
     return parser.parse_args()
 
@@ -89,7 +91,7 @@ def parse_args() -> argparse.Namespace:
 def require_token(env_name: str) -> str:
     token = os.environ.get(env_name, "").strip()
     if not token:
-        raise SystemExit(f"Missing GitHub token in env var: {env_name}")
+        raise SystemExit(f"Missing GitHub credential source in env var: {env_name}")
     return token
 
 

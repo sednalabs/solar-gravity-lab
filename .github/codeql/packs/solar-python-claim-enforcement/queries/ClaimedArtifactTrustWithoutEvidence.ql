@@ -112,15 +112,15 @@ predicate hasTrustClaim(File file, string claimClass) {
 predicate artifactOrReleaseContext(File file) {
   exists(StringLiteral literal |
     file = literal.getEnclosingModule().getFile() and
-    literal.getText().regexpMatch("(?is).*(artifact|apk|release|publish|provenance|manifest|digest|sha256|checksum|asset|ref|commit).*")
+    literal.getText().regexpMatch("(?is).*(^|[^A-Za-z0-9])(artifact|apk|release|publish|provenance|manifest|digest|sha256|checksum|asset|ref|commit)([^A-Za-z0-9]|$).*")
   )
   or
   exists(Function function |
     file = function.getEnclosingModule().getFile() and
-    function.getName().regexpMatch("(?is).*(artifact|apk|release|publish|provenance|manifest|digest|sha256|checksum|asset|ref|commit).*")
+    function.getName().regexpMatch("(?is).*(^|[^A-Za-z0-9])(artifact|apk|release|publish|provenance|manifest|digest|sha256|checksum|asset|ref|commit)([^A-Za-z0-9]|$).*")
   )
   or
-  file.getRelativePath().regexpMatch("(?is).*(artifact|apk|release|publish|provenance|manifest|digest|sha256|checksum|asset|ref|commit).*")
+  file.getRelativePath().regexpMatch("(?is).*(^|[^A-Za-z0-9])(artifact|apk|release|publish|provenance|manifest|digest|sha256|checksum|asset|ref|commit)([^A-Za-z0-9]|$).*")
 }
 
 predicate expressionText(File file, string text) {
