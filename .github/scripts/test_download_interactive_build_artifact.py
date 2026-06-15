@@ -52,14 +52,8 @@ def main() -> int:
         expected_interactive_debug_profile=None,
         expected_preferred_gpu_backend=None,
     )
-    assert (
-        module.github_api_url("/repos/sednalabs/solar-gravity-lab/actions/runs/123")
-        == "https://api.github.com/repos/sednalabs/solar-gravity-lab/actions/runs/123"
-    )
-    assert (
-        module.github_api_url("https://api.github.com/repos/sednalabs/solar-gravity-lab")
-        == "https://api.github.com/repos/sednalabs/solar-gravity-lab"
-    )
+    assert module.validate_repository("sednalabs/solar-gravity-lab") == "sednalabs/solar-gravity-lab"
+    assert module.validate_run_id("123456") == "123456"
 
     assert_system_exit_contains(
         lambda: module.validate_manifest_matches_request(
@@ -80,12 +74,12 @@ def main() -> int:
         "preferred_gpu_backend",
     )
     assert_system_exit_contains(
-        lambda: module.github_api_url("https://example.com/repos/sednalabs/solar-gravity-lab"),
-        "Refusing non-GitHub API URL",
+        lambda: module.validate_repository("https://example.com/sednalabs/solar-gravity-lab"),
+        "Invalid GitHub repository",
     )
     assert_system_exit_contains(
-        lambda: module.github_api_url("repos/sednalabs/solar-gravity-lab"),
-        "must start with '/'",
+        lambda: module.validate_run_id("run-123"),
+        "Invalid workflow run id",
     )
 
     print("interactive build artifact manifest tests passed")
