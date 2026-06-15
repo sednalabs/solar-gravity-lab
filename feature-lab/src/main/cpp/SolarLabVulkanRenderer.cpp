@@ -1848,6 +1848,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
+    // Trails stay in CPU-provided order so each span can be replayed as a separate line strip.
     std::vector<TrailVertex> trailVertices;
     const uint32_t trailPointCount = SafeCount3(
         sceneBuffers_.trailPositionsM.size(),
@@ -1865,6 +1866,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
+    // Stream metadata is filled before allocation so fallback paths can share labels and usage.
     sceneGpuStreams_.authoritative.path = DrawPath::BillboardSprite;
     sceneGpuStreams_.authoritative.label = "authoritative";
     sceneGpuStreams_.authoritative.strideBytes = sizeof(BillboardVertex);
@@ -1896,6 +1898,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.trails.vertexCount = trailPointCount;
     sceneGpuStreams_.trailStripVertexCounts.clear();
 
+    // Host-visible uploads are the common path for small or CPU-authored streams.
     auto uploadStream = [this](const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
         if (sizeBytes == 0) {
             DestroyGpuBuffer(target);
@@ -1907,6 +1910,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         return UploadBytes(data, sizeBytes, target);
     };
 
+    // Tracer streams prefer device-local staging, then fall back to mapped buffers for safety.
     auto uploadTracerStream = [this, &uploadStream](const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) -> bool {
         if (sizeBytes == 0) {
             DestroyGpuBuffer(target);
@@ -1918,6 +1922,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         LogInfo(std::string("Falling back to host-visible upload for ") + (label != nullptr ? label : "unnamed tracer stream") + ".");
         return uploadStream(data, sizeBytes, usage, label, target);
     };
+    // Compute compaction failure is non-fatal because direct draw buffers have already uploaded.
     auto disableComputeStream = [this](ComputeDrawStreamBuffers& stream, const char* label, const char* reason) {
         if (stream.enabled) {
             LogInfo(std::string("Disabling compute-compaction path for ") + (stream.label != nullptr ? stream.label : label) + " because " + reason + "; using direct draw fallback.");
@@ -1953,6 +1958,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         return false;
     };
 
+    // Direct draw streams are populated first so rendering can continue without compute support.
     if (!uploadStream(authoritativeVertices.data(), ByteSize(authoritativeVertices), sceneGpuStreams_.authoritative.plannedUsage, sceneGpuStreams_.authoritative.label, sceneGpuStreams_.authoritative.vertexBuffer)) {
         return false;
     }
@@ -1972,6 +1978,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         return false;
     }
 
+    // Trail strip counts are clamped to the uploaded vertex payload to avoid stale packet lengths.
     uint32_t remainingTrailVertices = trailPointCount;
     for (int32_t rawCount : sceneBuffers_.trailVertexCounts) {
         if (remainingTrailVertices < 2U) {
@@ -1989,6 +1996,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         remainingTrailVertices -= clampedCount;
     }
 
+    // The compute path is enabled only after descriptors and both pipelines exist together.
     const bool canCompute = computeCompactionEnabled_ &&
         tracerMediumComputeDescriptorSet_ != VK_NULL_HANDLE &&
         tracerFarComputeDescriptorSet_ != VK_NULL_HANDLE &&
@@ -2008,6 +2016,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX = RoundUpWorkgroups(tracerFarCount, kComputeLocalSizeX);
     sceneGpuStreams_.tracerFarCompute.outputVertexCapacity = 0U;
 
+    // Far tracer compaction bins output by screen tile, so capacity follows the swapchain size.
     uint32_t farTileCounterCount = 0U;
     uint32_t farOutputVertexCapacity = 0U;
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
@@ -2017,6 +2026,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         farOutputVertexCapacity = farTileCounterCount * kFarTileBinCapacity;
     }
 
+    // Medium tracers need source state, output vertices, indirect draw state, and readback.
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
         if (!TryUploadDeviceLocalWithStaging(
                 tracerMediumStates.data(),
@@ -2053,6 +2063,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid = false;
     }
 
+    // Far tracers add tile counters so dense regions can be capped before draw submission.
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
         if (!TryUploadDeviceLocalWithStaging(
                 tracerFarStates.data(),
@@ -2123,6 +2134,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         return false;
     }
 
+    // Upload statistics and cached labels describe the exact buffers that survived fallbacks.
     sceneGpuStreams_.uploadedRevision = sceneBuffers_.sourceRevision;
     sceneGpuStreams_.authoritativeInfluenceCount = authoritativeCount;
     sceneGpuStreams_.totalBytes =
