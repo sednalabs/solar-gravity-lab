@@ -56,10 +56,6 @@ on:
       - "gradle/**"
   workflow_dispatch:
     inputs:
-      ref:
-        description: Branch, tag, or commit to validate
-        required: false
-        type: string
       profile:
         description: Validation profile
         required: true
@@ -138,7 +134,7 @@ on:
         default: disabled
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -208,21 +204,15 @@ jobs:
         id: checkout_ref
         shell: bash
         env:
-          INPUT_REF: ${{ inputs.ref }}
-          EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
-          FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
 
-          checkout_ref="$INPUT_REF"
-          if [[ -z "$checkout_ref" && "$EVENT_NAME" == 'pull_request' ]]; then
-            checkout_ref="$EVENT_SHA"
+          if [[ -z "$EVENT_SHA" ]]; then
+            echo "github.sha was empty; cannot resolve a trusted checkout target." >&2
+            exit 1
           fi
-          if [[ -z "$checkout_ref" ]]; then
-            checkout_ref="$FALLBACK_REF"
-          fi
-          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=${EVENT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout workflow ref
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -460,21 +450,20 @@ jobs:
       - name: Commit wrapper files back to branch
         if: ${{ inputs.write_wrapper }}
         shell: bash
+        env:
+          EVENT_REF: ${{ github.ref }}
+          EVENT_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          checkout_ref='${{ needs.metadata.outputs.checkout_ref }}'
-          if [[ "$checkout_ref" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Refuses to push wrapper files back to a detached SHA ref: ${checkout_ref}" >&2
+          if [[ "$EVENT_REF" != refs/heads/* ]]; then
+            echo "Refuses to push wrapper files back to non-branch ref: ${EVENT_REF}" >&2
             exit 1
           fi
 
-          branch_name="$checkout_ref"
-          if [[ "$branch_name" == refs/heads/* ]]; then
-            branch_name="${branch_name#refs/heads/}"
-          fi
-          if [[ "$branch_name" == refs/tags/* ]]; then
-            echo "Refuses to push wrapper files back to a tag ref: ${checkout_ref}" >&2
+          branch_name="$EVENT_REF_NAME"
+          if [[ -z "$branch_name" ]]; then
+            echo "github.ref_name was empty; cannot resolve wrapper push branch." >&2
             exit 1
           fi
 
