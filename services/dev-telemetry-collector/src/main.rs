@@ -161,7 +161,8 @@ fn is_authorized(headers: &HeaderMap, expected_token: Option<&str>) -> bool {
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
-        .is_some_and(|provided| provided == format!("Bearer {}", expected_token))
+        .and_then(|provided| provided.strip_prefix("Bearer "))
+        .is_some_and(|provided_token| provided_token == expected_token)
 }
 
 async fn append_ndjson(path: &PathBuf, envelope: &TelemetryEnvelope) -> std::io::Result<()> {

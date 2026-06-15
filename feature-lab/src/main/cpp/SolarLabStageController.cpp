@@ -825,6 +825,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         }
     } packetRelease{.runtimeAbi = runtimeAbi_, .handle = packetResult.handle};
 
+    // Buffer views are optional because older runtime packets may omit a stream while still
+    // exporting a valid camera and body payload.
     auto requestBuffer = [&](SlVulkanSceneBufferKind kind) -> std::optional<SlBufferView> {
         const SlBufferViewResult bufferResult = runtimeAbi_->packet_buffer(packetResult.handle, kind);
         if (bufferResult.result.code != SL_STATUS_OK) {
@@ -844,6 +846,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     const bool focusTraceLayer = runtimeTraceLayerModeCode_ == kTraceLayerModeFocus;
     const std::string selectedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
     if (cameraLocked) {
+        // Locked observer modes mirror runtime camera intent directly and keep the native free
+        // camera centered on the selected runtime frame.
         InitializeFreeCameraFromRuntimePacketLocked(
             packetResult.info.camera.frame_origin_m.x,
             packetResult.info.camera.frame_origin_m.y,
@@ -900,6 +904,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::vector<int32_t> trailVertexCounts;
     std::vector<RuntimeBodyProxy> pickBodies;
 
+    // Scene origin is stored separately so Java/Kotlin callers can interpret relative packet
+    // coordinates without keeping the raw runtime packet alive.
     runtimeScene_.sceneOriginX = packetResult.info.camera.frame_origin_m.x;
     runtimeScene_.sceneOriginY = packetResult.info.camera.frame_origin_m.y;
     runtimeScene_.sceneOriginZ = packetResult.info.camera.frame_origin_m.z;

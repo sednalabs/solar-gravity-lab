@@ -816,6 +816,8 @@ bool SolarLabVulkanRenderer::CreateRenderPass() {
         return false;
     }
 
+    // Color stays presentable after the pass; depth is transient and only needs a supported
+    // attachment format for the current physical device.
     const VkAttachmentDescription colorAttachment{
         .flags = 0,
         .format = swapchainImageFormat_,
@@ -861,6 +863,8 @@ bool SolarLabVulkanRenderer::CreateRenderPass() {
         .pPreserveAttachments = nullptr,
     };
 
+    // External dependencies cover both color writes and early/late depth writes around the single
+    // graphics subpass shared by the pipeline variants.
     const std::array<VkSubpassDependency, 2> dependencies = {{
         {
             .srcSubpass = VK_SUBPASS_EXTERNAL,
@@ -882,6 +886,7 @@ bool SolarLabVulkanRenderer::CreateRenderPass() {
         },
     }};
 
+    // Keep attachment order aligned with the references above: color at index 0, depth at 1.
     const std::array<VkAttachmentDescription, 2> attachments = {{colorAttachment, depthAttachment}};
     const VkRenderPassCreateInfo renderPassCreateInfo{
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -1109,6 +1114,7 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
         return false;
     }
 
+    // The graphics descriptor exposes one uniform buffer and is reused across swapchain rebuilds.
     if (sceneDescriptorSetLayout_ == VK_NULL_HANDLE) {
         const VkDescriptorSetLayoutBinding binding{
             .binding = 0,
@@ -1130,6 +1136,8 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
         }
     }
 
+    // A single descriptor set is enough for the scene uniform path; compute storage is configured
+    // separately below when the queue family supports it.
     if (descriptorPool_ == VK_NULL_HANDLE) {
         const VkDescriptorPoolSize poolSize{
             .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -1182,6 +1190,8 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     };
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
 
+    // The pipeline layout depends on descriptor shape, not descriptor contents, so it can survive
+    // uniform-buffer updates.
     if (graphicsPipelineLayout_ == VK_NULL_HANDLE) {
         const VkPipelineLayoutCreateInfo layoutCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -1714,6 +1724,8 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
 
     DestroySceneGpuStreams();
 
+    // Authoritative bodies feed both billboard rendering and compute influence buffers, so their
+    // parallel arrays are collapsed together before any upload starts.
     std::vector<BillboardVertex> authoritativeVertices;
     const uint32_t authoritativeCount = SafeCount3(
         sceneBuffers_.authoritativePositionsM.size(),
@@ -1744,6 +1756,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
+    // Near tracers remain full billboards because they carry visible radius and kind information.
     std::vector<BillboardVertex> tracerNearVertices;
     const uint32_t tracerNearCount = SafeCount3(
         sceneBuffers_.tracerNearPositionsM.size(),
@@ -1765,6 +1778,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
+    // Medium tracers are split into draw vertices plus compute state for GPU-side compaction.
     std::vector<CheapPointVertex> tracerMediumVertices;
     const uint32_t tracerMediumCount = SafeCount3(
         sceneBuffers_.tracerMediumPositionsM.size(),
@@ -1800,6 +1814,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         });
     }
 
+    // Far tracers use density vertices and packed state so large scenes stay within draw budgets.
     std::vector<DensityPointVertex> tracerFarVertices;
     const uint32_t tracerFarCount = SafeCount3(
         sceneBuffers_.tracerFarPositionsM.size(),
@@ -2224,6 +2239,8 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         return true;
     }
 
+    // Each compute variant binds the same five-buffer layout: uniforms, source state, compacted
+    // output, indirect draw command, and auxiliary counters.
     auto updateSet = [this](VkDescriptorSet set, const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect, const GpuBuffer& aux) {
         const VkDescriptorBufferInfo uniformInfo{
             .buffer = sceneUniformBuffer_.buffer,
@@ -2315,6 +2332,8 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         vkUpdateDescriptorSets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     };
 
+    // Medium and far tracer compaction can be enabled independently based on scene scale and
+    // device capabilities.
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
         if (tracerMediumComputeDescriptorSet_ == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer.buffer == VK_NULL_HANDLE ||
@@ -2331,6 +2350,8 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer);
     }
 
+    // Far tracers additionally bind the tile counter buffer so the density pass can bin output
+    // before emitting indirect draw commands.
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
         if (tracerFarComputeDescriptorSet_ == VK_NULL_HANDLE ||
             sceneGpuStreams_.tracerFarCompute.sourceStateBuffer.buffer == VK_NULL_HANDLE ||
@@ -3058,6 +3079,8 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
     }
 
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    // Use a transient primary command buffer so uploads do not depend on frame command buffers or
+    // swapchain lifetime.
     const VkCommandBufferAllocateInfo allocateInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = nullptr,
@@ -3093,6 +3116,8 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
     };
     vkCmdCopyBuffer(commandBuffer, source.buffer, target.buffer, 1, &copyRegion);
 
+    // Make transfer writes visible to vertex, graphics shader, and compute readers that may
+    // consume the uploaded buffer in the next draw or compaction pass.
     const VkBufferMemoryBarrier transferBarrier{
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         .pNext = nullptr,
@@ -3124,6 +3149,8 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
         return false;
     }
 
+    // Submit synchronously because these uploads run during resource refresh; callers can safely
+    // use the target buffer after this function returns.
     const VkSubmitInfo submitInfo{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = nullptr,
@@ -3375,6 +3402,8 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
     VkPipeline& pipeline) {
     VkShaderModule vertexShader = VK_NULL_HANDLE;
     VkShaderModule fragmentShader = VK_NULL_HANDLE;
+    // Shader modules are short-lived construction inputs; the pipeline owns compiled state after
+    // vkCreateGraphicsPipelines returns.
     if (!LoadShaderModuleFromAssets(vertexShaderAssetPath, vertexShader)) {
         return false;
     }
@@ -3404,6 +3433,8 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
         },
     };
 
+    // Vertex input is the main shape that varies between billboard, trail, cheap-point, and
+    // density-point pipelines.
     const VkPipelineVertexInputStateCreateInfo vertexInputState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .pNext = nullptr,
@@ -3473,6 +3504,8 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
     };
 
     const VkStencilOpState emptyStencil{};
+    // Trail pipelines do not write depth so later billboard layers can still render cleanly while
+    // retaining depth tests against existing scene geometry.
     const VkBool32 depthWritesEnabled = topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ? VK_FALSE : VK_TRUE;
     const VkPipelineDepthStencilStateCreateInfo depthStencilState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
