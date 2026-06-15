@@ -388,9 +388,12 @@ fn marker_ring_around_primary(
 ) -> Vec<CanonicalBodySpec> {
     (0..count)
         .map(|index| {
+            let mut marker_id = String::from(id_prefix);
+            marker_id.push('-');
+            marker_id.push_str(&format!("{index:02}"));
             orbiting_body(
                 primary,
-                &format!("{}-{index:02}", id_prefix),
+                marker_id.as_str(),
                 BodyClass::Tracer,
                 0.0,
                 2_500.0,
