@@ -485,8 +485,6 @@ object PhysicsAccuracyTelemetryCli {
             parsed[key] = value
             index += 2
         }
-        require("--json-output" in parsed) { "Missing required argument --json-output <path>" }
-        require("--markdown-output" in parsed) { "Missing required argument --markdown-output <path>" }
         return parsed
     }
 }
