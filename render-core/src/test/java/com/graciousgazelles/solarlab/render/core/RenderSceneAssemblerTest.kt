@@ -261,8 +261,10 @@ class RenderSceneAssemblerTest {
                     colorArgb = 0xFFFFFFFF.toInt(),
                     alpha = 0.5f,
                     pointsM = List(400) { index ->
+                        val xMeters = (-0.3 * PhysicalConstants.ASTRONOMICAL_UNIT_M) +
+                            (index.toDouble() * 2.0e9)
                         Vector3d(
-                            (-0.3 * PhysicalConstants.ASTRONOMICAL_UNIT_M) + (index * 2.0e9),
+                            xMeters,
                             if (index % 2 == 0) 5.0e9 else -5.0e9,
                             0.0,
                         )
