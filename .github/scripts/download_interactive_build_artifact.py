@@ -14,6 +14,7 @@ from pathlib import Path
 
 API_VERSION = "2022-11-28"
 USER_AGENT = "solar-gravity-lab-interactive-session/1.0"
+GITHUB_API_ORIGIN = "https://api.github.com"
 
 
 class GitHubApiClient:
@@ -30,11 +31,7 @@ class GitHubApiClient:
         return request
 
     def get_json(self, path_or_url: str) -> dict:
-        url = (
-            path_or_url
-            if path_or_url.startswith("https://")
-            else f"https://api.github.com{path_or_url}"
-        )
+        url = github_api_url(path_or_url)
         with urllib.request.urlopen(self._request(url)) as response:
             return json.load(response)
 
@@ -84,6 +81,17 @@ def require_token(env_name: str) -> str:
     if not token:
         raise SystemExit(f"Missing GitHub token in env var: {env_name}")
     return token
+
+
+def github_api_url(path_or_url: str) -> str:
+    if path_or_url.startswith("https://"):
+        parsed = urllib.parse.urlparse(path_or_url)
+        if parsed.scheme != "https" or parsed.netloc != "api.github.com":
+            raise SystemExit(f"Refusing non-GitHub API URL: {path_or_url}")
+        return path_or_url
+    if not path_or_url.startswith("/"):
+        raise SystemExit(f"GitHub API path must start with '/': {path_or_url}")
+    return f"{GITHUB_API_ORIGIN}{path_or_url}"
 
 
 def sha256_file(path: Path) -> str:

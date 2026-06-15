@@ -26,6 +26,10 @@ SCHEMA_VERSION = "2026-04-27.1"
 AT_HWCAP = 16
 ADB_SERIAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 AT_HWCAP2 = 26
+ADB_SHELL_COMMANDS = {
+    "cat_cpuinfo": ("cat", "/proc/cpuinfo"),
+    "getprop": ("getprop",),
+}
 
 FEATURE_ALIASES = {
     "asimd": "neon",
@@ -272,14 +276,17 @@ def run_command(
     return result.stdout
 
 
-def adb_command(serial: str, command: str, *, required: bool = False) -> str:
+def adb_command(serial: str, command_name: str, *, required: bool = False) -> str:
+    command = ADB_SHELL_COMMANDS.get(command_name)
+    if command is None:
+        raise CommandFailure(f"Unsupported adb census command: {command_name}")
     base = ["adb"]
     if serial:
         base += ["-s", serial]
     return run_command(
-        base + ["shell", command],
+        base + ["shell", *command],
         required=required,
-        description=f"adb shell {command}",
+        description=f"adb shell {' '.join(command)}",
     )
 
 
@@ -431,7 +438,7 @@ def build_matrix(evidence: Iterable[Evidence]) -> list[dict[str, object]]:
 def collect_census(args: argparse.Namespace) -> dict[str, object]:
     serial = validate_adb_serial(args.adb_serial) if args.adb_serial else None
     if serial:
-        cpuinfo = adb_command(serial, "cat /proc/cpuinfo", required=True)
+        cpuinfo = adb_command(serial, "cat_cpuinfo", required=True)
         auxv_values: dict[str, int | None] = {"AT_HWCAP": None, "AT_HWCAP2": None}
         auxv_items: list[Evidence] = []
     else:
