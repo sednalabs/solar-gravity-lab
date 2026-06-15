@@ -1,0 +1,60 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/scripts/**"
+      - ".github/workflows/code-coverage.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/scripts/**"
+      - ".github/workflows/code-coverage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: code-coverage-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+jobs:
+  python-tools:
+    name: Python tool coverage
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      code-quality: write
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install coverage
+        run: python -m pip install coverage
+
+      - name: Run Python tool tests with coverage
+        run: |
+          set -euo pipefail
+          for test_file in .github/scripts/test_*.py; do
+            coverage run --append --source=.github/scripts "${test_file}"
+          done
+          coverage xml -o coverage-python-tools.xml
+
+      - name: Upload Python tool coverage
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage-python-tools.xml
+          language: Python
+          label: code-coverage/python-tools
