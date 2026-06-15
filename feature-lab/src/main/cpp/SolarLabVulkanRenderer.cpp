@@ -598,7 +598,7 @@ bool SolarLabVulkanRenderer::PickPhysicalDevice() {
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &queueFamilyCount, queueFamilies.data());
 
-        for (uint32_t queueIndex = 0; queueIndex < queueFamilyCount; ++queueIndex) {
+        for (uint32_t queueIndex = 0; queueIndex != queueFamilyCount; ++queueIndex) {
             VkBool32 supportsPresent = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(candidate, queueIndex, surface_, &supportsPresent);
             const bool supportsGraphics = (queueFamilies[queueIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
@@ -797,6 +797,8 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
     return true;
 }
 
+// Rebuilds the render pass around the active swapchain, including the depth attachment and subpass
+// dependency used by both the scene and overlay pipelines.
 bool SolarLabVulkanRenderer::CreateRenderPass() {
     if (physicalDevice_ == VK_NULL_HANDLE) {
         SetError("Cannot create a render pass before a physical device has been selected.");
@@ -1095,6 +1097,8 @@ bool SolarLabVulkanRenderer::CreateCommandPool() {
     return true;
 }
 
+// Allocates the descriptor layouts, pool, and uniform/scene buffers shared by graphics and compute
+// passes so later pipeline setup can bind a stable descriptor surface.
 bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     if (device_ == VK_NULL_HANDLE) {
         SetError("Cannot create descriptor resources before the Vulkan device exists.");
@@ -1700,6 +1704,8 @@ bool SolarLabVulkanRenderer::EnsureSceneGpuStreamsLocked() {
     return UploadSceneGpuStreamsLocked();
 }
 
+// Repackages the latest runtime scene into GPU vertex, indirect, and compaction buffers while the
+// caller holds the renderer state lock.
 bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     if (device_ == VK_NULL_HANDLE || physicalDevice_ == VK_NULL_HANDLE) {
         SetError("Cannot upload scene streams before the Vulkan device is ready.");
@@ -2211,6 +2217,8 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
     return UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_);
 }
 
+// Refreshes compute descriptor sets after scene-buffer replacement so compaction kernels read the
+// current input/output/indirect buffers.
 bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
     if (!computeCompactionEnabled_ || computeDescriptorSetLayout_ == VK_NULL_HANDLE) {
         return true;
@@ -3039,6 +3047,8 @@ bool SolarLabVulkanRenderer::EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkB
         buffer);
 }
 
+// Copies staged bytes into device-local buffers with a one-shot command buffer, optionally
+// surfacing detailed Vulkan errors to callers that are in user-visible setup paths.
 bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors) {
     if (sizeBytes == 0) {
         return true;
@@ -3352,6 +3362,8 @@ bool SolarLabVulkanRenderer::LoadShaderModuleFromAssets(const char* assetPath, V
     return true;
 }
 
+// Creates one graphics pipeline variant from packaged shader assets and caller-provided vertex
+// layout, preserving a common viewport, blending, depth, and render-pass configuration.
 bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
     const char* label,
     const char* vertexShaderAssetPath,
