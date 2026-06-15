@@ -115,7 +115,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -237,13 +237,13 @@ jobs:
           set -euo pipefail
           echo "session_start_epoch=$(date +%s)" >> "${GITHUB_OUTPUT}"
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
         if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         with:
           cache-read-only: true
@@ -269,7 +269,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.android/avd/*
@@ -277,7 +277,7 @@ jobs:
           key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
 
       - name: Restore Android SDK emulator packages cache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
@@ -286,7 +286,7 @@ jobs:
 
       - name: Seed Android emulator snapshot
         if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -299,7 +299,7 @@ jobs:
           disable-animations: false
           script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -370,7 +370,7 @@ jobs:
           echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
 
       - name: Checkout android-emulator-mcp workspace
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: sednalabs/android-emulator-mcp
           ref: ${{ steps.session_plan.outputs.android_emulator_mcp_ref }}
@@ -379,7 +379,7 @@ jobs:
           path: mcp-workspace/servers/android-emulator-mcp
 
       - name: Checkout mcp-toolkit-rs workspace
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: GraciousGazelles/toolkits-mcp-toolkit-rs
           ref: ${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}
@@ -410,13 +410,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "server_sha=$(git -C mcp-workspace/servers/android-emulator-mcp rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-          echo "toolkit_sha=$(git -C mcp-workspace/toolkits/mcp-toolkit-rs rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-          echo "rustc_release=$(rustc -Vv | awk '/^release: / { print $2 }')" >> "${GITHUB_OUTPUT}"
+          {
+            echo "server_sha=$(git -C mcp-workspace/servers/android-emulator-mcp rev-parse HEAD)"
+            echo "toolkit_sha=$(git -C mcp-workspace/toolkits/mcp-toolkit-rs rev-parse HEAD)"
+            echo "rustc_release=$(rustc -Vv | awk '/^release: / { print $2 }')"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Restore android-emulator-mcp target cache
         id: interactive_mcp_target_cache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ${{ steps.stage_mcp_workspace.outputs.server_dir }}/target
           key: interactive-mcp-target-${{ runner.os }}-${{ runner.arch }}-${{ steps.interactive_mcp_cache.outputs.rustc_release }}-${{ steps.interactive_mcp_cache.outputs.server_sha }}-${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}
@@ -573,7 +575,7 @@ jobs:
 
       - name: Run hosted interactive Android session
         id: interactive_session
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -639,7 +641,7 @@ jobs:
 
       - name: Upload interactive session artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: interactive-android-session-${{ github.run_id }}
           if-no-files-found: error

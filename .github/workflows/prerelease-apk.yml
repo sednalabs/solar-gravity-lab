@@ -116,7 +116,7 @@ jobs:
       build_variant: ${{ steps.route.outputs.build_variant }}
       publish_release: ${{ steps.route.outputs.publish_release }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
 
@@ -221,7 +221,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -241,12 +241,12 @@ jobs:
           set -euo pipefail
           echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
@@ -272,7 +272,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.android/avd/*
@@ -281,7 +281,7 @@ jobs:
 
       - name: Restore Android SDK emulator packages cache
         id: android-sdk-components-cache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
@@ -290,7 +290,7 @@ jobs:
 
       - name: Seed Android emulator snapshot
         if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -317,7 +317,7 @@ jobs:
             "${ANDROID_CMAKE_PACKAGE}" \
             "${ANDROID_NDK_PACKAGE}"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - id: prerelease_rust_shared_cache
         uses: ./.github/actions/rust-shared-cache
@@ -445,7 +445,7 @@ jobs:
 
       - name: Emulator launch smoke for packaged APK
         id: launch_smoke
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -579,7 +579,7 @@ jobs:
 
       - name: Upload prerelease APK artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: solar-gravity-lab-${{ steps.meta.outputs.safe_version }}-${{ steps.meta.outputs.package_label }}-${{ github.run_id }}
           if-no-files-found: error
@@ -605,12 +605,12 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -645,7 +645,7 @@ jobs:
 
       - name: Upload ARM64 ISA proof artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: arm64-isa-proof-${{ github.run_id }}
           if-no-files-found: warn
@@ -669,7 +669,7 @@ jobs:
       contents: write
     steps:
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: solar-gravity-lab-${{ needs.build-prerelease-apk.outputs.safe_version }}-${{ needs.build-prerelease-apk.outputs.package_label }}-${{ github.run_id }}
           path: dist
@@ -878,7 +878,7 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
@@ -916,7 +916,7 @@ jobs:
         run: cat dist/prerelease-summary/prerelease-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload prerelease summary artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: prerelease-summary
           if-no-files-found: error
