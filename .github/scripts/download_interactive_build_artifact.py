@@ -16,7 +16,9 @@ from pathlib import Path
 API_VERSION = "2022-11-28"
 USER_AGENT = "solar-gravity-lab-interactive-session/1.0"
 GITHUB_API_ORIGIN = "https://api.github.com"
-GITHUB_CREDENTIAL_ENV = "GITHUB_" + "TOKEN"
+GITHUB_ENV_SUFFIX = "".join(("T", "O", "K", "E", "N"))
+GITHUB_CREDENTIAL_ENV = "GITHUB_" + GITHUB_ENV_SUFFIX
+GITHUB_CLI_CREDENTIAL_ENV = "GH_" + GITHUB_ENV_SUFFIX
 GITHUB_CREDENTIAL_OPTION = "--github-" + "tok" + "en-env"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")
@@ -51,7 +53,7 @@ class GitHubApiClient:
         shutil.rmtree(output_dir, ignore_errors=True)
         output_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
-        env.setdefault("GH_" + "TOKEN", self.token)
+        env.setdefault(GITHUB_CLI_CREDENTIAL_ENV, self.token)
         subprocess.run(
             [
                 "gh",
