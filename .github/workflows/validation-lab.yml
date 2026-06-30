@@ -549,7 +549,7 @@ jobs:
     name: Rust workspace tests (Arm64)
     needs: metadata
     if: ${{ needs.metadata.outputs.rust_workspace_arm64 == 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
@@ -597,7 +597,7 @@ jobs:
     name: Arm64 ISA proof
     needs: metadata
     if: ${{ needs.metadata.outputs.arm64_isa_proof == 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
@@ -653,7 +653,7 @@ jobs:
     name: Arm64 capability census
     needs: metadata
     if: ${{ needs.metadata.outputs.arm64_capability_census == 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -1154,7 +1154,7 @@ jobs:
     name: Android shell emulator smoke (${{ matrix.validation_mode }})
     needs: metadata
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || (vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"')) }}
+    runs-on: ubuntu-24.04
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
