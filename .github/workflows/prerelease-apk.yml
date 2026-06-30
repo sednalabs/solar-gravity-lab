@@ -205,7 +205,8 @@ jobs:
       launch_smoke_outcome: ${{ steps.launch_smoke.outcome }}
       changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
       changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || (vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"')) }}
+    # Keep Android packaging on a standard GitHub-hosted runner.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
