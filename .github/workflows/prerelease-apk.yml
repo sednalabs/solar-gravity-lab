@@ -83,7 +83,7 @@ env:
   ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
   ANDROID_AVD_CACHE_VERSION: v3
   ANDROID_SDK_COMPONENT_CACHE_VERSION: v1
-  ANDROID_RUST_TOOLCHAIN_CACHE_VERSION: v1
+  ANDROID_RUST_TOOLCHAIN_CACHE_VERSION: v2
   ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
   ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
   ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -205,7 +205,7 @@ jobs:
       launch_smoke_outcome: ${{ steps.launch_smoke.outcome }}
       changelog_baseline_tag: ${{ steps.changelog.outputs.baseline_tag }}
       changelog_commit_count: ${{ steps.changelog.outputs.commit_count }}
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || (vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"')) }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
