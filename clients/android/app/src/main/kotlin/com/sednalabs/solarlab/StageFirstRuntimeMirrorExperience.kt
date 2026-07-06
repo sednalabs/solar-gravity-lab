@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.graciousgazelles.solarlab.core.model.PhysicalConstants.DAY_SECONDS
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.feature.lab.PlaybackSpeedPreset
 import com.graciousgazelles.solarlab.feature.lab.StepQuantumPreset
@@ -173,7 +174,7 @@ private val RuntimeMirrorRevisionBranchRegex = Regex("""(?:^|\|)branch=([^|]+)""
 private val RuntimeMirrorRevisionEpochRegex = Regex("""(?:^|\|)epoch=([^|]+)""")
 private val RuntimeMirrorRendererPacketTelemetryRegex = Regex("""\s+(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[.=]).*""")
 private val RuntimeMirrorWhitespaceRegex = Regex("""\s+""")
-private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
+private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = DAY_SECONDS
 private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 140
 private const val RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT = 3
 private const val RUNTIME_MIRROR_COMPACT_ACCELERATION_CHIP_LIMIT = 5
@@ -2767,24 +2768,24 @@ private fun runtimeMirrorShortKernelName(path: String): String {
     val normalized = path
         .substringAfter("simd.arm64.", missingDelimiterValue = path)
         .removeSuffix("-candidate")
-    return when (normalized) {
-        "neon-f64-pairwise" -> "NEON f64 pairwise"
-        "neon-f64-tiled-pairwise" -> "NEON f64 tiled"
-        "neon-f64-parallel-tiled-pairwise" -> "NEON f64 parallel tiled"
-        "sve-f64-batch" -> "SVE f64 batch"
-        "sve2-f64-batch" -> "SVE2 f64 batch"
-        "sve-i8mm-packed-assist" -> "SVE I8MM packed assist"
-        "sme-tiled-f64" -> "SME tiled f64"
-        "sme2-tiled-f64" -> "SME2 tiled f64"
-        "dotprod-packed-assist" -> "DotProd packed assist"
-        "i8mm-packed-assist" -> "I8MM packed assist"
-        "bf16-forecast-assist" -> "BF16 forecast assist"
-        "fp16-visual-assist" -> "FP16 visual assist"
-        "fhm-visual-assist" -> "FHM visual assist"
-        "rdm-vector-assist" -> "RDM vector assist"
-        "fcma-vector-assist" -> "FCMA vector assist"
-        else -> normalized
-    }
+    val kernelNameMappings = mapOf(
+        "neon-f64-pairwise" to "NEON f64 pairwise",
+        "neon-f64-tiled-pairwise" to "NEON f64 tiled",
+        "neon-f64-parallel-tiled-pairwise" to "NEON f64 parallel tiled",
+        "sve-f64-batch" to "SVE f64 batch",
+        "sve2-f64-batch" to "SVE2 f64 batch",
+        "sve-i8mm-packed-assist" to "SVE I8MM packed assist",
+        "sme-tiled-f64" to "SME tiled f64",
+        "sme2-tiled-f64" to "SME2 tiled f64",
+        "dotprod-packed-assist" to "DotProd packed assist",
+        "i8mm-packed-assist" to "I8MM packed assist",
+        "bf16-forecast-assist" to "BF16 forecast assist",
+        "fp16-visual-assist" to "FP16 visual assist",
+        "fhm-visual-assist" to "FHM visual assist",
+        "rdm-vector-assist" to "RDM vector assist",
+        "fcma-vector-assist" to "FCMA vector assist",
+    )
+    return kernelNameMappings[normalized] ?: normalized
 }
 
 private fun RenderFrame.toRuntimeMirrorScene(): RuntimeMirrorScene {
