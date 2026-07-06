@@ -9,7 +9,7 @@ import org.junit.Test
 
 class StageFirstRuntimeMirrorExperienceTest {
     @Test
-    fun buildRuntimeAccelerationReadout_promotesS25TilePlanIntoChips() {
+    fun buildRuntimeAccelerationReadout_promotesGalaxyS25TilePlanIntoChips() {
         val readout = requireNotNull(
             buildRuntimeAccelerationReadout(
                 backendSummary = listOf(
@@ -152,7 +152,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorAccelerationStatusLine_keepsHudMissionReadable() {
+    fun runtimeMirrorAccelerationStatusLine_keepsHUDMissionReadable() {
         assertEquals(
             "ARM64 solver lane online · Vulkan render path · kernel catalog steady",
             runtimeMirrorAccelerationStatusLine(
@@ -167,7 +167,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactAccelerationStatusLine_keepsPhoneHudGlanceable() {
+    fun runtimeMirrorCompactAccelerationStatusLine_keepsPhoneHUDGlanceable() {
         assertEquals(
             "ARM64 tiled · Vulkan · 3 future ISA",
             runtimeMirrorCompactAccelerationStatusLine(
@@ -339,7 +339,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactRendererStatusText_removesPacketCountersForHud() {
+    fun runtimeMirrorCompactRendererStatusText_removesPacketCountersForHUD() {
         assertEquals(
             "Vulkan SPIR-V + compute compaction active",
             runtimeMirrorCompactRendererStatusText(
@@ -350,7 +350,7 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactBackendStatus_keepsPhoneHudOutOfSentenceMode() {
+    fun runtimeMirrorCompactBackendStatus_keepsPhoneHUDOutOfSentenceMode() {
         assertEquals(
             "Connected · Host ready · rev=sol-system / main / t+6.0h · Vulkan + compute",
             runtimeMirrorCompactBackendStatus(
