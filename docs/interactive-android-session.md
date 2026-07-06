@@ -49,7 +49,10 @@ The workflow:
 - `android_emulator_mcp_ref`
   - branch, tag, or commit from the maintainer-configured Android provider
     repository
-  - default: `9d8e67ea7195e9b0536f9b76166e68caaa218fc9`
+  - default: `20c851bd93b76653443e1e06b99fb2b336e220f7`
+  - this pinned provider ref returns screenshot bytes as native MCP image
+    content for Codex computer-use observations; artifact paths remain
+    diagnostics, not the model-facing visual channel
 - `mcp_toolkit_rs_ref`
   - branch, tag, or commit from `GraciousGazelles/toolkits-mcp-toolkit-rs`
   - keep this in sync with the provider's path-based toolkit dependency

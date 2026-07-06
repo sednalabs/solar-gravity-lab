@@ -27,7 +27,7 @@ on:
         description: Branch, tag, or commit from sednalabs/android-emulator-mcp
         required: true
         type: string
-        default: 9d8e67ea7195e9b0536f9b76166e68caaa218fc9
+        default: 20c851bd93b76653443e1e06b99fb2b336e220f7
       mcp_toolkit_rs_ref:
         description: Branch, tag, or commit from GraciousGazelles/toolkits-mcp-toolkit-rs
         required: true
