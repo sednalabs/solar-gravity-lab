@@ -24,7 +24,7 @@ jobs:
       archive_seconds: ${{ steps.archive.outputs.archive_seconds }}
       rust_cache_hit: ${{ steps.rust_shared_cache.outputs.cache-hit }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -81,7 +81,7 @@ jobs:
     outputs:
       run_seconds: ${{ steps.run_nextest.outputs.run_seconds }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -139,7 +139,7 @@ jobs:
     outputs:
       doctest_seconds: ${{ steps.doctest.outputs.doctest_seconds }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
