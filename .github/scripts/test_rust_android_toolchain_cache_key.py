@@ -94,12 +94,12 @@ echo "cargo 1.97.0 (placeholder 2026-07-07)"
     def test_restore_prefix_changes_with_effective_rust_compiler(self) -> None:
         old = self.run_helper(
             release="1.96.1",
-            commit="31fca3adb0000000000000000000000000000000",
+            commit="31fca3adb",
             targets="aarch64-linux-android x86_64-linux-android",
         )
         new = self.run_helper(
             release="1.97.0",
-            commit="2d8144b780000000000000000000000000000000",
+            commit="2d8144b78",
             targets="aarch64-linux-android x86_64-linux-android",
         )
 
@@ -109,12 +109,12 @@ echo "cargo 1.97.0 (placeholder 2026-07-07)"
     def test_same_compiler_can_restore_a_partial_target_cache(self) -> None:
         one_target = self.run_helper(
             release="1.97.0",
-            commit="2d8144b780000000000000000000000000000000",
+            commit="2d8144b78",
             targets="aarch64-linux-android",
         )
         two_targets = self.run_helper(
             release="1.97.0",
-            commit="2d8144b780000000000000000000000000000000",
+            commit="2d8144b78",
             targets="aarch64-linux-android x86_64-linux-android",
         )
 

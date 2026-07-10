@@ -51,7 +51,7 @@ else
   exit 1
 fi
 
-compiler_identity="$(rustc -Vv 2>/dev/null || rustc -V 2>/dev/null)"
+compiler_identity="$(rustc -Vv 2>/dev/null || rustc -V 2>/dev/null || true)"
 if [[ -z "${compiler_identity}" ]]; then
   echo "Unable to resolve the effective Rust compiler identity." >&2
   exit 1
