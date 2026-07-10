@@ -57,6 +57,7 @@ echo "cargo 1.97.0 (placeholder 2026-07-07)"
             )
 
             env = os.environ.copy()
+            env.pop("GITHUB_OUTPUT", None)
             env.update(
                 {
                     "PATH": f"{fake_bin}:{env['PATH']}",
