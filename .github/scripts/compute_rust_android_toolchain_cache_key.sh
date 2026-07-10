@@ -51,6 +51,15 @@ else
   exit 1
 fi
 
+compiler_identity="$(rustc -Vv 2>/dev/null || rustc -V 2>/dev/null)"
+if [[ -z "${compiler_identity}" ]]; then
+  echo "Unable to resolve the effective Rust compiler identity." >&2
+  exit 1
+fi
+compiler_identity_hash="$(
+  printf '%s\n' "${compiler_identity}" | "${hash_cmd[@]}" | awk '{print substr($1, 1, 8)}'
+)"
+
 toolchain_hash="$(
   {
     rustup show active-toolchain 2>/dev/null || true
@@ -62,7 +71,7 @@ toolchain_hash="$(
   } | "${hash_cmd[@]}" | awk '{print substr($1, 1, 8)}'
 )"
 
-prefix="v0-rust-android-${cache_version}-${runner_os}-${normalized_arch}-${active_toolchain}"
+prefix="v0-rust-android-${cache_version}-${runner_os}-${normalized_arch}-${active_toolchain}-${compiler_identity_hash}"
 primary_key="${prefix}-${toolchain_hash}"
 restore_key_1="${prefix}-"
 
