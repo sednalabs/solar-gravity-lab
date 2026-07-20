@@ -91,7 +91,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-private data class RuntimeStageBody(
+internal data class RuntimeStageBody(
     val id: String,
     val displayName: String,
     val positionM: Vector3d,
@@ -114,6 +114,13 @@ private val RuntimeStageTeachingAliasesByBodyId = SolarLabTeachingCatalog.entrie
     .associate { entry ->
         entry.bodyId.lowercase(Locale.US) to entry.aliases.map { alias -> alias.lowercase(Locale.US) }
     }
+
+private val RuntimeStageBodySearchComparator =
+    compareBy<RuntimeStageBody> { body ->
+        RuntimeStageTeachingRankByBodyId[body.id.lowercase(Locale.US)] ?: Int.MAX_VALUE
+    }
+        .thenBy { body -> body.displayName.lowercase(Locale.US) }
+        .thenBy { body -> body.id.lowercase(Locale.US) }
 
 private data class RuntimeSelectionCard(
     val title: String,
@@ -1784,13 +1791,7 @@ private fun RuntimeStageSearchDialog(
     val filteredBodies = remember(bodies, normalizedQuery) {
         bodies
             .filter { body -> body.matchesRuntimeStageSearch(normalizedQuery) }
-            .sortedWith(
-                compareBy<RuntimeStageBody> { body ->
-                    RuntimeStageTeachingRankByBodyId[body.id.lowercase(Locale.US)] ?: Int.MAX_VALUE
-                }
-                    .thenBy { body -> body.displayName.lowercase(Locale.US) }
-                    .thenBy { body -> body.id.lowercase(Locale.US) },
-            )
+            .sortedWith(RuntimeStageBodySearchComparator)
             .take(32)
     }
 
@@ -2858,7 +2859,7 @@ private fun inferRuntimeHostBodyId(bodyId: String): String? = when (bodyId.lower
     else -> null
 }
 
-private fun resolveRuntimeSemanticBodyId(
+internal fun resolveRuntimeSemanticBodyId(
     bodies: List<RuntimeStageBody>,
     bodyQuery: String,
 ): String? {
@@ -2866,10 +2867,19 @@ private fun resolveRuntimeSemanticBodyId(
     if (normalizedQuery.isEmpty()) {
         return null
     }
-    return bodies.firstOrNull { body ->
+    val exactMatch = bodies.firstOrNull { body ->
         body.id.lowercase(Locale.US) == normalizedQuery ||
             body.displayName.lowercase(Locale.US) == normalizedQuery
-    }?.id
+    }
+    if (exactMatch != null) {
+        return exactMatch.id
+    }
+    return bodies
+        .asSequence()
+        .filter { body -> body.matchesRuntimeStageSearch(normalizedQuery) }
+        .sortedWith(RuntimeStageBodySearchComparator)
+        .firstOrNull()
+        ?.id
 }
 
 private fun argbFrom(

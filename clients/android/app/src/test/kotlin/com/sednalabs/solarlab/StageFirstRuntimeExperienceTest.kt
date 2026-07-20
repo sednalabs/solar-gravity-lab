@@ -1,5 +1,7 @@
 package com.sednalabs.solarlab
 
+import com.graciousgazelles.solarlab.core.math.Vector3d
+import com.graciousgazelles.solarlab.render.core.RenderBodyKind
 import com.sednalabs.solarlab.runtime.RenderStatusPresentation
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
@@ -8,6 +10,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StageFirstRuntimeExperienceTest {
+    @Test
+    fun resolveRuntimeSemanticBodyId_matchesTheRankedVisibleSearchContract() {
+        val bodies = listOf(
+            runtimeStageBody(id = "saturn", displayName = "Saturn", kind = RenderBodyKind.PLANET),
+            runtimeStageBody(id = "wild-2", displayName = "Wild 2", kind = RenderBodyKind.COMET),
+            runtimeStageBody(id = "halley", displayName = "Halley", kind = RenderBodyKind.COMET),
+        )
+
+        assertEquals("saturn", resolveRuntimeSemanticBodyId(bodies, "Saturn"))
+        assertEquals("halley", resolveRuntimeSemanticBodyId(bodies, "comet"))
+        assertEquals("halley", resolveRuntimeSemanticBodyId(bodies, "periodic"))
+        assertEquals(null, resolveRuntimeSemanticBodyId(bodies, "unknown body"))
+    }
+
     @Test
     fun buildRuntimeAccelerationReadout_promotesS25TilePlanIntoChips() {
         val readout = requireNotNull(
@@ -381,4 +397,18 @@ class StageFirstRuntimeExperienceTest {
             status,
         )
     }
+
+    private fun runtimeStageBody(
+        id: String,
+        displayName: String,
+        kind: RenderBodyKind,
+    ): RuntimeStageBody = RuntimeStageBody(
+        id = id,
+        displayName = displayName,
+        positionM = Vector3d.ZERO,
+        radiusM = 1.0,
+        colorArgb = 0,
+        kind = kind,
+        hostBodyId = null,
+    )
 }
