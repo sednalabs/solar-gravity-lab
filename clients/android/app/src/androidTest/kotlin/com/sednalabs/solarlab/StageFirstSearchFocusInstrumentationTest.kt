@@ -63,7 +63,9 @@ class StageFirstSearchFocusInstrumentationTest {
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL)
+            .performScrollToIfPossible()
+            .assertIsDisplayed()
 
         if (composeRule.activity.isStageFirstRuntimeMountedForTesting()) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
