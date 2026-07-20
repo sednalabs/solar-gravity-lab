@@ -186,7 +186,7 @@ The Codex-native Android provider evidence is concentrated in:
 - `codex-bridge/provider-manifest-validation.json`, when the selected
   provider ref can validate the emitted manifest
 - `codex-bridge-runs/`
-- `live-access/codex-android-tools.sh`
+- `live-access/codex-android-tools-<provider-sha>.sh`
 
 The provider manifest is Android capability metadata from the selected provider.
 Solar Lab stores and summarizes it as run evidence; it does not define the
@@ -248,11 +248,17 @@ process itself needs to change.
 When the selected Android provider ref includes the native Codex provider CLI,
 the hosted session stages:
 
-- `dist/interactive-session/live-access/codex-android-tools.sh`
+- `dist/interactive-session/live-access/codex-android-tools-<provider-sha>.sh`
 
 Inside the live shell, the session also exports:
 
-- `CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools.sh`
+- `CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools-<provider-sha>.sh`
+
+The helper command is content-addressed by the exact Android provider commit.
+Changing provider revisions therefore changes the native command identity as
+well as its contents, preventing a long-lived Codex session from reusing a
+cached adapter executable after a provider upgrade. The exact revision and
+resolved helper path are recorded in `codex-bridge/status.json`.
 
 This is the native harness direction:
 

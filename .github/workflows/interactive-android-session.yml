@@ -583,6 +583,7 @@ jobs:
           INTERACTIVE_APP_PACKAGE: ${{ env.INTERACTIVE_APP_PACKAGE }}
           INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
           INTERACTIVE_MCP_WORKSPACE_DIR: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
+          INTERACTIVE_MCP_ADAPTER_REVISION: ${{ steps.interactive_mcp_cache.outputs.server_sha }}
           INTERACTIVE_CLOUDFLARED_BIN: cloudflared
           INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
           INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
