@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -65,6 +66,7 @@ import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListene
 import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
+import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.RenderBody as StageRenderBody
@@ -209,6 +211,7 @@ internal fun StageFirstRuntimeMirrorExperience(
     runtimeMirrorRenderHostState: androidx.compose.runtime.MutableState<SolarSystemRenderHostView?>? = null,
 ) {
     SolarLabTheme {
+        val context = LocalContext.current.applicationContext
         val lifecycleOwner = LocalLifecycleOwner.current
         val coroutineScope = rememberCoroutineScope()
 
@@ -241,6 +244,10 @@ internal fun StageFirstRuntimeMirrorExperience(
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
+        var cameraScaleBand by remember { mutableStateOf(CameraScaleBand.SYSTEM) }
+        var cameraCoachVisible by rememberSaveable {
+            mutableStateOf(shouldShowStageCameraCoach(context))
+        }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive runtime mirror.") }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
         var hostedDebugModeApplied by remember { mutableStateOf(false) }
@@ -316,7 +323,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     "Using the native immersive stage while the packet bridge reports: ${uiState.renderStatus.issue}"
 
                 else ->
-                    "Tap bodies to focus them, pinch through Close→Deep scales, drag to pan, and use two fingers to orbit/tilt the immersive camera without dropping back to the packet-viewer shell. Full object editing still lives in Sandbox for now."
+                    "Drag to orbit. Pinch to zoom and move two fingers to pan. Tap to select and double-tap to frame."
             }
         }
         val canSendCommands = runtimeFacade != null && uiState.connectionState == SessionConnectionState.Active
@@ -559,10 +566,36 @@ internal fun StageFirstRuntimeMirrorExperience(
                     dense = compactLayout,
                 )
                 StageActionButton(
+                    label = "Home",
+                    onClick = { renderHostView?.resetCamera() },
+                    enabled = cameraControlsEnabled,
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
+                    dense = compactLayout,
+                )
+                StageActionButton(
                     label = if (compactLayout) "Frame" else "Frame selected",
                     onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
                     enabled = cameraControlsEnabled && selectedBodyId != null,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                    dense = compactLayout,
+                )
+                CameraScaleBand.entries.forEach { scaleBand ->
+                    StageActionButton(
+                        label = scaleBand.label,
+                        onClick = { renderHostView?.setCameraScaleBand(scaleBand) },
+                        enabled = cameraControlsEnabled,
+                        modifier = Modifier.testTag(
+                            SolarLabTestTags.stageFirstCameraScalePresetTag(scaleBand.name),
+                        ),
+                        contentDescription = "Set camera scale to ${scaleBand.label}",
+                        emphasized = cameraScaleBand == scaleBand,
+                        dense = compactLayout,
+                    )
+                }
+                StageActionButton(
+                    label = "Help",
+                    onClick = { cameraCoachVisible = true },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
                     dense = compactLayout,
                 )
                 StageActionButton(
@@ -670,6 +703,9 @@ internal fun StageFirstRuntimeMirrorExperience(
                         SolarSystemRenderHostView(viewContext).also { view ->
                             view.setOnBackendStatusChangedListener { status ->
                                 hostRendererStatus = status.message
+                            }
+                            view.setOnCameraScaleChangedListener { scaleBand ->
+                                cameraScaleBand = scaleBand
                             }
                             view.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
                             view.setInteractionListener(
@@ -817,53 +853,34 @@ internal fun StageFirstRuntimeMirrorExperience(
                         fillMaxWidth = false,
                     ) {
                         StageActionButton(
-                            label = if (isRunning) "Pause" else "Start",
-                            onClick = {
-                                if (isRunning) {
-                                    sendRuntimeCommand(RuntimeCommand.PausePlayback)
-                                } else {
-                                    sendRuntimeCommand(RuntimeCommand.ResumePlayback)
-                                }
-                            },
-                            emphasized = isRunning,
-                            enabled = canSendCommands,
+                            label = "Home",
+                            onClick = { renderHostView?.resetCamera() },
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
+                            enabled = cameraControlsEnabled,
                             dense = true,
                         )
                         StageActionButton(
-                            label = "Slow",
+                            label = "Frame",
                             onClick = {
-                                val nextPreset = playbackSpeedPreset.shifted(-1)
-                                playbackSpeedPreset = nextPreset
-                                sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
+                                selectedBodyId?.let(::focusAndFrameRuntimeBody)
+                                    ?: renderHostView?.resetCamera()
                             },
-                            enabled = canSendCommands,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                            enabled = cameraControlsEnabled,
                             dense = true,
                         )
-                        StageTraceLayerButton(
-                            mode = traceLayerMode,
-                            compact = true,
-                            onClick = { traceLayerModeName = traceLayerMode.next().name },
-                            dense = true,
-                        )
+                        Box(modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)) {
+                            StageControlsButton(
+                                label = cameraScaleBand.label,
+                                onClick = { chromeModeName = StageChromeMode.EXPANDED.name },
+                                contentDescription = "Camera scale ${cameraScaleBand.label}; open camera controls",
+                                dense = true,
+                            )
+                        }
                         StageActionButton(
-                            label = playbackSpeedPreset.label,
-                            onClick = {
-                                val nextPreset = playbackSpeedPreset.shifted(1)
-                                playbackSpeedPreset = nextPreset
-                                sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
-                            },
-                            enabled = canSendCommands,
-                            dense = true,
-                        )
-                        StageActionButton(
-                            label = "Hide",
-                            onClick = { chromeModeName = StageChromeMode.MINIMAL.name },
-                            secondary = true,
-                            dense = true,
-                        )
-                        StageControlsButton(
-                            label = "More",
-                            onClick = { chromeModeName = chromeMode.toggle().name },
+                            label = "Help",
+                            onClick = { cameraCoachVisible = true },
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
                             dense = true,
                         )
                     }
@@ -936,6 +953,15 @@ internal fun StageFirstRuntimeMirrorExperience(
                         dense = true,
                     )
                 }
+            }
+
+            if (cameraCoachVisible) {
+                StageCameraCoach(
+                    onDismiss = {
+                        markStageCameraCoachSeen(context)
+                        cameraCoachVisible = false
+                    },
+                )
             }
         }
 

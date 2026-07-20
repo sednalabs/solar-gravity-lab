@@ -65,6 +65,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -90,6 +92,7 @@ import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListene
 import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
 import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
 import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
+import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
@@ -114,6 +117,7 @@ private val StageFieldBlue = Color(0xFF5E8CFF)
 private val StageFieldLine = Color(0xFF19324B)
 private const val STAGE_SANDBOX_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
 private const val STAGE_SANDBOX_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / STAGE_SANDBOX_CAMERA_ZOOM_IN_FACTOR
+internal val StageActionMinimumTouchTarget = 48.dp
 
 private val StageCompactWidthBreakpoint = 720.dp
 private val StageRendererTelemetryTailRegex =
@@ -339,6 +343,10 @@ private fun StageFirstSandboxLocalExperience(
         }
         var bodyEditorState by remember { mutableStateOf<BodyEditorDialogState?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
+        var cameraScaleBand by remember { mutableStateOf(CameraScaleBand.SYSTEM) }
+        var cameraCoachVisible by rememberSaveable {
+            mutableStateOf(shouldShowStageCameraCoach(context))
+        }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
 
         val frameListener = remember {
@@ -540,7 +548,7 @@ private fun StageFirstSandboxLocalExperience(
         val interactionHintText = remember(placementSession) {
             when {
                 placementSession == null ->
-                    "Pinch through Close→Deep scale bands, drag to pan, and use two fingers to orbit/tilt the stage. Tap a body to select it."
+                    "Drag to orbit. Pinch to zoom and move two fingers to pan. Tap to select and double-tap to frame."
 
                 placementSession?.hasStagePlacement == true ->
                     "Preview staged. Tap or drag again to refine launch, use Adjust for exact values, then Commit object."
@@ -602,6 +610,9 @@ private fun StageFirstSandboxLocalExperience(
                         view.setOnBackendStatusChangedListener { status ->
                             backendStatus = status.message
                         }
+                        view.setOnCameraScaleChangedListener { scaleBand ->
+                            cameraScaleBand = scaleBand
+                        }
                         view.setInteractionListener(
                             object : RenderInteractionListener {
                                 override fun onBodySelectionChanged(bodyId: String?) {
@@ -651,6 +662,8 @@ private fun StageFirstSandboxLocalExperience(
                 renderProcessingMode = renderProcessingMode,
                 chromeMode = chromeMode,
                 traceLayerMode = traceLayerMode,
+                cameraScaleBand = cameraScaleBand,
+                cameraCoachVisible = cameraCoachVisible,
                 isRunning = isRunning,
                 canStepBackward = placementSession == null && !isRunning && (frame?.timeline?.canStepBackward == true),
                 canStepForward = placementSession == null && !isRunning,
@@ -728,8 +741,21 @@ private fun StageFirstSandboxLocalExperience(
                 onZoomOut = {
                     renderHostView?.zoomBy(STAGE_SANDBOX_CAMERA_ZOOM_OUT_FACTOR)
                 },
+                onHomeCamera = {
+                    renderHostView?.resetCamera()
+                },
                 onFrameCamera = {
                     selectedBodyId?.let(::focusAndFrameBody) ?: renderHostView?.resetCamera()
+                },
+                onCameraScaleBandSelected = { scaleBand ->
+                    renderHostView?.setCameraScaleBand(scaleBand)
+                },
+                onShowCameraHelp = {
+                    cameraCoachVisible = true
+                },
+                onDismissCameraHelp = {
+                    markStageCameraCoachSeen(context)
+                    cameraCoachVisible = false
                 },
                 onCycleStepQuantum = { session.cycleStepQuantum(+1) },
                 onSlower = { session.cyclePlaybackSpeed(-1) },
@@ -1083,6 +1109,8 @@ private fun BoxScope.StageOverlay(
     renderProcessingMode: RenderProcessingMode,
     chromeMode: StageChromeMode,
     traceLayerMode: TraceLayerMode,
+    cameraScaleBand: CameraScaleBand,
+    cameraCoachVisible: Boolean,
     isRunning: Boolean,
     canStepBackward: Boolean,
     canStepForward: Boolean,
@@ -1116,7 +1144,11 @@ private fun BoxScope.StageOverlay(
     onCycleObserver: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
+    onHomeCamera: () -> Unit,
     onFrameCamera: () -> Unit,
+    onCameraScaleBandSelected: (CameraScaleBand) -> Unit,
+    onShowCameraHelp: () -> Unit,
+    onDismissCameraHelp: () -> Unit,
     onCycleStepQuantum: () -> Unit,
     onSlower: () -> Unit,
     onFaster: () -> Unit,
@@ -1197,10 +1229,33 @@ private fun BoxScope.StageOverlay(
                 enabled = !authoringActive,
             )
             StageActionButton(
+                label = "Home",
+                onClick = onHomeCamera,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
+                enabled = !authoringActive,
+            )
+            StageActionButton(
                 label = if (compactLayout) "Frame" else "Frame view",
                 onClick = onFrameCamera,
                 modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
                 enabled = !authoringActive,
+            )
+            CameraScaleBand.entries.forEach { scaleBand ->
+                StageActionButton(
+                    label = scaleBand.label,
+                    onClick = { onCameraScaleBandSelected(scaleBand) },
+                    modifier = Modifier.testTag(
+                        SolarLabTestTags.stageFirstCameraScalePresetTag(scaleBand.name),
+                    ),
+                    contentDescription = "Set camera scale to ${scaleBand.label}",
+                    emphasized = cameraScaleBand == scaleBand,
+                    enabled = !authoringActive,
+                )
+            }
+            StageActionButton(
+                label = "Help",
+                onClick = onShowCameraHelp,
+                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
             )
         }
         val placementControls: @Composable (Boolean) -> Unit = { dense ->
@@ -1365,31 +1420,32 @@ private fun BoxScope.StageOverlay(
                         placementControls(true)
                     } else {
                         StageActionButton(
-                            label = if (isRunning) "Pause" else "Start",
-                            onClick = onStartPause,
-                            emphasized = isRunning,
+                            label = "Home",
+                            onClick = onHomeCamera,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
                             dense = true,
                         )
-                        StageActionButton(label = "Slow", onClick = onSlower, dense = true)
-                        StageTraceLayerButton(
-                            mode = traceLayerMode,
-                            compact = true,
-                            onClick = onCycleTraceLayer,
-                            dense = true,
-                        )
-                        StageActionButton(label = speedLabel, onClick = onFaster, dense = true)
                         StageActionButton(
-                            label = "Hide",
-                            onClick = onHideChrome,
-                            secondary = true,
+                            label = "Frame",
+                            onClick = onFrameCamera,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
+                            dense = true,
+                        )
+                        Box(modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)) {
+                            StageControlsButton(
+                                label = cameraScaleBand.label,
+                                onClick = onToggleChrome,
+                                contentDescription = "Camera scale ${cameraScaleBand.label}; open camera controls",
+                                dense = true,
+                            )
+                        }
+                        StageActionButton(
+                            label = "Help",
+                            onClick = onShowCameraHelp,
+                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
                             dense = true,
                         )
                     }
-                    StageControlsButton(
-                        label = "More",
-                        onClick = onToggleChrome,
-                        dense = true,
-                    )
                 }
             }
         } else if (chromeMode == StageChromeMode.EXPANDED) {
@@ -1480,6 +1536,10 @@ private fun BoxScope.StageOverlay(
                     dense = true,
                 )
             }
+        }
+
+        if (cameraCoachVisible) {
+            StageCameraCoach(onDismiss = onDismissCameraHelp)
         }
     }
 }
@@ -1697,6 +1757,7 @@ internal fun StageActionButton(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    contentDescription: String = label,
     enabled: Boolean = true,
     emphasized: Boolean = false,
     secondary: Boolean = false,
@@ -1715,8 +1776,9 @@ internal fun StageActionButton(
     Button(
         onClick = onClick,
         modifier = modifier
-            .defaultMinSize(minHeight = if (dense) 36.dp else 46.dp)
-            .sizeIn(minWidth = if (dense) 54.dp else 88.dp),
+            .defaultMinSize(minHeight = StageActionMinimumTouchTarget)
+            .sizeIn(minWidth = if (dense) StageActionMinimumTouchTarget else 88.dp)
+            .semantics { this.contentDescription = contentDescription },
         enabled = enabled,
         shape = RoundedCornerShape(if (dense) 13.dp else 16.dp),
         colors = ButtonDefaults.buttonColors(
@@ -1924,7 +1986,7 @@ private fun DebugDialog(
                     color = BodyText,
                 )
                 Text(
-                    text = "Pinch to zoom, drag to pan, tap a body to select it, or add a custom object and place it directly on the stage.",
+                    text = "Drag to orbit. Pinch to zoom and move two fingers to pan. Tap to select and double-tap to frame.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
