@@ -76,6 +76,22 @@ class CodeqlStaticWorkflowTests(unittest.TestCase):
         self.assertIn("Build Java and Kotlin sources for CodeQL", text)
         self.assertIn("matrix.language == 'java-kotlin'", text)
 
+    def test_rust_pack_dependencies_are_installed_before_codeql_init(self) -> None:
+        text = workflow_text()
+        trusted_policy_index = text.index("Apply trusted CodeQL policy for PRs")
+        setup_index = text.index("Set up CodeQL for custom Rust pack dependencies")
+        install_index = text.index("Install custom Rust pack dependencies")
+        init_index = text.index("Initialize CodeQL")
+
+        self.assertLess(trusted_policy_index, setup_index)
+        self.assertLess(setup_index, install_index)
+        self.assertLess(install_index, init_index)
+        self.assertIn(
+            '"${CODEQL}" pack install .github/codeql/packs/solar-rust-claim-enforcement',
+            text,
+        )
+        self.assertIn("CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}", text)
+
     def test_dynamic_router_is_not_present(self) -> None:
         text = workflow_text()
 
