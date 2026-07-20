@@ -49,7 +49,7 @@ The workflow:
 - `android_emulator_mcp_ref`
   - branch, tag, or commit from the maintainer-configured Android provider
     repository
-  - default: `cf9d08957df0bac55f1c5330f5a4153311c28a85`
+  - default: `360122b11c318ccd2b2755a507af3582e744cd68`
 - `mcp_toolkit_rs_ref`
   - branch, tag, or commit from `GraciousGazelles/toolkits-mcp-toolkit-rs`
   - keep this in sync with the provider's path-based toolkit dependency
