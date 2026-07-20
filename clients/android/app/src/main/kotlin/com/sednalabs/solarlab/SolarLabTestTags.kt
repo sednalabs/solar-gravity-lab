@@ -43,7 +43,12 @@ object SolarLabTestTags {
     const val STAGE_FIRST_RUNTIME_REFRESH_BUTTON = "stage_first.runtime.refresh_button"
     const val STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON = "stage_first.camera.zoom_in_button"
     const val STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON = "stage_first.camera.zoom_out_button"
+    const val STAGE_FIRST_CAMERA_HOME_BUTTON = "stage_first.camera.home_button"
     const val STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON = "stage_first.camera.frame_selected_button"
+    const val STAGE_FIRST_CAMERA_SCALE_CHIP = "stage_first.camera.scale_chip"
+    const val STAGE_FIRST_CAMERA_HELP_BUTTON = "stage_first.camera.help_button"
+    const val STAGE_FIRST_CAMERA_COACH = "stage_first.camera.coach"
+    const val STAGE_FIRST_CAMERA_COACH_DISMISS_BUTTON = "stage_first.camera.coach.dismiss_button"
 
     const val FOCUS_CATALOG_SEARCH_FIELD = "shell.focus_catalog_search_field"
     const val FOCUS_BODY_FIELD = "shell.focus_body_field"
@@ -88,6 +93,9 @@ object SolarLabTestTags {
     fun stageFirstSearchFocusTag(bodyId: String): String = "stage_first.search.focus.$bodyId"
 
     fun stageFirstScenarioLoadTag(scenarioId: String): String = "stage_first.scenario.load.$scenarioId"
+
+    fun stageFirstCameraScalePresetTag(scaleBand: String): String =
+        "stage_first.camera.scale_preset.${scaleBand.lowercase()}"
 
     fun trackedOrbitLimitTag(limit: Int): String = "shell.tracked_orbit_limit.$limit"
 }

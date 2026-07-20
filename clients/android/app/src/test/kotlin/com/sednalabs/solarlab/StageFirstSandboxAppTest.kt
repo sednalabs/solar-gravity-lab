@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import androidx.compose.ui.unit.dp
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.BodyCategory
 import com.graciousgazelles.solarlab.core.model.BodyFactory
@@ -17,6 +18,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StageFirstSandboxAppTest {
+    @Test
+    fun cameraGuidanceIsConciseAndAccessibilitySized() {
+        assertEquals(0.20f, STAGE_CAMERA_COACH_PORTRAIT_MAX_HEIGHT_FRACTION)
+        assertEquals(48.dp, StageActionMinimumTouchTarget)
+    }
+
     @Test
     fun stageChromeModeToggleRestoresCollapsedHudFromMinimalMode() {
         assertEquals(StageChromeMode.COLLAPSED, StageChromeMode.MINIMAL.toggle())

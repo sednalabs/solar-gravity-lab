@@ -1,5 +1,6 @@
 package com.graciousgazelles.solarlab.feature.lab.render
 
+import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
@@ -12,6 +13,10 @@ internal interface SolarRenderSurface {
     fun resetCamera()
     fun zoomBy(scaleFactor: Float) {}
     fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {}
+    fun frameBody(bodyId: String) {}
+    fun setCameraScaleBand(scaleBand: CameraScaleBand) {}
+    fun currentCameraScaleBand(): CameraScaleBand = CameraScaleBand.SYSTEM
+    fun setOnCameraScaleChangedListener(listener: ((CameraScaleBand) -> Unit)?) {}
     fun bindRuntimeSessionHandle(sessionHandle: Long) {}
     fun setProcessingMode(mode: RenderProcessingMode) {}
     fun setInteractionListener(listener: RenderInteractionListener?) {}

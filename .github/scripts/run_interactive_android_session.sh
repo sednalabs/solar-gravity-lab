@@ -44,6 +44,8 @@ codex_bridge_status_path="${codex_bridge_dir}/status.json"
 finish_sentinel="${INTERACTIVE_SESSION_END_SENTINEL:-${session_root}/finish-session}"
 mcp_health_url="${INTERACTIVE_MCP_HEALTH_URL:-http://127.0.0.1:9526/health}"
 mcp_bind_addr="${INTERACTIVE_MCP_BIND_ADDR:-127.0.0.1:9526}"
+mcp_emulator_grpc_host="${mcp_bind_addr%:*}"
+mcp_emulator_grpc_port="${INTERACTIVE_EMULATOR_GRPC_PORT:-}"
 mcp_allowed_hosts="${INTERACTIVE_MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}"
 ttyd_port="${INTERACTIVE_DEBUG_TTYD_PORT:-7681}"
 session_timeout_minutes="${INTERACTIVE_SESSION_TIMEOUT_MINUTES:-90}"
@@ -683,9 +685,46 @@ adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
 adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1 || true
 adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1 || true
 
+if ! [[ "${mcp_emulator_grpc_port}" =~ ^[0-9]+$ ]] ||
+  ((mcp_emulator_grpc_port < 1 || mcp_emulator_grpc_port > 65535)); then
+  final_status="failure"
+  final_reason="invalid_emulator_grpc_port"
+  write_live_status '{"schema_version":1,"status":"failed","reason":"invalid_emulator_grpc_port"}'
+  log "INTERACTIVE_EMULATOR_GRPC_PORT must be a valid TCP port"
+  exit 1
+fi
+
+emulator_grpc_ready="false"
+for _ in $(seq 1 30); do
+  if python3 - "${mcp_emulator_grpc_host}" "${mcp_emulator_grpc_port}" <<'PY'
+import socket
+import sys
+
+try:
+    with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=1):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+  then
+    emulator_grpc_ready="true"
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${emulator_grpc_ready}" != "true" ]]; then
+  final_status="failure"
+  final_reason="emulator_grpc_unavailable"
+  write_live_status '{"schema_version":1,"status":"failed","reason":"emulator_grpc_unavailable"}'
+  log "Android Emulator gRPC endpoint never became reachable on ${mcp_emulator_grpc_host}:${mcp_emulator_grpc_port}"
+  exit 1
+fi
+
 export ANDROID_EMULATOR_MCP_SDK_ROOT="${ANDROID_SDK_ROOT_DEFAULT:-${ANDROID_SDK_ROOT:-}}"
 export ANDROID_EMULATOR_MCP_ARTIFACT_DIR="${session_root}/android-emulator-mcp-artifacts"
 export ANDROID_EMULATOR_MCP_BIND_ADDR="${mcp_bind_addr}"
+export ANDROID_EMULATOR_MCP_EMULATOR_GRPC_PORT="${mcp_emulator_grpc_port}"
 if [[ -n "${mcp_public_hostname}" ]]; then
   mcp_allowed_hosts="${mcp_allowed_hosts},${mcp_public_hostname}"
 fi

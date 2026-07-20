@@ -88,6 +88,26 @@ std::string NativeCpuCapabilitySummary() {
 }
 }  // namespace
 
+namespace solar_lab_jni {
+jdoubleArray CameraSnapshotArray(
+    JNIEnv* env,
+    const SolarLabStageController::CameraSnapshot& snapshot) {
+    const jdouble values[] = {
+        snapshot.centerX,
+        snapshot.centerY,
+        snapshot.centerZ,
+        snapshot.viewRadiusM,
+        snapshot.yawRadians,
+        snapshot.pitchRadians,
+    };
+    jdoubleArray result = env->NewDoubleArray(6);
+    if (result != nullptr) {
+        env->SetDoubleArrayRegion(result, 0, 6, values);
+    }
+    return result;
+}
+}  // namespace solar_lab_jni
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeIsVulkanRuntimeAvailable(
     JNIEnv*, jclass) {
@@ -224,6 +244,48 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     }
 }
 
+extern "C" JNIEXPORT jdoubleArray JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetCameraState(
+    JNIEnv* env,
+    jclass,
+    jlong handle) {
+    auto* controller = FromHandle(handle);
+    return controller == nullptr
+        ? nullptr
+        : solar_lab_jni::CameraSnapshotArray(env, controller->GetCameraSnapshot());
+}
+
+extern "C" JNIEXPORT jdoubleArray JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeResolveRuntimeHomeCamera(
+    JNIEnv* env,
+    jclass,
+    jlong handle) {
+    auto* controller = FromHandle(handle);
+    if (controller == nullptr) {
+        return nullptr;
+    }
+    const auto snapshot = controller->ResolveRuntimeHomeCamera();
+    return snapshot.has_value()
+        ? solar_lab_jni::CameraSnapshotArray(env, snapshot.value())
+        : nullptr;
+}
+
+extern "C" JNIEXPORT jdoubleArray JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeResolveRuntimeBodyFrame(
+    JNIEnv* env,
+    jclass,
+    jlong handle,
+    jstring bodyId) {
+    auto* controller = FromHandle(handle);
+    if (controller == nullptr) {
+        return nullptr;
+    }
+    const auto snapshot = controller->ResolveRuntimeBodyFrame(CopyUtf8String(env, bodyId));
+    return snapshot.has_value()
+        ? solar_lab_jni::CameraSnapshotArray(env, snapshot.value())
+        : nullptr;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeBindRuntimeSession(
     JNIEnv*,
@@ -326,10 +388,39 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     JNIEnv*,
     jclass,
     jlong handle,
-    jfloat scaleFactor) {
+    jfloat scaleFactor,
+    jfloat focusXPx,
+    jfloat focusYPx,
+    jint viewportWidthPx,
+    jint viewportHeightPx) {
     auto* controller = FromHandle(handle);
     if (controller != nullptr) {
-        controller->ZoomRuntimeCamera(scaleFactor);
+        controller->ZoomRuntimeCamera(scaleFactor, focusXPx, focusYPx, viewportWidthPx, viewportHeightPx);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativePanAndZoomRuntimeCamera(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jfloat distanceXPx,
+    jfloat distanceYPx,
+    jfloat scaleFactor,
+    jfloat focusXPx,
+    jfloat focusYPx,
+    jint viewportWidthPx,
+    jint viewportHeightPx) {
+    auto* controller = FromHandle(handle);
+    if (controller != nullptr) {
+        controller->PanAndZoomRuntimeCamera(
+            distanceXPx,
+            distanceYPx,
+            scaleFactor,
+            focusXPx,
+            focusYPx,
+            viewportWidthPx,
+            viewportHeightPx);
     }
 }
 
@@ -339,10 +430,14 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
     jclass,
     jlong handle,
     jfloat deltaXPx,
-    jfloat deltaYPx) {
+    jfloat deltaYPx,
+    jfloat focusXPx,
+    jfloat focusYPx,
+    jint viewportWidthPx,
+    jint viewportHeightPx) {
     auto* controller = FromHandle(handle);
     if (controller != nullptr) {
-        controller->OrbitRuntimeCamera(deltaXPx, deltaYPx);
+        controller->OrbitRuntimeCamera(deltaXPx, deltaYPx, focusXPx, focusYPx, viewportWidthPx, viewportHeightPx);
     }
 }
 

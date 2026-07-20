@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Solar Gravity Lab</string>
+    <string name="stage_camera_coach_description">Camera navigation help</string>
+    <string name="stage_camera_coach_orbit">Drag to orbit</string>
+    <string name="stage_camera_coach_pan_zoom">Pinch to zoom and move two fingers to pan</string>
+    <string name="stage_camera_coach_selection">Tap to select and double-tap to frame</string>
+    <string name="stage_camera_coach_dismiss">Got it</string>
 </resources>

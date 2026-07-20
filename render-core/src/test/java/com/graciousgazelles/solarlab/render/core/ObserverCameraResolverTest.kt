@@ -16,6 +16,40 @@ import org.junit.Test
 class ObserverCameraResolverTest {
 
     @Test
+    fun resolveGestureFocusKeepsFreeGesturesAnchoredUnderTheFingers() {
+        val focus = ObserverCameraResolver.resolveGestureFocus(
+            requestedXPx = 880f,
+            requestedYPx = 310f,
+            viewportWidthPx = 1_200,
+            viewportHeightPx = 800,
+            observerMode = ObserverMode.FREE,
+        )
+
+        assertEquals(ObserverGestureFocus(xPx = 880f, yPx = 310f), focus)
+    }
+
+    @Test
+    fun resolveGestureFocusKeepsFollowGesturesCenteredOnTheTrackedBody() {
+        ObserverMode.entries
+            .filterNot { it == ObserverMode.FREE }
+            .forEach { observerMode ->
+                val focus = ObserverCameraResolver.resolveGestureFocus(
+                    requestedXPx = 880f,
+                    requestedYPx = 310f,
+                    viewportWidthPx = 1_200,
+                    viewportHeightPx = 800,
+                    observerMode = observerMode,
+                )
+
+                assertEquals(
+                    "observerMode=$observerMode",
+                    ObserverGestureFocus(xPx = 600f, yPx = 400f),
+                    focus,
+                )
+            }
+    }
+
+    @Test
     fun resolveCameraCenterReturnsNullInFreeMode() {
         val frame = scene(
             body(id = "planet", positionM = Vector3d(10.0, 20.0, 30.0)),

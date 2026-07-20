@@ -200,12 +200,14 @@ internal fun StageTrajectoryGlyph(
 internal fun StageControlsButton(
     label: String,
     onClick: () -> Unit,
+    contentDescription: String = label,
     dense: Boolean = false,
 ) {
     StageActionButton(
         label = label,
         onClick = onClick,
         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON),
+        contentDescription = contentDescription,
         secondary = true,
         dense = dense,
     )
