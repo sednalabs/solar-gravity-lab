@@ -1,7 +1,8 @@
 package com.sednalabs.solarlab
 
-import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -10,6 +11,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assume.assumeTrue
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -79,6 +81,45 @@ class StageFirstSearchFocusInstrumentationTest {
                 .assertIsDisplayed()
                 .performClick()
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
+        }
+    }
+
+    @Test
+    fun connectorFocusAlias_exposesCorrelatedResolvedAcknowledgement() {
+        assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.DEBUG)
+        val requestId = "connector-request-42"
+        val expectedAcknowledgement =
+            "Halley. SolarLab semantic focus acknowledged; " +
+                "request-id=connector-request-42; query=comet; resolved-body=halley"
+        SolarLabSemanticActionBridge.clearPendingReplay()
+
+        try {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }
+            assertTrue(
+                SolarLabSemanticActionBridge.submit(
+                    SolarLabSemanticAction.FocusBody(
+                        bodyQuery = "comet",
+                        requestId = requestId,
+                    )
+                )
+            )
+
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                runCatching {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                        .assertTextContains("Halley")
+                        .assertContentDescriptionEquals(expectedAcknowledgement)
+                }.isSuccess
+            }
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                .assertTextContains("Halley")
+                .assertContentDescriptionEquals(expectedAcknowledgement)
+        } finally {
+            SolarLabSemanticActionBridge.clearPendingReplay()
         }
     }
 }

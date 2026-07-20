@@ -25,6 +25,42 @@ class StageFirstRuntimeExperienceTest {
     }
 
     @Test
+    fun buildRuntimeSemanticFocusAcknowledgement_correlatesAliasToResolvedBody() {
+        val acknowledgement = requireNotNull(
+            buildRuntimeSemanticFocusAcknowledgement(
+                requestId = " Semantic Request 42 ",
+                bodyQuery = " Comet ",
+                resolvedBodyId = "halley",
+                resolvedDisplayName = "Halley",
+            )
+        )
+
+        assertEquals("halley", acknowledgement.resolvedBodyId)
+        assertEquals(
+            "Halley. SolarLab semantic focus acknowledged; " +
+                "request-id=semantic-request-42; query=comet; resolved-body=halley",
+            acknowledgement.contentDescription,
+        )
+    }
+
+    @Test
+    fun buildRuntimeSemanticFocusAcknowledgement_marksLegacyUncorrelatedRequests() {
+        assertEquals(
+            RuntimeSemanticFocusAcknowledgement(
+                resolvedBodyId = "halley",
+                contentDescription = "Halley. SolarLab semantic focus acknowledged; " +
+                    "request-id=legacy; query=comet; resolved-body=halley",
+            ),
+            buildRuntimeSemanticFocusAcknowledgement(
+                requestId = null,
+                bodyQuery = "comet",
+                resolvedBodyId = "halley",
+                resolvedDisplayName = "Halley",
+            ),
+        )
+    }
+
+    @Test
     fun buildRuntimeAccelerationReadout_promotesS25TilePlanIntoChips() {
         val readout = requireNotNull(
             buildRuntimeAccelerationReadout(

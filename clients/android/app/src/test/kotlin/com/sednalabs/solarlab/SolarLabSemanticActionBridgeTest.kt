@@ -19,6 +19,24 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
+    fun parseSemanticCommand_preservesFocusRequestCorrelation() {
+        val action = SolarLabSemanticActionBridge.parseSemanticCommand(
+            action = SolarLabSemanticActionBridge.INTENT_ACTION,
+            command = "focus_body",
+            bodyQuery = " comet ",
+            requestId = " semantic-request-42 ",
+        )
+
+        assertEquals(
+            SolarLabSemanticAction.FocusBody(
+                bodyQuery = "comet",
+                requestId = "semantic-request-42",
+            ),
+            action,
+        )
+    }
+
+    @Test
     fun parseSemanticCommand_mapsScenarioLoadCommand() {
         val action = SolarLabSemanticActionBridge.parseSemanticCommand(
             action = SolarLabSemanticActionBridge.INTENT_ACTION,

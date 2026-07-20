@@ -51,6 +51,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -127,6 +129,45 @@ private data class RuntimeSelectionCard(
     val detail: String,
     val eyebrow: String,
 )
+
+internal data class RuntimeSemanticFocusAcknowledgement(
+    val resolvedBodyId: String,
+    val contentDescription: String,
+)
+
+private const val RUNTIME_SEMANTIC_FOCUS_ACK_MARKER = "SolarLab semantic focus acknowledged"
+private const val RUNTIME_SEMANTIC_LEGACY_REQUEST_ID = "legacy"
+
+internal fun normalizeRuntimeSemanticAcknowledgementToken(value: String): String = buildString {
+    value.forEach { character ->
+        when {
+            character in 'a'..'z' || character in '0'..'9' -> append(character)
+            character in 'A'..'Z' -> append(character.lowercaseChar())
+            isNotEmpty() && last() != '-' -> append('-')
+        }
+    }
+}.trim('-')
+
+internal fun buildRuntimeSemanticFocusAcknowledgement(
+    requestId: String?,
+    bodyQuery: String,
+    resolvedBodyId: String,
+    resolvedDisplayName: String,
+): RuntimeSemanticFocusAcknowledgement? {
+    val requestIdToken = normalizeRuntimeSemanticAcknowledgementToken(requestId.orEmpty())
+        .ifEmpty { RUNTIME_SEMANTIC_LEGACY_REQUEST_ID }
+    val queryToken = normalizeRuntimeSemanticAcknowledgementToken(bodyQuery)
+    val resolvedBodyIdToken = normalizeRuntimeSemanticAcknowledgementToken(resolvedBodyId)
+    if (queryToken.isEmpty() || resolvedBodyIdToken.isEmpty()) {
+        return null
+    }
+    val accessibleName = resolvedDisplayName.trim().ifEmpty { resolvedBodyIdToken }
+    return RuntimeSemanticFocusAcknowledgement(
+        resolvedBodyId = resolvedBodyId,
+        contentDescription = "$accessibleName. $RUNTIME_SEMANTIC_FOCUS_ACK_MARKER; " +
+            "request-id=$requestIdToken; query=$queryToken; resolved-body=$resolvedBodyIdToken",
+    )
+}
 
 internal data class RuntimeAccelerationReadout(
     val headline: String,
@@ -246,6 +287,9 @@ internal fun StageFirstRuntimeExperience(
         }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive Rust stage.") }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
+        var semanticFocusAcknowledgement by remember {
+            mutableStateOf<RuntimeSemanticFocusAcknowledgement?>(null)
+        }
         var hostedDebugModeApplied by remember { mutableStateOf(false) }
 
         val stageScene = remember(uiState.renderFrame) {
@@ -344,11 +388,20 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        fun focusAndFrameRuntimeBody(bodyId: String) {
+        fun focusAndFrameRuntimeBody(
+            bodyId: String,
+            acknowledgement: RuntimeSemanticFocusAcknowledgement? = null,
+        ) {
             selectedBodyId = bodyId
             observerMode = ObserverMode.FOLLOW_SELECTED
             renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
             syncObserver(bodyId, ObserverMode.FOLLOW_SELECTED)
+            semanticFocusAcknowledgement = acknowledgement
+        }
+
+        fun resetRuntimeCamera() {
+            semanticFocusAcknowledgement = null
+            renderHostView?.resetCamera()
         }
 
         fun loadScenarioPack(scenarioId: String) {
@@ -356,10 +409,11 @@ internal fun StageFirstRuntimeExperience(
             if (knownScenario) {
                 selectedBodyId = null
                 observerMode = ObserverMode.FREE
+                semanticFocusAcknowledgement = null
                 searchVisible = false
                 scenarioPickerVisible = false
                 debugVisible = false
-                renderHostView?.resetCamera()
+                resetRuntimeCamera()
             }
             coroutineScope.launch {
                 runtimeFacade.loadScenario(scenarioId)
@@ -411,6 +465,7 @@ internal fun StageFirstRuntimeExperience(
             if (selectedBodyId != null && searchableBodies.none { body -> body.id == selectedBodyId }) {
                 selectedBodyId = null
                 observerMode = ObserverMode.FREE
+                semanticFocusAcknowledgement = null
             }
         }
 
@@ -424,15 +479,27 @@ internal fun StageFirstRuntimeExperience(
                         bodies = searchableBodies,
                         bodyQuery = action.bodyQuery,
                     ) ?: return@LaunchedEffect
+                    val resolvedBody = searchableBodies.firstOrNull { body -> body.id == resolvedBodyId }
+                        ?: return@LaunchedEffect
+                    val acknowledgement = buildRuntimeSemanticFocusAcknowledgement(
+                        requestId = action.requestId,
+                        bodyQuery = action.bodyQuery,
+                        resolvedBodyId = resolvedBody.id,
+                        resolvedDisplayName = resolvedBody.displayName,
+                    )
                     searchVisible = false
+                    scenarioPickerVisible = false
                     debugVisible = false
-                    focusAndFrameRuntimeBody(resolvedBodyId)
+                    if (stageChromeModeFromName(chromeModeName) == StageChromeMode.MINIMAL) {
+                        chromeModeName = StageChromeMode.COLLAPSED.name
+                    }
+                    focusAndFrameRuntimeBody(resolvedBodyId, acknowledgement)
                     appliedSemanticActionToken = pendingSemanticAction.token
                 }
 
                 SolarLabSemanticAction.ResetCamera -> {
                     renderHostView ?: return@LaunchedEffect
-                    renderHostView?.resetCamera()
+                    resetRuntimeCamera()
                     appliedSemanticActionToken = pendingSemanticAction.token
                 }
 
@@ -538,7 +605,7 @@ internal fun StageFirstRuntimeExperience(
                 )
                 StageActionButton(
                     label = "Home",
-                    onClick = { renderHostView?.resetCamera() },
+                    onClick = ::resetRuntimeCamera,
                     enabled = cameraControlsEnabled,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
                     dense = compactLayout,
@@ -612,7 +679,7 @@ internal fun StageFirstRuntimeExperience(
                     onClick = {
                         selectedBodyId = null
                         observerMode = ObserverMode.FREE
-                        renderHostView?.resetCamera()
+                        resetRuntimeCamera()
                         refreshRuntime()
                     },
                     enabled = true,
@@ -695,6 +762,9 @@ internal fun StageFirstRuntimeExperience(
                                 object : RenderInteractionListener {
                                     override fun onBodySelectionChanged(bodyId: String?) {
                                         selectedBodyId = bodyId
+                                        if (semanticFocusAcknowledgement?.resolvedBodyId != bodyId) {
+                                            semanticFocusAcknowledgement = null
+                                        }
                                         if (bodyId == null && observerMode != ObserverMode.FREE) {
                                             observerMode = ObserverMode.FREE
                                         }
@@ -762,6 +832,7 @@ internal fun StageFirstRuntimeExperience(
                 RuntimeStageCollapsedStageChip(
                     selectionCard = selectionCard,
                     scenarioLabel = timelineText,
+                    semanticFocusAcknowledgement = semanticFocusAcknowledgement,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .statusBarsPadding()
@@ -784,6 +855,7 @@ internal fun StageFirstRuntimeExperience(
                         RuntimeStageCollapsedStageChip(
                             selectionCard = selectionCard,
                             scenarioLabel = timelineText,
+                            semanticFocusAcknowledgement = semanticFocusAcknowledgement,
                             modifier = Modifier
                                 .widthIn(max = 360.dp)
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
@@ -801,6 +873,7 @@ internal fun StageFirstRuntimeExperience(
                                 observerMode = observerMode,
                                 renderProcessingMode = renderProcessingMode,
                                 scenarioLabel = timelineText,
+                                semanticFocusAcknowledgement = semanticFocusAcknowledgement,
                                 compact = false,
                                 modifier = Modifier
                                     .weight(1f)
@@ -833,7 +906,7 @@ internal fun StageFirstRuntimeExperience(
                     ) {
                         StageActionButton(
                             label = "Home",
-                            onClick = { renderHostView?.resetCamera() },
+                            onClick = ::resetRuntimeCamera,
                             modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
                             enabled = cameraControlsEnabled,
                             dense = true,
@@ -842,7 +915,7 @@ internal fun StageFirstRuntimeExperience(
                             label = "Frame",
                             onClick = {
                                 selectedBodyId?.let(::focusAndFrameRuntimeBody)
-                                    ?: renderHostView?.resetCamera()
+                                    ?: resetRuntimeCamera()
                             },
                             modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
                             enabled = cameraControlsEnabled,
@@ -1257,6 +1330,7 @@ private fun RuntimeStageMissionPanel(
     observerMode: ObserverMode,
     renderProcessingMode: RenderProcessingMode,
     scenarioLabel: String,
+    semanticFocusAcknowledgement: RuntimeSemanticFocusAcknowledgement?,
     compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -1334,6 +1408,7 @@ private fun RuntimeStageMissionPanel(
             RuntimeStageFocusIdentity(
                 selectionCard = selectionCard,
                 selectedBody = selectedBody,
+                semanticFocusAcknowledgement = semanticFocusAcknowledgement,
                 compact = compact,
             )
             if (compact) {
@@ -1386,6 +1461,7 @@ private fun RuntimeStageMissionPanel(
 private fun RuntimeStageFocusIdentity(
     selectionCard: RuntimeSelectionCard,
     selectedBody: RuntimeStageBody?,
+    semanticFocusAcknowledgement: RuntimeSemanticFocusAcknowledgement?,
     compact: Boolean,
 ) {
     Row(
@@ -1410,7 +1486,15 @@ private fun RuntimeStageFocusIdentity(
             )
             Text(
                 text = selectionCard.title,
-                modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                modifier = Modifier
+                    .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                    .then(
+                        semanticFocusAcknowledgement?.let { acknowledgement ->
+                            Modifier.semantics {
+                                contentDescription = acknowledgement.contentDescription
+                            }
+                        } ?: Modifier
+                    ),
                 color = RuntimeStageText,
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
@@ -1431,6 +1515,7 @@ private fun RuntimeStageFocusIdentity(
 private fun RuntimeStageCollapsedStageChip(
     selectionCard: RuntimeSelectionCard,
     scenarioLabel: String,
+    semanticFocusAcknowledgement: RuntimeSemanticFocusAcknowledgement?,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -1461,7 +1546,15 @@ private fun RuntimeStageCollapsedStageChip(
                 )
                 Text(
                     text = selectionCard.title,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
+                    modifier = Modifier
+                        .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                        .then(
+                            semanticFocusAcknowledgement?.let { acknowledgement ->
+                                Modifier.semantics {
+                                    contentDescription = acknowledgement.contentDescription
+                                }
+                            } ?: Modifier
+                        ),
                     color = RuntimeStageGold,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
