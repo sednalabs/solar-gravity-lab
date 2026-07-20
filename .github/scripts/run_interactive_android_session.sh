@@ -44,6 +44,7 @@ codex_bridge_status_path="${codex_bridge_dir}/status.json"
 finish_sentinel="${INTERACTIVE_SESSION_END_SENTINEL:-${session_root}/finish-session}"
 mcp_health_url="${INTERACTIVE_MCP_HEALTH_URL:-http://127.0.0.1:9526/health}"
 mcp_bind_addr="${INTERACTIVE_MCP_BIND_ADDR:-127.0.0.1:9526}"
+mcp_emulator_grpc_host="${mcp_bind_addr%:*}"
 mcp_emulator_grpc_port="${INTERACTIVE_EMULATOR_GRPC_PORT:-}"
 mcp_allowed_hosts="${INTERACTIVE_MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}"
 ttyd_port="${INTERACTIVE_DEBUG_TTYD_PORT:-7681}"
@@ -695,12 +696,12 @@ fi
 
 emulator_grpc_ready="false"
 for _ in $(seq 1 30); do
-  if python3 - "${mcp_emulator_grpc_port}" <<'PY'
+  if python3 - "${mcp_emulator_grpc_host}" "${mcp_emulator_grpc_port}" <<'PY'
 import socket
 import sys
 
 try:
-    with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1):
+    with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=1):
         pass
 except OSError:
     raise SystemExit(1)
@@ -716,7 +717,7 @@ if [[ "${emulator_grpc_ready}" != "true" ]]; then
   final_status="failure"
   final_reason="emulator_grpc_unavailable"
   write_live_status '{"schema_version":1,"status":"failed","reason":"emulator_grpc_unavailable"}'
-  log "Android Emulator gRPC endpoint never became reachable on 127.0.0.1:${mcp_emulator_grpc_port}"
+  log "Android Emulator gRPC endpoint never became reachable on ${mcp_emulator_grpc_host}:${mcp_emulator_grpc_port}"
   exit 1
 fi
 
