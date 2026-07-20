@@ -310,10 +310,11 @@ internal fun StageFirstRuntimeExperience(
         val canSendCommands = uiState.connectionState == SessionConnectionState.Active
         val isRunning = uiState.snapshot?.paused == false
         val cameraControlsEnabled = runtimeSessionHandle != 0L || stageScene?.scene != null
-        val refreshRuntime = {
+        val refreshRuntime: () -> Unit = {
             coroutineScope.launch {
                 runtimeFacade.refresh()
             }
+            Unit
         }
         fun sendRuntimeCommand(command: RuntimeCommand) {
             coroutineScope.launch {

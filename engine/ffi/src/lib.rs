@@ -3326,7 +3326,11 @@ mod tests {
 
     #[test]
     fn spawn_comet_decodes_typed_class_with_non_source_mass_default() {
+        let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+        body_id[..6].copy_from_slice(b"halley");
         let command = test_session_command(SlCommandKind::SpawnBody, |command| {
+            command.body_id = body_id;
+            command.body_id_len = 6;
             command.body_class = SlBodyClass::Comet;
             command.body_mass_kg = 2.2e14;
         });

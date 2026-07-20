@@ -254,8 +254,9 @@ mod tests {
     use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
 
     use super::{
-        CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
-        SceneItemFamily, ScenePacketMetadata, SceneTracer, SceneTrail, SceneTrailFamily,
+        CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneBodyKind,
+        SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneTracer, SceneTrail,
+        SceneTrailFamily,
     };
 
     #[test]
