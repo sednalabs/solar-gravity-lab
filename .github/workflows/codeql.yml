@@ -205,8 +205,7 @@ jobs:
             :core-model:compileKotlin \
             :core-model:compileTestKotlin \
             :core-simulation:compileKotlin \
-            :core-simulation:compileTestKotlin \
-            -Psolarlab.stageFirstRuntimeMirror=false
+            :core-simulation:compileTestKotlin
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

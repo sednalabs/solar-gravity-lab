@@ -1,39 +1,28 @@
-# Stage-first native runtime slice
+# Stage-first native runtime
 
-This slice finishes the hot-path handoff from the managed packet host to the real native Vulkan stage for the restored immersive client.
+The immersive Android stage binds directly to the long-lived Rust session
+handle (`SlRuntimeHandle`). Native `SolarLabStageController` owns session
+binding, camera state, picking, tracer/trail display policy, packet export, and
+translation into Vulkan streams.
 
-What changed:
+There is one execution path:
 
-- The immersive `feature-lab` Vulkan surface now binds directly to the long-lived Rust runtime session handle (`SlRuntimeHandle`) instead of requiring Kotlin to decode `RenderFrame` objects for the stage draw path.
-- A new native `SolarLabStageController` sits in front of `SolarLabVulkanRenderer`. It owns:
-  - runtime session binding
-  - native free-camera state
-  - native picking
-  - native tracer/trail classification and LOD
-  - runtime packet export and translation into renderer streams
-- `SolarSystemVulkanSurfaceView` now has two honest paths:
-  - local sandbox path: Kotlin assembles a local scene packet and submits it
-  - runtime path: Kotlin binds a Rust session handle and forwards gestures/selection to native; native exports packets from Rust and renders them directly
-- `StageFirstRuntimeMirrorExperience` now renders the immersive stage as soon as a runtime session handle exists, even before the shell has decoded a `RenderFrame` for search/debug metadata.
-- Debug builds now default to the stage-first client as well. The old packet/Canvas shell remains opt-in through `-Psolarlab.debugStageFirstClient=false`.
+`Rust world -> scene extraction -> versioned FFI packet -> native controller -> Vulkan renderer`
 
-What is now native in the runtime stage:
+Kotlin forwards lifecycle, gestures, selection intent, and command intent. It
+may decode bounded packet metadata for search, labels, accessibility, and debug
+presentation, but stage drawing and physical truth do not depend on that
+managed projection.
 
-- camera ownership for the immersive runtime path
-- pan / zoom / orbit gesture application
-- ray-style body picking against the native scene cache
-- tracer LOD split (near / medium / far)
-- trail simplification per camera band
-- packet export from the Rust runtime handle
+Native stage ownership includes:
 
-What stays in Kotlin:
+- pan, zoom, body-relative framing, and orbital camera gestures;
+- native body picking against the current Rust scene;
+- selected-body inclusion and renderer-local visual LOD;
+- near, medium, and far tracer classification;
+- trail display reduction; and
+- physical-light-driven body shading.
 
-- Compose HUD
-- search / debug sheets
-- command buttons
-- sandbox authoring UI
-- optional decoded packet metadata used for search, labels, and diagnostics
-
-Important note:
-
-The Android shell still decodes runtime packet metadata for UI/search/debug when available, but the actual stage draw path no longer depends on that decoded frame. The immersive runtime view now runs Rust session -> native Vulkan stage directly.
+Debug builds default to this stage-first runtime. The packet-oriented shell is
+still available through `-Psolarlab.debugStageFirstClient=false` for deliberate
+shell validation, but it binds the same Rust world.

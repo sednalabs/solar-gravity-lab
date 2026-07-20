@@ -17,7 +17,7 @@ The main scaling pressures are:
 - tracer count
 - trail density
 - camera regime (local vs wide/system view)
-- mode (sandbox vs runtime mirror)
+- presentation surface (shell vs stage-first runtime)
 
 ## Where optimization should live
 

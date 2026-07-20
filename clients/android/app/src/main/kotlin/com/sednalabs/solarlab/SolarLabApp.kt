@@ -2205,6 +2205,7 @@ private fun RuntimeBodyClass.displayLabel(): String = when (this) {
     RuntimeBodyClass.DwarfPlanet -> "Dwarf"
     RuntimeBodyClass.Moon -> "Moon"
     RuntimeBodyClass.SmallBody -> "Small body"
+    RuntimeBodyClass.Comet -> "Comet"
     RuntimeBodyClass.Tracer -> "Tracer"
     RuntimeBodyClass.Spacecraft -> "Craft"
     RuntimeBodyClass.Custom -> "Custom"

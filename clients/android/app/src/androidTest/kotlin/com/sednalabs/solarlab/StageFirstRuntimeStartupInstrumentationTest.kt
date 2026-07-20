@@ -3,6 +3,8 @@ package com.sednalabs.solarlab
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -17,12 +19,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class StageFirstLocalStartupInstrumentationTest {
+class StageFirstRuntimeStartupInstrumentationTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun stageFirstClient_launches_with_stage_controls_and_live_render_host() {
+    fun stageFirstClient_launchesRustWorldWithStageControlsAndLiveRenderHost() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
@@ -42,9 +44,19 @@ class StageFirstLocalStartupInstrumentationTest {
             .assertIsDisplayed()
             .performClick()
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON)
             .performScrollToIfPossible()
             .assertIsDisplayed()
+            .assertIsEnabled()
+            .performClick()
+            .assertIsNotEnabled()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON)
+            .performScrollToIfPossible()
+            .assertIsDisplayed()
+            .assertIsEnabled()
+            .performClick()
+            .performClick()
+            .assertIsNotEnabled()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
@@ -56,18 +68,6 @@ class StageFirstLocalStartupInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON)
             .performScrollToIfPossible()
             .assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_ADD_OBJECT_BUTTON)
-            .performScrollToIfPossible()
-            .assertIsDisplayed()
-
-        if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON)
-                .performScrollToIfPossible()
-                .assertIsDisplayed()
-        } else {
-            assertTrue(composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_MODE_BUTTON).fetchSemanticsNodes().isEmpty())
-        }
-
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
             hostView != null && hostView.width > 0 && hostView.height > 0

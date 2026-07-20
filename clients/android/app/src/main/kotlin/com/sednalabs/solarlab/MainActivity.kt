@@ -9,7 +9,6 @@ import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
-import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import kotlinx.coroutines.CoroutineScope
@@ -21,67 +20,32 @@ import kotlinx.coroutines.launch
 /**
  * Android entrypoint for the current client surface.
  *
- * The app can boot either the Rust-authoritative shell or the restored stage-first sandbox,
- * depending on the build variant / build flag.
+ * Every production surface binds the same Rust-authoritative world. Android
+ * owns lifecycle, controls, accessibility, and presentation only.
  */
 class MainActivity : ComponentActivity() {
-    private companion object {
-        const val STATE_STAGE_FIRST_EXPERIENCE_MODE = "stage_first_experience_mode"
-    }
-
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
-    private val stageFirstExperienceModeState = mutableStateOf(StageFirstExperienceMode.LOCAL_SANDBOX)
-    private val stageFirstRuntimeMirrorMountedState = mutableStateOf(false)
-    private val stageFirstRuntimeMirrorRenderHostState = mutableStateOf<SolarSystemRenderHostView?>(null)
+    private val stageFirstRuntimeMountedState = mutableStateOf(false)
 
     @VisibleForTesting
     internal val runtimeFacadeForTesting: RuntimeFacade
         get() = runtimeViewModel.runtimeFacade
 
     @VisibleForTesting
-    internal fun showStageFirstRuntimeMirrorForTesting() {
-        if (BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-            stageFirstExperienceModeState.value = StageFirstExperienceMode.RUNTIME_MIRROR
-        }
-    }
-
-    @VisibleForTesting
-    internal fun isStageFirstRuntimeMirrorMountedForTesting(): Boolean =
-        stageFirstRuntimeMirrorMountedState.value
-
-    @VisibleForTesting
-    internal fun stageFirstRuntimeMirrorRenderHostForTesting(): SolarSystemRenderHostView? =
-        stageFirstRuntimeMirrorRenderHostState.value
+    internal fun isStageFirstRuntimeMountedForTesting(): Boolean =
+        stageFirstRuntimeMountedState.value
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        stageFirstExperienceModeState.value = savedInstanceState
-            ?.getString(STATE_STAGE_FIRST_EXPERIENCE_MODE)
-            ?.let(StageFirstExperienceMode::valueOf)
-            ?: StageFirstExperienceMode.LOCAL_SANDBOX
-
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        if (!BuildConfig.STAGE_FIRST_CLIENT) {
-            runtimeViewModel.ensureStarted()
-        }
+        runtimeViewModel.ensureStarted()
 
         setContent {
             if (BuildConfig.STAGE_FIRST_CLIENT) {
-                StageFirstSandboxApp(
-                    runtimeFacade = if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-                        runtimeViewModel.runtimeFacade
-                    } else {
-                        null
-                    },
-                    ensureRuntimeStarted = if (BuildConfig.STAGE_FIRST_RUNTIME_MIRROR) {
-                        runtimeViewModel::ensureStarted
-                    } else {
-                        null
-                    },
-                    experienceModeState = stageFirstExperienceModeState,
-                    runtimeMirrorMountedState = stageFirstRuntimeMirrorMountedState,
-                    runtimeMirrorRenderHostState = stageFirstRuntimeMirrorRenderHostState,
+                StageFirstRuntimeApp(
+                    runtimeFacade = runtimeViewModel.runtimeFacade,
+                    ensureRuntimeStarted = runtimeViewModel::ensureStarted,
+                    runtimeMountedState = stageFirstRuntimeMountedState,
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)
@@ -89,11 +53,6 @@ class MainActivity : ComponentActivity() {
         }
 
         handleSemanticIntent(intent)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString(STATE_STAGE_FIRST_EXPERIENCE_MODE, stageFirstExperienceModeState.value.name)
-        super.onSaveInstanceState(outState)
     }
 
     override fun onNewIntent(intent: Intent) {

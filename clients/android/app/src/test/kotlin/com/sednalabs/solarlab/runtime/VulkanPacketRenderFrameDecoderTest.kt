@@ -9,6 +9,11 @@ import org.junit.Test
 
 class VulkanPacketRenderFrameDecoderTest {
     @Test
+    fun sceneBodyKind_decodesExplicitCometTaxonomy() {
+        assertEquals(RuntimeSceneBodyKind.Comet, RuntimeSceneBodyKind.fromNativeCode(5))
+    }
+
+    @Test
     fun decode_preservesBodyIdentifiers() {
         val bodyInstances = ByteBuffer.allocateDirect(BODY_STRIDE_BYTES)
             .order(ByteOrder.nativeOrder())
@@ -24,6 +29,7 @@ class VulkanPacketRenderFrameDecoderTest {
                 putFloat(1.0f)
                 putFloat(0f)
                 putInt(1)
+                putInt(RuntimeSceneBodyKind.Planet.nativeCode)
                 position(BODY_ID_OFFSET_BYTES)
                 put(bodyId)
                 position(BODY_ID_LENGTH_OFFSET_BYTES)
@@ -80,6 +86,7 @@ class VulkanPacketRenderFrameDecoderTest {
 
         val body = frame.bodies.single()
         assertEquals("earth", body.bodyId)
+        assertEquals(RuntimeSceneBodyKind.Planet, body.kind)
         assertTrue(body.selected)
         assertEquals(4f, body.radiusM)
     }
@@ -281,9 +288,9 @@ class VulkanPacketRenderFrameDecoderTest {
     }
 
     private companion object {
-        private const val BODY_STRIDE_BYTES = 140
-        private const val BODY_ID_OFFSET_BYTES = 40
-        private const val BODY_ID_LENGTH_OFFSET_BYTES = 136
+        private const val BODY_STRIDE_BYTES = 144
+        private const val BODY_ID_OFFSET_BYTES = 44
+        private const val BODY_ID_LENGTH_OFFSET_BYTES = 140
         private const val TRACER_STRIDE_BYTES = 132
         private const val TRACER_SOURCE_BODY_ID_OFFSET_BYTES = 32
         private const val TRACER_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 128

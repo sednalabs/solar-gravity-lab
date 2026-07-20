@@ -6,7 +6,7 @@ compaction through the 3D orbit-camera basis rather than reusing the old
 flattened path unchanged.
 
 This slice is the first real camera/render migration away from the overhead XY contract.
-It keeps the restored stage-first client and the runtime mirror from slices 1–3, but replaces the
+It keeps the restored stage-first client and Rust runtime from slices 1–3, but replaces the
 camera math that was still flattening the immersive client.
 
 What changed

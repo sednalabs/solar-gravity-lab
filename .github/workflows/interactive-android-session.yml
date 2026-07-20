@@ -27,7 +27,7 @@ on:
         description: Branch, tag, or commit from sednalabs/android-emulator-mcp
         required: true
         type: string
-        default: 9d8e67ea7195e9b0536f9b76166e68caaa218fc9
+        default: dffcb04ba558e7071507daec6598ca998242cf6a
       mcp_toolkit_rs_ref:
         description: Branch, tag, or commit from GraciousGazelles/toolkits-mcp-toolkit-rs
         required: true
@@ -39,9 +39,8 @@ on:
         type: choice
         options:
           - shell-v2
-          - stage-first-mirror-off
-          - stage-first-mirror-on
-        default: stage-first-mirror-on
+          - stage-first-runtime
+        default: stage-first-runtime
       interactive_debug_profile:
         description: Runtime posture for the hosted debug session
         required: true
@@ -159,23 +158,15 @@ jobs:
           fi
 
           debug_stage_first_client="true"
-          stage_first_runtime_mirror="true"
           preferred_gpu_backend="vulkan"
           hosted_debug_lite_mode="false"
           case "${INPUT_VALIDATION_MODE}" in
             shell-v2)
               debug_stage_first_client="false"
-              stage_first_runtime_mirror="false"
               preferred_gpu_backend="none"
               ;;
-            stage-first-mirror-off)
+            stage-first-runtime)
               debug_stage_first_client="true"
-              stage_first_runtime_mirror="false"
-              preferred_gpu_backend="none"
-              ;;
-            stage-first-mirror-on)
-              debug_stage_first_client="true"
-              stage_first_runtime_mirror="true"
               preferred_gpu_backend="vulkan"
               ;;
             *)
@@ -226,7 +217,6 @@ jobs:
             echo "session_timeout_minutes=${session_timeout_minutes}"
             echo "keep_session_on_failure=${INPUT_KEEP_SESSION_ON_FAILURE}"
             echo "debug_stage_first_client=${debug_stage_first_client}"
-            echo "stage_first_runtime_mirror=${stage_first_runtime_mirror}"
             echo "preferred_gpu_backend=${preferred_gpu_backend}"
             echo "hosted_debug_lite_mode=${hosted_debug_lite_mode}"
           } >> "${GITHUB_OUTPUT}"
@@ -468,7 +458,6 @@ jobs:
           ./gradlew -p clients/android \
             :app:assembleDebug \
             -Psolarlab.debugStageFirstClient=${{ steps.session_plan.outputs.debug_stage_first_client }} \
-            -Psolarlab.stageFirstRuntimeMirror=${{ steps.session_plan.outputs.stage_first_runtime_mirror }} \
             -Psolarlab.preferredGpuBackend=${{ steps.session_plan.outputs.preferred_gpu_backend }} \
             -Psolarlab.hostedDebugProfile=${{ steps.session_plan.outputs.interactive_debug_profile }}
           phase_end="$(date +%s)"
@@ -551,6 +540,13 @@ jobs:
             } >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Validate android-emulator-mcp provider contracts
+        shell: bash
+        working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -- --test-threads=1
+
       - name: Build android-emulator-mcp release binary
         id: build_mcp
         shell: bash
@@ -571,6 +567,7 @@ jobs:
             echo "- Android build setup: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- Rust Android toolchain: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- android-emulator-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
+            echo "- android-emulator-mcp provider contracts: \`passed\`"
             echo "- android-emulator-mcp build completed: \`true\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
@@ -594,6 +591,7 @@ jobs:
           INTERACTIVE_APP_PACKAGE: ${{ env.INTERACTIVE_APP_PACKAGE }}
           INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
           INTERACTIVE_MCP_WORKSPACE_DIR: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
+          INTERACTIVE_MCP_ADAPTER_REVISION: ${{ steps.interactive_mcp_cache.outputs.server_sha }}
           INTERACTIVE_CLOUDFLARED_BIN: cloudflared
           INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
           INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}

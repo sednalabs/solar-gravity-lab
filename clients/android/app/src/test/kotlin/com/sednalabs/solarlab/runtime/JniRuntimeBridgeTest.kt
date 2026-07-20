@@ -406,7 +406,7 @@ class JniRuntimeBridgeTest {
             return NativeCreateSessionResult(
                 result = NativeResult(code = 0),
                 handle = sessionHandles.removeFirstOrNull() ?: 42L,
-                abiVersion = 10,
+                abiVersion = 11,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
             )
@@ -416,7 +416,7 @@ class JniRuntimeBridgeTest {
             runtimeInfoHandles += handle
             return NativeRuntimeInfoResult(
                 result = NativeResult(code = 0),
-                abiVersion = 10,
+                abiVersion = 11,
                 requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,

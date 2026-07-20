@@ -55,6 +55,12 @@ build_manifest_path="${INTERACTIVE_BUILD_MANIFEST:?INTERACTIVE_BUILD_MANIFEST is
 app_package="${INTERACTIVE_APP_PACKAGE:?INTERACTIVE_APP_PACKAGE is required}"
 app_activity="${INTERACTIVE_APP_ACTIVITY:?INTERACTIVE_APP_ACTIVITY is required}"
 mcp_workspace_dir="${INTERACTIVE_MCP_WORKSPACE_DIR:?INTERACTIVE_MCP_WORKSPACE_DIR is required}"
+mcp_adapter_revision="${INTERACTIVE_MCP_ADAPTER_REVISION:?INTERACTIVE_MCP_ADAPTER_REVISION is required}"
+if ! [[ "${mcp_adapter_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "INTERACTIVE_MCP_ADAPTER_REVISION must be a full lowercase Git commit SHA" >&2
+  exit 1
+fi
+codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools-${mcp_adapter_revision}.sh"
 cloudflared_bin="${INTERACTIVE_CLOUDFLARED_BIN:?INTERACTIVE_CLOUDFLARED_BIN is required}"
 debug_hostname="${INTERACTIVE_DEBUG_HOSTNAME:-}"
 debug_tunnel_token="${INTERACTIVE_DEBUG_TUNNEL_TOKEN:-}"
@@ -209,7 +215,6 @@ stage_interactive_model_helpers() {
   local config_path="${openai_loop_dir}/config.json"
   local openai_helper_path="${live_access_dir}/openai-android-loop.sh"
   local codex_helper_path="${live_access_dir}/codex-android-observe.sh"
-  local codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools.sh"
   local provider_manifest_status="unavailable"
   local dynamic_tool_specs_status="unavailable"
   local dynamic_tool_proof_status="unavailable"
@@ -282,7 +287,7 @@ PY
     rm -f "${codex_dynamic_tool_proof_response_path}"
     rm -f "${codex_dynamic_tool_proof_error_path}"
     rm -f "${codex_dynamic_tool_proof_validation_path}"
-    write_codex_bridge_status "$(python3 - <<'PY' "${codex_dynamic_tools_bin}" "${codex_adapter_bin}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${codex_dynamic_tools_bin}" "${codex_adapter_bin}" "${mcp_adapter_revision}"
 import json
 import sys
 
@@ -292,6 +297,7 @@ print(json.dumps({
     "reason": "adapter_cli_missing",
     "dynamic_tool_adapter_bin": sys.argv[1],
     "observe_adapter_bin": sys.argv[2],
+    "adapter_revision": sys.argv[3],
 }))
 PY
 )"
@@ -580,7 +586,7 @@ EOF
       rm -f "${codex_helper_path}"
     fi
 
-    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${codex_provider_manifest_validation_path}" "${provider_manifest_status}" "${codex_dynamic_tool_specs_path}" "${dynamic_tool_specs_status}" "${codex_dynamic_tool_proof_response_path}" "${codex_dynamic_tool_proof_validation_path}" "${dynamic_tool_proof_status}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${codex_provider_manifest_validation_path}" "${provider_manifest_status}" "${codex_dynamic_tool_specs_path}" "${dynamic_tool_specs_status}" "${codex_dynamic_tool_proof_response_path}" "${codex_dynamic_tool_proof_validation_path}" "${dynamic_tool_proof_status}" "${mcp_adapter_revision}"
 import json
 import pathlib
 import sys
@@ -625,6 +631,7 @@ print(json.dumps({
     "dynamic_tool_proof_status": sys.argv[12],
     "dynamic_tool_outcome_contract_proven": proof_contract_proven,
     "dynamic_tool_outcome_success": proof_response_success,
+    "adapter_revision": sys.argv[13],
     "tool_names": ["android_observe", "android_step"],
 }))
 PY
@@ -803,11 +810,11 @@ export INTERACTIVE_OPENAI_LOOP_BIN="${live_access_dir}/openai-android-loop.sh"
 export INTERACTIVE_OPENAI_LOOP_CONFIG="${openai_loop_dir}/config.json"
 export INTERACTIVE_OPENAI_LOOP_OUTPUT_ROOT="${openai_loop_run_root}"
 export INTERACTIVE_CODEX_OBSERVE_BIN="${live_access_dir}/codex-android-observe.sh"
-export INTERACTIVE_CODEX_DYNAMIC_TOOL_BIN="${live_access_dir}/codex-android-tools.sh"
+export INTERACTIVE_CODEX_DYNAMIC_TOOL_BIN="${codex_dynamic_tool_helper_path}"
 export INTERACTIVE_CODEX_BRIDGE_OUTPUT_ROOT="${codex_bridge_run_root}"
 export INTERACTIVE_CODEX_PROVIDER_MANIFEST="${codex_provider_manifest_path}"
-if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
-  export CODEX_DYNAMIC_TOOL_COMMAND="${live_access_dir}/codex-android-tools.sh"
+if [[ -x "${codex_dynamic_tool_helper_path}" ]]; then
+  export CODEX_DYNAMIC_TOOL_COMMAND="${codex_dynamic_tool_helper_path}"
 else
   unset CODEX_DYNAMIC_TOOL_COMMAND || true
 fi
@@ -815,8 +822,8 @@ echo "Interactive Android session ready"
 echo "Workspace: ${GITHUB_WORKSPACE}"
 echo "Artifacts: ${session_root}"
 echo "MCP health: ${mcp_health_url}"
-if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
-  echo "Codex native dynamic-tool helper: ${live_access_dir}/codex-android-tools.sh"
+if [[ -x "${codex_dynamic_tool_helper_path}" ]]; then
+  echo "Codex native dynamic-tool helper: ${codex_dynamic_tool_helper_path}"
   echo "Codex dynamic-tool command: \${CODEX_DYNAMIC_TOOL_COMMAND}"
   if [[ -f "${codex_provider_manifest_path}" ]]; then
     echo "Codex Android provider manifest: ${codex_provider_manifest_path}"
@@ -927,7 +934,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
     echo "- finish early inside the session with: \`touch dist/interactive-session/finish-session\`"
     echo "- artifacts root: \`${session_root}\`"
-    python3 - <<'PY' "${codex_bridge_status_path}" "${live_access_dir}/codex-android-tools.sh"
+    python3 - <<'PY' "${codex_bridge_status_path}" "${codex_dynamic_tool_helper_path}"
 import json
 import pathlib
 import sys
@@ -948,6 +955,8 @@ if not helper_path.exists():
     raise SystemExit(0)
 
 print("- Codex native dynamic tools: `available`")
+if adapter_revision := status.get("adapter_revision"):
+    print(f"- Codex Android provider revision: `{adapter_revision}`")
 
 specs_status = status.get("dynamic_tool_specs_status", "unavailable")
 if specs_status == "ready":

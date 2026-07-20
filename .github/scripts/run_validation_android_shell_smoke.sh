@@ -35,18 +35,16 @@ SHELL_FULL_TEST_CLASSES=(
   "com.sednalabs.solarlab.PlaybackContinuityInstrumentationTest"
 )
 
-STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES=(
-  "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
+STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
+  "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
 )
 
-STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES=(
-  "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstRuntimeMirrorInstrumentationTest"
-)
-
-STAGE_FIRST_MIRROR_ON_FULL_TEST_CLASSES=(
-  "com.sednalabs.solarlab.StageFirstLocalStartupInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstRuntimeMirrorInstrumentationTest"
+STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES=(
+  "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
 )
 
 TEST_CLASSES=()
@@ -212,19 +210,11 @@ resolve_test_classes() {
     shell-v2)
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=false"
-        "-Psolarlab.stageFirstRuntimeMirror=false"
       )
       ;;
-    stage-first-mirror-off)
+    stage-first-runtime)
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
-        "-Psolarlab.stageFirstRuntimeMirror=false"
-      )
-      ;;
-    stage-first-mirror-on)
-      GRADLE_VALIDATION_PROPS=(
-        "-Psolarlab.debugStageFirstClient=true"
-        "-Psolarlab.stageFirstRuntimeMirror=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
         "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
       )
@@ -244,7 +234,6 @@ resolve_test_classes() {
     shell-v2)
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=false"
-        "-Psolarlab.stageFirstRuntimeMirror=false"
       )
       case "${TEST_SCOPE}" in
         core)
@@ -259,38 +248,18 @@ resolve_test_classes() {
           ;;
       esac
       ;;
-    stage-first-mirror-off)
+    stage-first-runtime)
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
-        "-Psolarlab.stageFirstRuntimeMirror=false"
-      )
-      case "${TEST_SCOPE}" in
-        core)
-          TEST_CLASSES=("${STAGE_FIRST_MIRROR_OFF_CORE_TEST_CLASSES[@]}")
-          ;;
-        full)
-          echo "ANDROID_TEST_SCOPE='full' is not yet supported for mode '${VALIDATION_MODE}'. Use 'core' or extend the stage-first class set explicitly first." >&2
-          exit 2
-          ;;
-        *)
-          echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
-          exit 2
-          ;;
-      esac
-      ;;
-    stage-first-mirror-on)
-      GRADLE_VALIDATION_PROPS=(
-        "-Psolarlab.debugStageFirstClient=true"
-        "-Psolarlab.stageFirstRuntimeMirror=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
         "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
       )
       case "${TEST_SCOPE}" in
         core)
-          TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_CORE_TEST_CLASSES[@]}")
+          TEST_CLASSES=("${STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES[@]}")
           ;;
         full)
-          TEST_CLASSES=("${STAGE_FIRST_MIRROR_ON_FULL_TEST_CLASSES[@]}")
+          TEST_CLASSES=("${STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES[@]}")
           ;;
         *)
           echo "Unsupported ANDROID_TEST_SCOPE='${TEST_SCOPE}' for mode '${VALIDATION_MODE}'" >&2
@@ -511,7 +480,7 @@ EOF
 
 resolve_test_classes
 if [[ "${TEST_BATCH_MODE}" == "auto" ]]; then
-  if [[ "${VALIDATION_MODE}" == "stage-first-mirror-on" ]]; then
+  if [[ "${VALIDATION_MODE}" == "stage-first-runtime" ]]; then
     TEST_BATCH_MODE="per-class"
   else
     TEST_BATCH_MODE="batch"

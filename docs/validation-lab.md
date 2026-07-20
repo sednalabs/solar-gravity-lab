@@ -59,10 +59,10 @@ checkpoint.
    - `emulator_boot_strategy=cold|snapshot-cache`: reliable cold boot default with opt-in AVD snapshot cache
 
 For stage-first runtime work, prefer
-`android_validation_mode=stage-first-mirror-on`. That mode builds the app with
-`solarlab.preferredGpuBackend=vulkan` and the core scope enters the runtime
-mirror, binds the native runtime session, and checks backend truth instead of
-only proving the local sandbox. See
+`android_validation_mode=stage-first-runtime`. That mode builds the app with
+`solarlab.preferredGpuBackend=vulkan` and the core scope enters the Rust stage,
+binds the native runtime session, and checks backend truth instead of only
+proving the shell. See
 [`Android Acceleration Truth`](android-acceleration-truth.md).
 
 ## Android cache observability
@@ -210,7 +210,7 @@ shell flows execute, and instrumentation contracts hold. It does not prove that
 an immersive or stage-first screen has the right composition on a device-sized
 viewport.
 
-For Android UI changes, especially stage-first, runtime mirror, scenario-pack,
+For Android UI changes, especially stage-first runtime, scenario-pack,
 or visual-polish work, include a visual acceptance note alongside the hosted CI
 run. The note should identify the observed surface and confirm the relevant
 collapsed/expanded or controls-open states. If live Android observation is not

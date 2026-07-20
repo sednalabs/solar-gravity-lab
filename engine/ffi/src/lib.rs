@@ -32,13 +32,13 @@ use solarlab_physics::{
     PhysicsPolicy, SolverBackend, SolverExecutionReport, SolverFallbackCode, SolverScheduleMode,
 };
 use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, WorldRuntime};
-use solarlab_scene::SceneTrailFamily;
+use solarlab_scene::{SceneBodyKind, SceneTrailFamily};
 use solarlab_vulkan_adapter::{
     PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight, VulkanSceneAdapter,
     VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 10;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 11;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -170,6 +170,21 @@ pub enum SlBodyClass {
     Tracer = 5,
     Spacecraft = 6,
     Custom = 7,
+    Comet = 8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlSceneBodyKind {
+    Star = 0,
+    Planet = 1,
+    DwarfPlanet = 2,
+    Moon = 3,
+    Asteroid = 4,
+    Comet = 5,
+    Tracer = 6,
+    Spacecraft = 7,
+    Custom = 8,
 }
 
 #[repr(C)]
@@ -252,6 +267,7 @@ pub struct SlVulkanBodyInstance {
     pub albedo: SlPackedColor,
     pub emissive_luminance: f32,
     pub selected: u32,
+    pub kind: SlSceneBodyKind,
     pub body_id: [u8; SL_V2_ID_CAPACITY],
     pub body_id_len: u32,
 }
@@ -264,6 +280,7 @@ impl Default for SlVulkanBodyInstance {
             albedo: SlPackedColor::default(),
             emissive_luminance: 0.0,
             selected: 0,
+            kind: SlSceneBodyKind::Custom,
             body_id: [0; SL_V2_ID_CAPACITY],
             body_id_len: 0,
         }
@@ -1313,8 +1330,23 @@ fn encode_body_instance(value: VulkanBodyInstance) -> SlVulkanBodyInstance {
         albedo: encode_packed_color(value.albedo),
         emissive_luminance: value.emissive_luminance,
         selected: u32::from(value.selected),
+        kind: encode_scene_body_kind(value.kind),
         body_id: encode_identifier(&value.body_id.0).expect("body id should fit into packet"),
         body_id_len: string_length_to_u32(&value.body_id.0),
+    }
+}
+
+fn encode_scene_body_kind(value: SceneBodyKind) -> SlSceneBodyKind {
+    match value {
+        SceneBodyKind::Star => SlSceneBodyKind::Star,
+        SceneBodyKind::Planet => SlSceneBodyKind::Planet,
+        SceneBodyKind::DwarfPlanet => SlSceneBodyKind::DwarfPlanet,
+        SceneBodyKind::Moon => SlSceneBodyKind::Moon,
+        SceneBodyKind::Asteroid => SlSceneBodyKind::Asteroid,
+        SceneBodyKind::Comet => SlSceneBodyKind::Comet,
+        SceneBodyKind::Tracer => SlSceneBodyKind::Tracer,
+        SceneBodyKind::Spacecraft => SlSceneBodyKind::Spacecraft,
+        SceneBodyKind::Custom => SlSceneBodyKind::Custom,
     }
 }
 
@@ -1564,6 +1596,7 @@ fn decode_body_class(value: SlBodyClass) -> Result<BodyClass, SlResult> {
         SlBodyClass::Tracer => Ok(BodyClass::Tracer),
         SlBodyClass::Spacecraft => Ok(BodyClass::Spacecraft),
         SlBodyClass::Custom => Ok(BodyClass::Custom),
+        SlBodyClass::Comet => Ok(BodyClass::Comet),
     }
 }
 
@@ -2274,6 +2307,7 @@ mod android_jni {
             5 => Ok(SlBodyClass::Tracer),
             6 => Ok(SlBodyClass::Spacecraft),
             7 => Ok(SlBodyClass::Custom),
+            8 => Ok(SlBodyClass::Comet),
             _ => Err(status(SlStatusCode::InvalidArgument)),
         }
     }
@@ -2666,8 +2700,9 @@ mod tests {
         sl_v2_session_refresh, sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
         sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlBodyClass,
         SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlRuntimeInfo,
-        SlRuntimeInfoResult, SlSessionCommand, SlSessionCreateParams, SlStatusCode,
-        SlTimelineSemantics, SlVector3d, SlVulkanBodyInstance, SlVulkanSceneBufferKind,
+        SlRuntimeInfoResult, SlSceneBodyKind, SlSessionCommand, SlSessionCreateParams,
+        SlStatusCode, SlTimelineSemantics, SlVector3d, SlVulkanBodyInstance,
+        SlVulkanSceneBufferKind,
         SlVulkanTracerInstance, SlVulkanTrailSpan, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
 
@@ -2728,6 +2763,16 @@ mod tests {
         assert_eq!(align_of::<SlRuntimeInfoResult>(), 8);
         assert_eq!(offset_of!(SlRuntimeInfoResult, result), 0);
         assert_eq!(offset_of!(SlRuntimeInfoResult, info), 8);
+    }
+
+    #[test]
+    fn vulkan_body_instance_layout_carries_scene_taxonomy() {
+        assert_eq!(size_of::<SlVulkanBodyInstance>(), 144);
+        assert_eq!(align_of::<SlVulkanBodyInstance>(), 4);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, selected), 36);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, kind), 40);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, body_id), 44);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, body_id_len), 140);
     }
 
     #[test]
@@ -3044,6 +3089,7 @@ mod tests {
             direct_packet.body_instances[1].position_from_origin_m.z
         );
         assert_eq!(exported_bodies[1].selected, 1);
+        assert_eq!(exported_bodies[1].kind, SlSceneBodyKind::Planet);
         assert_eq!(
             decode_identifier(&exported_bodies[1].body_id, exported_bodies[1].body_id_len)
                 .expect("body id should decode"),
@@ -3272,6 +3318,29 @@ mod tests {
         match decoded {
             WorldCommand::SpawnBody { body } => {
                 assert_eq!(body.mass_kg, 1.0e24);
+                assert_eq!(body.source_mass_kg(), 0.0);
+            }
+            other => panic!("expected spawn command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spawn_comet_decodes_typed_class_with_non_source_mass_default() {
+        let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+        body_id[..6].copy_from_slice(b"halley");
+        let command = test_session_command(SlCommandKind::SpawnBody, |command| {
+            command.body_id = body_id;
+            command.body_id_len = 6;
+            command.body_class = SlBodyClass::Comet;
+            command.body_mass_kg = 2.2e14;
+        });
+
+        let decoded = super::decode_world_command(command).expect("comet command should decode");
+
+        match decoded {
+            WorldCommand::SpawnBody { body } => {
+                assert_eq!(body.body_class, BodyClass::Comet);
+                assert_eq!(body.mass_kg, 2.2e14);
                 assert_eq!(body.source_mass_kg(), 0.0);
             }
             other => panic!("expected spawn command, got {other:?}"),

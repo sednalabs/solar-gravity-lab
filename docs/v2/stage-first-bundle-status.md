@@ -1,20 +1,16 @@
-# Steps 1-7 ready bundle status
+# Stage-first delivery status
 
-This bundle is the single cumulative handoff for the stage-first restoration track.
+The recovery sequence has converged into one product architecture:
 
-What is included in code:
+- one Rust-authoritative simulation world;
+- one native Vulkan stage;
+- a multiscale orbital camera with camera-relative packets;
+- native picking, tracer LOD, compute compaction, and pipeline caching; and
+- a thin Kotlin lifecycle, control, and accessibility shell.
 
-- Step 1: stage-first client restoration
-- Step 2: sandbox authoring parity
-- Step 3: runtime mirror on the immersive client
-- Step 4: multiscale orthographic orbit camera and 3D immersive pipeline foundations
-- Step 5: native runtime stage path (Rust session -> native controller -> Vulkan renderer)
-- Step 6: renderer completion pass (3D camera-basis compute compaction, pipeline cache, shader optimization, visual polish pass)
+The old split-world parity milestone is closed. Current work should extend Rust
+world commands or stable scene metadata, not add managed simulation behavior.
 
-What is included as docs / execution plan rather than merged code:
-
-- Step 7: NativeSimulationWorld unification
-
-That is deliberate. Step 7 is the architectural merge where Sandbox and Runtime should both talk to one long-lived native world handle. It is the first slice that most strongly benefits from a real Android/NDK assemble and runtime verification.
-
-Use this bundle as the first apply target when the offline Android build environment is available.
+Use `validation-lab` with `android_validation_mode=stage-first-runtime`, then
+install the reusable exact-head interactive artifact for native visual
+acceptance.

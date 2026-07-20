@@ -844,7 +844,9 @@ fn seed_major_bodies(runtime: &mut WorldRuntime) {
     let major_bodies = seed
         .bodies
         .into_iter()
-        .filter(|body| body.body_class != BodyClass::SmallBody)
+        .filter(|body| {
+            !matches!(body.body_class, BodyClass::SmallBody | BodyClass::Comet)
+        })
         .map(|body| {
             let source_mass_kg = BodyState::default_source_mass_kg(&body.body_class, body.mass_kg);
             BodyState {

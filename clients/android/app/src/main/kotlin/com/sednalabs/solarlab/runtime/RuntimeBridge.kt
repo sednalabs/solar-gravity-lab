@@ -815,7 +815,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 10
+        private const val ABI_VERSION = 11
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
@@ -966,12 +966,14 @@ enum class RuntimeBodyClass(val nativeCode: Int) {
     Tracer(5),
     Spacecraft(6),
     Custom(7),
+    Comet(8),
 }
 
 private fun RuntimeBodyClass.defaultSourceMassKg(massKg: Double): Double = when (this) {
     RuntimeBodyClass.Tracer,
     RuntimeBodyClass.Spacecraft,
-    RuntimeBodyClass.SmallBody -> 0.0
+    RuntimeBodyClass.SmallBody,
+    RuntimeBodyClass.Comet -> 0.0
     RuntimeBodyClass.Star,
     RuntimeBodyClass.Planet,
     RuntimeBodyClass.DwarfPlanet,

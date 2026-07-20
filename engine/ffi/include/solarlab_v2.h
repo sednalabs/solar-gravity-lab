@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 // ABI version of the runtime/session contract.
-#define SOLARLAB_V2_ABI_VERSION 10u
+#define SOLARLAB_V2_ABI_VERSION 11u
 // Fixed-size inline capacity for identifier payloads carried by value in structs.
 #define SL_V2_ID_CAPACITY 96u
 
@@ -112,8 +112,21 @@ typedef enum SlBodyClass {
   SL_BODY_CLASS_SMALL_BODY = 4,
   SL_BODY_CLASS_TRACER = 5,
   SL_BODY_CLASS_SPACECRAFT = 6,
-  SL_BODY_CLASS_CUSTOM = 7
+  SL_BODY_CLASS_CUSTOM = 7,
+  SL_BODY_CLASS_COMET = 8
 } SlBodyClass;
+
+typedef enum SlSceneBodyKind {
+  SL_SCENE_BODY_KIND_STAR = 0,
+  SL_SCENE_BODY_KIND_PLANET = 1,
+  SL_SCENE_BODY_KIND_DWARF_PLANET = 2,
+  SL_SCENE_BODY_KIND_MOON = 3,
+  SL_SCENE_BODY_KIND_ASTEROID = 4,
+  SL_SCENE_BODY_KIND_COMET = 5,
+  SL_SCENE_BODY_KIND_TRACER = 6,
+  SL_SCENE_BODY_KIND_SPACECRAFT = 7,
+  SL_SCENE_BODY_KIND_CUSTOM = 8
+} SlSceneBodyKind;
 
 typedef struct SlRuntimeInfo {
   uint32_t abi_version;
@@ -181,6 +194,7 @@ typedef struct SlVulkanBodyInstance {
   SlPackedColor albedo;
   float emissive_luminance;
   uint32_t selected;
+  SlSceneBodyKind kind;
   uint8_t body_id[SL_V2_ID_CAPACITY];
   uint32_t body_id_len;
 } SlVulkanBodyInstance;

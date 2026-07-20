@@ -34,6 +34,7 @@ pub enum BodyClass {
     Tracer,
     Spacecraft,
     Custom,
+    Comet,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

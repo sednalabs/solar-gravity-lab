@@ -112,15 +112,15 @@ What is already real:
 
 What is intentionally still early:
 
-- the runtime is still a bring-up slice rather than a full parity replacement for the
-  old Kotlin product line
+- the Rust runtime is the single product world; the removed Kotlin stage world
+  remains only in repository history, not in product wiring
 - the physics surface is now authoritative for the canonical Rust path, but its
   UI-facing product coverage and fixture depth are still growing
 - scene extraction is still bodies-first; richer tracer, trail, and light history
   surfaces remain thin
-- the legacy shell still has packet-decoding and software/debug presentation
-  paths, but the stage-first runtime mirror is the canonical visual surface and
-  hosts the native Vulkan stage directly
+- the shell still has bounded packet decoding for labels and debug presentation,
+  while the stage-first Rust runtime is the canonical visual surface and hosts
+  the native Vulkan stage directly
 - medium/far compute-compaction is restored only as 3D camera-space,
   non-authoritative renderer work; older XY-native compaction notes are
   historical and must not guide new work without translation into the current

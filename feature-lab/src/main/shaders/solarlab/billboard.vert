@@ -6,6 +6,7 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 upAndSpan;
     vec4 forwardAndDepth;
     vec4 viewport;
+    vec4 primaryLightPositionRelativeAndFlags;
 } uScene;
 
 layout(location = 0) in vec3 inPositionM;
@@ -16,12 +17,24 @@ layout(location = 4) in float inAlpha;
 layout(location = 5) in float inReserved;
 
 layout(location = 0) out vec4 vColor;
+layout(location = 1) flat out uint vKind;
+layout(location = 2) flat out vec3 vLightDirection;
+layout(location = 3) out vec2 vBillboardUv;
 
 const uint KIND_STAR = 0u;
 const uint KIND_PLANET = 1u;
 const uint KIND_DWARF_PLANET = 2u;
 const uint KIND_PROBE = 5u;
 const uint KIND_TEST_OBJECT = 6u;
+
+const vec2 BILLBOARD_CORNERS[6] = vec2[](
+    vec2(-1.0, -1.0),
+    vec2( 1.0, -1.0),
+    vec2(-1.0,  1.0),
+    vec2(-1.0,  1.0),
+    vec2( 1.0, -1.0),
+    vec2( 1.0,  1.0)
+);
 
 vec4 unpackArgb(uint argb) {
     float a = float((argb >> 24) & 0xFFu) / 255.0;
@@ -67,14 +80,33 @@ float clipDepth01(vec3 cameraRelativeM) {
 
 void main() {
     vec3 relative = cameraRelative(inPositionM);
-    gl_Position = vec4(clipXY(relative), clipDepth01(relative), 1.0);
+    vec2 centerClip = clipXY(relative);
 
     float metersPerPixel = max(uScene.centerRelativeAndMetrics.w, 1e-6);
-    float maxPointSizePx = max(uScene.viewport.z, 1.0);
     float diameterPx = max(minimumDiameterForKind(inKind), (inRadiusM / metersPerPixel) * 2.0);
-    gl_PointSize = clamp(diameterPx, 1.0, maxPointSizePx);
+    float maxBillboardDiameterPx = max(max(uScene.viewport.x, uScene.viewport.y) * 2.0, 1.0);
+    diameterPx = clamp(diameterPx, 1.0, maxBillboardDiameterPx);
+
+    vec2 corner = BILLBOARD_CORNERS[gl_VertexIndex];
+    vec2 cornerClipOffset = corner * vec2(
+        diameterPx / max(uScene.viewport.x, 1.0),
+        diameterPx / max(uScene.viewport.y, 1.0)
+    );
+    gl_Position = vec4(centerClip + cornerClipOffset, clipDepth01(relative), 1.0);
 
     vec4 color = unpackArgb(inColorArgb);
     color.a *= inAlpha;
     vColor = color;
+    vKind = inKind;
+    vBillboardUv = corner;
+    if (uScene.primaryLightPositionRelativeAndFlags.w > 0.5) {
+        vec3 toLightWorld = normalize(uScene.primaryLightPositionRelativeAndFlags.xyz - inPositionM);
+        vLightDirection = normalize(vec3(
+            dot(toLightWorld, uScene.rightAndSpan.xyz),
+            -dot(toLightWorld, uScene.upAndSpan.xyz),
+            -dot(toLightWorld, uScene.forwardAndDepth.xyz)
+        ));
+    } else {
+        vLightDirection = normalize(vec3(-0.42, -0.30, 0.86));
+    }
 }

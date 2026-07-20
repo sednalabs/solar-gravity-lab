@@ -113,7 +113,7 @@ internal object SolarLabTeachingCatalog {
             bodyId = "halley",
             displayName = "Halley",
             aliases = listOf("halleys comet", "periodic comet"),
-            spawnBodyClass = RuntimeBodyClass.SmallBody,
+            spawnBodyClass = RuntimeBodyClass.Comet,
             spawnMassKg = 2.2e14,
             spawnRadiusM = 5.5e3,
         ),

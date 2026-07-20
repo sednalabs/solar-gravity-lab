@@ -1,14 +1,17 @@
 package com.sednalabs.solarlab
 
-import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assume.assumeTrue
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,7 +45,12 @@ class StageFirstSearchFocusInstrumentationTest {
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("earth")
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("comet")
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextReplacement("earth")
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
@@ -57,14 +65,61 @@ class StageFirstSearchFocusInstrumentationTest {
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL)
+            .performScrollToIfPossible()
+            .assertIsDisplayed()
 
-        if (composeRule.activity.isStageFirstRuntimeMirrorMountedForTesting()) {
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON).assertIsDisplayed()
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON).performClick()
+        if (composeRule.activity.isStageFirstRuntimeMountedForTesting()) {
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON)
+                .performScrollToIfPossible()
+                .assertIsDisplayed()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON)
+                .performScrollToIfPossible()
+                .assertIsDisplayed()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
+                .performScrollToIfPossible()
+                .assertIsDisplayed()
+                .performClick()
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
+        }
+    }
+
+    @Test
+    fun connectorFocusAlias_exposesCorrelatedResolvedAcknowledgement() {
+        assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.DEBUG)
+        val requestId = "connector-request-42"
+        val expectedAcknowledgement =
+            "Halley. SolarLab semantic focus acknowledged; " +
+                "request-id=connector-request-42; query=comet; resolved-body=halley"
+        SolarLabSemanticActionBridge.clearPendingReplay()
+
+        try {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }
+            assertTrue(
+                SolarLabSemanticActionBridge.submit(
+                    SolarLabSemanticAction.FocusBody(
+                        bodyQuery = "comet",
+                        requestId = requestId,
+                    )
+                )
+            )
+
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                runCatching {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                        .assertTextContains("Halley")
+                        .assertContentDescriptionEquals(expectedAcknowledgement)
+                }.isSuccess
+            }
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                .assertTextContains("Halley")
+                .assertContentDescriptionEquals(expectedAcknowledgement)
+        } finally {
+            SolarLabSemanticActionBridge.clearPendingReplay()
         }
     }
 }

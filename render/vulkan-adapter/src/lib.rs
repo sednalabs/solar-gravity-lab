@@ -3,7 +3,8 @@
 use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
-    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail, SceneTrailFamily,
+    SceneBodyKind, ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
+    SceneTrailFamily,
 };
 use std::collections::HashSet;
 
@@ -76,6 +77,7 @@ pub struct VulkanCameraPacket {
 pub struct VulkanBodyInstance {
     pub body_id: BodyId,
     pub display_name: String,
+    pub kind: SceneBodyKind,
     pub position_from_origin_m: PackedVec3,
     pub radius_m: f32,
     pub albedo: PackedColor,
@@ -370,6 +372,7 @@ fn adapt_body(body: &SceneBody, frame_origin_m: Vector3d) -> VulkanBodyInstance 
     VulkanBodyInstance {
         body_id: body.body_id.clone(),
         display_name: body.display_name.clone(),
+        kind: body.kind,
         position_from_origin_m: relative_vec(body.position_m, frame_origin_m),
         radius_m: body.radius_m as f32,
         albedo: pack_color(body.albedo),
@@ -472,8 +475,8 @@ mod tests {
     use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
     use solarlab_scene::{
         CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-        SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneProvenanceRef, SceneTracer,
-        SceneTrail, SceneTrailFamily,
+        SceneBodyKind, SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneProvenanceRef,
+        SceneTracer, SceneTrail, SceneTrailFamily,
     };
 
     use super::{
@@ -502,6 +505,7 @@ mod tests {
                 z: 0.0,
             }
         );
+        assert_eq!(packet.body_instances[0].kind, SceneBodyKind::Planet);
         assert_eq!(
             packet.tracer_instances[0].position_from_origin_m,
             PackedVec3 {
@@ -621,6 +625,7 @@ mod tests {
         scene.bodies.push(SceneBody {
             body_id: BodyId("mars".to_owned()),
             display_name: "Mars".to_owned(),
+            kind: SceneBodyKind::Planet,
             position_m: Vector3d {
                 x: 220.0,
                 y: 4.0,
@@ -863,6 +868,7 @@ mod tests {
             bodies: vec![SceneBody {
                 body_id: BodyId("earth".to_owned()),
                 display_name: "Earth".to_owned(),
+                kind: SceneBodyKind::Planet,
                 position_m: Vector3d {
                     x: 100.0,
                     y: 10.0,

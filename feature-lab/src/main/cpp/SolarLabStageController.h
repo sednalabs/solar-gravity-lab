@@ -120,6 +120,7 @@ private:
     bool RefreshRuntimeSceneLocked();
     void PushCameraLocked();
     bool RuntimeSessionBoundLocked() const;
+    double MinimumViewRadiusLocked() const;
     void InitializeFreeCameraFromRuntimePacketLocked(
         double sceneOriginX,
         double sceneOriginY,

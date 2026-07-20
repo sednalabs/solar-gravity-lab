@@ -1,6 +1,6 @@
 # Scenario Packs
 
-Scenario packs are deterministic startup scenes for fast Android runtime-mirror
+Scenario packs are deterministic startup scenes for fast Android Rust-stage
 iteration.
 
 They exist so manual testers and automation clients can jump directly to useful
@@ -36,7 +36,7 @@ export.
 Scenario packs are fresh-session inputs. Loading a pack replaces the active
 runtime session with a new session for that `scenario_id`, seeds the selected
 pack through the existing Rust authority command, applies pack presentation
-defaults, and then resumes normal runtime-mirror refresh.
+defaults, and then resumes normal runtime refresh.
 
 Important boundaries:
 
@@ -48,7 +48,7 @@ Important boundaries:
 
 ## Android usage
 
-The runtime mirror exposes a visible Scenario control with stable test tags.
+The Rust stage exposes a visible Scenario control with stable test tags.
 Automation should operate that same UI instead of out-of-band setup scripts.
 This keeps automated actions observable and makes the app behave the same for a
 human operator.
@@ -65,7 +65,7 @@ Recommended visual iteration loop:
 5. Rerun the same pack so before/after evidence is comparable.
 
 For S25 Ultra acceleration work, load `stress.s25-tile-swarm` in the
-stage-first runtime mirror and inspect the backend summary. A healthy Arm64
+stage-first runtime and inspect the backend summary. A healthy Arm64
 device should make the large-scene scheduler fields obvious: body count,
 estimated pair count, tile count, tile size, and tile-worker slots should all
 be visible in the runtime-info summary before making any device-specific
