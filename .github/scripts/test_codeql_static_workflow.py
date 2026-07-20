@@ -6,6 +6,13 @@ from pathlib import Path
 
 
 WORKFLOW = Path(__file__).parents[1] / "workflows" / "codeql.yml"
+RUST_PACK_LOCK = (
+    Path(__file__).parents[1]
+    / "codeql"
+    / "packs"
+    / "solar-rust-claim-enforcement"
+    / "codeql-pack.lock.yml"
+)
 
 EXPECTED_MATRIX_ROWS = {
     "actions": (
@@ -76,21 +83,14 @@ class CodeqlStaticWorkflowTests(unittest.TestCase):
         self.assertIn("Build Java and Kotlin sources for CodeQL", text)
         self.assertIn("matrix.language == 'java-kotlin'", text)
 
-    def test_rust_pack_dependencies_are_installed_before_codeql_init(self) -> None:
+    def test_rust_pack_has_a_complete_dependency_lock(self) -> None:
         text = workflow_text()
-        trusted_policy_index = text.index("Apply trusted CodeQL policy for PRs")
-        setup_index = text.index("Set up CodeQL for custom Rust pack dependencies")
-        install_index = text.index("Install custom Rust pack dependencies")
-        init_index = text.index("Initialize CodeQL")
+        lock = RUST_PACK_LOCK.read_text(encoding="utf-8")
 
-        self.assertLess(trusted_policy_index, setup_index)
-        self.assertLess(setup_index, install_index)
-        self.assertLess(install_index, init_index)
-        self.assertIn(
-            '"${CODEQL}" pack install .github/codeql/packs/solar-rust-claim-enforcement',
-            text,
-        )
-        self.assertIn("CODEQL: ${{ steps.setup_codeql.outputs.codeql-path }}", text)
+        self.assertIn("./.github/codeql/codeql-rust-claim-enforcement.yml", text)
+        self.assertIn("codeql/rust-all:\n    version: 0.2.17", lock)
+        self.assertIn("codeql/namebinding:\n    version: 0.0.2", lock)
+        self.assertIn("compiled: false", lock)
 
     def test_dynamic_router_is_not_present(self) -> None:
         text = workflow_text()
