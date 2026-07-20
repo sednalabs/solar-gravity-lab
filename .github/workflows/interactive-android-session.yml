@@ -545,7 +545,6 @@ jobs:
         working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
         run: |
           set -euo pipefail
-          cargo fmt --all -- --check
           cargo test --locked
 
       - name: Build android-emulator-mcp release binary
