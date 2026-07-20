@@ -1213,7 +1213,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     const bool cameraLocked = runtimeObserverModeCode_ != kObserverModeFree;
     const bool traceLayerEnabled = runtimeTraceLayerModeCode_ != kTraceLayerModeOff;
     const bool focusTraceLayer = runtimeTraceLayerModeCode_ == kTraceLayerModeFocus;
-    const std::string selectedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
+    const std::string normalizedSelectedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
     if (cameraLocked) {
         // Locked observer modes keep the native camera centered on the selected runtime frame
         // while preserving user-controlled orbit and scale after the initial lock-on.
@@ -1290,7 +1290,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const std::string bodyId = DecodeInlineUtf8(body->body_id, body->body_id_len);
             const uint32_t kind = RenderKindForSceneBodyKind(body->kind);
             const bool selected = body->selected != 0 ||
-                (!selectedBodyId.empty() && LowercaseAscii(bodyId) == selectedBodyId);
+                (!normalizedSelectedBodyId.empty() &&
+                    LowercaseAscii(bodyId) == normalizedSelectedBodyId);
             pickBodies.push_back(RuntimeBodyProxy{
                 .bodyId = bodyId,
                 .positionRelativeX = body->position_from_origin_m.x,
@@ -1329,8 +1330,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(tracer->source_body_id, tracer->source_body_id_len));
             if (focusTraceLayer) {
-                const bool includeFocusedTrace = !selectedBodyId.empty()
-                    ? sourceBodyId == selectedBodyId
+                const bool includeFocusedTrace = !normalizedSelectedBodyId.empty()
+                    ? sourceBodyId == normalizedSelectedBodyId
                     : index % kFocusTraceDecimationStride == 0U;
                 if (!includeFocusedTrace) {
                     continue;
@@ -1397,8 +1398,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(span->source_body_id, span->source_body_id_len));
             if (focusTraceLayer) {
-                const bool includeFocusedTrail = !selectedBodyId.empty()
-                    ? sourceBodyId == selectedBodyId
+                const bool includeFocusedTrail = !normalizedSelectedBodyId.empty()
+                    ? sourceBodyId == normalizedSelectedBodyId
                     : spanIndex % kFocusTraceDecimationStride == 0U;
                 if (!includeFocusedTrail) {
                     continue;

@@ -35,7 +35,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.feature.lab.PlaybackSpeedPreset
 import com.graciousgazelles.solarlab.feature.lab.StepQuantumPreset
@@ -227,7 +227,7 @@ internal fun StageFirstRuntimeExperience(
         val lifecycleOwner = LocalLifecycleOwner.current
         val coroutineScope = rememberCoroutineScope()
 
-        val uiState by runtimeFacade.uiState.collectAsState()
+        val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
@@ -717,7 +717,6 @@ internal fun StageFirstRuntimeExperience(
                         }
                     },
                     update = { view ->
-                        renderHostView = view
                         view.updateRuntimeStageState(
                             sessionHandle = runtimeSessionHandle,
                             processingMode = renderProcessingMode,
