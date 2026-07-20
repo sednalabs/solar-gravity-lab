@@ -7,11 +7,21 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 class SolarLabStageController {
 public:
+    struct CameraSnapshot {
+        double centerX = 0.0;
+        double centerY = 0.0;
+        double centerZ = 0.0;
+        double viewRadiusM = 24.0 * 149597870700.0;
+        double yawRadians = -0.5934119456780721;
+        double pitchRadians = 1.0995574287564276;
+    };
+
     SolarLabStageController();
     ~SolarLabStageController();
 
@@ -70,7 +80,11 @@ public:
     void ResetRuntimeCamera();
     void PanRuntimeCamera(float distanceXPx, float distanceYPx, int viewportWidthPx, int viewportHeightPx);
     void ZoomRuntimeCamera(float scaleFactor, float focusXPx, float focusYPx, int viewportWidthPx, int viewportHeightPx);
+    void PanAndZoomRuntimeCamera(float distanceXPx, float distanceYPx, float scaleFactor, float focusXPx, float focusYPx, int viewportWidthPx, int viewportHeightPx);
     void OrbitRuntimeCamera(float deltaXPx, float deltaYPx, float focusXPx, float focusYPx, int viewportWidthPx, int viewportHeightPx);
+    CameraSnapshot GetCameraSnapshot() const;
+    std::optional<CameraSnapshot> ResolveRuntimeHomeCamera() const;
+    std::optional<CameraSnapshot> ResolveRuntimeBodyFrame(const std::string& bodyId) const;
     std::string PickRuntimeBodyId(float screenXPx, float screenYPx, int viewportWidthPx, int viewportHeightPx);
 
     bool Render();

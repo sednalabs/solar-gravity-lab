@@ -5,6 +5,7 @@ import android.util.AttributeSet
 import android.view.View
 import android.widget.FrameLayout
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
+import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
@@ -36,6 +37,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var renderLayerOptions: RenderLayerOptions = RenderLayerOptions()
     private var runtimeSessionHandle: Long = 0L
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
+    private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
         requested = requestedBackend,
         active = requestedBackend,
@@ -110,6 +112,24 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         selectedBodyId = bodyId
         this.observerMode = observerMode
         activeSurface?.focusAndFrameBody(bodyId, observerMode)
+    }
+
+    fun frameBody(bodyId: String) {
+        selectedBodyId = bodyId
+        activeSurface?.frameBody(bodyId)
+    }
+
+    fun setCameraScaleBand(scaleBand: CameraScaleBand) {
+        activeSurface?.setCameraScaleBand(scaleBand)
+    }
+
+    fun currentCameraScaleBand(): CameraScaleBand =
+        activeSurface?.currentCameraScaleBand() ?: CameraScaleBand.SYSTEM
+
+    fun setOnCameraScaleChangedListener(listener: ((CameraScaleBand) -> Unit)?) {
+        cameraScaleChangedListener = listener
+        activeSurface?.setOnCameraScaleChangedListener(listener)
+        listener?.invoke(currentCameraScaleBand())
     }
 
     fun setInteractionListener(listener: RenderInteractionListener?) {
@@ -241,6 +261,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setObserverMode(observerMode)
         activeSurface?.setPlacementPlaneZ(placementPlaneZ)
         activeSurface?.setRenderLayerOptions(renderLayerOptions)
+        activeSurface?.setOnCameraScaleChangedListener(cameraScaleChangedListener)
         addView(
             view,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),

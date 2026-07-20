@@ -2,6 +2,8 @@ package com.graciousgazelles.solarlab.feature.lab.render
 
 import android.content.res.AssetManager
 import android.view.Surface
+import com.graciousgazelles.solarlab.core.math.Vector3d
+import com.graciousgazelles.solarlab.render.core.CameraState
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
@@ -110,6 +112,21 @@ internal object SolarLabVulkanBridge {
         }
     }
 
+    fun cameraState(handle: Long): CameraState? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return nativeGetCameraState(handle)?.toCameraState()
+    }
+
+    fun resolveRuntimeHomeCamera(handle: Long): CameraState? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return nativeResolveRuntimeHomeCamera(handle)?.toCameraState()
+    }
+
+    fun resolveRuntimeBodyFrame(handle: Long, bodyId: String): CameraState? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return nativeResolveRuntimeBodyFrame(handle, bodyId)?.toCameraState()
+    }
+
     fun bindRuntimeSession(handle: Long, runtimeSessionHandle: Long) {
         if (!isLibraryLoaded || handle == 0L) return
         clearSubmissionCache(handle)
@@ -177,6 +194,30 @@ internal object SolarLabVulkanBridge {
         }
     }
 
+    fun panAndZoomRuntimeCamera(
+        handle: Long,
+        distanceXPx: Float,
+        distanceYPx: Float,
+        scaleFactor: Float,
+        focusXPx: Float,
+        focusYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ) {
+        if (isLibraryLoaded && handle != 0L) {
+            nativePanAndZoomRuntimeCamera(
+                handle,
+                distanceXPx,
+                distanceYPx,
+                scaleFactor,
+                focusXPx,
+                focusYPx,
+                viewportWidthPx,
+                viewportHeightPx,
+            )
+        }
+    }
+
     fun orbitRuntimeCamera(
         handle: Long,
         deltaXPx: Float,
@@ -203,6 +244,16 @@ internal object SolarLabVulkanBridge {
     }
 
     fun render(handle: Long): Boolean = isLibraryLoaded && handle != 0L && nativeRender(handle)
+
+    private fun DoubleArray.toCameraState(): CameraState? {
+        if (size < 6) return null
+        return CameraState(
+            centerM = Vector3d(this[0], this[1], this[2]),
+            viewRadiusM = this[3],
+            yawRadians = this[4],
+            pitchRadians = this[5],
+        ).sanitized()
+    }
 
     fun lastError(handle: Long): String =
         if (isLibraryLoaded && handle != 0L) nativeGetLastError(handle) else "Native Vulkan library is not loaded."
@@ -325,6 +376,9 @@ internal object SolarLabVulkanBridge {
         yawRadians: Double,
         pitchRadians: Double,
     )
+    private external fun nativeGetCameraState(handle: Long): DoubleArray?
+    private external fun nativeResolveRuntimeHomeCamera(handle: Long): DoubleArray?
+    private external fun nativeResolveRuntimeBodyFrame(handle: Long, bodyId: String): DoubleArray?
     private external fun nativeBindRuntimeSession(handle: Long, runtimeSessionHandle: Long)
     private external fun nativeUnbindRuntimeSession(handle: Long)
     private external fun nativeSetRuntimeProcessingMode(handle: Long, processingModeCode: Int)
@@ -341,6 +395,16 @@ internal object SolarLabVulkanBridge {
     )
     private external fun nativeZoomRuntimeCamera(
         handle: Long,
+        scaleFactor: Float,
+        focusXPx: Float,
+        focusYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    )
+    private external fun nativePanAndZoomRuntimeCamera(
+        handle: Long,
+        distanceXPx: Float,
+        distanceYPx: Float,
         scaleFactor: Float,
         focusXPx: Float,
         focusYPx: Float,

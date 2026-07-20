@@ -122,6 +122,45 @@ class MultiscaleOrbitCameraControllerTest {
     }
 
     @Test
+    fun orbitSensitivityUsesShortViewportAndScaleBandMultiplier() {
+        val viewportWidthPx = 1_600
+        val viewportHeightPx = 800
+        val dragAcrossShortViewportPx = 800f
+        val closeCamera = CameraState(viewRadiusM = CameraScaleBand.CLOSE.nominalViewRadiusM)
+        val deepCamera = CameraState(viewRadiusM = CameraScaleBand.DEEP.nominalViewRadiusM)
+
+        val closeOrbit = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
+            cameraState = closeCamera,
+            deltaXPx = dragAcrossShortViewportPx,
+            deltaYPx = 0f,
+            focusXPx = viewportWidthPx * 0.5f,
+            focusYPx = viewportHeightPx * 0.5f,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+        )
+        val deepOrbit = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
+            cameraState = deepCamera,
+            deltaXPx = dragAcrossShortViewportPx,
+            deltaYPx = 0f,
+            focusXPx = viewportWidthPx * 0.5f,
+            focusYPx = viewportHeightPx * 0.5f,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+        )
+
+        assertEquals(
+            Math.PI * 0.55,
+            kotlin.math.abs(closeOrbit.yawRadians - closeCamera.yawRadians),
+            1.0e-9,
+        )
+        assertEquals(
+            Math.PI,
+            kotlin.math.abs(deepOrbit.yawRadians - deepCamera.yawRadians),
+            1.0e-9,
+        )
+    }
+
+    @Test
     fun retargetSnapAppliesBandAwarePitch() {
         val targetRadius = 0.010 * PhysicalConstants.ASTRONOMICAL_UNIT_M
         val retargeted = MultiscaleOrbitCameraController.retarget(

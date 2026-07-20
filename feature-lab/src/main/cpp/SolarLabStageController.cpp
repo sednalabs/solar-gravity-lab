@@ -240,8 +240,7 @@ struct ProjectedBody {
 
 struct OrbitControlPolicy {
     double preferredPitchRadians = kDefaultPitchRadians;
-    double yawRadiansPerPixel = 0.0050;
-    double pitchRadiansPerPixel = 0.0037;
+    double orbitSensitivityMultiplier = 0.85;
     double zoomExponent = 0.82;
 };
 
@@ -348,15 +347,13 @@ OrbitControlPolicy OrbitControlPolicyForViewRadius(double viewRadiusM) {
         case CameraScaleBand::Close:
             return OrbitControlPolicy{
                 .preferredPitchRadians = 44.0 * kPi / 180.0,
-                .yawRadiansPerPixel = 0.0030,
-                .pitchRadiansPerPixel = 0.0022,
+                .orbitSensitivityMultiplier = 0.55,
                 .zoomExponent = 0.58,
             };
         case CameraScaleBand::Local:
             return OrbitControlPolicy{
                 .preferredPitchRadians = 50.0 * kPi / 180.0,
-                .yawRadiansPerPixel = 0.0038,
-                .pitchRadiansPerPixel = 0.0028,
+                .orbitSensitivityMultiplier = 0.70,
                 .zoomExponent = 0.68,
             };
         case CameraScaleBand::System:
@@ -364,15 +361,13 @@ OrbitControlPolicy OrbitControlPolicyForViewRadius(double viewRadiusM) {
         case CameraScaleBand::Wide:
             return OrbitControlPolicy{
                 .preferredPitchRadians = 72.0 * kPi / 180.0,
-                .yawRadiansPerPixel = 0.0062,
-                .pitchRadiansPerPixel = 0.0045,
+                .orbitSensitivityMultiplier = 1.0,
                 .zoomExponent = 0.92,
             };
         case CameraScaleBand::Deep:
             return OrbitControlPolicy{
                 .preferredPitchRadians = 80.0 * kPi / 180.0,
-                .yawRadiansPerPixel = 0.0074,
-                .pitchRadiansPerPixel = 0.0052,
+                .orbitSensitivityMultiplier = 1.0,
                 .zoomExponent = 1.0,
             };
     }
@@ -636,6 +631,113 @@ void SolarLabStageController::SetCamera(
     PushCameraLocked();
 }
 
+SolarLabStageController::CameraSnapshot SolarLabStageController::GetCameraSnapshot() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return CameraSnapshot{
+        .centerX = cameraCenterX_,
+        .centerY = cameraCenterY_,
+        .centerZ = cameraCenterZ_,
+        .viewRadiusM = cameraViewRadiusM_,
+        .yawRadians = cameraYawRadians_,
+        .pitchRadians = cameraPitchRadians_,
+    };
+}
+
+std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeHomeCamera() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    if (runtimeScene_.pickBodies.empty()) {
+        return std::nullopt;
+    }
+
+    double minX = std::numeric_limits<double>::max();
+    double minY = std::numeric_limits<double>::max();
+    double minZ = std::numeric_limits<double>::max();
+    double maxX = std::numeric_limits<double>::lowest();
+    double maxY = std::numeric_limits<double>::lowest();
+    double maxZ = std::numeric_limits<double>::lowest();
+    for (const RuntimeBodyProxy& body : runtimeScene_.pickBodies) {
+        const double worldX = runtimeScene_.sceneOriginX + body.positionRelativeX;
+        const double worldY = runtimeScene_.sceneOriginY + body.positionRelativeY;
+        const double worldZ = runtimeScene_.sceneOriginZ + body.positionRelativeZ;
+        minX = std::min(minX, worldX);
+        minY = std::min(minY, worldY);
+        minZ = std::min(minZ, worldZ);
+        maxX = std::max(maxX, worldX);
+        maxY = std::max(maxY, worldY);
+        maxZ = std::max(maxZ, worldZ);
+    }
+    const Float3 center = MakeFloat3(
+        (minX + maxX) * 0.5,
+        (minY + maxY) * 0.5,
+        (minZ + maxZ) * 0.5);
+    double contentRadiusM = 0.0;
+    for (const RuntimeBodyProxy& body : runtimeScene_.pickBodies) {
+        const Float3 worldPosition = MakeFloat3(
+            runtimeScene_.sceneOriginX + body.positionRelativeX,
+            runtimeScene_.sceneOriginY + body.positionRelativeY,
+            runtimeScene_.sceneOriginZ + body.positionRelativeZ);
+        contentRadiusM = std::max(
+            contentRadiusM,
+            Magnitude(worldPosition - center) + std::max(0.0, static_cast<double>(body.radiusM)));
+    }
+    const double viewRadiusM = Clamp(
+        std::max(contentRadiusM * 1.18, 0.010 * kAstronomicalUnitM),
+        kMinViewRadiusM,
+        kMaxViewRadiusM);
+    const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(viewRadiusM);
+    return CameraSnapshot{
+        .centerX = center.x,
+        .centerY = center.y,
+        .centerZ = center.z,
+        .viewRadiusM = viewRadiusM,
+        .yawRadians = kDefaultYawRadians,
+        .pitchRadians = policy.preferredPitchRadians,
+    };
+}
+
+std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeBodyFrame(
+    const std::string& bodyId) const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    const std::string normalizedBodyId = LowercaseAscii(bodyId);
+    const auto body = std::find_if(
+        runtimeScene_.pickBodies.begin(),
+        runtimeScene_.pickBodies.end(),
+        [&](const RuntimeBodyProxy& candidate) {
+            return LowercaseAscii(candidate.bodyId) == normalizedBodyId;
+        });
+    if (body == runtimeScene_.pickBodies.end()) {
+        return std::nullopt;
+    }
+
+    const double suggestedRadiusM = [&]() {
+        switch (body->kind) {
+            case kKindStar:
+                return 4.5 * kAstronomicalUnitM;
+            case kKindPlanet:
+                return 0.14 * kAstronomicalUnitM;
+            case kKindDwarfPlanet:
+                return 0.08 * kAstronomicalUnitM;
+            case kKindAsteroid:
+            case kKindComet:
+                return 0.035 * kAstronomicalUnitM;
+            case kKindProbe:
+            case kKindTestObject:
+                return 0.020 * kAstronomicalUnitM;
+            default:
+                return 0.18 * kAstronomicalUnitM;
+        }
+    }();
+    const double viewRadiusM = Clamp(suggestedRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
+    return CameraSnapshot{
+        .centerX = runtimeScene_.sceneOriginX + body->positionRelativeX,
+        .centerY = runtimeScene_.sceneOriginY + body->positionRelativeY,
+        .centerZ = runtimeScene_.sceneOriginZ + body->positionRelativeZ,
+        .viewRadiusM = viewRadiusM,
+        .yawRadians = cameraYawRadians_,
+        .pitchRadians = OrbitControlPolicyForViewRadius(viewRadiusM).preferredPitchRadians,
+    };
+}
+
 void SolarLabStageController::BindRuntimeSession(uint64_t runtimeSessionHandle) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     if (boundRuntimeSessionHandle_ == runtimeSessionHandle) {
@@ -779,6 +881,79 @@ void SolarLabStageController::ZoomRuntimeCamera(
     ++cameraRevisionCounter_;
 }
 
+void SolarLabStageController::PanAndZoomRuntimeCamera(
+    float distanceXPx,
+    float distanceYPx,
+    float scaleFactor,
+    float focusXPx,
+    float focusYPx,
+    int viewportWidthPx,
+    int viewportHeightPx) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    if (!RuntimeSessionBoundLocked() || !runtimeCameraInitialized_) {
+        return;
+    }
+
+    if (runtimeObserverModeCode_ == kObserverModeFree &&
+        (std::abs(distanceXPx) > 0.0f || std::abs(distanceYPx) > 0.0f)) {
+        const CameraFrame panFrame = BuildCameraFrame(
+            cameraViewRadiusM_,
+            cameraYawRadians_,
+            cameraPitchRadians_,
+            viewportWidthPx,
+            viewportHeightPx);
+        cameraCenterX_ += (distanceXPx * panFrame.metersPerPixel * panFrame.right.x) -
+            (distanceYPx * panFrame.metersPerPixel * panFrame.up.x);
+        cameraCenterY_ += (distanceXPx * panFrame.metersPerPixel * panFrame.right.y) -
+            (distanceYPx * panFrame.metersPerPixel * panFrame.up.y);
+        cameraCenterZ_ += (distanceXPx * panFrame.metersPerPixel * panFrame.right.z) -
+            (distanceYPx * panFrame.metersPerPixel * panFrame.up.z);
+    }
+
+    if (scaleFactor > 0.0f && std::abs(scaleFactor - 1.0f) >= 0.001f) {
+        const CameraFrame currentFrame = BuildCameraFrame(
+            cameraViewRadiusM_,
+            cameraYawRadians_,
+            cameraPitchRadians_,
+            viewportWidthPx,
+            viewportHeightPx);
+        const Float3 anchoredWorldPoint = FocusPlanePoint(
+            cameraCenterX_,
+            cameraCenterY_,
+            cameraCenterZ_,
+            currentFrame,
+            focusXPx,
+            focusYPx,
+            viewportWidthPx,
+            viewportHeightPx);
+        const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(cameraViewRadiusM_);
+        const double effectiveScaleFactor = std::pow(
+            Clamp(static_cast<double>(scaleFactor), 0.25, 4.0),
+            policy.zoomExponent);
+        cameraViewRadiusM_ = Clamp(
+            cameraViewRadiusM_ / effectiveScaleFactor,
+            kMinViewRadiusM,
+            kMaxViewRadiusM);
+        const CameraFrame resizedFrame = BuildCameraFrame(
+            cameraViewRadiusM_,
+            cameraYawRadians_,
+            cameraPitchRadians_,
+            viewportWidthPx,
+            viewportHeightPx);
+        const Float3 anchoredCenter = CenterForAnchorAtViewportPoint(
+            anchoredWorldPoint,
+            resizedFrame,
+            focusXPx,
+            focusYPx,
+            viewportWidthPx,
+            viewportHeightPx);
+        cameraCenterX_ = anchoredCenter.x;
+        cameraCenterY_ = anchoredCenter.y;
+        cameraCenterZ_ = anchoredCenter.z;
+    }
+    ++cameraRevisionCounter_;
+}
+
 void SolarLabStageController::OrbitRuntimeCamera(
     float deltaXPx,
     float deltaYPx,
@@ -787,7 +962,7 @@ void SolarLabStageController::OrbitRuntimeCamera(
     int viewportWidthPx,
     int viewportHeightPx) {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    if (!RuntimeSessionBoundLocked() || runtimeObserverModeCode_ != kObserverModeFree) {
+    if (!RuntimeSessionBoundLocked()) {
         return;
     }
     if (!runtimeCameraInitialized_) {
@@ -809,9 +984,16 @@ void SolarLabStageController::OrbitRuntimeCamera(
         viewportWidthPx,
         viewportHeightPx);
     const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(cameraViewRadiusM_);
-    cameraYawRadians_ = NormalizeAngleRadians(cameraYawRadians_ - (static_cast<double>(deltaXPx) * policy.yawRadiansPerPixel));
+    const double shortViewportDimensionPx = static_cast<double>(
+        std::max(1, std::min(viewportWidthPx, viewportHeightPx)));
+    const double yawRadiansPerPixel = (kPi / shortViewportDimensionPx) *
+        policy.orbitSensitivityMultiplier;
+    const double pitchRadiansPerPixel = ((kPi * 0.5) / shortViewportDimensionPx) *
+        policy.orbitSensitivityMultiplier;
+    cameraYawRadians_ = NormalizeAngleRadians(
+        cameraYawRadians_ - (static_cast<double>(deltaXPx) * yawRadiansPerPixel));
     cameraPitchRadians_ = Clamp(
-        cameraPitchRadians_ - (static_cast<double>(deltaYPx) * policy.pitchRadiansPerPixel),
+        cameraPitchRadians_ - (static_cast<double>(deltaYPx) * pitchRadiansPerPixel),
         kMinPitchRadians,
         kMaxPitchRadians);
     const CameraFrame rotatedFrame = BuildCameraFrame(
@@ -1020,8 +1202,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     const bool focusTraceLayer = runtimeTraceLayerModeCode_ == kTraceLayerModeFocus;
     const std::string selectedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
     if (cameraLocked) {
-        // Locked observer modes mirror runtime camera intent directly and keep the native free
-        // camera centered on the selected runtime frame.
+        // Locked observer modes keep the native camera centered on the selected runtime frame
+        // while preserving user-controlled orbit and scale after the initial lock-on.
         InitializeFreeCameraFromRuntimePacketLocked(
             packetResult.info.camera.frame_origin_m.x,
             packetResult.info.camera.frame_origin_m.y,
@@ -1033,7 +1215,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             packetResult.info.camera.target_from_origin_m.y,
             packetResult.info.camera.target_from_origin_m.z,
             packetResult.info.camera.vertical_fov_degrees,
-            true);
+            false);
         cameraCenterX_ = packetResult.info.camera.frame_origin_m.x + packetResult.info.camera.target_from_origin_m.x;
         cameraCenterY_ = packetResult.info.camera.frame_origin_m.y + packetResult.info.camera.target_from_origin_m.y;
         cameraCenterZ_ = packetResult.info.camera.frame_origin_m.z + packetResult.info.camera.target_from_origin_m.z;

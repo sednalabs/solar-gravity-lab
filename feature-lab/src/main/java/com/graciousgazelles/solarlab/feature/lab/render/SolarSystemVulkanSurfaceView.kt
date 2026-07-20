@@ -1,23 +1,28 @@
 package com.graciousgazelles.solarlab.feature.lab.render
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.os.Build
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.ViewConfiguration
+import android.view.animation.PathInterpolator
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
+import com.graciousgazelles.solarlab.render.core.CameraGesturePointer
+import com.graciousgazelles.solarlab.render.core.CameraGestureStateMachine
+import com.graciousgazelles.solarlab.render.core.CameraGestureUpdate
+import com.graciousgazelles.solarlab.render.core.CameraNavigation
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.CameraState
 import com.graciousgazelles.solarlab.render.core.MultiscaleOrbitCameraController
 import com.graciousgazelles.solarlab.render.core.NativeScenePacket
 import com.graciousgazelles.solarlab.render.core.ObserverCameraResolver
 import com.graciousgazelles.solarlab.render.core.ObserverMode
-import com.graciousgazelles.solarlab.render.core.OrbitCameraMath
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
@@ -25,7 +30,6 @@ import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.SceneInteractionMath
 import com.graciousgazelles.solarlab.render.core.ScenePacketBuildPolicy
 import com.graciousgazelles.solarlab.render.core.withLayerOptions
-import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -35,11 +39,6 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private val statusCallback: (RenderBackendStatus) -> Unit,
     private val fatalInitCallback: (String) -> Unit,
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback2, SolarRenderSurface {
-
-    private data class OrbitGestureState(
-        val centroidX: Float,
-        val centroidY: Float,
-    )
 
     private val capabilities = RenderDeviceCapabilities.query(context)
     private var rendererHandle: Long = 0L
@@ -56,27 +55,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var renderLayerOptions: RenderLayerOptions = RenderLayerOptions()
     private var placementStartScreen: Pair<Float, Float>? = null
     private var placementPlaneZ: Double = 0.0
-    private var orbitGestureState: OrbitGestureState? = null
+    private var placementGestureCancelledByTransform: Boolean = false
     private var runtimeSessionHandle: Long = 0L
     private var deferredRenderDepth: Int = 0
     private var renderDeferred: Boolean = false
+    private var cameraTransition: ValueAnimator? = null
+    private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
+    private var lastReportedCameraScaleBand: CameraScaleBand? = null
 
     private var scenePacketPolicy = defaultScenePacketPolicy()
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
     private val maxViewRadiusM: Double = 150_000.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M
-
-    private val scaleDetector = ScaleGestureDetector(
-        context,
-        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                return zoomByInternal(
-                    scaleFactor = detector.scaleFactor,
-                    focusXPx = detector.focusX,
-                    focusYPx = detector.focusY,
-                    manualGesture = true,
-                )
-            }
-        },
+    private val cameraGestures = CameraGestureStateMachine(
+        touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat(),
     )
 
     private val gestureDetector = GestureDetector(
@@ -86,63 +77,16 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
-                val bodyId = if (isRuntimeBound()) {
-                    SolarLabVulkanBridge.pickRuntimeBodyId(
-                        handle = rendererHandle,
-                        screenXPx = e.x,
-                        screenYPx = e.y,
-                        viewportWidthPx = width.coerceAtLeast(1),
-                        viewportHeightPx = height.coerceAtLeast(1),
-                    )
-                } else {
-                    SceneInteractionMath.pickBodyIdAtScreenPoint(
-                        frame = latestScene,
-                        cameraState = cameraState,
-                        viewportWidthPx = width.coerceAtLeast(1),
-                        viewportHeightPx = height.coerceAtLeast(1),
-                        screenXPx = e.x,
-                        screenYPx = e.y,
-                    )
-                }
-                interactionListener?.onBodySelectionChanged(bodyId)
-                return true
-            }
-
-            override fun onScroll(
-                e1: MotionEvent?,
-                e2: MotionEvent,
-                distanceX: Float,
-                distanceY: Float,
-            ): Boolean {
-                if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
-                if (e2.pointerCount > 1) return false
-                switchToFreeCameraForManualNavigation()
-                if (isRuntimeBound()) {
-                    SolarLabVulkanBridge.panRuntimeCamera(
-                        handle = rendererHandle,
-                        distanceXPx = distanceX,
-                        distanceYPx = distanceY,
-                        viewportWidthPx = width.coerceAtLeast(1),
-                        viewportHeightPx = height.coerceAtLeast(1),
-                    )
-                    renderLatestScene()
-                    return true
-                }
-                if (ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)) return false
-                cameraState = MultiscaleOrbitCameraController.panByScreenDelta(
-                    cameraState = cameraState,
-                    distanceXPx = distanceX,
-                    distanceYPx = distanceY,
-                    viewportWidthPx = width.coerceAtLeast(1),
-                    viewportHeightPx = height.coerceAtLeast(1),
-                )
-                onCameraChanged()
+                interactionListener?.onBodySelectionChanged(pickBodyId(e.x, e.y))
                 return true
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
-                resetCamera()
+                val bodyId = pickBodyId(e.x, e.y) ?: return false
+                selectedBodyId = bodyId
+                interactionListener?.onBodySelectionChanged(bodyId)
+                frameBody(bodyId)
                 return true
             }
         },
@@ -218,17 +162,40 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun resetCamera() {
-        if (isRuntimeBound()) {
+        switchToFreeCameraForManualNavigation()
+        val target = if (isRuntimeBound()) {
+            SolarLabVulkanBridge.resolveRuntimeHomeCamera(rendererHandle)
+        } else {
+            CameraNavigation.scenarioFit(
+                frame = latestScene,
+                currentCameraState = cameraState,
+                minViewRadiusM = minViewRadiusM,
+                maxViewRadiusM = maxViewRadiusM,
+            )
+        }
+        if (target != null) {
+            animateCameraTo(target)
+        } else if (isRuntimeBound()) {
             SolarLabVulkanBridge.resetRuntimeCamera(rendererHandle)
             renderLatestScene()
-            return
+        } else {
+            animateCameraTo(CameraState())
         }
-        cameraState = CameraState()
-        onCameraChanged()
     }
 
     override fun zoomBy(scaleFactor: Float) {
-        zoomByInternal(scaleFactor)
+        val current = currentCameraState()
+        val target = MultiscaleOrbitCameraController.zoomAroundViewportPoint(
+            cameraState = current,
+            scaleFactor = scaleFactor,
+            focusXPx = width.coerceAtLeast(1) * 0.5f,
+            focusYPx = height.coerceAtLeast(1) * 0.5f,
+            viewportWidthPx = width.coerceAtLeast(1),
+            viewportHeightPx = height.coerceAtLeast(1),
+            minViewRadiusM = minViewRadiusM,
+            maxViewRadiusM = maxViewRadiusM,
+        )
+        animateCameraTo(target)
     }
 
     override fun bindRuntimeSessionHandle(sessionHandle: Long) {
@@ -260,26 +227,60 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     override fun setInteractionMode(mode: SceneInteractionMode) {
         interactionMode = mode
         placementStartScreen = null
-        orbitGestureState = null
+        placementGestureCancelledByTransform = false
+        cameraGestures.onCancel()
     }
 
     override fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {
         selectedBodyId = bodyId
         this.observerMode = observerMode
+        val target = bodyId?.let(::resolveBodyFrame)
         if (isRuntimeBound()) {
             SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
             SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, observerMode)
-            renderLatestScene()
+            if (target != null) {
+                animateCameraTo(target)
+            } else {
+                renderLatestScene()
+            }
             return
         }
-        latestScene?.let { frame ->
-            applyObserverTargetIfNeeded(frame, snapToSuggestedRadius = observerMode != ObserverMode.FREE)
-            packetDirty = true
-            renderLatestScene()
+        if (target != null) {
+            animateCameraTo(target)
+        } else {
+            applyObserverTargetIfNeeded(latestScene, snapToSuggestedRadius = observerMode != ObserverMode.FREE)
+            onCameraChanged()
         }
     }
 
+    override fun frameBody(bodyId: String) {
+        selectedBodyId = bodyId
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
+        }
+        resolveBodyFrame(bodyId)?.let(::animateCameraTo)
+    }
+
+    override fun setCameraScaleBand(scaleBand: CameraScaleBand) {
+        val target = CameraNavigation.scalePreset(
+            currentCameraState = currentCameraState(),
+            scaleBand = scaleBand,
+            minViewRadiusM = minViewRadiusM,
+            maxViewRadiusM = maxViewRadiusM,
+        )
+        animateCameraTo(target)
+    }
+
+    override fun currentCameraScaleBand(): CameraScaleBand = currentCameraState().scaleBand()
+
+    override fun setOnCameraScaleChangedListener(listener: ((CameraScaleBand) -> Unit)?) {
+        cameraScaleChangedListener = listener
+        lastReportedCameraScaleBand = null
+        reportCameraScaleBand()
+    }
+
     override fun setSelectedBodyId(bodyId: String?) {
+        if (selectedBodyId == bodyId) return
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
             SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
@@ -292,6 +293,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun setObserverMode(mode: ObserverMode) {
+        if (observerMode == mode) return
         observerMode = mode
         if (isRuntimeBound()) {
             SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, mode)
@@ -320,6 +322,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun release() {
+        cancelCameraTransition()
         surfaceReady = false
         latestPacket = null
         packetDirty = true
@@ -353,32 +356,119 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (interactionMode == SceneInteractionMode.PLACE_BODY) {
-            val multiTouchActive = event.pointerCount >= 2 || orbitGestureState != null
-            if (multiTouchActive) {
-                placementStartScreen?.let { activeStart ->
-                    dispatchPlacementUpdate(
-                        phase = PlacementGesturePhase.Cancelled,
-                        startScreen = activeStart,
-                        endScreen = event.x to event.y,
-                    )
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                cancelCameraTransition()
+                parent?.requestDisallowInterceptTouchEvent(true)
+                placementGestureCancelledByTransform = false
+                cameraGestures.onDown(event.pointerAt(0))
+                return if (interactionMode == SceneInteractionMode.PLACE_BODY) {
+                    handlePlacementTouch(event)
+                } else {
+                    gestureDetector.onTouchEvent(event)
+                    true
                 }
-                placementStartScreen = null
-                handleOrbitTouch(event)
-                scaleDetector.onTouchEvent(event)
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                cancelTapRecognition(event)
+                if (cameraGestures.onPointerDown(event.pointers())) {
+                    cancelPlacementForTransform(event)
+                }
                 return true
             }
-            return handlePlacementTouch(event)
+
+            MotionEvent.ACTION_MOVE -> {
+                if (
+                    interactionMode == SceneInteractionMode.PLACE_BODY &&
+                    !placementGestureCancelledByTransform &&
+                    !cameraGestures.isTransforming &&
+                    event.pointerCount == 1
+                ) {
+                    return handlePlacementTouch(event)
+                }
+                if (
+                    interactionMode == SceneInteractionMode.NAVIGATE_AND_SELECT &&
+                    cameraGestures.acceptsTap &&
+                    event.pointerCount == 1
+                ) {
+                    gestureDetector.onTouchEvent(event)
+                }
+                cameraGestures.onMove(
+                    pointers = event.pointers(),
+                    followActive = observerMode != ObserverMode.FREE,
+                )?.let(::applyCameraGesture)
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                cameraGestures.onPointerUp()
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                if (
+                    interactionMode == SceneInteractionMode.PLACE_BODY &&
+                    !placementGestureCancelledByTransform
+                ) {
+                    handlePlacementTouch(event)
+                } else if (
+                    interactionMode == SceneInteractionMode.NAVIGATE_AND_SELECT &&
+                    cameraGestures.acceptsTap
+                ) {
+                    gestureDetector.onTouchEvent(event)
+                }
+                cameraGestures.onUp()
+                parent?.requestDisallowInterceptTouchEvent(false)
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                if (
+                    interactionMode == SceneInteractionMode.PLACE_BODY &&
+                    !placementGestureCancelledByTransform
+                ) {
+                    handlePlacementTouch(event)
+                }
+                cancelTapRecognition(event)
+                cameraGestures.onCancel()
+                placementStartScreen = null
+                parent?.requestDisallowInterceptTouchEvent(false)
+                return true
+            }
         }
-        val multiTouchActive = event.pointerCount >= 2 || orbitGestureState != null
-        val orbitHandled = if (multiTouchActive) handleOrbitTouch(event) else false
-        val scaled = scaleDetector.onTouchEvent(event)
-        val gestured = if (!multiTouchActive) {
-            gestureDetector.onTouchEvent(event)
-        } else {
-            false
+        return true
+    }
+
+    private fun MotionEvent.pointerAt(index: Int): CameraGesturePointer = CameraGesturePointer(
+        id = getPointerId(index),
+        xPx = getX(index),
+        yPx = getY(index),
+    )
+
+    private fun MotionEvent.pointers(): List<CameraGesturePointer> =
+        List(pointerCount) { index -> pointerAt(index) }
+
+    private fun cancelTapRecognition(source: MotionEvent) {
+        val cancel = MotionEvent.obtain(source)
+        cancel.action = MotionEvent.ACTION_CANCEL
+        gestureDetector.onTouchEvent(cancel)
+        cancel.recycle()
+    }
+
+    private fun cancelPlacementForTransform(event: MotionEvent) {
+        if (interactionMode != SceneInteractionMode.PLACE_BODY || placementGestureCancelledByTransform) {
+            return
         }
-        return orbitHandled || scaled || gestured || super.onTouchEvent(event)
+        placementStartScreen?.let { activeStart ->
+            dispatchPlacementUpdate(
+                phase = PlacementGesturePhase.Cancelled,
+                startScreen = activeStart,
+                endScreen = event.x to event.y,
+            )
+        }
+        placementStartScreen = null
+        placementGestureCancelledByTransform = true
     }
 
     private fun handlePlacementTouch(event: MotionEvent): Boolean {
@@ -444,107 +534,110 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         )
     }
 
-    private fun handleOrbitTouch(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_DOWN -> {
-                if (event.pointerCount >= 2) {
-                    orbitGestureState = OrbitGestureState(
-                        centroidX = (event.getX(0) + event.getX(1)) * 0.5f,
-                        centroidY = (event.getY(0) + event.getY(1)) * 0.5f,
-                    )
-                }
-                return event.pointerCount >= 2
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                if (event.pointerCount < 2) {
-                    return false
-                }
-                val previous = orbitGestureState ?: OrbitGestureState(
-                    centroidX = (event.getX(0) + event.getX(1)) * 0.5f,
-                    centroidY = (event.getY(0) + event.getY(1)) * 0.5f,
-                )
-                val centroidX = (event.getX(0) + event.getX(1)) * 0.5f
-                val centroidY = (event.getY(0) + event.getY(1)) * 0.5f
-                orbitGestureState = OrbitGestureState(centroidX, centroidY)
-
-                val deltaX = centroidX - previous.centroidX
-                val deltaY = centroidY - previous.centroidY
-                if (abs(deltaX) < 0.25f && abs(deltaY) < 0.25f) {
-                    return false
-                }
+    private fun applyCameraGesture(update: CameraGestureUpdate) {
+        when (update) {
+            is CameraGestureUpdate.Orbit -> {
                 if (isRuntimeBound()) {
-                    if (observerMode != ObserverMode.FREE) return false
                     SolarLabVulkanBridge.orbitRuntimeCamera(
                         handle = rendererHandle,
-                        deltaXPx = deltaX,
-                        deltaYPx = deltaY,
-                        focusXPx = centroidX,
-                        focusYPx = centroidY,
+                        deltaXPx = update.deltaXPx,
+                        deltaYPx = update.deltaYPx,
+                        focusXPx = update.focusXPx,
+                        focusYPx = update.focusYPx,
                         viewportWidthPx = width.coerceAtLeast(1),
                         viewportHeightPx = height.coerceAtLeast(1),
                     )
                     renderLatestScene()
-                    return true
+                } else {
+                    cameraState = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
+                        cameraState = cameraState,
+                        deltaXPx = update.deltaXPx,
+                        deltaYPx = update.deltaYPx,
+                        focusXPx = update.focusXPx,
+                        focusYPx = update.focusYPx,
+                        viewportWidthPx = width.coerceAtLeast(1),
+                        viewportHeightPx = height.coerceAtLeast(1),
+                    )
+                    onCameraChanged()
                 }
-                cameraState = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
-                    cameraState = cameraState,
-                    deltaXPx = deltaX,
-                    deltaYPx = deltaY,
-                    focusXPx = centroidX,
-                    focusYPx = centroidY,
-                    viewportWidthPx = width.coerceAtLeast(1),
-                    viewportHeightPx = height.coerceAtLeast(1),
-                )
-                onCameraChanged()
-                return true
             }
 
-            MotionEvent.ACTION_POINTER_UP,
-            MotionEvent.ACTION_UP,
-            MotionEvent.ACTION_CANCEL,
-            -> {
-                orbitGestureState = null
-                return false
+            is CameraGestureUpdate.PanAndZoom -> {
+                if (update.detachFollow) {
+                    switchToFreeCameraForManualNavigation()
+                }
+                if (isRuntimeBound()) {
+                    SolarLabVulkanBridge.panAndZoomRuntimeCamera(
+                        handle = rendererHandle,
+                        distanceXPx = update.distanceXPx,
+                        distanceYPx = update.distanceYPx,
+                        scaleFactor = update.scaleFactor,
+                        focusXPx = update.focusXPx,
+                        focusYPx = update.focusYPx,
+                        viewportWidthPx = width.coerceAtLeast(1),
+                        viewportHeightPx = height.coerceAtLeast(1),
+                    )
+                    renderLatestScene()
+                } else {
+                    var transformedCamera = cameraState
+                    if (update.distanceXPx != 0f || update.distanceYPx != 0f) {
+                        transformedCamera = MultiscaleOrbitCameraController.panByScreenDelta(
+                            cameraState = transformedCamera,
+                            distanceXPx = update.distanceXPx,
+                            distanceYPx = update.distanceYPx,
+                            viewportWidthPx = width.coerceAtLeast(1),
+                            viewportHeightPx = height.coerceAtLeast(1),
+                        )
+                    }
+                    if (update.scaleFactor != 1f) {
+                        transformedCamera = MultiscaleOrbitCameraController.zoomAroundViewportPoint(
+                            cameraState = transformedCamera,
+                            scaleFactor = update.scaleFactor,
+                            focusXPx = update.focusXPx,
+                            focusYPx = update.focusYPx,
+                            viewportWidthPx = width.coerceAtLeast(1),
+                            viewportHeightPx = height.coerceAtLeast(1),
+                            minViewRadiusM = minViewRadiusM,
+                            maxViewRadiusM = maxViewRadiusM,
+                        )
+                    }
+                    cameraState = transformedCamera
+                    onCameraChanged()
+                }
             }
         }
-        return false
     }
 
-    private fun zoomByInternal(
-        scaleFactor: Float,
-        focusXPx: Float = width.coerceAtLeast(1) * 0.5f,
-        focusYPx: Float = height.coerceAtLeast(1) * 0.5f,
-        manualGesture: Boolean = false,
-    ): Boolean {
-        if (scaleFactor <= 0f) {
-            return false
-        }
-        if (manualGesture) {
-            switchToFreeCameraForManualNavigation()
-        }
+    private fun pickBodyId(screenXPx: Float, screenYPx: Float): String? =
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.zoomRuntimeCamera(rendererHandle, scaleFactor)
-            renderLatestScene()
-            return true
-        }
-        val cameraLocked = ObserverCameraResolver.isCameraLocked(latestScene, selectedBodyId, observerMode)
-        val anchorBeforeZoom = if (cameraLocked) {
-            null
+            SolarLabVulkanBridge.pickRuntimeBodyId(
+                handle = rendererHandle,
+                screenXPx = screenXPx,
+                screenYPx = screenYPx,
+                viewportWidthPx = width.coerceAtLeast(1),
+                viewportHeightPx = height.coerceAtLeast(1),
+            )
         } else {
-            cameraFocusPlanePoint(focusXPx, focusYPx, cameraState)
+            SceneInteractionMath.pickBodyIdAtScreenPoint(
+                frame = latestScene,
+                cameraState = cameraState,
+                viewportWidthPx = width.coerceAtLeast(1),
+                viewportHeightPx = height.coerceAtLeast(1),
+                screenXPx = screenXPx,
+                screenYPx = screenYPx,
+            )
         }
-        cameraState = cameraState.copy(
-            viewRadiusM = (cameraState.viewRadiusM / scaleFactor.toDouble()).coerceIn(minViewRadiusM, maxViewRadiusM),
-        ).sanitized()
-        anchorBeforeZoom?.let { anchor ->
-            val anchorAfterZoom = cameraFocusPlanePoint(focusXPx, focusYPx, cameraState)
-            cameraState = cameraState.copy(
-                centerM = cameraState.centerM + (anchor - anchorAfterZoom),
-            ).sanitized()
-        }
-        onCameraChanged()
-        return true
+
+    private fun resolveBodyFrame(bodyId: String): CameraState? = if (isRuntimeBound()) {
+        SolarLabVulkanBridge.resolveRuntimeBodyFrame(rendererHandle, bodyId)
+    } else {
+        CameraNavigation.frameBody(
+            frame = latestScene,
+            bodyId = bodyId,
+            currentCameraState = cameraState,
+            minViewRadiusM = minViewRadiusM,
+            maxViewRadiusM = maxViewRadiusM,
+        )
     }
 
     private fun switchToFreeCameraForManualNavigation() {
@@ -556,17 +649,60 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun cameraFocusPlanePoint(
-        screenXPx: Float,
-        screenYPx: Float,
-        camera: CameraState,
-    ): Vector3d = OrbitCameraMath.focusPlanePoint(
-        screenXPx = screenXPx,
-        screenYPx = screenYPx,
-        cameraState = camera,
-        viewportWidthPx = width.coerceAtLeast(1),
-        viewportHeightPx = height.coerceAtLeast(1),
-    )
+    private fun currentCameraState(): CameraState = if (isRuntimeBound()) {
+        SolarLabVulkanBridge.cameraState(rendererHandle) ?: cameraState
+    } else {
+        cameraState
+    }
+
+    private fun animateCameraTo(target: CameraState) {
+        cancelCameraTransition()
+        val startCamera = currentCameraState()
+        cameraTransition = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = CAMERA_TRANSITION_DURATION_MS
+            interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+            addUpdateListener { animator ->
+                applyCameraState(
+                    CameraNavigation.interpolate(
+                        start = startCamera,
+                        target = target,
+                        fraction = animator.animatedValue as Float,
+                    ),
+                )
+            }
+            start()
+        }
+    }
+
+    private fun applyCameraState(nextCameraState: CameraState) {
+        cameraState = nextCameraState.sanitized()
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.setCamera(
+                handle = rendererHandle,
+                centerX = cameraState.centerM.x,
+                centerY = cameraState.centerM.y,
+                centerZ = cameraState.centerM.z,
+                viewRadiusM = cameraState.viewRadiusM,
+                yawRadians = cameraState.yawRadians,
+                pitchRadians = cameraState.pitchRadians,
+            )
+            renderLatestScene()
+        } else {
+            onCameraChanged()
+        }
+    }
+
+    private fun cancelCameraTransition() {
+        cameraTransition?.cancel()
+        cameraTransition = null
+    }
+
+    private fun reportCameraScaleBand() {
+        val scaleBand = currentCameraState().scaleBand()
+        if (lastReportedCameraScaleBand == scaleBand) return
+        lastReportedCameraScaleBand = scaleBand
+        cameraScaleChangedListener?.invoke(scaleBand)
+    }
 
     private fun applyObserverTargetIfNeeded(
         frame: RenderSceneFrame,
@@ -621,6 +757,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private fun isRuntimeBound(): Boolean = runtimeSessionHandle != 0L
 
     private fun onCameraChanged() {
+        reportCameraScaleBand()
         if (isRuntimeBound()) {
             renderLatestScene()
             return
@@ -657,6 +794,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             reportStatus(
                 "${SolarLabVulkanBridge.backendLabel(rendererHandle)} active. ${SolarLabVulkanBridge.sceneSummary(rendererHandle)}"
             )
+            reportCameraScaleBand()
             return
         }
 
@@ -779,5 +917,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             trailSimplificationTolerancePx = 6.0,
             maxTrailVerticesPerTrail = 96,
         )
+    }
+
+    private companion object {
+        private const val CAMERA_TRANSITION_DURATION_MS = 240L
     }
 }

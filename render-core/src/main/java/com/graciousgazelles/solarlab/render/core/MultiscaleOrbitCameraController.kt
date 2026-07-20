@@ -1,12 +1,12 @@
 package com.graciousgazelles.solarlab.render.core
 
 import com.graciousgazelles.solarlab.core.math.Vector3d
+import kotlin.math.PI
 import kotlin.math.pow
 
 data class OrbitCameraControlPolicy(
     val preferredPitchRadians: Double,
-    val yawRadiansPerPixel: Double,
-    val pitchRadiansPerPixel: Double,
+    val orbitSensitivityMultiplier: Double,
     val zoomExponent: Double,
 )
 
@@ -16,36 +16,31 @@ object MultiscaleOrbitCameraController {
     fun policyFor(scaleBand: CameraScaleBand): OrbitCameraControlPolicy = when (scaleBand) {
         CameraScaleBand.CLOSE -> OrbitCameraControlPolicy(
             preferredPitchRadians = Math.toRadians(44.0),
-            yawRadiansPerPixel = 0.0030,
-            pitchRadiansPerPixel = 0.0022,
+            orbitSensitivityMultiplier = 0.55,
             zoomExponent = 0.58,
         )
 
         CameraScaleBand.LOCAL -> OrbitCameraControlPolicy(
             preferredPitchRadians = Math.toRadians(50.0),
-            yawRadiansPerPixel = 0.0038,
-            pitchRadiansPerPixel = 0.0028,
+            orbitSensitivityMultiplier = 0.70,
             zoomExponent = 0.68,
         )
 
         CameraScaleBand.SYSTEM -> OrbitCameraControlPolicy(
             preferredPitchRadians = Math.toRadians(63.0),
-            yawRadiansPerPixel = 0.0050,
-            pitchRadiansPerPixel = 0.0037,
+            orbitSensitivityMultiplier = 0.85,
             zoomExponent = 0.82,
         )
 
         CameraScaleBand.WIDE -> OrbitCameraControlPolicy(
             preferredPitchRadians = Math.toRadians(72.0),
-            yawRadiansPerPixel = 0.0062,
-            pitchRadiansPerPixel = 0.0045,
+            orbitSensitivityMultiplier = 1.0,
             zoomExponent = 0.92,
         )
 
         CameraScaleBand.DEEP -> OrbitCameraControlPolicy(
             preferredPitchRadians = Math.toRadians(80.0),
-            yawRadiansPerPixel = 0.0074,
-            pitchRadiansPerPixel = 0.0052,
+            orbitSensitivityMultiplier = 1.0,
             zoomExponent = 1.0,
         )
     }
@@ -117,6 +112,13 @@ object MultiscaleOrbitCameraController {
     ): CameraState {
         val safeCamera = cameraState.sanitized()
         val policy = policyFor(safeCamera)
+        val shortViewportDimensionPx = minOf(viewportWidthPx, viewportHeightPx)
+            .coerceAtLeast(1)
+            .toDouble()
+        val yawRadiansPerPixel = (PI / shortViewportDimensionPx) *
+            policy.orbitSensitivityMultiplier
+        val pitchRadiansPerPixel = ((PI * 0.5) / shortViewportDimensionPx) *
+            policy.orbitSensitivityMultiplier
         val anchoredPoint = OrbitCameraMath.focusPlanePoint(
             screenXPx = focusXPx,
             screenYPx = focusYPx,
@@ -125,8 +127,8 @@ object MultiscaleOrbitCameraController {
             viewportHeightPx = viewportHeightPx,
         )
         val rotatedCamera = safeCamera.copy(
-            yawRadians = safeCamera.yawRadians - (deltaXPx * policy.yawRadiansPerPixel),
-            pitchRadians = safeCamera.pitchRadians - (deltaYPx * policy.pitchRadiansPerPixel),
+            yawRadians = safeCamera.yawRadians - (deltaXPx * yawRadiansPerPixel),
+            pitchRadians = safeCamera.pitchRadians - (deltaYPx * pitchRadiansPerPixel),
         ).sanitized()
         val anchoredCenter = OrbitCameraMath.centerForAnchorAtViewportPoint(
             anchoredWorldPointM = anchoredPoint,
