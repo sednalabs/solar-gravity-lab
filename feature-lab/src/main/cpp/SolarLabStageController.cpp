@@ -22,7 +22,7 @@
 namespace {
 constexpr const char* kLogTag = "SolarLabStage";
 constexpr double kAstronomicalUnitM = 149597870700.0;
-constexpr double kMinViewRadiusM = 0.001 * kAstronomicalUnitM;
+constexpr double kMinViewRadiusM = 1000.0;
 constexpr double kMaxViewRadiusM = 150000.0 * kAstronomicalUnitM;
 constexpr double kDefaultViewRadiusM = 24.0 * kAstronomicalUnitM;
 constexpr double kDefaultYawRadians = -0.5934119456780721;    // -34 degrees.
@@ -47,6 +47,9 @@ constexpr int kProcessingModeLow = 1;
 constexpr int kTraceLayerModeFocus = 0;
 constexpr int kTraceLayerModeAll = 1;
 constexpr int kTraceLayerModeOff = 2;
+constexpr uint32_t kFocusTraceDecimationStride = 4U;
+constexpr double kBodyFrameRadiusFactor = 3.2;
+constexpr double kBodyInspectionRadiusFactor = 1.15;
 
 void LogInfo(const std::string& message) {
     __android_log_print(ANDROID_LOG_INFO, kLogTag, "%s", message.c_str());
@@ -168,36 +171,44 @@ std::string DecodeBytesView(const SlBytesView& view) {
     return std::string(reinterpret_cast<const char*>(view.data), reinterpret_cast<const char*>(view.data) + view.length);
 }
 
-uint32_t InferBodyKind(const std::string& bodyId, float radiusM, float emissiveLuminance) {
-    const std::string lowered = [&]() {
-        std::string out = bodyId;
-        std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return out;
-    }();
-
-    if (lowered == "sun" || emissiveLuminance >= 100000.0f) {
-        return kKindStar;
+uint32_t RenderKindForSceneBodyKind(SlSceneBodyKind kind) {
+    switch (kind) {
+        case SL_SCENE_BODY_KIND_STAR:
+            return kKindStar;
+        case SL_SCENE_BODY_KIND_PLANET:
+        case SL_SCENE_BODY_KIND_MOON:
+            return kKindPlanet;
+        case SL_SCENE_BODY_KIND_DWARF_PLANET:
+            return kKindDwarfPlanet;
+        case SL_SCENE_BODY_KIND_ASTEROID:
+            return kKindAsteroid;
+        case SL_SCENE_BODY_KIND_COMET:
+            return kKindComet;
+        case SL_SCENE_BODY_KIND_TRACER:
+        case SL_SCENE_BODY_KIND_SPACECRAFT:
+            return kKindProbe;
+        case SL_SCENE_BODY_KIND_CUSTOM:
+        default:
+            return kKindTestObject;
     }
-    if (lowered.find("probe") != std::string::npos || lowered.find("ship") != std::string::npos) {
-        return kKindProbe;
-    }
-    if (lowered.find("comet") != std::string::npos) {
-        return kKindComet;
-    }
-    if (radiusM >= 1'000'000.0f) {
-        return kKindPlanet;
-    }
-    if (radiusM >= 250'000.0f) {
-        return kKindDwarfPlanet;
-    }
-    if (radiusM <= 10'000.0f) {
-        return kKindProbe;
-    }
-    return kKindAsteroid;
 }
 
 bool ShouldIncludeAuthoritativeBody(float radiusM, float emissiveLuminance, bool selected) {
     return selected || emissiveLuminance > 1000.0f || radiusM >= 100'000.0f;
+}
+
+double SafeBodyRadiusM(float radiusM) {
+    return std::isfinite(radiusM) && radiusM > 0.0f
+        ? static_cast<double>(radiusM)
+        : kMinViewRadiusM;
+}
+
+double BodyFrameViewRadiusM(float radiusM) {
+    return std::max(kMinViewRadiusM, SafeBodyRadiusM(radiusM) * kBodyFrameRadiusFactor);
+}
+
+double BodyInspectionViewRadiusM(float radiusM) {
+    return std::max(kMinViewRadiusM, SafeBodyRadiusM(radiusM) * kBodyInspectionRadiusFactor);
 }
 
 struct CameraFrame {
@@ -621,7 +632,7 @@ void SolarLabStageController::SetCamera(
     cameraCenterX_ = centerX;
     cameraCenterY_ = centerY;
     cameraCenterZ_ = centerZ;
-    cameraViewRadiusM_ = Clamp(viewRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
+    cameraViewRadiusM_ = Clamp(viewRadiusM, MinimumViewRadiusLocked(), kMaxViewRadiusM);
     cameraYawRadians_ = yawRadians;
     while (cameraYawRadians_ > kPi) cameraYawRadians_ -= 2.0 * kPi;
     while (cameraYawRadians_ < -kPi) cameraYawRadians_ += 2.0 * kPi;
@@ -641,6 +652,22 @@ SolarLabStageController::CameraSnapshot SolarLabStageController::GetCameraSnapsh
         .yawRadians = cameraYawRadians_,
         .pitchRadians = cameraPitchRadians_,
     };
+}
+
+double SolarLabStageController::MinimumViewRadiusLocked() const {
+    if (runtimeSelectedBodyId_.empty()) {
+        return kMinViewRadiusM;
+    }
+    const std::string normalizedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
+    const auto body = std::find_if(
+        runtimeScene_.pickBodies.begin(),
+        runtimeScene_.pickBodies.end(),
+        [&](const RuntimeBodyProxy& candidate) {
+            return LowercaseAscii(candidate.bodyId) == normalizedBodyId;
+        });
+    return body == runtimeScene_.pickBodies.end()
+        ? kMinViewRadiusM
+        : BodyInspectionViewRadiusM(body->radiusM);
 }
 
 std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeHomeCamera() const {
@@ -709,24 +736,7 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         return std::nullopt;
     }
 
-    const double suggestedRadiusM = [&]() {
-        switch (body->kind) {
-            case kKindStar:
-                return 4.5 * kAstronomicalUnitM;
-            case kKindPlanet:
-                return 0.14 * kAstronomicalUnitM;
-            case kKindDwarfPlanet:
-                return 0.08 * kAstronomicalUnitM;
-            case kKindAsteroid:
-            case kKindComet:
-                return 0.035 * kAstronomicalUnitM;
-            case kKindProbe:
-            case kKindTestObject:
-                return 0.020 * kAstronomicalUnitM;
-            default:
-                return 0.18 * kAstronomicalUnitM;
-        }
-    }();
+    const double suggestedRadiusM = BodyFrameViewRadiusM(body->radiusM);
     const double viewRadiusM = Clamp(suggestedRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
     return CameraSnapshot{
         .centerX = runtimeScene_.sceneOriginX + body->positionRelativeX,
@@ -861,7 +871,10 @@ void SolarLabStageController::ZoomRuntimeCamera(
     const double effectiveScaleFactor = std::pow(
         Clamp(static_cast<double>(scaleFactor), 0.25, 4.0),
         policy.zoomExponent);
-    cameraViewRadiusM_ = Clamp(cameraViewRadiusM_ / effectiveScaleFactor, kMinViewRadiusM, kMaxViewRadiusM);
+    cameraViewRadiusM_ = Clamp(
+        cameraViewRadiusM_ / effectiveScaleFactor,
+        MinimumViewRadiusLocked(),
+        kMaxViewRadiusM);
     const CameraFrame resizedFrame = BuildCameraFrame(
         cameraViewRadiusM_,
         cameraYawRadians_,
@@ -932,7 +945,7 @@ void SolarLabStageController::PanAndZoomRuntimeCamera(
             policy.zoomExponent);
         cameraViewRadiusM_ = Clamp(
             cameraViewRadiusM_ / effectiveScaleFactor,
-            kMinViewRadiusM,
+            MinimumViewRadiusLocked(),
             kMaxViewRadiusM);
         const CameraFrame resizedFrame = BuildCameraFrame(
             cameraViewRadiusM_,
@@ -1153,7 +1166,7 @@ void SolarLabStageController::InitializeFreeCameraFromRuntimePacketLocked(
     ++cameraRevisionCounter_;
 }
 
-// Pulls a fresh Vulkan scene packet from the Rust runtime, validates its ABI surface, and mirrors
+// Pulls a fresh Vulkan scene packet from the Rust runtime, validates its ABI surface, and copies
 // the packet into controller-owned native buffers while the caller holds the stage lock.
 bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::string runtimeLoadError;
@@ -1275,8 +1288,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         for (uint32_t index = 0; index < bodyCount; ++index) {
             const auto* body = reinterpret_cast<const SlVulkanBodyInstance*>(raw + (stride * index));
             const std::string bodyId = DecodeInlineUtf8(body->body_id, body->body_id_len);
-            const uint32_t kind = InferBodyKind(bodyId, body->radius_m, body->emissive_luminance);
-            const bool selected = body->selected != 0;
+            const uint32_t kind = RenderKindForSceneBodyKind(body->kind);
+            const bool selected = body->selected != 0 ||
+                (!selectedBodyId.empty() && LowercaseAscii(bodyId) == selectedBodyId);
             pickBodies.push_back(RuntimeBodyProxy{
                 .bodyId = bodyId,
                 .positionRelativeX = body->position_from_origin_m.x,
@@ -1292,7 +1306,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             authoritativePositionsM.push_back(body->position_from_origin_m.y);
             authoritativePositionsM.push_back(body->position_from_origin_m.z);
             authoritativeSourceMassesKg.push_back(0.0);
-            authoritativeRadiiM.push_back(body->radius_m * (selected ? 1.18f : 1.0f));
+            // Selection controls camera focus and stream inclusion, never the
+            // physical radius used for visual scale.
+            authoritativeRadiiM.push_back(body->radius_m);
             authoritativeColorsArgb.push_back(static_cast<int32_t>(PackArgb(body->albedo)));
             authoritativeKinds.push_back(static_cast<int32_t>(kind));
         }
@@ -1312,8 +1328,13 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const auto* tracer = reinterpret_cast<const SlVulkanTracerInstance*>(raw + (stride * index));
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(tracer->source_body_id, tracer->source_body_id_len));
-            if (focusTraceLayer && !selectedBodyId.empty() && sourceBodyId != selectedBodyId) {
-                continue;
+            if (focusTraceLayer) {
+                const bool includeFocusedTrace = !selectedBodyId.empty()
+                    ? sourceBodyId == selectedBodyId
+                    : index % kFocusTraceDecimationStride == 0U;
+                if (!includeFocusedTrace) {
+                    continue;
+                }
             }
             const Float3 position = MakeFloat3(
                 tracer->position_from_origin_m.x,
@@ -1375,10 +1396,13 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const auto* span = reinterpret_cast<const SlVulkanTrailSpan*>(spansRaw + (spanStride * spanIndex));
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(span->source_body_id, span->source_body_id_len));
-            if (focusTraceLayer &&
-                !selectedBodyId.empty() &&
-                sourceBodyId != selectedBodyId) {
-                continue;
+            if (focusTraceLayer) {
+                const bool includeFocusedTrail = !selectedBodyId.empty()
+                    ? sourceBodyId == selectedBodyId
+                    : spanIndex % kFocusTraceDecimationStride == 0U;
+                if (!includeFocusedTrail) {
+                    continue;
+                }
             }
             const uint32_t start = std::min(span->vertex_offset, totalVertexCount);
             const uint32_t count = std::min(span->vertex_count, totalVertexCount - start);
@@ -1422,7 +1446,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         runtimeObserverModeCode_,
         runtimeTraceLayerModeCode_);
 
-    // SubmitScene takes ownership of all freshly mirrored vectors for the Vulkan upload pass.
+    // SubmitScene takes ownership of all freshly copied vectors for the Vulkan upload pass.
     renderer_.SubmitScene(
         static_cast<int64_t>(syntheticRevision),
         runtimeScene_.sceneOriginX,
@@ -1457,6 +1481,10 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     runtimeScene_.packetRevision = static_cast<int64_t>(packetResult.info.diagnostics.frame_number);
     runtimeScene_.uploadedRevision = static_cast<int64_t>(syntheticRevision);
     runtimeScene_.pickBodies = std::move(pickBodies);
+    cameraViewRadiusM_ = Clamp(
+        cameraViewRadiusM_,
+        MinimumViewRadiusLocked(),
+        kMaxViewRadiusM);
     std::ostringstream summary;
     summary << "rev=" << sceneRevision
             << " bodies=" << packetResult.info.body_instance_count

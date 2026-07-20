@@ -173,6 +173,7 @@ private:
         std::array<float, 4> upAndSpan{};
         std::array<float, 4> forwardAndDepth{};
         std::array<float, 4> viewport{};
+        std::array<float, 4> primaryLightPositionRelativeAndFlags{};
     };
 
     struct ComputePushConstants {

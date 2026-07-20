@@ -7,7 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class StageFirstRuntimeMirrorExperienceTest {
+class StageFirstRuntimeExperienceTest {
     @Test
     fun buildRuntimeAccelerationReadout_promotesS25TilePlanIntoChips() {
         val readout = requireNotNull(
@@ -152,10 +152,10 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorAccelerationStatusLine_keepsHudMissionReadable() {
+    fun runtimeStageAccelerationStatusLine_keepsHudMissionReadable() {
         assertEquals(
             "ARM64 solver lane online · Vulkan render path · kernel catalog steady",
-            runtimeMirrorAccelerationStatusLine(
+            runtimeStageAccelerationStatusLine(
                 activeKernel = "NEON f64 tiled",
                 schedulerMode = "Scheduler reported",
                 gpuChip = "Vulkan",
@@ -167,44 +167,44 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactAccelerationStatusLine_keepsPhoneHudGlanceable() {
+    fun runtimeStageCompactAccelerationStatusLine_keepsPhoneHudGlanceable() {
         assertEquals(
             "ARM64 tiled · Vulkan · 3 future ISA",
-            runtimeMirrorCompactAccelerationStatusLine(
+            runtimeStageCompactAccelerationStatusLine(
                 "Parallel ARM64 drive online · Vulkan render path · 3 future ISA lanes scouted"
             ),
         )
         assertEquals(
             "Scalar truth · Vulkan · 12 device ISA",
-            runtimeMirrorCompactAccelerationStatusLine(
+            runtimeStageCompactAccelerationStatusLine(
                 "Emulator scalar truth mode · Vulkan render path · 12 device-only ISA lanes in audit"
             ),
         )
     }
 
     @Test
-    fun runtimeMirrorCompactAccelerationChipValue_keepsScalarIsaReadable() {
+    fun runtimeStageCompactAccelerationChipValue_keepsScalarIsaReadable() {
         assertEquals(
             "scalar",
-            runtimeMirrorCompactAccelerationChipValue("scalar.reference"),
+            runtimeStageCompactAccelerationChipValue("scalar.reference"),
         )
         assertEquals(
             "NEON tiled",
-            runtimeMirrorCompactAccelerationChipValue("NEON f64 parallel tiled"),
+            runtimeStageCompactAccelerationChipValue("NEON f64 parallel tiled"),
         )
     }
 
     @Test
-    fun runtimeMirrorCompactAccelerationAuditSummary_keepsScalarAuditReadable() {
+    fun runtimeStageCompactAccelerationAuditSummary_keepsScalarAuditReadable() {
         assertEquals(
             "CPU scalar · GPU Vulkan · active scalar",
-            runtimeMirrorCompactAccelerationAuditSummary(
+            runtimeStageCompactAccelerationAuditSummary(
                 "CPU simd-arm64 -> scalar · GPU vulkan · active scalar.reference"
             ),
         )
         assertEquals(
             "CPU scalar · GPU Vulkan · active scalar",
-            runtimeMirrorCompactAccelerationAuditSummary(
+            runtimeStageCompactAccelerationAuditSummary(
                 "CPU simd-arm64 -> scalar · GPU vulkan · active scalar.reference · " +
                     "fallback simd-arm64 requested on non-aarch64 host"
             ),
@@ -212,18 +212,18 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactStatusText_normalizesShortStatusText() {
+    fun runtimeStageCompactStatusText_normalizesShortStatusText() {
         assertEquals(
             "Runtime connected Vulkan ready · 8 tile workers",
-            runtimeMirrorCompactStatusText(
+            runtimeStageCompactStatusText(
                 "Runtime connected\n\tVulkan ready   ·   8 tile workers"
             ),
         )
     }
 
     @Test
-    fun runtimeMirrorCompactStatusText_cutsAfterHugePayloadMarker() {
-        val compacted = runtimeMirrorCompactStatusText(
+    fun runtimeStageCompactStatusText_cutsAfterHugePayloadMarker() {
+        val compacted = runtimeStageCompactStatusText(
             "Render host ready (89686 chars) observer=FollowSelected|sun|" +
                 "packet=${"x".repeat(300)}"
         )
@@ -232,8 +232,8 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactStatusText_boundsGenericLongStatusText() {
-        val compacted = runtimeMirrorCompactStatusText(
+    fun runtimeStageCompactStatusText_boundsGenericLongStatusText() {
+        val compacted = runtimeStageCompactStatusText(
             "Runtime connected " + "tile-lane ".repeat(80)
         )
 
@@ -242,10 +242,10 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactRevisionText_summarizesScenarioPayloadRevision() {
+    fun runtimeStageCompactRevisionText_summarizesScenarioPayloadRevision() {
         assertEquals(
             "sol-system / main / t+6.0h / payload 89693 chars",
-            runtimeMirrorCompactRevisionText(
+            runtimeStageCompactRevisionText(
                 "scenario=sol-system|branch=main|epoch=21600.000000|" +
                     "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)"
             ),
@@ -253,10 +253,10 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactRevisionText_canOmitPayloadForHud() {
+    fun runtimeStageCompactRevisionText_canOmitPayloadForHud() {
         assertEquals(
             "sol-system / main / t+6.0h",
-            runtimeMirrorCompactRevisionText(
+            runtimeStageCompactRevisionText(
                 value = "scenario=sol-system|branch=main|epoch=21600.000000|" +
                     "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)",
                 includePayloadSize = false,
@@ -265,10 +265,10 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactRevisionMetricText_prefersMissionElapsedTime() {
+    fun runtimeStageCompactRevisionMetricText_prefersMissionElapsedTime() {
         assertEquals(
             "t+6.0h",
-            runtimeMirrorCompactRevisionMetricText(
+            runtimeStageCompactRevisionMetricText(
                 "scenario=sol-system|branch=main|epoch=21600.000000|" +
                     "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)"
             ),
@@ -276,10 +276,10 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactRevisionMetric_labelsMissionElapsedTime() {
+    fun runtimeStageCompactRevisionMetric_labelsMissionElapsedTime() {
         assertEquals(
-            RuntimeMirrorCompactRevisionMetric(label = "MET", value = "t+6.0h"),
-            runtimeMirrorCompactRevisionMetric(
+            RuntimeStageCompactRevisionMetric(label = "MET", value = "t+6.0h"),
+            runtimeStageCompactRevisionMetric(
                 "scenario=sol-system|branch=main|epoch=21600.000000|" +
                     "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89693 chars)"
             ),
@@ -287,26 +287,26 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactRevisionMetricText_fallsBackToShortSceneLabel() {
+    fun runtimeStageCompactRevisionMetricText_fallsBackToShortSceneLabel() {
         assertEquals(
             "sol-system",
-            runtimeMirrorCompactRevisionMetricText("scenario=sol-system|branch=main"),
+            runtimeStageCompactRevisionMetricText("scenario=sol-system|branch=main"),
         )
     }
 
     @Test
-    fun runtimeMirrorCompactRevisionMetric_labelsFallbackAsRevision() {
+    fun runtimeStageCompactRevisionMetric_labelsFallbackAsRevision() {
         assertEquals(
-            RuntimeMirrorCompactRevisionMetric(label = "Rev", value = "sol-system"),
-            runtimeMirrorCompactRevisionMetric("scenario=sol-system|branch=main"),
+            RuntimeStageCompactRevisionMetric(label = "Rev", value = "sol-system"),
+            runtimeStageCompactRevisionMetric("scenario=sol-system|branch=main"),
         )
     }
 
     @Test
-    fun runtimeMirrorCompactSelectionDetail_keepsRawRevisionOutOfFocusCard() {
+    fun runtimeStageCompactSelectionDetail_keepsRawRevisionOutOfFocusCard() {
         assertEquals(
             "Scene sol-system / main / t+0.0h",
-            runtimeMirrorCompactSelectionDetail(
+            runtimeStageCompactSelectionDetail(
                 "Scene revision scenario=sol-system|branch=main|epoch=0.000000|" +
                     "observer=FollowSelected|sun|packet=${"x".repeat(80)} (89676 chars)"
             ),
@@ -314,10 +314,10 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactScenarioLabel_keepsPortraitHudMissionFirst() {
+    fun runtimeStageCompactScenarioLabel_keepsPortraitHudMissionFirst() {
         assertEquals(
             "Canonical solar system",
-            runtimeMirrorCompactScenarioLabel(
+            runtimeStageCompactScenarioLabel(
                 "Canonical solar system | branch=main\n" +
                     "Epoch 0.0h • Speed 6 h/s • Step 6 h",
             ),
@@ -325,24 +325,24 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorFocusDisplayName_promotesRawBodyIdsForHud() {
-        assertEquals("Earth", runtimeMirrorFocusDisplayName(bodyId = "earth", displayName = "earth"))
-        assertEquals("Probe Alpha", runtimeMirrorFocusDisplayName(bodyId = "probe-alpha", displayName = "probe-alpha"))
+    fun runtimeStageFocusDisplayName_promotesRawBodyIdsForHud() {
+        assertEquals("Earth", runtimeStageFocusDisplayName(bodyId = "earth", displayName = "earth"))
+        assertEquals("Probe Alpha", runtimeStageFocusDisplayName(bodyId = "probe-alpha", displayName = "probe-alpha"))
     }
 
     @Test
-    fun runtimeMirrorCompactRevisionText_fallsBackToStatusCompaction() {
-        val compacted = runtimeMirrorCompactRevisionText("revision-" + "segment-".repeat(80))
+    fun runtimeStageCompactRevisionText_fallsBackToStatusCompaction() {
+        val compacted = runtimeStageCompactRevisionText("revision-" + "segment-".repeat(80))
 
         assertTrue(compacted.endsWith("... [truncated]"))
         assertTrue(compacted.length <= 155)
     }
 
     @Test
-    fun runtimeMirrorCompactRendererStatusText_removesPacketCountersForHud() {
+    fun runtimeStageCompactRendererStatusText_removesPacketCountersForHud() {
         assertEquals(
             "Vulkan SPIR-V + compute compaction active",
-            runtimeMirrorCompactRendererStatusText(
+            runtimeStageCompactRendererStatusText(
                 "Vulkan SPIR-V graphics pipelines + compute compaction active. " +
                     "rev=-485007626274543117 A=355/AI=355 TN=0 TM=0 TF=0 TL=768/8 bytes=32400 paths..."
             ),
@@ -350,10 +350,10 @@ class StageFirstRuntimeMirrorExperienceTest {
     }
 
     @Test
-    fun runtimeMirrorCompactBackendStatus_keepsPhoneHudOutOfSentenceMode() {
+    fun runtimeStageCompactBackendStatus_keepsPhoneHudOutOfSentenceMode() {
         assertEquals(
             "Connected · Host ready · rev=sol-system / main / t+6.0h · Vulkan + compute",
-            runtimeMirrorCompactBackendStatus(
+            runtimeStageCompactBackendStatus(
                 "Runtime connected · Render host ready · rev=sol-system / main / t+6.0h · " +
                     "Vulkan SPIR-V + compute compaction active"
             ),

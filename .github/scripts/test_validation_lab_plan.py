@@ -129,9 +129,8 @@ class ValidationLabPlanTests(unittest.TestCase):
             json.loads(outputs["android_shell_matrix"]),
             [
                 {
-                    "validation_mode": "stage-first-mirror-on",
+                    "validation_mode": "stage-first-runtime",
                     "debug_stage_first_client": "true",
-                    "stage_first_runtime_mirror": "true",
                     "preferred_gpu_backend": "vulkan",
                     "hosted_debug_profile": "hosted-debug-lite",
                     "gradle_configuration_cache": "enabled",

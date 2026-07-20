@@ -18,8 +18,8 @@ SPIR-V-backed Vulkan graphics pipelines.
 - The native bridge now receives an `AAssetManager` at renderer creation time.
 - The native renderer loads compiled SPIR-V shader assets at runtime and creates
   the following graphics pipelines in this order:
-  1. billboard pipeline for authoritative bodies
-  2. billboard pipeline reuse for near tracers
+  1. GPU-instanced spherical-billboard pipeline for authoritative bodies
+  2. spherical-billboard pipeline reuse for near tracers
   3. cheap-point pipeline for medium tracers
   4. density-point pipeline for far tracers
   5. line-strip pipeline for trails
@@ -62,8 +62,8 @@ The next best tasks are:
   descriptions in lockstep.
 - If you add descriptor bindings, update both the shader set/binding
   declarations and the native descriptor set layout.
-- If you replace point sprites with instanced quads, keep the authoritative /
-  near pipeline order intact and preserve the current stream contracts unless
-  you also update `NativeScenePacket`.
+- The authoritative / near-body pipeline now expands one instance into a
+  six-vertex quad in the vertex shader. Keep that pipeline order and the
+  existing stream contracts intact unless `NativeScenePacket` changes with it.
 - Older notes about camera transforms being top-down XY orthographic should now
   be treated as historical context, not current architectural truth.

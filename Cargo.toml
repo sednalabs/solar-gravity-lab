@@ -30,3 +30,10 @@ pedantic = "warn"
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+# Android ships the Rust runtime as one FFI library. Thin LTO preserves useful
+# cross-crate optimization without making hosted release builds pay the much
+# larger full-LTO cost; one codegen unit gives LLVM a complete release view.
+[profile.release]
+lto = "thin"
+codegen-units = 1

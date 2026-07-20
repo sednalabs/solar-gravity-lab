@@ -192,7 +192,7 @@ Run these two workflows on a validation branch:
    - `profile=targeted`
    - `lane_set=android-shell`
    - `android_test_scope=core`
-   - `android_validation_mode=stage-first-mirror-on`
+   - `android_validation_mode=stage-first-runtime`
    - `android_artifact_mode=always`
    - `emulator_boot_strategy=snapshot-cache`
 

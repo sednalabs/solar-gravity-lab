@@ -1,6 +1,6 @@
 /**
  * @name Validation workflow is missing stage-first Android proof surface
- * @description Android UI, camera, and stage-first changes need a hosted proof surface that can exercise the stage-first runtime mirror posture.
+ * @description Android UI, camera, and stage-first changes need a hosted proof surface that exercises the Rust-backed stage runtime.
  * @kind problem
  * @problem.severity warning
  * @precision high
@@ -23,10 +23,10 @@ predicate mentionsAndroidValidationMode(Workflow workflow) {
   )
 }
 
-predicate mentionsStageFirstRuntimeMirror(Workflow workflow) {
+predicate mentionsStageFirstClient(Workflow workflow) {
   exists(Run run |
     run.getEnclosingWorkflow() = workflow and
-    run.getScript().getRawScript().regexpMatch("(?s).*stage_first_runtime_mirror.*")
+    run.getScript().getRawScript().regexpMatch("(?s).*debug_stage_first_client.*")
   )
 }
 
@@ -42,8 +42,8 @@ where
   validationLabWorkflow(workflow) and
   not (
     mentionsAndroidValidationMode(workflow) and
-    mentionsStageFirstRuntimeMirror(workflow) and
+    mentionsStageFirstClient(workflow) and
     mentionsPreferredGpuBackend(workflow)
   )
 select workflow,
-  "validation-lab does not appear to preserve stage-first runtime-mirror proof. Android visual or camera changes need this hosted proof route before visual claims are made."
+  "validation-lab does not appear to preserve Rust-backed stage-first proof. Android visual or camera changes need this hosted proof route before visual claims are made."

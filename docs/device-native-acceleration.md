@@ -95,6 +95,12 @@ is meant to stress the device, the Android UI and validation artifacts should
 show not just that the parallel path is selected, but how much tile work the
 runtime planned to distribute.
 
+Release artifacts use Rust Thin LTO with one codegen unit, conditional native
+C++ interprocedural optimization when NDK Clang proves support, optimized GLSL,
+and R8/resource shrinking with explicit JNI keep rules. Do not add
+`-march=native` to Android builds: Arm64 NEON is part of the ABI baseline, while
+newer optional ISA paths must remain runtime-dispatched and truthfully reported.
+
 This gives the project a safe way to plan the next solver stage:
 
 - introduce target-tiled or pairwise-tiled kernels behind explicit path IDs;
@@ -114,9 +120,9 @@ Use `validation-lab` as the canonical proof surface. For acceleration work:
   drift handling without claiming Galaxy-specific behavior.
 - `lane_set=runtime-cpu-truth` is the focused bundle for CPU truth, FFI ABI,
   and Android runtime-info surfacing.
-- `android_validation_mode=stage-first-mirror-on` proves that the Android shell
+- `android_validation_mode=stage-first-runtime` proves that the Android shell
   binds the native runtime and reports backend truth through the stage-first
-  mirror.
+  runtime.
 
 Real-device claims still need real-device evidence. Hosted Arm64 runners are
 valuable for fast, auditable proof, but an S25-class artifact remains the
@@ -131,7 +137,7 @@ presentation, interact with scenario packs, and help tune the stage visually and
 ergonomically while keeping screenshots and tool events in the Codex-native
 transcript path.
 
-The stage-first runtime mirror should therefore present acceleration telemetry
+The stage-first Rust runtime should therefore present acceleration telemetry
 as a device cockpit, not only as raw debug text. The live Android readout should
 name the active solver/kernel lane, the eligible future lanes, blocked lanes,
 scheduler tile plan, GPU backend, and workload split in a way that can be read
@@ -159,7 +165,7 @@ scenario time, and the active graphics/compute capability.
 The same rule applies to long kernel-lane lists: the cockpit can show a bounded
 preview such as the blocked-lane count plus the first few lane names, while the
 full candidate-path catalogue remains in the audit detail.
-This applies to both the runtime mirror cockpit and the pre-immersive stage
+This applies to both the Rust-stage cockpit and the pre-immersive stage
 shell. Debug dialogs can keep the raw renderer callback, but the visible stage
 surface should not make humans or native computer-use agents read packet
 counters before they can understand the scene.
@@ -171,3 +177,7 @@ The long-term loop is:
 - launch an interactive Android session for visual and ergonomic inspection;
 - use native computer-use calls to operate the app like a user; and
 - feed the observations back into solver, renderer, and scenario-pack work.
+
+Two renderer optimizations remain measured follow-ups rather than activation
+claims: replacing synchronous upload queue idling with a fenced staging ring,
+and adding thermal/battery-aware worker governance from real-device traces.

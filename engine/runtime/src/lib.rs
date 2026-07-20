@@ -30,7 +30,8 @@ use solarlab_physics::{
 };
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail, SceneTrailFamily,
+    SceneBodyKind, ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
+    SceneTrailFamily,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,7 +48,10 @@ pub struct BodyState {
 impl BodyState {
     pub fn default_source_mass_kg(body_class: &BodyClass, mass_kg: f64) -> f64 {
         match body_class {
-            BodyClass::Tracer | BodyClass::Spacecraft | BodyClass::SmallBody => 0.0,
+            BodyClass::Tracer
+            | BodyClass::Spacecraft
+            | BodyClass::SmallBody
+            | BodyClass::Comet => 0.0,
             BodyClass::Star
             | BodyClass::Planet
             | BodyClass::DwarfPlanet
@@ -1046,6 +1050,7 @@ pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
             SceneBody {
                 body_id: body.body_id.clone(),
                 display_name: body.body_id.0.clone(),
+                kind: scene_body_kind(body),
                 position_m: body.position_m,
                 radius_m: body.radius_m,
                 albedo: style.albedo,
@@ -1093,6 +1098,20 @@ pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
         diagnostics,
     }
     .with_derived_counts()
+}
+
+fn scene_body_kind(body: &BodyState) -> SceneBodyKind {
+    match &body.body_class {
+        BodyClass::Star => SceneBodyKind::Star,
+        BodyClass::Planet => SceneBodyKind::Planet,
+        BodyClass::DwarfPlanet => SceneBodyKind::DwarfPlanet,
+        BodyClass::Moon => SceneBodyKind::Moon,
+        BodyClass::SmallBody => SceneBodyKind::Asteroid,
+        BodyClass::Comet => SceneBodyKind::Comet,
+        BodyClass::Tracer => SceneBodyKind::Tracer,
+        BodyClass::Spacecraft => SceneBodyKind::Spacecraft,
+        BodyClass::Custom => SceneBodyKind::Custom,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1182,6 +1201,22 @@ fn body_style(body_class: BodyClass) -> BodyRenderStyle {
                 g: 0.66,
                 b: 0.54,
                 a: 0.55,
+            },
+            light_illuminance_lux: 0.0,
+        },
+        BodyClass::Comet => BodyRenderStyle {
+            albedo: ColorRgba {
+                r: 0.68,
+                g: 0.74,
+                b: 0.78,
+                a: 1.0,
+            },
+            emissive_luminance: 0.0,
+            tracer_color: ColorRgba {
+                r: 0.72,
+                g: 0.88,
+                b: 0.94,
+                a: 0.62,
             },
             light_illuminance_lux: 0.0,
         },
@@ -1673,9 +1708,10 @@ fn body_class_priority(body_class: &BodyClass) -> u8 {
         BodyClass::DwarfPlanet => 2,
         BodyClass::Moon => 3,
         BodyClass::SmallBody => 4,
-        BodyClass::Spacecraft => 5,
-        BodyClass::Tracer => 6,
-        BodyClass::Custom => 7,
+        BodyClass::Comet => 5,
+        BodyClass::Spacecraft => 6,
+        BodyClass::Tracer => 7,
+        BodyClass::Custom => 8,
     }
 }
 
@@ -1975,7 +2011,9 @@ mod tests {
     use solarlab_physics::{
         CollisionModel, IntegratorKind, PhysicsInvariants, PhysicsPolicy, SolverBackend,
     };
-    use solarlab_scene::{SceneDetailBand, SceneItemFamily, SceneTrailFamily};
+    use solarlab_scene::{
+        SceneBodyKind, SceneDetailBand, SceneItemFamily, SceneTrailFamily,
+    };
 
     use super::{
         compute_world_invariants, extract_render_scene, record_trail_samples_from_bodies,
@@ -2205,6 +2243,22 @@ mod tests {
 
         assert!(trail_body_ids.len() <= super::RENDER_SCENE_ORBIT_BODY_LIMIT);
         assert!(trail_body_ids.contains(&moon));
+        assert_eq!(
+            scene
+                .bodies
+                .iter()
+                .find(|body| body.body_id.0 == "halley")
+                .map(|body| body.kind),
+            Some(SceneBodyKind::Comet),
+        );
+        assert_eq!(
+            scene
+                .bodies
+                .iter()
+                .find(|body| body.body_id.0 == "vesta")
+                .map(|body| body.kind),
+            Some(SceneBodyKind::Asteroid),
+        );
         assert!(scene
             .trails
             .iter()
@@ -2325,6 +2379,14 @@ mod tests {
         assert_eq!(scene.trail_count, 8);
         assert_eq!(scene.observer_mode, ObserverMode::FollowSelected);
         assert_eq!(scene.bodies.len(), 4);
+        assert_eq!(
+            scene
+                .bodies
+                .iter()
+                .find(|body| body.body_id == moon)
+                .map(|body| body.kind),
+            Some(SceneBodyKind::Moon),
+        );
         assert_eq!(scene.tracers.len(), 1);
         assert_eq!(scene.trails.len(), 8);
         assert_eq!(scene.lights.len(), 1);
@@ -3138,6 +3200,14 @@ mod tests {
             body_position(&tracer_snapshot, &BodyId("teaching-probe".into())).x,
             8.0e7,
             "The probe should still respond to massive-body gravity as a tracer"
+        );
+    }
+
+    #[test]
+    fn comet_mass_is_not_promoted_to_gravity_source_mass() {
+        assert_eq!(
+            BodyState::default_source_mass_kg(&BodyClass::Comet, 2.2e14),
+            0.0,
         );
     }
 
@@ -4533,7 +4603,9 @@ mod tests {
         let major_bodies: Vec<BodyState> = seed
             .bodies
             .into_iter()
-            .filter(|body| body.body_class != BodyClass::SmallBody)
+            .filter(|body| {
+                !matches!(body.body_class, BodyClass::SmallBody | BodyClass::Comet)
+            })
             .map(|body| {
                 let source_mass_kg =
                     BodyState::default_source_mass_kg(&body.body_class, body.mass_kg);

@@ -28,7 +28,7 @@
 This is the live renderer-focused phase.
 
 - stage-first restoration as the conceptual target for immersive rendering
-- runtime mirror over the Rust runtime without surrendering renderer primacy
+- the Rust runtime as the single world without surrendering renderer primacy
 - orbit-camera and camera-relative packet design as the correct 3D direction
 - explicit renderer boundary: `world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan`
 - replace older flat packet-host assumptions with a truthful 3D

@@ -17,7 +17,7 @@ quality:
   static category-matrix shape so alert comparison does not silently lose base
   branch categories.
 - `solar-python-product-invariants` checks planner and summary helpers for
-  runtime CPU truth lanes, stage-first mirror proof, and provider-manifest
+  runtime CPU truth lanes, Rust-backed stage-first proof, and provider-manifest
   evidence in interactive session summaries.
 
 These packs intentionally sit beside the existing security packs rather than
@@ -39,7 +39,7 @@ precise and tied directly to a single owned contract.
 CodeQL can detect missing or weakened proof routes. It cannot prove visual or
 hardware claims by itself.
 
-- Android camera, immersive, runtime-mirror, and stage-first composition claims
+- Android camera, immersive runtime, and stage-first composition claims
   still require native Android observation or hosted interactive Android
   evidence.
 - Active hardware acceleration claims still require hosted ARM64, runtime CPU

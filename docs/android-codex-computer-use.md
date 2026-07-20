@@ -134,7 +134,7 @@ validation.
 ## Visual Acceptance
 
 Build and test proof is not the same thing as visual acceptance. When a change
-affects Android layout, stage-first presentation, runtime mirror controls,
+affects Android layout, stage-first presentation, runtime controls,
 scenario-pack interaction, or visual polish, the acceptance path must include a
 real Android observation loop.
 
@@ -145,8 +145,7 @@ For those changes:
   surface
 - navigate the actual user path being claimed, not just the default launch
   screen
-- inspect both the stage-first sandbox and runtime mirror when the change can
-  affect either surface
+- inspect the Rust-backed stage in both collapsed and expanded control states
 - check collapsed and expanded/control states before claiming that the 3D stage
   remains visually dominant
 - record the observation source in the PR or validation notes

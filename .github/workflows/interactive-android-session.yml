@@ -39,9 +39,8 @@ on:
         type: choice
         options:
           - shell-v2
-          - stage-first-mirror-off
-          - stage-first-mirror-on
-        default: stage-first-mirror-on
+          - stage-first-runtime
+        default: stage-first-runtime
       interactive_debug_profile:
         description: Runtime posture for the hosted debug session
         required: true
@@ -159,23 +158,15 @@ jobs:
           fi
 
           debug_stage_first_client="true"
-          stage_first_runtime_mirror="true"
           preferred_gpu_backend="vulkan"
           hosted_debug_lite_mode="false"
           case "${INPUT_VALIDATION_MODE}" in
             shell-v2)
               debug_stage_first_client="false"
-              stage_first_runtime_mirror="false"
               preferred_gpu_backend="none"
               ;;
-            stage-first-mirror-off)
+            stage-first-runtime)
               debug_stage_first_client="true"
-              stage_first_runtime_mirror="false"
-              preferred_gpu_backend="none"
-              ;;
-            stage-first-mirror-on)
-              debug_stage_first_client="true"
-              stage_first_runtime_mirror="true"
               preferred_gpu_backend="vulkan"
               ;;
             *)
@@ -226,7 +217,6 @@ jobs:
             echo "session_timeout_minutes=${session_timeout_minutes}"
             echo "keep_session_on_failure=${INPUT_KEEP_SESSION_ON_FAILURE}"
             echo "debug_stage_first_client=${debug_stage_first_client}"
-            echo "stage_first_runtime_mirror=${stage_first_runtime_mirror}"
             echo "preferred_gpu_backend=${preferred_gpu_backend}"
             echo "hosted_debug_lite_mode=${hosted_debug_lite_mode}"
           } >> "${GITHUB_OUTPUT}"
@@ -468,7 +458,6 @@ jobs:
           ./gradlew -p clients/android \
             :app:assembleDebug \
             -Psolarlab.debugStageFirstClient=${{ steps.session_plan.outputs.debug_stage_first_client }} \
-            -Psolarlab.stageFirstRuntimeMirror=${{ steps.session_plan.outputs.stage_first_runtime_mirror }} \
             -Psolarlab.preferredGpuBackend=${{ steps.session_plan.outputs.preferred_gpu_backend }} \
             -Psolarlab.hostedDebugProfile=${{ steps.session_plan.outputs.interactive_debug_profile }}
           phase_end="$(date +%s)"

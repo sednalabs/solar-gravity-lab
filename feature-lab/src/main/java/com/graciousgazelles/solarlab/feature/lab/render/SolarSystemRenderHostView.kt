@@ -67,7 +67,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.submitScene(frame.withLayerOptions(renderLayerOptions))
     }
 
-    fun updateRuntimeMirrorState(
+    fun updateRuntimeStageState(
         sessionHandle: Long,
         processingMode: RenderProcessingMode,
         renderLayerOptions: RenderLayerOptions,

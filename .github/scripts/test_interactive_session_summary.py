@@ -201,8 +201,8 @@ def main() -> int:
                 "status": "installed",
                 "activated_at_iso": "2026-04-26T00:00:00Z",
                 "manifest": {
-                    "artifact_name": "interactive-android-build-stage-first-mirror-on-hosted-debug-lite",
-                    "android_validation_mode": "stage-first-mirror-on",
+                    "artifact_name": "interactive-android-build-stage-first-runtime-hosted-debug-lite",
+                    "android_validation_mode": "stage-first-runtime",
                     "interactive_debug_profile": "hosted-debug-lite",
                     "preferred_gpu_backend": "vulkan",
                     "commit_sha": "deadbeef",
@@ -212,7 +212,7 @@ def main() -> int:
         ),
     )
     assert "### Active Build" in rendered_active_build
-    assert "- validation mode: `stage-first-mirror-on`" in rendered_active_build
+    assert "- validation mode: `stage-first-runtime`" in rendered_active_build
     assert "- debug profile: `hosted-debug-lite`" in rendered_active_build
     assert "- preferred GPU backend: `vulkan`" in rendered_active_build
 

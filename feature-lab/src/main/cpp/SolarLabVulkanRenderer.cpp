@@ -96,11 +96,14 @@ float KindMinimumBillboardDiameterPx(uint32_t kind) {
     }
 }
 
-VkVertexInputBindingDescription MakeBindingDescription(uint32_t binding, uint32_t stride) {
+VkVertexInputBindingDescription MakeBindingDescription(
+    uint32_t binding,
+    uint32_t stride,
+    VkVertexInputRate inputRate = VK_VERTEX_INPUT_RATE_VERTEX) {
     return VkVertexInputBindingDescription{
         .binding = binding,
         .stride = stride,
-        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        .inputRate = inputRate,
     };
 }
 
@@ -1340,7 +1343,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
     DestroyGraphicsPipelines();
 
     const std::vector<VkVertexInputBindingDescription> billboardBindings = {
-        MakeBindingDescription(0, sizeof(BillboardVertex)),
+        MakeBindingDescription(0, sizeof(BillboardVertex), VK_VERTEX_INPUT_RATE_INSTANCE),
     };
     const std::vector<VkVertexInputAttributeDescription> billboardAttributes = {
         MakeAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, x)),
@@ -1354,7 +1357,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
             "billboard",
             "shaders/solarlab/billboard.vert.spv",
             "shaders/solarlab/billboard.frag.spv",
-            VK_PRIMITIVE_TOPOLOGY_POINT_LIST,
+            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
             false,
             billboardBindings,
             billboardAttributes,
@@ -2208,6 +2211,29 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
         static_cast<float>(cameraCenterY_ - sceneBuffers_.sceneOriginY),
         static_cast<float>(cameraCenterZ_ - sceneBuffers_.sceneOriginZ));
 
+    std::array<float, 4> primaryLightPositionRelativeAndFlags{
+        0.0f,
+        0.0f,
+        0.0f,
+        0.0f,
+    };
+    const size_t authoritativeBodyCount = std::min(
+        sceneBuffers_.authoritativeKinds.size(),
+        sceneBuffers_.authoritativePositionsM.size() / 3U);
+    for (size_t index = 0; index < authoritativeBodyCount; ++index) {
+        if (sceneBuffers_.authoritativeKinds[index] != 0) {
+            continue;
+        }
+        const size_t base = index * 3U;
+        primaryLightPositionRelativeAndFlags = {
+            static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
+            static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
+            static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 2U]),
+            1.0f,
+        };
+        break;
+    }
+
     const SceneUniformData uniformData{
         .centerRelativeAndMetrics = {
             centerRelative.x,
@@ -2239,6 +2265,7 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
             maxPointSizePx,
             enabledFeatures_.largePoints ? 1.0f : 0.0f,
         },
+        .primaryLightPositionRelativeAndFlags = primaryLightPositionRelativeAndFlags,
     };
 
     return UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_);
@@ -2740,6 +2767,29 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
         vkCmdDraw(commandBuffer, stream.vertexCount, 1, 0, 0);
     };
 
+    auto bindAndDrawBillboards = [this, commandBuffer](const DrawStreamBuffers& stream) {
+        if (billboardPipeline_ == VK_NULL_HANDLE ||
+            stream.vertexCount == 0 ||
+            stream.vertexBuffer.buffer == VK_NULL_HANDLE) {
+            return;
+        }
+        constexpr uint32_t kVerticesPerBillboard = 6U;
+        const VkBuffer buffer = stream.vertexBuffer.buffer;
+        const VkDeviceSize offset = 0;
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, billboardPipeline_);
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            graphicsPipelineLayout_,
+            0,
+            1,
+            &sceneDescriptorSet_,
+            0,
+            nullptr);
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &buffer, &offset);
+        vkCmdDraw(commandBuffer, kVerticesPerBillboard, stream.vertexCount, 0, 0);
+    };
+
     auto bindAndDrawIndirect = [this, commandBuffer](VkPipeline pipeline, const ComputeDrawStreamBuffers& stream) {
         if (pipeline == VK_NULL_HANDLE || !stream.enabled || stream.outputVertexBuffer.buffer == VK_NULL_HANDLE || stream.indirectCommandBuffer.buffer == VK_NULL_HANDLE) {
             return;
@@ -2764,8 +2814,8 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
         vkCmdDraw(commandBuffer, stream.outputVertexCapacity, 1, 0, 0);
     };
 
-    bindAndDraw(billboardPipeline_, sceneGpuStreams_.authoritative);
-    bindAndDraw(billboardPipeline_, sceneGpuStreams_.tracerNear);
+    bindAndDrawBillboards(sceneGpuStreams_.authoritative);
+    bindAndDrawBillboards(sceneGpuStreams_.tracerNear);
     if (sceneGpuStreams_.tracerMediumCompute.enabled) {
         bindAndDrawIndirect(mediumPointPipeline_, sceneGpuStreams_.tracerMediumCompute);
     } else {
@@ -2781,8 +2831,8 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
     } else {
         bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
     }
-    bindAndDraw(billboardPipeline_, sceneGpuStreams_.tracerNear);
-    bindAndDraw(billboardPipeline_, sceneGpuStreams_.authoritative);
+    bindAndDrawBillboards(sceneGpuStreams_.tracerNear);
+    bindAndDrawBillboards(sceneGpuStreams_.authoritative);
 
     if (trailPipeline_ != VK_NULL_HANDLE && sceneGpuStreams_.trails.vertexCount > 1 && sceneGpuStreams_.trails.vertexBuffer.buffer != VK_NULL_HANDLE) {
         const VkBuffer trailBuffer = sceneGpuStreams_.trails.vertexBuffer.buffer;

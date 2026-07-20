@@ -26,31 +26,33 @@ internal fun StageChromeMode.toggle(): StageChromeMode = when (this) {
     StageChromeMode.EXPANDED -> StageChromeMode.COLLAPSED
 }
 
-internal fun TraceLayerMode.next(): TraceLayerMode = when (this) {
-    TraceLayerMode.FOCUS -> TraceLayerMode.ALL
-    TraceLayerMode.ALL -> TraceLayerMode.OFF
+internal fun TraceLayerMode.less(): TraceLayerMode = when (this) {
+    TraceLayerMode.ALL -> TraceLayerMode.FOCUS
+    TraceLayerMode.FOCUS,
+    TraceLayerMode.OFF,
+    -> TraceLayerMode.OFF
+}
+
+internal fun TraceLayerMode.more(): TraceLayerMode = when (this) {
     TraceLayerMode.OFF -> TraceLayerMode.FOCUS
+    TraceLayerMode.FOCUS,
+    TraceLayerMode.ALL,
+    -> TraceLayerMode.ALL
 }
 
 internal fun stageChromeModeFromName(value: String): StageChromeMode =
     StageChromeMode.entries.firstOrNull { it.name == value } ?: StageChromeMode.COLLAPSED
-
-internal fun stageChromeModeAfterObjectCommit(current: StageChromeMode): StageChromeMode = when (current) {
-    StageChromeMode.MINIMAL,
-    StageChromeMode.COLLAPSED,
-    StageChromeMode.EXPANDED -> StageChromeMode.COLLAPSED
-}
 
 internal fun traceLayerModeFromName(value: String): TraceLayerMode =
     TraceLayerMode.entries.firstOrNull { it.name == value } ?: TraceLayerMode.FOCUS
 
 internal fun traceLayerButtonLabel(mode: TraceLayerMode, compact: Boolean): String {
     val label = when (mode) {
-        TraceLayerMode.FOCUS -> if (compact) "Trace" else "Focus"
-        TraceLayerMode.ALL -> "All"
-        TraceLayerMode.OFF -> "Off"
+        TraceLayerMode.FOCUS -> if (compact) "Focused" else "Focused only"
+        TraceLayerMode.ALL -> "More"
+        TraceLayerMode.OFF -> "Hidden"
     }
-    return if (compact) label else "Traces: $label"
+    return if (compact) label else "Tracers: $label"
 }
 
 private object StageTrajectoryGlyphMetrics {
@@ -209,24 +211,6 @@ internal fun StageControlsButton(
         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON),
         contentDescription = contentDescription,
         secondary = true,
-        dense = dense,
-    )
-}
-
-@Composable
-internal fun StageTraceLayerButton(
-    mode: TraceLayerMode,
-    compact: Boolean,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-    dense: Boolean = false,
-) {
-    StageActionButton(
-        label = traceLayerButtonLabel(mode, compact = compact),
-        onClick = onClick,
-        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON),
-        secondary = true,
-        enabled = enabled,
         dense = dense,
     )
 }

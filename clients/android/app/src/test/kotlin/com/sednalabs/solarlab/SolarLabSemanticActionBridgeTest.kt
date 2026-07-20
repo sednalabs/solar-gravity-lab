@@ -42,28 +42,12 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
-    fun parseSemanticCommand_mapsNonDestructiveStageCommands() {
+    fun parseSemanticCommand_mapsResetCameraCommand() {
         assertEquals(
             SolarLabSemanticAction.ResetCamera,
             SolarLabSemanticActionBridge.parseSemanticCommand(
                 action = SolarLabSemanticActionBridge.INTENT_ACTION,
                 command = "reset_camera",
-                bodyQuery = null,
-            ),
-        )
-        assertEquals(
-            SolarLabSemanticAction.OpenImmersive,
-            SolarLabSemanticActionBridge.parseSemanticCommand(
-                action = SolarLabSemanticActionBridge.INTENT_ACTION,
-                command = "open_immersive",
-                bodyQuery = null,
-            ),
-        )
-        assertEquals(
-            SolarLabSemanticAction.ReturnToSandbox,
-            SolarLabSemanticActionBridge.parseSemanticCommand(
-                action = SolarLabSemanticActionBridge.INTENT_ACTION,
-                command = "return_to_sandbox",
                 bodyQuery = null,
             ),
         )
@@ -82,63 +66,27 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
-    fun resolveLoadScenarioSemanticRouting_doesNotEnterMirrorForUnknownScenarioFromSandbox() {
-        val routing = resolveLoadScenarioSemanticRouting(
-            runtimeMirrorAvailable = true,
-            currentlyInRuntimeMirror = false,
-            scenarioKnown = false,
-        )
-
-        assertFalse(routing.shouldEnterRuntimeMirror)
-        assertFalse(routing.shouldDeliverAction)
-    }
-
-    @Test
-    fun resolveLoadScenarioSemanticRouting_allowsKnownScenarioToEnterMirror() {
-        val routing = resolveLoadScenarioSemanticRouting(
-            runtimeMirrorAvailable = true,
-            currentlyInRuntimeMirror = false,
-            scenarioKnown = true,
-        )
-
-        assertTrue(routing.shouldEnterRuntimeMirror)
-        assertTrue(routing.shouldDeliverAction)
-    }
-
-    @Test
-    fun resolveLoadScenarioSemanticRouting_deliversUnknownScenarioInsideMirrorForNotice() {
-        val routing = resolveLoadScenarioSemanticRouting(
-            runtimeMirrorAvailable = true,
-            currentlyInRuntimeMirror = true,
-            scenarioKnown = false,
-        )
-
-        assertFalse(routing.shouldEnterRuntimeMirror)
-        assertTrue(routing.shouldDeliverAction)
-    }
-
-    @Test
-    fun shouldAttachRuntimeMirrorRenderHost_waitsForSessionAndFirstScene() {
+    fun shouldAttachRuntimeRenderHost_waitsForSessionAndFirstScene() {
         assertFalse(
-            shouldAttachRuntimeMirrorRenderHost(
+            shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
-                hasMirrorScene = false,
+                hasStageScene = false,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,
             )
         )
         assertFalse(
-            shouldAttachRuntimeMirrorRenderHost(
+            shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 0L,
-                hasMirrorScene = true,
+                hasStageScene = true,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,
             )
         )
         assertTrue(
-            shouldAttachRuntimeMirrorRenderHost(
+            shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
-                hasMirrorScene = true,
+                hasStageScene = true,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,
             )
@@ -146,19 +94,19 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
-    fun shouldAttachRuntimeMirrorRenderHost_defersHostedDebugUntilPauseIsApplied() {
+    fun shouldAttachRuntimeRenderHost_defersHostedDebugUntilPauseIsApplied() {
         assertFalse(
-            shouldAttachRuntimeMirrorRenderHost(
+            shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
-                hasMirrorScene = true,
+                hasStageScene = true,
                 hostedDebugModeEnabled = true,
                 hostedDebugModeApplied = false,
             )
         )
         assertTrue(
-            shouldAttachRuntimeMirrorRenderHost(
+            shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
-                hasMirrorScene = true,
+                hasStageScene = true,
                 hostedDebugModeEnabled = true,
                 hostedDebugModeApplied = true,
             )

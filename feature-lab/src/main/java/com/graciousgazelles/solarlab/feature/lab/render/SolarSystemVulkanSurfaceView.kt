@@ -85,8 +85,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
                 val bodyId = pickBodyId(e.x, e.y) ?: return false
                 selectedBodyId = bodyId
+                observerMode = ObserverMode.FOLLOW_SELECTED
                 interactionListener?.onBodySelectionChanged(bodyId)
-                frameBody(bodyId)
+                interactionListener?.onCameraNavigationModeChanged(ObserverMode.FOLLOW_SELECTED)
+                focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
                 return true
             }
         },
@@ -184,6 +186,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun zoomBy(scaleFactor: Float) {
+        if (isRuntimeBound()) {
+            SolarLabVulkanBridge.zoomRuntimeCamera(
+                handle = rendererHandle,
+                scaleFactor = scaleFactor,
+                focusXPx = width.coerceAtLeast(1) * 0.5f,
+                focusYPx = height.coerceAtLeast(1) * 0.5f,
+                viewportWidthPx = width.coerceAtLeast(1),
+                viewportHeightPx = height.coerceAtLeast(1),
+            )
+            renderLatestScene()
+            reportCameraScaleBand()
+            return
+        }
         val current = currentCameraState()
         val target = MultiscaleOrbitCameraController.zoomAroundViewportPoint(
             cameraState = current,

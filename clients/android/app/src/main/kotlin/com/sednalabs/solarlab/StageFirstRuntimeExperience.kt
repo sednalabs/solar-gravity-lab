@@ -45,7 +45,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -76,12 +75,12 @@ import com.graciousgazelles.solarlab.render.core.RenderTrail as StageRenderTrail
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
-import com.sednalabs.solarlab.runtime.RenderStatusPresentation
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPack
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPacks
+import com.sednalabs.solarlab.runtime.RuntimeSceneBodyKind
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.toShareText
@@ -92,7 +91,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-private data class RuntimeMirrorBody(
+private data class RuntimeStageBody(
     val id: String,
     val displayName: String,
     val positionM: Vector3d,
@@ -102,9 +101,9 @@ private data class RuntimeMirrorBody(
     val hostBodyId: String?,
 )
 
-private data class RuntimeMirrorScene(
+private data class RuntimeStageScene(
     val scene: RenderSceneFrame,
-    val searchableBodies: List<RuntimeMirrorBody>,
+    val searchableBodies: List<RuntimeStageBody>,
 )
 
 private data class RuntimeSelectionCard(
@@ -143,95 +142,77 @@ internal enum class RuntimeAccelerationLaneTone {
     Neutral,
 }
 
-internal data class RuntimeMirrorCompactRevisionMetric(
+internal data class RuntimeStageCompactRevisionMetric(
     val label: String,
     val value: String,
 )
 
-private val RuntimeMirrorCompactWidthBreakpoint = 720.dp
-private val RuntimeMirrorVoid = Color(0xFF02050B)
-private val RuntimeMirrorGlass = Color(0xE6070D18)
-private val RuntimeMirrorGlassSoft = Color(0xB40B1424)
-private val RuntimeMirrorCyan = Color(0xFF76F7FF)
-private val RuntimeMirrorCyanDim = Color(0xFF2A9DAC)
-private val RuntimeMirrorGold = Color(0xFFFFD36B)
-private val RuntimeMirrorBlue = Color(0xFF5E8CFF)
-private val RuntimeMirrorInkLine = Color(0xFF19324B)
-private val RuntimeMirrorText = Color(0xFFE8F7FF)
-private val RuntimeMirrorTextDim = Color(0xFF9FB6C9)
-private val RuntimeMirrorKernelLaneRegex =
+private val RuntimeStageCompactWidthBreakpoint = 720.dp
+private val RuntimeStageVoid = Color(0xFF02050B)
+private val RuntimeStageGlass = Color(0xE6070D18)
+private val RuntimeStageGlassSoft = Color(0xB40B1424)
+private val RuntimeStageCyan = Color(0xFF76F7FF)
+private val RuntimeStageCyanDim = Color(0xFF2A9DAC)
+private val RuntimeStageGold = Color(0xFFFFD36B)
+private val RuntimeStageInkLine = Color(0xFF19324B)
+private val RuntimeStageText = Color(0xFFE8F7FF)
+private val RuntimeStageTextDim = Color(0xFF9FB6C9)
+private val RuntimeStageKernelLaneRegex =
     Regex(
         """\b(active|eligible candidates|blocked candidates) \d+(?: \[([^\]]+)])?""",
         RegexOption.IGNORE_CASE,
     )
-private val RuntimeMirrorEligibleKernelCountRegex =
+private val RuntimeStageEligibleKernelCountRegex =
     Regex("""\beligible candidates (\d+)""", RegexOption.IGNORE_CASE)
-private val RuntimeMirrorBlockedKernelCountRegex =
+private val RuntimeStageBlockedKernelCountRegex =
     Regex("""\bblocked candidates (\d+)""", RegexOption.IGNORE_CASE)
-private val RuntimeMirrorHugePayloadMarkerRegex = Regex("""\(\d+ chars\)""")
-private val RuntimeMirrorHugePayloadCharCountRegex = Regex("""\((\d+) chars\)""")
-private val RuntimeMirrorRevisionScenarioRegex = Regex("""(?:^|\|)scenario=([^|]+)""")
-private val RuntimeMirrorRevisionBranchRegex = Regex("""(?:^|\|)branch=([^|]+)""")
-private val RuntimeMirrorRevisionEpochRegex = Regex("""(?:^|\|)epoch=([^|]+)""")
-private val RuntimeMirrorRendererPacketTelemetryRegex = Regex("""\s+(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[.=]).*""")
-private val RuntimeMirrorWhitespaceRegex = Regex("""\s+""")
-private const val RUNTIME_MIRROR_MISSION_DAY_SECONDS = 86_400.0
-private const val RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT = 140
-private const val RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT = 3
-private const val RUNTIME_MIRROR_COMPACT_ACCELERATION_CHIP_LIMIT = 5
-private const val RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION = 18f
-private const val RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION = 28f
-private const val RUNTIME_MIRROR_SIGNAL_FOCUS_LIFT = 0.16f
-private const val RUNTIME_MIRROR_SIGNAL_SELECTED_LIFT = 0.12f
-private const val RUNTIME_MIRROR_SIGNAL_L1_BASE = 0.24f
-private const val RUNTIME_MIRROR_SIGNAL_L1_BODY_COEFF = 0.34f
-private const val RUNTIME_MIRROR_SIGNAL_L2_BASE = 0.22f
-private const val RUNTIME_MIRROR_SIGNAL_L2_SELECTED_COEFF = 0.44f
-private const val RUNTIME_MIRROR_SIGNAL_L3_BASE = 0.30f
-private const val RUNTIME_MIRROR_SIGNAL_L3_TRAIL_COEFF = 0.42f
-private const val RUNTIME_MIRROR_SIGNAL_L4_BASE = 0.20f
-private const val RUNTIME_MIRROR_SIGNAL_L4_TIME_COEFF = 0.50f
-private const val RUNTIME_MIRROR_SIGNAL_L5_BASE = 0.32f
-private const val RUNTIME_MIRROR_SIGNAL_L5_BODY_COEFF = 0.20f
-private const val RUNTIME_MIRROR_SIGNAL_L5_TRAIL_COEFF = 0.22f
-private const val RUNTIME_MIRROR_SIGNAL_L6_BASE = 0.28f
-private const val RUNTIME_MIRROR_SIGNAL_L6_FOCUS_COEFF = 0.48f
-private const val RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
-private const val RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR
-private val RuntimeMirrorTilePlanRegex = Regex("""(\d+)x(\d+)-body tiles""")
-private val RuntimeMirrorTileWorkersRegex = Regex("""(\d+) tile workers""")
+private val RuntimeStageHugePayloadMarkerRegex = Regex("""\(\d+ chars\)""")
+private val RuntimeStageHugePayloadCharCountRegex = Regex("""\((\d+) chars\)""")
+private val RuntimeStageRevisionScenarioRegex = Regex("""(?:^|\|)scenario=([^|]+)""")
+private val RuntimeStageRevisionBranchRegex = Regex("""(?:^|\|)branch=([^|]+)""")
+private val RuntimeStageRevisionEpochRegex = Regex("""(?:^|\|)epoch=([^|]+)""")
+private val RuntimeStageRendererPacketTelemetryRegex = Regex("""\s+(?:rev=|A=|TN=|TM=|TF=|TL=|bytes=|paths[.=]).*""")
+private val RuntimeStageWhitespaceRegex = Regex("""\s+""")
+private const val RUNTIME_STAGE_MISSION_DAY_SECONDS = 86_400.0
+private const val RUNTIME_STAGE_STATUS_TEXT_CHAR_LIMIT = 140
+private const val RUNTIME_STAGE_KERNEL_LANE_HUD_NAME_LIMIT = 3
+private const val RUNTIME_STAGE_COMPACT_ACCELERATION_CHIP_LIMIT = 5
+private const val RUNTIME_STAGE_SIGNAL_BODY_NORMALIZATION = 18f
+private const val RUNTIME_STAGE_SIGNAL_TRAIL_NORMALIZATION = 28f
+private const val RUNTIME_STAGE_SIGNAL_FOCUS_LIFT = 0.16f
+private const val RUNTIME_STAGE_SIGNAL_SELECTED_LIFT = 0.12f
+private const val RUNTIME_STAGE_SIGNAL_L1_BASE = 0.24f
+private const val RUNTIME_STAGE_SIGNAL_L1_BODY_COEFF = 0.34f
+private const val RUNTIME_STAGE_SIGNAL_L2_BASE = 0.22f
+private const val RUNTIME_STAGE_SIGNAL_L2_SELECTED_COEFF = 0.44f
+private const val RUNTIME_STAGE_SIGNAL_L3_BASE = 0.30f
+private const val RUNTIME_STAGE_SIGNAL_L3_TRAIL_COEFF = 0.42f
+private const val RUNTIME_STAGE_SIGNAL_L4_BASE = 0.20f
+private const val RUNTIME_STAGE_SIGNAL_L4_TIME_COEFF = 0.50f
+private const val RUNTIME_STAGE_SIGNAL_L5_BASE = 0.32f
+private const val RUNTIME_STAGE_SIGNAL_L5_BODY_COEFF = 0.20f
+private const val RUNTIME_STAGE_SIGNAL_L5_TRAIL_COEFF = 0.22f
+private const val RUNTIME_STAGE_SIGNAL_L6_BASE = 0.28f
+private const val RUNTIME_STAGE_SIGNAL_L6_FOCUS_COEFF = 0.48f
+private const val RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR
+private val RuntimeStageTilePlanRegex = Regex("""(\d+)x(\d+)-body tiles""")
+private val RuntimeStageTileWorkersRegex = Regex("""(\d+) tile workers""")
 
 @Composable
-internal fun StageFirstRuntimeMirrorExperience(
-    runtimeFacade: RuntimeFacade?,
-    ensureRuntimeStarted: (() -> Unit)?,
+internal fun StageFirstRuntimeExperience(
+    runtimeFacade: RuntimeFacade,
+    ensureRuntimeStarted: () -> Unit,
     pendingSemanticAction: PendingSemanticAction?,
-    onReturnToSandbox: () -> Unit,
-    runtimeMirrorMountedState: androidx.compose.runtime.MutableState<Boolean>? = null,
-    runtimeMirrorRenderHostState: androidx.compose.runtime.MutableState<SolarSystemRenderHostView?>? = null,
+    runtimeMountedState: androidx.compose.runtime.MutableState<Boolean>? = null,
+    runtimeRenderHostState: androidx.compose.runtime.MutableState<SolarSystemRenderHostView?>? = null,
 ) {
     SolarLabTheme {
         val context = LocalContext.current.applicationContext
         val lifecycleOwner = LocalLifecycleOwner.current
         val coroutineScope = rememberCoroutineScope()
 
-        val fallbackRuntimeState = remember {
-            mutableStateOf(
-                ShellUiState(
-                    connectionState = SessionConnectionState.Unavailable,
-                    statusLine = "Runtime mirror unavailable",
-                    detailLine = "This stage-first build did not provide a Rust runtime facade.",
-                    noticeLine = "Switch back to Sandbox to keep using the restored local client.",
-                    renderStatus = RenderStatusPresentation(
-                        readiness = RenderHostReadiness.Unavailable,
-                        isDegraded = true,
-                        degradationReason = "Runtime facade missing",
-                        issue = "Runtime facade missing",
-                    ),
-                )
-            )
-        }
-        val uiState by runtimeFacade?.uiState?.collectAsState() ?: fallbackRuntimeState
+        val uiState by runtimeFacade.uiState.collectAsState()
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
@@ -248,16 +229,16 @@ internal fun StageFirstRuntimeMirrorExperience(
         var cameraCoachVisible by rememberSaveable {
             mutableStateOf(shouldShowStageCameraCoach(context))
         }
-        var hostRendererStatus by remember { mutableStateOf("Preparing immersive runtime mirror.") }
+        var hostRendererStatus by remember { mutableStateOf("Preparing immersive Rust stage.") }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
         var hostedDebugModeApplied by remember { mutableStateOf(false) }
 
-        val mirrorScene = remember(uiState.renderFrame) {
-            uiState.renderFrame?.toRuntimeMirrorScene()
+        val stageScene = remember(uiState.renderFrame) {
+            uiState.renderFrame?.toRuntimeStageScene()
         }
         val chromeMode = stageChromeModeFromName(chromeModeName)
         val traceLayerMode = traceLayerModeFromName(traceLayerModeName)
-        val searchableBodies = mirrorScene?.searchableBodies.orEmpty()
+        val searchableBodies = stageScene?.searchableBodies.orEmpty()
         val selectedBody = remember(searchableBodies, selectedBodyId) {
             searchableBodies.firstOrNull { it.id == selectedBodyId }
         }
@@ -271,16 +252,16 @@ internal fun StageFirstRuntimeMirrorExperience(
                 },
             )
         }
-        val scenarioPacks = runtimeFacade?.scenarioPacks.orEmpty()
+        val scenarioPacks = runtimeFacade.scenarioPacks
         val activeScenarioPack = remember(uiState.snapshot?.scenarioId, scenarioPacks) {
             RuntimeScenarioPacks.byId(uiState.snapshot?.scenarioId)
                 ?: scenarioPacks.firstOrNull { it.scenarioId == uiState.snapshot?.scenarioId }
                 ?: RuntimeScenarioPacks.default
         }
         val runtimeSessionHandle = uiState.sessionHandle ?: 0L
-        val attachRenderHost = shouldAttachRuntimeMirrorRenderHost(
+        val attachRenderHost = shouldAttachRuntimeRenderHost(
             runtimeSessionHandle = runtimeSessionHandle,
-            hasMirrorScene = mirrorScene?.scene != null,
+            hasStageScene = stageScene?.scene != null,
             hostedDebugModeEnabled = HostedDebugMode.enabled,
             hostedDebugModeApplied = hostedDebugModeApplied,
         )
@@ -323,32 +304,24 @@ internal fun StageFirstRuntimeMirrorExperience(
                     "Using the native immersive stage while the packet bridge reports: ${uiState.renderStatus.issue}"
 
                 else ->
-                    "Drag to orbit. Pinch to zoom and move two fingers to pan. Tap to select and double-tap to frame."
+                    "Drag to orbit. Pinch to zoom and move two fingers to pan. Tap to select and double-tap to enter close orbit."
             }
         }
-        val canSendCommands = runtimeFacade != null && uiState.connectionState == SessionConnectionState.Active
+        val canSendCommands = uiState.connectionState == SessionConnectionState.Active
         val isRunning = uiState.snapshot?.paused == false
-        val cameraControlsEnabled = runtimeSessionHandle != 0L || mirrorScene?.scene != null
+        val cameraControlsEnabled = runtimeSessionHandle != 0L || stageScene?.scene != null
         val refreshRuntime = {
-            if (runtimeFacade != null) {
-                coroutineScope.launch {
-                    runtimeFacade.refresh()
-                }
+            coroutineScope.launch {
+                runtimeFacade.refresh()
             }
         }
         fun sendRuntimeCommand(command: RuntimeCommand) {
-            if (runtimeFacade == null) {
-                return
-            }
             coroutineScope.launch {
                 runtimeFacade.applyCommand(command)
             }
         }
 
         fun syncObserver(bodyId: String?, mode: ObserverMode) {
-            if (runtimeFacade == null) {
-                return
-            }
             coroutineScope.launch {
                 runtimeFacade.applyCommand(RuntimeCommand.FocusBody(bodyId))
                 runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(mode.toRuntimeObserverMode()))
@@ -363,7 +336,6 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         fun loadScenarioPack(scenarioId: String) {
-            val facade = runtimeFacade ?: return
             val knownScenario = scenarioPacks.any { it.scenarioId == scenarioId }
             if (knownScenario) {
                 selectedBodyId = null
@@ -374,7 +346,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                 renderHostView?.resetCamera()
             }
             coroutineScope.launch {
-                facade.loadScenario(scenarioId)
+                runtimeFacade.loadScenario(scenarioId)
             }
         }
 
@@ -387,9 +359,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         LaunchedEffect(runtimeFacade) {
-            if (runtimeFacade != null) {
-                ensureRuntimeStarted?.invoke()
-            }
+            ensureRuntimeStarted()
         }
 
         LaunchedEffect(uiState.snapshot?.simSecondsPerRealSecond) {
@@ -421,7 +391,7 @@ internal fun StageFirstRuntimeMirrorExperience(
             hostedDebugModeApplied = true
         }
 
-        LaunchedEffect(mirrorScene?.scene?.sourceRevision, searchableBodies) {
+        LaunchedEffect(stageScene?.scene?.sourceRevision, searchableBodies) {
             if (selectedBodyId != null && searchableBodies.none { body -> body.id == selectedBodyId }) {
                 selectedBodyId = null
                 observerMode = ObserverMode.FREE
@@ -438,11 +408,9 @@ internal fun StageFirstRuntimeMirrorExperience(
                         bodies = searchableBodies,
                         bodyQuery = action.bodyQuery,
                     ) ?: return@LaunchedEffect
-                    selectedBodyId = resolvedBodyId
-                    observerMode = ObserverMode.FOLLOW_SELECTED
                     searchVisible = false
                     debugVisible = false
-                    syncObserver(resolvedBodyId, observerMode)
+                    focusAndFrameRuntimeBody(resolvedBodyId)
                     appliedSemanticActionToken = pendingSemanticAction.token
                 }
 
@@ -465,17 +433,17 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         DisposableEffect(Unit) {
-            runtimeMirrorMountedState?.value = true
+            runtimeMountedState?.value = true
             onDispose {
-                runtimeMirrorMountedState?.value = false
-                runtimeMirrorRenderHostState?.value = null
+                runtimeMountedState?.value = false
+                runtimeRenderHostState?.value = null
                 renderHostView?.release()
             }
         }
 
         LaunchedEffect(attachRenderHost) {
             if (!attachRenderHost) {
-                runtimeMirrorRenderHostState?.value = null
+                runtimeRenderHostState?.value = null
             }
         }
 
@@ -499,18 +467,18 @@ internal fun StageFirstRuntimeMirrorExperience(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            RuntimeMirrorVoid,
+                            RuntimeStageVoid,
                             Color(0xFF06101C),
                             Color(0xFF0B1829),
                         )
                     )
                 ),
         ) {
-            val compactLayout = maxWidth < RuntimeMirrorCompactWidthBreakpoint
+            val compactLayout = maxWidth < RuntimeStageCompactWidthBreakpoint
             val expandedCockpitMaxHeight = maxHeight * expandedStageDeckMaxHeightFraction(compactLayout)
             val expandedCockpitScrollState = rememberScrollState()
             val cockpitBackendStatus = if (compactLayout) {
-                runtimeMirrorCompactBackendStatus(backendStatus)
+                runtimeStageCompactBackendStatus(backendStatus)
             } else {
                 backendStatus
             }
@@ -522,12 +490,6 @@ internal fun StageFirstRuntimeMirrorExperience(
                 StageControlsButton(
                     label = "Less",
                     onClick = { chromeModeName = chromeMode.toggle().name },
-                )
-                StageActionButton(
-                    label = "Sandbox",
-                    onClick = onReturnToSandbox,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_SANDBOX_BUTTON),
-                    secondary = true,
                 )
                 StageActionButton(
                     label = if (searchVisible) "Searching" else "Search",
@@ -553,14 +515,14 @@ internal fun StageFirstRuntimeMirrorExperience(
             val primaryControls: @Composable () -> Unit = {
                 StageActionButton(
                     label = if (compactLayout) "In" else "Zoom +",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_IN_FACTOR) },
+                    onClick = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
                     enabled = cameraControlsEnabled,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
                     dense = compactLayout,
                 )
                 StageActionButton(
                     label = if (compactLayout) "Out" else "Zoom -",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_MIRROR_CAMERA_ZOOM_OUT_FACTOR) },
+                    onClick = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
                     enabled = cameraControlsEnabled,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
                     dense = compactLayout,
@@ -644,7 +606,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         renderHostView?.resetCamera()
                         refreshRuntime()
                     },
-                    enabled = runtimeFacade != null,
+                    enabled = true,
                     dense = compactLayout,
                 )
             }
@@ -674,10 +636,22 @@ internal fun StageFirstRuntimeMirrorExperience(
                     enabled = canSendCommands,
                     dense = compactLayout,
                 )
-                StageTraceLayerButton(
-                    mode = traceLayerMode,
-                    compact = compactLayout,
-                    onClick = { traceLayerModeName = traceLayerMode.next().name },
+                StageActionButton(
+                    label = if (compactLayout) "Tracers -" else "Fewer tracers",
+                    onClick = { traceLayerModeName = traceLayerMode.less().name },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON),
+                    contentDescription = "Show fewer tracers; currently ${traceLayerButtonLabel(traceLayerMode, true)}",
+                    enabled = traceLayerMode != TraceLayerMode.OFF,
+                    secondary = true,
+                    dense = compactLayout,
+                )
+                StageActionButton(
+                    label = if (compactLayout) "Tracers +" else "More tracers",
+                    onClick = { traceLayerModeName = traceLayerMode.more().name },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON),
+                    contentDescription = "Show more tracers; currently ${traceLayerButtonLabel(traceLayerMode, true)}",
+                    enabled = traceLayerMode != TraceLayerMode.ALL,
+                    secondary = true,
                     dense = compactLayout,
                 )
                 StageActionButton(
@@ -731,24 +705,23 @@ internal fun StageFirstRuntimeMirrorExperience(
                                 }
                             )
                             renderHostView = view
-                            runtimeMirrorRenderHostState?.value = view
+                            runtimeRenderHostState?.value = view
                         }
                     },
                     update = { view ->
                         renderHostView = view
-                        runtimeMirrorRenderHostState?.value = view
-                        view.updateRuntimeMirrorState(
+                        runtimeRenderHostState?.value = view
+                        view.updateRuntimeStageState(
                             sessionHandle = runtimeSessionHandle,
                             processingMode = renderProcessingMode,
                             renderLayerOptions = renderLayerOptions,
                             observerMode = observerMode,
                             selectedBodyId = selectedBodyId,
                             interactionMode = SceneInteractionMode.NAVIGATE_AND_SELECT,
-                            sceneFrame = mirrorScene?.scene,
+                            sceneFrame = stageScene?.scene,
                         )
                     },
                 )
-                RuntimeMirrorBackdropOverlay(compact = compactLayout)
             } else {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -773,14 +746,14 @@ internal fun StageFirstRuntimeMirrorExperience(
                             label = "Refresh runtime",
                             onClick = refreshRuntime,
                             modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_RUNTIME_REFRESH_BUTTON),
-                            enabled = runtimeFacade != null,
+                            enabled = true,
                         )
                     }
                 }
             }
 
             if (chromeMode == StageChromeMode.COLLAPSED) {
-                RuntimeMirrorCollapsedStageChip(
+                RuntimeStageCollapsedStageChip(
                     selectionCard = selectionCard,
                     scenarioLabel = timelineText,
                     modifier = Modifier
@@ -802,7 +775,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (compactLayout) {
-                        RuntimeMirrorCollapsedStageChip(
+                        RuntimeStageCollapsedStageChip(
                             selectionCard = selectionCard,
                             scenarioLabel = timelineText,
                             modifier = Modifier
@@ -815,7 +788,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.Top,
                         ) {
-                            RuntimeMirrorMissionPanel(
+                            RuntimeStageMissionPanel(
                                 uiState = uiState,
                                 selectionCard = selectionCard,
                                 selectedBody = selectedBody,
@@ -901,12 +874,12 @@ internal fun StageFirstRuntimeMirrorExperience(
                             actionButtons()
                         }
                     }
-                    RuntimeMirrorTimelineRail(
+                    RuntimeStageTimelineRail(
                         uiState = uiState,
                         fallbackSpeedPreset = playbackSpeedPreset,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    RuntimeMirrorCommandDeck(
+                    RuntimeStageCommandDeck(
                         compact = compactLayout,
                         primaryControls = primaryControls,
                         secondaryControls = secondaryControls,
@@ -916,14 +889,14 @@ internal fun StageFirstRuntimeMirrorExperience(
                     ) {
                         Text(
                             text = cockpitBackendStatus,
-                            color = RuntimeMirrorCyan,
+                            color = RuntimeStageCyan,
                             style = MaterialTheme.typography.bodyMedium,
                             maxLines = if (compactLayout) 2 else Int.MAX_VALUE,
                             overflow = TextOverflow.Ellipsis,
                         )
                         accelerationReadout?.let { readout ->
                             Spacer(modifier = Modifier.height(8.dp))
-                            RuntimeMirrorAccelerationPanel(
+                            RuntimeStageAccelerationPanel(
                                 readout = readout,
                                 compact = compactLayout,
                             )
@@ -931,7 +904,7 @@ internal fun StageFirstRuntimeMirrorExperience(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = interactionHintText,
-                            color = RuntimeMirrorTextDim,
+                            color = RuntimeStageTextDim,
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = if (compactLayout) 1 else Int.MAX_VALUE,
                             overflow = TextOverflow.Ellipsis,
@@ -966,7 +939,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         if (searchVisible) {
-            RuntimeMirrorSearchDialog(
+            RuntimeStageSearchDialog(
                 bodies = searchableBodies,
                 selectedBodyId = selectedBodyId,
                 onDismiss = { searchVisible = false },
@@ -978,7 +951,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         if (scenarioPickerVisible) {
-            RuntimeMirrorScenarioDialog(
+            RuntimeStageScenarioDialog(
                 scenarioPacks = scenarioPacks,
                 activeScenarioId = uiState.snapshot?.scenarioId,
                 onDismiss = { scenarioPickerVisible = false },
@@ -987,7 +960,7 @@ internal fun StageFirstRuntimeMirrorExperience(
         }
 
         if (debugVisible) {
-            RuntimeMirrorDebugDialog(
+            RuntimeStageDebugDialog(
                 uiState = uiState,
                 hostRendererStatus = hostRendererStatus,
                 stepQuantumPreset = stepQuantumPreset,
@@ -1002,78 +975,29 @@ internal fun StageFirstRuntimeMirrorExperience(
     }
 }
 
-internal fun shouldAttachRuntimeMirrorRenderHost(
+internal fun shouldAttachRuntimeRenderHost(
     runtimeSessionHandle: Long,
-    hasMirrorScene: Boolean,
+    hasStageScene: Boolean,
     hostedDebugModeEnabled: Boolean,
     hostedDebugModeApplied: Boolean,
 ): Boolean {
-    val runtimeReady = runtimeSessionHandle != 0L && hasMirrorScene
+    val runtimeReady = runtimeSessionHandle != 0L && hasStageScene
     return runtimeReady && (!hostedDebugModeEnabled || hostedDebugModeApplied)
 }
 
 @Composable
-private fun RuntimeMirrorBackdropOverlay(compact: Boolean) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val haloCenter = Offset(size.width * 0.74f, size.height * if (compact) 0.54f else 0.48f)
-        val haloRadius = size.minDimension * if (compact) 0.30f else 0.38f
-        drawCircle(
-            color = RuntimeMirrorCyanDim.copy(alpha = 0.07f),
-            radius = haloRadius,
-            center = haloCenter,
-        )
-        drawCircle(
-            color = RuntimeMirrorBlue.copy(alpha = 0.05f),
-            radius = haloRadius * 0.62f,
-            center = Offset(size.width * 0.22f, size.height * 0.24f),
-        )
-        drawArc(
-            color = RuntimeMirrorCyan.copy(alpha = 0.11f),
-            startAngle = 196f,
-            sweepAngle = 116f,
-            useCenter = false,
-            topLeft = Offset(haloCenter.x - haloRadius, haloCenter.y - haloRadius),
-            size = Size(haloRadius * 2f, haloRadius * 2f),
-            style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round),
-        )
-        drawArc(
-            color = RuntimeMirrorGold.copy(alpha = 0.16f),
-            startAngle = 242f,
-            sweepAngle = 34f,
-            useCenter = false,
-            topLeft = Offset(haloCenter.x - haloRadius * 1.18f, haloCenter.y - haloRadius * 1.18f),
-            size = Size(haloRadius * 2.36f, haloRadius * 2.36f),
-            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
-        )
-
-        val gridTop = size.height * if (compact) 0.10f else 0.08f
-        val gridBottom = size.height * if (compact) 0.48f else 0.58f
-        repeat(12) { index ->
-            val fraction = index / 11f
-            drawLine(
-                color = RuntimeMirrorInkLine.copy(alpha = 0.30f),
-                start = Offset(size.width * fraction, gridTop),
-                end = Offset(size.width * (fraction + 0.08f), gridBottom),
-                strokeWidth = 1.dp.toPx(),
-                cap = StrokeCap.Round,
-            )
-        }
-    }
-}
-
-@Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun RuntimeMirrorAccelerationPanel(
+private fun RuntimeStageAccelerationPanel(
     readout: RuntimeAccelerationReadout,
     compact: Boolean = false,
 ) {
     val statusLine = if (compact) {
-        runtimeMirrorCompactAccelerationStatusLine(readout.statusLine)
+        runtimeStageCompactAccelerationStatusLine(readout.statusLine)
     } else {
         readout.statusLine
     }
     val auditSummary = if (compact) {
-        runtimeMirrorCompactAccelerationAuditSummary(readout.auditSummary)
+        runtimeStageCompactAccelerationAuditSummary(readout.auditSummary)
     } else {
         readout.auditSummary
     }
@@ -1094,20 +1018,20 @@ private fun RuntimeMirrorAccelerationPanel(
             ) {
                 Text(
                     text = readout.headline,
-                    color = RuntimeMirrorGold,
+                    color = RuntimeStageGold,
                     style = MaterialTheme.typography.labelLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = statusLine,
-                    color = RuntimeMirrorCyan,
+                    color = RuntimeStageCyan,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            RuntimeMirrorMetricPill(
+            RuntimeStageMetricPill(
                 label = "DRIVE",
                 value = "${readout.drivePercentage}%",
                 compact = compact,
@@ -1119,10 +1043,10 @@ private fun RuntimeMirrorAccelerationPanel(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                val visibleChips = readout.chips.take(RUNTIME_MIRROR_COMPACT_ACCELERATION_CHIP_LIMIT)
+                val visibleChips = readout.chips.take(RUNTIME_STAGE_COMPACT_ACCELERATION_CHIP_LIMIT)
                 visibleChips.forEach { chip ->
-                    val presentation = runtimeMirrorCompactAccelerationChip(chip)
-                    RuntimeMirrorMetricPill(
+                    val presentation = runtimeStageCompactAccelerationChip(chip)
+                    RuntimeStageMetricPill(
                         label = presentation.label,
                         value = presentation.value,
                         modifier = Modifier.widthIn(max = 154.dp),
@@ -1131,7 +1055,7 @@ private fun RuntimeMirrorAccelerationPanel(
                 }
                 val hiddenChipCount = readout.chips.size - visibleChips.size
                 if (hiddenChipCount > 0) {
-                    RuntimeMirrorMetricPill(
+                    RuntimeStageMetricPill(
                         label = "More",
                         value = "+$hiddenChipCount",
                         compact = true,
@@ -1147,34 +1071,34 @@ private fun RuntimeMirrorAccelerationPanel(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 readout.chips.forEach { chip ->
-                    RuntimeMirrorMetricPill(label = "VECTOR", value = chip)
+                    RuntimeStageMetricPill(label = "VECTOR", value = chip)
                 }
             }
         }
-        RuntimeMirrorAccelerationSpectrum(
+        RuntimeStageAccelerationSpectrum(
             readout = readout,
             compact = compact,
         )
         if (!compact) readout.lanes.takeIf { it.isNotEmpty() }?.let { lanes ->
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = RuntimeMirrorGlassSoft,
+                color = RuntimeStageGlassSoft,
                 shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.22f)),
+                border = BorderStroke(1.dp, RuntimeStageCyanDim.copy(alpha = 0.22f)),
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     lanes.forEach { lane ->
-                        RuntimeMirrorAccelerationLaneRow(lane = lane)
+                        RuntimeStageAccelerationLaneRow(lane = lane)
                     }
                 }
             }
         }
         Text(
             text = auditSummary,
-            color = RuntimeMirrorTextDim,
+            color = RuntimeStageTextDim,
             style = MaterialTheme.typography.bodySmall,
             maxLines = if (compact) 1 else 2,
             overflow = TextOverflow.Ellipsis,
@@ -1183,7 +1107,7 @@ private fun RuntimeMirrorAccelerationPanel(
 }
 
 @Composable
-private fun RuntimeMirrorAccelerationSpectrum(
+private fun RuntimeStageAccelerationSpectrum(
     readout: RuntimeAccelerationReadout,
     compact: Boolean = false,
 ) {
@@ -1194,9 +1118,9 @@ private fun RuntimeMirrorAccelerationSpectrum(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = RuntimeMirrorVoid.copy(alpha = 0.42f),
+        color = RuntimeStageVoid.copy(alpha = 0.42f),
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.18f)),
+        border = BorderStroke(1.dp, RuntimeStageCyanDim.copy(alpha = 0.18f)),
     ) {
         Canvas(
             modifier = Modifier
@@ -1210,14 +1134,14 @@ private fun RuntimeMirrorAccelerationSpectrum(
             val signal = readout.signal.coerceIn(0.08f, 1f)
             val baselineY = size.height * 0.64f
             drawLine(
-                color = RuntimeMirrorInkLine.copy(alpha = 0.76f),
+                color = RuntimeStageInkLine.copy(alpha = 0.76f),
                 start = Offset(railLeft, baselineY),
                 end = Offset(railRight, baselineY),
                 strokeWidth = 1.5.dp.toPx(),
                 cap = StrokeCap.Round,
             )
             drawLine(
-                color = RuntimeMirrorCyan.copy(alpha = 0.88f),
+                color = RuntimeStageCyan.copy(alpha = 0.88f),
                 start = Offset(railLeft, baselineY),
                 end = Offset(railLeft + railWidth * signal, baselineY),
                 strokeWidth = 3.dp.toPx(),
@@ -1256,7 +1180,7 @@ private fun RuntimeMirrorAccelerationSpectrum(
             repeat(6) { index ->
                 val x = railLeft + railWidth * (index / 5f)
                 drawLine(
-                    color = RuntimeMirrorTextDim.copy(alpha = 0.20f),
+                    color = RuntimeStageTextDim.copy(alpha = 0.20f),
                     start = Offset(x, baselineY - 6.dp.toPx()),
                     end = Offset(x, baselineY + 6.dp.toPx()),
                     strokeWidth = 1.dp.toPx(),
@@ -1267,7 +1191,7 @@ private fun RuntimeMirrorAccelerationSpectrum(
 }
 
 @Composable
-private fun RuntimeMirrorAccelerationLaneRow(lane: RuntimeAccelerationLane) {
+private fun RuntimeStageAccelerationLaneRow(lane: RuntimeAccelerationLane) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1300,26 +1224,26 @@ private fun RuntimeMirrorAccelerationLaneRow(lane: RuntimeAccelerationLane) {
         Text(
             modifier = Modifier.weight(1f),
             text = lane.value,
-            color = RuntimeMirrorText,
+            color = RuntimeStageText,
             style = MaterialTheme.typography.bodySmall,
         )
     }
 }
 
 private fun RuntimeAccelerationLaneTone.accentColor(): Color = when (this) {
-    RuntimeAccelerationLaneTone.Active -> RuntimeMirrorCyan
-    RuntimeAccelerationLaneTone.Eligible -> RuntimeMirrorGold
+    RuntimeAccelerationLaneTone.Active -> RuntimeStageCyan
+    RuntimeAccelerationLaneTone.Eligible -> RuntimeStageGold
     RuntimeAccelerationLaneTone.Blocked -> Color(0xFFFF8C6B)
     RuntimeAccelerationLaneTone.Fallback -> Color(0xFFFFB37A)
-    RuntimeAccelerationLaneTone.Neutral -> RuntimeMirrorTextDim
+    RuntimeAccelerationLaneTone.Neutral -> RuntimeStageTextDim
 }
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun RuntimeMirrorMissionPanel(
+private fun RuntimeStageMissionPanel(
     uiState: ShellUiState,
     selectionCard: RuntimeSelectionCard,
-    selectedBody: RuntimeMirrorBody?,
+    selectedBody: RuntimeStageBody?,
     observerMode: ObserverMode,
     renderProcessingMode: RenderProcessingMode,
     scenarioLabel: String,
@@ -1329,13 +1253,13 @@ private fun RuntimeMirrorMissionPanel(
     val revisionSeed = uiState.renderStatus.sceneRevision ?: uiState.renderFrame?.sceneRevision
     val revision = remember(revisionSeed) {
         revisionSeed
-            ?.let { runtimeMirrorCompactRevisionText(it, includePayloadSize = false) }
+            ?.let { runtimeStageCompactRevisionText(it, includePayloadSize = false) }
             ?: "waiting"
     }
     val compactRevisionMetric = remember(revisionSeed) {
         revisionSeed
-            ?.let(::runtimeMirrorCompactRevisionMetric)
-            ?: RuntimeMirrorCompactRevisionMetric(label = "Rev", value = "waiting")
+            ?.let(::runtimeStageCompactRevisionMetric)
+            ?: RuntimeStageCompactRevisionMetric(label = "Rev", value = "waiting")
     }
     val bodyCount = uiState.renderStatus.renderedBodyCount
     val trailCount = uiState.renderStatus.renderedTrailCount
@@ -1343,7 +1267,7 @@ private fun RuntimeMirrorMissionPanel(
     val focusMetricLabel = if (selectedBody == null && uiState.focusedBodyId != null) "Runtime" else "Focus"
     val scenarioHeadline = remember(scenarioLabel, compact) {
         if (compact) {
-            runtimeMirrorCompactScenarioLabel(scenarioLabel)
+            runtimeStageCompactScenarioLabel(scenarioLabel)
         } else {
             scenarioLabel
         }
@@ -1351,9 +1275,9 @@ private fun RuntimeMirrorMissionPanel(
 
     Surface(
         modifier = modifier.widthIn(max = 760.dp),
-        color = RuntimeMirrorGlass,
+        color = RuntimeStageGlass,
         shape = RoundedCornerShape(26.dp),
-        border = BorderStroke(1.dp, RuntimeMirrorCyan.copy(alpha = 0.30f)),
+        border = BorderStroke(1.dp, RuntimeStageCyan.copy(alpha = 0.30f)),
     ) {
         Column(
             modifier = Modifier
@@ -1361,9 +1285,9 @@ private fun RuntimeMirrorMissionPanel(
                 .background(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            RuntimeMirrorCyanDim.copy(alpha = 0.20f),
-                            RuntimeMirrorGlass,
-                            RuntimeMirrorGold.copy(alpha = 0.08f),
+                            RuntimeStageCyanDim.copy(alpha = 0.20f),
+                            RuntimeStageGlass,
+                            RuntimeStageGold.copy(alpha = 0.08f),
                         )
                     )
                 )
@@ -1377,7 +1301,7 @@ private fun RuntimeMirrorMissionPanel(
             ) {
                 Text(
                     text = "TRAJECTORY STAGE",
-                    color = RuntimeMirrorCyan,
+                    color = RuntimeStageCyan,
                     style = MaterialTheme.typography.labelLarge,
                 )
                 Text(
@@ -1385,19 +1309,19 @@ private fun RuntimeMirrorMissionPanel(
                         RenderProcessingMode.DEFAULT -> "FULL DETAIL"
                         RenderProcessingMode.LOW -> "LITE RENDER"
                     },
-                    color = RuntimeMirrorGold,
+                    color = RuntimeStageGold,
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
             Text(
                 text = scenarioHeadline,
                 modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
-                color = RuntimeMirrorGold,
+                color = RuntimeStageGold,
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = if (compact) 1 else Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis,
             )
-            RuntimeMirrorFocusIdentity(
+            RuntimeStageFocusIdentity(
                 selectionCard = selectionCard,
                 selectedBody = selectedBody,
                 compact = compact,
@@ -1408,20 +1332,20 @@ private fun RuntimeMirrorMissionPanel(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    RuntimeMirrorMetricPill(
+                    RuntimeStageMetricPill(
                         label = focusMetricLabel,
                         value = focusLabel,
                         modifier = Modifier.widthIn(max = 154.dp),
                         compact = true,
                     )
-                    RuntimeMirrorMetricPill(
+                    RuntimeStageMetricPill(
                         label = compactRevisionMetric.label,
                         value = compactRevisionMetric.value,
                         compact = true,
                     )
-                    RuntimeMirrorMetricPill(label = "Bodies", value = bodyCount.toString(), compact = true)
+                    RuntimeStageMetricPill(label = "Bodies", value = bodyCount.toString(), compact = true)
                     if (trailCount > 0) {
-                        RuntimeMirrorMetricPill(label = "Trails", value = trailCount.toString(), compact = true)
+                        RuntimeStageMetricPill(label = "Trails", value = trailCount.toString(), compact = true)
                     }
                 }
             } else {
@@ -1432,14 +1356,14 @@ private fun RuntimeMirrorMissionPanel(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RuntimeMirrorMetricPill(label = focusMetricLabel, value = focusLabel)
-                    RuntimeMirrorMetricPill(label = "Rev", value = revision)
-                    RuntimeMirrorMetricPill(label = "Scene", value = "$bodyCount bodies / $trailCount trails")
-                    RuntimeMirrorMetricPill(label = "Camera", value = observerMode.runtimeDisplayLabel().removePrefix("Observer: "))
+                    RuntimeStageMetricPill(label = focusMetricLabel, value = focusLabel)
+                    RuntimeStageMetricPill(label = "Rev", value = revision)
+                    RuntimeStageMetricPill(label = "Scene", value = "$bodyCount bodies / $trailCount trails")
+                    RuntimeStageMetricPill(label = "Camera", value = observerMode.runtimeDisplayLabel().removePrefix("Observer: "))
                 }
             }
-            RuntimeMirrorMiniSignalChart(
-                values = runtimeMirrorSignalValues(uiState = uiState, selectedBody = selectedBody),
+            RuntimeStageMiniSignalChart(
+                values = runtimeStageSignalValues(uiState = uiState, selectedBody = selectedBody),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(if (compact) 22.dp else 34.dp),
@@ -1449,9 +1373,9 @@ private fun RuntimeMirrorMissionPanel(
 }
 
 @Composable
-private fun RuntimeMirrorFocusIdentity(
+private fun RuntimeStageFocusIdentity(
     selectionCard: RuntimeSelectionCard,
-    selectedBody: RuntimeMirrorBody?,
+    selectedBody: RuntimeStageBody?,
     compact: Boolean,
 ) {
     Row(
@@ -1459,7 +1383,7 @@ private fun RuntimeMirrorFocusIdentity(
         horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RuntimeMirrorFocusGlyph(
+        RuntimeStageFocusGlyph(
             selectedBody = selectedBody,
             compact = compact,
         )
@@ -1469,7 +1393,7 @@ private fun RuntimeMirrorFocusIdentity(
         ) {
             Text(
                 text = selectionCard.eyebrow,
-                color = RuntimeMirrorGold,
+                color = RuntimeStageGold,
                 style = MaterialTheme.typography.labelMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1477,14 +1401,14 @@ private fun RuntimeMirrorFocusIdentity(
             Text(
                 text = selectionCard.title,
                 modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                color = RuntimeMirrorText,
+                color = RuntimeStageText,
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = selectionCard.detail,
-                color = RuntimeMirrorTextDim,
+                color = RuntimeStageTextDim,
                 style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
                 maxLines = if (compact) 2 else 3,
                 overflow = TextOverflow.Ellipsis,
@@ -1494,16 +1418,16 @@ private fun RuntimeMirrorFocusIdentity(
 }
 
 @Composable
-private fun RuntimeMirrorCollapsedStageChip(
+private fun RuntimeStageCollapsedStageChip(
     selectionCard: RuntimeSelectionCard,
     scenarioLabel: String,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         modifier = modifier,
-        color = RuntimeMirrorGlassSoft.copy(alpha = 0.78f),
+        color = RuntimeStageGlassSoft.copy(alpha = 0.78f),
         shape = RoundedCornerShape(999.dp),
-        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.34f)),
+        border = BorderStroke(1.dp, RuntimeStageCyanDim.copy(alpha = 0.34f)),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
@@ -1511,8 +1435,8 @@ private fun RuntimeMirrorCollapsedStageChip(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             StageTrajectoryGlyph(
-                orbitColor = RuntimeMirrorCyan,
-                probeColor = RuntimeMirrorGold,
+                orbitColor = RuntimeStageCyan,
+                probeColor = RuntimeStageGold,
             )
             Column(
                 modifier = Modifier.weight(1f),
@@ -1520,7 +1444,7 @@ private fun RuntimeMirrorCollapsedStageChip(
             ) {
                 Text(
                     text = "Trajectory stage",
-                    color = RuntimeMirrorCyan.copy(alpha = 0.92f),
+                    color = RuntimeStageCyan.copy(alpha = 0.92f),
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1528,14 +1452,14 @@ private fun RuntimeMirrorCollapsedStageChip(
                 Text(
                     text = selectionCard.title,
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE),
-                    color = RuntimeMirrorGold,
+                    color = RuntimeStageGold,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = runtimeMirrorCompactScenarioLabel(scenarioLabel),
-                    color = RuntimeMirrorTextDim.copy(alpha = 0.86f),
+                    text = runtimeStageCompactScenarioLabel(scenarioLabel),
+                    color = RuntimeStageTextDim.copy(alpha = 0.86f),
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1546,11 +1470,11 @@ private fun RuntimeMirrorCollapsedStageChip(
 }
 
 @Composable
-private fun RuntimeMirrorFocusGlyph(
-    selectedBody: RuntimeMirrorBody?,
+private fun RuntimeStageFocusGlyph(
+    selectedBody: RuntimeStageBody?,
     compact: Boolean,
 ) {
-    val bodyColor = selectedBody?.colorArgb?.let(::Color) ?: RuntimeMirrorCyan
+    val bodyColor = selectedBody?.colorArgb?.let(::Color) ?: RuntimeStageCyan
     Canvas(
         modifier = Modifier
             .width(if (compact) 40.dp else 48.dp)
@@ -1559,12 +1483,12 @@ private fun RuntimeMirrorFocusGlyph(
         val center = Offset(size.width * 0.5f, size.height * 0.5f)
         val radius = size.minDimension * 0.23f
         drawCircle(
-            color = RuntimeMirrorCyanDim.copy(alpha = 0.18f),
+            color = RuntimeStageCyanDim.copy(alpha = 0.18f),
             radius = size.minDimension * 0.46f,
             center = center,
         )
         drawCircle(
-            color = RuntimeMirrorGold.copy(alpha = 0.18f),
+            color = RuntimeStageGold.copy(alpha = 0.18f),
             radius = size.minDimension * 0.34f,
             center = center,
             style = Stroke(width = 1.2.dp.toPx()),
@@ -1575,20 +1499,20 @@ private fun RuntimeMirrorFocusGlyph(
             center = center,
         )
         drawCircle(
-            color = RuntimeMirrorText.copy(alpha = 0.72f),
+            color = RuntimeStageText.copy(alpha = 0.72f),
             radius = radius * 1.18f,
             center = center,
             style = Stroke(width = 1.dp.toPx()),
         )
         drawLine(
-            color = RuntimeMirrorCyan.copy(alpha = 0.70f),
+            color = RuntimeStageCyan.copy(alpha = 0.70f),
             start = Offset(center.x - size.width * 0.34f, center.y),
             end = Offset(center.x - radius * 1.55f, center.y),
             strokeWidth = 1.dp.toPx(),
             cap = StrokeCap.Round,
         )
         drawLine(
-            color = RuntimeMirrorCyan.copy(alpha = 0.70f),
+            color = RuntimeStageCyan.copy(alpha = 0.70f),
             start = Offset(center.x + size.width * 0.34f, center.y),
             end = Offset(center.x + radius * 1.55f, center.y),
             strokeWidth = 1.dp.toPx(),
@@ -1598,7 +1522,7 @@ private fun RuntimeMirrorFocusGlyph(
 }
 
 @Composable
-private fun RuntimeMirrorMetricPill(
+private fun RuntimeStageMetricPill(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
@@ -1606,9 +1530,9 @@ private fun RuntimeMirrorMetricPill(
 ) {
     Surface(
         modifier = modifier,
-        color = RuntimeMirrorGlassSoft,
+        color = RuntimeStageGlassSoft,
         shape = RoundedCornerShape(999.dp),
-        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.24f)),
+        border = BorderStroke(1.dp, RuntimeStageCyanDim.copy(alpha = 0.24f)),
     ) {
         Row(
             modifier = Modifier.padding(
@@ -1620,7 +1544,7 @@ private fun RuntimeMirrorMetricPill(
         ) {
             Text(
                 text = label.uppercase(Locale.US),
-                color = RuntimeMirrorTextDim,
+                color = RuntimeStageTextDim,
                 style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1628,7 +1552,7 @@ private fun RuntimeMirrorMetricPill(
             Text(
                 text = value,
                 modifier = if (compact) Modifier.widthIn(max = 78.dp) else Modifier,
-                color = RuntimeMirrorText,
+                color = RuntimeStageText,
                 style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1639,15 +1563,15 @@ private fun RuntimeMirrorMetricPill(
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun RuntimeMirrorCommandDeck(
+private fun RuntimeStageCommandDeck(
     compact: Boolean,
     primaryControls: @Composable () -> Unit,
     secondaryControls: @Composable () -> Unit,
 ) {
     Surface(
-        color = RuntimeMirrorGlass,
+        color = RuntimeStageGlass,
         shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
-        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.28f)),
+        border = BorderStroke(1.dp, RuntimeStageCyanDim.copy(alpha = 0.28f)),
     ) {
         Column(
             modifier = Modifier.padding(
@@ -1656,12 +1580,12 @@ private fun RuntimeMirrorCommandDeck(
             ),
             verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
         ) {
-            RuntimeMirrorCommandDeckRow(
+            RuntimeStageCommandDeckRow(
                 label = "Stage",
                 compact = compact,
                 content = primaryControls,
             )
-            RuntimeMirrorCommandDeckRow(
+            RuntimeStageCommandDeckRow(
                 label = "Time",
                 compact = compact,
                 content = secondaryControls,
@@ -1672,7 +1596,7 @@ private fun RuntimeMirrorCommandDeck(
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun RuntimeMirrorCommandDeckRow(
+private fun RuntimeStageCommandDeckRow(
     label: String,
     compact: Boolean,
     content: @Composable () -> Unit,
@@ -1685,7 +1609,7 @@ private fun RuntimeMirrorCommandDeckRow(
         Text(
             modifier = Modifier.width(if (compact) 48.dp else 62.dp),
             text = label.uppercase(Locale.US),
-            color = RuntimeMirrorCyan.copy(alpha = 0.82f),
+            color = RuntimeStageCyan.copy(alpha = 0.82f),
             style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1702,7 +1626,7 @@ private fun RuntimeMirrorCommandDeckRow(
 }
 
 @Composable
-private fun RuntimeMirrorTimelineRail(
+private fun RuntimeStageTimelineRail(
     uiState: ShellUiState,
     fallbackSpeedPreset: PlaybackSpeedPreset,
     modifier: Modifier = Modifier,
@@ -1711,13 +1635,13 @@ private fun RuntimeMirrorTimelineRail(
     val epochSeconds = snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds
     val speedLabel = snapshot?.let { formatPlaybackRateLabel(it.simSecondsPerRealSecond, fallbackSpeedPreset) }
         ?: "packet time"
-    val progress = runtimeMirrorRailProgress(epochSeconds)
+    val progress = runtimeStageRailProgress(epochSeconds)
 
     Surface(
         modifier = modifier,
-        color = RuntimeMirrorGlass,
+        color = RuntimeStageGlass,
         shape = RoundedCornerShape(22.dp),
-        border = BorderStroke(1.dp, RuntimeMirrorCyanDim.copy(alpha = 0.24f)),
+        border = BorderStroke(1.dp, RuntimeStageCyanDim.copy(alpha = 0.24f)),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
@@ -1730,12 +1654,12 @@ private fun RuntimeMirrorTimelineRail(
             ) {
                 Text(
                     text = epochSeconds?.let { "MET ${formatRuntimeEpoch(it)}" } ?: "Awaiting mission clock",
-                    color = RuntimeMirrorText,
+                    color = RuntimeStageText,
                     style = MaterialTheme.typography.labelLarge,
                 )
                 Text(
                     text = speedLabel,
-                    color = RuntimeMirrorGold,
+                    color = RuntimeStageGold,
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
@@ -1749,14 +1673,14 @@ private fun RuntimeMirrorTimelineRail(
                 val endX = size.width - 4.dp.toPx()
                 val activeX = startX + (endX - startX) * progress
                 drawLine(
-                    color = RuntimeMirrorInkLine.copy(alpha = 0.86f),
+                    color = RuntimeStageInkLine.copy(alpha = 0.86f),
                     start = Offset(startX, railY),
                     end = Offset(endX, railY),
                     strokeWidth = 2.dp.toPx(),
                     cap = StrokeCap.Round,
                 )
                 drawLine(
-                    color = RuntimeMirrorCyan.copy(alpha = 0.88f),
+                    color = RuntimeStageCyan.copy(alpha = 0.88f),
                     start = Offset(startX, railY),
                     end = Offset(activeX, railY),
                     strokeWidth = 2.4.dp.toPx(),
@@ -1767,19 +1691,19 @@ private fun RuntimeMirrorTimelineRail(
                     val tickX = startX + ((endX - startX) * tickProgress)
                     val tickHeight = if (index % 2 == 0) 8.dp.toPx() else 5.dp.toPx()
                     drawLine(
-                        color = RuntimeMirrorTextDim.copy(alpha = 0.42f),
+                        color = RuntimeStageTextDim.copy(alpha = 0.42f),
                         start = Offset(tickX, railY - (tickHeight * 0.5f)),
                         end = Offset(tickX, railY + (tickHeight * 0.5f)),
                         strokeWidth = 1.dp.toPx(),
                     )
                 }
                 drawCircle(
-                    color = RuntimeMirrorGold.copy(alpha = 0.26f),
+                    color = RuntimeStageGold.copy(alpha = 0.26f),
                     radius = 8.dp.toPx(),
                     center = Offset(activeX, railY),
                 )
                 drawCircle(
-                    color = RuntimeMirrorGold,
+                    color = RuntimeStageGold,
                     radius = 3.dp.toPx(),
                     center = Offset(activeX, railY),
                 )
@@ -1789,7 +1713,7 @@ private fun RuntimeMirrorTimelineRail(
 }
 
 @Composable
-private fun RuntimeMirrorMiniSignalChart(
+private fun RuntimeStageMiniSignalChart(
     values: List<Float>,
     modifier: Modifier = Modifier,
 ) {
@@ -1803,7 +1727,7 @@ private fun RuntimeMirrorMiniSignalChart(
         val bottom = size.height - 4.dp.toPx()
         val baseline = bottom - (bottom - top) * 0.18f
         drawLine(
-            color = RuntimeMirrorInkLine.copy(alpha = 0.72f),
+            color = RuntimeStageInkLine.copy(alpha = 0.72f),
             start = Offset(left, baseline),
             end = Offset(right, baseline),
             strokeWidth = 1.dp.toPx(),
@@ -1818,14 +1742,14 @@ private fun RuntimeMirrorMiniSignalChart(
             )
             previous?.let { last ->
                 drawLine(
-                    color = RuntimeMirrorCyan.copy(alpha = 0.30f),
+                    color = RuntimeStageCyan.copy(alpha = 0.30f),
                     start = last,
                     end = current,
                     strokeWidth = 5.dp.toPx(),
                     cap = StrokeCap.Round,
                 )
                 drawLine(
-                    color = RuntimeMirrorCyan.copy(alpha = 0.88f),
+                    color = RuntimeStageCyan.copy(alpha = 0.88f),
                     start = last,
                     end = current,
                     strokeWidth = 1.5.dp.toPx(),
@@ -1836,7 +1760,7 @@ private fun RuntimeMirrorMiniSignalChart(
         }
         previous?.let { head ->
             drawCircle(
-                color = RuntimeMirrorGold.copy(alpha = 0.88f),
+                color = RuntimeStageGold.copy(alpha = 0.88f),
                 radius = 2.4.dp.toPx(),
                 center = head,
             )
@@ -1845,8 +1769,8 @@ private fun RuntimeMirrorMiniSignalChart(
 }
 
 @Composable
-private fun RuntimeMirrorSearchDialog(
-    bodies: List<RuntimeMirrorBody>,
+private fun RuntimeStageSearchDialog(
+    bodies: List<RuntimeStageBody>,
     selectedBodyId: String?,
     onDismiss: () -> Unit,
     onSelectBody: (String) -> Unit,
@@ -1855,7 +1779,7 @@ private fun RuntimeMirrorSearchDialog(
     val normalizedQuery = query.trim().lowercase(Locale.US)
     val filteredBodies = remember(bodies, normalizedQuery) {
         bodies
-            .sortedWith(compareBy<RuntimeMirrorBody> { it.displayName.lowercase(Locale.US) }.thenBy { it.id.lowercase(Locale.US) })
+            .sortedWith(compareBy<RuntimeStageBody> { it.displayName.lowercase(Locale.US) }.thenBy { it.id.lowercase(Locale.US) })
             .filter { body ->
                 normalizedQuery.isBlank() ||
                     body.displayName.lowercase(Locale.US).contains(normalizedQuery) ||
@@ -1961,7 +1885,7 @@ private fun RuntimeMirrorSearchDialog(
 }
 
 @Composable
-private fun RuntimeMirrorScenarioDialog(
+private fun RuntimeStageScenarioDialog(
     scenarioPacks: List<RuntimeScenarioPack>,
     activeScenarioId: String?,
     onDismiss: () -> Unit,
@@ -2058,7 +1982,7 @@ private fun RuntimeMirrorScenarioDialog(
 }
 
 @Composable
-private fun RuntimeMirrorDebugDialog(
+private fun RuntimeStageDebugDialog(
     uiState: ShellUiState,
     hostRendererStatus: String,
     stepQuantumPreset: StepQuantumPreset,
@@ -2081,7 +2005,7 @@ private fun RuntimeMirrorDebugDialog(
                 }
             }
         },
-        title = { Text("Runtime mirror debug") },
+        title = { Text("Rust stage debug") },
         text = {
             Column(
                 modifier = Modifier
@@ -2132,7 +2056,7 @@ private fun buildRuntimeTimelineText(
     fallbackSpeedPreset: PlaybackSpeedPreset,
     scenarioPack: RuntimeScenarioPack,
 ): String {
-    val snapshot = uiState.snapshot ?: return "Runtime mirror\nWaiting for authoritative snapshot"
+    val snapshot = uiState.snapshot ?: return "Rust stage\nWaiting for authoritative snapshot"
     val speedLabel = formatPlaybackRateLabel(snapshot.simSecondsPerRealSecond, fallbackSpeedPreset)
     return buildString {
         append(scenarioPack.title)
@@ -2148,8 +2072,8 @@ private fun buildRuntimeTimelineText(
     }
 }
 
-internal fun runtimeMirrorCompactScenarioLabel(value: String): String {
-    val normalized = runtimeMirrorNormalizeStatusText(value)
+internal fun runtimeStageCompactScenarioLabel(value: String): String {
+    val normalized = runtimeStageNormalizeStatusText(value)
     val headline = normalized
         .substringBefore(" | branch=")
         .trim()
@@ -2158,17 +2082,17 @@ internal fun runtimeMirrorCompactScenarioLabel(value: String): String {
 
 private fun buildRuntimeSelectionCard(
     uiState: ShellUiState,
-    selectedBody: RuntimeMirrorBody?,
+    selectedBody: RuntimeStageBody?,
 ): RuntimeSelectionCard {
     if (selectedBody == null) {
         return RuntimeSelectionCard(
             title = if (uiState.connectionState == SessionConnectionState.Unavailable) {
-                "Runtime mirror unavailable"
+                "Rust stage unavailable"
             } else {
                 "No body selected"
             },
             detail = uiState.detailLine
-                ?.let(::runtimeMirrorCompactSelectionDetail)
+                ?.let(::runtimeStageCompactSelectionDetail)
                 ?: "Tap a moving body to select it, then use Follow to keep the authoritative scene in view.",
             eyebrow = if (uiState.connectionState == SessionConnectionState.Unavailable) {
                 "MISSION STATUS"
@@ -2179,29 +2103,29 @@ private fun buildRuntimeSelectionCard(
     }
     val hostLine = selectedBody.hostBodyId?.let { "Host ${displayNameForBodyId(it)}" }
     return RuntimeSelectionCard(
-        title = runtimeMirrorFocusDisplayName(
+        title = runtimeStageFocusDisplayName(
             bodyId = selectedBody.id,
             displayName = selectedBody.displayName,
         ),
         detail = listOfNotNull(
             hostLine,
-            "${runtimeMirrorBodyKindLabel(selectedBody.kind)} • Radius ${formatDistance(selectedBody.radiusM)}",
+            "${runtimeStageBodyKindLabel(selectedBody.kind)} • Radius ${formatDistance(selectedBody.radiusM)}",
             "${formatDistance(selectedBody.positionM.magnitude())} from frame origin",
         ).joinToString(separator = " · "),
         eyebrow = "FOCUS LOCK",
     )
 }
 
-internal fun runtimeMirrorCompactSelectionDetail(value: String): String {
-    val normalized = runtimeMirrorNormalizeStatusText(value)
+internal fun runtimeStageCompactSelectionDetail(value: String): String {
+    val normalized = runtimeStageNormalizeStatusText(value)
     val revision = normalized.substringAfter("Scene revision ", missingDelimiterValue = normalized)
     if (revision.contains("scenario=") || revision.contains("packet=")) {
-        return "Scene ${runtimeMirrorCompactRevisionText(revision, includePayloadSize = false)}"
+        return "Scene ${runtimeStageCompactRevisionText(revision, includePayloadSize = false)}"
     }
-    return runtimeMirrorCompactStatusText(normalized)
+    return runtimeStageCompactStatusText(normalized)
 }
 
-internal fun runtimeMirrorFocusDisplayName(
+internal fun runtimeStageFocusDisplayName(
     bodyId: String,
     displayName: String,
 ): String {
@@ -2220,7 +2144,7 @@ internal fun runtimeMirrorFocusDisplayName(
         .ifBlank { bodyId }
 }
 
-private fun runtimeMirrorBodyKindLabel(kind: RenderBodyKind): String = when (kind) {
+private fun runtimeStageBodyKindLabel(kind: RenderBodyKind): String = when (kind) {
     RenderBodyKind.STAR -> "Stellar anchor"
     RenderBodyKind.PLANET -> "Planetary target"
     RenderBodyKind.DWARF_PLANET -> "Dwarf-planet target"
@@ -2240,21 +2164,21 @@ internal fun buildRuntimeBackendStatus(
         SessionConnectionState.Unavailable -> "Runtime unavailable"
     }
     val revision = uiState.renderStatus.sceneRevision
-        ?.let { revision -> runtimeMirrorCompactRevisionText(revision, includePayloadSize = false) }
+        ?.let { revision -> runtimeStageCompactRevisionText(revision, includePayloadSize = false) }
         ?: "waiting-for-packet"
     return listOfNotNull(
         connectionSummary,
         uiState.statusLine
             .takeIf(String::isNotBlank)
-            ?.let(::runtimeMirrorCompactStatusText),
+            ?.let(::runtimeStageCompactStatusText),
         "rev=$revision",
         hostRendererStatus
             .takeIf(String::isNotBlank)
-            ?.let(::runtimeMirrorCompactRendererStatusText),
+            ?.let(::runtimeStageCompactRendererStatusText),
     ).joinToString(separator = " · ")
 }
 
-internal fun runtimeMirrorCompactBackendStatus(value: String): String =
+internal fun runtimeStageCompactBackendStatus(value: String): String =
     value
         .replace("Runtime connected", "Connected")
         .replace("Connecting to runtime", "Connecting")
@@ -2263,15 +2187,15 @@ internal fun runtimeMirrorCompactBackendStatus(value: String): String =
         .replace("Vulkan SPIR-V + compute compaction active", "Vulkan + compute")
         .replace("waiting-for-packet", "waiting")
 
-internal fun runtimeMirrorCompactRevisionText(value: String, includePayloadSize: Boolean = true): String {
-    val normalized = runtimeMirrorNormalizeStatusText(value)
+internal fun runtimeStageCompactRevisionText(value: String, includePayloadSize: Boolean = true): String {
+    val normalized = runtimeStageNormalizeStatusText(value)
     if (normalized.isBlank()) {
         return "waiting-for-packet"
     }
-    val scenario = RuntimeMirrorRevisionScenarioRegex.find(normalized)?.groupValues?.getOrNull(1)
-    val branch = RuntimeMirrorRevisionBranchRegex.find(normalized)?.groupValues?.getOrNull(1)
-    val epochHours = runtimeMirrorRevisionEpochHours(normalized)
-    val payloadChars = RuntimeMirrorHugePayloadCharCountRegex.find(normalized)
+    val scenario = RuntimeStageRevisionScenarioRegex.find(normalized)?.groupValues?.getOrNull(1)
+    val branch = RuntimeStageRevisionBranchRegex.find(normalized)?.groupValues?.getOrNull(1)
+    val epochHours = runtimeStageRevisionEpochHours(normalized)
+    val payloadChars = RuntimeStageHugePayloadCharCountRegex.find(normalized)
         ?.groupValues
         ?.getOrNull(1)
     val summary = listOfNotNull(
@@ -2283,43 +2207,43 @@ internal fun runtimeMirrorCompactRevisionText(value: String, includePayloadSize:
     if (summary.isNotEmpty()) {
         return summary.joinToString(" / ")
     }
-    return runtimeMirrorCompactStatusText(normalized)
+    return runtimeStageCompactStatusText(normalized)
 }
 
-private fun runtimeMirrorRevisionEpochHours(normalizedRevision: String): Double? =
-    RuntimeMirrorRevisionEpochRegex.find(normalizedRevision)
+private fun runtimeStageRevisionEpochHours(normalizedRevision: String): Double? =
+    RuntimeStageRevisionEpochRegex.find(normalizedRevision)
         ?.groupValues
         ?.getOrNull(1)
         ?.toDoubleOrNull()
         ?.div(3_600.0)
 
-internal fun runtimeMirrorCompactRevisionMetric(value: String): RuntimeMirrorCompactRevisionMetric {
-    val normalized = runtimeMirrorNormalizeStatusText(value)
-    val epochHours = runtimeMirrorRevisionEpochHours(normalized)
+internal fun runtimeStageCompactRevisionMetric(value: String): RuntimeStageCompactRevisionMetric {
+    val normalized = runtimeStageNormalizeStatusText(value)
+    val epochHours = runtimeStageRevisionEpochHours(normalized)
 
     return epochHours
         ?.let { hours ->
-            RuntimeMirrorCompactRevisionMetric(
+            RuntimeStageCompactRevisionMetric(
                 label = "MET",
                 value = String.format(Locale.US, "t+%.1fh", hours),
             )
         }
-        ?: RuntimeMirrorCompactRevisionMetric(
+        ?: RuntimeStageCompactRevisionMetric(
             label = "Rev",
-            value = runtimeMirrorCompactRevisionText(normalized, includePayloadSize = false)
+            value = runtimeStageCompactRevisionText(normalized, includePayloadSize = false)
                 .substringBefore(" / ")
                 .ifBlank { "waiting" },
         )
 }
 
-internal fun runtimeMirrorCompactRevisionMetricText(value: String): String {
-    return runtimeMirrorCompactRevisionMetric(value).value
+internal fun runtimeStageCompactRevisionMetricText(value: String): String {
+    return runtimeStageCompactRevisionMetric(value).value
 }
 
-internal fun runtimeMirrorCompactRendererStatusText(value: String): String {
-    val normalized = runtimeMirrorNormalizeStatusText(value)
+internal fun runtimeStageCompactRendererStatusText(value: String): String {
+    val normalized = runtimeStageNormalizeStatusText(value)
     val withoutPacketTelemetry = normalized
-        .replace(RuntimeMirrorRendererPacketTelemetryRegex, "")
+        .replace(RuntimeStageRendererPacketTelemetryRegex, "")
         .trimEnd('.', ' ')
 
     return when {
@@ -2333,35 +2257,35 @@ internal fun runtimeMirrorCompactRendererStatusText(value: String): String {
             ignoreCase = true,
         ) -> "Vulkan SPIR-V graphics active"
 
-        withoutPacketTelemetry.isNotBlank() -> runtimeMirrorCompactStatusText(withoutPacketTelemetry)
-        else -> runtimeMirrorCompactStatusText(normalized)
+        withoutPacketTelemetry.isNotBlank() -> runtimeStageCompactStatusText(withoutPacketTelemetry)
+        else -> runtimeStageCompactStatusText(normalized)
     }
 }
 
-internal fun runtimeMirrorCompactStatusText(value: String): String {
-    val normalized = runtimeMirrorNormalizeStatusText(value)
-    if (normalized.length <= RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT) {
+internal fun runtimeStageCompactStatusText(value: String): String {
+    val normalized = runtimeStageNormalizeStatusText(value)
+    if (normalized.length <= RUNTIME_STAGE_STATUS_TEXT_CHAR_LIMIT) {
         return normalized
     }
 
-    RuntimeMirrorHugePayloadMarkerRegex.find(normalized)?.let { marker ->
+    RuntimeStageHugePayloadMarkerRegex.find(normalized)?.let { marker ->
         val markerEnd = marker.range.last + 1
         val throughPayloadMarker = normalized.take(markerEnd).trim()
-        if (throughPayloadMarker.length <= RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT) {
+        if (throughPayloadMarker.length <= RUNTIME_STAGE_STATUS_TEXT_CHAR_LIMIT) {
             return throughPayloadMarker
         }
     }
 
     return normalized
-        .take(RUNTIME_MIRROR_STATUS_TEXT_CHAR_LIMIT)
+        .take(RUNTIME_STAGE_STATUS_TEXT_CHAR_LIMIT)
         .trimEnd()
         .plus("... [truncated]")
 }
 
-private fun runtimeMirrorNormalizeStatusText(value: String): String =
+private fun runtimeStageNormalizeStatusText(value: String): String =
     value
         .replace('\n', ' ')
-        .replace(RuntimeMirrorWhitespaceRegex, " ")
+        .replace(RuntimeStageWhitespaceRegex, " ")
         .trim()
 
 private fun buildRuntimeDiagnosticsText(
@@ -2435,9 +2359,9 @@ internal fun buildRuntimeAccelerationReadout(
     val workloads = segmentStartingWith("workloads:")
 
     val tilePlan = scheduler
-        ?.let { RuntimeMirrorTilePlanRegex.find(it)?.value }
+        ?.let { RuntimeStageTilePlanRegex.find(it)?.value }
     val tileWorkers = scheduler
-        ?.let { RuntimeMirrorTileWorkersRegex.find(it)?.value }
+        ?.let { RuntimeStageTileWorkersRegex.find(it)?.value }
     val schedulerMode = when {
         scheduler?.contains("adaptive tiled active", ignoreCase = true) == true -> "Parallel tiled"
         scheduler?.contains("adaptive tiled", ignoreCase = true) == true -> "Tiled candidate"
@@ -2461,15 +2385,15 @@ internal fun buildRuntimeAccelerationReadout(
         ?.substringAfter("solver:", missingDelimiterValue = solver)
         ?.trim()
         ?.takeIf(String::isNotEmpty)
-    val activeKernel = runtimeMirrorKernelLaneNames(kernels, "active")
-        ?: solverKernel?.let(::runtimeMirrorShortKernelName)
+    val activeKernel = runtimeStageKernelLaneNames(kernels, "active")
+        ?: solverKernel?.let(::runtimeStageShortKernelName)
     val eligibleKernelCount = kernels
-        ?.let { RuntimeMirrorEligibleKernelCountRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+        ?.let { RuntimeStageEligibleKernelCountRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
     val eligibleKernelChip = eligibleKernelCount
         ?.takeIf { it > 0 }
         ?.let { "$it eligible lanes" }
     val blockedKernelCount = kernels
-        ?.let { RuntimeMirrorBlockedKernelCountRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+        ?.let { RuntimeStageBlockedKernelCountRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
     val tileWorkerCount = tileWorkers
         ?.substringBefore(' ', missingDelimiterValue = tileWorkers)
         ?.toIntOrNull()
@@ -2486,7 +2410,7 @@ internal fun buildRuntimeAccelerationReadout(
         eligibleKernelChip?.let(::add)
         gpuChip?.let(::add)
     }.distinct()
-    val signal = runtimeMirrorAccelerationSignal(
+    val signal = runtimeStageAccelerationSignal(
         bodyCount = bodyCount,
         activeKernel = activeKernel,
         eligibleKernelCount = eligibleKernelCount,
@@ -2510,7 +2434,7 @@ internal fun buildRuntimeAccelerationReadout(
         kernels,
         workloads,
     ).joinToString(separator = " | ").ifBlank { summary }
-    val statusLine = runtimeMirrorAccelerationStatusLine(
+    val statusLine = runtimeStageAccelerationStatusLine(
         activeKernel = activeKernel,
         schedulerMode = schedulerMode,
         gpuChip = gpuChip,
@@ -2518,7 +2442,7 @@ internal fun buildRuntimeAccelerationReadout(
         eligibleKernelCount = eligibleKernelCount,
         blockedKernelCount = blockedKernelCount,
     )
-    val auditSummary = runtimeMirrorAccelerationAuditSummary(
+    val auditSummary = runtimeStageAccelerationAuditSummary(
         cpu = cpu,
         gpu = gpu,
         activeKernel = activeKernel,
@@ -2535,7 +2459,7 @@ internal fun buildRuntimeAccelerationReadout(
             add(
                 RuntimeAccelerationLane(
                     "Solver",
-                    runtimeMirrorShortKernelName(it),
+                    runtimeStageShortKernelName(it),
                     RuntimeAccelerationLaneTone.Active,
                 )
             )
@@ -2550,9 +2474,9 @@ internal fun buildRuntimeAccelerationReadout(
             )
         }
         activeKernel?.let { add(RuntimeAccelerationLane("Active", it, RuntimeAccelerationLaneTone.Active)) }
-        runtimeMirrorKernelLaneSummary(kernels, "eligible candidates")
+        runtimeStageKernelLaneSummary(kernels, "eligible candidates")
             ?.let { add(RuntimeAccelerationLane("Eligible", it, RuntimeAccelerationLaneTone.Eligible)) }
-        runtimeMirrorKernelLaneSummary(
+        runtimeStageKernelLaneSummary(
             kernels = kernels,
             lane = "blocked candidates",
             compactHud = true,
@@ -2589,7 +2513,7 @@ internal fun buildRuntimeAccelerationReadout(
     )
 }
 
-internal fun runtimeMirrorAccelerationStatusLine(
+internal fun runtimeStageAccelerationStatusLine(
     activeKernel: String?,
     schedulerMode: String?,
     gpuChip: String?,
@@ -2612,7 +2536,7 @@ internal fun runtimeMirrorAccelerationStatusLine(
     return listOf(drive, render, catalogue).joinToString(" · ")
 }
 
-internal fun runtimeMirrorCompactAccelerationStatusLine(value: String): String =
+internal fun runtimeStageCompactAccelerationStatusLine(value: String): String =
     value
         .replace("Parallel ARM64 drive online", "ARM64 tiled")
         .replace("ARM64 solver lane online", "ARM64 solver")
@@ -2623,7 +2547,7 @@ internal fun runtimeMirrorCompactAccelerationStatusLine(value: String): String =
         .replace(Regex("""(\d+) device-only ISA lanes in audit"""), "$1 device ISA")
         .replace("kernel catalog steady", "catalog steady")
 
-internal fun runtimeMirrorAccelerationAuditSummary(
+internal fun runtimeStageAccelerationAuditSummary(
     cpu: String?,
     gpu: String?,
     activeKernel: String?,
@@ -2645,7 +2569,7 @@ internal fun runtimeMirrorAccelerationAuditSummary(
         .ifBlank { "Acceleration audit available in debug" }
 }
 
-internal fun runtimeMirrorCompactAccelerationAuditSummary(value: String): String =
+internal fun runtimeStageCompactAccelerationAuditSummary(value: String): String =
     value
         .replace("requested simd-arm64 -> effective reference-scalar", "simd-arm64 -> scalar")
         .replace("CPU simd-arm64 -> scalar", "CPU scalar")
@@ -2656,7 +2580,7 @@ internal fun runtimeMirrorCompactAccelerationAuditSummary(value: String): String
         .replace(" · fallback scalar on emulator", "")
         .replace("GPU vulkan", "GPU Vulkan")
 
-private fun runtimeMirrorCompactAccelerationChip(value: String): RuntimeAccelerationChipPresentation {
+private fun runtimeStageCompactAccelerationChip(value: String): RuntimeAccelerationChipPresentation {
     val chip = value.trim()
     return when {
         chip.equals("S25 swarm", ignoreCase = true) ->
@@ -2668,7 +2592,7 @@ private fun runtimeMirrorCompactAccelerationChip(value: String): RuntimeAccelera
         chip.startsWith("Active ", ignoreCase = true) ->
             RuntimeAccelerationChipPresentation(
                 label = "ISA",
-                value = runtimeMirrorCompactAccelerationChipValue(chip.substringAfter(' ', missingDelimiterValue = chip)),
+                value = runtimeStageCompactAccelerationChipValue(chip.substringAfter(' ', missingDelimiterValue = chip)),
             )
 
         chip.equals("Parallel tiled", ignoreCase = true) ->
@@ -2690,11 +2614,11 @@ private fun runtimeMirrorCompactAccelerationChip(value: String): RuntimeAccelera
             RuntimeAccelerationChipPresentation("GPU", "Vulkan")
 
         else ->
-            RuntimeAccelerationChipPresentation("Signal", runtimeMirrorCompactAccelerationChipValue(chip))
+            RuntimeAccelerationChipPresentation("Signal", runtimeStageCompactAccelerationChipValue(chip))
     }
 }
 
-internal fun runtimeMirrorCompactAccelerationChipValue(value: String): String {
+internal fun runtimeStageCompactAccelerationChipValue(value: String): String {
     if (value.contains("scalar", ignoreCase = true)) {
         return "scalar"
     }
@@ -2706,7 +2630,7 @@ internal fun runtimeMirrorCompactAccelerationChipValue(value: String): String {
         .take(18)
 }
 
-private fun runtimeMirrorAccelerationSignal(
+private fun runtimeStageAccelerationSignal(
     bodyCount: Int?,
     activeKernel: String?,
     eligibleKernelCount: Int?,
@@ -2729,58 +2653,58 @@ private fun runtimeMirrorAccelerationSignal(
 private fun segmentValue(segment: String, prefix: String): String =
     segment.substringAfter(prefix, missingDelimiterValue = segment).trim()
 
-private fun runtimeMirrorKernelLaneSummary(
+private fun runtimeStageKernelLaneSummary(
     kernels: String?,
     lane: String,
     compactHud: Boolean = false,
 ): String? =
     kernels
-        ?.let { runtimeMirrorKernelLaneMatch(it, lane) }
+        ?.let { runtimeStageKernelLaneMatch(it, lane) }
         ?.let { match ->
-            if (runtimeMirrorKernelLaneCount(match) == 0) {
+            if (runtimeStageKernelLaneCount(match) == 0) {
                 return@let null
             }
-            runtimeMirrorKernelLaneNames(
+            runtimeStageKernelLaneNames(
                 match = match,
                 compactHud = compactHud,
             )
                 ?: match.value
         }
 
-private fun runtimeMirrorKernelLaneNames(kernels: String?, lane: String): String? =
+private fun runtimeStageKernelLaneNames(kernels: String?, lane: String): String? =
     kernels
-        ?.let { runtimeMirrorKernelLaneMatch(it, lane) }
-        ?.let(::runtimeMirrorKernelLaneNames)
+        ?.let { runtimeStageKernelLaneMatch(it, lane) }
+        ?.let(::runtimeStageKernelLaneNames)
 
-private fun runtimeMirrorKernelLaneMatch(kernels: String, lane: String): MatchResult? =
-    RuntimeMirrorKernelLaneRegex.findAll(kernels).firstOrNull { match ->
+private fun runtimeStageKernelLaneMatch(kernels: String, lane: String): MatchResult? =
+    RuntimeStageKernelLaneRegex.findAll(kernels).firstOrNull { match ->
         match.groupValues.getOrNull(1)?.equals(lane, ignoreCase = true) == true
     }
 
-private fun runtimeMirrorKernelLaneNames(match: MatchResult): String? =
-    runtimeMirrorKernelLaneNames(match = match, compactHud = false)
+private fun runtimeStageKernelLaneNames(match: MatchResult): String? =
+    runtimeStageKernelLaneNames(match = match, compactHud = false)
 
-private fun runtimeMirrorKernelLaneNames(
+private fun runtimeStageKernelLaneNames(
     match: MatchResult,
     compactHud: Boolean,
 ): String? {
     val names = match.groupValues.getOrNull(2)
         ?.takeIf(String::isNotBlank)
         ?.split(',')
-        ?.map { runtimeMirrorShortKernelName(it.trim()) }
+        ?.map { runtimeStageShortKernelName(it.trim()) }
         .orEmpty()
     if (names.isEmpty()) {
         return null
     }
-    if (!compactHud || names.size <= RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT) {
+    if (!compactHud || names.size <= RUNTIME_STAGE_KERNEL_LANE_HUD_NAME_LIMIT) {
         return names.joinToString()
     }
-    val count = runtimeMirrorKernelLaneCount(match) ?: names.size
-    val preview = names.take(RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT).joinToString()
-    return "$count blocked lanes · $preview · ${names.size - RUNTIME_MIRROR_KERNEL_LANE_HUD_NAME_LIMIT} more in audit"
+    val count = runtimeStageKernelLaneCount(match) ?: names.size
+    val preview = names.take(RUNTIME_STAGE_KERNEL_LANE_HUD_NAME_LIMIT).joinToString()
+    return "$count blocked lanes · $preview · ${names.size - RUNTIME_STAGE_KERNEL_LANE_HUD_NAME_LIMIT} more in audit"
 }
 
-private fun runtimeMirrorKernelLaneCount(match: MatchResult): Int? {
+private fun runtimeStageKernelLaneCount(match: MatchResult): Int? {
     val laneLabel = match.groupValues.getOrNull(1) ?: return null
     return match.value
         .substringAfter(laneLabel, missingDelimiterValue = "")
@@ -2789,7 +2713,7 @@ private fun runtimeMirrorKernelLaneCount(match: MatchResult): Int? {
         .toIntOrNull()
 }
 
-private fun runtimeMirrorShortKernelName(path: String): String {
+private fun runtimeStageShortKernelName(path: String): String {
     val normalized = path
         .substringAfter("simd.arm64.", missingDelimiterValue = path)
         .removeSuffix("-candidate")
@@ -2813,21 +2737,20 @@ private fun runtimeMirrorShortKernelName(path: String): String {
     }
 }
 
-private fun RenderFrame.toRuntimeMirrorScene(): RuntimeMirrorScene {
+private fun RenderFrame.toRuntimeStageScene(): RuntimeStageScene {
     val origin = Vector3d(
         x = camera.frameOriginX,
         y = camera.frameOriginY,
         z = camera.frameOriginZ,
     )
     val searchableBodies = bodies.map { body ->
-        val kind = inferRenderBodyKind(body.bodyId, body.radiusM.toDouble())
-        RuntimeMirrorBody(
+        RuntimeStageBody(
             id = body.bodyId,
             displayName = displayNameForBodyId(body.bodyId),
             positionM = origin + Vector3d(body.x.toDouble(), body.y.toDouble(), body.z.toDouble()),
             radiusM = body.radiusM.toDouble(),
             colorArgb = argbFrom(body.colorR, body.colorG, body.colorB, body.colorA),
-            kind = kind,
+            kind = body.kind.toStageRenderBodyKind(),
             hostBodyId = inferRuntimeHostBodyId(body.bodyId),
         )
     }
@@ -2867,7 +2790,7 @@ private fun RenderFrame.toRuntimeMirrorScene(): RuntimeMirrorScene {
     }
     val revisionSeed = sceneRevision.hashCode().toLong() xor epochSeconds.toBits()
     val stableRevision = if (revisionSeed == Long.MIN_VALUE) 0L else abs(revisionSeed)
-    return RuntimeMirrorScene(
+    return RuntimeStageScene(
         scene = RenderSceneFrame(
             epochSeconds = epochSeconds,
             authoritativeBodies = authoritativeBodies,
@@ -2888,37 +2811,19 @@ private fun displayNameForBodyId(bodyId: String): String {
         }
 }
 
-private fun inferRenderBodyKind(
-    bodyId: String,
-    radiusM: Double,
-): RenderBodyKind {
-    val catalogEntry = SolarLabTeachingCatalog.entries.firstOrNull { entry ->
-        entry.bodyId.equals(bodyId, ignoreCase = true)
-    }
-    return when (catalogEntry?.spawnBodyClass) {
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.Star -> RenderBodyKind.STAR
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.Planet,
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.Moon,
-        -> RenderBodyKind.PLANET
+private fun RuntimeSceneBodyKind.toStageRenderBodyKind(): RenderBodyKind = when (this) {
+    RuntimeSceneBodyKind.Star -> RenderBodyKind.STAR
+    RuntimeSceneBodyKind.Planet,
+    RuntimeSceneBodyKind.Moon,
+    -> RenderBodyKind.PLANET
 
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.DwarfPlanet -> RenderBodyKind.DWARF_PLANET
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.SmallBody -> if (bodyId.equals("halley", ignoreCase = true)) {
-            RenderBodyKind.COMET
-        } else {
-            RenderBodyKind.ASTEROID
-        }
-
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.Spacecraft -> RenderBodyKind.PROBE
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.Tracer,
-        com.sednalabs.solarlab.runtime.RuntimeBodyClass.Custom,
-        null,
-        -> when {
-            bodyId.equals("sun", ignoreCase = true) -> RenderBodyKind.STAR
-            radiusM >= 1.0e7 -> RenderBodyKind.PLANET
-            radiusM >= 7.5e5 -> RenderBodyKind.DWARF_PLANET
-            else -> RenderBodyKind.TEST_OBJECT
-        }
-    }
+    RuntimeSceneBodyKind.DwarfPlanet -> RenderBodyKind.DWARF_PLANET
+    RuntimeSceneBodyKind.Asteroid -> RenderBodyKind.ASTEROID
+    RuntimeSceneBodyKind.Comet -> RenderBodyKind.COMET
+    RuntimeSceneBodyKind.Spacecraft -> RenderBodyKind.PROBE
+    RuntimeSceneBodyKind.Tracer,
+    RuntimeSceneBodyKind.Custom,
+    -> RenderBodyKind.TEST_OBJECT
 }
 
 private fun inferRuntimeHostBodyId(bodyId: String): String? = when (bodyId.lowercase(Locale.US)) {
@@ -2930,7 +2835,7 @@ private fun inferRuntimeHostBodyId(bodyId: String): String? = when (bodyId.lower
 }
 
 private fun resolveRuntimeSemanticBodyId(
-    bodies: List<RuntimeMirrorBody>,
+    bodies: List<RuntimeStageBody>,
     bodyQuery: String,
 ): String? {
     val normalizedQuery = bodyQuery.trim().lowercase(Locale.US)
@@ -2992,34 +2897,34 @@ private fun nearestPlaybackSpeedPreset(simSecondsPerRealSecond: Double): Playbac
     } ?: PlaybackSpeedPreset.SIX_HOURS_PER_SECOND
 }
 
-private fun runtimeMirrorRailProgress(epochSeconds: Double?): Float {
+private fun runtimeStageRailProgress(epochSeconds: Double?): Float {
     if (epochSeconds == null) {
         return 0.08f
     }
-    val normalized = ((epochSeconds % RUNTIME_MIRROR_MISSION_DAY_SECONDS) + RUNTIME_MIRROR_MISSION_DAY_SECONDS) %
-        RUNTIME_MIRROR_MISSION_DAY_SECONDS
-    return (normalized / RUNTIME_MIRROR_MISSION_DAY_SECONDS).toFloat().coerceIn(0.04f, 0.96f)
+    val normalized = ((epochSeconds % RUNTIME_STAGE_MISSION_DAY_SECONDS) + RUNTIME_STAGE_MISSION_DAY_SECONDS) %
+        RUNTIME_STAGE_MISSION_DAY_SECONDS
+    return (normalized / RUNTIME_STAGE_MISSION_DAY_SECONDS).toFloat().coerceIn(0.04f, 0.96f)
 }
 
-private fun runtimeMirrorSignalValues(
+private fun runtimeStageSignalValues(
     uiState: ShellUiState,
-    selectedBody: RuntimeMirrorBody?,
+    selectedBody: RuntimeStageBody?,
 ): List<Float> {
-    val epochProgress = runtimeMirrorRailProgress(uiState.snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds)
-    val bodySignal = (uiState.renderStatus.renderedBodyCount / RUNTIME_MIRROR_SIGNAL_BODY_NORMALIZATION)
+    val epochProgress = runtimeStageRailProgress(uiState.snapshot?.epochSeconds ?: uiState.renderFrame?.epochSeconds)
+    val bodySignal = (uiState.renderStatus.renderedBodyCount / RUNTIME_STAGE_SIGNAL_BODY_NORMALIZATION)
         .coerceIn(0.08f, 0.92f)
-    val trailSignal = (uiState.renderStatus.renderedTrailCount / RUNTIME_MIRROR_SIGNAL_TRAIL_NORMALIZATION)
+    val trailSignal = (uiState.renderStatus.renderedTrailCount / RUNTIME_STAGE_SIGNAL_TRAIL_NORMALIZATION)
         .coerceIn(0.10f, 0.90f)
-    val focusLift = if (uiState.focusedBodyId != null) RUNTIME_MIRROR_SIGNAL_FOCUS_LIFT else 0f
-    val selectedLift = if (selectedBody != null) RUNTIME_MIRROR_SIGNAL_SELECTED_LIFT else 0f
+    val focusLift = if (uiState.focusedBodyId != null) RUNTIME_STAGE_SIGNAL_FOCUS_LIFT else 0f
+    val selectedLift = if (selectedBody != null) RUNTIME_STAGE_SIGNAL_SELECTED_LIFT else 0f
 
     return listOf(
-        RUNTIME_MIRROR_SIGNAL_L1_BASE + (bodySignal * RUNTIME_MIRROR_SIGNAL_L1_BODY_COEFF),
-        RUNTIME_MIRROR_SIGNAL_L2_BASE + (selectedLift * RUNTIME_MIRROR_SIGNAL_L2_SELECTED_COEFF),
-        RUNTIME_MIRROR_SIGNAL_L3_BASE + (trailSignal * RUNTIME_MIRROR_SIGNAL_L3_TRAIL_COEFF),
-        RUNTIME_MIRROR_SIGNAL_L4_BASE + (epochProgress * RUNTIME_MIRROR_SIGNAL_L4_TIME_COEFF),
-        RUNTIME_MIRROR_SIGNAL_L5_BASE + (bodySignal * RUNTIME_MIRROR_SIGNAL_L5_BODY_COEFF) + (trailSignal * RUNTIME_MIRROR_SIGNAL_L5_TRAIL_COEFF),
-        RUNTIME_MIRROR_SIGNAL_L6_BASE + (focusLift * RUNTIME_MIRROR_SIGNAL_L6_FOCUS_COEFF) + selectedLift,
+        RUNTIME_STAGE_SIGNAL_L1_BASE + (bodySignal * RUNTIME_STAGE_SIGNAL_L1_BODY_COEFF),
+        RUNTIME_STAGE_SIGNAL_L2_BASE + (selectedLift * RUNTIME_STAGE_SIGNAL_L2_SELECTED_COEFF),
+        RUNTIME_STAGE_SIGNAL_L3_BASE + (trailSignal * RUNTIME_STAGE_SIGNAL_L3_TRAIL_COEFF),
+        RUNTIME_STAGE_SIGNAL_L4_BASE + (epochProgress * RUNTIME_STAGE_SIGNAL_L4_TIME_COEFF),
+        RUNTIME_STAGE_SIGNAL_L5_BASE + (bodySignal * RUNTIME_STAGE_SIGNAL_L5_BODY_COEFF) + (trailSignal * RUNTIME_STAGE_SIGNAL_L5_TRAIL_COEFF),
+        RUNTIME_STAGE_SIGNAL_L6_BASE + (focusLift * RUNTIME_STAGE_SIGNAL_L6_FOCUS_COEFF) + selectedLift,
     ).map { value -> value.coerceIn(0.05f, 0.95f) }
 }
 

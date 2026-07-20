@@ -35,6 +35,7 @@ data class RenderCamera(
 
 data class RenderBody(
     val bodyId: String,
+    val kind: RuntimeSceneBodyKind,
     val x: Float,
     val y: Float,
     val z: Float,
@@ -45,6 +46,23 @@ data class RenderBody(
     val colorB: Float,
     val colorA: Float,
 )
+
+enum class RuntimeSceneBodyKind(val nativeCode: Int) {
+    Star(0),
+    Planet(1),
+    DwarfPlanet(2),
+    Moon(3),
+    Asteroid(4),
+    Comet(5),
+    Tracer(6),
+    Spacecraft(7),
+    Custom(8);
+
+    companion object {
+        fun fromNativeCode(code: Int): RuntimeSceneBodyKind =
+            entries.firstOrNull { it.nativeCode == code } ?: Custom
+    }
+}
 
 data class RenderTracer(
     val sourceBodyId: String,
@@ -90,13 +108,14 @@ data class RenderPoint(
 )
 
 internal object VulkanPacketRenderFrameDecoder {
-    private const val BODY_STRIDE_BYTES = 140
+    private const val BODY_STRIDE_BYTES = 144
     private const val TRACER_STRIDE_BYTES = 132
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
     private const val TRAIL_SPAN_STRIDE_BYTES = 136
-    private const val BODY_ID_OFFSET_BYTES = 40
+    private const val BODY_KIND_OFFSET_BYTES = 40
+    private const val BODY_ID_OFFSET_BYTES = 44
     private const val BODY_ID_MAX_BYTES = 96
-    private const val BODY_ID_LENGTH_OFFSET_BYTES = 136
+    private const val BODY_ID_LENGTH_OFFSET_BYTES = 140
     private const val TRACER_SOURCE_BODY_ID_OFFSET_BYTES = 32
     private const val TRACER_SOURCE_BODY_ID_MAX_BYTES = 96
     private const val TRACER_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 128
@@ -152,6 +171,9 @@ internal object VulkanPacketRenderFrameDecoder {
                     bytesOffset = base + BODY_ID_OFFSET_BYTES,
                     maxBytes = BODY_ID_MAX_BYTES,
                     lengthOffset = base + BODY_ID_LENGTH_OFFSET_BYTES,
+                ),
+                kind = RuntimeSceneBodyKind.fromNativeCode(
+                    ordered.getInt(base + BODY_KIND_OFFSET_BYTES),
                 ),
                 x = ordered.getFloat(base + 0),
                 y = ordered.getFloat(base + 4),

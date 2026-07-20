@@ -57,10 +57,9 @@ The workflow:
 - `android_validation_mode`
   - one of:
     - `shell-v2`
-    - `stage-first-mirror-off`
-    - `stage-first-mirror-on`
-  - `stage-first-mirror-on` builds with `solarlab.preferredGpuBackend=vulkan`
-    so hosted interactive sessions exercise the native runtime mirror with the
+    - `stage-first-runtime`
+  - `stage-first-runtime` builds with `solarlab.preferredGpuBackend=vulkan`
+    so hosted interactive sessions exercise the native Rust stage with the
     same requested GPU intent as the canonical Android validation lane
 - `interactive_debug_profile`
   - one of:
@@ -213,7 +212,7 @@ Those files are designed to answer:
 Recommended first run:
 
 1. dispatch the workflow from a `validation/*` branch
-2. keep `android_validation_mode=stage-first-mirror-on`
+2. keep `android_validation_mode=stage-first-runtime`
 3. keep `interactive_debug_profile=hosted-debug-lite`
 4. keep `emulator_boot_strategy=snapshot-cache`
 5. keep the default timeout

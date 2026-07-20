@@ -18,10 +18,29 @@ pub struct CameraPose {
     pub exposure: f64,
 }
 
+/// Renderer-facing taxonomy for an authoritative body.
+///
+/// This is deliberately separate from the dynamical `BodyClass`: solver roles
+/// and gravitational source mass remain world truth, while this enum carries
+/// the stable visual meaning required by native renderers and client shells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneBodyKind {
+    Star,
+    Planet,
+    DwarfPlanet,
+    Moon,
+    Asteroid,
+    Comet,
+    Tracer,
+    Spacecraft,
+    Custom,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneBody {
     pub body_id: BodyId,
     pub display_name: String,
+    pub kind: SceneBodyKind,
     pub position_m: Vector3d,
     pub radius_m: f64,
     pub albedo: ColorRgba,
@@ -263,6 +282,7 @@ mod tests {
             bodies: vec![SceneBody {
                 body_id: BodyId("earth".to_owned()),
                 display_name: "earth".to_owned(),
+                kind: SceneBodyKind::Planet,
                 position_m: Vector3d::default(),
                 radius_m: 6_371_000.0,
                 albedo: ColorRgba {

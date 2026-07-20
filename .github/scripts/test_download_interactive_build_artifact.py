@@ -35,14 +35,14 @@ def assert_system_exit_contains(callable_obj, expected_text: str) -> None:
 def main() -> int:
     module = load_download_module()
     manifest = {
-        "android_validation_mode": "stage-first-mirror-on",
+        "android_validation_mode": "stage-first-runtime",
         "interactive_debug_profile": "hosted-debug-lite",
         "preferred_gpu_backend": "vulkan",
     }
 
     module.validate_manifest_matches_request(
         manifest,
-        expected_android_validation_mode="stage-first-mirror-on",
+        expected_android_validation_mode="stage-first-runtime",
         expected_interactive_debug_profile="hosted-debug-lite",
         expected_preferred_gpu_backend="vulkan",
     )
@@ -67,7 +67,7 @@ def main() -> int:
     assert_system_exit_contains(
         lambda: module.validate_manifest_matches_request(
             manifest,
-            expected_android_validation_mode="stage-first-mirror-on",
+            expected_android_validation_mode="stage-first-runtime",
             expected_interactive_debug_profile="hosted-debug-lite",
             expected_preferred_gpu_backend="none",
         ),

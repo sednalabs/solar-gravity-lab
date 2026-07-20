@@ -292,25 +292,14 @@ def resolve_android_shell_matrix(enabled: bool, android_validation_mode: str, pr
             {
                 "validation_mode": "shell-v2",
                 "debug_stage_first_client": "false",
-                "stage_first_runtime_mirror": "false",
                 "preferred_gpu_backend": "none",
                 "hosted_debug_profile": "full-fidelity",
             }
         ],
-        "stage-first-mirror-off": [
+        "stage-first-runtime": [
             {
-                "validation_mode": "stage-first-mirror-off",
+                "validation_mode": "stage-first-runtime",
                 "debug_stage_first_client": "true",
-                "stage_first_runtime_mirror": "false",
-                "preferred_gpu_backend": "none",
-                "hosted_debug_profile": "full-fidelity",
-            }
-        ],
-        "stage-first-mirror-on": [
-            {
-                "validation_mode": "stage-first-mirror-on",
-                "debug_stage_first_client": "true",
-                "stage_first_runtime_mirror": "true",
                 "preferred_gpu_backend": "vulkan",
                 "hosted_debug_profile": "hosted-debug-lite",
             }
@@ -318,11 +307,11 @@ def resolve_android_shell_matrix(enabled: bool, android_validation_mode: str, pr
     }
     if android_validation_mode == "auto":
         if profile == "targeted":
-            rows = matrix_by_mode["stage-first-mirror-on"]
+            rows = matrix_by_mode["stage-first-runtime"]
         elif profile == "frontier":
-            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-mirror-on"]
+            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-runtime"]
         else:
-            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-mirror-off"] + matrix_by_mode["stage-first-mirror-on"]
+            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-runtime"]
     elif android_validation_mode in matrix_by_mode:
         rows = matrix_by_mode[android_validation_mode]
     else:

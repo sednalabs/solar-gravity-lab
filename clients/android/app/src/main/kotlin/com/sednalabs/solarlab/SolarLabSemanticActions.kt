@@ -11,8 +11,6 @@ internal sealed interface SolarLabSemanticAction {
     data class FocusBody(val bodyQuery: String) : SolarLabSemanticAction
     data class LoadScenario(val scenarioId: String) : SolarLabSemanticAction
     data object ResetCamera : SolarLabSemanticAction
-    data object OpenImmersive : SolarLabSemanticAction
-    data object ReturnToSandbox : SolarLabSemanticAction
 }
 
 internal object SolarLabSemanticActionBridge {
@@ -64,8 +62,6 @@ internal object SolarLabSemanticActionBridge {
                 ?.takeIf(String::isNotEmpty)
                 ?.let(SolarLabSemanticAction::LoadScenario)
             "reset_camera" -> SolarLabSemanticAction.ResetCamera
-            "open_immersive" -> SolarLabSemanticAction.OpenImmersive
-            "return_to_sandbox" -> SolarLabSemanticAction.ReturnToSandbox
             else -> null
         }
     }

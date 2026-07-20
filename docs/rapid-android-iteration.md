@@ -50,7 +50,7 @@ branch work, dispatch the reusable interactive build:
 gh workflow run interactive-android-build.yml \
   --ref <branch> \
   -f ref=<branch> \
-  -f android_validation_mode=stage-first-mirror-on \
+  -f android_validation_mode=stage-first-runtime \
   -f interactive_debug_profile=hosted-debug-lite
 ```
 
@@ -63,7 +63,7 @@ gh workflow run interactive-android-session.yml \
   --ref <branch> \
   -f ref=<branch> \
   -f build_source=artifact \
-  -f android_validation_mode=stage-first-mirror-on \
+  -f android_validation_mode=stage-first-runtime \
   -f interactive_debug_profile=hosted-debug-lite \
   -f emulator_boot_strategy=snapshot-cache \
   -f session_timeout_minutes=180 \
@@ -84,13 +84,13 @@ standalone shell command:
 ```json
 {
   "workflow_run_id": 123456789,
-  "artifact_name": "interactive-android-build-stage-first-mirror-on-hosted-debug-lite",
+  "artifact_name": "interactive-android-build-stage-first-runtime-hosted-debug-lite",
   "launch_after_install": true
 }
 ```
 
 The `artifact_name` must match the artifact emitted by the build run. The
-example above matches the `stage-first-mirror-on` /
+example above matches the `stage-first-runtime` /
 `hosted-debug-lite` command shown in this runbook. The provider verifies the
 artifact manifest, installs the APK, relaunches the configured
 package/activity, updates `dist/interactive-session/active-build.json`, and
@@ -107,7 +107,7 @@ gh workflow run validation-lab.yml \
   -f profile=targeted \
   -f lane_set=android-shell \
   -f android_test_scope=core \
-  -f android_validation_mode=stage-first-mirror-on \
+  -f android_validation_mode=stage-first-runtime \
   -f android_artifact_mode=failures-only \
   -f emulator_boot_strategy=snapshot-cache
 ```
@@ -116,7 +116,7 @@ Change only the lane and inputs needed for the question:
 
 - `lane_set=android-unit` for Android unit or host-side behavior.
 - `lane_set=android-lint` for Android lint-only questions.
-- `lane_set=android-shell` with `android_validation_mode=stage-first-mirror-on`
+- `lane_set=android-shell` with `android_validation_mode=stage-first-runtime`
   for hosted app build, launch, and shell smoke questions.
 - `lane_set=ffi-abi` for C ABI, JNI, or Android bridge contract questions.
 - `lane_set=runtime-cpu-truth` when a change crosses physics dispatch, FFI
@@ -155,7 +155,7 @@ turning local build artifacts into the source of truth.
 `validation-lab` proves build, test, lint, shell, and runtime contracts. It
 does not prove that a stage-first or immersive screen is visually good.
 
-For Android UI, visual design, stage-first, runtime mirror, scenario-pack, or
+For Android UI, visual design, stage-first runtime, scenario-pack, or
 interaction-ergonomics changes, record a native observation note that names the
 surfaces inspected. At minimum, check the changed path in the relevant compact
 and expanded states. If live Android observation is unavailable, say visual
