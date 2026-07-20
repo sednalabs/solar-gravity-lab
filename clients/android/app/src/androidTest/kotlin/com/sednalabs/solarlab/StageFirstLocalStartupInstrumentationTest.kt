@@ -29,13 +29,22 @@ class StageFirstLocalStartupInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON)
-            .performScrollToIfPossible()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON)
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON)
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
             .performScrollToIfPossible()
             .assertIsDisplayed()
             .performClick()
+
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LAYER_BUTTON)
+            .performScrollToIfPossible()
+            .assertIsDisplayed()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()

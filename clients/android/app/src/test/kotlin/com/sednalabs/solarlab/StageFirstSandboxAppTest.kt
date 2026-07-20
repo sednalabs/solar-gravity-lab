@@ -20,15 +20,6 @@ import org.junit.Test
 class StageFirstSandboxAppTest {
     @Test
     fun cameraGuidanceIsConciseAndAccessibilitySized() {
-        assertEquals("Drag to orbit", STAGE_CAMERA_COACH_ORBIT_TEXT)
-        assertEquals(
-            "Pinch to zoom and move two fingers to pan",
-            STAGE_CAMERA_COACH_PAN_ZOOM_TEXT,
-        )
-        assertEquals(
-            "Tap to select and double-tap to frame",
-            STAGE_CAMERA_COACH_SELECTION_TEXT,
-        )
         assertEquals(0.20f, STAGE_CAMERA_COACH_PORTRAIT_MAX_HEIGHT_FRACTION)
         assertEquals(48.dp, StageActionMinimumTouchTarget)
     }

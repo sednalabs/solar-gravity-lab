@@ -19,15 +19,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
-internal const val STAGE_CAMERA_COACH_ORBIT_TEXT = "Drag to orbit"
-internal const val STAGE_CAMERA_COACH_PAN_ZOOM_TEXT =
-    "Pinch to zoom and move two fingers to pan"
-internal const val STAGE_CAMERA_COACH_SELECTION_TEXT =
-    "Tap to select and double-tap to frame"
 internal const val STAGE_CAMERA_COACH_PORTRAIT_MAX_HEIGHT_FRACTION = 0.20f
 
 private const val STAGE_CAMERA_PREFERENCES = "stage_camera_guidance"
@@ -49,6 +45,7 @@ internal fun StageCameraCoach(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val coachDescription = stringResource(R.string.stage_camera_coach_description)
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val portrait = maxHeight > maxWidth
         val maxPanelHeight = maxHeight * if (portrait) {
@@ -64,7 +61,7 @@ internal fun StageCameraCoach(
                 .widthIn(max = 520.dp)
                 .heightIn(max = maxPanelHeight)
                 .testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_COACH)
-                .semantics { contentDescription = "Camera navigation help" },
+                .semantics { contentDescription = coachDescription },
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
             tonalElevation = 8.dp,
@@ -76,22 +73,22 @@ internal fun StageCameraCoach(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    text = STAGE_CAMERA_COACH_ORBIT_TEXT,
+                    text = stringResource(R.string.stage_camera_coach_orbit),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = STAGE_CAMERA_COACH_PAN_ZOOM_TEXT,
+                    text = stringResource(R.string.stage_camera_coach_pan_zoom),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = STAGE_CAMERA_COACH_SELECTION_TEXT,
+                    text = stringResource(R.string.stage_camera_coach_selection),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 StageActionButton(
-                    label = "Got it",
+                    label = stringResource(R.string.stage_camera_coach_dismiss),
                     onClick = onDismiss,
                     modifier = Modifier
                         .align(Alignment.End)

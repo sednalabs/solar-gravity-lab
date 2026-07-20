@@ -537,13 +537,20 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private fun applyCameraGesture(update: CameraGestureUpdate) {
         when (update) {
             is CameraGestureUpdate.Orbit -> {
+                val focus = ObserverCameraResolver.resolveGestureFocus(
+                    requestedXPx = update.focusXPx,
+                    requestedYPx = update.focusYPx,
+                    viewportWidthPx = width,
+                    viewportHeightPx = height,
+                    observerMode = observerMode,
+                )
                 if (isRuntimeBound()) {
                     SolarLabVulkanBridge.orbitRuntimeCamera(
                         handle = rendererHandle,
                         deltaXPx = update.deltaXPx,
                         deltaYPx = update.deltaYPx,
-                        focusXPx = update.focusXPx,
-                        focusYPx = update.focusYPx,
+                        focusXPx = focus.xPx,
+                        focusYPx = focus.yPx,
                         viewportWidthPx = width.coerceAtLeast(1),
                         viewportHeightPx = height.coerceAtLeast(1),
                     )
@@ -553,8 +560,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                         cameraState = cameraState,
                         deltaXPx = update.deltaXPx,
                         deltaYPx = update.deltaYPx,
-                        focusXPx = update.focusXPx,
-                        focusYPx = update.focusYPx,
+                        focusXPx = focus.xPx,
+                        focusYPx = focus.yPx,
                         viewportWidthPx = width.coerceAtLeast(1),
                         viewportHeightPx = height.coerceAtLeast(1),
                     )
@@ -566,14 +573,21 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 if (update.detachFollow) {
                     switchToFreeCameraForManualNavigation()
                 }
+                val focus = ObserverCameraResolver.resolveGestureFocus(
+                    requestedXPx = update.focusXPx,
+                    requestedYPx = update.focusYPx,
+                    viewportWidthPx = width,
+                    viewportHeightPx = height,
+                    observerMode = observerMode,
+                )
                 if (isRuntimeBound()) {
                     SolarLabVulkanBridge.panAndZoomRuntimeCamera(
                         handle = rendererHandle,
                         distanceXPx = update.distanceXPx,
                         distanceYPx = update.distanceYPx,
                         scaleFactor = update.scaleFactor,
-                        focusXPx = update.focusXPx,
-                        focusYPx = update.focusYPx,
+                        focusXPx = focus.xPx,
+                        focusYPx = focus.yPx,
                         viewportWidthPx = width.coerceAtLeast(1),
                         viewportHeightPx = height.coerceAtLeast(1),
                     )
@@ -593,8 +607,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                         transformedCamera = MultiscaleOrbitCameraController.zoomAroundViewportPoint(
                             cameraState = transformedCamera,
                             scaleFactor = update.scaleFactor,
-                            focusXPx = update.focusXPx,
-                            focusYPx = update.focusYPx,
+                            focusXPx = focus.xPx,
+                            focusYPx = focus.yPx,
                             viewportWidthPx = width.coerceAtLeast(1),
                             viewportHeightPx = height.coerceAtLeast(1),
                             minViewRadiusM = minViewRadiusM,

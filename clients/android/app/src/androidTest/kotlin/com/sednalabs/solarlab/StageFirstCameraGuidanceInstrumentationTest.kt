@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
+import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
@@ -43,10 +44,16 @@ class StageFirstCameraGuidanceInstrumentationTest {
             .assertHeightIsAtLeast(48.dp)
             .performClick()
 
+        val orbitText = composeRule.activity.getString(R.string.stage_camera_coach_orbit)
+        val panZoomText = composeRule.activity.getString(R.string.stage_camera_coach_pan_zoom)
+        val selectionText = composeRule.activity.getString(R.string.stage_camera_coach_selection)
+        assertEquals("Drag to orbit", orbitText)
+        assertEquals("Pinch to zoom and move two fingers to pan", panZoomText)
+        assertEquals("Tap to select and double-tap to frame", selectionText)
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_COACH).assertIsDisplayed()
-        composeRule.onNodeWithText(STAGE_CAMERA_COACH_ORBIT_TEXT).assertIsDisplayed()
-        composeRule.onNodeWithText(STAGE_CAMERA_COACH_PAN_ZOOM_TEXT).assertIsDisplayed()
-        composeRule.onNodeWithText(STAGE_CAMERA_COACH_SELECTION_TEXT).assertIsDisplayed()
+        composeRule.onNodeWithText(orbitText).assertIsDisplayed()
+        composeRule.onNodeWithText(panZoomText).assertIsDisplayed()
+        composeRule.onNodeWithText(selectionText).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_COACH_DISMISS_BUTTON)
             .assertHeightIsAtLeast(48.dp)
             .performClick()
