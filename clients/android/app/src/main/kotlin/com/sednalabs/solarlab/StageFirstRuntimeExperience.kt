@@ -270,7 +270,6 @@ internal fun StageFirstRuntimeExperience(
         val runtimeSessionHandle = uiState.sessionHandle ?: 0L
         val attachRenderHost = shouldAttachRuntimeRenderHost(
             runtimeSessionHandle = runtimeSessionHandle,
-            hasStageScene = stageScene?.scene != null,
             hostedDebugModeEnabled = HostedDebugMode.enabled,
             hostedDebugModeApplied = hostedDebugModeApplied,
         )
@@ -987,11 +986,13 @@ internal fun StageFirstRuntimeExperience(
 
 internal fun shouldAttachRuntimeRenderHost(
     runtimeSessionHandle: Long,
-    hasStageScene: Boolean,
     hostedDebugModeEnabled: Boolean,
     hostedDebugModeApplied: Boolean,
 ): Boolean {
-    val runtimeReady = runtimeSessionHandle != 0L && hasStageScene
+    // The native stage streams directly from the Rust session. Decoded packet
+    // metadata may briefly be absent during scenario replacement and must not
+    // tear down the Vulkan surface or force device/pipeline reconstruction.
+    val runtimeReady = runtimeSessionHandle != 0L
     return runtimeReady && (!hostedDebugModeEnabled || hostedDebugModeApplied)
 }
 

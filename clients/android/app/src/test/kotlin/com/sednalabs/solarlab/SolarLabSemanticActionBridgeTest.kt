@@ -66,19 +66,10 @@ class SolarLabSemanticActionBridgeTest {
     }
 
     @Test
-    fun shouldAttachRuntimeRenderHost_waitsForSessionAndFirstScene() {
-        assertFalse(
-            shouldAttachRuntimeRenderHost(
-                runtimeSessionHandle = 42L,
-                hasStageScene = false,
-                hostedDebugModeEnabled = false,
-                hostedDebugModeApplied = false,
-            )
-        )
+    fun shouldAttachRuntimeRenderHost_tracksSessionRatherThanTransientPacketMetadata() {
         assertFalse(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 0L,
-                hasStageScene = true,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,
             )
@@ -86,7 +77,6 @@ class SolarLabSemanticActionBridgeTest {
         assertTrue(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
-                hasStageScene = true,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,
             )
@@ -98,7 +88,6 @@ class SolarLabSemanticActionBridgeTest {
         assertFalse(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
-                hasStageScene = true,
                 hostedDebugModeEnabled = true,
                 hostedDebugModeApplied = false,
             )
@@ -106,7 +95,6 @@ class SolarLabSemanticActionBridgeTest {
         assertTrue(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
-                hasStageScene = true,
                 hostedDebugModeEnabled = true,
                 hostedDebugModeApplied = true,
             )
