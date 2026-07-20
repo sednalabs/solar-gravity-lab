@@ -89,6 +89,7 @@ env:
   ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
   ANDROID_NDK_VERSION: "27.3.13750724"
   ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  INTERACTIVE_EMULATOR_GRPC_PORT: "8554"
   INTERACTIVE_MCP_BIND_ADDR: 127.0.0.1:9526
   INTERACTIVE_DEBUG_TTYD_PORT: "7681"
   INTERACTIVE_SESSION_ROOT: dist/interactive-session
@@ -584,7 +585,7 @@ jobs:
           avd-name: ${{ env.ANDROID_AVD_NAME }}
           emulator-boot-timeout: 1200
           force-avd-creation: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -grpc ${{ env.INTERACTIVE_EMULATOR_GRPC_PORT }} -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_interactive_android_session.sh
         env:
@@ -600,6 +601,7 @@ jobs:
           INTERACTIVE_MCP_PUBLIC_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_MCP_HOSTNAME }}
           INTERACTIVE_SESSION_TIMEOUT_MINUTES: ${{ steps.session_plan.outputs.session_timeout_minutes }}
           INTERACTIVE_KEEP_SESSION_ON_FAILURE: ${{ steps.session_plan.outputs.keep_session_on_failure }}
+          INTERACTIVE_EMULATOR_GRPC_PORT: ${{ env.INTERACTIVE_EMULATOR_GRPC_PORT }}
           INTERACTIVE_MCP_BIND_ADDR: ${{ env.INTERACTIVE_MCP_BIND_ADDR }}
           INTERACTIVE_SESSION_GITHUB_REPOSITORY: ${{ github.repository }}
           INTERACTIVE_SESSION_GITHUB_TOKEN: ${{ github.token }}
