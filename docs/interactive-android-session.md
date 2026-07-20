@@ -28,8 +28,8 @@ The workflow:
 
 - boots the existing x64 emulator image on a GitHub-hosted runner
 - builds the app debug APK under `clients/android`
-- checks out and builds the configured Android provider from source inside the
-  job
+- checks out, formats, tests, and builds the configured Android provider from
+  source inside the job
 - checks out the pinned `mcp-toolkit-rs` sibling workspace needed by that
   provider
 - starts the Android provider on loopback only

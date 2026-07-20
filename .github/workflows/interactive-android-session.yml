@@ -540,6 +540,14 @@ jobs:
             } >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Validate android-emulator-mcp provider contracts
+        shell: bash
+        working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked
+
       - name: Build android-emulator-mcp release binary
         id: build_mcp
         shell: bash
@@ -560,6 +568,7 @@ jobs:
             echo "- Android build setup: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- Rust Android toolchain: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- android-emulator-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
+            echo "- android-emulator-mcp provider contracts: \`passed\`"
             echo "- android-emulator-mcp build completed: \`true\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
