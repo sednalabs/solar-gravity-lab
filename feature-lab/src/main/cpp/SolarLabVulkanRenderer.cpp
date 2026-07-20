@@ -2814,13 +2814,10 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
         vkCmdDraw(commandBuffer, stream.outputVertexCapacity, 1, 0, 0);
     };
 
-    bindAndDrawBillboards(sceneGpuStreams_.authoritative);
-    bindAndDrawBillboards(sceneGpuStreams_.tracerNear);
-    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
-        bindAndDrawIndirect(mediumPointPipeline_, sceneGpuStreams_.tracerMediumCompute);
-    } else {
-        bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
-    }
+    // Draw each distance band once, back to front. A historical merge left
+    // authoritative, near, and medium streams duplicated around the far pass;
+    // with depth writes enabled that only repeated vertex/fragment work and
+    // compounded translucent edges.
     if (sceneGpuStreams_.tracerFarCompute.enabled) {
         bindAndDrawFixedCount(farDensityPipeline_, sceneGpuStreams_.tracerFarCompute);
     } else {
