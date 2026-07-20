@@ -36,7 +36,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
-import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import kotlinx.coroutines.flow.Flow
 
@@ -74,7 +73,6 @@ internal fun StageFirstRuntimeApp(
     ensureRuntimeStarted: () -> Unit,
     semanticActions: Flow<SolarLabSemanticAction> = SolarLabSemanticActionBridge.commands,
     runtimeMountedState: MutableState<Boolean>? = null,
-    runtimeRenderHostState: MutableState<SolarSystemRenderHostView?>? = null,
 ) {
     var nextSemanticToken by remember { mutableStateOf(0L) }
     var pendingSemanticAction by remember { mutableStateOf<PendingSemanticAction?>(null) }
@@ -95,7 +93,6 @@ internal fun StageFirstRuntimeApp(
         ensureRuntimeStarted = ensureRuntimeStarted,
         pendingSemanticAction = pendingSemanticAction,
         runtimeMountedState = runtimeMountedState,
-        runtimeRenderHostState = runtimeRenderHostState,
     )
 }
 

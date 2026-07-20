@@ -214,7 +214,6 @@ internal fun StageFirstRuntimeExperience(
     ensureRuntimeStarted: () -> Unit,
     pendingSemanticAction: PendingSemanticAction?,
     runtimeMountedState: androidx.compose.runtime.MutableState<Boolean>? = null,
-    runtimeRenderHostState: androidx.compose.runtime.MutableState<SolarSystemRenderHostView?>? = null,
 ) {
     SolarLabTheme {
         val context = LocalContext.current.applicationContext
@@ -446,14 +445,7 @@ internal fun StageFirstRuntimeExperience(
             runtimeMountedState?.value = true
             onDispose {
                 runtimeMountedState?.value = false
-                runtimeRenderHostState?.value = null
                 renderHostView?.release()
-            }
-        }
-
-        LaunchedEffect(attachRenderHost) {
-            if (!attachRenderHost) {
-                runtimeRenderHostState?.value = null
             }
         }
 
@@ -715,12 +707,10 @@ internal fun StageFirstRuntimeExperience(
                                 }
                             )
                             renderHostView = view
-                            runtimeRenderHostState?.value = view
                         }
                     },
                     update = { view ->
                         renderHostView = view
-                        runtimeRenderHostState?.value = view
                         view.updateRuntimeStageState(
                             sessionHandle = runtimeSessionHandle,
                             processingMode = renderProcessingMode,

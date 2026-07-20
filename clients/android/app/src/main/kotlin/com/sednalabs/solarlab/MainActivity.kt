@@ -9,7 +9,6 @@ import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
-import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import kotlinx.coroutines.CoroutineScope
@@ -27,7 +26,6 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val runtimeViewModel: RuntimeSessionViewModel by viewModels()
     private val stageFirstRuntimeMountedState = mutableStateOf(false)
-    private val stageFirstRuntimeRenderHostState = mutableStateOf<SolarSystemRenderHostView?>(null)
 
     @VisibleForTesting
     internal val runtimeFacadeForTesting: RuntimeFacade
@@ -36,10 +34,6 @@ class MainActivity : ComponentActivity() {
     @VisibleForTesting
     internal fun isStageFirstRuntimeMountedForTesting(): Boolean =
         stageFirstRuntimeMountedState.value
-
-    @VisibleForTesting
-    internal fun stageFirstRuntimeRenderHostForTesting(): SolarSystemRenderHostView? =
-        stageFirstRuntimeRenderHostState.value
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +46,6 @@ class MainActivity : ComponentActivity() {
                     runtimeFacade = runtimeViewModel.runtimeFacade,
                     ensureRuntimeStarted = runtimeViewModel::ensureStarted,
                     runtimeMountedState = stageFirstRuntimeMountedState,
-                    runtimeRenderHostState = stageFirstRuntimeRenderHostState,
                 )
             } else {
                 SolarLabApp(runtimeFacade = runtimeViewModel.runtimeFacade)

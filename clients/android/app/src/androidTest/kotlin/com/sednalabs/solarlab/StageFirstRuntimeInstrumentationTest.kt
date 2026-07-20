@@ -1,7 +1,10 @@
 package com.sednalabs.solarlab
 
+import android.view.View
+import android.view.ViewGroup
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -56,6 +59,19 @@ class StageFirstRuntimeInstrumentationTest {
             composeRule.activity.isStageFirstRuntimeMountedForTesting(),
         )
 
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.runOnUiThread {
+                findRenderHostView(composeRule.activity.window.decorView)?.let { hostView ->
+                    hostView.isAttachedToWindow && hostView.width > 0 && hostView.height > 0
+                } == true
+            }
+        }
+        val initialHostView = requireNotNull(
+            composeRule.runOnUiThread {
+                findRenderHostView(composeRule.activity.window.decorView)
+            },
+        ) { "Runtime render host should be present before scenario replacement" }
+
         val showcaseScenarioId = "showcase.jupiter-system"
         runBlocking {
             composeRule.activity.runtimeFacadeForTesting.loadScenario(showcaseScenarioId)
@@ -66,15 +82,23 @@ class StageFirstRuntimeInstrumentationTest {
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.runOnUiThread {
-                val hostView = composeRule.activity.stageFirstRuntimeRenderHostForTesting()
-                hostView != null && hostView.isAttachedToWindow && hostView.width > 0 && hostView.height > 0
+                val hostView = findRenderHostView(composeRule.activity.window.decorView)
+                hostView != null &&
+                    hostView === initialHostView &&
+                    hostView.isAttachedToWindow &&
+                    hostView.width > 0 &&
+                    hostView.height > 0
             }
         }
 
         val hostView = composeRule.runOnUiThread {
-            composeRule.activity.stageFirstRuntimeRenderHostForTesting()
+            findRenderHostView(composeRule.activity.window.decorView)
         }
         assertNotNull("Runtime render host should be present", hostView)
+        assertTrue(
+            "Scenario replacement should preserve the native render host instance",
+            hostView === initialHostView,
+        )
         assertTrue(
             "Runtime render host should have a measured size",
             composeRule.runOnUiThread {
@@ -83,5 +107,20 @@ class StageFirstRuntimeInstrumentationTest {
                     hostView.height > 0
             },
         )
+    }
+
+    private fun findRenderHostView(root: View): SolarSystemRenderHostView? {
+        if (root is SolarSystemRenderHostView) {
+            return root
+        }
+        if (root is ViewGroup) {
+            for (index in 0 until root.childCount) {
+                val match = findRenderHostView(root.getChildAt(index))
+                if (match != null) {
+                    return match
+                }
+            }
+        }
+        return null
     }
 }
