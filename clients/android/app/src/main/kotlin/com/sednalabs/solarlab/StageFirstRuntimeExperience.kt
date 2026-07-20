@@ -106,6 +106,15 @@ private data class RuntimeStageScene(
     val searchableBodies: List<RuntimeStageBody>,
 )
 
+private val RuntimeStageTeachingRankByBodyId = SolarLabTeachingCatalog.entries
+    .mapIndexed { index, entry -> entry.bodyId.lowercase(Locale.US) to index }
+    .toMap()
+
+private val RuntimeStageTeachingAliasesByBodyId = SolarLabTeachingCatalog.entries
+    .associate { entry ->
+        entry.bodyId.lowercase(Locale.US) to entry.aliases.map { alias -> alias.lowercase(Locale.US) }
+    }
+
 private data class RuntimeSelectionCard(
     val title: String,
     val detail: String,
@@ -1780,12 +1789,14 @@ private fun RuntimeStageSearchDialog(
     val normalizedQuery = query.trim().lowercase(Locale.US)
     val filteredBodies = remember(bodies, normalizedQuery) {
         bodies
-            .sortedWith(compareBy<RuntimeStageBody> { it.displayName.lowercase(Locale.US) }.thenBy { it.id.lowercase(Locale.US) })
-            .filter { body ->
-                normalizedQuery.isBlank() ||
-                    body.displayName.lowercase(Locale.US).contains(normalizedQuery) ||
-                    body.id.lowercase(Locale.US).contains(normalizedQuery)
-            }
+            .filter { body -> body.matchesRuntimeStageSearch(normalizedQuery) }
+            .sortedWith(
+                compareBy<RuntimeStageBody> { body ->
+                    RuntimeStageTeachingRankByBodyId[body.id.lowercase(Locale.US)] ?: Int.MAX_VALUE
+                }
+                    .thenBy { body -> body.displayName.lowercase(Locale.US) }
+                    .thenBy { body -> body.id.lowercase(Locale.US) },
+            )
             .take(32)
     }
 
@@ -1873,7 +1884,12 @@ private fun RuntimeStageSearchDialog(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
-                                TextButton(onClick = { onSelectBody(body.id) }) {
+                                TextButton(
+                                    onClick = { onSelectBody(body.id) },
+                                    modifier = Modifier.testTag(
+                                        SolarLabTestTags.stageFirstSearchFocusTag(body.id),
+                                    ),
+                                ) {
                                     Text("Focus")
                                 }
                             }
@@ -1883,6 +1899,19 @@ private fun RuntimeStageSearchDialog(
             }
         },
     )
+}
+
+private fun RuntimeStageBody.matchesRuntimeStageSearch(normalizedQuery: String): Boolean {
+    if (normalizedQuery.isBlank()) {
+        return true
+    }
+    val normalizedId = id.lowercase(Locale.US)
+    return displayName.lowercase(Locale.US).contains(normalizedQuery) ||
+        normalizedId.contains(normalizedQuery) ||
+        kind.name.replace('_', ' ').lowercase(Locale.US).contains(normalizedQuery) ||
+        RuntimeStageTeachingAliasesByBodyId[normalizedId]
+            .orEmpty()
+            .any { alias -> alias.contains(normalizedQuery) }
 }
 
 @Composable
