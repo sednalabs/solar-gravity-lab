@@ -70,6 +70,7 @@ class SolarLabSemanticActionBridgeTest {
         assertFalse(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 0L,
+                renderHostEstablished = false,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,
             )
@@ -77,6 +78,15 @@ class SolarLabSemanticActionBridgeTest {
         assertTrue(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
+                renderHostEstablished = false,
+                hostedDebugModeEnabled = false,
+                hostedDebugModeApplied = false,
+            )
+        )
+        assertTrue(
+            shouldAttachRuntimeRenderHost(
+                runtimeSessionHandle = 0L,
+                renderHostEstablished = true,
                 hostedDebugModeEnabled = false,
                 hostedDebugModeApplied = false,
             )
@@ -88,6 +98,7 @@ class SolarLabSemanticActionBridgeTest {
         assertFalse(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
+                renderHostEstablished = false,
                 hostedDebugModeEnabled = true,
                 hostedDebugModeApplied = false,
             )
@@ -95,6 +106,7 @@ class SolarLabSemanticActionBridgeTest {
         assertTrue(
             shouldAttachRuntimeRenderHost(
                 runtimeSessionHandle = 42L,
+                renderHostEstablished = false,
                 hostedDebugModeEnabled = true,
                 hostedDebugModeApplied = true,
             )
