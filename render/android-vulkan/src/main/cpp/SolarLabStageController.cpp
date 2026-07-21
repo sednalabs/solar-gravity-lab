@@ -600,6 +600,7 @@ void SolarLabStageController::SubmitScene(
         std::move(authoritativeRadiiM),
         std::move(authoritativeColorsArgb),
         std::move(authoritativeKinds),
+        {},
         std::move(tracerNearPositionsM),
         std::move(tracerNearRadiiM),
         std::move(tracerNearColorsArgb),
@@ -1252,6 +1253,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::vector<float> authoritativeRadiiM;
     std::vector<int32_t> authoritativeColorsArgb;
     std::vector<int32_t> authoritativeKinds;
+    std::vector<SolarLabVulkanRenderer::CelestialAppearanceInput> authoritativeAppearances;
     std::vector<double> tracerNearPositionsM;
     std::vector<float> tracerNearRadiiM;
     std::vector<int32_t> tracerNearColorsArgb;
@@ -1312,6 +1314,32 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             authoritativeRadiiM.push_back(body->radius_m);
             authoritativeColorsArgb.push_back(static_cast<int32_t>(PackArgb(body->albedo)));
             authoritativeKinds.push_back(static_cast<int32_t>(kind));
+            authoritativeAppearances.push_back(SolarLabVulkanRenderer::CelestialAppearanceInput{
+                .material = static_cast<uint32_t>(body->appearance.material),
+                .flags = body->appearance.flags,
+                .northPoleX = body->appearance.north_pole_ws.x,
+                .northPoleY = body->appearance.north_pole_ws.y,
+                .northPoleZ = body->appearance.north_pole_ws.z,
+                .referenceMeridianRadians = body->appearance.reference_meridian_radians,
+                .ringInnerRadiusM = body->appearance.ring_inner_radius_m,
+                .ringOuterRadiusM = body->appearance.ring_outer_radius_m,
+                .ringOpticalDepth = body->appearance.ring_optical_depth,
+                .ringPlaneX = body->appearance.ring_plane_normal_ws.x,
+                .ringPlaneY = body->appearance.ring_plane_normal_ws.y,
+                .ringPlaneZ = body->appearance.ring_plane_normal_ws.z,
+                .atmosphereOuterRadiusM = body->appearance.atmosphere_outer_radius_m,
+                .atmosphereOpticalDensity = body->appearance.atmosphere_optical_density,
+                .cometNucleusRadiusM = body->appearance.comet_nucleus_radius_m,
+                .cometComaRadiusM = body->appearance.comet_coma_radius_m,
+                .cometDustTailLengthM = body->appearance.comet_dust_tail_length_m,
+                .cometIonTailLengthM = body->appearance.comet_ion_tail_length_m,
+                .cometAntiSolarX = body->appearance.comet_anti_solar_direction_ws.x,
+                .cometAntiSolarY = body->appearance.comet_anti_solar_direction_ws.y,
+                .cometAntiSolarZ = body->appearance.comet_anti_solar_direction_ws.z,
+                .cometVelocityX = body->appearance.comet_velocity_direction_ws.x,
+                .cometVelocityY = body->appearance.comet_velocity_direction_ws.y,
+                .cometVelocityZ = body->appearance.comet_velocity_direction_ws.z,
+            });
         }
     }
 
@@ -1458,6 +1486,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         std::move(authoritativeRadiiM),
         std::move(authoritativeColorsArgb),
         std::move(authoritativeKinds),
+        std::move(authoritativeAppearances),
         std::move(tracerNearPositionsM),
         std::move(tracerNearRadiiM),
         std::move(tracerNearColorsArgb),

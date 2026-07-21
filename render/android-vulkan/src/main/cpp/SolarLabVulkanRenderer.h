@@ -13,6 +13,34 @@
 
 class SolarLabVulkanRenderer {
 public:
+    struct CelestialAppearanceInput {
+        uint32_t material = 10U;
+        uint32_t flags = 0U;
+        float northPoleX = 0.0f;
+        float northPoleY = 1.0f;
+        float northPoleZ = 0.0f;
+        float referenceMeridianRadians = 0.0f;
+        float ringInnerRadiusM = 0.0f;
+        float ringOuterRadiusM = 0.0f;
+        float ringOpticalDepth = 0.0f;
+        float ringPlaneX = 0.0f;
+        float ringPlaneY = 1.0f;
+        float ringPlaneZ = 0.0f;
+        float atmosphereOuterRadiusM = 0.0f;
+        float atmosphereOpticalDensity = 0.0f;
+        float referenceMeridianRadians = 0.0f;
+        float cometNucleusRadiusM = 0.0f;
+        float cometComaRadiusM = 0.0f;
+        float cometDustTailLengthM = 0.0f;
+        float cometIonTailLengthM = 0.0f;
+        float cometAntiSolarX = 1.0f;
+        float cometAntiSolarY = 0.0f;
+        float cometAntiSolarZ = 0.0f;
+        float cometVelocityX = 0.0f;
+        float cometVelocityY = 0.0f;
+        float cometVelocityZ = 1.0f;
+    };
+
     SolarLabVulkanRenderer();
     ~SolarLabVulkanRenderer();
 
@@ -35,6 +63,7 @@ public:
         std::vector<float> authoritativeRadiiM,
         std::vector<int32_t> authoritativeColorsArgb,
         std::vector<int32_t> authoritativeKinds,
+        std::vector<CelestialAppearanceInput> authoritativeAppearances,
         std::vector<double> tracerNearPositionsM,
         std::vector<float> tracerNearRadiiM,
         std::vector<int32_t> tracerNearColorsArgb,
@@ -74,6 +103,7 @@ private:
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
         std::vector<int32_t> authoritativeKinds;
+        std::vector<CelestialAppearanceInput> authoritativeAppearances;
         std::vector<double> tracerNearPositionsM;
         std::vector<float> tracerNearRadiiM;
         std::vector<int32_t> tracerNearColorsArgb;
@@ -111,7 +141,30 @@ private:
         uint32_t colorArgb = 0;
         uint32_t kind = 0;
         float alpha = 1.0f;
-        float reserved = 0.0f;
+        uint32_t material = 10U;
+        uint32_t appearanceFlags = 0U;
+        float physicalRadiusM = 0.0f;
+        float northPoleX = 0.0f;
+        float northPoleY = 1.0f;
+        float northPoleZ = 0.0f;
+        float ringInnerRadiusM = 0.0f;
+        float ringOuterRadiusM = 0.0f;
+        float ringOpticalDepth = 0.0f;
+        float ringPlaneX = 0.0f;
+        float ringPlaneY = 1.0f;
+        float ringPlaneZ = 0.0f;
+        float atmosphereOuterRadiusM = 0.0f;
+        float atmosphereOpticalDensity = 0.0f;
+        float cometNucleusRadiusM = 0.0f;
+        float cometComaRadiusM = 0.0f;
+        float cometDustTailLengthM = 0.0f;
+        float cometIonTailLengthM = 0.0f;
+        float cometAntiSolarX = 1.0f;
+        float cometAntiSolarY = 0.0f;
+        float cometAntiSolarZ = 0.0f;
+        float cometVelocityX = 0.0f;
+        float cometVelocityY = 0.0f;
+        float cometVelocityZ = 1.0f;
     };
 
     struct CheapPointVertex {
@@ -261,6 +314,9 @@ private:
         int64_t sourceRevision = -1;
         size_t bytesUploaded = 0;
         uint32_t authoritativeCount = 0;
+        uint32_t ringBodyCount = 0;
+        uint32_t atmosphereBodyCount = 0;
+        uint32_t cometBodyCount = 0;
         uint32_t tracerNearCount = 0;
         uint32_t tracerMediumCount = 0;
         uint32_t tracerFarCount = 0;
