@@ -283,8 +283,8 @@ mod tests {
 
     use super::{
         CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneBodyKind,
-        SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneTracer, SceneTrail,
-        SceneTrailFamily,
+        SceneCelestialAppearance, SceneDetailBand, SceneItemFamily, ScenePacketMetadata,
+        SceneTracer, SceneTrail, SceneTrailFamily,
     };
 
     #[test]
