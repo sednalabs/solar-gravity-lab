@@ -466,6 +466,7 @@ internal fun StageFirstRuntimeExperience(
                 uiState.snapshot?.scenarioId != scenarioPack.scenarioId ||
                 stageScene?.scenarioId != scenarioPack.scenarioId ||
                 uiState.focusedBodyId != focusBodyId ||
+                uiState.observerModeCode != scenarioPack.defaultObserverMode.nativeCode ||
                 searchableBodies.none { body -> body.id == focusBodyId }
             ) {
                 return@LaunchedEffect
