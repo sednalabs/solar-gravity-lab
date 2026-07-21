@@ -11,6 +11,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 VERIFY_SCRIPT = REPOSITORY_ROOT / ".github/scripts/verify_prerelease_jni_r8_contract.py"
 PROGUARD_RULES = REPOSITORY_ROOT / "clients/android/app/proguard-rules.pro"
+APP_BUILD = REPOSITORY_ROOT / "clients/android/app/build.gradle.kts"
 
 
 def load_verifier():
@@ -60,6 +61,17 @@ class PrereleaseJniR8ContractTest(unittest.TestCase):
             verifier.defined_dex_classes_from_output(renamed_output),
         )
         self.assertEqual({dto_classes[0]}, missing)
+
+    def test_minified_prerelease_uses_the_jni_keep_rules(self) -> None:
+        build_file = APP_BUILD.read_text(encoding="utf-8")
+        prerelease_block = build_file.split('create("prerelease") {', 1)[1].split(
+            '\n        release {',
+            1,
+        )[0]
+
+        self.assertIn("proguardFiles(", prerelease_block)
+        self.assertIn('getDefaultProguardFile("proguard-android-optimize.txt")', prerelease_block)
+        self.assertIn('"proguard-rules.pro"', prerelease_block)
 
 
 if __name__ == "__main__":

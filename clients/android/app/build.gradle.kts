@@ -424,6 +424,12 @@ android {
             matchingFallbacks += listOf("release")
             isMinifyEnabled = true
             isShrinkResources = true
+            // initWith copies the release configuration before the release block
+            // below declares its rules, so the installable prerelease must opt in.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             applicationIdSuffix = ".internal"
             signingConfig = signingConfigs.getByName("debug")
             resValue("string", "app_name", "Solar Gravity Lab Dev Preview")
