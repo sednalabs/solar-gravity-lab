@@ -50,6 +50,10 @@ constexpr int kTraceLayerModeOff = 2;
 constexpr uint32_t kFocusTraceDecimationStride = 4U;
 constexpr double kBodyFrameRadiusFactor = 3.2;
 constexpr double kBodyInspectionRadiusFactor = 1.15;
+// A comet's full typed tail length remains authoritative input to the shader, but fitting that
+// entire length with planet-style padding makes the nucleus and coma unreadable. Frame a
+// presentation-only fraction so the head is legible while the tail can continue off-screen.
+constexpr float kCometTailFrameFraction = 0.42f;
 
 void LogInfo(const std::string& message) {
     __android_log_print(ANDROID_LOG_INFO, kLogTag, "%s", message.c_str());
@@ -1302,11 +1306,13 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 frameRadiusM = std::max(frameRadiusM, body->appearance.atmosphere_outer_radius_m);
             }
             if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_COMET) != 0U) {
+                const float tailFrameRadiusM = std::max(
+                    body->appearance.comet_dust_tail_length_m,
+                    body->appearance.comet_ion_tail_length_m) * kCometTailFrameFraction;
                 frameRadiusM = std::max({
                     frameRadiusM,
                     body->appearance.comet_coma_radius_m,
-                    body->appearance.comet_dust_tail_length_m,
-                    body->appearance.comet_ion_tail_length_m,
+                    tailFrameRadiusM,
                 });
             }
             pickBodies.push_back(RuntimeBodyProxy{
