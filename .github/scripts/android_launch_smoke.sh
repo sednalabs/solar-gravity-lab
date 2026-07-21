@@ -3,10 +3,14 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: android_launch_smoke.sh --package PACKAGE --activity ACTIVITY [--apk APK] --out-dir DIR
+Usage: android_launch_smoke.sh --package PACKAGE --activity ACTIVITY [--apk APK] --out-dir DIR [--require-runtime-ready]
 
 Install an APK if provided, launch the activity, wait for the app process to stay
 alive through startup, and write diagnostic artifacts to the output directory.
+
+--require-runtime-ready additionally waits for the minified app to report an
+authoritative Rust session. It fails on an unavailable runtime rather than
+accepting a process that merely stayed alive.
 EOF
 }
 
@@ -16,6 +20,7 @@ apk_path=""
 out_dir=""
 startup_grace_seconds="${STARTUP_GRACE_SECONDS:-10}"
 artifact_mode="${ANDROID_LAUNCH_ARTIFACT_MODE:-failures-only}"
+require_runtime_ready=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +39,10 @@ while [[ $# -gt 0 ]]; do
     --out-dir)
       out_dir="$2"
       shift 2
+      ;;
+    --require-runtime-ready)
+      require_runtime_ready=1
+      shift
       ;;
     -h|--help)
       usage
@@ -58,11 +67,35 @@ logcat_log="$out_dir/logcat.txt"
 process_log="$out_dir/process.txt"
 dumpsys_log="$out_dir/dumpsys_activity.txt"
 screen_png="$out_dir/screen.png"
+runtime_ui_dump="$out_dir/runtime-ui.xml"
+runtime_bridge_log="$out_dir/runtime-bridge.log"
+
+capture_runtime_ui() {
+  rm -f "$runtime_ui_dump" || true
+  adb shell rm -f /sdcard/solar-launch-smoke-window.xml >/dev/null 2>&1 || true
+  adb shell uiautomator dump /sdcard/solar-launch-smoke-window.xml >/dev/null 2>&1 || true
+  adb pull /sdcard/solar-launch-smoke-window.xml "$runtime_ui_dump" >/dev/null 2>&1 || true
+}
+
+capture_runtime_bridge_log() {
+  rm -f "$runtime_bridge_log" || true
+  # Some adb/logcat versions treat the trailing silent filter as overriding the
+  # selected tag. Read the finite buffer and extract the authoritative bridge
+  # records locally so a ready session cannot be mistaken for a timeout.
+  adb logcat -d -v threadtime \
+    | grep -F " SolarLabRuntimeBridge:" > "$runtime_bridge_log" || true
+}
+
+capture_runtime_state() {
+  capture_runtime_ui
+  capture_runtime_bridge_log
+}
 
 capture_smoke_artifacts() {
   adb logcat -d > "$logcat_log" || true
   adb shell dumpsys activity activities > "$dumpsys_log" || true
   adb exec-out screencap -p > "$screen_png" || true
+  capture_runtime_state
 }
 
 pidof_or_empty() {
@@ -122,6 +155,57 @@ if [[ -z "$post_grace_pid" ]]; then
   capture_smoke_artifacts
   echo "App process died during startup grace window" >&2
   exit 1
+fi
+
+if [[ "$require_runtime_ready" -eq 1 ]]; then
+  runtime_deadline=$((SECONDS + ${RUNTIME_READY_TIMEOUT_SECONDS:-45}))
+  next_runtime_ui_capture=0
+  runtime_ready=0
+  while (( SECONDS < runtime_deadline )); do
+    current_pid="$(pidof_or_empty | tr -d '\r' | tr -d '\n')"
+    if [[ -z "$current_pid" ]]; then
+      capture_smoke_artifacts
+      echo "App process died while waiting for runtime to become ready" >&2
+      exit 1
+    fi
+
+    capture_runtime_bridge_log
+
+    if [[ -f "$runtime_bridge_log" ]] && grep -Eq \
+      'connect\.initial-refresh\.render\.refresh\.result .*lease=ready' \
+      "$runtime_bridge_log"; then
+      runtime_ready=1
+      break
+    fi
+
+    if [[ -f "$runtime_bridge_log" ]] && grep -Eq \
+      'connect\.createSession\.failure|connect\.runtimeInfo\.failure|connect\.initial-refresh\.(refreshSession|render\.refresh)\.failure|connect\.initial-refresh\.render\.refresh\.result .*lease=missing' \
+      "$runtime_bridge_log"; then
+      capture_smoke_artifacts
+      echo "Rust runtime reported an unavailable state during packaged APK startup" >&2
+      exit 1
+    fi
+
+    if (( SECONDS >= next_runtime_ui_capture )); then
+      capture_runtime_ui
+      next_runtime_ui_capture=$((SECONDS + ${RUNTIME_UI_CAPTURE_INTERVAL_SECONDS:-5}))
+      if [[ -f "$runtime_ui_dump" ]] && grep -Eq \
+        "Runtime unavailable|Rust stage unavailable|Native runtime session adapter is unavailable|Render host cannot start" \
+        "$runtime_ui_dump"; then
+        capture_smoke_artifacts
+        echo "Rust runtime reported an unavailable state during packaged APK startup" >&2
+        exit 1
+      fi
+    fi
+    sleep 1
+  done
+
+  if [[ "$runtime_ready" -ne 1 ]]; then
+    capture_smoke_artifacts
+    echo "Rust runtime did not report a connected session within ${RUNTIME_READY_TIMEOUT_SECONDS:-45}s" >&2
+    exit 1
+  fi
+  echo "runtime_session=connected" | tee -a "$process_log"
 fi
 
 echo "Launch smoke passed for ${package_id}" | tee -a "$process_log"

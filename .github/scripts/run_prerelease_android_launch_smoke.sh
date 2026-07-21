@@ -15,4 +15,5 @@ bash .github/scripts/android_launch_smoke.sh \
   --package "$package_id" \
   --activity "com.sednalabs.solarlab.MainActivity" \
   --apk "dist/solar-gravity-lab-${safe_version}-${package_label}.apk" \
-  --out-dir "dist/startup-smoke"
+  --out-dir "dist/startup-smoke" \
+  --require-runtime-ready

@@ -391,6 +391,26 @@ jobs:
             echo "configuration_cache_status=${configuration_cache_status}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify Rust JNI DTO identities after R8
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_variant="${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
+          apk_path="$(find "clients/android/app/build/outputs/apk/${build_variant}" -maxdepth 1 -name '*.apk' -print -quit)"
+          if [[ -z "${apk_path}" ]]; then
+            echo "No packaged APK found for ${build_variant}." >&2
+            exit 1
+          fi
+          if ! command -v apkanalyzer >/dev/null 2>&1; then
+            export PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}"
+          fi
+          if ! command -v apkanalyzer >/dev/null 2>&1; then
+            echo "apkanalyzer is unavailable from the installed Android SDK." >&2
+            exit 1
+          fi
+          python3 .github/scripts/verify_prerelease_jni_r8_contract.py \
+            --apk "${apk_path}"
+
       - name: Derive artifact metadata
         id: meta
         shell: bash
