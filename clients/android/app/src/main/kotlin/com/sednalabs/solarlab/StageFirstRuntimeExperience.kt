@@ -280,6 +280,7 @@ internal fun StageFirstRuntimeExperience(
         var searchVisible by rememberSaveable { mutableStateOf(false) }
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
+        var pendingScenarioFrame by remember { mutableStateOf<RuntimeScenarioPack?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var cameraScaleBand by remember { mutableStateOf(CameraScaleBand.SYSTEM) }
         var cameraCoachVisible by rememberSaveable {
@@ -405,8 +406,9 @@ internal fun StageFirstRuntimeExperience(
         }
 
         fun loadScenarioPack(scenarioId: String) {
-            val knownScenario = scenarioPacks.any { it.scenarioId == scenarioId }
-            if (knownScenario) {
+            val scenarioPack = scenarioPacks.firstOrNull { it.scenarioId == scenarioId }
+            if (scenarioPack != null) {
+                pendingScenarioFrame = scenarioPack
                 selectedBodyId = null
                 observerMode = ObserverMode.FREE
                 semanticFocusAcknowledgement = null
@@ -443,6 +445,35 @@ internal fun StageFirstRuntimeExperience(
 
         LaunchedEffect(uiState.observerModeCode) {
             observerMode = observerModeFromRuntimeCode(uiState.observerModeCode)
+        }
+
+        LaunchedEffect(
+            pendingScenarioFrame,
+            uiState.snapshot?.scenarioId,
+            uiState.focusedBodyId,
+            uiState.observerModeCode,
+            stageScene?.scene?.sourceRevision,
+            searchableBodies,
+            renderHostView,
+        ) {
+            val scenarioPack = pendingScenarioFrame ?: return@LaunchedEffect
+            val focusBodyId = scenarioPack.defaultFocusBodyId ?: run {
+                pendingScenarioFrame = null
+                return@LaunchedEffect
+            }
+            if (
+                uiState.snapshot?.scenarioId != scenarioPack.scenarioId ||
+                uiState.focusedBodyId != focusBodyId ||
+                searchableBodies.none { body -> body.id == focusBodyId }
+            ) {
+                return@LaunchedEffect
+            }
+            val hostView = renderHostView ?: return@LaunchedEffect
+            val scenarioObserverMode = observerModeFromRuntimeCode(uiState.observerModeCode)
+            selectedBodyId = focusBodyId
+            observerMode = scenarioObserverMode
+            pendingScenarioFrame = null
+            hostView.focusAndFrameBody(focusBodyId, scenarioObserverMode)
         }
 
         LaunchedEffect(canSendCommands, uiState.snapshot?.paused) {
