@@ -815,7 +815,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 11
+        private const val ABI_VERSION = 12
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         private const val REFRESH_INTERVAL_MS = 500L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L

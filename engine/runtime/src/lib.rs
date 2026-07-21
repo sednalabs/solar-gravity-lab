@@ -9,9 +9,10 @@ use std::mem::size_of;
 use std::time::Instant;
 
 use solarlab_data::{
-    apply_update_plan, plan_manifest_update, scenario_pack_seed, ApplyPackageInputs,
-    ApplyProvenance, ApplyUpdateError, CompatibilityTarget, Digest, LocalDataState, PackageKind,
-    SemVer, StoredPackage, UpdateManifest, UpdatePlan, UpdatePlanError,
+    apply_update_plan, canonical_celestial_appearance, plan_manifest_update, scenario_pack_seed,
+    ApplyPackageInputs, ApplyProvenance, ApplyUpdateError, CompatibilityTarget, Digest,
+    LocalDataState, PackageKind, SemVer, StoredPackage, UpdateManifest, UpdatePlan,
+    UpdatePlanError,
 };
 
 use solarlab_domain::{
@@ -30,8 +31,8 @@ use solarlab_physics::{
 };
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-    SceneBodyKind, ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
-    SceneTrailFamily,
+    SceneBodyKind, SceneCelestialAppearance, SceneCometVisualGuide, ScenePacketMetadata,
+    SceneProvenanceRef, SceneTracer, SceneTrail, SceneTrailFamily,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1042,11 +1043,16 @@ impl WorldRuntime {
 pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
     let extract_started_at = Instant::now();
     let selected_body = snapshot.observer.focus_body_id.as_ref();
+    let star_position_m = snapshot
+        .bodies
+        .iter()
+        .find(|body| body.body_class == BodyClass::Star)
+        .map(|body| body.position_m);
     let bodies: Vec<SceneBody> = snapshot
         .bodies
         .iter()
         .map(|body| {
-            let style = body_style(body.body_class.clone());
+            let style = body_style(body.body_class);
             SceneBody {
                 body_id: body.body_id.clone(),
                 display_name: body.body_id.0.clone(),
@@ -1058,6 +1064,7 @@ pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
                 selected: selected_body
                     .map(|focused| focused == &body.body_id)
                     .unwrap_or(false),
+                appearance: scene_celestial_appearance(body, star_position_m),
             }
         })
         .collect();
@@ -1098,6 +1105,56 @@ pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
         diagnostics,
     }
     .with_derived_counts()
+}
+
+fn scene_celestial_appearance(
+    body: &BodyState,
+    star_position_m: Option<Vector3d>,
+) -> SceneCelestialAppearance {
+    let facts = canonical_celestial_appearance(&body.body_id.0, body.body_class, body.radius_m);
+    let comet_visual = facts.comet.map(|_| SceneCometVisualGuide {
+        anti_solar_direction_ws: normalized_or(
+            star_position_m.map_or(body.position_m, |star| subtract(body.position_m, star)),
+            Vector3d {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        ),
+        velocity_direction_ws: normalized_or(
+            body.velocity_mps,
+            Vector3d {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+            },
+        ),
+    });
+    SceneCelestialAppearance {
+        facts,
+        comet_visual,
+    }
+}
+
+fn subtract(left: Vector3d, right: Vector3d) -> Vector3d {
+    Vector3d {
+        x: left.x - right.x,
+        y: left.y - right.y,
+        z: left.z - right.z,
+    }
+}
+
+fn normalized_or(value: Vector3d, fallback: Vector3d) -> Vector3d {
+    let magnitude = (value.x * value.x + value.y * value.y + value.z * value.z).sqrt();
+    if magnitude.is_finite() && magnitude > f64::EPSILON {
+        Vector3d {
+            x: value.x / magnitude,
+            y: value.y / magnitude,
+            z: value.z / magnitude,
+        }
+    } else {
+        fallback
+    }
 }
 
 fn scene_body_kind(body: &BodyState) -> SceneBodyKind {
@@ -1510,7 +1567,7 @@ fn scene_revision_from_snapshot(
         use std::fmt::Write as _;
         let _ = write!(
             &mut revision,
-            "|{}|class={:?}|selected={selected}|r={:.6}|p=({:.6},{:.6},{:.6})|v=({:.6},{:.6},{:.6})|e={:.3}",
+            "|{}|class={:?}|selected={selected}|r={:.6}|p=({:.6},{:.6},{:.6})|v=({:.6},{:.6},{:.6})|e={:.3}|appearance={:?}",
             body_state.body_id.0,
             body_state.body_class,
             body_state.radius_m,
@@ -1520,7 +1577,8 @@ fn scene_revision_from_snapshot(
             body_state.velocity_mps.x,
             body_state.velocity_mps.y,
             body_state.velocity_mps.z,
-            body_scene.emissive_luminance
+            body_scene.emissive_luminance,
+            body_scene.appearance
         );
     }
     if let Some(mounted_manifest) = &snapshot.mounted_manifest {
@@ -2003,8 +2061,8 @@ mod tests {
         StoredPackage, UpdateManifest,
     };
     use solarlab_domain::{
-        BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics,
-        Vector3d,
+        BodyClass, BodyId, BranchId, CelestialMaterialFamily, CheckpointId, ObserverMode,
+        ScenarioId, TimelineSemantics, Vector3d,
     };
     use solarlab_hardware::HardwareProfile;
     use solarlab_history::{HistoryEvent, OrbitArchiveFamily, OrbitArchiveQuery};
@@ -2234,6 +2292,7 @@ mod tests {
             )
             .expect("focusing moon should succeed");
 
+        let physics_state_before_render = runtime.snapshot().bodies;
         let scene = runtime.render_scene();
         let trail_body_ids = scene
             .trails
@@ -2259,6 +2318,32 @@ mod tests {
                 .map(|body| body.kind),
             Some(SceneBodyKind::Asteroid),
         );
+        let saturn = scene
+            .bodies
+            .iter()
+            .find(|body| body.body_id.0 == "saturn")
+            .expect("Saturn should be present");
+        assert_eq!(saturn.appearance.facts.material, CelestialMaterialFamily::GasGiant);
+        assert_eq!(
+            saturn
+                .appearance
+                .facts
+                .ring_system
+                .expect("Saturn should carry ring facts")
+                .outer_radius_m,
+            140_220_000.0
+        );
+        let halley = scene
+            .bodies
+            .iter()
+            .find(|body| body.body_id.0 == "halley")
+            .expect("Halley should be present");
+        assert_eq!(
+            halley.appearance.facts.material,
+            CelestialMaterialFamily::CometNucleus
+        );
+        assert!(halley.appearance.comet_visual.is_some());
+        assert_eq!(physics_state_before_render, runtime.snapshot().bodies);
         assert!(scene
             .trails
             .iter()

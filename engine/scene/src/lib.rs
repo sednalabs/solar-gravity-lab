@@ -1,5 +1,7 @@
 use solarlab_data::Digest;
-use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
+use solarlab_domain::{
+    BodyId, CelestialAppearanceFacts, ObserverMode, TimelineSemantics, Vector3d,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ColorRgba {
@@ -36,6 +38,31 @@ pub enum SceneBodyKind {
     Custom,
 }
 
+/// Dynamic comet vectors derived from authoritative scene state.
+///
+/// They guide renderer effects only. They are never solver inputs and cannot
+/// feed back into trajectories, mass, forces, or ephemerides.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneCometVisualGuide {
+    pub anti_solar_direction_ws: Vector3d,
+    pub velocity_direction_ws: Vector3d,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneCelestialAppearance {
+    pub facts: CelestialAppearanceFacts,
+    pub comet_visual: Option<SceneCometVisualGuide>,
+}
+
+impl Default for SceneCelestialAppearance {
+    fn default() -> Self {
+        Self {
+            facts: CelestialAppearanceFacts::default(),
+            comet_visual: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneBody {
     pub body_id: BodyId,
@@ -46,6 +73,7 @@ pub struct SceneBody {
     pub albedo: ColorRgba,
     pub emissive_luminance: f64,
     pub selected: bool,
+    pub appearance: SceneCelestialAppearance,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -294,6 +322,7 @@ mod tests {
                 },
                 emissive_luminance: 0.0,
                 selected: false,
+                appearance: SceneCelestialAppearance::default(),
             }],
             tracers: vec![SceneTracer {
                 tracer_id: "trace-1".to_owned(),

@@ -19,8 +19,8 @@ use std::str;
 use std::sync::{Mutex, OnceLock};
 
 use solarlab_domain::{
-    BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics,
-    Vector3d,
+    AppearanceProvenance, BodyClass, BodyId, BranchId, CelestialMaterialFamily, CheckpointId,
+    ObserverMode, ScenarioId, TimelineSemantics, Vector3d,
 };
 use solarlab_hardware::{
     BackendFamilyAssignment, CpuBackend, GpuBackend, GpuBackendReport, GpuBackendStateFamily,
@@ -35,10 +35,11 @@ use solarlab_runtime::{BodyState, RuntimeConfig, RuntimeError, WorldCommand, Wor
 use solarlab_scene::{SceneBodyKind, SceneTrailFamily};
 use solarlab_vulkan_adapter::{
     PackedColor, PackedVec3, VulkanBodyInstance, VulkanDirectionalLight, VulkanSceneAdapter,
-    VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan, VulkanTrailVertex,
+    VulkanCelestialAppearance, VulkanScenePacket, VulkanTracerInstance, VulkanTrailSpan,
+    VulkanTrailVertex,
 };
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 11;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 12;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -189,6 +190,34 @@ pub enum SlSceneBodyKind {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlCelestialMaterialFamily {
+    StellarPhotosphere = 0,
+    Terrestrial = 1,
+    Rocky = 2,
+    GasGiant = 3,
+    IceGiant = 4,
+    Icy = 5,
+    Lunar = 6,
+    Asteroid = 7,
+    CometNucleus = 8,
+    Spacecraft = 9,
+    Neutral = 10,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlAppearanceProvenance {
+    CuratedPhysicalGuide = 0,
+    CuratedVisualGuide = 1,
+    DerivedClassDefault = 2,
+}
+
+pub const SL_CELESTIAL_APPEARANCE_HAS_RING_SYSTEM: u32 = 1 << 0;
+pub const SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE: u32 = 1 << 1;
+pub const SL_CELESTIAL_APPEARANCE_HAS_COMET: u32 = 1 << 2;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlRuntimeInfo {
     pub abi_version: u32,
     pub requested_cpu_backend: SlCpuBackend,
@@ -261,6 +290,56 @@ pub struct SlVulkanCameraPacket {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlVulkanCelestialAppearance {
+    pub material: SlCelestialMaterialFamily,
+    pub provenance: SlAppearanceProvenance,
+    pub north_pole_ws: SlPackedVec3,
+    pub reference_meridian_radians: f32,
+    pub flags: u32,
+    pub ring_inner_radius_m: f32,
+    pub ring_outer_radius_m: f32,
+    pub ring_plane_normal_ws: SlPackedVec3,
+    pub ring_optical_depth: f32,
+    pub atmosphere_outer_radius_m: f32,
+    pub atmosphere_optical_density: f32,
+    pub comet_nucleus_radius_m: f32,
+    pub comet_coma_radius_m: f32,
+    pub comet_dust_tail_length_m: f32,
+    pub comet_ion_tail_length_m: f32,
+    pub comet_anti_solar_direction_ws: SlPackedVec3,
+    pub comet_velocity_direction_ws: SlPackedVec3,
+}
+
+impl Default for SlVulkanCelestialAppearance {
+    fn default() -> Self {
+        Self {
+            material: SlCelestialMaterialFamily::Neutral,
+            provenance: SlAppearanceProvenance::DerivedClassDefault,
+            north_pole_ws: SlPackedVec3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            reference_meridian_radians: 0.0,
+            flags: 0,
+            ring_inner_radius_m: 0.0,
+            ring_outer_radius_m: 0.0,
+            ring_plane_normal_ws: SlPackedVec3::default(),
+            ring_optical_depth: 0.0,
+            atmosphere_outer_radius_m: 0.0,
+            atmosphere_optical_density: 0.0,
+            comet_nucleus_radius_m: 0.0,
+            comet_coma_radius_m: 0.0,
+            comet_dust_tail_length_m: 0.0,
+            comet_ion_tail_length_m: 0.0,
+            comet_anti_solar_direction_ws: SlPackedVec3::default(),
+            comet_velocity_direction_ws: SlPackedVec3::default(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlVulkanBodyInstance {
     pub position_from_origin_m: SlPackedVec3,
     pub radius_m: f32,
@@ -268,6 +347,7 @@ pub struct SlVulkanBodyInstance {
     pub emissive_luminance: f32,
     pub selected: u32,
     pub kind: SlSceneBodyKind,
+    pub appearance: SlVulkanCelestialAppearance,
     pub body_id: [u8; SL_V2_ID_CAPACITY],
     pub body_id_len: u32,
 }
@@ -281,6 +361,7 @@ impl Default for SlVulkanBodyInstance {
             emissive_luminance: 0.0,
             selected: 0,
             kind: SlSceneBodyKind::Custom,
+            appearance: SlVulkanCelestialAppearance::default(),
             body_id: [0; SL_V2_ID_CAPACITY],
             body_id_len: 0,
         }
@@ -1331,8 +1412,78 @@ fn encode_body_instance(value: VulkanBodyInstance) -> SlVulkanBodyInstance {
         emissive_luminance: value.emissive_luminance,
         selected: u32::from(value.selected),
         kind: encode_scene_body_kind(value.kind),
+        appearance: encode_celestial_appearance(value.appearance),
         body_id: encode_identifier(&value.body_id.0).expect("body id should fit into packet"),
         body_id_len: string_length_to_u32(&value.body_id.0),
+    }
+}
+
+fn encode_celestial_appearance(
+    value: VulkanCelestialAppearance,
+) -> SlVulkanCelestialAppearance {
+    let mut encoded = SlVulkanCelestialAppearance {
+        material: encode_celestial_material(value.material),
+        provenance: encode_appearance_provenance(value.provenance),
+        north_pole_ws: encode_packed_vec3(value.north_pole_ws),
+        reference_meridian_radians: value.reference_meridian_radians,
+        ..SlVulkanCelestialAppearance::default()
+    };
+
+    if let Some(ring) = value.ring_system {
+        encoded.flags |= SL_CELESTIAL_APPEARANCE_HAS_RING_SYSTEM;
+        encoded.ring_inner_radius_m = ring.inner_radius_m;
+        encoded.ring_outer_radius_m = ring.outer_radius_m;
+        encoded.ring_plane_normal_ws = encode_packed_vec3(ring.plane_normal_ws);
+        encoded.ring_optical_depth = ring.optical_depth;
+    }
+    if let Some(atmosphere) = value.atmosphere {
+        encoded.flags |= SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE;
+        encoded.atmosphere_outer_radius_m = atmosphere.outer_radius_m;
+        encoded.atmosphere_optical_density = atmosphere.optical_density;
+    }
+    if let Some(comet) = value.comet {
+        encoded.flags |= SL_CELESTIAL_APPEARANCE_HAS_COMET;
+        encoded.comet_nucleus_radius_m = comet.nucleus_radius_m;
+        encoded.comet_coma_radius_m = comet.coma_radius_m;
+        encoded.comet_dust_tail_length_m = comet.dust_tail_length_m;
+        encoded.comet_ion_tail_length_m = comet.ion_tail_length_m;
+        encoded.comet_anti_solar_direction_ws =
+            encode_packed_vec3(comet.anti_solar_direction_ws);
+        encoded.comet_velocity_direction_ws = encode_packed_vec3(comet.velocity_direction_ws);
+    }
+
+    encoded
+}
+
+fn encode_celestial_material(value: CelestialMaterialFamily) -> SlCelestialMaterialFamily {
+    match value {
+        CelestialMaterialFamily::StellarPhotosphere => {
+            SlCelestialMaterialFamily::StellarPhotosphere
+        }
+        CelestialMaterialFamily::Terrestrial => SlCelestialMaterialFamily::Terrestrial,
+        CelestialMaterialFamily::Rocky => SlCelestialMaterialFamily::Rocky,
+        CelestialMaterialFamily::GasGiant => SlCelestialMaterialFamily::GasGiant,
+        CelestialMaterialFamily::IceGiant => SlCelestialMaterialFamily::IceGiant,
+        CelestialMaterialFamily::Icy => SlCelestialMaterialFamily::Icy,
+        CelestialMaterialFamily::Lunar => SlCelestialMaterialFamily::Lunar,
+        CelestialMaterialFamily::Asteroid => SlCelestialMaterialFamily::Asteroid,
+        CelestialMaterialFamily::CometNucleus => SlCelestialMaterialFamily::CometNucleus,
+        CelestialMaterialFamily::Spacecraft => SlCelestialMaterialFamily::Spacecraft,
+        CelestialMaterialFamily::Neutral => SlCelestialMaterialFamily::Neutral,
+    }
+}
+
+fn encode_appearance_provenance(value: AppearanceProvenance) -> SlAppearanceProvenance {
+    match value {
+        AppearanceProvenance::CuratedPhysicalGuide => {
+            SlAppearanceProvenance::CuratedPhysicalGuide
+        }
+        AppearanceProvenance::CuratedVisualGuide => {
+            SlAppearanceProvenance::CuratedVisualGuide
+        }
+        AppearanceProvenance::DerivedClassDefault => {
+            SlAppearanceProvenance::DerivedClassDefault
+        }
     }
 }
 
@@ -2699,11 +2850,12 @@ mod tests {
         sl_v2_session_create, sl_v2_session_destroy, sl_v2_session_export_vulkan_scene,
         sl_v2_session_refresh, sl_v2_session_runtime_info, sl_v2_session_snapshot_summary,
         sl_v2_vulkan_scene_packet_buffer, sl_v2_vulkan_scene_packet_release, SlBodyClass,
-        SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode, SlRuntimeInfo,
-        SlRuntimeInfoResult, SlSceneBodyKind, SlSessionCommand, SlSessionCreateParams,
-        SlStatusCode, SlTimelineSemantics, SlVector3d, SlVulkanBodyInstance,
-        SlVulkanSceneBufferKind,
-        SlVulkanTracerInstance, SlVulkanTrailSpan, SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
+        SlCelestialMaterialFamily, SlCommandKind, SlCpuBackend, SlGpuBackend, SlObserverMode,
+        SlRuntimeInfo, SlRuntimeInfoResult, SlSceneBodyKind, SlSessionCommand,
+        SlSessionCreateParams, SlStatusCode, SlTimelineSemantics, SlVector3d,
+        SlVulkanBodyInstance, SlVulkanCelestialAppearance, SlVulkanSceneBufferKind,
+        SlVulkanTracerInstance, SlVulkanTrailSpan, SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE,
+        SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
 
     #[test]
@@ -2767,12 +2919,24 @@ mod tests {
 
     #[test]
     fn vulkan_body_instance_layout_carries_scene_taxonomy() {
-        assert_eq!(size_of::<SlVulkanBodyInstance>(), 144);
+        assert_eq!(size_of::<SlVulkanCelestialAppearance>(), 100);
+        assert_eq!(align_of::<SlVulkanCelestialAppearance>(), 4);
+        assert_eq!(offset_of!(SlVulkanCelestialAppearance, flags), 24);
+        assert_eq!(offset_of!(SlVulkanCelestialAppearance, ring_inner_radius_m), 28);
+        assert_eq!(offset_of!(SlVulkanCelestialAppearance, atmosphere_outer_radius_m), 52);
+        assert_eq!(offset_of!(SlVulkanCelestialAppearance, comet_nucleus_radius_m), 60);
+        assert_eq!(
+            offset_of!(SlVulkanCelestialAppearance, comet_velocity_direction_ws),
+            88
+        );
+
+        assert_eq!(size_of::<SlVulkanBodyInstance>(), 244);
         assert_eq!(align_of::<SlVulkanBodyInstance>(), 4);
         assert_eq!(offset_of!(SlVulkanBodyInstance, selected), 36);
         assert_eq!(offset_of!(SlVulkanBodyInstance, kind), 40);
-        assert_eq!(offset_of!(SlVulkanBodyInstance, body_id), 44);
-        assert_eq!(offset_of!(SlVulkanBodyInstance, body_id_len), 140);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, appearance), 44);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, body_id), 144);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, body_id_len), 240);
     }
 
     #[test]
@@ -3090,6 +3254,14 @@ mod tests {
         );
         assert_eq!(exported_bodies[1].selected, 1);
         assert_eq!(exported_bodies[1].kind, SlSceneBodyKind::Planet);
+        assert_eq!(
+            exported_bodies[1].appearance.material,
+            SlCelestialMaterialFamily::Lunar
+        );
+        assert_eq!(
+            exported_bodies[1].appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE,
+            0
+        );
         assert_eq!(
             decode_identifier(&exported_bodies[1].body_id, exported_bodies[1].body_id_len)
                 .expect("body id should decode"),
