@@ -28,7 +28,6 @@ public:
         float ringPlaneZ = 0.0f;
         float atmosphereOuterRadiusM = 0.0f;
         float atmosphereOpticalDensity = 0.0f;
-        float referenceMeridianRadians = 0.0f;
         float cometNucleusRadiusM = 0.0f;
         float cometComaRadiusM = 0.0f;
         float cometDustTailLengthM = 0.0f;
@@ -155,6 +154,7 @@ private:
         float ringPlaneZ = 0.0f;
         float atmosphereOuterRadiusM = 0.0f;
         float atmosphereOpticalDensity = 0.0f;
+        float referenceMeridianRadians = 0.0f;
         float cometNucleusRadiusM = 0.0f;
         float cometComaRadiusM = 0.0f;
         float cometDustTailLengthM = 0.0f;
