@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Verify that R8 preserves all Kotlin DTO names constructed by Rust JNI."""
+"""Verify that the packaged APK preserves Kotlin DTO names constructed by Rust JNI."""
 
 from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,12 +16,12 @@ RUNTIME_PREFIX = "com.sednalabs.solarlab.runtime.Native"
 JNI_CLASS_CONSTANT = re.compile(
     r'const\s+CLASS_NATIVE_[A-Z0-9_]+:\s*&str\s*=\s*"(?P<name>[^"]+)";'
 )
-MAPPING_CLASS = re.compile(r"^(?P<source>\S+) -> (?P<target>\S+):$")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mapping", required=True, type=Path)
+    parser.add_argument("--apk", required=True, type=Path)
+    parser.add_argument("--apkanalyzer", required=True, type=Path)
     parser.add_argument("--ffi-source", type=Path, default=DEFAULT_FFI_SOURCE)
     return parser.parse_args()
 
@@ -39,29 +40,45 @@ def required_jni_dto_classes(ffi_source: Path) -> list[str]:
     return classes
 
 
-def mapped_class_names(mapping: Path) -> dict[str, str]:
-    mappings: dict[str, str] = {}
-    for line in mapping.read_text(encoding="utf-8").splitlines():
-        match = MAPPING_CLASS.match(line)
-        if match is not None:
-            mappings[match.group("source")] = match.group("target")
-    return mappings
-
-
-def renamed_jni_dto_classes(ffi_source: Path, mapping: Path) -> dict[str, str | None]:
-    required = required_jni_dto_classes(ffi_source)
-    mapped = mapped_class_names(mapping)
-    return {
-        class_name: mapped.get(class_name)
-        for class_name in required
-        if mapped.get(class_name) != class_name
+def defined_dex_classes_from_output(output: str) -> set[str]:
+    classes = {
+        line.split()[-1]
+        for line in output.splitlines()
+        if line.startswith("C ") and len(line.split()) >= 6
     }
+    if not classes:
+        raise RuntimeError("apkanalyzer found no DEX class declarations")
+    return classes
+
+
+def defined_dex_classes(apk: Path, apkanalyzer: Path) -> set[str]:
+    completed = subprocess.run(
+        [str(apkanalyzer), "dex", "packages", "--defined-only", str(apk)],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostic output"
+        raise RuntimeError(f"apkanalyzer failed for {apk}: {detail}")
+
+    try:
+        return defined_dex_classes_from_output(completed.stdout)
+    except RuntimeError as error:
+        raise RuntimeError(f"{error} in {apk}") from error
+
+
+def missing_jni_dto_classes(ffi_source: Path, defined_classes: set[str]) -> set[str]:
+    return set(required_jni_dto_classes(ffi_source)).difference(defined_classes)
 
 
 def main() -> int:
     args = parse_args()
-    if not args.mapping.is_file():
-        print(f"R8 mapping is missing: {args.mapping}", file=sys.stderr)
+    if not args.apk.is_file():
+        print(f"Packaged APK is missing: {args.apk}", file=sys.stderr)
+        return 1
+    if not args.apkanalyzer.is_file():
+        print(f"apkanalyzer is missing: {args.apkanalyzer}", file=sys.stderr)
         return 1
     if not args.ffi_source.is_file():
         print(f"Rust FFI source is missing: {args.ffi_source}", file=sys.stderr)
@@ -69,17 +86,15 @@ def main() -> int:
 
     try:
         required = required_jni_dto_classes(args.ffi_source)
-    except ValueError as error:
+        defined_classes = defined_dex_classes(args.apk, args.apkanalyzer)
+    except (RuntimeError, ValueError) as error:
         print(str(error), file=sys.stderr)
         return 1
-    renamed = renamed_jni_dto_classes(args.ffi_source, args.mapping)
-    if renamed:
-        details = "\n".join(
-            f"- {class_name}: {target if target is not None else 'missing from mapping'}"
-            for class_name, target in renamed.items()
-        )
+    missing = missing_jni_dto_classes(args.ffi_source, defined_classes)
+    if missing:
+        details = "\n".join(f"- {class_name}" for class_name in sorted(missing))
         print(
-            "R8 changed or removed Kotlin DTO names constructed by Rust JNI:\n" + details,
+            "The packaged APK is missing Kotlin DTO names constructed by Rust JNI:\n" + details,
             file=sys.stderr,
         )
         return 1

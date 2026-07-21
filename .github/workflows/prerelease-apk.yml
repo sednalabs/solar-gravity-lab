@@ -396,8 +396,18 @@ jobs:
         run: |
           set -euo pipefail
           build_variant="${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
+          apk_path="$(find "clients/android/app/build/outputs/apk/${build_variant}" -maxdepth 1 -name '*.apk' -print -quit)"
+          if [[ -z "${apk_path}" ]]; then
+            echo "No packaged APK found for ${build_variant}." >&2
+            exit 1
+          fi
+          apkanalyzer_bin="$(command -v apkanalyzer || true)"
+          if [[ -z "${apkanalyzer_bin}" ]]; then
+            apkanalyzer_bin="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/apkanalyzer"
+          fi
           python3 .github/scripts/verify_prerelease_jni_r8_contract.py \
-            --mapping "clients/android/app/build/outputs/mapping/${build_variant}/mapping.txt"
+            --apk "${apk_path}" \
+            --apkanalyzer "${apkanalyzer_bin}"
 
       - name: Derive artifact metadata
         id: meta
