@@ -196,8 +196,8 @@ jobs:
             :app:compileDebugKotlin \
             :app:compileDebugUnitTestKotlin \
             :app:compileDebugAndroidTestKotlin \
-            :feature-lab:compileDebugKotlin \
-            :feature-lab:compileDebugUnitTestKotlin \
+            :android-vulkan-renderer:compileDebugKotlin \
+            :android-vulkan-renderer:compileDebugUnitTestKotlin \
             :render-core:compileKotlin \
             :render-core:compileTestKotlin \
             :core-math:compileKotlin \

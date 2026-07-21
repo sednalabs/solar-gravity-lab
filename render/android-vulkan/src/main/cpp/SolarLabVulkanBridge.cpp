@@ -109,20 +109,20 @@ jdoubleArray CameraSnapshotArray(
 }  // namespace solar_lab_jni
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeIsVulkanRuntimeAvailable(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeIsVulkanRuntimeAvailable(
     JNIEnv*, jclass) {
     return SolarLabStageController::IsVulkanRuntimeAvailable() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetCpuCapabilitySummary(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetCpuCapabilitySummary(
     JNIEnv* env, jclass) {
     const std::string value = NativeCpuCapabilitySummary();
     return env->NewStringUTF(value.c_str());
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeCreateRenderer(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeCreateRenderer(
     JNIEnv* env, jclass, jobject assetManager) {
     auto* controller = new SolarLabStageController();
     controller->SetAssetManager(AAssetManager_fromJava(env, assetManager));
@@ -130,27 +130,27 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeDestroyRenderer(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeDestroyRenderer(
     JNIEnv*, jclass, jlong handle) {
     delete FromHandle(handle);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOnSurfaceCreated(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeOnSurfaceCreated(
     JNIEnv* env, jclass, jlong handle, jobject surface, jint width, jint height) {
     auto* controller = FromHandle(handle);
     return controller != nullptr && controller->Initialize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOnSurfaceChanged(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeOnSurfaceChanged(
     JNIEnv* env, jclass, jlong handle, jobject surface, jint width, jint height) {
     auto* controller = FromHandle(handle);
     return controller != nullptr && controller->Resize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOnSurfaceDestroyed(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeOnSurfaceDestroyed(
     JNIEnv*, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
     if (controller != nullptr) {
@@ -159,7 +159,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSubmitScene(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSubmitScene(
     JNIEnv* env,
     jclass,
     jlong handle,
@@ -228,7 +228,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetCamera(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetCamera(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -245,7 +245,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jdoubleArray JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetCameraState(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetCameraState(
     JNIEnv* env,
     jclass,
     jlong handle) {
@@ -256,7 +256,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jdoubleArray JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeResolveRuntimeHomeCamera(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeResolveRuntimeHomeCamera(
     JNIEnv* env,
     jclass,
     jlong handle) {
@@ -271,7 +271,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jdoubleArray JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeResolveRuntimeBodyFrame(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeResolveRuntimeBodyFrame(
     JNIEnv* env,
     jclass,
     jlong handle,
@@ -287,7 +287,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeBindRuntimeSession(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeBindRuntimeSession(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -299,7 +299,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeUnbindRuntimeSession(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeUnbindRuntimeSession(
     JNIEnv*,
     jclass,
     jlong handle) {
@@ -310,7 +310,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeProcessingMode(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetRuntimeProcessingMode(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -322,7 +322,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeObserverMode(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetRuntimeObserverMode(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -334,7 +334,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeSelectedBodyId(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetRuntimeSelectedBodyId(
     JNIEnv* env,
     jclass,
     jlong handle,
@@ -346,7 +346,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeSetRuntimeTraceLayerMode(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetRuntimeTraceLayerMode(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -358,7 +358,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeResetRuntimeCamera(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeResetRuntimeCamera(
     JNIEnv*,
     jclass,
     jlong handle) {
@@ -369,7 +369,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativePanRuntimeCamera(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativePanRuntimeCamera(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -384,7 +384,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeZoomRuntimeCamera(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeZoomRuntimeCamera(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -400,7 +400,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativePanAndZoomRuntimeCamera(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativePanAndZoomRuntimeCamera(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -425,7 +425,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeOrbitRuntimeCamera(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeOrbitRuntimeCamera(
     JNIEnv*,
     jclass,
     jlong handle,
@@ -442,7 +442,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativePickRuntimeBodyId(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativePickRuntimeBodyId(
     JNIEnv* env,
     jclass,
     jlong handle,
@@ -462,14 +462,14 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeRender(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeRender(
     JNIEnv*, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
     return controller != nullptr && controller->Render() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetLastError(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetLastError(
     JNIEnv* env, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
     const std::string value = controller != nullptr ? controller->LastError() : std::string("Renderer handle is null.");
@@ -477,7 +477,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetBackendLabel(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetBackendLabel(
     JNIEnv* env, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
     const std::string value = controller != nullptr ? controller->BackendLabel() : std::string("Renderer handle is null.");
@@ -485,7 +485,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetSceneSummary(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetSceneSummary(
     JNIEnv* env, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
     const std::string value = controller != nullptr ? controller->SceneSummary() : std::string("Renderer handle is null.");
@@ -493,7 +493,7 @@ Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativ
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_graciousgazelles_solarlab_feature_lab_render_SolarLabVulkanBridge_nativeGetHardwareSummary(
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetHardwareSummary(
     JNIEnv* env, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
     const std::string value =

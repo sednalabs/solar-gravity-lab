@@ -9,10 +9,14 @@ The canonical product path on this branch is:
 - `engine/ffi/` for the C ABI and opaque-handle boundary
 - `clients/android/` for the Android shell over the Rust runtime
 - `render/vulkan-adapter/` for the first backend adapter crate
+- `render/android-vulkan/` for the Android host, JNI bridge, native Vulkan
+  renderer, and packaged shaders
 
 The root-level Kotlin modules (`app`, `core-*`, `feature-lab`, `render-core`) are
-retained only as legacy/reference material. They are no longer the canonical
-architecture or validation target on this branch.
+retained as legacy/reference or transitional policy material. `feature-lab` is
+not a production dependency. The canonical Android renderer currently consumes
+selected core/render policy types while those contracts migrate toward Rust
+ownership.
 
 ## Canonical boundaries
 
@@ -80,6 +84,10 @@ telemetry can report what is actually active.
 - control dispatch into the runtime command surface
 
 The Android client must not grow its own simulation rules.
+
+The shell depends directly on `:android-vulkan-renderer`, sourced from
+`render/android-vulkan/`. The renderer owns lifecycle-bound Vulkan/NDK concerns
+after scene export; it does not own world integration or history.
 
 ## Current rendering boundary
 

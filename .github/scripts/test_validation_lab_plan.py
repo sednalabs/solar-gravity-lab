@@ -138,6 +138,16 @@ class ValidationLabPlanTests(unittest.TestCase):
             ],
         )
 
+    def test_canonical_android_renderer_routes_to_android_lanes_only(self) -> None:
+        outputs = run_plan(["render/android-vulkan/src/main/cpp/SolarLabVulkanRenderer.cpp"])
+
+        self.assertEqual(outputs["rust_workspace"], "false")
+        self.assertEqual(outputs["rust_workspace_arm64"], "false")
+        self.assertEqual(outputs["runtime_scene_telemetry"], "false")
+        self.assertEqual(outputs["android_unit"], "true")
+        self.assertEqual(outputs["android_lint"], "true")
+        self.assertEqual(outputs["android_shell"], "true")
+
     def test_workflow_change_forces_full_checkpoint(self) -> None:
         outputs = run_plan([".github/workflows/validation-lab.yml"])
 

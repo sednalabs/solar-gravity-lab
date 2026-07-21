@@ -883,7 +883,7 @@ jobs:
           )
           ./gradlew -p clients/android \
             :app:testDebugUnitTest \
-            :feature-lab:testDebugUnitTest \
+            :android-vulkan-renderer:testDebugUnitTest \
             :render-core:test \
             :core-math:test \
             :core-model:test \
@@ -959,13 +959,13 @@ jobs:
           if-no-files-found: warn
           path: |
             clients/android/app/build/reports/tests/**
-            feature-lab/build/reports/tests/**
+            render/android-vulkan/build/reports/tests/**
             render-core/build/reports/tests/**
             core-math/build/reports/tests/**
             core-model/build/reports/tests/**
             core-simulation/build/reports/tests/**
             clients/android/app/build/test-results/**
-            feature-lab/build/test-results/**
+            render/android-vulkan/build/test-results/**
             render-core/build/test-results/**
             core-math/build/test-results/**
             core-model/build/test-results/**
@@ -1070,7 +1070,7 @@ jobs:
           mapfile -t gradle_configuration_cache_args < <(
             bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )
-          ./gradlew -p clients/android :app:lintDebug :feature-lab:lintDebug \
+          ./gradlew -p clients/android :app:lintDebug :android-vulkan-renderer:lintDebug \
             "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-lint.log
           phase_end="$(date +%s)"
@@ -1145,10 +1145,10 @@ jobs:
             clients/android/app/build/reports/lint-results-*.xml
             clients/android/app/build/reports/lint-results-*.txt
             clients/android/app/build/intermediates/lint_intermediate_text_report/**
-            feature-lab/build/reports/lint-results-*.html
-            feature-lab/build/reports/lint-results-*.xml
-            feature-lab/build/reports/lint-results-*.txt
-            feature-lab/build/intermediates/lint_intermediate_text_report/**
+            render/android-vulkan/build/reports/lint-results-*.html
+            render/android-vulkan/build/reports/lint-results-*.xml
+            render/android-vulkan/build/reports/lint-results-*.txt
+            render/android-vulkan/build/intermediates/lint_intermediate_text_report/**
             dist/gradle/**
             dist/sccache/**
 

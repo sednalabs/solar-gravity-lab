@@ -30,11 +30,17 @@ find_library(android-lib android)
 find_library(vulkan-lib vulkan)
 find_library(dl-lib dl)
 
+get_filename_component(
+    SOLARLAB_REPOSITORY_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.."
+    ABSOLUTE
+)
+
 target_include_directories(
     solarlab_vulkan
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../engine/ffi/include
+    ${SOLARLAB_REPOSITORY_ROOT}/engine/ffi/include
 )
 
 target_link_libraries(
