@@ -1,6 +1,5 @@
 #pragma once
 
-#include <jni.h>
 #include <android/asset_manager.h>
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
@@ -21,8 +20,9 @@ public:
 
     void SetAssetManager(AAssetManager* assetManager);
 
-    bool Initialize(JNIEnv* env, jobject surface, int width, int height);
-    bool Resize(JNIEnv* env, jobject surface, int width, int height);
+    // Takes ownership of one ANativeWindow reference on every call.
+    bool Initialize(ANativeWindow* nativeWindow, int width, int height);
+    bool Resize(ANativeWindow* nativeWindow, int width, int height);
     void DestroySurface();
 
     void SubmitScene(
@@ -269,7 +269,8 @@ private:
     };
 
     bool CreateInstance();
-    bool CreateSurface(JNIEnv* env, jobject surface);
+    bool CreateSurface();
+    void AdoptNativeWindow(ANativeWindow* nativeWindow);
     bool PickPhysicalDevice();
     bool CreateDevice();
     bool CreatePipelineCache();

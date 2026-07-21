@@ -3,7 +3,6 @@
 #include "SolarLabVulkanRenderer.h"
 
 #include <android/asset_manager.h>
-#include <jni.h>
 
 #include <cstdint>
 #include <mutex>
@@ -29,8 +28,8 @@ public:
 
     void SetAssetManager(AAssetManager* assetManager);
 
-    bool Initialize(JNIEnv* env, jobject surface, int width, int height);
-    bool Resize(JNIEnv* env, jobject surface, int width, int height);
+    bool Initialize(ANativeWindow* nativeWindow, int width, int height);
+    bool Resize(ANativeWindow* nativeWindow, int width, int height);
     void DestroySurface();
 
     void SubmitScene(

@@ -2,7 +2,6 @@
 
 #include <android/asset_manager.h>
 #include <android/log.h>
-#include <android/native_window_jni.h>
 #include <vulkan/vulkan_android.h>
 
 #include <algorithm>
@@ -32,6 +31,7 @@ constexpr uint32_t kBodyKindPlanet = 1U;
 constexpr uint32_t kBodyKindDwarfPlanet = 2U;
 constexpr uint32_t kBodyKindProbe = 5U;
 constexpr uint32_t kBodyKindTestObject = 6U;
+constexpr uint64_t kFrameWaitTimeoutNs = 2'000'000'000ULL;
 
 VkDrawIndirectCommand MakeInitialIndirectCommand() {
     return VkDrawIndirectCommand{
@@ -187,9 +187,10 @@ void SolarLabVulkanRenderer::SetAssetManager(AAssetManager* assetManager) {
     assetManager_ = assetManager;
 }
 
-bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width, int height) {
+bool SolarLabVulkanRenderer::Initialize(ANativeWindow* nativeWindow, int width, int height) {
     std::scoped_lock lock(stateMutex_);
     Cleanup();
+    AdoptNativeWindow(nativeWindow);
 
     if (assetManager_ == nullptr) {
         SetError("AAssetManager must be set before Vulkan initialisation so compiled SPIR-V shaders can be loaded.");
@@ -200,7 +201,7 @@ bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width,
     if (!CreateInstance()) {
         return false;
     }
-    if (!CreateSurface(env, surface)) {
+    if (!CreateSurface()) {
         return false;
     }
 
@@ -259,10 +260,27 @@ bool SolarLabVulkanRenderer::Initialize(JNIEnv* env, jobject surface, int width,
     return true;
 }
 
-bool SolarLabVulkanRenderer::Resize(JNIEnv* env, jobject surface, int width, int height) {
+bool SolarLabVulkanRenderer::Resize(ANativeWindow* nativeWindow, int width, int height) {
     std::scoped_lock lock(stateMutex_);
     if (instance_ == VK_NULL_HANDLE) {
-        return Initialize(env, surface, width, height);
+        if (nativeWindow != nullptr) {
+            ANativeWindow_release(nativeWindow);
+        }
+        SetError("Surface resize requested before Vulkan initialisation completed.");
+        return false;
+    }
+
+    if (
+        nativeWindow != nullptr &&
+        nativeWindow == nativeWindow_ &&
+        swapchain_ != VK_NULL_HANDLE &&
+        swapchainExtent_.width == static_cast<uint32_t>(std::max(width, 1)) &&
+        swapchainExtent_.height == static_cast<uint32_t>(std::max(height, 1))) {
+        // surfaceChanged follows surfaceCreated during ordinary attachment. The new native-window
+        // reference aliases the one already owned by the renderer, so release only the duplicate
+        // and avoid an unnecessary device-wide drain and swapchain rebuild.
+        ANativeWindow_release(nativeWindow);
+        return true;
     }
 
     if (device_ != VK_NULL_HANDLE) {
@@ -270,8 +288,9 @@ bool SolarLabVulkanRenderer::Resize(JNIEnv* env, jobject surface, int width, int
     }
 
     DestroySurfaceResources();
+    AdoptNativeWindow(nativeWindow);
 
-    if (!CreateSurface(env, surface)) {
+    if (!CreateSurface()) {
         return false;
     }
     if (!CreateSwapchain(width, height)) {
@@ -402,13 +421,16 @@ bool SolarLabVulkanRenderer::Render() {
         return false;
     }
 
-    const auto fenceResult = vkWaitForFences(device_, 1, &inFlightFence_, VK_TRUE, std::numeric_limits<uint64_t>::max());
+    const auto fenceResult = vkWaitForFences(device_, 1, &inFlightFence_, VK_TRUE, kFrameWaitTimeoutNs);
+    if (fenceResult == VK_TIMEOUT) {
+        SetError("Timed out waiting for the previous Vulkan frame fence.");
+        return false;
+    }
     if (fenceResult != VK_SUCCESS) {
         SetError("vkWaitForFences failed.");
         return false;
     }
     RefreshCompactionVisibleCountsFromReadbackLocked();
-    vkResetFences(device_, 1, &inFlightFence_);
 
     if (!EnsureSceneGpuStreamsLocked()) {
         return false;
@@ -426,12 +448,16 @@ bool SolarLabVulkanRenderer::Render() {
     const auto acquireResult = vkAcquireNextImageKHR(
         device_,
         swapchain_,
-        std::numeric_limits<uint64_t>::max(),
+        kFrameWaitTimeoutNs,
         imageAvailableSemaphore_,
         VK_NULL_HANDLE,
         &imageIndex);
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
         SetError("Swapchain out of date; surface resize is required.");
+        return false;
+    }
+    if (acquireResult == VK_TIMEOUT) {
+        SetError("Timed out acquiring the next Vulkan swapchain image.");
         return false;
     }
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
@@ -452,6 +478,10 @@ bool SolarLabVulkanRenderer::Render() {
         .pSignalSemaphores = &renderFinishedSemaphore_,
     };
 
+    if (vkResetFences(device_, 1, &inFlightFence_) != VK_SUCCESS) {
+        SetError("vkResetFences failed before Vulkan frame submission.");
+        return false;
+    }
     const auto submitResult = vkQueueSubmit(graphicsQueue_, 1, &submitInfo, inFlightFence_);
     if (submitResult != VK_SUCCESS) {
         SetError("vkQueueSubmit failed.");
@@ -552,7 +582,7 @@ bool SolarLabVulkanRenderer::CreateInstance() {
     return true;
 }
 
-bool SolarLabVulkanRenderer::CreateSurface(JNIEnv* env, jobject surface) {
+void SolarLabVulkanRenderer::AdoptNativeWindow(ANativeWindow* nativeWindow) {
     if (surface_ != VK_NULL_HANDLE && instance_ != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(instance_, surface_, nullptr);
         surface_ = VK_NULL_HANDLE;
@@ -562,9 +592,12 @@ bool SolarLabVulkanRenderer::CreateSurface(JNIEnv* env, jobject surface) {
         nativeWindow_ = nullptr;
     }
 
-    nativeWindow_ = ANativeWindow_fromSurface(env, surface);
+    nativeWindow_ = nativeWindow;
+}
+
+bool SolarLabVulkanRenderer::CreateSurface() {
     if (nativeWindow_ == nullptr) {
-        SetError("ANativeWindow_fromSurface returned null.");
+        SetError("A referenced ANativeWindow is required for Vulkan surface creation.");
         return false;
     }
 
@@ -3176,7 +3209,13 @@ SolarLabVulkanRenderer::StagingUploadSlot* SolarLabVulkanRenderer::AcquireStagin
                 1,
                 &slot.fence,
                 VK_TRUE,
-                std::numeric_limits<uint64_t>::max());
+                kFrameWaitTimeoutNs);
+            if (waitResult == VK_TIMEOUT) {
+                if (reportErrors) {
+                    SetError("Timed out waiting to reuse a staged upload slot.");
+                }
+                return nullptr;
+            }
             if (waitResult != VK_SUCCESS) {
                 if (reportErrors) {
                     SetError("vkWaitForFences failed while reusing a staged upload slot.");
