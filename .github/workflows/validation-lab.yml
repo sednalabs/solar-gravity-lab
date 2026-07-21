@@ -268,6 +268,9 @@ jobs:
       - name: Verify Android Rust cache key isolation
         run: python3 .github/scripts/test_rust_android_toolchain_cache_key.py
 
+      - name: Verify Rust JNI R8 keep-rule coverage
+        run: python3 .github/scripts/test_prerelease_jni_r8_contract.py
+
       - name: Resolve prior validation evidence
         id: prior_evidence
         if: ${{ github.event_name == 'pull_request' && (github.event.action == 'synchronize' || github.event.action == 'ready_for_review') }}

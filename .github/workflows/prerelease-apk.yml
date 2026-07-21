@@ -391,6 +391,14 @@ jobs:
             echo "configuration_cache_status=${configuration_cache_status}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify Rust JNI DTO identities after R8
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_variant="${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
+          python3 .github/scripts/verify_prerelease_jni_r8_contract.py \
+            --mapping "clients/android/app/build/outputs/mapping/${build_variant}/mapping.txt"
+
       - name: Derive artifact metadata
         id: meta
         shell: bash
