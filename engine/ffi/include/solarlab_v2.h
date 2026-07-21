@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 // ABI version of the runtime/session contract.
-#define SOLARLAB_V2_ABI_VERSION 11u
+#define SOLARLAB_V2_ABI_VERSION 12u
 // Fixed-size inline capacity for identifier payloads carried by value in structs.
 #define SL_V2_ID_CAPACITY 96u
 
@@ -128,6 +128,32 @@ typedef enum SlSceneBodyKind {
   SL_SCENE_BODY_KIND_CUSTOM = 8
 } SlSceneBodyKind;
 
+typedef enum SlCelestialMaterialFamily {
+  SL_CELESTIAL_MATERIAL_STELLAR_PHOTOSPHERE = 0,
+  SL_CELESTIAL_MATERIAL_TERRESTRIAL = 1,
+  SL_CELESTIAL_MATERIAL_ROCKY = 2,
+  SL_CELESTIAL_MATERIAL_GAS_GIANT = 3,
+  SL_CELESTIAL_MATERIAL_ICE_GIANT = 4,
+  SL_CELESTIAL_MATERIAL_ICY = 5,
+  SL_CELESTIAL_MATERIAL_LUNAR = 6,
+  SL_CELESTIAL_MATERIAL_ASTEROID = 7,
+  SL_CELESTIAL_MATERIAL_COMET_NUCLEUS = 8,
+  SL_CELESTIAL_MATERIAL_SPACECRAFT = 9,
+  SL_CELESTIAL_MATERIAL_NEUTRAL = 10
+} SlCelestialMaterialFamily;
+
+typedef enum SlAppearanceProvenance {
+  SL_APPEARANCE_PROVENANCE_CURATED_PHYSICAL_GUIDE = 0,
+  SL_APPEARANCE_PROVENANCE_CURATED_VISUAL_GUIDE = 1,
+  SL_APPEARANCE_PROVENANCE_DERIVED_CLASS_DEFAULT = 2
+} SlAppearanceProvenance;
+
+enum {
+  SL_CELESTIAL_APPEARANCE_HAS_RING_SYSTEM = 1u << 0,
+  SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE = 1u << 1,
+  SL_CELESTIAL_APPEARANCE_HAS_COMET = 1u << 2
+};
+
 typedef struct SlRuntimeInfo {
   uint32_t abi_version;
   SlCpuBackend requested_cpu_backend;
@@ -188,6 +214,26 @@ typedef struct SlVulkanCameraPacket {
   float exposure;
 } SlVulkanCameraPacket;
 
+typedef struct SlVulkanCelestialAppearance {
+  SlCelestialMaterialFamily material;
+  SlAppearanceProvenance provenance;
+  SlPackedVec3 north_pole_ws;
+  float reference_meridian_radians;
+  uint32_t flags;
+  float ring_inner_radius_m;
+  float ring_outer_radius_m;
+  SlPackedVec3 ring_plane_normal_ws;
+  float ring_optical_depth;
+  float atmosphere_outer_radius_m;
+  float atmosphere_optical_density;
+  float comet_nucleus_radius_m;
+  float comet_coma_radius_m;
+  float comet_dust_tail_length_m;
+  float comet_ion_tail_length_m;
+  SlPackedVec3 comet_anti_solar_direction_ws;
+  SlPackedVec3 comet_velocity_direction_ws;
+} SlVulkanCelestialAppearance;
+
 typedef struct SlVulkanBodyInstance {
   SlPackedVec3 position_from_origin_m;
   float radius_m;
@@ -195,6 +241,7 @@ typedef struct SlVulkanBodyInstance {
   float emissive_luminance;
   uint32_t selected;
   SlSceneBodyKind kind;
+  SlVulkanCelestialAppearance appearance;
   uint8_t body_id[SL_V2_ID_CAPACITY];
   uint32_t body_id_len;
 } SlVulkanBodyInstance;

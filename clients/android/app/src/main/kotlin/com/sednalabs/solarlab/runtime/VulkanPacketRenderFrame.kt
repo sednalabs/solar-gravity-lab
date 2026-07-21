@@ -45,6 +45,74 @@ data class RenderBody(
     val colorG: Float,
     val colorB: Float,
     val colorA: Float,
+    val appearance: RenderCelestialAppearance,
+)
+
+enum class RenderCelestialMaterial(val nativeCode: Int) {
+    StellarPhotosphere(0),
+    Terrestrial(1),
+    Rocky(2),
+    GasGiant(3),
+    IceGiant(4),
+    Icy(5),
+    Lunar(6),
+    Asteroid(7),
+    CometNucleus(8),
+    Spacecraft(9),
+    Neutral(10);
+
+    companion object {
+        private val byNativeCode = entries.associateBy { it.nativeCode }
+
+        fun fromNativeCode(code: Int): RenderCelestialMaterial =
+            byNativeCode[code] ?: Neutral
+    }
+}
+
+enum class RenderAppearanceProvenance(val nativeCode: Int) {
+    CuratedPhysicalGuide(0),
+    CuratedVisualGuide(1),
+    DerivedClassDefault(2);
+
+    companion object {
+        private val byNativeCode = entries.associateBy { it.nativeCode }
+
+        fun fromNativeCode(code: Int): RenderAppearanceProvenance =
+            byNativeCode[code] ?: DerivedClassDefault
+    }
+}
+
+data class RenderDirection(val x: Float, val y: Float, val z: Float)
+
+data class RenderRingSystem(
+    val innerRadiusM: Float,
+    val outerRadiusM: Float,
+    val planeNormal: RenderDirection,
+    val opticalDepth: Float,
+)
+
+data class RenderAtmosphere(
+    val outerRadiusM: Float,
+    val opticalDensity: Float,
+)
+
+data class RenderCometAppearance(
+    val nucleusRadiusM: Float,
+    val comaRadiusM: Float,
+    val dustTailLengthM: Float,
+    val ionTailLengthM: Float,
+    val antiSolarDirection: RenderDirection,
+    val velocityDirection: RenderDirection,
+)
+
+data class RenderCelestialAppearance(
+    val material: RenderCelestialMaterial,
+    val provenance: RenderAppearanceProvenance,
+    val northPole: RenderDirection,
+    val referenceMeridianRadians: Float,
+    val ringSystem: RenderRingSystem?,
+    val atmosphere: RenderAtmosphere?,
+    val comet: RenderCometAppearance?,
 )
 
 enum class RuntimeSceneBodyKind(val nativeCode: Int) {
@@ -108,14 +176,18 @@ data class RenderPoint(
 )
 
 internal object VulkanPacketRenderFrameDecoder {
-    private const val BODY_STRIDE_BYTES = 144
+    private const val BODY_STRIDE_BYTES = 244
     private const val TRACER_STRIDE_BYTES = 132
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
     private const val TRAIL_SPAN_STRIDE_BYTES = 136
     private const val BODY_KIND_OFFSET_BYTES = 40
-    private const val BODY_ID_OFFSET_BYTES = 44
+    private const val BODY_APPEARANCE_OFFSET_BYTES = 44
+    private const val BODY_ID_OFFSET_BYTES = 144
     private const val BODY_ID_MAX_BYTES = 96
-    private const val BODY_ID_LENGTH_OFFSET_BYTES = 140
+    private const val BODY_ID_LENGTH_OFFSET_BYTES = 240
+    private const val APPEARANCE_HAS_RING_SYSTEM = 1 shl 0
+    private const val APPEARANCE_HAS_ATMOSPHERE = 1 shl 1
+    private const val APPEARANCE_HAS_COMET = 1 shl 2
     private const val TRACER_SOURCE_BODY_ID_OFFSET_BYTES = 32
     private const val TRACER_SOURCE_BODY_ID_MAX_BYTES = 96
     private const val TRACER_SOURCE_BODY_ID_LENGTH_OFFSET_BYTES = 128
@@ -184,9 +256,59 @@ internal object VulkanPacketRenderFrameDecoder {
                 colorB = ordered.getFloat(base + 24),
                 colorA = ordered.getFloat(base + 28),
                 selected = ordered.getInt(base + 36) != 0,
+                appearance = decodeAppearance(ordered, base + BODY_APPEARANCE_OFFSET_BYTES),
             )
         }
     }
+
+    private fun decodeAppearance(
+        ordered: ByteBuffer,
+        base: Int,
+    ): RenderCelestialAppearance {
+        val flags = ordered.getInt(base + 24)
+        return RenderCelestialAppearance(
+            material = RenderCelestialMaterial.fromNativeCode(ordered.getInt(base + 0)),
+            provenance = RenderAppearanceProvenance.fromNativeCode(ordered.getInt(base + 4)),
+            northPole = direction(ordered, base + 8),
+            referenceMeridianRadians = ordered.getFloat(base + 20),
+            ringSystem = if ((flags and APPEARANCE_HAS_RING_SYSTEM) != 0) {
+                RenderRingSystem(
+                    innerRadiusM = ordered.getFloat(base + 28),
+                    outerRadiusM = ordered.getFloat(base + 32),
+                    planeNormal = direction(ordered, base + 36),
+                    opticalDepth = ordered.getFloat(base + 48),
+                )
+            } else {
+                null
+            },
+            atmosphere = if ((flags and APPEARANCE_HAS_ATMOSPHERE) != 0) {
+                RenderAtmosphere(
+                    outerRadiusM = ordered.getFloat(base + 52),
+                    opticalDensity = ordered.getFloat(base + 56),
+                )
+            } else {
+                null
+            },
+            comet = if ((flags and APPEARANCE_HAS_COMET) != 0) {
+                RenderCometAppearance(
+                    nucleusRadiusM = ordered.getFloat(base + 60),
+                    comaRadiusM = ordered.getFloat(base + 64),
+                    dustTailLengthM = ordered.getFloat(base + 68),
+                    ionTailLengthM = ordered.getFloat(base + 72),
+                    antiSolarDirection = direction(ordered, base + 76),
+                    velocityDirection = direction(ordered, base + 88),
+                )
+            } else {
+                null
+            },
+        )
+    }
+
+    private fun direction(ordered: ByteBuffer, offset: Int): RenderDirection = RenderDirection(
+        x = ordered.getFloat(offset + 0),
+        y = ordered.getFloat(offset + 4),
+        z = ordered.getFloat(offset + 8),
+    )
 
     private fun decodeTracers(buffer: ByteBuffer?, count: Int): List<RenderTracer> {
         val ordered = preparedBuffer(buffer) ?: return emptyList()
