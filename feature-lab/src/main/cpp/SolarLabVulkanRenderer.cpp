@@ -1615,6 +1615,7 @@ void SolarLabVulkanRenderer::Cleanup() {
         vkDeviceWaitIdle(device_);
     }
 
+    DestroyStagingUploadRing();
     DestroySceneGpuStreams();
     DestroySurfaceResources();
     DestroyDescriptorResources();
@@ -3127,29 +3128,92 @@ bool SolarLabVulkanRenderer::EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkB
         buffer);
 }
 
-// Copies staged bytes into device-local buffers with a one-shot command buffer, optionally
-// surfacing detailed Vulkan errors to callers that are in user-visible setup paths.
-bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors) {
+SolarLabVulkanRenderer::StagingUploadSlot* SolarLabVulkanRenderer::AcquireStagingUploadSlot(bool reportErrors) {
+    if (device_ == VK_NULL_HANDLE || commandPool_ == VK_NULL_HANDLE) {
+        return nullptr;
+    }
+
+    StagingUploadSlot& slot = stagingUploadRing_[nextStagingUploadSlot_];
+    nextStagingUploadSlot_ = (nextStagingUploadSlot_ + 1U) % stagingUploadRing_.size();
+
+    if (slot.commandBuffer == VK_NULL_HANDLE) {
+        const VkCommandBufferAllocateInfo allocateInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .commandPool = commandPool_,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        if (vkAllocateCommandBuffers(device_, &allocateInfo, &slot.commandBuffer) != VK_SUCCESS ||
+            slot.commandBuffer == VK_NULL_HANDLE) {
+            if (reportErrors) {
+                SetError("vkAllocateCommandBuffers failed for fenced staged upload.");
+            }
+            slot.commandBuffer = VK_NULL_HANDLE;
+            return nullptr;
+        }
+    }
+
+    if (slot.fence == VK_NULL_HANDLE) {
+        const VkFenceCreateInfo fenceCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+        if (vkCreateFence(device_, &fenceCreateInfo, nullptr, &slot.fence) != VK_SUCCESS) {
+            if (reportErrors) {
+                SetError("vkCreateFence failed for staged upload ring.");
+            }
+            return nullptr;
+        }
+    }
+
+    if (slot.inFlight) {
+        const VkResult status = vkGetFenceStatus(device_, slot.fence);
+        if (status == VK_NOT_READY) {
+            const VkResult waitResult = vkWaitForFences(
+                device_,
+                1,
+                &slot.fence,
+                VK_TRUE,
+                std::numeric_limits<uint64_t>::max());
+            if (waitResult != VK_SUCCESS) {
+                if (reportErrors) {
+                    SetError("vkWaitForFences failed while reusing a staged upload slot.");
+                }
+                return nullptr;
+            }
+        } else if (status != VK_SUCCESS) {
+            if (reportErrors) {
+                SetError("vkGetFenceStatus failed for staged upload slot.");
+            }
+            return nullptr;
+        }
+        slot.inFlight = false;
+    }
+
+    return &slot;
+}
+
+// Records and submits one staged copy. The graphics queue preserves copy-to-draw ordering, while
+// the slot fence preserves staging-buffer lifetime without vkQueueWaitIdle.
+bool SolarLabVulkanRenderer::SubmitStagingCopy(
+    StagingUploadSlot& slot,
+    const GpuBuffer& target,
+    VkDeviceSize sizeBytes,
+    bool reportErrors) {
     if (sizeBytes == 0) {
         return true;
     }
-    if (commandPool_ == VK_NULL_HANDLE || graphicsQueue_ == VK_NULL_HANDLE || source.buffer == VK_NULL_HANDLE || target.buffer == VK_NULL_HANDLE) {
+    if (graphicsQueue_ == VK_NULL_HANDLE || slot.commandBuffer == VK_NULL_HANDLE ||
+        slot.fence == VK_NULL_HANDLE || slot.stagingBuffer.buffer == VK_NULL_HANDLE ||
+        target.buffer == VK_NULL_HANDLE) {
         return false;
     }
 
-    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-    // Use a transient primary command buffer so uploads do not depend on frame command buffers or
-    // swapchain lifetime.
-    const VkCommandBufferAllocateInfo allocateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .pNext = nullptr,
-        .commandPool = commandPool_,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-    if (vkAllocateCommandBuffers(device_, &allocateInfo, &commandBuffer) != VK_SUCCESS || commandBuffer == VK_NULL_HANDLE) {
+    if (vkResetCommandBuffer(slot.commandBuffer, 0) != VK_SUCCESS) {
         if (reportErrors) {
-            SetError("vkAllocateCommandBuffers failed for staged tracer upload copy.");
+            SetError("vkResetCommandBuffer failed for fenced staged upload.");
         }
         return false;
     }
@@ -3160,10 +3224,9 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         .pInheritanceInfo = nullptr,
     };
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-        vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+    if (vkBeginCommandBuffer(slot.commandBuffer, &beginInfo) != VK_SUCCESS) {
         if (reportErrors) {
-            SetError("vkBeginCommandBuffer failed for staged tracer upload copy.");
+            SetError("vkBeginCommandBuffer failed for fenced staged upload.");
         }
         return false;
     }
@@ -3173,7 +3236,7 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
         .dstOffset = 0,
         .size = sizeBytes,
     };
-    vkCmdCopyBuffer(commandBuffer, source.buffer, target.buffer, 1, &copyRegion);
+    vkCmdCopyBuffer(slot.commandBuffer, slot.stagingBuffer.buffer, target.buffer, 1, &copyRegion);
 
     // Make transfer writes visible to vertex, graphics shader, and compute readers that may
     // consume the uploaded buffer in the next draw or compaction pass.
@@ -3189,7 +3252,7 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
         .size = sizeBytes,
     };
     vkCmdPipelineBarrier(
-        commandBuffer,
+        slot.commandBuffer,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0,
@@ -3200,16 +3263,13 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
         0,
         nullptr);
 
-    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-        vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+    if (vkEndCommandBuffer(slot.commandBuffer) != VK_SUCCESS) {
         if (reportErrors) {
-            SetError("vkEndCommandBuffer failed for staged tracer upload copy.");
+            SetError("vkEndCommandBuffer failed for fenced staged upload.");
         }
         return false;
     }
 
-    // Submit synchronously because these uploads run during resource refresh; callers can safely
-    // use the target buffer after this function returns.
     const VkSubmitInfo submitInfo{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = nullptr,
@@ -3217,30 +3277,52 @@ bool SolarLabVulkanRenderer::CopyBufferBytes(const GpuBuffer& source, const GpuB
         .pWaitSemaphores = nullptr,
         .pWaitDstStageMask = nullptr,
         .commandBufferCount = 1,
-        .pCommandBuffers = &commandBuffer,
+        .pCommandBuffers = &slot.commandBuffer,
         .signalSemaphoreCount = 0,
         .pSignalSemaphores = nullptr,
     };
-    const VkResult submitResult = vkQueueSubmit(graphicsQueue_, 1, &submitInfo, VK_NULL_HANDLE);
-    if (submitResult == VK_SUCCESS) {
-        const VkResult waitResult = vkQueueWaitIdle(graphicsQueue_);
-        if (waitResult != VK_SUCCESS && reportErrors) {
-            SetError("vkQueueWaitIdle failed for staged tracer upload copy.");
-        }
-        if (waitResult != VK_SUCCESS) {
-            vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
-            return false;
-        }
-    } else {
+    if (vkResetFences(device_, 1, &slot.fence) != VK_SUCCESS) {
         if (reportErrors) {
-            SetError("vkQueueSubmit failed for staged tracer upload copy.");
+            SetError("vkResetFences failed for staged upload slot.");
         }
-        vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+        vkDestroyFence(device_, slot.fence, nullptr);
+        slot.fence = VK_NULL_HANDLE;
         return false;
     }
 
-    vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer);
+    if (vkQueueSubmit(graphicsQueue_, 1, &submitInfo, slot.fence) != VK_SUCCESS) {
+        if (reportErrors) {
+            SetError("vkQueueSubmit failed for fenced staged upload.");
+        }
+        // A reset but unused fence cannot be waited safely. Recreate it lazily as signaled on
+        // the next slot acquisition.
+        vkDestroyFence(device_, slot.fence, nullptr);
+        slot.fence = VK_NULL_HANDLE;
+        return false;
+    }
+
+    slot.inFlight = true;
     return true;
+}
+
+void SolarLabVulkanRenderer::DestroyStagingUploadRing() {
+    if (device_ == VK_NULL_HANDLE) {
+        stagingUploadRing_ = {};
+        nextStagingUploadSlot_ = 0U;
+        return;
+    }
+
+    for (StagingUploadSlot& slot : stagingUploadRing_) {
+        DestroyGpuBuffer(slot.stagingBuffer);
+        if (slot.fence != VK_NULL_HANDLE) {
+            vkDestroyFence(device_, slot.fence, nullptr);
+        }
+        if (slot.commandBuffer != VK_NULL_HANDLE && commandPool_ != VK_NULL_HANDLE) {
+            vkFreeCommandBuffers(device_, commandPool_, 1, &slot.commandBuffer);
+        }
+        slot = StagingUploadSlot{};
+    }
+    nextStagingUploadSlot_ = 0U;
 }
 
 bool SolarLabVulkanRenderer::TryUploadDeviceLocalWithStaging(const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target) {
@@ -3261,21 +3343,24 @@ bool SolarLabVulkanRenderer::TryUploadDeviceLocalWithStaging(const void* data, s
         return false;
     }
 
-    GpuBuffer stagingBuffer;
+    StagingUploadSlot* slot = AcquireStagingUploadSlot(false);
+    if (slot == nullptr) {
+        DestroyGpuBuffer(target);
+        return false;
+    }
     if (!EnsureBufferWithMemoryProperties(
             static_cast<VkDeviceSize>(sizeBytes),
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            label,
+            "staging-upload-ring",
             false,
-            stagingBuffer)) {
+            slot->stagingBuffer)) {
         DestroyGpuBuffer(target);
         return false;
     }
 
-    const bool uploaded = UploadBytesInternal(data, sizeBytes, stagingBuffer, false);
-    const bool copied = uploaded && CopyBufferBytes(stagingBuffer, target, static_cast<VkDeviceSize>(sizeBytes), false);
-    DestroyGpuBuffer(stagingBuffer);
+    const bool uploaded = UploadBytesInternal(data, sizeBytes, slot->stagingBuffer, false);
+    const bool copied = uploaded && SubmitStagingCopy(*slot, target, static_cast<VkDeviceSize>(sizeBytes), false);
     if (!copied) {
         DestroyGpuBuffer(target);
     }
