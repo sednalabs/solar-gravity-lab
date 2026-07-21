@@ -106,6 +106,7 @@ internal data class RuntimeStageBody(
 private data class RuntimeStageScene(
     val scene: RenderSceneFrame,
     val searchableBodies: List<RuntimeStageBody>,
+    val scenarioId: String?,
 )
 
 private val RuntimeStageTeachingRankByBodyId = SolarLabTeachingCatalog.entries
@@ -463,6 +464,7 @@ internal fun StageFirstRuntimeExperience(
             }
             if (
                 uiState.snapshot?.scenarioId != scenarioPack.scenarioId ||
+                stageScene?.scenarioId != scenarioPack.scenarioId ||
                 uiState.focusedBodyId != focusBodyId ||
                 searchableBodies.none { body -> body.id == focusBodyId }
             ) {
@@ -2358,6 +2360,13 @@ internal fun runtimeStageCompactRevisionText(value: String, includePayloadSize: 
     return runtimeStageCompactStatusText(normalized)
 }
 
+internal fun runtimeStageScenarioIdFromRevision(value: String): String? =
+    RuntimeStageRevisionScenarioRegex
+        .find(runtimeStageNormalizeStatusText(value))
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.takeIf(String::isNotBlank)
+
 private fun runtimeStageRevisionEpochHours(normalizedRevision: String): Double? =
     RuntimeStageRevisionEpochRegex.find(normalizedRevision)
         ?.groupValues
@@ -2947,6 +2956,7 @@ private fun RenderFrame.toRuntimeStageScene(): RuntimeStageScene {
             sourceRevision = stableRevision,
         ),
         searchableBodies = searchableBodies,
+        scenarioId = runtimeStageScenarioIdFromRevision(sceneRevision),
     )
 }
 
