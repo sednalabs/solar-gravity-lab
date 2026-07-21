@@ -271,7 +271,7 @@ internal object VulkanPacketRenderFrameDecoder {
             provenance = RenderAppearanceProvenance.fromNativeCode(ordered.getInt(base + 4)),
             northPole = direction(ordered, base + 8),
             referenceMeridianRadians = ordered.getFloat(base + 20),
-            ringSystem = if (flags and APPEARANCE_HAS_RING_SYSTEM != 0) {
+            ringSystem = if ((flags and APPEARANCE_HAS_RING_SYSTEM) != 0) {
                 RenderRingSystem(
                     innerRadiusM = ordered.getFloat(base + 28),
                     outerRadiusM = ordered.getFloat(base + 32),
@@ -281,7 +281,7 @@ internal object VulkanPacketRenderFrameDecoder {
             } else {
                 null
             },
-            atmosphere = if (flags and APPEARANCE_HAS_ATMOSPHERE != 0) {
+            atmosphere = if ((flags and APPEARANCE_HAS_ATMOSPHERE) != 0) {
                 RenderAtmosphere(
                     outerRadiusM = ordered.getFloat(base + 52),
                     opticalDensity = ordered.getFloat(base + 56),
@@ -289,7 +289,7 @@ internal object VulkanPacketRenderFrameDecoder {
             } else {
                 null
             },
-            comet = if (flags and APPEARANCE_HAS_COMET != 0) {
+            comet = if ((flags and APPEARANCE_HAS_COMET) != 0) {
                 RenderCometAppearance(
                     nucleusRadiusM = ordered.getFloat(base + 60),
                     comaRadiusM = ordered.getFloat(base + 64),
