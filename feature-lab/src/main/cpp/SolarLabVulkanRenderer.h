@@ -191,6 +191,16 @@ private:
         const char* debugLabel = nullptr;
     };
 
+    // Device-local upload source memory must outlive its copy command. Slots are reused only
+    // after their individual transfer fence signals; a full graphics-queue drain is never
+    // required for ordinary scene uploads.
+    struct StagingUploadSlot {
+        GpuBuffer stagingBuffer;
+        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        VkFence fence = VK_NULL_HANDLE;
+        bool inFlight = false;
+    };
+
     struct GpuImage {
         VkImage image = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -305,7 +315,9 @@ private:
         GpuBuffer& buffer);
     bool EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& buffer);
     bool EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, bool reportErrors, GpuBuffer& buffer);
-    bool CopyBufferBytes(const GpuBuffer& source, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors);
+    StagingUploadSlot* AcquireStagingUploadSlot(bool reportErrors);
+    bool SubmitStagingCopy(StagingUploadSlot& slot, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors);
+    void DestroyStagingUploadRing();
     bool TryUploadDeviceLocalWithStaging(const void* data, size_t sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& target);
     bool UploadBytesInternal(const void* data, size_t sizeBytes, const GpuBuffer& buffer, bool reportErrors);
     bool UploadBytes(const void* data, size_t sizeBytes, GpuBuffer& buffer);
@@ -396,6 +408,10 @@ private:
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
     int64_t commandBuffersRevision_ = -1;
+
+    static constexpr size_t kStagingUploadRingSize = 8U;
+    std::array<StagingUploadSlot, kStagingUploadRingSize> stagingUploadRing_{};
+    size_t nextStagingUploadSlot_ = 0U;
 
     VkSemaphore imageAvailableSemaphore_ = VK_NULL_HANDLE;
     VkSemaphore renderFinishedSemaphore_ = VK_NULL_HANDLE;
