@@ -401,13 +401,15 @@ jobs:
             echo "No packaged APK found for ${build_variant}." >&2
             exit 1
           fi
-          apkanalyzer_bin="$(command -v apkanalyzer || true)"
-          if [[ -z "${apkanalyzer_bin}" ]]; then
-            apkanalyzer_bin="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/apkanalyzer"
+          if ! command -v apkanalyzer >/dev/null 2>&1; then
+            export PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}"
+          fi
+          if ! command -v apkanalyzer >/dev/null 2>&1; then
+            echo "apkanalyzer is unavailable from the installed Android SDK." >&2
+            exit 1
           fi
           python3 .github/scripts/verify_prerelease_jni_r8_contract.py \
-            --apk "${apk_path}" \
-            --apkanalyzer "${apkanalyzer_bin}"
+            --apk "${apk_path}"
 
       - name: Derive artifact metadata
         id: meta

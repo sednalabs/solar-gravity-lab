@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
-import unittest
 from pathlib import Path
+import unittest
+from unittest.mock import Mock, patch
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +64,34 @@ class PrereleaseJniR8ContractTest(unittest.TestCase):
         )
         self.assertEqual({dto_classes[0]}, missing)
 
+    def test_dex_enumeration_uses_the_fixed_sdk_command(self) -> None:
+        verifier = load_verifier()
+        completed = Mock(
+            returncode=0,
+            stdout="C d 1 1 1 com.sednalabs.solarlab.runtime.NativeResult\n",
+            stderr="",
+        )
+
+        with patch.object(verifier.subprocess, "run", return_value=completed) as run:
+            classes = verifier.defined_dex_classes(Path("candidate.apk"))
+
+        self.assertEqual({"com.sednalabs.solarlab.runtime.NativeResult"}, classes)
+        self.assertEqual(
+            ["apkanalyzer", "dex", "packages", "--defined-only", "candidate.apk"],
+            run.call_args.args[0],
+        )
+
+    def test_dex_enumeration_reports_a_missing_sdk_command(self) -> None:
+        verifier = load_verifier()
+
+        with patch.object(
+            verifier.subprocess,
+            "run",
+            side_effect=FileNotFoundError("apkanalyzer"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "apkanalyzer could not start"):
+                verifier.defined_dex_classes(Path("candidate.apk"))
+
     def test_minified_prerelease_uses_the_jni_keep_rules(self) -> None:
         build_file = APP_BUILD.read_text(encoding="utf-8")
         prerelease_block = build_file.split('create("prerelease") {', 1)[1].split(
@@ -90,6 +119,10 @@ class PrereleaseJniR8ContractTest(unittest.TestCase):
             "connect\\.initial-refresh\\.render\\.refresh\\.result .*lease=ready",
             smoke_script,
         )
+        self.assertIn('rm -f "$runtime_ui_dump" || true', smoke_script)
+        self.assertIn('adb shell rm -f /sdcard/solar-launch-smoke-window.xml', smoke_script)
+        self.assertIn('rm -f "$runtime_bridge_log" || true', smoke_script)
+        self.assertIn("App process died while waiting for runtime to become ready", smoke_script)
 
 
 if __name__ == "__main__":

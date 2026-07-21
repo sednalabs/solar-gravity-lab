@@ -70,14 +70,25 @@ screen_png="$out_dir/screen.png"
 runtime_ui_dump="$out_dir/runtime-ui.xml"
 runtime_bridge_log="$out_dir/runtime-bridge.log"
 
-capture_runtime_state() {
+capture_runtime_ui() {
+  rm -f "$runtime_ui_dump" || true
+  adb shell rm -f /sdcard/solar-launch-smoke-window.xml >/dev/null 2>&1 || true
   adb shell uiautomator dump /sdcard/solar-launch-smoke-window.xml >/dev/null 2>&1 || true
   adb pull /sdcard/solar-launch-smoke-window.xml "$runtime_ui_dump" >/dev/null 2>&1 || true
+}
+
+capture_runtime_bridge_log() {
+  rm -f "$runtime_bridge_log" || true
   # Some adb/logcat versions treat the trailing silent filter as overriding the
   # selected tag. Read the finite buffer and extract the authoritative bridge
   # records locally so a ready session cannot be mistaken for a timeout.
   adb logcat -d -v threadtime \
     | grep -F " SolarLabRuntimeBridge:" > "$runtime_bridge_log" || true
+}
+
+capture_runtime_state() {
+  capture_runtime_ui
+  capture_runtime_bridge_log
 }
 
 capture_smoke_artifacts() {
@@ -148,9 +159,17 @@ fi
 
 if [[ "$require_runtime_ready" -eq 1 ]]; then
   runtime_deadline=$((SECONDS + ${RUNTIME_READY_TIMEOUT_SECONDS:-45}))
+  next_runtime_ui_capture=0
   runtime_ready=0
   while (( SECONDS < runtime_deadline )); do
-    capture_runtime_state
+    current_pid="$(pidof_or_empty | tr -d '\r' | tr -d '\n')"
+    if [[ -z "$current_pid" ]]; then
+      capture_smoke_artifacts
+      echo "App process died while waiting for runtime to become ready" >&2
+      exit 1
+    fi
+
+    capture_runtime_bridge_log
 
     if [[ -f "$runtime_bridge_log" ]] && grep -Eq \
       'connect\.initial-refresh\.render\.refresh\.result .*lease=ready' \
@@ -159,14 +178,24 @@ if [[ "$require_runtime_ready" -eq 1 ]]; then
       break
     fi
 
-    if { [[ -f "$runtime_ui_dump" ]] && grep -Eq \
-      "Runtime unavailable|Rust stage unavailable|Native runtime session adapter is unavailable|Render host cannot start" \
-      "$runtime_ui_dump"; } || { [[ -f "$runtime_bridge_log" ]] && grep -Eq \
+    if [[ -f "$runtime_bridge_log" ]] && grep -Eq \
       'connect\.createSession\.failure|connect\.runtimeInfo\.failure|connect\.initial-refresh\.(refreshSession|render\.refresh)\.failure|connect\.initial-refresh\.render\.refresh\.result .*lease=missing' \
-      "$runtime_bridge_log"; }; then
+      "$runtime_bridge_log"; then
       capture_smoke_artifacts
       echo "Rust runtime reported an unavailable state during packaged APK startup" >&2
       exit 1
+    fi
+
+    if (( SECONDS >= next_runtime_ui_capture )); then
+      capture_runtime_ui
+      next_runtime_ui_capture=$((SECONDS + ${RUNTIME_UI_CAPTURE_INTERVAL_SECONDS:-5}))
+      if [[ -f "$runtime_ui_dump" ]] && grep -Eq \
+        "Runtime unavailable|Rust stage unavailable|Native runtime session adapter is unavailable|Render host cannot start" \
+        "$runtime_ui_dump"; then
+        capture_smoke_artifacts
+        echo "Rust runtime reported an unavailable state during packaged APK startup" >&2
+        exit 1
+      fi
     fi
     sleep 1
   done

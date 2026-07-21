@@ -21,7 +21,6 @@ JNI_CLASS_CONSTANT = re.compile(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apk", required=True, type=Path)
-    parser.add_argument("--apkanalyzer", required=True, type=Path)
     parser.add_argument("--ffi-source", type=Path, default=DEFAULT_FFI_SOURCE)
     return parser.parse_args()
 
@@ -51,13 +50,16 @@ def defined_dex_classes_from_output(output: str) -> set[str]:
     return classes
 
 
-def defined_dex_classes(apk: Path, apkanalyzer: Path) -> set[str]:
-    completed = subprocess.run(
-        [str(apkanalyzer), "dex", "packages", "--defined-only", str(apk)],
-        check=False,
-        capture_output=True,
-        encoding="utf-8",
-    )
+def defined_dex_classes(apk: Path) -> set[str]:
+    try:
+        completed = subprocess.run(
+            ["apkanalyzer", "dex", "packages", "--defined-only", str(apk)],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+    except OSError as error:
+        raise RuntimeError(f"apkanalyzer could not start: {error}") from error
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostic output"
         raise RuntimeError(f"apkanalyzer failed for {apk}: {detail}")
@@ -77,16 +79,13 @@ def main() -> int:
     if not args.apk.is_file():
         print(f"Packaged APK is missing: {args.apk}", file=sys.stderr)
         return 1
-    if not args.apkanalyzer.is_file():
-        print(f"apkanalyzer is missing: {args.apkanalyzer}", file=sys.stderr)
-        return 1
     if not args.ffi_source.is_file():
         print(f"Rust FFI source is missing: {args.ffi_source}", file=sys.stderr)
         return 1
 
     try:
         required = required_jni_dto_classes(args.ffi_source)
-        defined_classes = defined_dex_classes(args.apk, args.apkanalyzer)
+        defined_classes = defined_dex_classes(args.apk)
     except (RuntimeError, ValueError) as error:
         print(str(error), file=sys.stderr)
         return 1
