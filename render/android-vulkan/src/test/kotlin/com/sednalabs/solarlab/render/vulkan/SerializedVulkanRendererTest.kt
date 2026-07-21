@@ -123,9 +123,28 @@ class SerializedVulkanRendererTest {
         assertEquals(listOf("releaseWindow:101"), backend.events)
     }
 
+    @Test
+    fun submissionFailureAlwaysReleasesItsOwnedWindow() {
+        val backend = RecordingBackend()
+        val renderer = renderer(
+            backend = backend,
+            executor = Executor { throw AssertionError("rejected") },
+        )
+        var failure: Throwable? = null
+
+        try {
+            renderer.surfaceCreated(1L, 101L, 100, 200) {}
+        } catch (error: Throwable) {
+            failure = error
+        }
+
+        assertTrue(failure is AssertionError)
+        assertEquals(listOf("releaseWindow:101"), backend.events)
+    }
+
     private fun renderer(
         backend: RecordingBackend,
-        executor: ManualExecutor,
+        executor: Executor,
     ) = SerializedVulkanRenderer(
         backend = backend,
         executor = executor,

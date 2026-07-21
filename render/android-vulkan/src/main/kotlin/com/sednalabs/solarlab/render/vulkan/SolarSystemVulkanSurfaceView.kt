@@ -3,6 +3,8 @@ package com.sednalabs.solarlab.render.vulkan
 import android.animation.ValueAnimator
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -64,6 +66,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var cameraTransition: ValueAnimator? = null
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
     private var lastReportedCameraScaleBand: CameraScaleBand? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val serializedRenderer = SerializedVulkanRenderer(
         backend = object : SerializedVulkanRenderer.LifecycleBackend {
@@ -107,7 +110,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
             override fun lastError(handle: Long): String = SolarLabVulkanBridge.lastError(handle)
         },
-        dispatchResult = { action -> post { action() } },
+        dispatchResult = { action -> mainHandler.post { action() } },
     )
 
     private var scenePacketPolicy = defaultScenePacketPolicy()
@@ -125,7 +128,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
                 pickBodyId(e.x, e.y) { bodyId ->
-                    interactionListener?.onBodySelectionChanged(bodyId)
+                    if (!released) {
+                        interactionListener?.onBodySelectionChanged(bodyId)
+                    }
                 }
                 return true
             }
@@ -133,6 +138,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
                 pickBodyId(e.x, e.y) pickResult@{ bodyId ->
+                    if (released) return@pickResult
                     bodyId ?: return@pickResult
                     selectedBodyId = bodyId
                     observerMode = ObserverMode.FOLLOW_SELECTED
@@ -343,7 +349,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 renderLatestScene()
                 return
             }
-            resolveBodyFrame(bodyId) { target ->
+            resolveBodyFrame(bodyId) frameResult@{ target ->
+                if (released) return@frameResult
                 if (target != null && selectedBodyId == bodyId) {
                     animateCameraTo(target)
                 } else {
@@ -376,7 +383,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, bodyId)
             }
         }
-        resolveBodyFrame(bodyId) { target -> target?.let(::animateCameraTo) }
+        resolveBodyFrame(bodyId) frameResult@{ target ->
+            if (released) return@frameResult
+            target?.let(::animateCameraTo)
+        }
     }
 
     override fun setCameraScaleBand(scaleBand: CameraScaleBand) {

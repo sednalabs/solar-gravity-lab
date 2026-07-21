@@ -207,7 +207,7 @@ internal class SerializedVulkanRenderer(
             }
             try {
                 executor.execute { action() }
-            } catch (error: RuntimeException) {
+            } catch (error: Throwable) {
                 backend.releaseNativeWindow(nativeWindowHandle)
                 throw error
             }
