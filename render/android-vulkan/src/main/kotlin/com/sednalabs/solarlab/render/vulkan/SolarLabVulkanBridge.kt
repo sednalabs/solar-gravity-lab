@@ -26,6 +26,20 @@ internal object SolarLabVulkanBridge {
 
     fun createRenderer(assetManager: AssetManager): Long = if (isLibraryLoaded) nativeCreateRenderer(assetManager) else 0L
 
+    /**
+     * Takes a native reference to the Surface's ANativeWindow. This is the only JNI surface work
+     * performed by an Android lifecycle callback; Vulkan consumes the owned reference later on
+     * the serialized render thread.
+     */
+    fun acquireNativeWindow(surface: Surface): Long =
+        if (isLibraryLoaded && surface.isValid) nativeAcquireNativeWindow(surface) else 0L
+
+    fun releaseNativeWindow(nativeWindowHandle: Long) {
+        if (isLibraryLoaded && nativeWindowHandle != 0L) {
+            nativeReleaseNativeWindow(nativeWindowHandle)
+        }
+    }
+
     fun destroyRenderer(handle: Long) {
         if (isLibraryLoaded && handle != 0L) {
             clearSubmissionCache(handle)
@@ -33,18 +47,18 @@ internal object SolarLabVulkanBridge {
         }
     }
 
-    fun onSurfaceCreated(handle: Long, surface: Surface, width: Int, height: Int): Boolean {
-        if (!isLibraryLoaded || handle == 0L) return false
-        val created = nativeOnSurfaceCreated(handle, surface, width, height)
+    fun onSurfaceCreated(handle: Long, nativeWindowHandle: Long, width: Int, height: Int): Boolean {
+        if (!isLibraryLoaded || handle == 0L || nativeWindowHandle == 0L) return false
+        val created = nativeOnSurfaceCreated(handle, nativeWindowHandle, width, height)
         if (created) {
             clearSubmissionCache(handle)
         }
         return created
     }
 
-    fun onSurfaceChanged(handle: Long, surface: Surface, width: Int, height: Int): Boolean {
-        if (!isLibraryLoaded || handle == 0L) return false
-        val changed = nativeOnSurfaceChanged(handle, surface, width, height)
+    fun onSurfaceChanged(handle: Long, nativeWindowHandle: Long, width: Int, height: Int): Boolean {
+        if (!isLibraryLoaded || handle == 0L || nativeWindowHandle == 0L) return false
+        val changed = nativeOnSurfaceChanged(handle, nativeWindowHandle, width, height)
         if (changed) {
             clearSubmissionCache(handle)
         }
@@ -332,9 +346,11 @@ internal object SolarLabVulkanBridge {
     private external fun nativeIsVulkanRuntimeAvailable(): Boolean
     private external fun nativeGetCpuCapabilitySummary(): String
     private external fun nativeCreateRenderer(assetManager: AssetManager): Long
+    private external fun nativeAcquireNativeWindow(surface: Surface): Long
+    private external fun nativeReleaseNativeWindow(nativeWindowHandle: Long)
     private external fun nativeDestroyRenderer(handle: Long)
-    private external fun nativeOnSurfaceCreated(handle: Long, surface: Surface, width: Int, height: Int): Boolean
-    private external fun nativeOnSurfaceChanged(handle: Long, surface: Surface, width: Int, height: Int): Boolean
+    private external fun nativeOnSurfaceCreated(handle: Long, nativeWindowHandle: Long, width: Int, height: Int): Boolean
+    private external fun nativeOnSurfaceChanged(handle: Long, nativeWindowHandle: Long, width: Int, height: Int): Boolean
     private external fun nativeOnSurfaceDestroyed(handle: Long)
     private external fun nativeSubmitScene(
         handle: Long,

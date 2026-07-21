@@ -41,8 +41,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback2, SolarRenderSurface {
 
     private val capabilities = RenderDeviceCapabilities.query(context)
-    private var rendererHandle: Long = 0L
     private var surfaceReady: Boolean = false
+    private var surfaceGenerationCounter: Long = 0L
+    private var activeSurfaceGeneration: Long = 0L
+    private var released: Boolean = false
     private var latestScene: RenderSceneFrame = emptyScene()
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
@@ -63,6 +65,51 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
     private var lastReportedCameraScaleBand: CameraScaleBand? = null
 
+    private val serializedRenderer = SerializedVulkanRenderer(
+        backend = object : SerializedVulkanRenderer.LifecycleBackend {
+            override fun createRenderer(): Long = SolarLabVulkanBridge.createRenderer(context.assets)
+
+            override fun destroyRenderer(handle: Long) {
+                SolarLabVulkanBridge.destroyRenderer(handle)
+            }
+
+            override fun releaseNativeWindow(nativeWindowHandle: Long) {
+                SolarLabVulkanBridge.releaseNativeWindow(nativeWindowHandle)
+            }
+
+            override fun onSurfaceCreated(
+                handle: Long,
+                nativeWindowHandle: Long,
+                width: Int,
+                height: Int,
+            ): Boolean = SolarLabVulkanBridge.onSurfaceCreated(
+                handle = handle,
+                nativeWindowHandle = nativeWindowHandle,
+                width = width,
+                height = height,
+            )
+
+            override fun onSurfaceChanged(
+                handle: Long,
+                nativeWindowHandle: Long,
+                width: Int,
+                height: Int,
+            ): Boolean = SolarLabVulkanBridge.onSurfaceChanged(
+                handle = handle,
+                nativeWindowHandle = nativeWindowHandle,
+                width = width,
+                height = height,
+            )
+
+            override fun onSurfaceDestroyed(handle: Long) {
+                SolarLabVulkanBridge.onSurfaceDestroyed(handle)
+            }
+
+            override fun lastError(handle: Long): String = SolarLabVulkanBridge.lastError(handle)
+        },
+        dispatchResult = { action -> post { action() } },
+    )
+
     private var scenePacketPolicy = defaultScenePacketPolicy()
     private val minViewRadiusM: Double = 0.001 * PhysicalConstants.ASTRONOMICAL_UNIT_M
     private val maxViewRadiusM: Double = 150_000.0 * PhysicalConstants.ASTRONOMICAL_UNIT_M
@@ -77,18 +124,22 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
-                interactionListener?.onBodySelectionChanged(pickBodyId(e.x, e.y))
+                pickBodyId(e.x, e.y) { bodyId ->
+                    interactionListener?.onBodySelectionChanged(bodyId)
+                }
                 return true
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
-                val bodyId = pickBodyId(e.x, e.y) ?: return false
-                selectedBodyId = bodyId
-                observerMode = ObserverMode.FOLLOW_SELECTED
-                interactionListener?.onBodySelectionChanged(bodyId)
-                interactionListener?.onCameraNavigationModeChanged(ObserverMode.FOLLOW_SELECTED)
-                focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
+                pickBodyId(e.x, e.y) pickResult@{ bodyId ->
+                    bodyId ?: return@pickResult
+                    selectedBodyId = bodyId
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    interactionListener?.onBodySelectionChanged(bodyId)
+                    interactionListener?.onCameraNavigationModeChanged(ObserverMode.FOLLOW_SELECTED)
+                    focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
+                }
                 return true
             }
         },
@@ -108,33 +159,52 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        if (!ensureRenderer()) {
+        if (released || !canAttemptVulkan()) {
+            fatalInitCallback("Vulkan runtime or native library is unavailable.")
             return
         }
-        surfaceReady = SolarLabVulkanBridge.onSurfaceCreated(rendererHandle, holder.surface, width.coerceAtLeast(1), height.coerceAtLeast(1))
-        if (!surfaceReady) {
-            fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
+        val nativeWindowHandle = SolarLabVulkanBridge.acquireNativeWindow(holder.surface)
+        if (nativeWindowHandle == 0L) {
+            fatalInitCallback("Unable to acquire the Android native window for Vulkan.")
             return
         }
-        syncRuntimeBinding()
-        reportStatus("${SolarLabVulkanBridge.backendLabel(rendererHandle)} active.")
-        renderLatestScene()
+        val generation = ++surfaceGenerationCounter
+        activeSurfaceGeneration = generation
+        surfaceReady = false
+        serializedRenderer.surfaceCreated(
+            generation = generation,
+            nativeWindowHandle = nativeWindowHandle,
+            width = width.coerceAtLeast(1),
+            height = height.coerceAtLeast(1),
+            onResult = ::onSurfaceReadyResult,
+        )
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        if (rendererHandle == 0L) return
-        surfaceReady = SolarLabVulkanBridge.onSurfaceChanged(rendererHandle, holder.surface, width.coerceAtLeast(1), height.coerceAtLeast(1))
-        if (!surfaceReady) {
-            fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
+        val generation = activeSurfaceGeneration
+        if (released || generation == 0L) return
+        val nativeWindowHandle = SolarLabVulkanBridge.acquireNativeWindow(holder.surface)
+        if (nativeWindowHandle == 0L) {
+            fatalInitCallback("Unable to reacquire the Android native window after a surface change.")
             return
         }
-        packetDirty = true
-        renderLatestScene()
+        surfaceReady = false
+        serializedRenderer.surfaceChanged(
+            generation = generation,
+            nativeWindowHandle = nativeWindowHandle,
+            width = width.coerceAtLeast(1),
+            height = height.coerceAtLeast(1),
+            onResult = ::onSurfaceReadyResult,
+        )
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        val generation = activeSurfaceGeneration
         surfaceReady = false
-        SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
+        activeSurfaceGeneration = 0L
+        if (generation != 0L) {
+            serializedRenderer.surfaceDestroyed(generation)
+        }
     }
 
     override fun surfaceRedrawNeeded(holder: SurfaceHolder) {
@@ -165,21 +235,31 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun resetCamera() {
         switchToFreeCameraForManualNavigation()
-        val target = if (isRuntimeBound()) {
-            SolarLabVulkanBridge.resolveRuntimeHomeCamera(rendererHandle)
-        } else {
-            CameraNavigation.scenarioFit(
-                frame = latestScene,
-                currentCameraState = cameraState,
-                minViewRadiusM = minViewRadiusM,
-                maxViewRadiusM = maxViewRadiusM,
+        if (isRuntimeBound()) {
+            serializedRenderer.query(
+                action = SolarLabVulkanBridge::resolveRuntimeHomeCamera,
+                onResult = cameraResult@{ target ->
+                    if (released || !isRuntimeBound()) return@cameraResult
+                    if (target != null) {
+                        animateCameraTo(target)
+                    } else {
+                        serializedRenderer.execute { handle ->
+                            SolarLabVulkanBridge.resetRuntimeCamera(handle)
+                        }
+                        renderLatestScene()
+                    }
+                },
             )
+            return
         }
+        val target = CameraNavigation.scenarioFit(
+            frame = latestScene,
+            currentCameraState = cameraState,
+            minViewRadiusM = minViewRadiusM,
+            maxViewRadiusM = maxViewRadiusM,
+        )
         if (target != null) {
             animateCameraTo(target)
-        } else if (isRuntimeBound()) {
-            SolarLabVulkanBridge.resetRuntimeCamera(rendererHandle)
-            renderLatestScene()
         } else {
             animateCameraTo(CameraState())
         }
@@ -187,16 +267,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun zoomBy(scaleFactor: Float) {
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.zoomRuntimeCamera(
-                handle = rendererHandle,
-                scaleFactor = scaleFactor,
-                focusXPx = width.coerceAtLeast(1) * 0.5f,
-                focusYPx = height.coerceAtLeast(1) * 0.5f,
-                viewportWidthPx = width.coerceAtLeast(1),
-                viewportHeightPx = height.coerceAtLeast(1),
-            )
+            val viewportWidth = width.coerceAtLeast(1)
+            val viewportHeight = height.coerceAtLeast(1)
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.zoomRuntimeCamera(
+                    handle = handle,
+                    scaleFactor = scaleFactor,
+                    focusXPx = viewportWidth * 0.5f,
+                    focusYPx = viewportHeight * 0.5f,
+                    viewportWidthPx = viewportWidth,
+                    viewportHeightPx = viewportHeight,
+                )
+            }
             renderLatestScene()
-            reportCameraScaleBand()
             return
         }
         val current = currentCameraState()
@@ -227,7 +310,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         processingMode = mode
         scenePacketPolicy = packetPolicyForMode(mode)
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setRuntimeProcessingMode(rendererHandle, mode)
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setRuntimeProcessingMode(handle, mode)
+            }
             renderLatestScene()
             return
         }
@@ -249,16 +334,32 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     override fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {
         selectedBodyId = bodyId
         this.observerMode = observerMode
-        val target = bodyId?.let(::resolveBodyFrame)
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
-            SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, observerMode)
-            if (target != null) {
-                animateCameraTo(target)
-            } else {
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, bodyId)
+                SolarLabVulkanBridge.setRuntimeObserverMode(handle, observerMode)
+            }
+            if (bodyId == null) {
                 renderLatestScene()
+                return
+            }
+            resolveBodyFrame(bodyId) { target ->
+                if (target != null && selectedBodyId == bodyId) {
+                    animateCameraTo(target)
+                } else {
+                    renderLatestScene()
+                }
             }
             return
+        }
+        val target = bodyId?.let {
+            CameraNavigation.frameBody(
+                frame = latestScene,
+                bodyId = it,
+                currentCameraState = cameraState,
+                minViewRadiusM = minViewRadiusM,
+                maxViewRadiusM = maxViewRadiusM,
+            )
         }
         if (target != null) {
             animateCameraTo(target)
@@ -271,9 +372,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     override fun frameBody(bodyId: String) {
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, bodyId)
+            }
         }
-        resolveBodyFrame(bodyId)?.let(::animateCameraTo)
+        resolveBodyFrame(bodyId) { target -> target?.let(::animateCameraTo) }
     }
 
     override fun setCameraScaleBand(scaleBand: CameraScaleBand) {
@@ -298,7 +401,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (selectedBodyId == bodyId) return
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, bodyId)
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, bodyId)
+            }
             renderLatestScene()
             return
         }
@@ -311,7 +416,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (observerMode == mode) return
         observerMode = mode
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, mode)
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setRuntimeObserverMode(handle, mode)
+            }
             renderLatestScene()
             return
         }
@@ -328,7 +435,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (renderLayerOptions == options) return
         renderLayerOptions = options
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setRuntimeTraceLayerMode(rendererHandle, options.traceLayerMode)
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setRuntimeTraceLayerMode(handle, options.traceLayerMode)
+            }
             renderLatestScene()
             return
         }
@@ -337,16 +446,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun release() {
+        if (released) return
+        released = true
         cancelCameraTransition()
         surfaceReady = false
+        activeSurfaceGeneration = 0L
         latestPacket = null
         packetDirty = true
-        if (rendererHandle != 0L && runtimeSessionHandle != 0L) {
-            SolarLabVulkanBridge.unbindRuntimeSession(rendererHandle)
+        val wasRuntimeBound = runtimeSessionHandle != 0L
+        serializedRenderer.release { handle ->
+            if (wasRuntimeBound) {
+                SolarLabVulkanBridge.unbindRuntimeSession(handle)
+            }
         }
-        SolarLabVulkanBridge.onSurfaceDestroyed(rendererHandle)
-        SolarLabVulkanBridge.destroyRenderer(rendererHandle)
-        rendererHandle = 0L
     }
 
     override fun onHostResume() {
@@ -560,15 +672,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     observerMode = observerMode,
                 )
                 if (isRuntimeBound()) {
-                    SolarLabVulkanBridge.orbitRuntimeCamera(
-                        handle = rendererHandle,
-                        deltaXPx = update.deltaXPx,
-                        deltaYPx = update.deltaYPx,
-                        focusXPx = focus.xPx,
-                        focusYPx = focus.yPx,
-                        viewportWidthPx = width.coerceAtLeast(1),
-                        viewportHeightPx = height.coerceAtLeast(1),
-                    )
+                    val viewportWidth = width.coerceAtLeast(1)
+                    val viewportHeight = height.coerceAtLeast(1)
+                    serializedRenderer.execute { handle ->
+                        SolarLabVulkanBridge.orbitRuntimeCamera(
+                            handle = handle,
+                            deltaXPx = update.deltaXPx,
+                            deltaYPx = update.deltaYPx,
+                            focusXPx = focus.xPx,
+                            focusYPx = focus.yPx,
+                            viewportWidthPx = viewportWidth,
+                            viewportHeightPx = viewportHeight,
+                        )
+                    }
                     renderLatestScene()
                 } else {
                     cameraState = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
@@ -596,16 +712,20 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     observerMode = observerMode,
                 )
                 if (isRuntimeBound()) {
-                    SolarLabVulkanBridge.panAndZoomRuntimeCamera(
-                        handle = rendererHandle,
-                        distanceXPx = update.distanceXPx,
-                        distanceYPx = update.distanceYPx,
-                        scaleFactor = update.scaleFactor,
-                        focusXPx = focus.xPx,
-                        focusYPx = focus.yPx,
-                        viewportWidthPx = width.coerceAtLeast(1),
-                        viewportHeightPx = height.coerceAtLeast(1),
-                    )
+                    val viewportWidth = width.coerceAtLeast(1)
+                    val viewportHeight = height.coerceAtLeast(1)
+                    serializedRenderer.execute { handle ->
+                        SolarLabVulkanBridge.panAndZoomRuntimeCamera(
+                            handle = handle,
+                            distanceXPx = update.distanceXPx,
+                            distanceYPx = update.distanceYPx,
+                            scaleFactor = update.scaleFactor,
+                            focusXPx = focus.xPx,
+                            focusYPx = focus.yPx,
+                            viewportWidthPx = viewportWidth,
+                            viewportHeightPx = viewportHeight,
+                        )
+                    }
                     renderLatestScene()
                 } else {
                     var transformedCamera = cameraState
@@ -637,35 +757,60 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun pickBodyId(screenXPx: Float, screenYPx: Float): String? =
-        if (isRuntimeBound()) {
-            SolarLabVulkanBridge.pickRuntimeBodyId(
-                handle = rendererHandle,
-                screenXPx = screenXPx,
-                screenYPx = screenYPx,
-                viewportWidthPx = width.coerceAtLeast(1),
-                viewportHeightPx = height.coerceAtLeast(1),
+    private fun pickBodyId(
+        screenXPx: Float,
+        screenYPx: Float,
+        onResult: (String?) -> Unit,
+    ) {
+        if (!isRuntimeBound()) {
+            onResult(
+                SceneInteractionMath.pickBodyIdAtScreenPoint(
+                    frame = latestScene,
+                    cameraState = cameraState,
+                    viewportWidthPx = width.coerceAtLeast(1),
+                    viewportHeightPx = height.coerceAtLeast(1),
+                    screenXPx = screenXPx,
+                    screenYPx = screenYPx,
+                ),
             )
-        } else {
-            SceneInteractionMath.pickBodyIdAtScreenPoint(
-                frame = latestScene,
-                cameraState = cameraState,
-                viewportWidthPx = width.coerceAtLeast(1),
-                viewportHeightPx = height.coerceAtLeast(1),
-                screenXPx = screenXPx,
-                screenYPx = screenYPx,
-            )
+            return
         }
+        val viewportWidth = width.coerceAtLeast(1)
+        val viewportHeight = height.coerceAtLeast(1)
+        serializedRenderer.query(
+            requireSurface = true,
+            action = { handle ->
+                SolarLabVulkanBridge.pickRuntimeBodyId(
+                    handle = handle,
+                    screenXPx = screenXPx,
+                    screenYPx = screenYPx,
+                    viewportWidthPx = viewportWidth,
+                    viewportHeightPx = viewportHeight,
+                )
+            },
+            onResult = onResult,
+        )
+    }
 
-    private fun resolveBodyFrame(bodyId: String): CameraState? = if (isRuntimeBound()) {
-        SolarLabVulkanBridge.resolveRuntimeBodyFrame(rendererHandle, bodyId)
-    } else {
-        CameraNavigation.frameBody(
-            frame = latestScene,
-            bodyId = bodyId,
-            currentCameraState = cameraState,
-            minViewRadiusM = minViewRadiusM,
-            maxViewRadiusM = maxViewRadiusM,
+    private fun resolveBodyFrame(
+        bodyId: String,
+        onResult: (CameraState?) -> Unit,
+    ) {
+        if (isRuntimeBound()) {
+            serializedRenderer.query(
+                action = { handle -> SolarLabVulkanBridge.resolveRuntimeBodyFrame(handle, bodyId) },
+                onResult = onResult,
+            )
+            return
+        }
+        onResult(
+            CameraNavigation.frameBody(
+                frame = latestScene,
+                bodyId = bodyId,
+                currentCameraState = cameraState,
+                minViewRadiusM = minViewRadiusM,
+                maxViewRadiusM = maxViewRadiusM,
+            ),
         )
     }
 
@@ -674,15 +819,13 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         observerMode = ObserverMode.FREE
         interactionListener?.onCameraNavigationModeChanged(ObserverMode.FREE)
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, ObserverMode.FREE)
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setRuntimeObserverMode(handle, ObserverMode.FREE)
+            }
         }
     }
 
-    private fun currentCameraState(): CameraState = if (isRuntimeBound()) {
-        SolarLabVulkanBridge.cameraState(rendererHandle) ?: cameraState
-    } else {
-        cameraState
-    }
+    private fun currentCameraState(): CameraState = cameraState
 
     private fun animateCameraTo(target: CameraState) {
         cancelCameraTransition()
@@ -706,15 +849,18 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private fun applyCameraState(nextCameraState: CameraState) {
         cameraState = nextCameraState.sanitized()
         if (isRuntimeBound()) {
-            SolarLabVulkanBridge.setCamera(
-                handle = rendererHandle,
-                centerX = cameraState.centerM.x,
-                centerY = cameraState.centerM.y,
-                centerZ = cameraState.centerM.z,
-                viewRadiusM = cameraState.viewRadiusM,
-                yawRadians = cameraState.yawRadians,
-                pitchRadians = cameraState.pitchRadians,
-            )
+            val nextCamera = cameraState
+            serializedRenderer.execute { handle ->
+                SolarLabVulkanBridge.setCamera(
+                    handle = handle,
+                    centerX = nextCamera.centerM.x,
+                    centerY = nextCamera.centerM.y,
+                    centerZ = nextCamera.centerM.z,
+                    viewRadiusM = nextCamera.viewRadiusM,
+                    yawRadians = nextCamera.yawRadians,
+                    pitchRadians = nextCamera.pitchRadians,
+                )
+            }
             renderLatestScene()
         } else {
             onCameraChanged()
@@ -752,32 +898,33 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         )
     }
 
-    private fun ensureRenderer(): Boolean {
-        if (!canAttemptVulkan()) {
-            fatalInitCallback("Vulkan runtime or native library is unavailable.")
-            return false
-        }
-        if (rendererHandle != 0L) return true
-        rendererHandle = SolarLabVulkanBridge.createRenderer(context.assets)
-        if (rendererHandle == 0L) {
-            fatalInitCallback("Failed to create native Vulkan renderer.")
-            return false
-        }
-        syncRuntimeBinding()
-        return true
-    }
-
     private fun syncRuntimeBinding() {
-        if (rendererHandle == 0L) return
-        if (runtimeSessionHandle != 0L) {
-            SolarLabVulkanBridge.bindRuntimeSession(rendererHandle, runtimeSessionHandle)
-            SolarLabVulkanBridge.setRuntimeProcessingMode(rendererHandle, processingMode)
-            SolarLabVulkanBridge.setRuntimeObserverMode(rendererHandle, observerMode)
-            SolarLabVulkanBridge.setRuntimeSelectedBodyId(rendererHandle, selectedBodyId)
-            SolarLabVulkanBridge.setRuntimeTraceLayerMode(rendererHandle, renderLayerOptions.traceLayerMode)
-        } else {
-            SolarLabVulkanBridge.unbindRuntimeSession(rendererHandle)
-            pushCamera()
+        if (released) return
+        val sessionHandle = runtimeSessionHandle
+        val nextProcessingMode = processingMode
+        val nextObserverMode = observerMode
+        val nextSelectedBodyId = selectedBodyId
+        val nextTraceLayerMode = renderLayerOptions.traceLayerMode
+        val nextCamera = cameraState
+        serializedRenderer.execute { handle ->
+            if (sessionHandle != 0L) {
+                SolarLabVulkanBridge.bindRuntimeSession(handle, sessionHandle)
+                SolarLabVulkanBridge.setRuntimeProcessingMode(handle, nextProcessingMode)
+                SolarLabVulkanBridge.setRuntimeObserverMode(handle, nextObserverMode)
+                SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, nextSelectedBodyId)
+                SolarLabVulkanBridge.setRuntimeTraceLayerMode(handle, nextTraceLayerMode)
+            } else {
+                SolarLabVulkanBridge.unbindRuntimeSession(handle)
+                SolarLabVulkanBridge.setCamera(
+                    handle = handle,
+                    centerX = nextCamera.centerM.x,
+                    centerY = nextCamera.centerM.y,
+                    centerZ = nextCamera.centerM.z,
+                    viewRadiusM = nextCamera.viewRadiusM,
+                    yawRadians = nextCamera.yawRadians,
+                    pitchRadians = nextCamera.pitchRadians,
+                )
+            }
         }
     }
 
@@ -797,33 +944,34 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     private fun pushCamera() {
-        if (rendererHandle == 0L || !surfaceReady || isRuntimeBound()) return
-        SolarLabVulkanBridge.setCamera(
-            handle = rendererHandle,
-            centerX = cameraState.centerM.x,
-            centerY = cameraState.centerM.y,
-            centerZ = cameraState.centerM.z,
-            viewRadiusM = cameraState.viewRadiusM,
-            yawRadians = cameraState.yawRadians,
-            pitchRadians = cameraState.pitchRadians,
-        )
+        if (!surfaceReady || isRuntimeBound() || released) return
+        val nextCamera = cameraState
+        serializedRenderer.execute { handle ->
+            SolarLabVulkanBridge.setCamera(
+                handle = handle,
+                centerX = nextCamera.centerM.x,
+                centerY = nextCamera.centerM.y,
+                centerZ = nextCamera.centerM.z,
+                viewRadiusM = nextCamera.viewRadiusM,
+                yawRadians = nextCamera.yawRadians,
+                pitchRadians = nextCamera.pitchRadians,
+            )
+        }
     }
 
     private fun renderLatestScene() {
-        if (rendererHandle == 0L || !surfaceReady) return
+        if (!surfaceReady || released) return
         if (deferredRenderDepth > 0) {
             renderDeferred = true
             return
         }
+        val generation = activeSurfaceGeneration
         if (isRuntimeBound()) {
-            if (!SolarLabVulkanBridge.render(rendererHandle)) {
-                fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
-                return
-            }
-            reportStatus(
-                "${SolarLabVulkanBridge.backendLabel(rendererHandle)} active. ${SolarLabVulkanBridge.sceneSummary(rendererHandle)}"
+            serializedRenderer.query(
+                requireSurface = true,
+                action = { handle -> renderNativeFrame(handle) },
+                onResult = { result -> onNativeFrameRendered(generation, result, cameraLabel = null) },
             )
-            reportCameraScaleBand()
             return
         }
 
@@ -839,17 +987,63 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             )
             packetDirty = false
         }
-        latestPacket?.let { SolarLabVulkanBridge.submitScene(rendererHandle, it) }
-        if (!SolarLabVulkanBridge.render(rendererHandle)) {
-            fatalInitCallback(SolarLabVulkanBridge.lastError(rendererHandle))
+        val packet = latestPacket ?: return
+        val cameraLabel = cameraTelemetryLabel()
+        serializedRenderer.query(
+            requireSurface = true,
+            action = { handle ->
+                SolarLabVulkanBridge.submitScene(handle, packet)
+                renderNativeFrame(handle)
+            },
+            onResult = { result -> onNativeFrameRendered(generation, result, cameraLabel) },
+        )
+    }
+
+    private fun renderNativeFrame(handle: Long): NativeRenderResult {
+        val rendered = SolarLabVulkanBridge.render(handle)
+        return NativeRenderResult(
+            rendered = rendered,
+            error = if (rendered) null else SolarLabVulkanBridge.lastError(handle),
+            backendLabel = SolarLabVulkanBridge.backendLabel(handle),
+            sceneSummary = SolarLabVulkanBridge.sceneSummary(handle),
+            cameraState = SolarLabVulkanBridge.cameraState(handle),
+        )
+    }
+
+    private fun onNativeFrameRendered(
+        generation: Long,
+        result: NativeRenderResult?,
+        cameraLabel: String?,
+    ) {
+        if (released || generation == 0L || generation != activeSurfaceGeneration || result == null) return
+        if (!result.rendered) {
+            fatalInitCallback(result.error ?: "Native Vulkan rendering failed.")
             return
         }
-        latestPacket?.let {
-            reportStatus(
-                "${SolarLabVulkanBridge.backendLabel(rendererHandle)} active. ${cameraTelemetryLabel()} · " +
-                    SolarLabVulkanBridge.sceneSummary(rendererHandle)
-            )
+        result.cameraState?.let { cameraState = it }
+        val detail = cameraLabel?.let { "$it · ${result.sceneSummary}" } ?: result.sceneSummary
+        reportStatus("${result.backendLabel} active. $detail")
+        reportCameraScaleBand()
+    }
+
+    private fun onSurfaceReadyResult(result: SerializedVulkanRenderer.SurfaceResult) {
+        if (released || result.generation != activeSurfaceGeneration) return
+        surfaceReady = result.isReady
+        if (!result.isReady) {
+            fatalInitCallback(result.error ?: "Native Vulkan surface initialisation failed.")
+            return
         }
+        packetDirty = true
+        syncRuntimeBinding()
+        serializedRenderer.query(
+            action = SolarLabVulkanBridge::backendLabel,
+            onResult = { backendLabel ->
+                if (!released && result.generation == activeSurfaceGeneration && backendLabel != null) {
+                    reportStatus("$backendLabel active.")
+                }
+            },
+        )
+        renderLatestScene()
     }
 
     private fun screenToWorld(screen: Pair<Float, Float>): Vector3d = SceneInteractionMath.screenToWorldPoint(
@@ -951,4 +1145,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private companion object {
         private const val CAMERA_TRANSITION_DURATION_MS = 240L
     }
+
+    private data class NativeRenderResult(
+        val rendered: Boolean,
+        val error: String?,
+        val backendLabel: String,
+        val sceneSummary: String,
+        val cameraState: CameraState?,
+    )
 }

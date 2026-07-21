@@ -539,18 +539,18 @@ void SolarLabStageController::SetAssetManager(AAssetManager* assetManager) {
     renderer_.SetAssetManager(assetManager);
 }
 
-bool SolarLabStageController::Initialize(JNIEnv* env, jobject surface, int width, int height) {
+bool SolarLabStageController::Initialize(ANativeWindow* nativeWindow, int width, int height) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     surfaceWidthPx_ = std::max(width, 1);
     surfaceHeightPx_ = std::max(height, 1);
-    return renderer_.Initialize(env, surface, width, height);
+    return renderer_.Initialize(nativeWindow, width, height);
 }
 
-bool SolarLabStageController::Resize(JNIEnv* env, jobject surface, int width, int height) {
+bool SolarLabStageController::Resize(ANativeWindow* nativeWindow, int width, int height) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     surfaceWidthPx_ = std::max(width, 1);
     surfaceHeightPx_ = std::max(height, 1);
-    return renderer_.Resize(env, surface, width, height);
+    return renderer_.Resize(nativeWindow, width, height);
 }
 
 void SolarLabStageController::DestroySurface() {

@@ -56,4 +56,5 @@ dependencies {
     implementation(project(":core-model"))
     implementation(project(":render-core"))
     implementation(libs.androidx.core.ktx)
+    testImplementation("junit:junit:4.13.2")
 }

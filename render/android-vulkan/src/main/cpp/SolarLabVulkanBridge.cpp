@@ -1,6 +1,7 @@
 #include "SolarLabStageController.h"
 
 #include <android/asset_manager_jni.h>
+#include <android/native_window_jni.h>
 #include <jni.h>
 
 #include <algorithm>
@@ -12,6 +13,10 @@
 namespace {
 SolarLabStageController* FromHandle(jlong handle) {
     return reinterpret_cast<SolarLabStageController*>(handle);
+}
+
+ANativeWindow* WindowFromHandle(jlong handle) {
+    return reinterpret_cast<ANativeWindow*>(handle);
 }
 
 std::vector<double> CopyDoubles(JNIEnv* env, jdoubleArray array) {
@@ -129,6 +134,21 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeCreateRende
     return reinterpret_cast<jlong>(controller);
 }
 
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeAcquireNativeWindow(
+    JNIEnv* env, jclass, jobject surface) {
+    return reinterpret_cast<jlong>(ANativeWindow_fromSurface(env, surface));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeReleaseNativeWindow(
+    JNIEnv*, jclass, jlong nativeWindowHandle) {
+    auto* nativeWindow = WindowFromHandle(nativeWindowHandle);
+    if (nativeWindow != nullptr) {
+        ANativeWindow_release(nativeWindow);
+    }
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeDestroyRenderer(
     JNIEnv*, jclass, jlong handle) {
@@ -137,16 +157,22 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeDestroyRend
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeOnSurfaceCreated(
-    JNIEnv* env, jclass, jlong handle, jobject surface, jint width, jint height) {
+    JNIEnv*, jclass, jlong handle, jlong nativeWindowHandle, jint width, jint height) {
     auto* controller = FromHandle(handle);
-    return controller != nullptr && controller->Initialize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
+    return controller != nullptr &&
+            controller->Initialize(WindowFromHandle(nativeWindowHandle), width, height)
+        ? JNI_TRUE
+        : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeOnSurfaceChanged(
-    JNIEnv* env, jclass, jlong handle, jobject surface, jint width, jint height) {
+    JNIEnv*, jclass, jlong handle, jlong nativeWindowHandle, jint width, jint height) {
     auto* controller = FromHandle(handle);
-    return controller != nullptr && controller->Resize(env, surface, width, height) ? JNI_TRUE : JNI_FALSE;
+    return controller != nullptr &&
+            controller->Resize(WindowFromHandle(nativeWindowHandle), width, height)
+        ? JNI_TRUE
+        : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

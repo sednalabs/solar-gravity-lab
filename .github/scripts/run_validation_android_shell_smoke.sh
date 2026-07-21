@@ -45,6 +45,7 @@ STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstRuntimeLifecycleInstrumentationTest"
 )
 
 TEST_CLASSES=()
