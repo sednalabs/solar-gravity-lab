@@ -31,6 +31,9 @@ constexpr uint32_t kBodyKindPlanet = 1U;
 constexpr uint32_t kBodyKindDwarfPlanet = 2U;
 constexpr uint32_t kBodyKindProbe = 5U;
 constexpr uint32_t kBodyKindTestObject = 6U;
+constexpr uint32_t kAppearanceHasRingSystem = 1U << 0U;
+constexpr uint32_t kAppearanceHasAtmosphere = 1U << 1U;
+constexpr uint32_t kAppearanceHasComet = 1U << 2U;
 constexpr uint64_t kFrameWaitTimeoutNs = 2'000'000'000ULL;
 
 VkDrawIndirectCommand MakeInitialIndirectCommand() {
@@ -348,6 +351,7 @@ void SolarLabVulkanRenderer::SubmitScene(
     std::vector<float> authoritativeRadiiM,
     std::vector<int32_t> authoritativeColorsArgb,
     std::vector<int32_t> authoritativeKinds,
+    std::vector<CelestialAppearanceInput> authoritativeAppearances,
     std::vector<double> tracerNearPositionsM,
     std::vector<float> tracerNearRadiiM,
     std::vector<int32_t> tracerNearColorsArgb,
@@ -377,6 +381,7 @@ void SolarLabVulkanRenderer::SubmitScene(
     sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
     sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
     sceneBuffers_.authoritativeKinds = std::move(authoritativeKinds);
+    sceneBuffers_.authoritativeAppearances = std::move(authoritativeAppearances);
     sceneBuffers_.tracerNearPositionsM = std::move(tracerNearPositionsM);
     sceneBuffers_.tracerNearRadiiM = std::move(tracerNearRadiiM);
     sceneBuffers_.tracerNearColorsArgb = std::move(tracerNearColorsArgb);
@@ -1384,7 +1389,16 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
         MakeAttributeDescription(2, 0, VK_FORMAT_R32_UINT, offsetof(BillboardVertex, colorArgb)),
         MakeAttributeDescription(3, 0, VK_FORMAT_R32_UINT, offsetof(BillboardVertex, kind)),
         MakeAttributeDescription(4, 0, VK_FORMAT_R32_SFLOAT, offsetof(BillboardVertex, alpha)),
-        MakeAttributeDescription(5, 0, VK_FORMAT_R32_SFLOAT, offsetof(BillboardVertex, reserved)),
+        MakeAttributeDescription(5, 0, VK_FORMAT_R32_UINT, offsetof(BillboardVertex, material)),
+        MakeAttributeDescription(6, 0, VK_FORMAT_R32_UINT, offsetof(BillboardVertex, appearanceFlags)),
+        MakeAttributeDescription(7, 0, VK_FORMAT_R32_SFLOAT, offsetof(BillboardVertex, physicalRadiusM)),
+        MakeAttributeDescription(8, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, northPoleX)),
+        MakeAttributeDescription(9, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, ringInnerRadiusM)),
+        MakeAttributeDescription(10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, atmosphereOuterRadiusM)),
+        MakeAttributeDescription(11, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(BillboardVertex, cometNucleusRadiusM)),
+        MakeAttributeDescription(12, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, cometAntiSolarX)),
+        MakeAttributeDescription(13, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, cometVelocityX)),
+        MakeAttributeDescription(14, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, ringPlaneX)),
     };
     if (!CreateGraphicsPipeline(
             "billboard",
@@ -1773,17 +1787,70 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     std::vector<AuthoritativeInfluenceBody> authoritativeInfluences;
     authoritativeVertices.reserve(authoritativeCount);
     authoritativeInfluences.reserve(authoritativeCount);
+    uint32_t ringBodyCount = 0U;
+    uint32_t atmosphereBodyCount = 0U;
+    uint32_t cometBodyCount = 0U;
     for (uint32_t index = 0; index < authoritativeCount; ++index) {
         const size_t base = static_cast<size_t>(index) * 3U;
+        const float physicalRadiusM = sceneBuffers_.authoritativeRadiiM[index];
+        const CelestialAppearanceInput appearance =
+            index < sceneBuffers_.authoritativeAppearances.size()
+                ? sceneBuffers_.authoritativeAppearances[index]
+                : CelestialAppearanceInput{};
+        float visualRadiusM = physicalRadiusM;
+        if ((appearance.flags & kAppearanceHasRingSystem) != 0U) {
+            ++ringBodyCount;
+            visualRadiusM = std::max(visualRadiusM, appearance.ringOuterRadiusM);
+        }
+        if ((appearance.flags & kAppearanceHasAtmosphere) != 0U) {
+            ++atmosphereBodyCount;
+            visualRadiusM = std::max(visualRadiusM, appearance.atmosphereOuterRadiusM);
+        }
+        if ((appearance.flags & kAppearanceHasComet) != 0U) {
+            ++cometBodyCount;
+            visualRadiusM = std::max({
+                visualRadiusM,
+                appearance.cometComaRadiusM,
+                appearance.cometDustTailLengthM,
+                appearance.cometIonTailLengthM,
+            });
+        }
+        if (!std::isfinite(visualRadiusM) || visualRadiusM <= 0.0f) {
+            visualRadiusM = std::max(physicalRadiusM, 1.0f);
+        }
         authoritativeVertices.push_back(BillboardVertex{
             .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
             .z = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 2U]),
-            .radiusM = sceneBuffers_.authoritativeRadiiM[index],
+            .radiusM = visualRadiusM,
             .colorArgb = static_cast<uint32_t>(sceneBuffers_.authoritativeColorsArgb[index]),
             .kind = static_cast<uint32_t>(sceneBuffers_.authoritativeKinds[index]),
             .alpha = 1.0f,
-            .reserved = 0.0f,
+            .material = appearance.material,
+            .appearanceFlags = appearance.flags,
+            .physicalRadiusM = physicalRadiusM,
+            .northPoleX = appearance.northPoleX,
+            .northPoleY = appearance.northPoleY,
+            .northPoleZ = appearance.northPoleZ,
+            .ringInnerRadiusM = appearance.ringInnerRadiusM,
+            .ringOuterRadiusM = appearance.ringOuterRadiusM,
+            .ringOpticalDepth = appearance.ringOpticalDepth,
+            .ringPlaneX = appearance.ringPlaneX,
+            .ringPlaneY = appearance.ringPlaneY,
+            .ringPlaneZ = appearance.ringPlaneZ,
+            .atmosphereOuterRadiusM = appearance.atmosphereOuterRadiusM,
+            .atmosphereOpticalDensity = appearance.atmosphereOpticalDensity,
+            .referenceMeridianRadians = appearance.referenceMeridianRadians,
+            .cometNucleusRadiusM = appearance.cometNucleusRadiusM,
+            .cometComaRadiusM = appearance.cometComaRadiusM,
+            .cometDustTailLengthM = appearance.cometDustTailLengthM,
+            .cometIonTailLengthM = appearance.cometIonTailLengthM,
+            .cometAntiSolarX = appearance.cometAntiSolarX,
+            .cometAntiSolarY = appearance.cometAntiSolarY,
+            .cometAntiSolarZ = appearance.cometAntiSolarZ,
+            .cometVelocityX = appearance.cometVelocityX,
+            .cometVelocityY = appearance.cometVelocityY,
+            .cometVelocityZ = appearance.cometVelocityZ,
         });
         authoritativeInfluences.push_back(AuthoritativeInfluenceBody{
             .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
@@ -1811,7 +1878,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .colorArgb = static_cast<uint32_t>(sceneBuffers_.tracerNearColorsArgb[index]),
             .kind = static_cast<uint32_t>(sceneBuffers_.tracerNearKinds[index]),
             .alpha = kNearTracerAlpha,
-            .reserved = 0.0f,
+            .physicalRadiusM = sceneBuffers_.tracerNearRadiiM[index],
         });
     }
 
@@ -2195,6 +2262,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     uploadStats_.sourceRevision = sceneBuffers_.sourceRevision;
     uploadStats_.bytesUploaded = sceneGpuStreams_.totalBytes;
     uploadStats_.authoritativeCount = authoritativeCount;
+    uploadStats_.ringBodyCount = ringBodyCount;
+    uploadStats_.atmosphereBodyCount = atmosphereBodyCount;
+    uploadStats_.cometBodyCount = cometBodyCount;
     uploadStats_.tracerNearCount = tracerNearCount;
     uploadStats_.tracerMediumCount = tracerMediumCount;
     uploadStats_.tracerFarCount = tracerFarCount;
@@ -2863,8 +2933,10 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
         bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
     }
     bindAndDrawBillboards(sceneGpuStreams_.tracerNear);
-    bindAndDrawBillboards(sceneGpuStreams_.authoritative);
 
+    // Trails describe motion but must remain behind the solid celestial stage.
+    // Drawing them first lets authoritative bodies and their ring/coma effects
+    // occlude paths naturally instead of painting a line across a planet.
     if (trailPipeline_ != VK_NULL_HANDLE && sceneGpuStreams_.trails.vertexCount > 1 && sceneGpuStreams_.trails.vertexBuffer.buffer != VK_NULL_HANDLE) {
         const VkBuffer trailBuffer = sceneGpuStreams_.trails.vertexBuffer.buffer;
         const VkDeviceSize trailOffset = 0;
@@ -2879,6 +2951,7 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
             }
         }
     }
+    bindAndDrawBillboards(sceneGpuStreams_.authoritative);
 
     return true;
 }
@@ -3451,6 +3524,9 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
     out << "rev=" << uploadStats_.sourceRevision
         << " A=" << uploadStats_.authoritativeCount
         << "/AI=" << sceneGpuStreams_.authoritativeInfluenceCount
+        << " FX=[R:" << uploadStats_.ringBodyCount
+        << ",At:" << uploadStats_.atmosphereBodyCount
+        << ",C:" << uploadStats_.cometBodyCount << ']'
         << " TN=" << uploadStats_.tracerNearCount
         << " TM=" << uploadStats_.tracerMediumCount
         << " TF=" << uploadStats_.tracerFarCount

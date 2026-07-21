@@ -129,7 +129,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 if (interactionMode != SceneInteractionMode.NAVIGATE_AND_SELECT) return false
                 pickBodyId(e.x, e.y) { bodyId ->
                     if (!released) {
-                        interactionListener?.onBodySelectionChanged(bodyId)
+                        val retainedSelection = retainSelectionOnEmptyPick(selectedBodyId, bodyId)
+                        if (retainedSelection != selectedBodyId) {
+                            selectedBodyId = retainedSelection
+                            interactionListener?.onBodySelectionChanged(retainedSelection)
+                        }
                     }
                 }
                 return true
@@ -1164,3 +1168,6 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val cameraState: CameraState?,
     )
 }
+
+internal fun retainSelectionOnEmptyPick(currentBodyId: String?, pickedBodyId: String?): String? =
+    pickedBodyId ?: currentBodyId

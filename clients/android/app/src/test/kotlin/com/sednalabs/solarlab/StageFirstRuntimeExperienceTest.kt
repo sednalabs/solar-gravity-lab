@@ -11,6 +11,17 @@ import org.junit.Test
 
 class StageFirstRuntimeExperienceTest {
     @Test
+    fun runtimeStageScenarioIdFromRevision_requiresTheCurrentPacketIdentity() {
+        assertEquals(
+            "showcase.comet-flyby",
+            runtimeStageScenarioIdFromRevision(
+                "scenario=showcase.comet-flyby|branch=main|epoch=43200.000000|payload=ready",
+            ),
+        )
+        assertEquals(null, runtimeStageScenarioIdFromRevision("waiting-for-packet"))
+    }
+
+    @Test
     fun resolveRuntimeSemanticBodyId_matchesTheRankedVisibleSearchContract() {
         val bodies = listOf(
             runtimeStageBody(id = "saturn", displayName = "Saturn", kind = RenderBodyKind.PLANET),

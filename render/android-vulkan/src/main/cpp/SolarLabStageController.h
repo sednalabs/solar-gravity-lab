@@ -99,6 +99,7 @@ public:
         double positionRelativeY = 0.0;
         double positionRelativeZ = 0.0;
         float radiusM = 0.0f;
+        float frameRadiusM = 0.0f;
         uint32_t kind = 0;
     };
 

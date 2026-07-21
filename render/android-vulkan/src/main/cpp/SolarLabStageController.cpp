@@ -50,6 +50,10 @@ constexpr int kTraceLayerModeOff = 2;
 constexpr uint32_t kFocusTraceDecimationStride = 4U;
 constexpr double kBodyFrameRadiusFactor = 3.2;
 constexpr double kBodyInspectionRadiusFactor = 1.15;
+// A comet's full typed tail length remains authoritative input to the shader, but fitting that
+// entire length with planet-style padding makes the nucleus and coma unreadable. Frame a
+// presentation-only fraction so the head is legible while the tail can continue off-screen.
+constexpr float kCometTailFrameFraction = 0.42f;
 
 void LogInfo(const std::string& message) {
     __android_log_print(ANDROID_LOG_INFO, kLogTag, "%s", message.c_str());
@@ -600,6 +604,7 @@ void SolarLabStageController::SubmitScene(
         std::move(authoritativeRadiiM),
         std::move(authoritativeColorsArgb),
         std::move(authoritativeKinds),
+        {},
         std::move(tracerNearPositionsM),
         std::move(tracerNearRadiiM),
         std::move(tracerNearColorsArgb),
@@ -736,7 +741,7 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         return std::nullopt;
     }
 
-    const double suggestedRadiusM = BodyFrameViewRadiusM(body->radiusM);
+    const double suggestedRadiusM = BodyFrameViewRadiusM(body->frameRadiusM);
     const double viewRadiusM = Clamp(suggestedRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
     return CameraSnapshot{
         .centerX = runtimeScene_.sceneOriginX + body->positionRelativeX,
@@ -1252,6 +1257,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::vector<float> authoritativeRadiiM;
     std::vector<int32_t> authoritativeColorsArgb;
     std::vector<int32_t> authoritativeKinds;
+    std::vector<SolarLabVulkanRenderer::CelestialAppearanceInput> authoritativeAppearances;
     std::vector<double> tracerNearPositionsM;
     std::vector<float> tracerNearRadiiM;
     std::vector<int32_t> tracerNearColorsArgb;
@@ -1292,12 +1298,30 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const bool selected = body->selected != 0 ||
                 (!normalizedSelectedBodyId.empty() &&
                     LowercaseAscii(bodyId) == normalizedSelectedBodyId);
+            float frameRadiusM = body->radius_m;
+            if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_RING_SYSTEM) != 0U) {
+                frameRadiusM = std::max(frameRadiusM, body->appearance.ring_outer_radius_m);
+            }
+            if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE) != 0U) {
+                frameRadiusM = std::max(frameRadiusM, body->appearance.atmosphere_outer_radius_m);
+            }
+            if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_COMET) != 0U) {
+                const float tailFrameRadiusM = std::max(
+                    body->appearance.comet_dust_tail_length_m,
+                    body->appearance.comet_ion_tail_length_m) * kCometTailFrameFraction;
+                frameRadiusM = std::max({
+                    frameRadiusM,
+                    body->appearance.comet_coma_radius_m,
+                    tailFrameRadiusM,
+                });
+            }
             pickBodies.push_back(RuntimeBodyProxy{
                 .bodyId = bodyId,
                 .positionRelativeX = body->position_from_origin_m.x,
                 .positionRelativeY = body->position_from_origin_m.y,
                 .positionRelativeZ = body->position_from_origin_m.z,
                 .radiusM = body->radius_m,
+                .frameRadiusM = frameRadiusM,
                 .kind = kind,
             });
             if (!ShouldIncludeAuthoritativeBody(body->radius_m, body->emissive_luminance, selected)) {
@@ -1312,6 +1336,32 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             authoritativeRadiiM.push_back(body->radius_m);
             authoritativeColorsArgb.push_back(static_cast<int32_t>(PackArgb(body->albedo)));
             authoritativeKinds.push_back(static_cast<int32_t>(kind));
+            authoritativeAppearances.push_back(SolarLabVulkanRenderer::CelestialAppearanceInput{
+                .material = static_cast<uint32_t>(body->appearance.material),
+                .flags = body->appearance.flags,
+                .northPoleX = body->appearance.north_pole_ws.x,
+                .northPoleY = body->appearance.north_pole_ws.y,
+                .northPoleZ = body->appearance.north_pole_ws.z,
+                .referenceMeridianRadians = body->appearance.reference_meridian_radians,
+                .ringInnerRadiusM = body->appearance.ring_inner_radius_m,
+                .ringOuterRadiusM = body->appearance.ring_outer_radius_m,
+                .ringOpticalDepth = body->appearance.ring_optical_depth,
+                .ringPlaneX = body->appearance.ring_plane_normal_ws.x,
+                .ringPlaneY = body->appearance.ring_plane_normal_ws.y,
+                .ringPlaneZ = body->appearance.ring_plane_normal_ws.z,
+                .atmosphereOuterRadiusM = body->appearance.atmosphere_outer_radius_m,
+                .atmosphereOpticalDensity = body->appearance.atmosphere_optical_density,
+                .cometNucleusRadiusM = body->appearance.comet_nucleus_radius_m,
+                .cometComaRadiusM = body->appearance.comet_coma_radius_m,
+                .cometDustTailLengthM = body->appearance.comet_dust_tail_length_m,
+                .cometIonTailLengthM = body->appearance.comet_ion_tail_length_m,
+                .cometAntiSolarX = body->appearance.comet_anti_solar_direction_ws.x,
+                .cometAntiSolarY = body->appearance.comet_anti_solar_direction_ws.y,
+                .cometAntiSolarZ = body->appearance.comet_anti_solar_direction_ws.z,
+                .cometVelocityX = body->appearance.comet_velocity_direction_ws.x,
+                .cometVelocityY = body->appearance.comet_velocity_direction_ws.y,
+                .cometVelocityZ = body->appearance.comet_velocity_direction_ws.z,
+            });
         }
     }
 
@@ -1458,6 +1508,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         std::move(authoritativeRadiiM),
         std::move(authoritativeColorsArgb),
         std::move(authoritativeKinds),
+        std::move(authoritativeAppearances),
         std::move(tracerNearPositionsM),
         std::move(tracerNearRadiiM),
         std::move(tracerNearColorsArgb),
