@@ -1146,7 +1146,7 @@ fn subtract(left: Vector3d, right: Vector3d) -> Vector3d {
 
 fn normalized_or(value: Vector3d, fallback: Vector3d) -> Vector3d {
     let magnitude = (value.x * value.x + value.y * value.y + value.z * value.z).sqrt();
-    if magnitude.is_finite() && magnitude > f64::EPSILON {
+    if magnitude.is_finite() && magnitude > 0.0 {
         Vector3d {
             x: value.x / magnitude,
             y: value.y / magnitude,

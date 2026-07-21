@@ -62,8 +62,10 @@ enum class RenderCelestialMaterial(val nativeCode: Int) {
     Neutral(10);
 
     companion object {
+        private val byNativeCode = entries.associateBy { it.nativeCode }
+
         fun fromNativeCode(code: Int): RenderCelestialMaterial =
-            entries.firstOrNull { it.nativeCode == code } ?: Neutral
+            byNativeCode[code] ?: Neutral
     }
 }
 
@@ -73,8 +75,10 @@ enum class RenderAppearanceProvenance(val nativeCode: Int) {
     DerivedClassDefault(2);
 
     companion object {
+        private val byNativeCode = entries.associateBy { it.nativeCode }
+
         fun fromNativeCode(code: Int): RenderAppearanceProvenance =
-            entries.firstOrNull { it.nativeCode == code } ?: DerivedClassDefault
+            byNativeCode[code] ?: DerivedClassDefault
     }
 }
 
