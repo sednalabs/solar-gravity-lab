@@ -12,7 +12,8 @@ SPIR-V-backed Vulkan graphics pipelines.
 
 ## What is now implemented
 
-- AOT shader source lives under `feature-lab/src/main/shaders/solarlab/`.
+- AOT shader source now lives under
+  `render/android-vulkan/src/main/shaders/solarlab/`.
 - Android Gradle / Shaderc compiles those shaders to SPIR-V and packages them
   into `assets/shaders/solarlab/*.spv`.
 - The native bridge now receives an `AAssetManager` at renderer creation time.

@@ -96,7 +96,11 @@ def has_rust_surface(files: list[str]) -> bool:
 
 
 def has_runtime_scene_surface(files: list[str]) -> bool:
-    return any(path.startswith(("engine/runtime/", "render/", "labs/parity/")) for path in files)
+    return any(
+        path.startswith(("engine/runtime/", "labs/parity/"))
+        or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
+        for path in files
+    )
 
 
 def has_ffi_surface(files: list[str]) -> bool:
@@ -105,7 +109,8 @@ def has_ffi_surface(files: list[str]) -> bool:
 
 def has_arm64_surface(files: list[str]) -> bool:
     return any(
-        path.startswith(("engine/", "render/", "services/", "proto/"))
+        path.startswith(("engine/", "services/", "proto/"))
+        or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
         or path == ".github/scripts/run_arm64_isa_proof.sh"
         for path in files
     )
@@ -115,7 +120,15 @@ def has_android_surface(files: list[str]) -> bool:
     return any(
         path_matches(
             path,
-            ("clients/android/", "feature-lab/", "render-core/", "core-math/", "core-model/", "core-simulation/", "gradle/"),
+            (
+                "clients/android/",
+                "render/android-vulkan/",
+                "render-core/",
+                "core-math/",
+                "core-model/",
+                "core-simulation/",
+                "gradle/",
+            ),
             ("build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradlew", "gradlew.bat"),
         )
         for path in files
@@ -124,7 +137,14 @@ def has_android_surface(files: list[str]) -> bool:
 
 def has_android_shell_surface(files: list[str]) -> bool:
     return any(
-        path.startswith(("clients/android/app/src/androidTest/", "clients/android/app/src/main/", "feature-lab/", "render-core/"))
+        path.startswith(
+            (
+                "clients/android/app/src/androidTest/",
+                "clients/android/app/src/main/",
+                "render/android-vulkan/",
+                "render-core/",
+            )
+        )
         or path in {"clients/android/build.gradle.kts", "clients/android/settings.gradle.kts"}
         for path in files
     )
@@ -136,7 +156,7 @@ def has_android_unit_surface(files: list[str]) -> bool:
             (
                 "clients/android/app/src/test/",
                 "clients/android/app/src/main/",
-                "feature-lab/",
+                "render/android-vulkan/",
                 "render-core/",
                 "core-math/",
                 "core-model/",

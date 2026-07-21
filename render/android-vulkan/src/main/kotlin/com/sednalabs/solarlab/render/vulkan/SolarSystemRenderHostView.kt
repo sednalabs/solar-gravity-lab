@@ -1,4 +1,4 @@
-package com.graciousgazelles.solarlab.feature.lab.render
+package com.sednalabs.solarlab.render.vulkan
 
 import android.content.Context
 import android.util.AttributeSet

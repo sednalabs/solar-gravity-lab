@@ -1,4 +1,4 @@
-package com.graciousgazelles.solarlab.feature.lab.render
+package com.sednalabs.solarlab.render.vulkan
 
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.render.core.ObserverMode

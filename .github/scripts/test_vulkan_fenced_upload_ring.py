@@ -6,8 +6,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-HEADER = ROOT / "feature-lab/src/main/cpp/SolarLabVulkanRenderer.h"
-SOURCE = ROOT / "feature-lab/src/main/cpp/SolarLabVulkanRenderer.cpp"
+HEADER = ROOT / "render/android-vulkan/src/main/cpp/SolarLabVulkanRenderer.h"
+SOURCE = ROOT / "render/android-vulkan/src/main/cpp/SolarLabVulkanRenderer.cpp"
 
 
 def function_block(source: str, signature: str, next_signature: str) -> str:

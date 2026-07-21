@@ -43,20 +43,23 @@ production physics authority.
 
 ## Render host seam
 
-Today the live rendering path is still a packet-host seam over the Rust runtime.
-That is intentionally real, but it is also intentionally transitional.
+The live rendering path is a packet-host seam over the Rust runtime. The
+production host, JNI bridge, C++ Vulkan implementation, and shaders live in the
+canonical `render/android-vulkan/` library, mapped into this build as
+`:android-vulkan-renderer`.
 
 The current architecture should be read as:
 
 - **Kotlin** = shell / control plane
-- **render-core style policy** = camera / projection / packet shaping direction
-- **native Vulkan** = actual renderer seam
+- **render-core policy** = transitional camera / projection / packet shaping
+- **render/android-vulkan** = Android host, JNI, native Vulkan, and shaders
 - **Rust** = authoritative runtime truth
 
 ## Known renderer gap / forward direction
 
-Future agents should **not** treat the current packet-host behavior as the
-end-state architecture.
+The renderer is now in its canonical module, but the older render-core policy
+types remain a deliberate transitional dependency while scene and appearance
+contracts move toward Rust ownership.
 
 The forward direction is:
 

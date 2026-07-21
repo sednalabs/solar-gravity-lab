@@ -26,6 +26,9 @@ What is real on this canonical main line today:
 - an operational Android shell in [`clients/android`](clients/android) that can
   start a Rust runtime session, refresh/apply commands, and host the exported
   Vulkan render packet surface
+- a canonical Android renderer in
+  [`render/android-vulkan`](render/android-vulkan) containing the Kotlin host,
+  JNI bridge, C++ Vulkan stage, and packaged shaders
 - a source-mass-aware runtime/FFI command path so probes, tracers, and teaching
   bodies can carry display mass without silently perturbing canonical bodies
 - working Android native builds through `cargo-ndk` and the Android app Gradle
@@ -33,8 +36,11 @@ What is real on this canonical main line today:
 
 What is intentionally still transitional:
 
-- the existing `app`, `core-*`, `feature-lab`, and `render-core` modules are
-  still present as v1 reference code
+- the existing `app`, `core-*`, and `feature-lab` modules remain as v1 reference
+  code; `feature-lab` is no longer on the production Android dependency path
+- the canonical Android renderer still consumes selected `render-core` and
+  core model/math policy types while those contracts migrate toward Rust
+  ownership
 - the runtime and scene export surface are still earlier in product maturity
   than the old line; this branch is structurally ahead of feature parity, but
   now owns the authoritative physics semantics for the canonical path

@@ -480,7 +480,7 @@ dependencies {
     implementation(project(":core-model"))
     implementation(project(":core-simulation"))
     implementation(project(":render-core"))
-    implementation(project(":feature-lab"))
+    implementation(project(":android-vulkan-renderer"))
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")

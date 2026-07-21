@@ -30,9 +30,13 @@ identifiable as authoritative integration, history, bounded preview, or visual
 guide. Hardware acceleration must publish the exact active backend and declared
 accuracy profile; capability detection alone is not an execution claim.
 
-## Remaining migration
+## Renderer ownership
 
-The active native stage is still physically hosted by the legacy
-`feature-lab` module. Move it into canonical `render/` and `clients/android/`
-directories as an independent module migration. That source move must not
-reintroduce a managed world or alter the stable Rust scene/FFI contracts.
+The active native stage is hosted by the canonical
+`render/android-vulkan/` Android library. The forward Android build maps that
+directory to `:android-vulkan-renderer` and depends on it directly; it has no
+production dependency on `feature-lab`.
+
+This ownership move did not change the Rust scene/FFI contracts or reintroduce
+a managed world. The retained root `feature-lab` source is legacy simulation
+reference material only.

@@ -63,10 +63,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.feature.lab.PlaybackSpeedPreset
 import com.graciousgazelles.solarlab.feature.lab.StepQuantumPreset
-import com.graciousgazelles.solarlab.feature.lab.render.RenderInteractionListener
-import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
-import com.graciousgazelles.solarlab.feature.lab.render.SceneInteractionMode
-import com.graciousgazelles.solarlab.feature.lab.render.SolarSystemRenderHostView
+import com.sednalabs.solarlab.render.vulkan.RenderInteractionListener
+import com.sednalabs.solarlab.render.vulkan.RenderProcessingMode
+import com.sednalabs.solarlab.render.vulkan.SceneInteractionMode
+import com.sednalabs.solarlab.render.vulkan.SolarSystemRenderHostView
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderLayerOptions

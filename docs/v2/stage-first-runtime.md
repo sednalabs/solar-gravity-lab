@@ -61,18 +61,20 @@ the reusable `interactive-android-build` artifact from the exact validated
 commit for native computer-use acceptance. A visual claim still requires native
 Android observation; compilation and semantic tags alone are not visual proof.
 
-## Deliberate next migrations
+## Native renderer boundary
 
-The current native Vulkan host is still physically located under the legacy
-`feature-lab` module. It is the active renderer, not an alternate simulator.
-Move that host into the canonical `render/` and `clients/android/` boundaries as
-a separate, reviewable migration once the stable packet and camera contracts are
-proven.
+The native Vulkan host now lives under `render/android-vulkan/` and is consumed
+by the Android shell as `:android-vulkan-renderer`. Its Kotlin package and JNI
+exports use the canonical `com.sednalabs.solarlab.render.vulkan` namespace.
+The legacy `feature-lab` module is not on the production dependency path.
 
 The next measured renderer work is:
 
-- replace synchronous scene-upload queue idling with a fenced staging ring;
+- extend the typed Rust scene contract with renderer-facing celestial
+  appearance, orientation, ring, and comet facts;
+- render recognizable scale-aware planets, moons, rings, and comets without
+  changing the authoritative world;
 - add device-profiled thermal and battery scheduling policy;
-- add a true mesh-sphere close-body LOD only where device profiling shows a
-  material gain over the current GPU-instanced spherical quads; and
+- measure whether far-tracer aggregation materially improves sustained device
+  behavior before choosing another compaction path; and
 - preserve scalar-oracle physics proof as new Arm64 kernels become active.

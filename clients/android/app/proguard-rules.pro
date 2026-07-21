@@ -3,7 +3,3 @@
 -keepclasseswithmembernames,includedescriptorclasses class com.sednalabs.solarlab.runtime.** {
     native <methods>;
 }
-
--keepclasseswithmembernames,includedescriptorclasses class com.graciousgazelles.solarlab.feature.lab.render.** {
-    native <methods>;
-}
