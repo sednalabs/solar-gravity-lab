@@ -86,9 +86,10 @@ def has_rust_surface(files: list[str]) -> bool:
     return any(
         path_matches(
             path,
-            ("engine/", "proto/", "render/", "services/", "labs/", "core-math/", "core-model/", "core-simulation/"),
+            ("engine/", "proto/", "services/", "labs/", "core-math/", "core-model/", "core-simulation/"),
             ("Cargo.toml", "Cargo.lock"),
         )
+        or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
         or path.endswith("/Cargo.toml")
         or path.endswith("/Cargo.lock")
         for path in files
