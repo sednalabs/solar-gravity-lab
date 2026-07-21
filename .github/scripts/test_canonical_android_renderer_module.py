@@ -27,6 +27,12 @@ class CanonicalAndroidRendererModuleTest(unittest.TestCase):
         self.assertIn('implementation(project(":android-vulkan-renderer"))', app_build)
         self.assertNotIn('implementation(project(":feature-lab"))', app_build)
 
+        app_sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((ROOT / "clients/android/app/src/main").rglob("*.kt"))
+        )
+        self.assertNotIn("com.graciousgazelles.solarlab.feature.lab", app_sources)
+
     def test_renderer_sources_have_one_canonical_owner(self) -> None:
         expected_sources = {
             "src/main/cpp/CMakeLists.txt",

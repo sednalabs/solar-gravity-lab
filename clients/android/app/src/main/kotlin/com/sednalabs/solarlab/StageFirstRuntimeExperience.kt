@@ -61,8 +61,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
-import com.graciousgazelles.solarlab.feature.lab.PlaybackSpeedPreset
-import com.graciousgazelles.solarlab.feature.lab.StepQuantumPreset
 import com.sednalabs.solarlab.render.vulkan.RenderInteractionListener
 import com.sednalabs.solarlab.render.vulkan.RenderProcessingMode
 import com.sednalabs.solarlab.render.vulkan.SceneInteractionMode
@@ -76,6 +74,8 @@ import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.RenderTrail as StageRenderTrail
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import com.sednalabs.solarlab.runtime.RenderFrame
+import com.sednalabs.solarlab.runtime.PlaybackSpeedPreset
+import com.sednalabs.solarlab.runtime.StepQuantumPreset
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
