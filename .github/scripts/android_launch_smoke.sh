@@ -73,7 +73,11 @@ runtime_bridge_log="$out_dir/runtime-bridge.log"
 capture_runtime_state() {
   adb shell uiautomator dump /sdcard/solar-launch-smoke-window.xml >/dev/null 2>&1 || true
   adb pull /sdcard/solar-launch-smoke-window.xml "$runtime_ui_dump" >/dev/null 2>&1 || true
-  adb logcat -d -s SolarLabRuntimeBridge:I SolarLabRuntimeBridge:E '*:S' > "$runtime_bridge_log" || true
+  # Some adb/logcat versions treat the trailing silent filter as overriding the
+  # selected tag. Read the finite buffer and extract the authoritative bridge
+  # records locally so a ready session cannot be mistaken for a timeout.
+  adb logcat -d -v threadtime \
+    | grep -F " SolarLabRuntimeBridge:" > "$runtime_bridge_log" || true
 }
 
 capture_smoke_artifacts() {

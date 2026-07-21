@@ -12,6 +12,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 VERIFY_SCRIPT = REPOSITORY_ROOT / ".github/scripts/verify_prerelease_jni_r8_contract.py"
 PROGUARD_RULES = REPOSITORY_ROOT / "clients/android/app/proguard-rules.pro"
 APP_BUILD = REPOSITORY_ROOT / "clients/android/app/build.gradle.kts"
+ANDROID_LAUNCH_SMOKE = REPOSITORY_ROOT / ".github/scripts/android_launch_smoke.sh"
 
 
 def load_verifier():
@@ -72,6 +73,23 @@ class PrereleaseJniR8ContractTest(unittest.TestCase):
         self.assertIn("proguardFiles(", prerelease_block)
         self.assertIn('getDefaultProguardFile("proguard-android-optimize.txt")', prerelease_block)
         self.assertIn('"proguard-rules.pro"', prerelease_block)
+
+    def test_runtime_readiness_smoke_preserves_bridge_records(self) -> None:
+        smoke_script = ANDROID_LAUNCH_SMOKE.read_text(encoding="utf-8")
+
+        self.assertIn("adb logcat -d -v threadtime", smoke_script)
+        self.assertIn(
+            '| grep -F " SolarLabRuntimeBridge:" > "$runtime_bridge_log" || true',
+            smoke_script,
+        )
+        self.assertNotIn(
+            "adb logcat -d -s SolarLabRuntimeBridge:I SolarLabRuntimeBridge:E '*:S'",
+            smoke_script,
+        )
+        self.assertIn(
+            "connect\\.initial-refresh\\.render\\.refresh\\.result .*lease=ready",
+            smoke_script,
+        )
 
 
 if __name__ == "__main__":
