@@ -38,6 +38,34 @@ float hash21(vec2 point) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+vec3 bodyLocalNormal(vec3 cameraNormal) {
+    vec3 pole = normalize(vNorthPoleCamera);
+    vec3 reference = abs(pole.z) < 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 east = normalize(cross(reference, pole));
+    vec3 meridian = normalize(cross(pole, east));
+    vec3 local = vec3(
+        dot(cameraNormal, east),
+        dot(cameraNormal, pole),
+        dot(cameraNormal, meridian)
+    );
+    float phaseCos = cos(vReferenceMeridianRadians);
+    float phaseSin = sin(vReferenceMeridianRadians);
+    return vec3(
+        phaseCos * local.x - phaseSin * local.z,
+        local.y,
+        phaseSin * local.x + phaseCos * local.z
+    );
+}
+
+float layeredSurfaceNoise(vec3 local) {
+    float broad = sin(local.x * 5.1 + local.y * 2.3) *
+        sin(local.z * 4.7 - local.x * 1.9);
+    float medium = sin(local.x * 11.3 - local.z * 7.1 + local.y * 3.7) *
+        sin(local.y * 9.2 + local.z * 5.9);
+    float fine = sin(local.x * 23.0 + local.y * 17.0 - local.z * 13.0);
+    return clamp(0.50 + broad * 0.22 + medium * 0.16 + fine * 0.08, 0.0, 1.0);
+}
+
 void composite(inout vec4 accumulated, vec3 color, float alpha) {
     alpha = clamp(alpha, 0.0, 1.0);
     float combinedAlpha = alpha + accumulated.a * (1.0 - alpha);
@@ -47,11 +75,11 @@ void composite(inout vec4 accumulated, vec3 color, float alpha) {
 }
 
 vec3 surfaceColor(vec3 normal, float sphereZ) {
-    vec3 axis = normalize(vNorthPoleCamera);
-    float latitude = dot(normal, axis);
-    float longitude = atan(normal.y, normal.x) + vReferenceMeridianRadians;
-    float broadNoise = sin(longitude * 5.0 + latitude * 9.0) * 0.5 + 0.5;
-    float fineNoise = sin(longitude * 17.0 - latitude * 31.0) * 0.5 + 0.5;
+    vec3 local = bodyLocalNormal(normal);
+    float latitude = local.y;
+    float longitude = atan(local.z, local.x);
+    float broadNoise = layeredSurfaceNoise(local);
+    float fineNoise = layeredSurfaceNoise(local.zxy * 2.13 + vec3(0.17, -0.31, 0.23));
     float detail = mix(0.5, 1.0, vSurfaceDetail);
 
     if (vMaterial == MATERIAL_TERRESTRIAL) {
@@ -59,26 +87,29 @@ vec3 surfaceColor(vec3 normal, float sphereZ) {
             float cloudBands = 0.5 + 0.5 * sin(latitude * 34.0 + broadNoise * 3.0);
             return mix(vec3(0.70, 0.36, 0.10), vec3(0.98, 0.77, 0.36), cloudBands * detail);
         }
-        float continentSignal = broadNoise + fineNoise * 0.55 + latitude * 0.18;
-        float land = smoothstep(0.82, 1.18, continentSignal);
+        float continentSignal = broadNoise * 0.72 + fineNoise * 0.28;
+        float land = smoothstep(0.48, 0.61, continentSignal);
         vec3 ocean = mix(vec3(0.025, 0.12, 0.30), vec3(0.06, 0.34, 0.66), sphereZ);
         vec3 terrain = mix(vec3(0.12, 0.32, 0.10), vec3(0.58, 0.45, 0.22), fineNoise);
         vec3 result = mix(ocean, terrain, land * detail);
-        float cloud = smoothstep(0.76, 0.96, sin(longitude * 13.0 + latitude * 23.0) * 0.5 + 0.5);
+        float cloudNoise = layeredSurfaceNoise(local.yzx * 3.1 + vec3(-0.4, 0.2, 0.7));
+        float cloud = smoothstep(0.66, 0.82, cloudNoise);
         return mix(result, vec3(0.92), cloud * 0.22 * detail);
     }
     if (vMaterial == MATERIAL_GAS_GIANT) {
-        float bands = 0.5 + 0.5 * sin(latitude * 58.0 + sin(longitude * 3.0) * 1.2);
-        float belts = smoothstep(0.18, 0.82, bands);
+        float bands = 0.5 + 0.5 * sin(latitude * 31.0 + sin(longitude * 2.0) * 0.55);
+        float fineBands = 0.5 + 0.5 * sin(latitude * 67.0 - longitude * 0.8);
+        float belts = smoothstep(0.20, 0.80, bands) * 0.75 + fineBands * 0.25;
         vec3 cream = vec3(0.88, 0.72, 0.47);
         vec3 ochre = vec3(0.48, 0.25, 0.12);
-        vec3 result = mix(cream, ochre, belts * 0.64 * detail);
-        float storm = exp(-55.0 * dot(vec2(longitude - 0.65, latitude + 0.24), vec2(longitude - 0.65, latitude + 0.24)));
-        return mix(result, vec3(0.72, 0.18, 0.08), storm * detail);
+        vec3 result = mix(cream, ochre, (0.14 + belts * 0.38) * detail);
+        vec2 stormOffset = vec2(longitude - 0.65, (latitude + 0.24) * 2.4);
+        float storm = exp(-18.0 * dot(stormOffset, stormOffset));
+        return mix(result, vec3(0.72, 0.18, 0.08), storm * 0.72 * detail);
     }
     if (vMaterial == MATERIAL_ICE_GIANT) {
-        float bands = 0.5 + 0.5 * sin(latitude * 32.0 + longitude * 1.5);
-        return mix(vec3(0.18, 0.56, 0.72), vec3(0.50, 0.86, 0.91), bands * 0.38 * detail);
+        float bands = 0.5 + 0.5 * sin(latitude * 20.0 + sin(longitude) * 0.45);
+        return mix(vec3(0.18, 0.56, 0.72), vec3(0.50, 0.86, 0.91), (0.18 + bands * 0.25) * detail);
     }
     if (vMaterial == MATERIAL_ROCKY || vMaterial == MATERIAL_LUNAR ||
         vMaterial == MATERIAL_ASTEROID || vMaterial == MATERIAL_ICY ||
@@ -194,11 +225,15 @@ void main() {
         float edgeWidth = max((outerRadius - innerRadius) * 0.035, 0.0015);
         float innerEdge = smoothstep(innerRadius - edgeWidth, innerRadius + edgeWidth, ringRadius);
         float outerEdge = 1.0 - smoothstep(outerRadius - edgeWidth, outerRadius + edgeWidth, ringRadius);
-        float divisions = 0.56 + 0.44 * sin(ringRadius * 185.0 + 0.8);
+        float ringSpan = max(outerRadius - innerRadius, 1e-5);
+        float radialPosition = clamp((ringRadius - innerRadius) / ringSpan, 0.0, 1.0);
+        float broadBands = 0.5 + 0.5 * sin(radialPosition * 31.4159265 + 0.8);
+        float fineBands = 0.5 + 0.5 * sin(radialPosition * 69.1150384 - 0.35);
+        float divisions = broadBands * 0.72 + fineBands * 0.28;
         insideRing = innerEdge * outerEdge > 0.001;
         ringAlpha = innerEdge * outerEdge * clamp(vRingRatiosAndOpticalDepth.z, 0.0, 1.0) *
-            mix(0.48, 0.92, divisions);
-        ringColor = mix(vec3(0.38, 0.28, 0.20), vec3(0.94, 0.82, 0.59), divisions);
+            mix(0.58, 0.88, divisions);
+        ringColor = mix(vec3(0.48, 0.38, 0.27), vec3(0.91, 0.82, 0.65), divisions);
         ringInFront = !insideBody || ringZ > bodyZ;
         if (insideRing && !ringInFront) {
             composite(accumulated, ringColor, ringAlpha);

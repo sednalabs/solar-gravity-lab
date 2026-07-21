@@ -2933,8 +2933,10 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
         bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
     }
     bindAndDrawBillboards(sceneGpuStreams_.tracerNear);
-    bindAndDrawBillboards(sceneGpuStreams_.authoritative);
 
+    // Trails describe motion but must remain behind the solid celestial stage.
+    // Drawing them first lets authoritative bodies and their ring/coma effects
+    // occlude paths naturally instead of painting a line across a planet.
     if (trailPipeline_ != VK_NULL_HANDLE && sceneGpuStreams_.trails.vertexCount > 1 && sceneGpuStreams_.trails.vertexBuffer.buffer != VK_NULL_HANDLE) {
         const VkBuffer trailBuffer = sceneGpuStreams_.trails.vertexBuffer.buffer;
         const VkDeviceSize trailOffset = 0;
@@ -2949,6 +2951,7 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
             }
         }
     }
+    bindAndDrawBillboards(sceneGpuStreams_.authoritative);
 
     return true;
 }

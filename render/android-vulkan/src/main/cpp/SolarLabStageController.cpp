@@ -737,7 +737,7 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         return std::nullopt;
     }
 
-    const double suggestedRadiusM = BodyFrameViewRadiusM(body->radiusM);
+    const double suggestedRadiusM = BodyFrameViewRadiusM(body->frameRadiusM);
     const double viewRadiusM = Clamp(suggestedRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
     return CameraSnapshot{
         .centerX = runtimeScene_.sceneOriginX + body->positionRelativeX,
@@ -1294,12 +1294,28 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const bool selected = body->selected != 0 ||
                 (!normalizedSelectedBodyId.empty() &&
                     LowercaseAscii(bodyId) == normalizedSelectedBodyId);
+            float frameRadiusM = body->radius_m;
+            if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_RING_SYSTEM) != 0U) {
+                frameRadiusM = std::max(frameRadiusM, body->appearance.ring_outer_radius_m);
+            }
+            if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE) != 0U) {
+                frameRadiusM = std::max(frameRadiusM, body->appearance.atmosphere_outer_radius_m);
+            }
+            if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_COMET) != 0U) {
+                frameRadiusM = std::max({
+                    frameRadiusM,
+                    body->appearance.comet_coma_radius_m,
+                    body->appearance.comet_dust_tail_length_m,
+                    body->appearance.comet_ion_tail_length_m,
+                });
+            }
             pickBodies.push_back(RuntimeBodyProxy{
                 .bodyId = bodyId,
                 .positionRelativeX = body->position_from_origin_m.x,
                 .positionRelativeY = body->position_from_origin_m.y,
                 .positionRelativeZ = body->position_from_origin_m.z,
                 .radiusM = body->radius_m,
+                .frameRadiusM = frameRadiusM,
                 .kind = kind,
             });
             if (!ShouldIncludeAuthoritativeBody(body->radius_m, body->emissive_luminance, selected)) {

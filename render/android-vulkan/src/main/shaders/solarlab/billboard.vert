@@ -125,7 +125,10 @@ void main() {
         diameterPx / max(uScene.viewport.x, 1.0),
         diameterPx / max(uScene.viewport.y, 1.0)
     );
-    gl_Position = vec4(centerClip + cornerClipOffset, clipDepth01(relative), 1.0);
+    // Keep a co-located trajectory from winning an equal-depth comparison and
+    // visibly painting through the body it describes.
+    float bodyDepth = max(0.0, clipDepth01(relative) - 1e-5);
+    gl_Position = vec4(centerClip + cornerClipOffset, bodyDepth, 1.0);
 
     vec4 color = unpackArgb(inColorArgb);
     color.a *= inAlpha;
