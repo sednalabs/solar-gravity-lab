@@ -38,8 +38,8 @@ proves the harness rather than redefining a general Android computer-use API.
 artifact bundle under `dist/interactive-session/`. The Codex-facing parts of
 that bundle are:
 
-- `live-access/codex-android-tools.sh`: provider helper, when the
-  selected provider ref supports it
+- `live-access/codex-android-tools-<provider-sha>.sh`: content-addressed
+  provider helper, when the selected provider ref supports it
 - `live-access/codex-android-observe.sh`: optional explicit observation helper
   for debugging
 - `codex-bridge/status.json`: readiness, mode, helper paths, output root,
@@ -65,8 +65,13 @@ that bundle are:
 The live shell also exports the provider helper command when available:
 
 ```bash
-CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools.sh
+CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools-<provider-sha>.sh
 ```
+
+The exact connector commit is part of the command path and is also recorded as
+`adapter_revision` in `codex-bridge/status.json`. That immutable identity makes
+provider upgrades visible to long-lived native tool sessions instead of
+silently reusing a previously cached helper.
 
 Normal Codex-driven use of the hosted session uses Codex's native
 `android_observe` / `android_step` flow, with the helper script acting as the
@@ -134,7 +139,7 @@ validation.
 ## Visual Acceptance
 
 Build and test proof is not the same thing as visual acceptance. When a change
-affects Android layout, stage-first presentation, runtime mirror controls,
+affects Android layout, stage-first presentation, runtime controls,
 scenario-pack interaction, or visual polish, the acceptance path must include a
 real Android observation loop.
 
@@ -145,8 +150,7 @@ For those changes:
   surface
 - navigate the actual user path being claimed, not just the default launch
   screen
-- inspect both the stage-first sandbox and runtime mirror when the change can
-  affect either surface
+- inspect the Rust-backed stage in both collapsed and expanded control states
 - check collapsed and expanded/control states before claiming that the 3D stage
   remains visually dominant
 - record the observation source in the PR or validation notes

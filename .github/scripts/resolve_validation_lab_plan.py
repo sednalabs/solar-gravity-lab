@@ -86,9 +86,10 @@ def has_rust_surface(files: list[str]) -> bool:
     return any(
         path_matches(
             path,
-            ("engine/", "proto/", "render/", "services/", "labs/", "core-math/", "core-model/", "core-simulation/"),
+            ("engine/", "proto/", "services/", "labs/", "core-math/", "core-model/", "core-simulation/"),
             ("Cargo.toml", "Cargo.lock"),
         )
+        or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
         or path.endswith("/Cargo.toml")
         or path.endswith("/Cargo.lock")
         for path in files
@@ -96,7 +97,11 @@ def has_rust_surface(files: list[str]) -> bool:
 
 
 def has_runtime_scene_surface(files: list[str]) -> bool:
-    return any(path.startswith(("engine/runtime/", "render/", "labs/parity/")) for path in files)
+    return any(
+        path.startswith(("engine/runtime/", "labs/parity/"))
+        or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
+        for path in files
+    )
 
 
 def has_ffi_surface(files: list[str]) -> bool:
@@ -105,7 +110,8 @@ def has_ffi_surface(files: list[str]) -> bool:
 
 def has_arm64_surface(files: list[str]) -> bool:
     return any(
-        path.startswith(("engine/", "render/", "services/", "proto/"))
+        path.startswith(("engine/", "services/", "proto/"))
+        or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
         or path == ".github/scripts/run_arm64_isa_proof.sh"
         for path in files
     )
@@ -115,7 +121,15 @@ def has_android_surface(files: list[str]) -> bool:
     return any(
         path_matches(
             path,
-            ("clients/android/", "feature-lab/", "render-core/", "core-math/", "core-model/", "core-simulation/", "gradle/"),
+            (
+                "clients/android/",
+                "render/android-vulkan/",
+                "render-core/",
+                "core-math/",
+                "core-model/",
+                "core-simulation/",
+                "gradle/",
+            ),
             ("build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradlew", "gradlew.bat"),
         )
         for path in files
@@ -124,7 +138,14 @@ def has_android_surface(files: list[str]) -> bool:
 
 def has_android_shell_surface(files: list[str]) -> bool:
     return any(
-        path.startswith(("clients/android/app/src/androidTest/", "clients/android/app/src/main/", "feature-lab/", "render-core/"))
+        path.startswith(
+            (
+                "clients/android/app/src/androidTest/",
+                "clients/android/app/src/main/",
+                "render/android-vulkan/",
+                "render-core/",
+            )
+        )
         or path in {"clients/android/build.gradle.kts", "clients/android/settings.gradle.kts"}
         for path in files
     )
@@ -136,7 +157,7 @@ def has_android_unit_surface(files: list[str]) -> bool:
             (
                 "clients/android/app/src/test/",
                 "clients/android/app/src/main/",
-                "feature-lab/",
+                "render/android-vulkan/",
                 "render-core/",
                 "core-math/",
                 "core-model/",
@@ -292,25 +313,14 @@ def resolve_android_shell_matrix(enabled: bool, android_validation_mode: str, pr
             {
                 "validation_mode": "shell-v2",
                 "debug_stage_first_client": "false",
-                "stage_first_runtime_mirror": "false",
                 "preferred_gpu_backend": "none",
                 "hosted_debug_profile": "full-fidelity",
             }
         ],
-        "stage-first-mirror-off": [
+        "stage-first-runtime": [
             {
-                "validation_mode": "stage-first-mirror-off",
+                "validation_mode": "stage-first-runtime",
                 "debug_stage_first_client": "true",
-                "stage_first_runtime_mirror": "false",
-                "preferred_gpu_backend": "none",
-                "hosted_debug_profile": "full-fidelity",
-            }
-        ],
-        "stage-first-mirror-on": [
-            {
-                "validation_mode": "stage-first-mirror-on",
-                "debug_stage_first_client": "true",
-                "stage_first_runtime_mirror": "true",
                 "preferred_gpu_backend": "vulkan",
                 "hosted_debug_profile": "hosted-debug-lite",
             }
@@ -318,11 +328,11 @@ def resolve_android_shell_matrix(enabled: bool, android_validation_mode: str, pr
     }
     if android_validation_mode == "auto":
         if profile == "targeted":
-            rows = matrix_by_mode["stage-first-mirror-on"]
+            rows = matrix_by_mode["stage-first-runtime"]
         elif profile == "frontier":
-            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-mirror-on"]
+            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-runtime"]
         else:
-            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-mirror-off"] + matrix_by_mode["stage-first-mirror-on"]
+            rows = matrix_by_mode["shell-v2"] + matrix_by_mode["stage-first-runtime"]
     elif android_validation_mode in matrix_by_mode:
         rows = matrix_by_mode[android_validation_mode]
     else:

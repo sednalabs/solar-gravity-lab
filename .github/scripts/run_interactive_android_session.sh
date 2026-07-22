@@ -44,6 +44,8 @@ codex_bridge_status_path="${codex_bridge_dir}/status.json"
 finish_sentinel="${INTERACTIVE_SESSION_END_SENTINEL:-${session_root}/finish-session}"
 mcp_health_url="${INTERACTIVE_MCP_HEALTH_URL:-http://127.0.0.1:9526/health}"
 mcp_bind_addr="${INTERACTIVE_MCP_BIND_ADDR:-127.0.0.1:9526}"
+mcp_emulator_grpc_host="${mcp_bind_addr%:*}"
+mcp_emulator_grpc_port="${INTERACTIVE_EMULATOR_GRPC_PORT:-}"
 mcp_allowed_hosts="${INTERACTIVE_MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}"
 ttyd_port="${INTERACTIVE_DEBUG_TTYD_PORT:-7681}"
 session_timeout_minutes="${INTERACTIVE_SESSION_TIMEOUT_MINUTES:-90}"
@@ -53,6 +55,12 @@ build_manifest_path="${INTERACTIVE_BUILD_MANIFEST:?INTERACTIVE_BUILD_MANIFEST is
 app_package="${INTERACTIVE_APP_PACKAGE:?INTERACTIVE_APP_PACKAGE is required}"
 app_activity="${INTERACTIVE_APP_ACTIVITY:?INTERACTIVE_APP_ACTIVITY is required}"
 mcp_workspace_dir="${INTERACTIVE_MCP_WORKSPACE_DIR:?INTERACTIVE_MCP_WORKSPACE_DIR is required}"
+mcp_adapter_revision="${INTERACTIVE_MCP_ADAPTER_REVISION:?INTERACTIVE_MCP_ADAPTER_REVISION is required}"
+if ! [[ "${mcp_adapter_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "INTERACTIVE_MCP_ADAPTER_REVISION must be a full lowercase Git commit SHA" >&2
+  exit 1
+fi
+codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools-${mcp_adapter_revision}.sh"
 cloudflared_bin="${INTERACTIVE_CLOUDFLARED_BIN:?INTERACTIVE_CLOUDFLARED_BIN is required}"
 debug_hostname="${INTERACTIVE_DEBUG_HOSTNAME:-}"
 debug_tunnel_token="${INTERACTIVE_DEBUG_TUNNEL_TOKEN:-}"
@@ -207,7 +215,6 @@ stage_interactive_model_helpers() {
   local config_path="${openai_loop_dir}/config.json"
   local openai_helper_path="${live_access_dir}/openai-android-loop.sh"
   local codex_helper_path="${live_access_dir}/codex-android-observe.sh"
-  local codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools.sh"
   local provider_manifest_status="unavailable"
   local dynamic_tool_specs_status="unavailable"
   local dynamic_tool_proof_status="unavailable"
@@ -280,7 +287,7 @@ PY
     rm -f "${codex_dynamic_tool_proof_response_path}"
     rm -f "${codex_dynamic_tool_proof_error_path}"
     rm -f "${codex_dynamic_tool_proof_validation_path}"
-    write_codex_bridge_status "$(python3 - <<'PY' "${codex_dynamic_tools_bin}" "${codex_adapter_bin}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${codex_dynamic_tools_bin}" "${codex_adapter_bin}" "${mcp_adapter_revision}"
 import json
 import sys
 
@@ -290,6 +297,7 @@ print(json.dumps({
     "reason": "adapter_cli_missing",
     "dynamic_tool_adapter_bin": sys.argv[1],
     "observe_adapter_bin": sys.argv[2],
+    "adapter_revision": sys.argv[3],
 }))
 PY
 )"
@@ -578,7 +586,7 @@ EOF
       rm -f "${codex_helper_path}"
     fi
 
-    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${codex_provider_manifest_validation_path}" "${provider_manifest_status}" "${codex_dynamic_tool_specs_path}" "${dynamic_tool_specs_status}" "${codex_dynamic_tool_proof_response_path}" "${codex_dynamic_tool_proof_validation_path}" "${dynamic_tool_proof_status}"
+    write_codex_bridge_status "$(python3 - <<'PY' "${config_path}" "${codex_dynamic_tool_helper_path}" "${codex_helper_path}" "${codex_bridge_run_root}" "${codex_provider_manifest_path}" "${codex_provider_manifest_validation_path}" "${provider_manifest_status}" "${codex_dynamic_tool_specs_path}" "${dynamic_tool_specs_status}" "${codex_dynamic_tool_proof_response_path}" "${codex_dynamic_tool_proof_validation_path}" "${dynamic_tool_proof_status}" "${mcp_adapter_revision}"
 import json
 import pathlib
 import sys
@@ -623,6 +631,7 @@ print(json.dumps({
     "dynamic_tool_proof_status": sys.argv[12],
     "dynamic_tool_outcome_contract_proven": proof_contract_proven,
     "dynamic_tool_outcome_success": proof_response_success,
+    "adapter_revision": sys.argv[13],
     "tool_names": ["android_observe", "android_step"],
 }))
 PY
@@ -683,9 +692,46 @@ adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
 adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1 || true
 adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1 || true
 
+if ! [[ "${mcp_emulator_grpc_port}" =~ ^[0-9]+$ ]] ||
+  ((mcp_emulator_grpc_port < 1 || mcp_emulator_grpc_port > 65535)); then
+  final_status="failure"
+  final_reason="invalid_emulator_grpc_port"
+  write_live_status '{"schema_version":1,"status":"failed","reason":"invalid_emulator_grpc_port"}'
+  log "INTERACTIVE_EMULATOR_GRPC_PORT must be a valid TCP port"
+  exit 1
+fi
+
+emulator_grpc_ready="false"
+for _ in $(seq 1 30); do
+  if python3 - "${mcp_emulator_grpc_host}" "${mcp_emulator_grpc_port}" <<'PY'
+import socket
+import sys
+
+try:
+    with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=1):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+  then
+    emulator_grpc_ready="true"
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${emulator_grpc_ready}" != "true" ]]; then
+  final_status="failure"
+  final_reason="emulator_grpc_unavailable"
+  write_live_status '{"schema_version":1,"status":"failed","reason":"emulator_grpc_unavailable"}'
+  log "Android Emulator gRPC endpoint never became reachable on ${mcp_emulator_grpc_host}:${mcp_emulator_grpc_port}"
+  exit 1
+fi
+
 export ANDROID_EMULATOR_MCP_SDK_ROOT="${ANDROID_SDK_ROOT_DEFAULT:-${ANDROID_SDK_ROOT:-}}"
 export ANDROID_EMULATOR_MCP_ARTIFACT_DIR="${session_root}/android-emulator-mcp-artifacts"
 export ANDROID_EMULATOR_MCP_BIND_ADDR="${mcp_bind_addr}"
+export ANDROID_EMULATOR_MCP_EMULATOR_GRPC_PORT="${mcp_emulator_grpc_port}"
 if [[ -n "${mcp_public_hostname}" ]]; then
   mcp_allowed_hosts="${mcp_allowed_hosts},${mcp_public_hostname}"
 fi
@@ -764,11 +810,11 @@ export INTERACTIVE_OPENAI_LOOP_BIN="${live_access_dir}/openai-android-loop.sh"
 export INTERACTIVE_OPENAI_LOOP_CONFIG="${openai_loop_dir}/config.json"
 export INTERACTIVE_OPENAI_LOOP_OUTPUT_ROOT="${openai_loop_run_root}"
 export INTERACTIVE_CODEX_OBSERVE_BIN="${live_access_dir}/codex-android-observe.sh"
-export INTERACTIVE_CODEX_DYNAMIC_TOOL_BIN="${live_access_dir}/codex-android-tools.sh"
+export INTERACTIVE_CODEX_DYNAMIC_TOOL_BIN="${codex_dynamic_tool_helper_path}"
 export INTERACTIVE_CODEX_BRIDGE_OUTPUT_ROOT="${codex_bridge_run_root}"
 export INTERACTIVE_CODEX_PROVIDER_MANIFEST="${codex_provider_manifest_path}"
-if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
-  export CODEX_DYNAMIC_TOOL_COMMAND="${live_access_dir}/codex-android-tools.sh"
+if [[ -x "${codex_dynamic_tool_helper_path}" ]]; then
+  export CODEX_DYNAMIC_TOOL_COMMAND="${codex_dynamic_tool_helper_path}"
 else
   unset CODEX_DYNAMIC_TOOL_COMMAND || true
 fi
@@ -776,8 +822,8 @@ echo "Interactive Android session ready"
 echo "Workspace: ${GITHUB_WORKSPACE}"
 echo "Artifacts: ${session_root}"
 echo "MCP health: ${mcp_health_url}"
-if [[ -x "${live_access_dir}/codex-android-tools.sh" ]]; then
-  echo "Codex native dynamic-tool helper: ${live_access_dir}/codex-android-tools.sh"
+if [[ -x "${codex_dynamic_tool_helper_path}" ]]; then
+  echo "Codex native dynamic-tool helper: ${codex_dynamic_tool_helper_path}"
   echo "Codex dynamic-tool command: \${CODEX_DYNAMIC_TOOL_COMMAND}"
   if [[ -f "${codex_provider_manifest_path}" ]]; then
     echo "Codex Android provider manifest: ${codex_provider_manifest_path}"
@@ -888,7 +934,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- timeout minutes: \`${session_timeout_minutes}\`"
     echo "- finish early inside the session with: \`touch dist/interactive-session/finish-session\`"
     echo "- artifacts root: \`${session_root}\`"
-    python3 - <<'PY' "${codex_bridge_status_path}" "${live_access_dir}/codex-android-tools.sh"
+    python3 - <<'PY' "${codex_bridge_status_path}" "${codex_dynamic_tool_helper_path}"
 import json
 import pathlib
 import sys
@@ -909,6 +955,8 @@ if not helper_path.exists():
     raise SystemExit(0)
 
 print("- Codex native dynamic tools: `available`")
+if adapter_revision := status.get("adapter_revision"):
+    print(f"- Codex Android provider revision: `{adapter_revision}`")
 
 specs_status = status.get("dynamic_tool_specs_status", "unavailable")
 if specs_status == "ready":

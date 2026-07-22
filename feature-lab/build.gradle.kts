@@ -8,19 +8,10 @@ plugins {
 android {
     namespace = "com.graciousgazelles.solarlab.feature.lab"
     compileSdk = libs.versions.compileSdk.get().toInt()
-    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
         consumerProguardFiles("consumer-rules.pro")
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-fexceptions", "-frtti")
-            }
-        }
-        shaders {
-            glslcArgs += listOf("-c", "-O")
-        }
     }
 
     buildTypes {
@@ -38,11 +29,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
-    }
 }
 
 kotlin {
@@ -55,7 +41,6 @@ dependencies {
     implementation(project(":core-math"))
     api(project(":core-model"))
     api(project(":core-simulation"))
-    api(project(":render-core"))
     implementation(libs.androidx.core.ktx)
 
     testImplementation(libs.junit)

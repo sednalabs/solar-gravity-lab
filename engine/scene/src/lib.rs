@@ -1,5 +1,7 @@
 use solarlab_data::Digest;
-use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
+use solarlab_domain::{
+    BodyId, CelestialAppearanceFacts, ObserverMode, TimelineSemantics, Vector3d,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ColorRgba {
@@ -18,15 +20,60 @@ pub struct CameraPose {
     pub exposure: f64,
 }
 
+/// Renderer-facing taxonomy for an authoritative body.
+///
+/// This is deliberately separate from the dynamical `BodyClass`: solver roles
+/// and gravitational source mass remain world truth, while this enum carries
+/// the stable visual meaning required by native renderers and client shells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneBodyKind {
+    Star,
+    Planet,
+    DwarfPlanet,
+    Moon,
+    Asteroid,
+    Comet,
+    Tracer,
+    Spacecraft,
+    Custom,
+}
+
+/// Dynamic comet vectors derived from authoritative scene state.
+///
+/// They guide renderer effects only. They are never solver inputs and cannot
+/// feed back into trajectories, mass, forces, or ephemerides.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneCometVisualGuide {
+    pub anti_solar_direction_ws: Vector3d,
+    pub velocity_direction_ws: Vector3d,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneCelestialAppearance {
+    pub facts: CelestialAppearanceFacts,
+    pub comet_visual: Option<SceneCometVisualGuide>,
+}
+
+impl Default for SceneCelestialAppearance {
+    fn default() -> Self {
+        Self {
+            facts: CelestialAppearanceFacts::default(),
+            comet_visual: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneBody {
     pub body_id: BodyId,
     pub display_name: String,
+    pub kind: SceneBodyKind,
     pub position_m: Vector3d,
     pub radius_m: f64,
     pub albedo: ColorRgba,
     pub emissive_luminance: f64,
     pub selected: bool,
+    pub appearance: SceneCelestialAppearance,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -235,8 +282,9 @@ mod tests {
     use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
 
     use super::{
-        CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
-        SceneItemFamily, ScenePacketMetadata, SceneTracer, SceneTrail, SceneTrailFamily,
+        CameraPose, ColorRgba, RenderDiagnostics, RenderScene, SceneBody, SceneBodyKind,
+        SceneCelestialAppearance, SceneDetailBand, SceneItemFamily, ScenePacketMetadata,
+        SceneTracer, SceneTrail, SceneTrailFamily,
     };
 
     #[test]
@@ -263,6 +311,7 @@ mod tests {
             bodies: vec![SceneBody {
                 body_id: BodyId("earth".to_owned()),
                 display_name: "earth".to_owned(),
+                kind: SceneBodyKind::Planet,
                 position_m: Vector3d::default(),
                 radius_m: 6_371_000.0,
                 albedo: ColorRgba {
@@ -273,6 +322,7 @@ mod tests {
                 },
                 emissive_luminance: 0.0,
                 selected: false,
+                appearance: SceneCelestialAppearance::default(),
             }],
             tracers: vec![SceneTracer {
                 tracer_id: "trace-1".to_owned(),

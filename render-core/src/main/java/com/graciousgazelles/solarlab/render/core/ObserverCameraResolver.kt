@@ -14,7 +14,27 @@ data class ObserverCameraTarget(
     val suggestedViewRadiusM: Double,
 )
 
+data class ObserverGestureFocus(
+    val xPx: Float,
+    val yPx: Float,
+)
+
 object ObserverCameraResolver {
+
+    fun resolveGestureFocus(
+        requestedXPx: Float,
+        requestedYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+        observerMode: ObserverMode,
+    ): ObserverGestureFocus = if (observerMode == ObserverMode.FREE) {
+        ObserverGestureFocus(xPx = requestedXPx, yPx = requestedYPx)
+    } else {
+        ObserverGestureFocus(
+            xPx = viewportWidthPx.coerceAtLeast(1) * 0.5f,
+            yPx = viewportHeightPx.coerceAtLeast(1) * 0.5f,
+        )
+    }
 
     fun resolveCameraTarget(
         frame: RenderSceneFrame,

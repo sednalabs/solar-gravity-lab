@@ -56,10 +56,6 @@ on:
       - "gradle/**"
   workflow_dispatch:
     inputs:
-      ref:
-        description: Branch, tag, or commit to validate
-        required: false
-        type: string
       profile:
         description: Validation profile
         required: true
@@ -109,8 +105,7 @@ on:
         options:
           - auto
           - shell-v2
-          - stage-first-mirror-off
-          - stage-first-mirror-on
+          - stage-first-runtime
         default: auto
       android_artifact_mode:
         description: Android artifact capture mode
@@ -138,7 +133,7 @@ on:
         default: disabled
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -150,7 +145,7 @@ env:
   ANDROID_AVD_NAME: pixel_7_api35_google_apis_x86_64
   ANDROID_AVD_CACHE_VERSION: v3
   ANDROID_SDK_COMPONENT_CACHE_VERSION: v1
-  ANDROID_RUST_TOOLCHAIN_CACHE_VERSION: v1
+  ANDROID_RUST_TOOLCHAIN_CACHE_VERSION: v2
   ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
   ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
   ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
@@ -208,24 +203,18 @@ jobs:
         id: checkout_ref
         shell: bash
         env:
-          INPUT_REF: ${{ inputs.ref }}
-          EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
-          FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
 
-          checkout_ref="$INPUT_REF"
-          if [[ -z "$checkout_ref" && "$EVENT_NAME" == 'pull_request' ]]; then
-            checkout_ref="$EVENT_SHA"
+          if [[ -z "$EVENT_SHA" ]]; then
+            echo "github.sha was empty; cannot resolve a trusted checkout target." >&2
+            exit 1
           fi
-          if [[ -z "$checkout_ref" ]]; then
-            checkout_ref="$FALLBACK_REF"
-          fi
-          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=${EVENT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout workflow ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -275,6 +264,12 @@ jobs:
             echo "head_sha=${head_sha}"
             echo "before_sha=${before_sha}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify Android Rust cache key isolation
+        run: python3 .github/scripts/test_rust_android_toolchain_cache_key.py
+
+      - name: Verify Rust JNI R8 keep-rule coverage
+        run: python3 .github/scripts/test_prerelease_jni_r8_contract.py
 
       - name: Resolve prior validation evidence
         id: prior_evidence
@@ -419,18 +414,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           ref: ${{ needs.metadata.outputs.checkout_ref }}
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Restore standalone Gradle cache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
@@ -447,7 +442,7 @@ jobs:
           git status --short
 
       - name: Upload wrapper artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gradle-wrapper-${{ github.run_id }}
           if-no-files-found: error
@@ -460,21 +455,20 @@ jobs:
       - name: Commit wrapper files back to branch
         if: ${{ inputs.write_wrapper }}
         shell: bash
+        env:
+          EVENT_REF: ${{ github.ref }}
+          EVENT_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          checkout_ref='${{ needs.metadata.outputs.checkout_ref }}'
-          if [[ "$checkout_ref" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Refuses to push wrapper files back to a detached SHA ref: ${checkout_ref}" >&2
+          if [[ "$EVENT_REF" != refs/heads/* ]]; then
+            echo "Refuses to push wrapper files back to non-branch ref: ${EVENT_REF}" >&2
             exit 1
           fi
 
-          branch_name="$checkout_ref"
-          if [[ "$branch_name" == refs/heads/* ]]; then
-            branch_name="${branch_name#refs/heads/}"
-          fi
-          if [[ "$branch_name" == refs/tags/* ]]; then
-            echo "Refuses to push wrapper files back to a tag ref: ${checkout_ref}" >&2
+          branch_name="$EVENT_REF_NAME"
+          if [[ -z "$branch_name" ]]; then
+            echo "github.ref_name was empty; cannot resolve wrapper push branch." >&2
             exit 1
           fi
 
@@ -496,10 +490,11 @@ jobs:
     needs: metadata
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: Validate parity matrix schema
         shell: bash
@@ -516,10 +511,11 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
@@ -563,10 +559,11 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
@@ -610,10 +607,11 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
@@ -648,7 +646,7 @@ jobs:
 
       - name: Upload Arm64 ISA proof artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: arm64-isa-proof-${{ github.run_id }}
           if-no-files-found: error
@@ -662,10 +660,11 @@ jobs:
     if: ${{ needs.metadata.outputs.arm64_capability_census == 'true' }}
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: Collect hosted Arm64 capability census
         shell: bash
@@ -685,7 +684,7 @@ jobs:
 
       - name: Upload Arm64 capability census artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: arm64-capability-census-${{ github.run_id }}
           if-no-files-found: error
@@ -700,10 +699,11 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
@@ -747,10 +747,11 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
@@ -806,10 +807,11 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: Initialize Android unit lane timing
         id: android_unit_timing
@@ -818,12 +820,12 @@ jobs:
           set -euo pipefail
           echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
@@ -884,7 +886,7 @@ jobs:
           )
           ./gradlew -p clients/android \
             :app:testDebugUnitTest \
-            :feature-lab:testDebugUnitTest \
+            :android-vulkan-renderer:testDebugUnitTest \
             :render-core:test \
             :core-math:test \
             :core-model:test \
@@ -954,19 +956,19 @@ jobs:
 
       - name: Upload Android unit artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: android-unit-${{ github.run_id }}
           if-no-files-found: warn
           path: |
             clients/android/app/build/reports/tests/**
-            feature-lab/build/reports/tests/**
+            render/android-vulkan/build/reports/tests/**
             render-core/build/reports/tests/**
             core-math/build/reports/tests/**
             core-model/build/reports/tests/**
             core-simulation/build/reports/tests/**
             clients/android/app/build/test-results/**
-            feature-lab/build/test-results/**
+            render/android-vulkan/build/test-results/**
             render-core/build/test-results/**
             core-math/build/test-results/**
             core-model/build/test-results/**
@@ -994,10 +996,11 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: Initialize Android lint lane timing
         id: android_lint_timing
@@ -1006,12 +1009,12 @@ jobs:
           set -euo pipefail
           echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
@@ -1070,7 +1073,7 @@ jobs:
           mapfile -t gradle_configuration_cache_args < <(
             bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )
-          ./gradlew -p clients/android :app:lintDebug :feature-lab:lintDebug \
+          ./gradlew -p clients/android :app:lintDebug :android-vulkan-renderer:lintDebug \
             "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/android-lint.log
           phase_end="$(date +%s)"
@@ -1136,7 +1139,7 @@ jobs:
 
       - name: Upload Android lint artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: android-lint-${{ github.run_id }}
           if-no-files-found: warn
@@ -1145,10 +1148,10 @@ jobs:
             clients/android/app/build/reports/lint-results-*.xml
             clients/android/app/build/reports/lint-results-*.txt
             clients/android/app/build/intermediates/lint_intermediate_text_report/**
-            feature-lab/build/reports/lint-results-*.html
-            feature-lab/build/reports/lint-results-*.xml
-            feature-lab/build/reports/lint-results-*.txt
-            feature-lab/build/intermediates/lint_intermediate_text_report/**
+            render/android-vulkan/build/reports/lint-results-*.html
+            render/android-vulkan/build/reports/lint-results-*.xml
+            render/android-vulkan/build/reports/lint-results-*.txt
+            render/android-vulkan/build/intermediates/lint_intermediate_text_report/**
             dist/gradle/**
             dist/sccache/**
 
@@ -1156,7 +1159,7 @@ jobs:
     name: Android shell emulator smoke (${{ matrix.validation_mode }})
     needs: metadata
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || (vars.SGL_ANDROID_HEAVY_RUNS_ON_JSON || '"ubuntu-24.04"')) }}
+    runs-on: ubuntu-24.04
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
@@ -1171,10 +1174,11 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.metadata.outputs.android_shell_matrix) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: Initialize Android lane timing
         id: android_timing
@@ -1183,12 +1187,12 @@ jobs:
           set -euo pipefail
           echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
           cache-cleanup: on-success
@@ -1214,7 +1218,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.android/avd/*
@@ -1223,7 +1227,7 @@ jobs:
 
       - name: Restore Android SDK emulator packages cache
         id: android-sdk-components-cache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
@@ -1232,7 +1236,7 @@ jobs:
 
       - name: Seed Android emulator snapshot
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -1290,7 +1294,6 @@ jobs:
           {
             echo "validation_mode=${{ matrix.validation_mode }}"
             echo "debug_stage_first_client=${{ matrix.debug_stage_first_client }}"
-            echo "stage_first_runtime_mirror=${{ matrix.stage_first_runtime_mirror }}"
             echo "preferred_gpu_backend=${{ matrix.preferred_gpu_backend }}"
             echo "hosted_debug_profile=${{ matrix.hosted_debug_profile }}"
           } >> "$GITHUB_OUTPUT"
@@ -1309,7 +1312,6 @@ jobs:
             :app:assembleDebug \
             :app:assembleDebugAndroidTest \
             -Psolarlab.debugStageFirstClient=${{ steps.android_mode.outputs.debug_stage_first_client }} \
-            -Psolarlab.stageFirstRuntimeMirror=${{ steps.android_mode.outputs.stage_first_runtime_mirror }} \
             -Psolarlab.preferredGpuBackend=${{ steps.android_mode.outputs.preferred_gpu_backend }} \
             -Psolarlab.hostedDebugProfile=${{ steps.android_mode.outputs.hosted_debug_profile }} \
             "${gradle_configuration_cache_args[@]}" \
@@ -1329,7 +1331,7 @@ jobs:
 
       - name: Run connected Android shell smoke and continuity tests
         id: android_connected_tests
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -1347,7 +1349,6 @@ jobs:
           ANDROID_VALIDATION_MODE: ${{ steps.android_mode.outputs.validation_mode }}
           GRADLE_CONFIGURATION_CACHE_MODE: ${{ env.GRADLE_CONFIGURATION_CACHE_MODE }}
           ORG_GRADLE_PROJECT_solarlab_debugStageFirstClient: ${{ steps.android_mode.outputs.debug_stage_first_client }}
-          ORG_GRADLE_PROJECT_solarlab_stageFirstRuntimeMirror: ${{ steps.android_mode.outputs.stage_first_runtime_mirror }}
           ORG_GRADLE_PROJECT_solarlab_preferredGpuBackend: ${{ steps.android_mode.outputs.preferred_gpu_backend }}
           ORG_GRADLE_PROJECT_solarlab_hostedDebugProfile: ${{ steps.android_mode.outputs.hosted_debug_profile }}
 
@@ -1394,7 +1395,6 @@ jobs:
             echo "## android-shell timings"
             echo "- validation mode: \`${{ steps.android_mode.outputs.validation_mode }}\`"
             echo "- stage-first client: \`${{ steps.android_mode.outputs.debug_stage_first_client }}\`"
-            echo "- stage-first runtime mirror: \`${{ steps.android_mode.outputs.stage_first_runtime_mirror }}\`"
             echo "- preferred GPU backend: \`${{ steps.android_mode.outputs.preferred_gpu_backend }}\`"
             echo "- hosted debug profile: \`${{ steps.android_mode.outputs.hosted_debug_profile }}\`"
             echo "- sdk setup: \`${{ steps.android_sdk_install.outputs.sdk_setup_seconds || 'n/a' }}s\`"
@@ -1435,7 +1435,7 @@ jobs:
 
       - name: Upload Android shell artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: android-shell-${{ matrix.validation_mode }}-${{ github.run_id }}
           if-no-files-found: warn
@@ -1466,14 +1466,15 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 1
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: Download Android shell artifacts for summary enrichment
         if: ${{ needs.android-shell.result != 'skipped' }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: android-shell-*-${{ github.run_id }}
           path: dist/android-shell-artifacts
@@ -1530,14 +1531,14 @@ jobs:
         run: cat dist/validation-summary/validation-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload validation summary artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: validation-summary
           if-no-files-found: error
           path: dist/validation-summary/**
 
       - name: Upload CI proof artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ci-proof-v1-validation-lab-pr${{ github.event.pull_request.number || 'none' }}-${{ needs.metadata.outputs.base_sha || 'no-base' }}-${{ needs.metadata.outputs.head_sha }}-${{ needs.metadata.outputs.profile }}-${{ needs.metadata.outputs.lane_set }}
           if-no-files-found: error

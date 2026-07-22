@@ -1,8 +1,8 @@
 # Android Acceleration Truth
 
-Solar Gravity Lab has two separate Android truths that must not be mixed up:
+Solar Gravity Lab separates renderer execution from simulation authority:
 
-- The stage is a native Vulkan renderer. The stage-first runtime mirror should
+- The stage is a native Vulkan renderer. The stage-first Rust runtime should
   bind the Rust runtime session to `SolarSystemRenderHostView`, which hosts the
   native Vulkan surface.
 - The Rust runtime remains the authority for world state. GPU paths may assist
@@ -96,11 +96,11 @@ these fields separately:
 
 ## Validation Expectations
 
-`validation-lab` should use `android_validation_mode=stage-first-mirror-on` as
-the canonical hosted Android proof for the runtime mirror. That lane must:
+`validation-lab` should use `android_validation_mode=stage-first-runtime` as
+the canonical hosted Android proof for the Rust stage. That lane must:
 
 - build with `solarlab.preferredGpuBackend=vulkan`;
-- enter the stage-first runtime mirror, not only the local sandbox;
+- enter the Rust-backed stage-first client;
 - bind a nonzero native runtime session handle;
 - assert that backend summary telemetry includes CPU and GPU truth; and
 - preserve logs/screenshots as the shared audit trail.
@@ -115,8 +115,8 @@ For capability inventory work that does not need solver tests, dispatch
 same schema used by real-device census runs while making clear that a hosted
 runner is not Galaxy S25 Ultra proof.
 
-Use the local sandbox lane only for local authoring surface checks. Do not use a
-local sandbox smoke as proof that the accelerated runtime mirror is healthy.
+There is no local Android simulation lane. Shell-only proof must not be used as
+evidence that the accelerated Rust stage is healthy.
 
 See [`Android Arm64 Capability Census`](android-arm64-capability-census.md) for
 the census schema and S25-specific proof contract, and

@@ -26,6 +26,10 @@ SCHEMA_VERSION = "2026-04-27.1"
 AT_HWCAP = 16
 ADB_SERIAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 AT_HWCAP2 = 26
+ADB_SHELL_COMMANDS = {
+    "cat_cpuinfo": ("cat", "/proc/cpuinfo"),
+    "getprop": ("getprop",),
+}
 
 FEATURE_ALIASES = {
     "asimd": "neon",
@@ -235,52 +239,42 @@ class CommandFailure(RuntimeError):
     """Raised when a required device-census command cannot collect evidence."""
 
 
-def run_command(
-    command: list[str],
-    timeout: int = 30,
-    *,
-    required: bool = False,
-    description: str | None = None,
-) -> str:
+def adb_command(serial: str, command_name: str, *, required: bool = False) -> str:
+    command = ADB_SHELL_COMMANDS.get(command_name)
+    if command is None:
+        raise CommandFailure(f"Unsupported adb census command: {command_name}")
+    env = None
+    if serial:
+        env = os.environ.copy()
+        env["ANDROID_SERIAL"] = serial
+    argv = ["adb", "shell", *command]
+    description = f"adb shell {' '.join(command)}"
     try:
         result = subprocess.run(
-            command,
+            argv,
             check=False,
             capture_output=True,
+            env=env,
             text=True,
-            timeout=timeout,
+            timeout=30,
         )
     except FileNotFoundError as exc:
         if required:
-            label = description or " ".join(command)
-            raise CommandFailure(f"Required command not found for {label}: {command[0]}") from exc
+            raise CommandFailure(f"Required command not found for {description}: adb") from exc
         return ""
     except subprocess.TimeoutExpired as exc:
         if required:
-            label = description or " ".join(command)
-            raise CommandFailure(f"Required command timed out for {label}") from exc
+            raise CommandFailure(f"Required command timed out for {description}") from exc
         return ""
     if result.returncode != 0:
         if required:
-            label = description or " ".join(command)
             stderr = result.stderr.strip() or result.stdout.strip() or "no output"
             raise CommandFailure(
-                f"Required command failed for {label} "
+                f"Required command failed for {description} "
                 f"(exit {result.returncode}): {stderr}"
             )
         return ""
     return result.stdout
-
-
-def adb_command(serial: str, command: str, *, required: bool = False) -> str:
-    base = ["adb"]
-    if serial:
-        base += ["-s", serial]
-    return run_command(
-        base + ["shell", command],
-        required=required,
-        description=f"adb shell {command}",
-    )
 
 
 def validate_adb_serial(serial: str) -> str:
@@ -431,7 +425,7 @@ def build_matrix(evidence: Iterable[Evidence]) -> list[dict[str, object]]:
 def collect_census(args: argparse.Namespace) -> dict[str, object]:
     serial = validate_adb_serial(args.adb_serial) if args.adb_serial else None
     if serial:
-        cpuinfo = adb_command(serial, "cat /proc/cpuinfo", required=True)
+        cpuinfo = adb_command(serial, "cat_cpuinfo", required=True)
         auxv_values: dict[str, int | None] = {"AT_HWCAP": None, "AT_HWCAP2": None}
         auxv_items: list[Evidence] = []
     else:

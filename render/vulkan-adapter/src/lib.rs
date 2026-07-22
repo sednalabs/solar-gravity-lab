@@ -1,9 +1,13 @@
 #![allow(clippy::cast_possible_truncation)]
 
-use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
+use solarlab_domain::{
+    AppearanceProvenance, BodyId, CelestialMaterialFamily, ObserverMode, TimelineSemantics,
+    Vector3d,
+};
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
-    ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail, SceneTrailFamily,
+    SceneBodyKind, ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
+    SceneTrailFamily,
 };
 use std::collections::HashSet;
 
@@ -76,11 +80,48 @@ pub struct VulkanCameraPacket {
 pub struct VulkanBodyInstance {
     pub body_id: BodyId,
     pub display_name: String,
+    pub kind: SceneBodyKind,
     pub position_from_origin_m: PackedVec3,
     pub radius_m: f32,
     pub albedo: PackedColor,
     pub emissive_luminance: f32,
     pub selected: bool,
+    pub appearance: VulkanCelestialAppearance,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VulkanRingSystemAppearance {
+    pub inner_radius_m: f32,
+    pub outer_radius_m: f32,
+    pub plane_normal_ws: PackedVec3,
+    pub optical_depth: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VulkanAtmosphereAppearance {
+    pub outer_radius_m: f32,
+    pub optical_density: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VulkanCometAppearance {
+    pub nucleus_radius_m: f32,
+    pub coma_radius_m: f32,
+    pub dust_tail_length_m: f32,
+    pub ion_tail_length_m: f32,
+    pub anti_solar_direction_ws: PackedVec3,
+    pub velocity_direction_ws: PackedVec3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VulkanCelestialAppearance {
+    pub material: CelestialMaterialFamily,
+    pub provenance: AppearanceProvenance,
+    pub north_pole_ws: PackedVec3,
+    pub reference_meridian_radians: f32,
+    pub ring_system: Option<VulkanRingSystemAppearance>,
+    pub atmosphere: Option<VulkanAtmosphereAppearance>,
+    pub comet: Option<VulkanCometAppearance>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -370,11 +411,60 @@ fn adapt_body(body: &SceneBody, frame_origin_m: Vector3d) -> VulkanBodyInstance 
     VulkanBodyInstance {
         body_id: body.body_id.clone(),
         display_name: body.display_name.clone(),
+        kind: body.kind,
         position_from_origin_m: relative_vec(body.position_m, frame_origin_m),
         radius_m: body.radius_m as f32,
         albedo: pack_color(body.albedo),
         emissive_luminance: body.emissive_luminance as f32,
         selected: body.selected,
+        appearance: VulkanCelestialAppearance {
+            material: body.appearance.facts.material,
+            provenance: body.appearance.facts.provenance,
+            north_pole_ws: pack_vec3(body.appearance.facts.orientation.north_pole_ws),
+            reference_meridian_radians: body
+                .appearance
+                .facts
+                .orientation
+                .reference_meridian_radians as f32,
+            ring_system: body.appearance.facts.ring_system.map(|ring| {
+                VulkanRingSystemAppearance {
+                    inner_radius_m: ring.inner_radius_m as f32,
+                    outer_radius_m: ring.outer_radius_m as f32,
+                    plane_normal_ws: pack_vec3(ring.plane_normal_ws),
+                    optical_depth: ring.optical_depth as f32,
+                }
+            }),
+            atmosphere: body.appearance.facts.atmosphere.map(|atmosphere| {
+                VulkanAtmosphereAppearance {
+                    outer_radius_m: atmosphere.outer_radius_m as f32,
+                    optical_density: atmosphere.optical_density as f32,
+                }
+            }),
+            comet: body.appearance.facts.comet.map(|comet| {
+                let visual = body.appearance.comet_visual.unwrap_or(
+                    solarlab_scene::SceneCometVisualGuide {
+                        anti_solar_direction_ws: Vector3d {
+                            x: 1.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        velocity_direction_ws: Vector3d {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 1.0,
+                        },
+                    },
+                );
+                VulkanCometAppearance {
+                    nucleus_radius_m: comet.nucleus_radius_m as f32,
+                    coma_radius_m: comet.coma_radius_m as f32,
+                    dust_tail_length_m: comet.dust_tail_length_m as f32,
+                    ion_tail_length_m: comet.ion_tail_length_m as f32,
+                    anti_solar_direction_ws: pack_vec3(visual.anti_solar_direction_ws),
+                    velocity_direction_ws: pack_vec3(visual.velocity_direction_ws),
+                }
+            }),
+        },
     }
 }
 
@@ -472,8 +562,8 @@ mod tests {
     use solarlab_domain::{BodyId, ObserverMode, TimelineSemantics, Vector3d};
     use solarlab_scene::{
         CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-        SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneProvenanceRef, SceneTracer,
-        SceneTrail, SceneTrailFamily,
+        SceneBodyKind, SceneDetailBand, SceneItemFamily, ScenePacketMetadata, SceneProvenanceRef,
+        SceneTracer, SceneTrail, SceneTrailFamily,
     };
 
     use super::{
@@ -502,6 +592,7 @@ mod tests {
                 z: 0.0,
             }
         );
+        assert_eq!(packet.body_instances[0].kind, SceneBodyKind::Planet);
         assert_eq!(
             packet.tracer_instances[0].position_from_origin_m,
             PackedVec3 {
@@ -621,6 +712,7 @@ mod tests {
         scene.bodies.push(SceneBody {
             body_id: BodyId("mars".to_owned()),
             display_name: "Mars".to_owned(),
+            kind: SceneBodyKind::Planet,
             position_m: Vector3d {
                 x: 220.0,
                 y: 4.0,
@@ -635,6 +727,7 @@ mod tests {
             },
             emissive_luminance: 0.0,
             selected: false,
+            appearance: solarlab_scene::SceneCelestialAppearance::default(),
         });
         scene.tracers = vec![
             SceneTracer {
@@ -863,6 +956,7 @@ mod tests {
             bodies: vec![SceneBody {
                 body_id: BodyId("earth".to_owned()),
                 display_name: "Earth".to_owned(),
+                kind: SceneBodyKind::Planet,
                 position_m: Vector3d {
                     x: 100.0,
                     y: 10.0,
@@ -877,6 +971,7 @@ mod tests {
                 },
                 emissive_luminance: 0.0,
                 selected: true,
+                appearance: solarlab_scene::SceneCelestialAppearance::default(),
             }],
             tracers: vec![SceneTracer {
                 tracer_id: "trace-1".to_owned(),

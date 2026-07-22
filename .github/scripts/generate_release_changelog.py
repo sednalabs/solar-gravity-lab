@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+PRERELEASE_LINE_RE = r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}"
 
 
 def run_git(args: list[str], cwd: Path = Path(".")) -> str:
@@ -66,8 +67,10 @@ class Version:
 
 
 def parse_prerelease(version_text: str) -> Version:
+    if len(version_text) > 128:
+        raise ValueError("Version text is too long.")
     prerelease_match = re.fullmatch(
-        r"v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)-(?P<line>.+)\.(?P<index>\d+)",
+        rf"v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)-(?P<line>{PRERELEASE_LINE_RE})\.(?P<index>\d+)",
         version_text,
     )
     if prerelease_match:

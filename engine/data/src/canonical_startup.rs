@@ -341,7 +341,7 @@ fn curated_small_body_seed(primary: &CanonicalBodySpec) -> Vec<CanonicalBodySpec
         ),
         spawn_orbiting_body_around_primary(
             "halley",
-            BodyClass::SmallBody,
+            BodyClass::Comet,
             primary,
             2.2e14,
             5_500.0,
@@ -349,7 +349,7 @@ fn curated_small_body_seed(primary: &CanonicalBodySpec) -> Vec<CanonicalBodySpec
         ),
         spawn_orbiting_body_around_primary(
             "encke",
-            BodyClass::SmallBody,
+            BodyClass::Comet,
             primary,
             3.5e13,
             2_400.0,
@@ -357,7 +357,7 @@ fn curated_small_body_seed(primary: &CanonicalBodySpec) -> Vec<CanonicalBodySpec
         ),
         spawn_orbiting_body_around_primary(
             "churyumov-gerasimenko",
-            BodyClass::SmallBody,
+            BodyClass::Comet,
             primary,
             9.98e12,
             2_000.0,
@@ -365,7 +365,7 @@ fn curated_small_body_seed(primary: &CanonicalBodySpec) -> Vec<CanonicalBodySpec
         ),
         spawn_orbiting_body_around_primary(
             "wild-2",
-            BodyClass::SmallBody,
+            BodyClass::Comet,
             primary,
             2.3e13,
             2_000.0,
@@ -708,6 +708,8 @@ impl DeterministicRng {
 
 #[cfg(test)]
 mod tests {
+    use solarlab_domain::BodyClass;
+
     use super::canonical_startup_seed;
 
     #[test]
@@ -722,6 +724,20 @@ mod tests {
         assert!(seed.bodies.iter().any(|body| body.body_id == "halley"));
         assert!(seed.bodies.iter().any(|body| body.body_id == "belt-239"));
         assert!(seed.bodies.iter().any(|body| body.body_id == "oort-95"));
+        assert_eq!(
+            seed.bodies
+                .iter()
+                .find(|body| body.body_id == "halley")
+                .map(|body| &body.body_class),
+            Some(&BodyClass::Comet),
+        );
+        assert_eq!(
+            seed.bodies
+                .iter()
+                .find(|body| body.body_id == "vesta")
+                .map(|body| &body.body_class),
+            Some(&BodyClass::SmallBody),
+        );
     }
 
     #[test]

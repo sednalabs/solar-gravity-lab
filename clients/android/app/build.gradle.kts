@@ -358,10 +358,6 @@ val solarlabDebugStageFirstClient = project.booleanPropertyOrEnv(
     "solarlab.debugStageFirstClient",
     "SOLARLAB_STAGE_FIRST_CLIENT",
 ) ?: true
-val solarlabStageFirstRuntimeMirror = project.booleanPropertyOrEnv(
-    "solarlab.stageFirstRuntimeMirror",
-    "SOLARLAB_STAGE_FIRST_RUNTIME_MIRROR",
-) ?: true
 val solarlabHostedDebugProfile = project.stringPropertyOrEnv(
     "solarlab.hostedDebugProfile",
     "SOLARLAB_HOSTED_DEBUG_PROFILE",
@@ -410,7 +406,6 @@ android {
         buildConfigField("String", "DEV_TELEMETRY_ENDPOINT", solarlabDevTelemetryEndpoint.toBuildConfigStringLiteral())
         buildConfigField("String", "DEV_TELEMETRY_TOKEN", solarlabDevTelemetryToken.toBuildConfigStringLiteral())
         buildConfigField("String", "PREFERRED_GPU_BACKEND", solarlabPreferredGpuBackend.toBuildConfigStringLiteral())
-        buildConfigField("boolean", "STAGE_FIRST_RUNTIME_MIRROR", solarlabStageFirstRuntimeMirror.toString())
         buildConfigField("String", "HOSTED_DEBUG_PROFILE", solarlabHostedDebugProfile.toBuildConfigStringLiteral())
         buildConfigField("boolean", "HOSTED_DEBUG_LITE_MODE", solarlabHostedDebugLiteMode.toString())
 
@@ -427,6 +422,14 @@ android {
         create("prerelease") {
             initWith(getByName("release"))
             matchingFallbacks += listOf("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // initWith copies the release configuration before the release block
+            // below declares its rules, so the installable prerelease must opt in.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             applicationIdSuffix = ".internal"
             signingConfig = signingConfigs.getByName("debug")
             resValue("string", "app_name", "Solar Gravity Lab Dev Preview")
@@ -434,7 +437,8 @@ android {
         }
 
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -467,25 +471,12 @@ android {
     }
 }
 
-val debugVariantNeedsRustRuntime = !solarlabDebugStageFirstClient || solarlabStageFirstRuntimeMirror
-val stageFirstReleaseVariantsNeedRustRuntime = solarlabStageFirstRuntimeMirror
-
-if (debugVariantNeedsRustRuntime) {
-    tasks.matching { task ->
-        task.name == "preDebugBuild" ||
-            task.name == "preDebugAndroidTestBuild"
-    }.configureEach {
-        dependsOn(buildSolarlabNative)
-    }
-}
-
-if (stageFirstReleaseVariantsNeedRustRuntime) {
-    tasks.matching { task ->
-        task.name == "prePrereleaseBuild" ||
-            task.name == "preReleaseBuild"
-    }.configureEach {
-        dependsOn(buildSolarlabNative)
-    }
+tasks.matching { task ->
+    task.name == "mergeDebugJniLibFolders" ||
+        task.name == "mergePrereleaseJniLibFolders" ||
+        task.name == "mergeReleaseJniLibFolders"
+}.configureEach {
+    dependsOn(buildSolarlabNative)
 }
 
 dependencies {
@@ -495,10 +486,11 @@ dependencies {
     implementation(project(":core-model"))
     implementation(project(":core-simulation"))
     implementation(project(":render-core"))
-    implementation(project(":feature-lab"))
+    implementation(project(":android-vulkan-renderer"))
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

@@ -27,7 +27,7 @@ on:
         description: Branch, tag, or commit from sednalabs/android-emulator-mcp
         required: true
         type: string
-        default: 9d8e67ea7195e9b0536f9b76166e68caaa218fc9
+        default: dffcb04ba558e7071507daec6598ca998242cf6a
       mcp_toolkit_rs_ref:
         description: Branch, tag, or commit from GraciousGazelles/toolkits-mcp-toolkit-rs
         required: true
@@ -39,9 +39,8 @@ on:
         type: choice
         options:
           - shell-v2
-          - stage-first-mirror-off
-          - stage-first-mirror-on
-        default: stage-first-mirror-on
+          - stage-first-runtime
+        default: stage-first-runtime
       interactive_debug_profile:
         description: Runtime posture for the hosted debug session
         required: true
@@ -89,6 +88,7 @@ env:
   ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
   ANDROID_NDK_VERSION: "27.3.13750724"
   ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  INTERACTIVE_EMULATOR_GRPC_PORT: "8554"
   INTERACTIVE_MCP_BIND_ADDR: 127.0.0.1:9526
   INTERACTIVE_DEBUG_TTYD_PORT: "7681"
   INTERACTIVE_SESSION_ROOT: dist/interactive-session
@@ -115,7 +115,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -158,23 +158,15 @@ jobs:
           fi
 
           debug_stage_first_client="true"
-          stage_first_runtime_mirror="true"
           preferred_gpu_backend="vulkan"
           hosted_debug_lite_mode="false"
           case "${INPUT_VALIDATION_MODE}" in
             shell-v2)
               debug_stage_first_client="false"
-              stage_first_runtime_mirror="false"
               preferred_gpu_backend="none"
               ;;
-            stage-first-mirror-off)
+            stage-first-runtime)
               debug_stage_first_client="true"
-              stage_first_runtime_mirror="false"
-              preferred_gpu_backend="none"
-              ;;
-            stage-first-mirror-on)
-              debug_stage_first_client="true"
-              stage_first_runtime_mirror="true"
               preferred_gpu_backend="vulkan"
               ;;
             *)
@@ -225,7 +217,6 @@ jobs:
             echo "session_timeout_minutes=${session_timeout_minutes}"
             echo "keep_session_on_failure=${INPUT_KEEP_SESSION_ON_FAILURE}"
             echo "debug_stage_first_client=${debug_stage_first_client}"
-            echo "stage_first_runtime_mirror=${stage_first_runtime_mirror}"
             echo "preferred_gpu_backend=${preferred_gpu_backend}"
             echo "hosted_debug_lite_mode=${hosted_debug_lite_mode}"
           } >> "${GITHUB_OUTPUT}"
@@ -237,13 +228,13 @@ jobs:
           set -euo pipefail
           echo "session_start_epoch=$(date +%s)" >> "${GITHUB_OUTPUT}"
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         with:
           cache-read-only: true
@@ -269,7 +260,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.android/avd/*
@@ -277,7 +268,7 @@ jobs:
           key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
 
       - name: Restore Android SDK emulator packages cache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
@@ -286,7 +277,7 @@ jobs:
 
       - name: Seed Android emulator snapshot
         if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -299,7 +290,7 @@ jobs:
           disable-animations: false
           script: echo "Generated AVD snapshot for ${ANDROID_AVD_NAME}."
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - uses: ./.github/actions/rust-shared-cache
         with:
@@ -370,7 +361,7 @@ jobs:
           echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
 
       - name: Checkout android-emulator-mcp workspace
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: sednalabs/android-emulator-mcp
           ref: ${{ steps.session_plan.outputs.android_emulator_mcp_ref }}
@@ -379,7 +370,7 @@ jobs:
           path: mcp-workspace/servers/android-emulator-mcp
 
       - name: Checkout mcp-toolkit-rs workspace
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: GraciousGazelles/toolkits-mcp-toolkit-rs
           ref: ${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}
@@ -410,13 +401,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "server_sha=$(git -C mcp-workspace/servers/android-emulator-mcp rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-          echo "toolkit_sha=$(git -C mcp-workspace/toolkits/mcp-toolkit-rs rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-          echo "rustc_release=$(rustc -Vv | awk '/^release: / { print $2 }')" >> "${GITHUB_OUTPUT}"
+          {
+            echo "server_sha=$(git -C mcp-workspace/servers/android-emulator-mcp rev-parse HEAD)"
+            echo "toolkit_sha=$(git -C mcp-workspace/toolkits/mcp-toolkit-rs rev-parse HEAD)"
+            echo "rustc_release=$(rustc -Vv | awk '/^release: / { print $2 }')"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Restore android-emulator-mcp target cache
         id: interactive_mcp_target_cache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ${{ steps.stage_mcp_workspace.outputs.server_dir }}/target
           key: interactive-mcp-target-${{ runner.os }}-${{ runner.arch }}-${{ steps.interactive_mcp_cache.outputs.rustc_release }}-${{ steps.interactive_mcp_cache.outputs.server_sha }}-${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}
@@ -465,7 +458,6 @@ jobs:
           ./gradlew -p clients/android \
             :app:assembleDebug \
             -Psolarlab.debugStageFirstClient=${{ steps.session_plan.outputs.debug_stage_first_client }} \
-            -Psolarlab.stageFirstRuntimeMirror=${{ steps.session_plan.outputs.stage_first_runtime_mirror }} \
             -Psolarlab.preferredGpuBackend=${{ steps.session_plan.outputs.preferred_gpu_backend }} \
             -Psolarlab.hostedDebugProfile=${{ steps.session_plan.outputs.interactive_debug_profile }}
           phase_end="$(date +%s)"
@@ -548,6 +540,13 @@ jobs:
             } >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Validate android-emulator-mcp provider contracts
+        shell: bash
+        working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -- --test-threads=1
+
       - name: Build android-emulator-mcp release binary
         id: build_mcp
         shell: bash
@@ -568,12 +567,13 @@ jobs:
             echo "- Android build setup: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- Rust Android toolchain: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- android-emulator-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
+            echo "- android-emulator-mcp provider contracts: \`passed\`"
             echo "- android-emulator-mcp build completed: \`true\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Run hosted interactive Android session
         id: interactive_session
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
         with:
           api-level: 35
           arch: x86_64
@@ -582,7 +582,7 @@ jobs:
           avd-name: ${{ env.ANDROID_AVD_NAME }}
           emulator-boot-timeout: 1200
           force-avd-creation: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' && 'false' || 'true' }}
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -grpc ${{ env.INTERACTIVE_EMULATOR_GRPC_PORT }} -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: bash .github/scripts/run_interactive_android_session.sh
         env:
@@ -591,6 +591,7 @@ jobs:
           INTERACTIVE_APP_PACKAGE: ${{ env.INTERACTIVE_APP_PACKAGE }}
           INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
           INTERACTIVE_MCP_WORKSPACE_DIR: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
+          INTERACTIVE_MCP_ADAPTER_REVISION: ${{ steps.interactive_mcp_cache.outputs.server_sha }}
           INTERACTIVE_CLOUDFLARED_BIN: cloudflared
           INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
           INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
@@ -598,6 +599,7 @@ jobs:
           INTERACTIVE_MCP_PUBLIC_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_MCP_HOSTNAME }}
           INTERACTIVE_SESSION_TIMEOUT_MINUTES: ${{ steps.session_plan.outputs.session_timeout_minutes }}
           INTERACTIVE_KEEP_SESSION_ON_FAILURE: ${{ steps.session_plan.outputs.keep_session_on_failure }}
+          INTERACTIVE_EMULATOR_GRPC_PORT: ${{ env.INTERACTIVE_EMULATOR_GRPC_PORT }}
           INTERACTIVE_MCP_BIND_ADDR: ${{ env.INTERACTIVE_MCP_BIND_ADDR }}
           INTERACTIVE_SESSION_GITHUB_REPOSITORY: ${{ github.repository }}
           INTERACTIVE_SESSION_GITHUB_TOKEN: ${{ github.token }}
@@ -639,7 +641,7 @@ jobs:
 
       - name: Upload interactive session artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: interactive-android-session-${{ github.run_id }}
           if-no-files-found: error

@@ -342,8 +342,8 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val scaleHandled = scaleGestureDetector.onTouchEvent(event)
-        val gestureHandled = gestureDetector.onTouchEvent(event)
+        scaleGestureDetector.onTouchEvent(event)
+        gestureDetector.onTouchEvent(event)
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -372,7 +372,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             }
         }
 
-        return scaleHandled || gestureHandled || true
+        return true
     }
 
     /**
@@ -834,7 +834,7 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     ) {
         if (trail.points.size < 2) return
         val path = Path()
-        var plottedPointCount = 0
+        var hasDrawableSegment = false
         var previousScreenPoint: ScreenPoint? = null
         var lastScreenPoint: ScreenPoint? = null
         trail.points.forEach { point ->
@@ -847,16 +847,17 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
             if (!sx.isFinite() || !sy.isFinite()) {
                 return@forEach
             }
-            if (plottedPointCount == 0) {
+            val previousPoint = lastScreenPoint
+            if (previousPoint == null) {
                 path.moveTo(sx, sy)
             } else {
                 path.lineTo(sx, sy)
+                hasDrawableSegment = true
             }
-            plottedPointCount++
-            previousScreenPoint = lastScreenPoint
+            previousScreenPoint = previousPoint
             lastScreenPoint = ScreenPoint(x = sx, y = sy)
         }
-        if (plottedPointCount < 2) return
+        if (!hasDrawableSegment) return
         val rankEmphasis = highlightRank?.let { rank ->
             when (rank) {
                 0 -> 1f
@@ -1623,24 +1624,21 @@ class VulkanPacketRenderSurfaceView @JvmOverloads constructor(
     private fun selectOverheadProjectionPlane(frame: RenderFrame): ProjectionPlane {
         var ySpread = 0f
         var zSpread = 0f
-        var sampleCount = 0
-        frame.bodies.forEach { body ->
-            if (!body.x.isFinite()) {
-                return@forEach
-            }
+        val finiteBodies = frame.bodies.filter { body -> body.x.isFinite() }
+        if (finiteBodies.isEmpty()) {
+            return ProjectionPlane.XZ
+        }
+        finiteBodies.forEach { body ->
             if (body.y.isFinite()) {
                 ySpread += abs(body.y)
             }
             if (body.z.isFinite()) {
                 zSpread += abs(body.z)
             }
-            sampleCount++
         }
-        if (sampleCount == 0) {
-            return ProjectionPlane.XZ
-        }
-        val meanYSpread = ySpread / sampleCount.toFloat()
-        val meanZSpread = zSpread / sampleCount.toFloat()
+        val sampleCount = finiteBodies.size.toFloat()
+        val meanYSpread = ySpread / sampleCount
+        val meanZSpread = zSpread / sampleCount
         return if (meanZSpread > meanYSpread * 1.5f) {
             ProjectionPlane.XZ
         } else {

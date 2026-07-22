@@ -33,10 +33,17 @@ Seam-level behavior expectations:
   - Session handles: create, use, then destroy.
   - Packet handles: export, read buffer views, then release explicitly.
 - FFI ABI boundary:
-  - `SOLARLAB_V2_ABI_VERSION` is currently `10`.
-  - ABI 10 adds explicit spawn-body source mass through
+  - `SOLARLAB_V2_ABI_VERSION` is currently `12`.
+  - ABI 10 added explicit spawn-body source mass through
     `SlSessionCommand.body_source_mass_kg`; negative or non-finite values fall
     back to the runtime's class-based default for compatibility.
+  - ABI 11 adds the explicit `SL_BODY_CLASS_COMET` domain class and the stable
+    renderer-facing `SlSceneBodyKind` field to `SlVulkanBodyInstance`; clients
+    must use the packet stride supplied by the ABI view and decode the new
+    144-byte body layout.
+  - ABI 12 adds the typed celestial material, provenance, orientation, ring,
+    atmosphere, and comet presentation contract to the body packet. The body
+    layout is 244 bytes and retains fixed-width, renderer-neutral fields.
 
 Crates:
 

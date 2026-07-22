@@ -35,14 +35,14 @@ def assert_system_exit_contains(callable_obj, expected_text: str) -> None:
 def main() -> int:
     module = load_download_module()
     manifest = {
-        "android_validation_mode": "stage-first-mirror-on",
+        "android_validation_mode": "stage-first-runtime",
         "interactive_debug_profile": "hosted-debug-lite",
         "preferred_gpu_backend": "vulkan",
     }
 
     module.validate_manifest_matches_request(
         manifest,
-        expected_android_validation_mode="stage-first-mirror-on",
+        expected_android_validation_mode="stage-first-runtime",
         expected_interactive_debug_profile="hosted-debug-lite",
         expected_preferred_gpu_backend="vulkan",
     )
@@ -52,6 +52,8 @@ def main() -> int:
         expected_interactive_debug_profile=None,
         expected_preferred_gpu_backend=None,
     )
+    assert module.validate_repository("sednalabs/solar-gravity-lab") == "sednalabs/solar-gravity-lab"
+    assert module.validate_run_id("123456") == "123456"
 
     assert_system_exit_contains(
         lambda: module.validate_manifest_matches_request(
@@ -65,11 +67,19 @@ def main() -> int:
     assert_system_exit_contains(
         lambda: module.validate_manifest_matches_request(
             manifest,
-            expected_android_validation_mode="stage-first-mirror-on",
+            expected_android_validation_mode="stage-first-runtime",
             expected_interactive_debug_profile="hosted-debug-lite",
             expected_preferred_gpu_backend="none",
         ),
         "preferred_gpu_backend",
+    )
+    assert_system_exit_contains(
+        lambda: module.validate_repository("https://example.com/sednalabs/solar-gravity-lab"),
+        "Invalid GitHub repository",
+    )
+    assert_system_exit_contains(
+        lambda: module.validate_run_id("run-123"),
+        "Invalid workflow run id",
     )
 
     print("interactive build artifact manifest tests passed")

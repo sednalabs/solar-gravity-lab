@@ -16,6 +16,11 @@ predicate ciHelperFile(File file) {
   file.getRelativePath().regexpMatch("\\.github/scripts/.*\\.py")
 }
 
+predicate policyImplementationOrFixture(File file) {
+  file.getRelativePath() = ".github/scripts/inventory_claim_surfaces.py"
+  or file.getRelativePath() = ".github/scripts/test_inventory_claim_surfaces.py"
+}
+
 predicate hasAppendOnlyClaim(File file) {
   exists(StringLiteral literal |
     file = literal.getEnclosingModule().getFile() and
@@ -36,6 +41,10 @@ predicate hasAppendEvidence(File file) {
 }
 
 from File file
-where ciHelperFile(file) and hasAppendOnlyClaim(file) and not hasAppendEvidence(file)
+where
+  ciHelperFile(file) and
+  not policyImplementationOrFixture(file) and
+  hasAppendOnlyClaim(file) and
+  not hasAppendEvidence(file)
 select file,
   "This Python helper claims append-only behavior without recognized append evidence. claim_class=append_only missing_evidence=no_append_only_open_or_write_guard."

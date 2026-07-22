@@ -14,7 +14,7 @@ Concretely:
 - Far thinning now includes a depth slice in the spatial hash so very deep views keep a more stable statistical distribution when orbiting around dense belts or clouds.
 - The renderer now owns an in-process Vulkan pipeline cache so swapchain recreation does not have to cold-build every graphics and compute pipeline from scratch.
 - Shader compilation is requested with optimization enabled from the Android build.
-- Cheap-point and density-point fragments are now circular soft sprites instead of hard square points, billboard sprites have a stronger halo/core falloff, and trails get a small brightness pass.
+- Cheap-point and density-point fragments are circular soft sprites instead of hard square points. Authoritative and near-body rendering now uses GPU-instanced spherical quads, avoiding device point-size ceilings while preserving physical-radius scaling and light-driven 3D shading; trails retain their brightness pass.
 - The stage-first Vulkan surface now requests a high refresh rate on resume when the platform supports it.
 
 ## Intentional limits

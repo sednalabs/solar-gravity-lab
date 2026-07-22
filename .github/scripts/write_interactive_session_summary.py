@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 
 
+SUMMARY_REDACTED_DETAIL = "not this GitHub summary"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Write an interactive Android session summary artifact.")
     parser.add_argument("--workflow", required=True)
@@ -145,7 +148,7 @@ def render_markdown(payload: dict) -> str:
                     "#### Human Terminal",
                     "",
                     f"- status: `{human_terminal.get('status', 'unknown')}`",
-                    f"- hostname: `{human_terminal.get('hostname', 'n/a')}`",
+                    f"- endpoint detail: `{SUMMARY_REDACTED_DETAIL}`",
                     f"- auth mode: `{human_terminal.get('auth_mode', 'n/a')}`",
                 ]
             )
@@ -156,7 +159,7 @@ def render_markdown(payload: dict) -> str:
                     "#### Agent MCP",
                     "",
                     f"- status: `{agent_mcp.get('status', 'unknown')}`",
-                    f"- hostname: `{agent_mcp.get('hostname', 'n/a')}`",
+                    f"- endpoint detail: `{SUMMARY_REDACTED_DETAIL}`",
                     f"- auth mode: `{agent_mcp.get('auth_mode', 'n/a')}`",
                 ]
             )

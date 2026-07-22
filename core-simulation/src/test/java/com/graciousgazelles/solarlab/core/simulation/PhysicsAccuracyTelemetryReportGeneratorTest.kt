@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
+import java.nio.file.Path
 
 class PhysicsAccuracyTelemetryReportGeneratorTest {
 
@@ -161,16 +162,13 @@ class PhysicsAccuracyTelemetryReportGeneratorTest {
 
     @Test
     fun `cli writes json and markdown artifacts`() {
-        val root = Files.createTempDirectory("physics-accuracy-cli-test")
-        val jsonPath = root.resolve("report.json")
-        val markdownPath = root.resolve("report.md")
+        val jsonPath = Path.of("build", "reports", "physics-accuracy", "physics-accuracy-report.json")
+        val markdownPath = Path.of("build", "reports", "physics-accuracy", "physics-accuracy-report.md")
+        Files.deleteIfExists(jsonPath)
+        Files.deleteIfExists(markdownPath)
 
         PhysicsAccuracyTelemetryCli.main(
             arrayOf(
-                "--json-output",
-                jsonPath.toString(),
-                "--markdown-output",
-                markdownPath.toString(),
                 "--run-label",
                 "cli-test",
                 "--step-seconds",

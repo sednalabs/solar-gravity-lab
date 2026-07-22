@@ -125,13 +125,7 @@ object OrbitCameraMath {
         viewportHeightPx: Int,
     ): CameraRay {
         val frame = frame(cameraState, viewportWidthPx, viewportHeightPx)
-        val width = viewportWidthPx.coerceAtLeast(1)
-        val height = viewportHeightPx.coerceAtLeast(1)
-        val normalizedX = ((screenXPx / width.toFloat()) * 2.0) - 1.0
-        val normalizedY = 1.0 - ((screenYPx / height.toFloat()) * 2.0)
-        val focusPlanePoint = frame.centerM +
-            frame.rightM * (normalizedX * frame.halfSpanXM) +
-            frame.upM * (normalizedY * frame.halfSpanYM)
+        val focusPlanePoint = focusPlanePoint(screenXPx, screenYPx, frame, viewportWidthPx, viewportHeightPx)
         return CameraRay(
             originM = focusPlanePoint - frame.forwardM * frame.halfDepthM,
             directionM = frame.forwardM,
@@ -146,12 +140,26 @@ object OrbitCameraMath {
         viewportHeightPx: Int,
     ): Vector3d {
         val frame = frame(cameraState, viewportWidthPx, viewportHeightPx)
-        val width = viewportWidthPx.coerceAtLeast(1)
-        val height = viewportHeightPx.coerceAtLeast(1)
-        val normalizedX = ((screenXPx / width.toFloat()) * 2.0) - 1.0
-        val normalizedY = 1.0 - ((screenYPx / height.toFloat()) * 2.0)
-        return frame.centerM +
-            frame.rightM * (normalizedX * frame.halfSpanXM) +
+        return focusPlanePoint(screenXPx, screenYPx, frame, viewportWidthPx, viewportHeightPx)
+    }
+
+    fun centerForAnchorAtViewportPoint(
+        anchoredWorldPointM: Vector3d,
+        screenXPx: Float,
+        screenYPx: Float,
+        cameraState: CameraState,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ): Vector3d {
+        val frame = frame(cameraState, viewportWidthPx, viewportHeightPx)
+        val (normalizedX, normalizedY) = normalizedViewportCoordinates(
+            screenXPx = screenXPx,
+            screenYPx = screenYPx,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+        )
+        return anchoredWorldPointM -
+            frame.rightM * (normalizedX * frame.halfSpanXM) -
             frame.upM * (normalizedY * frame.halfSpanYM)
     }
 
@@ -181,5 +189,36 @@ object OrbitCameraMath {
             y = snap(safeCamera.centerM.y),
             z = snap(safeCamera.centerM.z),
         )
+    }
+
+    private fun focusPlanePoint(
+        screenXPx: Float,
+        screenYPx: Float,
+        frame: OrbitCameraFrame,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ): Vector3d {
+        val (normalizedX, normalizedY) = normalizedViewportCoordinates(
+            screenXPx = screenXPx,
+            screenYPx = screenYPx,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+        )
+        return frame.centerM +
+            frame.rightM * (normalizedX * frame.halfSpanXM) +
+            frame.upM * (normalizedY * frame.halfSpanYM)
+    }
+
+    private fun normalizedViewportCoordinates(
+        screenXPx: Float,
+        screenYPx: Float,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+    ): Pair<Double, Double> {
+        val width = viewportWidthPx.coerceAtLeast(1)
+        val height = viewportHeightPx.coerceAtLeast(1)
+        val normalizedX = ((screenXPx / width.toFloat()) * 2.0) - 1.0
+        val normalizedY = 1.0 - ((screenYPx / height.toFloat()) * 2.0)
+        return normalizedX to normalizedY
     }
 }

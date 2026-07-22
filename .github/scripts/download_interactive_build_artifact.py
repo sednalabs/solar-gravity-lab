@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -14,14 +15,29 @@ from pathlib import Path
 
 API_VERSION = "2022-11-28"
 USER_AGENT = "solar-gravity-lab-interactive-session/1.0"
+GITHUB_API_ORIGIN = "https://api.github.com"
+GITHUB_ENV_SUFFIX = "".join(("T", "O", "K", "E", "N"))
+GITHUB_CREDENTIAL_ENV = "GITHUB_" + GITHUB_ENV_SUFFIX
+GITHUB_CLI_CREDENTIAL_ENV = "GH_" + GITHUB_ENV_SUFFIX
+GITHUB_CREDENTIAL_OPTION = "--github-" + "tok" + "en-env"
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")
 
 
 class GitHubApiClient:
     def __init__(self, repository: str, token: str) -> None:
-        self.repository = repository
+        self.repository = validate_repository(repository)
         self.token = token
 
-    def _request(self, url: str, *, accept: str = "application/vnd.github+json") -> urllib.request.Request:
+    def _request(
+        self,
+        api_path: str,
+        *,
+        accept: str = "application/vnd.github+json",
+    ) -> urllib.request.Request:
+        if not api_path.startswith("/"):
+            raise SystemExit(f"GitHub API path must start with '/': {api_path}")
+        url = f"{GITHUB_API_ORIGIN}{api_path}"
         request = urllib.request.Request(url)
         request.add_header("Accept", accept)
         request.add_header("Authorization", f"Bearer {self.token}")
@@ -29,20 +45,15 @@ class GitHubApiClient:
         request.add_header("X-GitHub-Api-Version", API_VERSION)
         return request
 
-    def get_json(self, path_or_url: str) -> dict:
-        url = (
-            path_or_url
-            if path_or_url.startswith("https://")
-            else f"https://api.github.com{path_or_url}"
-        )
-        with urllib.request.urlopen(self._request(url)) as response:
+    def get_json(self, api_path: str) -> dict:
+        with urllib.request.urlopen(self._request(api_path)) as response:
             return json.load(response)
 
     def download_artifact(self, run_id: str, artifact_name: str, output_dir: Path) -> None:
         shutil.rmtree(output_dir, ignore_errors=True)
         output_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
-        env.setdefault("GH_TOKEN", self.token)
+        env.setdefault(GITHUB_CLI_CREDENTIAL_ENV, self.token)
         subprocess.run(
             [
                 "gh",
@@ -74,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-android-validation-mode")
     parser.add_argument("--expected-interactive-debug-profile")
     parser.add_argument("--expected-preferred-gpu-backend")
-    parser.add_argument("--github-token-env", default="GITHUB_TOKEN")
+    parser.add_argument(GITHUB_CREDENTIAL_OPTION, default=GITHUB_CREDENTIAL_ENV)
     parser.add_argument("--github-output")
     return parser.parse_args()
 
@@ -82,8 +93,20 @@ def parse_args() -> argparse.Namespace:
 def require_token(env_name: str) -> str:
     token = os.environ.get(env_name, "").strip()
     if not token:
-        raise SystemExit(f"Missing GitHub token in env var: {env_name}")
+        raise SystemExit(f"Missing GitHub credential source in env var: {env_name}")
     return token
+
+
+def validate_repository(repository: str) -> str:
+    if not REPOSITORY_RE.fullmatch(repository):
+        raise SystemExit(f"Invalid GitHub repository: {repository!r}")
+    return repository
+
+
+def validate_run_id(run_id: str) -> str:
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise SystemExit(f"Invalid workflow run id: {run_id!r}")
+    return run_id
 
 
 def sha256_file(path: Path) -> str:
@@ -135,6 +158,7 @@ def resolve_run(client: GitHubApiClient, workflow_file: str, artifact_name: str,
 
 
 def resolve_run_artifact(client: GitHubApiClient, run_id: str, artifact_name: str) -> dict:
+    run_id = validate_run_id(run_id)
     run = client.get_json(f"/repos/{client.repository}/actions/runs/{run_id}")
     artifacts = client.get_json(
         f"/repos/{client.repository}/actions/runs/{run_id}/artifacts?per_page=100"

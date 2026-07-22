@@ -117,7 +117,11 @@ What changed across that pair:
 - Gradle remote cache reused more Android tasks on the warm run
 - `:app:buildSolarlabNative` hit `FROM-CACHE` on the warm run
 
-The next hotspot after those wins was repeated `feature-lab` CMake work, so the rollout now routes CMake compiler invocations through `sccache`, preserves per-job stats in both logs and uploaded artifacts, and installs `sccache` through an in-repo composite action instead of the stale Node 20 upstream action wrapper.
+The next hotspot after those wins was repeated native-renderer CMake work (then
+under `feature-lab`, now under `render/android-vulkan`), so the rollout routes
+CMake compiler invocations through `sccache`, preserves per-job stats in both
+logs and uploaded artifacts, and installs `sccache` through an in-repo
+composite action instead of the stale Node 20 upstream action wrapper.
 
 ### Prerelease + ARM64 proof checkpoint
 

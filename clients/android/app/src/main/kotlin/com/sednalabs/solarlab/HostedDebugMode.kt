@@ -1,6 +1,6 @@
 package com.sednalabs.solarlab
 
-import com.graciousgazelles.solarlab.feature.lab.render.RenderProcessingMode
+import com.sednalabs.solarlab.render.vulkan.RenderProcessingMode
 
 internal object HostedDebugMode {
     val enabled: Boolean = BuildConfig.HOSTED_DEBUG_LITE_MODE

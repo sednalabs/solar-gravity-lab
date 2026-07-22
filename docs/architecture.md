@@ -9,10 +9,14 @@ The canonical product path on this branch is:
 - `engine/ffi/` for the C ABI and opaque-handle boundary
 - `clients/android/` for the Android shell over the Rust runtime
 - `render/vulkan-adapter/` for the first backend adapter crate
+- `render/android-vulkan/` for the Android host, JNI bridge, native Vulkan
+  renderer, and packaged shaders
 
 The root-level Kotlin modules (`app`, `core-*`, `feature-lab`, `render-core`) are
-retained only as legacy/reference material. They are no longer the canonical
-architecture or validation target on this branch.
+retained as legacy/reference or transitional policy material. `feature-lab` is
+not a production dependency. The canonical Android renderer currently consumes
+selected core/render policy types while those contracts migrate toward Rust
+ownership.
 
 ## Canonical boundaries
 
@@ -81,6 +85,10 @@ telemetry can report what is actually active.
 
 The Android client must not grow its own simulation rules.
 
+The shell depends directly on `:android-vulkan-renderer`, sourced from
+`render/android-vulkan/`. The renderer owns lifecycle-bound Vulkan/NDK concerns
+after scene export; it does not own world integration or history.
+
 ## Current rendering boundary
 
 The most important live rendering seam to understand is:
@@ -112,15 +120,15 @@ What is already real:
 
 What is intentionally still early:
 
-- the runtime is still a bring-up slice rather than a full parity replacement for the
-  old Kotlin product line
+- the Rust runtime is the single product world; the removed Kotlin stage world
+  remains only in repository history, not in product wiring
 - the physics surface is now authoritative for the canonical Rust path, but its
   UI-facing product coverage and fixture depth are still growing
 - scene extraction is still bodies-first; richer tracer, trail, and light history
   surfaces remain thin
-- the legacy shell still has packet-decoding and software/debug presentation
-  paths, but the stage-first runtime mirror is the canonical visual surface and
-  hosts the native Vulkan stage directly
+- the shell still has bounded packet decoding for labels and debug presentation,
+  while the stage-first Rust runtime is the canonical visual surface and hosts
+  the native Vulkan stage directly
 - medium/far compute-compaction is restored only as 3D camera-space,
   non-authoritative renderer work; older XY-native compaction notes are
   historical and must not guide new work without translation into the current

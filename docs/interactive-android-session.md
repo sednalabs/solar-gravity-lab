@@ -28,8 +28,8 @@ The workflow:
 
 - boots the existing x64 emulator image on a GitHub-hosted runner
 - builds the app debug APK under `clients/android`
-- checks out and builds the configured Android provider from source inside the
-  job
+- checks out, tests, and builds the configured Android provider from source
+  inside the job
 - checks out the pinned `mcp-toolkit-rs` sibling workspace needed by that
   provider
 - starts the Android provider on loopback only
@@ -49,7 +49,7 @@ The workflow:
 - `android_emulator_mcp_ref`
   - branch, tag, or commit from the maintainer-configured Android provider
     repository
-  - default: `9d8e67ea7195e9b0536f9b76166e68caaa218fc9`
+  - default: `dffcb04ba558e7071507daec6598ca998242cf6a`
 - `mcp_toolkit_rs_ref`
   - branch, tag, or commit from `GraciousGazelles/toolkits-mcp-toolkit-rs`
   - keep this in sync with the provider's path-based toolkit dependency
@@ -57,10 +57,9 @@ The workflow:
 - `android_validation_mode`
   - one of:
     - `shell-v2`
-    - `stage-first-mirror-off`
-    - `stage-first-mirror-on`
-  - `stage-first-mirror-on` builds with `solarlab.preferredGpuBackend=vulkan`
-    so hosted interactive sessions exercise the native runtime mirror with the
+    - `stage-first-runtime`
+  - `stage-first-runtime` builds with `solarlab.preferredGpuBackend=vulkan`
+    so hosted interactive sessions exercise the native Rust stage with the
     same requested GPU intent as the canonical Android validation lane
 - `interactive_debug_profile`
   - one of:
@@ -187,7 +186,7 @@ The Codex-native Android provider evidence is concentrated in:
 - `codex-bridge/provider-manifest-validation.json`, when the selected
   provider ref can validate the emitted manifest
 - `codex-bridge-runs/`
-- `live-access/codex-android-tools.sh`
+- `live-access/codex-android-tools-<provider-sha>.sh`
 
 The provider manifest is Android capability metadata from the selected provider.
 Solar Lab stores and summarizes it as run evidence; it does not define the
@@ -213,7 +212,7 @@ Those files are designed to answer:
 Recommended first run:
 
 1. dispatch the workflow from a `validation/*` branch
-2. keep `android_validation_mode=stage-first-mirror-on`
+2. keep `android_validation_mode=stage-first-runtime`
 3. keep `interactive_debug_profile=hosted-debug-lite`
 4. keep `emulator_boot_strategy=snapshot-cache`
 5. keep the default timeout
@@ -249,11 +248,17 @@ process itself needs to change.
 When the selected Android provider ref includes the native Codex provider CLI,
 the hosted session stages:
 
-- `dist/interactive-session/live-access/codex-android-tools.sh`
+- `dist/interactive-session/live-access/codex-android-tools-<provider-sha>.sh`
 
 Inside the live shell, the session also exports:
 
-- `CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools.sh`
+- `CODEX_DYNAMIC_TOOL_COMMAND=dist/interactive-session/live-access/codex-android-tools-<provider-sha>.sh`
+
+The helper command is content-addressed by the exact Android provider commit.
+Changing provider revisions therefore changes the native command identity as
+well as its contents, preventing a long-lived Codex session from reusing a
+cached adapter executable after a provider upgrade. The exact revision and
+resolved helper path are recorded in `codex-bridge/status.json`.
 
 This is the native harness direction:
 
