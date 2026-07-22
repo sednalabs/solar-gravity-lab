@@ -75,6 +75,7 @@ def is_docs_only(files: list[str]) -> bool:
             ".github/workflows/docs-sanity.yml",
             ".github/scripts/check_markdown_links.py",
             ".github/scripts/check_public_doc_safety.py",
+            ".github/scripts/test_interactive_android_provider_wiring.py",
             ".github/scripts/test_interactive_session_summary.py",
             ".github/scripts/write_interactive_session_summary.py",
         }

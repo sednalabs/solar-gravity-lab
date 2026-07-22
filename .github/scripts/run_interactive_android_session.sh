@@ -83,7 +83,7 @@ mkdir -p \
   "${openai_loop_run_root}" \
   "${codex_bridge_dir}" \
   "${codex_bridge_run_root}" \
-  "${session_root}/android-emulator-mcp-artifacts"
+  "${session_root}/android-computer-use-mcp-artifacts"
 
 touch "${startup_log_dir}/session.log"
 
@@ -728,26 +728,29 @@ if [[ "${emulator_grpc_ready}" != "true" ]]; then
   exit 1
 fi
 
-export ANDROID_EMULATOR_MCP_SDK_ROOT="${ANDROID_SDK_ROOT_DEFAULT:-${ANDROID_SDK_ROOT:-}}"
-export ANDROID_EMULATOR_MCP_ARTIFACT_DIR="${session_root}/android-emulator-mcp-artifacts"
-export ANDROID_EMULATOR_MCP_BIND_ADDR="${mcp_bind_addr}"
-export ANDROID_EMULATOR_MCP_EMULATOR_GRPC_PORT="${mcp_emulator_grpc_port}"
+export ANDROID_COMPUTER_USE_MCP_SDK_ROOT="${ANDROID_SDK_ROOT_DEFAULT:-${ANDROID_SDK_ROOT:-}}"
+export ANDROID_COMPUTER_USE_MCP_ARTIFACT_DIR="${session_root}/android-computer-use-mcp-artifacts"
+export ANDROID_COMPUTER_USE_MCP_BIND_ADDR="${mcp_bind_addr}"
+export ANDROID_COMPUTER_USE_MCP_EMULATOR_GRPC_PORT="${mcp_emulator_grpc_port}"
 if [[ -n "${mcp_public_hostname}" ]]; then
   mcp_allowed_hosts="${mcp_allowed_hosts},${mcp_public_hostname}"
 fi
 
-export ANDROID_EMULATOR_MCP_ALLOWED_HOSTS="${mcp_allowed_hosts}"
-export ANDROID_EMULATOR_MCP_HTTP_ALLOW_RESUME=0
-export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_ROOT="${session_root}"
-export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_APP_PACKAGE="${app_package}"
-export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_APP_ACTIVITY="${app_activity}"
-export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_GITHUB_REPOSITORY="${INTERACTIVE_SESSION_GITHUB_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
-export ANDROID_EMULATOR_MCP_INTERACTIVE_SESSION_GITHUB_TOKEN="${INTERACTIVE_SESSION_GITHUB_TOKEN:-}"
+export ANDROID_COMPUTER_USE_MCP_ALLOWED_HOSTS="${mcp_allowed_hosts}"
+export ANDROID_COMPUTER_USE_MCP_HTTP_ALLOW_RESUME=0
+export ANDROID_COMPUTER_USE_MCP_ENVIRONMENT_ID="${INTERACTIVE_MCP_ENVIRONMENT_ID:?INTERACTIVE_MCP_ENVIRONMENT_ID is required}"
+export ANDROID_COMPUTER_USE_MCP_PROVIDER_INSTANCE_ID="${INTERACTIVE_MCP_PROVIDER_INSTANCE_ID:?INTERACTIVE_MCP_PROVIDER_INSTANCE_ID is required}"
+export ANDROID_COMPUTER_USE_MCP_SESSION_ID="${INTERACTIVE_MCP_SESSION_ID:?INTERACTIVE_MCP_SESSION_ID is required}"
+export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_ROOT="${session_root}"
+export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_APP_PACKAGE="${app_package}"
+export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_APP_ACTIVITY="${app_activity}"
+export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_GITHUB_REPOSITORY="${INTERACTIVE_SESSION_GITHUB_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_GITHUB_TOKEN="${INTERACTIVE_SESSION_GITHUB_TOKEN:-}"
 
-log "Starting android-emulator-mcp on ${mcp_bind_addr}"
-"${mcp_workspace_dir}/target/release/android-emulator-mcp" \
-  > "${startup_log_dir}/android-emulator-mcp.stdout.log" \
-  2> "${startup_log_dir}/android-emulator-mcp.stderr.log" &
+log "Starting android-computer-use-mcp on ${mcp_bind_addr}"
+"${mcp_workspace_dir}/target/release/android-computer-use-mcp" \
+  > "${startup_log_dir}/android-computer-use-mcp.stdout.log" \
+  2> "${startup_log_dir}/android-computer-use-mcp.stderr.log" &
 mcp_pid=$!
 
 health_ready="false"
@@ -763,7 +766,7 @@ if [[ "${health_ready}" != "true" ]]; then
   final_status="failure"
   final_reason="mcp_health_unavailable"
   write_live_status '{"schema_version":1,"status":"failed","reason":"mcp_health_unavailable"}'
-  log "android-emulator-mcp never reported healthy"
+  log "android-computer-use-mcp never reported healthy"
   exit 1
 fi
 
@@ -951,7 +954,7 @@ if status_path.exists():
         status = {}
 
 if not helper_path.exists():
-    print("- Codex native dynamic tools: `unavailable for the selected android-emulator-mcp ref`")
+    print("- Codex native dynamic tools: `unavailable for the selected android-computer-use-mcp ref`")
     raise SystemExit(0)
 
 print("- Codex native dynamic tools: `available`")
@@ -986,17 +989,17 @@ elif manifest_status == "invalid":
 elif manifest_status == "validation_unavailable":
     print("- Codex Android provider manifest: `available; validation unsupported by selected provider ref`")
 else:
-    print("- Codex Android provider manifest: `unavailable for the selected android-emulator-mcp ref`")
+    print("- Codex Android provider manifest: `unavailable for the selected android-computer-use-mcp ref`")
 PY
     if [[ -x "${live_access_dir}/codex-android-observe.sh" ]]; then
       echo "- Codex bridge observe helper: \`available\`"
     else
-      echo "- Codex bridge observe helper: \`unavailable for the selected android-emulator-mcp ref\`"
+      echo "- Codex bridge observe helper: \`unavailable for the selected android-computer-use-mcp ref\`"
     fi
     if [[ -x "${live_access_dir}/openai-android-loop.sh" ]]; then
       echo "- standalone OpenAI helper: \`available (optional API mode)\`"
     else
-      echo "- standalone OpenAI helper: \`unavailable for the selected android-emulator-mcp ref\`"
+      echo "- standalone OpenAI helper: \`unavailable for the selected android-computer-use-mcp ref\`"
     fi
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
@@ -1023,7 +1026,7 @@ while (( SECONDS < deadline )); do
   if ! kill -0 "${mcp_pid}" >/dev/null 2>&1; then
     final_status="failure"
     final_reason="mcp_exited_early"
-    log "android-emulator-mcp exited before timeout"
+    log "android-computer-use-mcp exited before timeout"
     exit 1
   fi
 

@@ -10,7 +10,7 @@ Usage: run_interactive_android_preflight.sh \
   --activity ACTIVITY \
   --out-dir DIR
 
-Proves the in-job android-emulator-mcp health surface plus the app
+Proves the in-job android-computer-use-mcp health surface plus the app
 install-and-launch path before handing control to the interactive session.
 EOF
 }

@@ -23,16 +23,11 @@ on:
         description: Optional artifact name override for the reusable interactive APK bundle
         required: false
         type: string
-      android_emulator_mcp_ref:
-        description: Branch, tag, or commit from sednalabs/android-emulator-mcp
+      android_computer_use_mcp_ref:
+        description: Branch, tag, or commit from sednalabs/android-computer-use-mcp
         required: true
         type: string
-        default: dffcb04ba558e7071507daec6598ca998242cf6a
-      mcp_toolkit_rs_ref:
-        description: Branch, tag, or commit from GraciousGazelles/toolkits-mcp-toolkit-rs
-        required: true
-        type: string
-        default: e5fffbd11480661e588cc03b6590726963986a95
+        default: 5aa8fa9cd4315e3d7f644647da6afbd6a28027cc
       android_validation_mode:
         description: Which Android runtime posture to boot for live debugging
         required: true
@@ -129,8 +124,7 @@ jobs:
           INPUT_BUILD_SOURCE: ${{ inputs.build_source }}
           INPUT_BUILD_RUN_ID: ${{ inputs.build_run_id }}
           INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name }}
-          INPUT_MCP_REF: ${{ inputs.android_emulator_mcp_ref }}
-          INPUT_TOOLKIT_REF: ${{ inputs.mcp_toolkit_rs_ref }}
+          INPUT_MCP_REF: ${{ inputs.android_computer_use_mcp_ref }}
           INPUT_VALIDATION_MODE: ${{ inputs.android_validation_mode }}
           INPUT_DEBUG_PROFILE: ${{ inputs.interactive_debug_profile }}
           INPUT_BOOT_STRATEGY: ${{ inputs.emulator_boot_strategy }}
@@ -209,8 +203,7 @@ jobs:
             echo "build_source=${build_source}"
             echo "build_run_id=${INPUT_BUILD_RUN_ID}"
             echo "artifact_name=${artifact_name}"
-            echo "android_emulator_mcp_ref=${INPUT_MCP_REF}"
-            echo "mcp_toolkit_rs_ref=${INPUT_TOOLKIT_REF}"
+            echo "android_computer_use_mcp_ref=${INPUT_MCP_REF}"
             echo "android_validation_mode=${INPUT_VALIDATION_MODE}"
             echo "interactive_debug_profile=${INPUT_DEBUG_PROFILE}"
             echo "emulator_boot_strategy=${INPUT_BOOT_STRATEGY}"
@@ -360,23 +353,14 @@ jobs:
           bash .github/scripts/install_cloudflared.sh "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
 
-      - name: Checkout android-emulator-mcp workspace
+      - name: Checkout android-computer-use-mcp workspace
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          repository: sednalabs/android-emulator-mcp
-          ref: ${{ steps.session_plan.outputs.android_emulator_mcp_ref }}
-          token: ${{ secrets.SGL_ANDROID_EMULATOR_MCP_READ_TOKEN }}
+          repository: sednalabs/android-computer-use-mcp
+          ref: ${{ steps.session_plan.outputs.android_computer_use_mcp_ref }}
           fetch-depth: 1
-          path: mcp-workspace/servers/android-emulator-mcp
-
-      - name: Checkout mcp-toolkit-rs workspace
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-        with:
-          repository: GraciousGazelles/toolkits-mcp-toolkit-rs
-          ref: ${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}
-          token: ${{ secrets.SGL_MCP_TOOLKIT_RS_READ_TOKEN }}
-          fetch-depth: 1
-          path: mcp-workspace/toolkits/mcp-toolkit-rs
+          persist-credentials: false
+          path: mcp-workspace/servers/android-computer-use-mcp
 
       - name: Stage isolated MCP workspace
         id: stage_mcp_workspace
@@ -385,29 +369,42 @@ jobs:
           set -euo pipefail
           isolated_root="${RUNNER_TEMP}/interactive-mcp-root"
           rm -rf "${isolated_root}"
-          mkdir -p \
-            "${isolated_root}/mcp-workspace/servers" \
-            "${isolated_root}/mcp-workspace/toolkits"
+          mkdir -p "${isolated_root}/mcp-workspace/servers"
           cp -a \
-            mcp-workspace/servers/android-emulator-mcp \
-            "${isolated_root}/mcp-workspace/servers/android-emulator-mcp"
-          cp -a \
-            mcp-workspace/toolkits/mcp-toolkit-rs \
-            "${isolated_root}/mcp-workspace/toolkits/mcp-toolkit-rs"
-          echo "server_dir=${isolated_root}/mcp-workspace/servers/android-emulator-mcp" >> "${GITHUB_OUTPUT}"
+            mcp-workspace/servers/android-computer-use-mcp \
+            "${isolated_root}/mcp-workspace/servers/android-computer-use-mcp"
+          echo "server_dir=${isolated_root}/mcp-workspace/servers/android-computer-use-mcp" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve interactive MCP build cache inputs
         id: interactive_mcp_cache
         shell: bash
         run: |
           set -euo pipefail
+          toolkit_sha="$(
+            python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          revisions = set(
+              re.findall(
+                  r'git\+https://github\.com/sednalabs/mcp-toolkit-rs[^"#]*#[^"#]*?([0-9a-f]{40})',
+                  Path("mcp-workspace/servers/android-computer-use-mcp/Cargo.lock").read_text(),
+              )
+          )
+          if len(revisions) != 1:
+              raise SystemExit(
+                  f"expected one pinned sednalabs/mcp-toolkit-rs revision, found {sorted(revisions)}"
+              )
+          print(revisions.pop())
+          PY
+          )"
           {
-            echo "server_sha=$(git -C mcp-workspace/servers/android-emulator-mcp rev-parse HEAD)"
-            echo "toolkit_sha=$(git -C mcp-workspace/toolkits/mcp-toolkit-rs rev-parse HEAD)"
+            echo "server_sha=$(git -C mcp-workspace/servers/android-computer-use-mcp rev-parse HEAD)"
+            echo "toolkit_sha=${toolkit_sha}"
             echo "rustc_release=$(rustc -Vv | awk '/^release: / { print $2 }')"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Restore android-emulator-mcp target cache
+      - name: Restore android-computer-use-mcp target cache
         id: interactive_mcp_target_cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -540,14 +537,14 @@ jobs:
             } >> "${GITHUB_OUTPUT}"
           fi
 
-      - name: Validate android-emulator-mcp provider contracts
+      - name: Validate android-computer-use-mcp provider contracts
         shell: bash
         working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
         run: |
           set -euo pipefail
           cargo test --locked -- --test-threads=1
 
-      - name: Build android-emulator-mcp release binary
+      - name: Build android-computer-use-mcp release binary
         id: build_mcp
         shell: bash
         working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
@@ -566,9 +563,9 @@ jobs:
             echo "- build source: \`${{ steps.session_plan.outputs.build_source }}\`"
             echo "- Android build setup: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- Rust Android toolchain: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
-            echo "- android-emulator-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
-            echo "- android-emulator-mcp provider contracts: \`passed\`"
-            echo "- android-emulator-mcp build completed: \`true\`"
+            echo "- android-computer-use-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
+            echo "- android-computer-use-mcp provider contracts: \`passed\`"
+            echo "- android-computer-use-mcp build completed: \`true\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Run hosted interactive Android session
@@ -592,6 +589,9 @@ jobs:
           INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
           INTERACTIVE_MCP_WORKSPACE_DIR: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
           INTERACTIVE_MCP_ADAPTER_REVISION: ${{ steps.interactive_mcp_cache.outputs.server_sha }}
+          INTERACTIVE_MCP_ENVIRONMENT_ID: github-actions/${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}
+          INTERACTIVE_MCP_PROVIDER_INSTANCE_ID: android-computer-use-mcp/${{ steps.interactive_mcp_cache.outputs.server_sha }}
+          INTERACTIVE_MCP_SESSION_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           INTERACTIVE_CLOUDFLARED_BIN: cloudflared
           INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
           INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
@@ -621,8 +621,9 @@ jobs:
             --artifact-name "${{ steps.active_build.outputs.artifact_name }}" \
             --build-run-id "${{ steps.active_build.outputs.build_run_id }}" \
             --build-commit-sha "${{ steps.active_build.outputs.build_commit_sha }}" \
-            --android-emulator-mcp-ref "${{ steps.session_plan.outputs.android_emulator_mcp_ref }}" \
-            --mcp-toolkit-rs-ref "${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}" \
+            --android-computer-use-mcp-ref "${{ steps.session_plan.outputs.android_computer_use_mcp_ref }}" \
+            --android-computer-use-mcp-sha "${{ steps.interactive_mcp_cache.outputs.server_sha }}" \
+            --mcp-toolkit-rs-sha "${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}" \
             --android-validation-mode "${{ steps.session_plan.outputs.android_validation_mode }}" \
             --interactive-debug-profile "${{ steps.session_plan.outputs.interactive_debug_profile }}" \
             --preferred-gpu-backend "${{ steps.session_plan.outputs.preferred_gpu_backend }}" \
