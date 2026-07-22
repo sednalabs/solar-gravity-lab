@@ -20,7 +20,7 @@ def main() -> int:
     require_once(workflow, "persist-credentials: false")
     require_once(
         workflow,
-        "default: 5aa8fa9cd4315e3d7f644647da6afbd6a28027cc",
+        "default: 780bd7c93a07dc2477d074cd28ebd192fd922e68",
     )
     checkout_credential_field = "".join(("to", "ken"))
     assert f"\n          {checkout_credential_field}:" not in workflow

@@ -27,7 +27,7 @@ on:
         description: Branch, tag, or commit from sednalabs/android-computer-use-mcp
         required: true
         type: string
-        default: 5aa8fa9cd4315e3d7f644647da6afbd6a28027cc
+        default: 780bd7c93a07dc2477d074cd28ebd192fd922e68
       android_validation_mode:
         description: Which Android runtime posture to boot for live debugging
         required: true

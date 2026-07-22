@@ -48,7 +48,7 @@ The workflow:
   - branch, tag, or commit from this repo
 - `android_computer_use_mcp_ref`
   - branch, tag, or commit from `sednalabs/android-computer-use-mcp`
-  - default: `5aa8fa9cd4315e3d7f644647da6afbd6a28027cc`
+  - default: `780bd7c93a07dc2477d074cd28ebd192fd922e68`
   - the session summary records both this requested ref and the resolved commit
     SHA; it also records the exact public `mcp-toolkit-rs` SHA resolved from the
     provider lockfile
