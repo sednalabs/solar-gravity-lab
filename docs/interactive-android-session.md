@@ -28,10 +28,10 @@ The workflow:
 
 - boots the existing x64 emulator image on a GitHub-hosted runner
 - builds the app debug APK under `clients/android`
-- checks out, tests, and builds the configured Android provider from source
+- checks out, tests, and builds `sednalabs/android-computer-use-mcp` from source
   inside the job
-- checks out the pinned `mcp-toolkit-rs` sibling workspace needed by that
-  provider
+- uses the exact public `mcp-toolkit-rs` revision pinned by the provider's
+  `Cargo.lock`
 - starts the Android provider on loopback only
 - runs install-and-launch preflight before the session opens
 - exposes a live web terminal through a Cloudflare Access-protected tunnel
@@ -46,14 +46,12 @@ The workflow:
 
 - `ref`
   - branch, tag, or commit from this repo
-- `android_emulator_mcp_ref`
-  - branch, tag, or commit from the maintainer-configured Android provider
-    repository
-  - default: `dffcb04ba558e7071507daec6598ca998242cf6a`
-- `mcp_toolkit_rs_ref`
-  - branch, tag, or commit from `GraciousGazelles/toolkits-mcp-toolkit-rs`
-  - keep this in sync with the provider's path-based toolkit dependency
-    surface
+- `android_computer_use_mcp_ref`
+  - branch, tag, or commit from `sednalabs/android-computer-use-mcp`
+  - default: `780bd7c93a07dc2477d074cd28ebd192fd922e68`
+  - the session summary records both this requested ref and the resolved commit
+    SHA; it also records the exact public `mcp-toolkit-rs` SHA resolved from the
+    provider lockfile
 - `android_validation_mode`
   - one of:
     - `shell-v2`
@@ -80,12 +78,10 @@ The workflow:
 
 ## Required secrets
 
-This workflow needs explicit repo reads and tunnel access:
+This workflow checks out its Android provider and Rust toolkit from public
+Sedna repositories, so it does not need cross-repository read tokens. It still
+needs tunnel access:
 
-- `SGL_ANDROID_EMULATOR_MCP_READ_TOKEN`
-  - read access to the maintainer-configured Android provider repository
-- `SGL_MCP_TOOLKIT_RS_READ_TOKEN`
-  - read access to `GraciousGazelles/toolkits-mcp-toolkit-rs`
 - `SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN`
   - Cloudflare named tunnel token for the live terminal
 - `SGL_INTERACTIVE_DEBUG_HOSTNAME`
@@ -158,7 +154,7 @@ The workflow writes its main artifact bundle under:
 Expected contents:
 
 - `app/`
-- `android-emulator-mcp-artifacts/`
+- `android-computer-use-mcp-artifacts/`
 - `preflight/`
 - `startup-log/`
 - `live-access/`
@@ -198,7 +194,8 @@ The summary payloads live under:
 
 Those files are designed to answer:
 
-- which repo refs were used
+- which Android provider ref was requested and which provider and toolkit SHAs
+  were resolved
 - whether preflight passed
 - whether human terminal access came up
 - whether machine-facing MCP access came up

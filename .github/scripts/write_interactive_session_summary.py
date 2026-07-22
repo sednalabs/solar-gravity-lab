@@ -21,8 +21,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-name", required=True)
     parser.add_argument("--build-run-id", required=True)
     parser.add_argument("--build-commit-sha", required=True)
-    parser.add_argument("--android-emulator-mcp-ref", required=True)
-    parser.add_argument("--mcp-toolkit-rs-ref", required=True)
+    parser.add_argument("--android-computer-use-mcp-ref", required=True)
+    parser.add_argument("--android-computer-use-mcp-sha", required=True)
+    parser.add_argument("--mcp-toolkit-rs-sha", required=True)
     parser.add_argument("--android-validation-mode", required=True)
     parser.add_argument("--interactive-debug-profile", required=True)
     parser.add_argument("--preferred-gpu-backend", required=True)
@@ -103,8 +104,9 @@ def render_markdown(payload: dict) -> str:
         f"- build artifact: `{payload['context']['artifact_name']}`",
         f"- build run id: `{payload['context']['build_run_id']}`",
         f"- build commit: `{payload['context']['build_commit_sha']}`",
-        f"- android-emulator-mcp ref: `{payload['context']['android_emulator_mcp_ref']}`",
-        f"- mcp-toolkit-rs ref: `{payload['context']['mcp_toolkit_rs_ref']}`",
+        f"- android-computer-use-mcp requested ref: `{payload['context']['android_computer_use_mcp_ref']}`",
+        f"- android-computer-use-mcp resolved SHA: `{payload['context']['android_computer_use_mcp_sha']}`",
+        f"- mcp-toolkit-rs resolved SHA: `{payload['context']['mcp_toolkit_rs_sha']}`",
         f"- android validation mode: `{payload['context']['android_validation_mode']}`",
         f"- interactive debug profile: `{payload['context']['interactive_debug_profile']}`",
         f"- preferred GPU backend: `{payload['context']['preferred_gpu_backend']}`",
@@ -321,7 +323,7 @@ def render_markdown(payload: dict) -> str:
                 "",
                 f"- root: `{payload['summary']['artifacts_dir']}`",
             "- expected directories:",
-            "  - `android-emulator-mcp-artifacts/`",
+            "  - `android-computer-use-mcp-artifacts/`",
             "  - `preflight/`",
             "  - `startup-log/`",
             "  - `live-access/`",
@@ -356,7 +358,7 @@ def main() -> None:
     )
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "workflow": args.workflow,
         "run": {
             "id": args.run_id,
@@ -370,8 +372,9 @@ def main() -> None:
             "artifact_name": args.artifact_name,
             "build_run_id": args.build_run_id,
             "build_commit_sha": args.build_commit_sha,
-            "android_emulator_mcp_ref": args.android_emulator_mcp_ref,
-            "mcp_toolkit_rs_ref": args.mcp_toolkit_rs_ref,
+            "android_computer_use_mcp_ref": args.android_computer_use_mcp_ref,
+            "android_computer_use_mcp_sha": args.android_computer_use_mcp_sha,
+            "mcp_toolkit_rs_sha": args.mcp_toolkit_rs_sha,
             "android_validation_mode": args.android_validation_mode,
             "interactive_debug_profile": args.interactive_debug_profile,
             "preferred_gpu_backend": args.preferred_gpu_backend,
