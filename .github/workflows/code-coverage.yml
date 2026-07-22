@@ -58,3 +58,14 @@ jobs:
           file: coverage-python-tools.xml
           language: Python
           label: code-coverage/python-tools
+          # Keep the portable report available even when repository-level Code
+          # Quality processing is not enabled.
+          fail-on-error: false
+
+      - name: Upload portable Python coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-tool-coverage-${{ github.run_id }}
+          path: coverage-python-tools.xml
+          if-no-files-found: error
