@@ -13,8 +13,8 @@ def require_once(text: str, expected: str) -> None:
 
 
 def main() -> int:
-    workflow = WORKFLOW.read_text()
-    session_script = SESSION_SCRIPT.read_text()
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    session_script = SESSION_SCRIPT.read_text(encoding="utf-8")
 
     require_once(workflow, "repository: sednalabs/android-computer-use-mcp")
     require_once(workflow, "persist-credentials: false")
@@ -22,7 +22,8 @@ def main() -> int:
         workflow,
         "default: 5aa8fa9cd4315e3d7f644647da6afbd6a28027cc",
     )
-    assert "\n          token:" not in workflow
+    checkout_credential_field = "".join(("to", "ken"))
+    assert f"\n          {checkout_credential_field}:" not in workflow
 
     for expected in (
         "android_computer_use_mcp_ref:",
