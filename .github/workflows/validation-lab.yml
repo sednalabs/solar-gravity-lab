@@ -425,7 +425,7 @@ jobs:
           java-version: "17"
 
       - name: Restore standalone Gradle cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
@@ -1218,7 +1218,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: |
             ~/.android/avd/*
@@ -1227,7 +1227,7 @@ jobs:
 
       - name: Restore Android SDK emulator packages cache
         id: android-sdk-components-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
