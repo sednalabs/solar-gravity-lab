@@ -8,7 +8,7 @@ Tick (world) -> RenderSceneFrame -> Camera/Projection -> NativeScenePacket -> Na
 
 ## 1. Tick / world step
 
-Owner: sandbox path or Rust runtime.
+Owner: Rust runtime.
 
 Output: updated 3D body state, trails, epoch, provenance.
 

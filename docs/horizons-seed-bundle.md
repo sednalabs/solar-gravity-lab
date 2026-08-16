@@ -1,14 +1,23 @@
 # Horizons Seed Bundle Handoff
 
-This project is now wired so an external agent can drop in a single asset file containing authoritative cartesian start vectors for the Sun, planets, and dwarf planets.
+> **Historical handoff note.**
+>
+> This document describes the cartesian TSV seed format originally designed for
+> drop-in ingestion under `app/src/main/assets/ephemeris/`. In the v2
+> architecture, canonical startup states and scenario seeding are owned by the
+> Rust data crate (`solarlab-data` / `engine/data`), with versioned protobuf contracts
+> in `proto/solarlab/v2` (`EphemerisBundle`, `ScenarioPackage`). Keep this file as
+> reference for the underlying TSV schema and JPL Horizons query parameters.
 
-## Drop-in target path
+This project is structured so an authoritative cartesian seed bundle can provide start vectors for the Sun, planets, and dwarf planets.
+
+## Drop-in target path (v1 reference)
 
 Place the generated file at:
 
 `app/src/main/assets/ephemeris/solarlab_horizons_seed_bundle_v1.tsv`
 
-The app will try to load it automatically at startup. If the file is missing or invalid, SolarLab falls back to the current approximate/representative seeding path.
+The reference app loads it automatically at startup. If the file is missing or invalid, the app falls back cleanly.
 
 ## Bundle format
 

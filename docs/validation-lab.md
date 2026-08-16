@@ -149,8 +149,14 @@ Current recommendation:
   physics/FFI/Android boundary.
 - `ffi-abi`
   Run only the focused FFI ABI test slice.
+- `android-unit`
+  Run Android unit tests and host-side test suites.
+- `android-lint`
+  Run Android lint checks.
 - `android-shell`
-  Run only the Android shell build path under `clients/android`.
+  Run only the Android shell build and smoke test path under `clients/android`.
+- `runtime-scene-telemetry`
+  Run the focused runtime scene extraction and telemetry validation bundle.
 - `full`
   Run every currently-defined canonical lane.
 
