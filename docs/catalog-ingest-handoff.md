@@ -1,6 +1,14 @@
 # Catalog ingest handoff
 
-This repo now supports three catalog layers for the default scenario:
+> **Historical handoff note.**
+>
+> This document describes the legacy Kotlin TSV catalog import path under the
+> retained root `app/` reference code. On canonical `main`, authoritative
+> scenario packages and catalog packs are governed by `proto/solarlab/v2`
+> (`CatalogPack`, `ScenarioPackage`) and loaded through `engine/data`
+> (`solarlab-data`). Keep this file as historical reference for TSV element schemas.
+
+This repo originally supported three catalog layers for the default scenario:
 
 1. Built-in approximate planet / dwarf-planet layer
 2. Built-in starter moon + curated small-body layer

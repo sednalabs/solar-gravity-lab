@@ -68,12 +68,13 @@ by the Android shell as `:android-vulkan-renderer`. Its Kotlin package and JNI
 exports use the canonical `com.sednalabs.solarlab.render.vulkan` namespace.
 The legacy `feature-lab` module is not on the production dependency path.
 
-The next measured renderer work is:
+The typed Rust scene contract now includes renderer-facing celestial
+appearance, orientation, ring, atmosphere, and comet facts (introduced in ABI 12)
+rendered by the native Vulkan stage as procedural surfaces, atmosphere limbs,
+occluded ring planes, and comet tails without mutating authoritative world state.
 
-- extend the typed Rust scene contract with renderer-facing celestial
-  appearance, orientation, ring, and comet facts;
-- render recognizable scale-aware planets, moons, rings, and comets without
-  changing the authoritative world;
+The current and next measured renderer work is:
+
 - add device-profiled thermal and battery scheduling policy;
 - measure whether far-tracer aggregation materially improves sustained device
   behavior before choosing another compaction path; and

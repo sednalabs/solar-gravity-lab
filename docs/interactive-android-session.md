@@ -46,12 +46,22 @@ The workflow:
 
 - `ref`
   - branch, tag, or commit from this repo
+- `build_source`
+  - one of:
+    - `artifact` (reuse a pre-built interactive artifact from a previous run)
+    - `inline` (assemble the APK inside the session workflow)
+  - default: `artifact`
+- `build_run_id`
+  - optional `interactive-android-build` workflow run ID to download and install
+- `artifact_name`
+  - optional artifact name override for the reusable interactive APK bundle
 - `android_emulator_mcp_ref`
   - branch, tag, or commit from the maintainer-configured Android provider
     repository
   - default: `dffcb04ba558e7071507daec6598ca998242cf6a`
 - `mcp_toolkit_rs_ref`
   - branch, tag, or commit from `GraciousGazelles/toolkits-mcp-toolkit-rs`
+  - default: `e5fffbd11480661e588cc03b6590726963986a95`
   - keep this in sync with the provider's path-based toolkit dependency
     surface
 - `android_validation_mode`

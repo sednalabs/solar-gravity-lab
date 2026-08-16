@@ -21,6 +21,7 @@ The Rust engine is split into:
 - `history`
 - `scene`
 - `hardware`
+- `data`
 - `ffi`
 
 This keeps scientific truth, runtime control, rendering, and platform concerns
