@@ -48,7 +48,7 @@ hardware claims by itself.
   proof before their SARIF should be trusted.
 
 ## Rollout checkpoint
- 
+
 The initial baseline established on 2026-05-06 verified the advisory warning
 and error split across workflow and helper packs. Ongoing triage periodically
 reviews warning noise, hardens mature invariants to errors, and adjusts query
