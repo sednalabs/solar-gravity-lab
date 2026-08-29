@@ -501,10 +501,23 @@ def write_json(path: str | None, payload: object) -> None:
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def resolve_safe_output_path(path: str) -> Path:
+    base_dir = Path.cwd().resolve()
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = base_dir / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError(f"Refusing to write outside workspace: {path}") from exc
+    return resolved
+
+
 def write_summary(path: str | None, census: dict[str, object]) -> None:
     if not path:
         return
-    target = Path(path)
+    target = resolve_safe_output_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     cpu = census["cpu"]
     detected = cpu["detected_features"]
