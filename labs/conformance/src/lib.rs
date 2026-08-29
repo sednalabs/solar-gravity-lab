@@ -508,7 +508,7 @@ fn run_host_relative_playback_policy() -> ScenarioReport {
 #[derive(Clone, Copy)]
 struct TelemetryMetrics {
     relative_energy_drift: f64,
-    absolute_angular_momentum_drift_kg_m2ps: f64,
+    absolute_angular_momentum_drift_kg_m2_per_s: f64,
     relative_angular_momentum_drift: f64,
     barycenter_drift_m: f64,
     barycenter_velocity_drift_mps: f64,
