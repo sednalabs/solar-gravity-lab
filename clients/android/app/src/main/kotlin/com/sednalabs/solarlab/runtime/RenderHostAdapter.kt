@@ -1,5 +1,7 @@
 package com.sednalabs.solarlab.runtime
 
+import kotlinx.coroutines.CancellationException
+
 /**
  * Android render-host seam for native Vulkan scene packet export.
  *
@@ -71,6 +73,7 @@ internal class NativeRenderHostAdapter(
         val packetResult = runCatching {
             transport.exportVulkanScene(sessionHandle)
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             return RenderPacketRefreshResult(
                 unavailableReason = "Render export unavailable: ${error.message ?: error::class.java.simpleName}"
             )
