@@ -21,18 +21,20 @@ class StageFirstSemanticIntentInstrumentationTest {
     fun focusIntent_updatesSelectionAndAcknowledgesRequest() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.DEBUG)
         SolarLabSemanticActionBridge.clearPendingReplay()
+        val activity = composeRule.activity
+        val originalIntent = activity.intent
         try {
             composeRule.waitUntil(timeoutMillis = 20_000) {
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                     .fetchSemanticsNodes().isNotEmpty()
             }
             val intent = Intent(SolarLabSemanticActionBridge.INTENT_ACTION)
-                .setClass(composeRule.activity, MainActivity::class.java)
+                .setClass(activity, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(SolarLabSemanticActionBridge.EXTRA_COMMAND, "focus_body")
                 .putExtra(SolarLabSemanticActionBridge.EXTRA_BODY_QUERY, "earth")
                 .putExtra(SolarLabSemanticActionBridge.EXTRA_REQUEST_ID, "intent-focus-42")
-            composeRule.runOnUiThread { composeRule.activity.startActivity(intent) }
+            composeRule.runOnUiThread { activity.startActivity(intent) }
 
             val expected = "Earth. SolarLab semantic focus acknowledged; " +
                 "request-id=intent-focus-42; query=earth; resolved-body=earth"
@@ -44,7 +46,13 @@ class StageFirstSemanticIntentInstrumentationTest {
                 }.isSuccess
             }
         } finally {
-            SolarLabSemanticActionBridge.clearPendingReplay()
+            // ActivityScenario tracks lifecycle events against the launch intent.
+            // Restore it after exercising onNewIntent so rule teardown can track this activity.
+            try {
+                composeRule.runOnUiThread { activity.intent = originalIntent }
+            } finally {
+                SolarLabSemanticActionBridge.clearPendingReplay()
+            }
         }
     }
 }

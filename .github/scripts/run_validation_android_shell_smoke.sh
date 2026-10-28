@@ -28,9 +28,7 @@ SHELL_CORE_TEST_CLASSES=(
 )
 
 SHELL_FULL_TEST_CLASSES=(
-  "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
-  "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
-  "com.sednalabs.solarlab.SolarLabShellLayoutTest"
+  "${SHELL_CORE_TEST_CLASSES[@]}"
   "com.sednalabs.solarlab.RotationContinuityInstrumentationTest"
   "com.sednalabs.solarlab.PlaybackContinuityInstrumentationTest"
 )
@@ -40,14 +38,13 @@ STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstSemanticIntentInstrumentationTest"
 )
 
 STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES=(
-  "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
+  "${STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES[@]}"
   "com.sednalabs.solarlab.StageFirstRuntimeLifecycleInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstCameraGuidanceInstrumentationTest"
 )
 
 TEST_CLASSES=()
@@ -381,6 +378,7 @@ run_test_classes_individually() {
   local configuration_cache_status="disabled"
   local command_configuration_cache_status="disabled"
   local overall_status=0
+  local report_capture_failed=0
 
   mkdir -p "${run_dir}"
 
@@ -389,6 +387,7 @@ run_test_classes_individually() {
 
   for class_name in "${TEST_CLASSES[@]}"; do
     class_arg="${class_name}"
+    report_capture_failed=0
     class_dir="${run_dir}/$(class_slug "${class_name}")"
     mkdir -p "${class_dir}"
     adb logcat -c || true
@@ -397,6 +396,17 @@ run_test_classes_individually() {
 
     echo "Running ${class_name}"
     start_live_logcat "${class_dir}"
+
+    # Previous class evidence has been archived; remove only Gradle's
+    # regenerable connected-test output before the next attempt.
+    if ! rm -rf clients/android/app/build/outputs/androidTest-results \
+      clients/android/app/build/reports/androidTests; then
+      echo "Could not clear connected test output before ${class_name}" >&2
+      stop_live_logcat "${LAST_LOGCAT_PID}"
+      LAST_LOGCAT_PID=""
+      overall_status=1
+      break
+    fi
 
     set +e
     timeout --foreground "${CLASS_TIMEOUT_SECONDS}s" \
@@ -408,6 +418,25 @@ run_test_classes_individually() {
         2>&1 | tee "${class_dir}/gradle-output.txt"
     command_status=${PIPESTATUS[0]}
     set -e
+    # Retain whatever this attempt produced before the next class runs.
+    if [[ -d clients/android/app/build/outputs/androidTest-results ]]; then
+      if ! cp -a clients/android/app/build/outputs/androidTest-results "${class_dir}/androidTest-results"; then
+        echo "Could not retain connected test results for ${class_name}" >&2
+        report_capture_failed=1
+      fi
+    else
+      echo "No connected test results produced for ${class_name}" >&2
+      report_capture_failed=1
+    fi
+    if [[ -d clients/android/app/build/reports/androidTests ]]; then
+      if ! cp -a clients/android/app/build/reports/androidTests "${class_dir}/androidTests"; then
+        echo "Could not retain connected test reports for ${class_name}" >&2
+        report_capture_failed=1
+      fi
+    else
+      echo "No connected test reports produced for ${class_name}" >&2
+      report_capture_failed=1
+    fi
     stop_live_logcat "${LAST_LOGCAT_PID}"
     LAST_LOGCAT_PID=""
     from_cache_count="$(grep -c 'FROM-CACHE' "${class_dir}/gradle-output.txt" || true)"
@@ -439,6 +468,7 @@ run_test_classes_individually() {
       printf 'from_cache_count=%s\n' "${from_cache_count}"
       printf 'configuration_cache_mode=%s\n' "${GRADLE_CONFIGURATION_CACHE_MODE}"
       printf 'configuration_cache_status=%s\n' "${command_configuration_cache_status}"
+      printf 'report_capture_failed=%s\n' "${report_capture_failed}"
       printf 'exit_code=%s\n' "${command_status}"
     } > "${class_dir}/status.txt"
 
@@ -453,6 +483,10 @@ run_test_classes_individually() {
       echo "Instrumentation class ${class_name} failed with exit code ${command_status}" >&2
       emit_failure_summary "${class_dir}"
       overall_status=${command_status}
+      break
+    elif [[ "${report_capture_failed}" -ne 0 ]]; then
+      echo "Connected test report custody failed for ${class_name}" >&2
+      overall_status=1
       break
     fi
   done
