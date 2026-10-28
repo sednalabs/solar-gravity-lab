@@ -120,7 +120,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -263,7 +263,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.android/avd/*
@@ -271,7 +271,7 @@ jobs:
           key: avd-${{ runner.os }}-${{ env.ANDROID_AVD_NAME }}-${{ env.ANDROID_AVD_CACHE_VERSION }}
 
       - name: Restore Android SDK emulator packages cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
@@ -280,7 +280,7 @@ jobs:
 
       - name: Seed Android emulator snapshot
         if: ${{ steps.session_plan.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 35
           arch: x86_64
@@ -364,7 +364,7 @@ jobs:
           echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
 
       - name: Checkout android-computer-use-mcp workspace
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: sednalabs/android-computer-use-mcp
           ref: ${{ steps.session_plan.outputs.android_computer_use_mcp_ref }}
@@ -416,7 +416,7 @@ jobs:
 
       - name: Restore android-computer-use-mcp target cache
         id: interactive_mcp_target_cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.stage_mcp_workspace.outputs.server_dir }}/target
           key: interactive-mcp-target-${{ runner.os }}-${{ runner.arch }}-${{ steps.interactive_mcp_cache.outputs.rustc_release }}-${{ steps.interactive_mcp_cache.outputs.server_sha }}-${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}
@@ -629,7 +629,7 @@ jobs:
 
       - name: Run hosted interactive Android session
         id: interactive_session
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 35
           arch: x86_64
