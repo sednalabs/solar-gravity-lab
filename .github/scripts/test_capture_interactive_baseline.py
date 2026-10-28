@@ -27,7 +27,7 @@ VIEW = f'<hierarchy><node package="{PACKAGE}" bounds="[0,0][1080,2400]">{STAGE}{
 LESS = f'<node package="{PACKAGE}" enabled="true" content-desc="Less" bounds="[800,2100][900,2200]"/>'
 SEARCH = f'<node package="{PACKAGE}" enabled="true" content-desc="Search" bounds="[100,1900][200,2000]"/>'
 EXPANDED = VIEW.replace(CONTROLS, CONTROLS + LESS + SEARCH)
-SEARCH_VIEW = VIEW.replace(CONTROLS, f'<node package="{PACKAGE}" class="android.widget.EditText" text="" enabled="true" focused="true" bounds="[100,100][900,200]"/>')
+SEARCH_VIEW = VIEW.replace(CONTROLS, f'<node package="{PACKAGE}" class="android.widget.EditText" text="" enabled="true" focused="true" clickable="true" bounds="[100,100][900,200]"/>')
 
 
 class CaptureTest(unittest.TestCase):
@@ -157,7 +157,7 @@ class CaptureTest(unittest.TestCase):
             self.assertTrue((step / "immediate/action-response.json").exists())
             self.assertTrue((step / "settled/hierarchy.xml").exists())
 
-    def test_type_requires_focused_empty_field_and_uses_raw_text_action(self):
+    def test_type_requires_focused_empty_field_and_uses_verified_selector(self):
         capture.capture_baseline()
         for phase in ("help", "frame", "home"):
             self.step(phase)
@@ -170,7 +170,8 @@ class CaptureTest(unittest.TestCase):
         (capture.BRIDGE / "type-earth-before.json").write_text(json.dumps(self.receipt(False)))
         capture.phase_prepare("type-earth")
         request = json.loads((capture.BRIDGE / "type-earth-request.json").read_text())
-        self.assertEqual(request["arguments"]["actions"], [{"type": "type", "text": "earth"}])
+        self.assertEqual(request["arguments"]["actions"], [{"type": "type", "text": "earth",
+            "selector": {"focused": True, "enabled": True, "clickable": True}}])
         self.assertTrue((capture.OUTPUT / "type-earth-before/screen.png").exists())
 
     def test_type_refuses_unfocused_field_and_preserves_pre_action_observation(self):
@@ -186,6 +187,21 @@ class CaptureTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             capture.phase_prepare("type-earth")
         self.assertTrue((capture.OUTPUT / "type-earth-before/screen.png").exists())
+        self.assertFalse((capture.BRIDGE / "type-earth-request.json").exists())
+
+    def test_type_refuses_ambiguous_focused_selector(self):
+        capture.capture_baseline()
+        for phase in ("help", "frame", "home"):
+            self.step(phase)
+        self.step("controls", EXPANDED)
+        (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
+        self.step("search", SEARCH_VIEW)
+        capture.write_status(["baseline", "help", "frame", "home", "controls", "search", "close-search", "reopen-search"], "partial")
+        extra = f'<node package="{PACKAGE}" focused="true" enabled="true" clickable="true"/>'
+        self.baseline_xml.write_text(SEARCH_VIEW.replace('</node></hierarchy>', extra + '</node></hierarchy>'))
+        (capture.BRIDGE / "type-earth-before.json").write_text(json.dumps(self.receipt(False)))
+        with self.assertRaises(ValueError):
+            capture.phase_prepare("type-earth")
         self.assertFalse((capture.BRIDGE / "type-earth-request.json").exists())
 
     def test_close_requires_unique_enabled_clickable_target_in_dialog(self):

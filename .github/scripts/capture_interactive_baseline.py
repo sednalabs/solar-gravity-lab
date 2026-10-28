@@ -429,11 +429,14 @@ def phase_prepare(phase: str) -> None:
         if any(n.get("package") != package for n in root.iter("node")):
             raise ValueError("unexpected window in search hierarchy")
         fields = [n for n in root.iter("node") if n.get("package") == package and n.get("class") == "android.widget.EditText"]
-        if len(fields) != 1 or fields[0].get("focused") != "true" or fields[0].get("text", "") != "" or fields[0].get("enabled") != "true":
+        if len(fields) != 1 or fields[0].get("focused") != "true" or fields[0].get("text", "") != "" or fields[0].get("enabled") != "true" or fields[0].get("clickable") != "true":
             raise ValueError("search field is not uniquely focused and empty")
+        matches = [n for n in root.iter("node") if all(n.get(key) == "true" for key in ("focused", "enabled", "clickable"))]
+        if len(matches) != 1 or matches[0] is not fields[0]:
+            raise ValueError("focused input selector is ambiguous")
         if len([n for n in root.iter("node") if n.get("package") == package and n.get("text") == "Find a runtime body"]) != 1:
             raise ValueError("search dialog is not uniquely observed")
-        action = {"type": "type", "text": "earth"}
+        action = {"type": "type", "text": "earth", "selector": {"focused": True, "enabled": True, "clickable": True}}
     elif phase in {"focus-earth", "focus-earth-again"}:
         valid_app_view(root, package)
         x, y = earth_focus_center(root, package, viewport)
