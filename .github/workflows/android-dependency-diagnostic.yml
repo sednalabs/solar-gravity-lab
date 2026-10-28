@@ -16,10 +16,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          ref: 0731515cfedae1cc446f0d37be8d08843f9aff74
+          ref: 001388ccea76c1e3889948cc7a0610b926404982
       - name: Verify diagnostic source
         shell: bash
-        run: test "$(git rev-parse HEAD)" = 0731515cfedae1cc446f0d37be8d08843f9aff74
+        run: test "$(git rev-parse HEAD)" = 001388ccea76c1e3889948cc7a0610b926404982
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
         with:
           distribution: temurin
@@ -48,6 +48,11 @@ jobs:
           def safe = { value -> value.toString().replaceAll('[^A-Za-z0-9_.:+,()=/> -]', '?').take(350) }
           def targets = [
             'org.jetbrains.kotlin:kotlin-gradle-plugin',
+            'org.bitbucket.b_c:jose4j',
+            'org.jdom:jdom2',
+            'com.google.protobuf:protobuf-kotlin',
+            'com.google.protobuf:protobuf-java',
+            'org.apache.commons:commons-compress',
             'org.bouncycastle:bcprov-jdk18on',
             'org.bouncycastle:bcpkix-jdk18on',
             'org.bouncycastle:bcutil-jdk18on',
