@@ -215,6 +215,54 @@ class CaptureTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 capture.earth_focus_center(ET.fromstring(invalid), PACKAGE, (1080, 2400))
 
+    def test_failed_close_postcondition_retains_evidence_and_in_progress(self):
+        capture.capture_baseline()
+        phase = "close-search"
+        expected = ["baseline"] + list(capture.PHASES[:capture.PHASES.index(phase)])
+        (capture.OUTPUT / phase).mkdir()
+        capture.write_status(expected, "partial", in_progress=phase, action_effect="observation_captured")
+        self.baseline_xml.write_text(SEARCH_VIEW.replace('</node></hierarchy>',
+            f'<node package="{PACKAGE}" text="Find a runtime body"/></node></hierarchy>'))
+        (capture.BRIDGE / f"{phase}-settled.json").write_text(json.dumps(self.receipt(False)))
+        with self.assertRaises(ValueError):
+            capture.phase_record(phase)
+        status = capture.current_status()
+        self.assertEqual(status["completed"], expected)
+        self.assertEqual((status["in_progress"], status["action_effect"]), (phase, "observation_captured"))
+        self.assertEqual((capture.OUTPUT / phase / "settled/screen.png").read_bytes(), b"png")
+        self.assertTrue((capture.OUTPUT / phase / "settled/hierarchy.xml").exists())
+
+    def test_ineffective_collapse_does_not_promote_and_keeps_evidence(self):
+        capture.capture_baseline()
+        phase = "collapse"
+        expected = ["baseline"] + list(capture.PHASES[:capture.PHASES.index(phase)])
+        (capture.OUTPUT / phase).mkdir()
+        capture.write_status(expected, "partial", in_progress=phase, action_effect="observation_captured")
+        self.baseline_xml.write_text(EXPANDED)
+        (capture.BRIDGE / f"{phase}-settled.json").write_text(json.dumps(self.receipt(False)))
+        with self.assertRaises(ValueError):
+            capture.phase_record(phase)
+        status = capture.current_status()
+        self.assertEqual(status["completed"], expected)
+        self.assertEqual(status["in_progress"], phase)
+        self.assertEqual((capture.OUTPUT / phase / "settled/hierarchy.xml").read_text(), EXPANDED)
+        self.assertEqual((capture.OUTPUT / phase / "settled/screen.png").read_bytes(), b"png")
+
+    def test_compact_controls_promote_collapse_after_observation(self):
+        capture.capture_baseline()
+        phase = "collapse"
+        expected = ["baseline"] + list(capture.PHASES[:capture.PHASES.index(phase)])
+        (capture.OUTPUT / phase).mkdir()
+        capture.write_status(expected, "partial", in_progress=phase, action_effect="observation_captured")
+        descriptions = ("Home", "Frame", "Help", "Camera scale Close; open camera controls")
+        nodes = "".join(f'<node package="{PACKAGE}" enabled="true" content-desc="{d}"/>' for d in descriptions)
+        self.baseline_xml.write_text(f'<hierarchy><node package="{PACKAGE}">{nodes}</node></hierarchy>')
+        (capture.BRIDGE / f"{phase}-settled.json").write_text(json.dumps(self.receipt(False)))
+        capture.phase_record(phase)
+        status = capture.current_status()
+        self.assertEqual(status["completed"], expected + [phase])
+        self.assertEqual((status["status"], status["visual_acceptance"]), ("captured", "pending"))
+
     def test_missing_search_target_preserves_fresh_observation(self):
         capture.capture_baseline()
         for phase in ("help", "frame", "home"):

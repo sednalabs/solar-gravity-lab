@@ -518,8 +518,6 @@ def phase_record(phase: str) -> None:
         (staging / "screen.png").write_bytes(png)
         (staging / "hierarchy.xml").write_bytes(xml)
         staging.rename(OUTPUT / phase / "settled")
-    completed = expected + [phase]
-    write_status(completed, "partial")
     if phase == "controls":
         less = [node for node in root.iter("node") if node.get("content-desc") == "Less" and node.get("enabled") == "true" and node.get("package") == os.environ["INTERACTIVE_APP_PACKAGE"]]
         if len(less) != 1:
@@ -541,7 +539,22 @@ def phase_record(phase: str) -> None:
                 any(n.get("text") == "Find a runtime body" for n in root.iter("node"))):
             raise ValueError("Earth selection was not uniquely observed")
     if phase == "collapse":
-        write_status(completed, "captured")
+        package = os.environ["INTERACTIVE_APP_PACKAGE"]
+        nodes = list(root.iter("node"))
+        if any(n.get("content-desc") in {"Less", "Search"} for n in nodes):
+            raise ValueError("expanded controls remain after collapse")
+        for description in ("Home", "Frame", "Help"):
+            matches = [n for n in nodes if n.get("package") == package and
+                       n.get("content-desc") == description and n.get("enabled") == "true"]
+            if len(matches) != 1:
+                raise ValueError("compact camera control is missing or ambiguous")
+        scale = [n for n in nodes if n.get("package") == package and n.get("enabled") == "true" and
+                 n.get("content-desc", "").startswith("Camera scale ") and
+                 n.get("content-desc", "").endswith("; open camera controls")]
+        if len(scale) != 1:
+            raise ValueError("compact camera scale control is missing or ambiguous")
+    completed = expected + [phase]
+    write_status(completed, "captured" if phase == "collapse" else "partial")
 
 
 FAILURE_STAGES = {"startup", "emulator", "provider", "preflight", "baseline_foreground",
