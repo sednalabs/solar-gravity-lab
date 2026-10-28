@@ -1588,6 +1588,9 @@ internal data class NativeSnapshotSummaryResult(
     val simSecondsPerRealSecond: Double,
     val observerMode: Int,
     val timelineSemantics: Int,
+    val focusTargetBodyId: String? = null,
+    val activeCheckpointId: String? = null,
+    val activeCheckpointLabel: String? = null,
 )
 
 internal data class NativeVulkanScenePacketResult(

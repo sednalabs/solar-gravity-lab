@@ -2101,7 +2101,7 @@ mod android_jni {
             }
         };
 
-        match create_native_snapshot_summary_result(&mut env, snapshot_summary) {
+        match create_native_snapshot_summary_result(&mut env, handle, snapshot_summary) {
             Ok(value) => value.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
@@ -2124,7 +2124,7 @@ mod android_jni {
             }
         };
 
-        match create_native_snapshot_summary_result(&mut env, refresh_summary) {
+        match create_native_snapshot_summary_result(&mut env, handle, refresh_summary) {
             Ok(value) => value.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
@@ -2181,7 +2181,7 @@ mod android_jni {
             recorded_at_unix_ms,
         );
 
-        match create_native_snapshot_summary_result(&mut env, command_result) {
+        match create_native_snapshot_summary_result(&mut env, handle, command_result) {
             Ok(value) => value.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
@@ -2587,8 +2587,36 @@ mod android_jni {
 
     fn create_native_snapshot_summary_result<'local>(
         env: &mut JNIEnv<'local>,
-        result: SlSessionSnapshotSummaryResult,
+        handle: jlong,
+        mut result: SlSessionSnapshotSummaryResult,
     ) -> jni::errors::Result<JObject<'local>> {
+        // Capture the summary and its metadata under one registry lock. The public C
+        // summary layout remains unchanged; JNI projects the current native snapshot.
+        let mut focus = None;
+        let mut checkpoint_id = None;
+        let mut checkpoint_label = None;
+        if result.result.code == SlStatusCode::Ok {
+            let captured = u64::try_from(handle).ok().and_then(|raw| {
+                let registry = super::registry().lock().ok()?;
+                let session = registry.get(SlRuntimeHandle { raw })?;
+                let summary = super::snapshot_summary(&session.runtime).ok()?;
+                let snapshot = session.runtime.snapshot();
+                Some((summary, snapshot))
+            });
+            if let Some((summary, snapshot)) = captured {
+                result.summary = summary;
+                focus = snapshot.observer.focus_body_id.map(|id| id.0);
+                if let Some(checkpoint) = snapshot.active_checkpoint {
+                    checkpoint_id = Some(checkpoint.checkpoint_id.0);
+                    checkpoint_label = checkpoint.label;
+                }
+            } else {
+                result.result = status(SlStatusCode::NotReady);
+            }
+        }
+        let focus_obj = match focus { Some(value) => JObject::from(env.new_string(value)?), None => JObject::null() };
+        let checkpoint_id_obj = match checkpoint_id { Some(value) => JObject::from(env.new_string(value)?), None => JObject::null() };
+        let checkpoint_label_obj = match checkpoint_label { Some(value) => JObject::from(env.new_string(value)?), None => JObject::null() };
         let native_result = create_native_result(env, result.result)?;
         let scenario_id = env.new_string(id_from_summary(
             &result.summary.scenario_id,
@@ -2603,7 +2631,7 @@ mod android_jni {
 
         env.new_object(
             CLASS_NATIVE_SNAPSHOT_SUMMARY_RESULT,
-            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Ljava/lang/String;Ljava/lang/String;IDZDII)V",
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Ljava/lang/String;Ljava/lang/String;IDZDIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
             &[
                 JValue::Object(&native_result),
                 JValue::Object(&scenario_id_obj),
@@ -2614,6 +2642,9 @@ mod android_jni {
                 JValue::Double(result.summary.sim_seconds_per_real_second),
                 JValue::Int(result.summary.observer_mode as i32),
                 JValue::Int(result.summary.timeline_semantics as i32),
+                JValue::Object(&focus_obj),
+                JValue::Object(&checkpoint_id_obj),
+                JValue::Object(&checkpoint_label_obj),
             ],
         )
     }

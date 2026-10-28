@@ -303,11 +303,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
 
             is RuntimeSignal.SnapshotUpdated -> _uiState.update { current ->
-                val snapshot = signal.summary.toSnapshotPresentation(
-                    focusTargetBodyId = current.focusedBodyId,
-                    activeCheckpointId = current.activeCheckpointId,
-                    activeCheckpointLabel = current.activeCheckpointLabel,
-                )
+                val snapshot = signal.summary.toSnapshotPresentation()
                 val recentFocusedBodyIds = current.recentFocusedBodyIds
                     .updatedRecentFocusedBodyIds(snapshot.focusTargetBodyId)
                 val next = current.copy(
@@ -350,16 +346,12 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
 
             is RuntimeSignal.CommandApplied -> _uiState.update { current ->
-                val focusedBodyId = signal.command.focusTargetBodyId(current.focusedBodyId)
-                val checkpointId = signal.command.activeCheckpointId(current.activeCheckpointId)
-                val checkpointLabel = signal.command.activeCheckpointLabel(current.activeCheckpointLabel)
+                val snapshot = signal.summary.toSnapshotPresentation()
+                val focusedBodyId = snapshot.focusTargetBodyId
+                val checkpointId = snapshot.activeCheckpointId
+                val checkpointLabel = snapshot.activeCheckpointLabel
                 val recentFocusedBodyIds = current.recentFocusedBodyIds
                     .updatedRecentFocusedBodyIds(focusedBodyId)
-                val snapshot = signal.summary.toSnapshotPresentation(
-                    focusTargetBodyId = focusedBodyId,
-                    activeCheckpointId = checkpointId,
-                    activeCheckpointLabel = checkpointLabel,
-                )
                 current.copy(
                     connectionState = SessionConnectionState.Active,
                     statusLine = "Runtime command applied",
@@ -648,18 +640,6 @@ private fun List<String>.updatedRecentFocusedBodyIds(
 }
 
 private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresentation {
-    return toSnapshotPresentation(
-        focusTargetBodyId = null,
-        activeCheckpointId = null,
-        activeCheckpointLabel = null,
-    )
-}
-
-private fun NativeSnapshotSummaryResult.toSnapshotPresentation(
-    focusTargetBodyId: String?,
-    activeCheckpointId: String?,
-    activeCheckpointLabel: String?,
-): SnapshotPresentation {
     return SnapshotPresentation(
         scenarioId = scenarioId,
         activeBranchId = activeBranchId,
@@ -748,28 +728,6 @@ private fun NativeVulkanScenePacket.toRenderStatusPresentation(
         degradationReason = diagnostics.toRenderIssue(),
         issue = diagnostics.toRenderIssue(),
     )
-}
-
-private fun RuntimeCommand.focusTargetBodyId(existing: String?): String? {
-    return when (this) {
-        is RuntimeCommand.FocusBody -> bodyId
-        else -> existing
-    }
-}
-
-private fun RuntimeCommand.activeCheckpointId(existing: String?): String? {
-    return when (this) {
-        is RuntimeCommand.CreateCheckpoint -> checkpointId ?: existing
-        is RuntimeCommand.CreateBranchFromCheckpoint -> checkpointId
-        else -> existing
-    }
-}
-
-private fun RuntimeCommand.activeCheckpointLabel(existing: String?): String? {
-    return when (this) {
-        is RuntimeCommand.CreateCheckpoint -> checkpointLabel ?: existing
-        else -> existing
-    }
 }
 
 private fun RuntimeCommand.userFacingAction(): String = when (this) {

@@ -359,6 +359,7 @@ class BridgeBackedRuntimeFacadeTest {
                     summary = snapshotSummary(
                         scenarioId = "showcase.jupiter-system",
                         bodyCount = 31,
+                        focusTargetBodyId = "jupiter",
                     ),
                 ),
             ),
@@ -414,17 +415,17 @@ class BridgeBackedRuntimeFacadeTest {
                 RuntimeSignal.CommandApplied(
                     command = RuntimeCommand.FocusBody("earth"),
                     commandLabel = RuntimeCommand.FocusBody("earth").label,
-                    summary = snapshotSummary(bodyCount = 2),
+                    summary = snapshotSummary(bodyCount = 2, focusTargetBodyId = "earth"),
                 ),
                 RuntimeSignal.CommandApplied(
                     command = RuntimeCommand.FocusBody("moon"),
                     commandLabel = RuntimeCommand.FocusBody("moon").label,
-                    summary = snapshotSummary(bodyCount = 2),
+                    summary = snapshotSummary(bodyCount = 2, focusTargetBodyId = "moon"),
                 ),
                 RuntimeSignal.CommandApplied(
                     command = RuntimeCommand.FocusBody("earth"),
                     commandLabel = RuntimeCommand.FocusBody("earth").label,
-                    summary = snapshotSummary(bodyCount = 2),
+                    summary = snapshotSummary(bodyCount = 2, focusTargetBodyId = "earth"),
                 ),
             ),
         )
@@ -479,6 +480,39 @@ class BridgeBackedRuntimeFacadeTest {
         facade.refresh()
         assertEquals(SessionConnectionState.Unavailable, facade.uiState.value.connectionState)
         assertEquals("boundary failed", facade.uiState.value.detailLine)
+    }
+
+    @Test
+    fun nativeSnapshotMetadataOverridesCommandIntentAndPreviousState() = runBlocking {
+        val summaries = listOf(
+            snapshotSummary(bodyCount = 1, focusTargetBodyId = "earth"),
+            snapshotSummary(bodyCount = 0),
+            snapshotSummary(bodyCount = 0, activeCheckpointId = "checkpoint-1", activeCheckpointLabel = "first"),
+            snapshotSummary(bodyCount = 0, activeCheckpointId = "checkpoint-2", activeCheckpointLabel = "second"),
+        ).iterator()
+        val bridge = object : RuntimeBridge {
+            override fun connect(): Flow<RuntimeSignal> = flowOf(RuntimeSignal.Connected(17L))
+            override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> = emptyList()
+            override suspend fun refresh(): List<RuntimeSignal> = listOf(RuntimeSignal.SnapshotUpdated(
+                snapshotSummary(bodyCount = 0, activeCheckpointId = "checkpoint-2", activeCheckpointLabel = "second")))
+            override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> =
+                listOf(RuntimeSignal.CommandApplied(command, command.label, summaries.next()))
+        }
+        val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+        facade.startSession()
+        facade.applyCommand(RuntimeCommand.FocusBody("earth"))
+        assertEquals("earth", facade.uiState.value.focusedBodyId)
+        facade.applyCommand(RuntimeCommand.RemoveBody("earth"))
+        assertEquals(null, facade.uiState.value.focusedBodyId)
+        facade.applyCommand(RuntimeCommand.CreateCheckpoint())
+        assertEquals("checkpoint-1", facade.uiState.value.activeCheckpointId)
+        assertEquals("first", facade.uiState.value.activeCheckpointLabel)
+        facade.applyCommand(RuntimeCommand.CreateBranchFromCheckpoint("checkpoint-2"))
+        assertEquals("checkpoint-2", facade.uiState.value.activeCheckpointId)
+        assertEquals("second", facade.uiState.value.activeCheckpointLabel)
+        facade.refresh()
+        assertEquals("checkpoint-2", facade.uiState.value.activeCheckpointId)
+        assertEquals("second", facade.uiState.value.activeCheckpointLabel)
     }
 
     private fun packetLease(
@@ -579,6 +613,9 @@ class BridgeBackedRuntimeFacadeTest {
             scenarioId: String = "sol-system",
             bodyCount: Int,
             paused: Boolean = false,
+            focusTargetBodyId: String? = null,
+            activeCheckpointId: String? = null,
+            activeCheckpointLabel: String? = null,
         ): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
             result = NativeResult(code = 0),
             scenarioId = scenarioId,
@@ -589,6 +626,9 @@ class BridgeBackedRuntimeFacadeTest {
             simSecondsPerRealSecond = 1.0,
             observerMode = RuntimeObserverMode.SystemFrame.nativeCode,
             timelineSemantics = 1,
+            focusTargetBodyId = focusTargetBodyId,
+            activeCheckpointId = activeCheckpointId,
+            activeCheckpointLabel = activeCheckpointLabel,
         )
     }
 
