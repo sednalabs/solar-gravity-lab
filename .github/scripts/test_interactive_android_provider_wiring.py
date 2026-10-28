@@ -20,14 +20,19 @@ def main() -> int:
     require_once(workflow, "persist-credentials: false")
     require_once(
         workflow,
-        "default: 0e5a3dc692f39022fa84d88c927e4a59801673e4",
+        "ref: 0e5a3dc692f39022fa84d88c927e4a59801673e4",
     )
+    assert "android_computer_use_mcp_ref:" not in workflow
+    assert "inputs.ref" not in workflow
+    assert "actions/cache@" not in workflow
+    assert "rust-shared-cache" not in workflow
+    assert "cache-disabled: true" in workflow
+    assert "--no-build-cache --no-configuration-cache" in workflow
     checkout_credential_field = "".join(("to", "ken"))
     assert f"\n          {checkout_credential_field}:" not in workflow
 
     for expected in (
-        "android_computer_use_mcp_ref:",
-        "--android-computer-use-mcp-ref",
+        "--android-computer-use-mcp-pin",
         "--android-computer-use-mcp-sha",
         "--mcp-toolkit-rs-sha",
         "INTERACTIVE_MCP_ENVIRONMENT_ID:",

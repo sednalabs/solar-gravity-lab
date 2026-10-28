@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import shutil
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
@@ -122,9 +123,44 @@ class CaptureTest(unittest.TestCase):
                         BASELINE.replace(STAGE, STAGE.replace(f'package="{PACKAGE}" class="android.view.View"', 'package="other" class="android.view.View"')),
                         BASELINE.replace(STAGE, "").replace(BUTTON + '</node>', BUTTON + '</node>' + STAGE)):
             self.baseline_xml.write_text(invalid)
+            capture.capture_baseline()
+            with self.assertRaises(ValueError):
+                capture.phase_prepare("help")
+            capture.mark_failed()
+            self.assertEqual((capture.OUTPUT / "baseline/hierarchy.xml").read_text(), invalid)
+            self.assertEqual(capture.current_status()["completed"], ["baseline"])
+            self.assertFalse((capture.BRIDGE / "help-request.json").exists())
+            shutil.rmtree(capture.OUTPUT)
+
+    def test_invalid_baseline_is_not_promoted_and_stage_is_safe(self):
+        cases = (("wrong_package", BASELINE.replace(PACKAGE, "other"), "baseline_package"),
+                 ("invalid_xml", "<hierarchy>", "baseline_hierarchy"))
+        for _, xml, stage in cases:
+            self.baseline_xml.write_text(xml)
             with self.assertRaises(ValueError):
                 capture.capture_baseline()
-            self.assertFalse(capture.OUTPUT.exists())
+            with patch.dict(os.environ, {"INTERACTIVE_CAPTURE_FAILURE_STAGE": "baseline_validate"}):
+                capture.mark_failed()
+            status = capture.current_status()
+            self.assertEqual((status["status"], status["failure_stage"]), ("failed", stage))
+            self.assertFalse((capture.OUTPUT / "baseline").exists())
+            capture.mark_failed()
+            self.assertEqual(capture.current_status()["status"], "failed")
+            self.assertEqual(capture.current_status()["failure_stage"], stage)
+            shutil.rmtree(capture.OUTPUT)
+        with patch.object(capture, "has_decodable_native_png", return_value=False):
+            with self.assertRaises(ValueError):
+                capture.capture_baseline()
+        with patch.dict(os.environ, {"INTERACTIVE_CAPTURE_FAILURE_STAGE": "baseline_validate"}):
+            capture.mark_failed()
+        self.assertEqual(capture.current_status()["failure_stage"], "baseline_image")
+        self.assertFalse((capture.OUTPUT / "baseline").exists())
+
+    def test_unrecognized_stage_is_not_copied_to_status(self):
+        with patch.dict(os.environ, {"INTERACTIVE_CAPTURE_FAILURE_STAGE": "sensitive\nvalue"}):
+            capture.mark_failed()
+        self.assertEqual(capture.current_status()["failure_stage"], "unknown")
+        self.assertNotIn("sensitive", (capture.OUTPUT / "status.json").read_text())
 
     def test_failed_action_retains_only_prior_validated_evidence(self):
         capture.capture_baseline()

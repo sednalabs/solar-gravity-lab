@@ -25,14 +25,20 @@ def require_capture_provider(value: str) -> None:
         raise ValueError("capture provider revision does not match the inspected contract")
 
 
-def read_observation(response_path: Path, hierarchy_path: Path, *, is_step: bool = False):
+def read_observation(response_path: Path, hierarchy_path: Path, *, is_step: bool = False, mark=None):
+    if mark:
+        mark("baseline_receipt")
     if response_path.stat().st_size > 20_000_000 or hierarchy_path.stat().st_size > 2_000_000:
         raise ValueError("observation exceeds capture bound")
     response = response_path.read_bytes()
     receipt = json.loads(response)
     outcome = receipt.get("metadata", {}).get("android", {}).get("outcome", {})
     items = receipt.get("contentItems")
-    if receipt.get("success") is not True or outcome.get("status") != "succeeded" or not has_decodable_native_png(items):
+    if receipt.get("success") is not True or outcome.get("status") != "succeeded":
+        raise ValueError("adapter observation outcome check failed")
+    if mark:
+        mark("baseline_image")
+    if not has_decodable_native_png(items):
         raise ValueError("adapter observation outcome or native image check failed")
     if is_step and outcome.get("actionTypes") != ["click"]:
         raise ValueError("unexpected adapter action")
@@ -40,6 +46,8 @@ def read_observation(response_path: Path, hierarchy_path: Path, *, is_step: bool
     if len(image_items) != 1:
         raise ValueError("expected one native image")
     png = base64.b64decode(image_items[0]["imageUrl"].partition(",")[2], validate=True)
+    if mark:
+        mark("baseline_hierarchy")
     xml = hierarchy_path.read_bytes()
     root = ET.fromstring(xml)
     if root.tag != "hierarchy" or not list(root.iter("node")):
@@ -164,9 +172,10 @@ def valid_app_view(root: ET.Element, package: str) -> None:
 
 
 def write_status(completed: list[str], status: str, stop_reason: str | None = None,
-                 in_progress: str | None = None, action_effect: str | None = None) -> None:
+                 in_progress: str | None = None, action_effect: str | None = None,
+                 failure_stage: str | None = None) -> None:
     payload = {"status": status, "completed": completed, "stop_reason": stop_reason,
-               "in_progress": in_progress, "action_effect": action_effect,
+               "in_progress": in_progress, "action_effect": action_effect, "failure_stage": failure_stage,
                "stability": "unknown", "response_session_identity": "unknown",
                "transport_attempts": "unknown", "provider_may_fallback": True, "visual_acceptance": "pending"}
     temporary = OUTPUT / "status.tmp"
@@ -178,10 +187,18 @@ def current_status() -> dict:
     return json.loads((OUTPUT / "status.json").read_text())
 
 
+def baseline_stage(stage: str) -> None:
+    (BRIDGE / "baseline-stage").write_text(stage)
+
+
 def capture_baseline() -> None:
+    baseline_stage("baseline_provider")
     require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
-    response, png, xml, root = read_observation(BRIDGE / "baseline-response.json", HIERARCHIES / "codex-android-observe.xml")
-    help_center(root, os.environ["INTERACTIVE_APP_PACKAGE"], png_dimensions(png))
+    response, png, xml, root = read_observation(BRIDGE / "baseline-response.json", HIERARCHIES / "codex-android-observe.xml", mark=baseline_stage)
+    baseline_stage("baseline_package")
+    if not any(node.get("package") == os.environ["INTERACTIVE_APP_PACKAGE"] for node in root.iter("node")):
+        raise ValueError("hierarchy does not contain the expected package")
+    baseline_stage("baseline_provenance")
     build = json.loads((SESSION / "qualified-prerelease/qualified-prerelease-intake.json").read_text())
     if build.get("artifact_kind") != "qualified-prerelease" or build.get("package_name") != os.environ["INTERACTIVE_APP_PACKAGE"]:
         raise ValueError("unexpected capture build")
@@ -189,6 +206,7 @@ def capture_baseline() -> None:
         "provider_sha": os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"], "toolkit_sha": os.environ["INTERACTIVE_TOOLKIT_SHA"],
         "build": build, "foreground_package": os.environ["INTERACTIVE_APP_PACKAGE"], "response_session_identity": "unknown", "stability": "unknown",
         "transport_attempts": "unknown", "provider_may_fallback": True}
+    baseline_stage("baseline_publish")
     with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
         staging = Path(temporary) / "capture"
         baseline = staging / "baseline"
@@ -290,11 +308,34 @@ def phase_record(phase: str) -> None:
         write_status(completed, "captured")
 
 
+FAILURE_STAGES = {"startup", "emulator", "provider", "preflight", "baseline_foreground",
+    "baseline_config", "baseline_observe", "baseline_provider", "baseline_receipt", "baseline_image",
+    "baseline_hierarchy", "baseline_package", "baseline_provenance", "baseline_publish",
+    "help", "frame", "home", "controls", "unknown"}
+
+
 def mark_failed() -> None:
+    stage = os.environ.get("INTERACTIVE_CAPTURE_FAILURE_STAGE", "unknown")
+    if stage == "baseline_validate":
+        try:
+            stage = (BRIDGE / "baseline-stage").read_text()
+        except OSError:
+            stage = "unknown"
+    if stage not in FAILURE_STAGES:
+        stage = "unknown"
     if (OUTPUT / "status.json").exists():
         status = current_status()
-        write_status(status.get("completed", []), "partial", "inspection_stopped",
-                     status.get("in_progress"), status.get("action_effect"))
+        stage = status.get("failure_stage") or stage
+        if stage not in FAILURE_STAGES:
+            stage = "unknown"
+        if status.get("status") == "failed" and not status.get("completed"):
+            write_status([], "failed", "capture_stage_failed", failure_stage=stage)
+        else:
+            write_status(status.get("completed", []), "partial", "inspection_stopped",
+                         status.get("in_progress"), status.get("action_effect"), stage)
+    else:
+        OUTPUT.mkdir(parents=True, exist_ok=True)
+        write_status([], "failed", "capture_stage_failed", failure_stage=stage)
 
 
 if __name__ == "__main__":

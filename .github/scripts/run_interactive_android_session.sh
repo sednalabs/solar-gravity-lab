@@ -686,6 +686,7 @@ cloudflared_pid=""
 logcat_pid=""
 final_status="failure"
 final_reason="session_not_started"
+capture_failure_stage="startup"
 
 cleanup() {
   if [[ "${session_mode}" == "live" ]]; then
@@ -701,7 +702,7 @@ cleanup() {
 
   if [[ "${session_mode}" == "capture-only" ]]; then
     if [[ "${final_status}" != "success" ]]; then
-      python3 .github/scripts/capture_interactive_baseline.py --mark-failed >/dev/null 2>&1 || true
+      INTERACTIVE_CAPTURE_FAILURE_STAGE="${capture_failure_stage}" python3 .github/scripts/capture_interactive_baseline.py --mark-failed >/dev/null 2>&1 || true
     fi
     return
   fi
@@ -725,6 +726,7 @@ PY
 
 trap cleanup EXIT
 
+capture_failure_stage="emulator"
 adb wait-for-device
 adb logcat -c || true
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
@@ -786,6 +788,7 @@ export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_APP_ACTIVITY="${app_activity
 export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_GITHUB_REPOSITORY="${INTERACTIVE_SESSION_GITHUB_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
 export ANDROID_COMPUTER_USE_MCP_INTERACTIVE_SESSION_GITHUB_TOKEN="${INTERACTIVE_SESSION_GITHUB_TOKEN:-}"
 
+capture_failure_stage="provider"
 log "Starting android-computer-use-mcp on ${mcp_bind_addr}"
 "${mcp_workspace_dir}/target/release/android-computer-use-mcp" \
   > "${startup_log_dir}/android-computer-use-mcp.stdout.log" \
@@ -809,6 +812,7 @@ if [[ "${health_ready}" != "true" ]]; then
   exit 1
 fi
 
+capture_failure_stage="preflight"
 log "Running install-and-launch preflight"
 preflight_ok="true"
 runtime_args=()
@@ -835,9 +839,11 @@ if [[ "${session_mode}" == "capture-only" ]]; then
   if [[ "${preflight_ok}" != "true" ]]; then
     exit 1
   fi
+  capture_failure_stage="baseline_foreground"
   if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
     exit 1
   fi
+  capture_failure_stage="baseline_config"
   python3 .github/scripts/write_interactive_openai_loop_config.py \
     --mcp-url "http://${mcp_bind_addr}/mcp" \
     --environment-id "${mcp_environment_id}" \
@@ -848,13 +854,20 @@ if [[ "${session_mode}" == "capture-only" ]]; then
     --default-model "${openai_default_model}" --default-serial "${openai_default_serial}" \
     --default-package-name "${app_package}" --default-activity "${app_activity}" \
     --output-root "${codex_bridge_run_root}" --output-json "${openai_loop_dir}/config.json"
+  capture_failure_stage="baseline_observe"
   printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
     | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
       --config "${openai_loop_dir}/config.json" call \
       > "${codex_bridge_dir}/baseline-response.json" 2>/dev/null
+  capture_failure_stage="baseline_foreground"
+  if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+    exit 1
+  fi
+  capture_failure_stage="baseline_validate"
   python3 .github/scripts/capture_interactive_baseline.py --baseline >/dev/null 2>&1
   capture_step() {
     local phase="$1"
+    capture_failure_stage="${phase}"
     python3 .github/scripts/capture_interactive_baseline.py "--prepare-${phase}" >/dev/null 2>&1
     if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
       return 1
