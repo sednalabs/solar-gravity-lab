@@ -100,9 +100,12 @@ jobs:
     name: Hosted interactive Android emulator session
     runs-on: ubuntu-24.04
     env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/interactive-gradle-home
       RUSTC_WRAPPER: ""
     steps:
+      - name: Isolate Gradle user home
+        shell: bash
+        run: printf 'GRADLE_USER_HOME=%s/interactive-gradle-home\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
