@@ -25,7 +25,7 @@ def require_capture_provider(value: str) -> None:
         raise ValueError("capture provider revision does not match the inspected contract")
 
 
-def read_observation(response_path: Path, hierarchy_path: Path, *, is_step: bool = False, mark=None):
+def read_observation(response_path: Path, hierarchy_path: Path, *, is_step: bool = False, step_type: str = "click", mark=None):
     if mark:
         mark("baseline_receipt")
     if response_path.stat().st_size > 20_000_000 or hierarchy_path.stat().st_size > 2_000_000:
@@ -40,7 +40,7 @@ def read_observation(response_path: Path, hierarchy_path: Path, *, is_step: bool
         mark("baseline_image")
     if not has_decodable_native_png(items):
         raise ValueError("adapter observation outcome or native image check failed")
-    if is_step and outcome.get("actionTypes") != ["click"]:
+    if is_step and outcome.get("actionTypes") != [step_type]:
         raise ValueError("unexpected adapter action")
     image_items = [item for item in items if isinstance(item, dict) and item.get("type") == "inputImage"]
     if len(image_items) != 1:
@@ -160,7 +160,7 @@ def target_center(root: ET.Element, package: str, viewport: tuple[int, int], tar
 
 
 OUTPUT = Path("dist/interactive-capture")
-PHASES = ("help", "frame", "home", "controls", "search")
+PHASES = ("help", "frame", "home", "controls", "search", "type-earth", "focus-earth", "reframe-earth", "collapse")
 
 
 def valid_app_view(root: ET.Element, package: str) -> None:
@@ -169,6 +169,12 @@ def valid_app_view(root: ET.Element, package: str) -> None:
         raise ValueError("hierarchy does not contain the expected package")
     if any(node.get("content-desc") in {HELP, DISMISS} or node.get("text") in {HELP, DISMISS} for node in nodes):
         raise ValueError("help remains visible after dismissal")
+
+
+def valid_continuation_view(root: ET.Element, package: str) -> None:
+    valid_app_view(root, package)
+    if any(n.get("package") != package for n in root.iter("node")):
+        raise ValueError("unexpected window in continuation hierarchy")
 
 
 def write_status(completed: list[str], status: str, stop_reason: str | None = None,
@@ -328,6 +334,42 @@ def capture_baseline() -> None:
         staging.rename(OUTPUT)
 
 
+def earth_focus_center(root: ET.Element, package: str, viewport: tuple[int, int]) -> tuple[int, int]:
+    nodes = list(root.iter("node"))
+    if any(n.get("package") != package for n in nodes):
+        raise ValueError("unexpected window in search hierarchy")
+    earth = [n for n in nodes if n.get("package") == package and n.get("text") == "Earth"]
+    fields = [n for n in nodes if n.get("package") == package and n.get("class") == "android.widget.EditText"]
+    if len(earth) != 1 or len(fields) != 1 or fields[0].get("text", "").lower() != "earth":
+        raise ValueError("filtered Earth result or query is ambiguous")
+    parents = {child: parent for parent in root.iter() for child in parent}
+    row = parents.get(earth[0])
+    if row is None or row.get("package") != package:
+        raise ValueError("Earth result row is missing")
+    row_nodes = list(row.iter("node"))
+    identifiers = [n for n in row_nodes if n.get("text", "").startswith("earth · ")]
+    labels = [n for n in row_nodes if n.get("text") == "Focus" and n.get("package") == package]
+    if len(identifiers) != 1 or len(labels) != 1:
+        raise ValueError("Earth focus action is ambiguous")
+    target = parents.get(labels[0])
+    if target is None or target.get("package") != package or target.get("enabled") != "true" or target.get("clickable") != "true":
+        raise ValueError("Earth focus action is not enabled and clickable")
+    rect = bounds(target)
+    if not contains((0, 0, *viewport), rect) or not contains(bounds(row), rect):
+        raise ValueError("Earth focus action is clipped")
+    scroll = parents.get(row)
+    if scroll is None or scroll.get("class") != "android.widget.ScrollView" or not contains(bounds(scroll), rect):
+        raise ValueError("Earth focus action is outside visible results")
+    x, y = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
+    for node in nodes:
+        if node is target or node.get("clickable") != "true":
+            continue
+        b = bounds(node)
+        if b[0] <= x < b[2] and b[1] <= y < b[3]:
+            raise ValueError("Earth focus action is obstructed")
+    return x, y
+
+
 def phase_prepare(phase: str) -> None:
     require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
     status = current_status()
@@ -335,15 +377,17 @@ def phase_prepare(phase: str) -> None:
     if (status.get("status") != "partial" or status.get("completed") != expected
             or status.get("in_progress") is not None or status.get("stop_reason") is not None):
         raise ValueError("unexpected inspection sequence")
-    if phase == "search":
-        response, png, xml, root = read_observation(BRIDGE / "search-before.json", HIERARCHIES / "codex-android-observe.xml")
+    if phase in {"search", "type-earth", "focus-earth", "reframe-earth", "collapse"}:
+        response, png, xml, root = read_observation(BRIDGE / f"{phase}-before.json", HIERARCHIES / "codex-android-observe.xml")
+        if phase != "search":
+            valid_continuation_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
         with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
             staging = Path(temporary) / "before"
             staging.mkdir()
             (staging / "observation.json").write_bytes(response)
             (staging / "screen.png").write_bytes(png)
             (staging / "hierarchy.xml").write_bytes(xml)
-            staging.rename(OUTPUT / "search-before")
+            staging.rename(OUTPUT / f"{phase}-before")
     else:
         previous = OUTPUT / expected[-1]
         if expected[-1] != "baseline":
@@ -352,18 +396,35 @@ def phase_prepare(phase: str) -> None:
         root = ET.fromstring((previous / "hierarchy.xml").read_bytes())
     package = os.environ["INTERACTIVE_APP_PACKAGE"]
     viewport = png_dimensions(png)
-    if phase == "help":
+    if phase == "type-earth":
+        valid_app_view(root, package)
+        if any(n.get("package") != package for n in root.iter("node")):
+            raise ValueError("unexpected window in search hierarchy")
+        fields = [n for n in root.iter("node") if n.get("package") == package and n.get("class") == "android.widget.EditText"]
+        if len(fields) != 1 or fields[0].get("focused") != "true" or fields[0].get("text", "") != "" or fields[0].get("enabled") != "true":
+            raise ValueError("search field is not uniquely focused and empty")
+        if len([n for n in root.iter("node") if n.get("package") == package and n.get("text") == "Find a runtime body"]) != 1:
+            raise ValueError("search dialog is not uniquely observed")
+        action = {"type": "type", "text": "earth"}
+    elif phase == "focus-earth":
+        valid_app_view(root, package)
+        x, y = earth_focus_center(root, package, viewport)
+        action = {"type": "click", "x": x, "y": y}
+    elif phase == "help":
         x, y = help_center(root, package, viewport)
+        action = {"type": "click", "x": x, "y": y}
     else:
         valid_app_view(root, package)
-        if phase == "frame":
+        if phase in {"frame", "reframe-earth", "collapse"}:
             earth = [n for n in root.iter("node") if n.get("text") == "Earth" and n.get("package") == package]
             if len(earth) != 1:
                 raise ValueError("Earth selection is not uniquely visible")
         def selected(node):
             description = node.get("content-desc", "")
-            if phase == "frame":
+            if phase in {"frame", "reframe-earth"}:
                 return description == "Frame"
+            if phase == "collapse":
+                return description == "Less"
             if phase == "home":
                 return description == "Home"
             if phase == "search":
@@ -373,7 +434,8 @@ def phase_prepare(phase: str) -> None:
         if len(targets) != 1:
             raise ValueError("inspection target is missing or ambiguous")
         x, y = target_center(root, package, viewport, targets[0])
-    request = {"tool": "android_step", "arguments": {"actions": [{"type": "click", "x": x, "y": y}],
+        action = {"type": "click", "x": x, "y": y}
+    request = {"tool": "android_step", "arguments": {"actions": [action],
         "post_observe_scope": "screen_and_ui"}}
     request_text = json.dumps(request) + "\n"
     (BRIDGE / f"{phase}-request.json").write_text(request_text)
@@ -390,8 +452,12 @@ def phase_snapshot(phase: str) -> None:
     expected = ["baseline"] + list(PHASES[:PHASES.index(phase)])
     if status.get("status") != "partial" or status.get("completed") != expected or status.get("in_progress") != phase:
         raise ValueError("unexpected inspection sequence")
-    response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / "codex-click-after.xml", is_step=True)
-    valid_app_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
+    action_type = "type" if phase == "type-earth" else "click"
+    response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / f"codex-{action_type}-after.xml", is_step=True, step_type=action_type)
+    if phase in {"type-earth", "focus-earth", "reframe-earth", "collapse"}:
+        valid_continuation_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
+    else:
+        valid_app_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
     with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
         staging = Path(temporary) / "immediate"
         staging.mkdir()
@@ -410,7 +476,10 @@ def phase_record(phase: str) -> None:
             or status.get("stop_reason") is not None):
         raise ValueError("unexpected inspection sequence")
     response, png, xml, root = read_observation(BRIDGE / f"{phase}-settled.json", HIERARCHIES / "codex-android-observe.xml")
-    valid_app_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
+    if phase in {"type-earth", "focus-earth", "reframe-earth", "collapse"}:
+        valid_continuation_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
+    else:
+        valid_app_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
     with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
         staging = Path(temporary) / "settled"
         staging.mkdir()
@@ -432,13 +501,17 @@ def phase_record(phase: str) -> None:
                  "focused_values": [node.get("focused") for node in fields],
                  "keyboard_visual_observation": "pending"}
         (OUTPUT / phase / "focus-observation.json").write_text(json.dumps(focus) + "\n")
+    if phase == "type-earth":
+        earth_focus_center(root, os.environ["INTERACTIVE_APP_PACKAGE"], png_dimensions(png))
+    if phase == "collapse":
         write_status(completed, "captured")
 
 
 FAILURE_STAGES = {"startup", "emulator", "provider", "preflight", "baseline_foreground",
     "baseline_config", "baseline_observe", "baseline_provider", "baseline_receipt", "baseline_image",
     "baseline_hierarchy", "baseline_quarantine", "baseline_package", "baseline_provenance", "baseline_publish",
-    "launcher_recovery", "help", "frame", "home", "controls", "search", "unknown"}
+    "launcher_recovery", "help", "frame", "home", "controls", "search",
+    "type-earth", "focus-earth", "reframe-earth", "collapse", "unknown"}
 
 
 def mark_failed() -> None:
@@ -507,6 +580,30 @@ if __name__ == "__main__":
         phase_record("controls")
     elif command == ["--record-search"]:
         phase_record("search")
+    elif command == ["--prepare-type-earth"]:
+        phase_prepare("type-earth")
+    elif command == ["--snapshot-type-earth"]:
+        phase_snapshot("type-earth")
+    elif command == ["--record-type-earth"]:
+        phase_record("type-earth")
+    elif command == ["--prepare-focus-earth"]:
+        phase_prepare("focus-earth")
+    elif command == ["--snapshot-focus-earth"]:
+        phase_snapshot("focus-earth")
+    elif command == ["--record-focus-earth"]:
+        phase_record("focus-earth")
+    elif command == ["--prepare-reframe-earth"]:
+        phase_prepare("reframe-earth")
+    elif command == ["--snapshot-reframe-earth"]:
+        phase_snapshot("reframe-earth")
+    elif command == ["--record-reframe-earth"]:
+        phase_record("reframe-earth")
+    elif command == ["--prepare-collapse"]:
+        phase_prepare("collapse")
+    elif command == ["--snapshot-collapse"]:
+        phase_snapshot("collapse")
+    elif command == ["--record-collapse"]:
+        phase_record("collapse")
     elif command == ["--mark-failed"]:
         mark_failed()
     else:

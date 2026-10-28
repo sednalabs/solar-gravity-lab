@@ -144,7 +144,7 @@ class CaptureTest(unittest.TestCase):
         self.step("search", SEARCH_VIEW)
         status = json.loads((capture.OUTPUT / "status.json").read_text())
         self.assertEqual(status["completed"], ["baseline", "help", "frame", "home", "controls", "search"])
-        self.assertEqual((status["status"], status["stability"], status["visual_acceptance"]), ("captured", "unknown", "pending"))
+        self.assertEqual((status["status"], status["stability"], status["visual_acceptance"]), ("partial", "unknown", "pending"))
         self.assertTrue(status["provider_may_fallback"])
         self.assertEqual(json.loads((capture.OUTPUT / "search/focus-observation.json").read_text()),
                          {"edit_text_count": 1, "focused_values": ["true"], "keyboard_visual_observation": "pending"})
@@ -156,6 +156,50 @@ class CaptureTest(unittest.TestCase):
             self.assertTrue((step / "action-request.json").exists())
             self.assertTrue((step / "immediate/action-response.json").exists())
             self.assertTrue((step / "settled/hierarchy.xml").exists())
+
+    def test_type_requires_focused_empty_field_and_uses_raw_text_action(self):
+        capture.capture_baseline()
+        for phase in ("help", "frame", "home"):
+            self.step(phase)
+        self.step("controls", EXPANDED)
+        (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
+        self.step("search", SEARCH_VIEW)
+        self.baseline_xml.write_text(SEARCH_VIEW.replace('</node></hierarchy>',
+            f'<node package="{PACKAGE}" text="Find a runtime body"/></node></hierarchy>'))
+        (capture.BRIDGE / "type-earth-before.json").write_text(json.dumps(self.receipt(False)))
+        capture.phase_prepare("type-earth")
+        request = json.loads((capture.BRIDGE / "type-earth-request.json").read_text())
+        self.assertEqual(request["arguments"]["actions"], [{"type": "type", "text": "earth"}])
+        self.assertTrue((capture.OUTPUT / "type-earth-before/screen.png").exists())
+
+    def test_type_refuses_unfocused_field_and_preserves_pre_action_observation(self):
+        capture.capture_baseline()
+        for phase in ("help", "frame", "home"):
+            self.step(phase)
+        self.step("controls", EXPANDED)
+        (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
+        self.step("search", SEARCH_VIEW)
+        self.baseline_xml.write_text(SEARCH_VIEW.replace('focused="true"', 'focused="false"'))
+        (capture.BRIDGE / "type-earth-before.json").write_text(json.dumps(self.receipt(False)))
+        with self.assertRaises(ValueError):
+            capture.phase_prepare("type-earth")
+        self.assertTrue((capture.OUTPUT / "type-earth-before/screen.png").exists())
+        self.assertFalse((capture.BRIDGE / "type-earth-request.json").exists())
+
+    def test_earth_row_focus_requires_unique_visible_clickable_action(self):
+        field = f'<node package="{PACKAGE}" class="android.widget.EditText" text="earth"/>'
+        button = (f'<node package="{PACKAGE}" clickable="true" enabled="true" bounds="[650,600][850,700]">'
+                  f'<node package="{PACKAGE}" text="Focus"/></node>')
+        row = (f'<node package="{PACKAGE}" bounds="[100,580][900,720]">'
+               f'<node package="{PACKAGE}" text="Earth"/><node package="{PACKAGE}" text="earth · 1 AU"/>{button}</node>')
+        scroll = f'<node package="{PACKAGE}" class="android.widget.ScrollView" bounds="[80,500][950,800]">{row}</node>'
+        xml = f'<hierarchy><node package="{PACKAGE}">{field}{scroll}</node></hierarchy>'
+        self.assertEqual(capture.earth_focus_center(ET.fromstring(xml), PACKAGE, (1080, 2400)), (750, 650))
+        for invalid in (xml.replace(row, row + row), xml.replace('clickable="true"', 'clickable="false"'),
+                        xml.replace('[80,500][950,800]', '[80,500][950,650]'),
+                        xml.replace(button, button + f'<node package="android" clickable="true" bounds="[700,600][800,700]"/>')):
+            with self.assertRaises(ValueError):
+                capture.earth_focus_center(ET.fromstring(invalid), PACKAGE, (1080, 2400))
 
     def test_missing_search_target_preserves_fresh_observation(self):
         capture.capture_baseline()
