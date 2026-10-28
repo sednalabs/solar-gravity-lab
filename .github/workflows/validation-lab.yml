@@ -244,19 +244,16 @@ jobs:
           fi
 
           mkdir -p dist/validation-plan
-          : > dist/validation-plan/primary-files.txt
-          : > dist/validation-plan/latest-files.txt
-
           if [[ -n "$base_sha" ]] && git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
-            git diff --name-only "$base_sha" "$head_sha" > dist/validation-plan/primary-files.txt
-          else
-            git diff --name-only HEAD~1 "$head_sha" > dist/validation-plan/primary-files.txt || true
+            bash .github/scripts/validation_changed_files.sh "$base_sha" "$head_sha" > dist/validation-plan/primary-files.txt
+          elif [[ "$event_name" != 'pull_request' ]]; then
+            bash .github/scripts/validation_changed_files.sh HEAD~1 "$head_sha" > dist/validation-plan/primary-files.txt || rm -f dist/validation-plan/primary-files.txt
           fi
 
           if [[ "$event_name" == 'pull_request' && -n "$before_sha" && "$before_sha" != '0000000000000000000000000000000000000000' ]] && \
              git cat-file -e "${before_sha}^{commit}" 2>/dev/null; then
-            git diff --name-only "$before_sha" "$head_sha" > dist/validation-plan/latest-files.txt
-          else
+            bash .github/scripts/validation_changed_files.sh "$before_sha" "$head_sha" > dist/validation-plan/latest-files.txt
+          elif [[ -f dist/validation-plan/primary-files.txt ]]; then
             cp dist/validation-plan/primary-files.txt dist/validation-plan/latest-files.txt
           fi
 

@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).with_name("resolve_validation_lab_plan.py")
+SCRIPT = Path(__file__).resolve().with_name("resolve_validation_lab_plan.py")
+CHANGED_FILES_SCRIPT = Path(__file__).resolve().with_name("validation_changed_files.sh")
 
 
 def run_plan(
@@ -22,6 +23,8 @@ def run_plan(
     head_sha: str = "head123",
     pull_request_number: str = "42",
     evidence: dict | None = None,
+    primary_available: bool = True,
+    latest_available: bool = True,
 ) -> dict[str, str]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -31,9 +34,11 @@ def run_plan(
         primary_path = plan_dir / "primary-files.txt"
         latest_path = plan_dir / "latest-files.txt"
         evidence_path = evidence_dir / "validation-summary.json"
-        primary_path.write_text("\n".join(primary_files) + ("\n" if primary_files else ""), encoding="utf-8")
+        if primary_available:
+            primary_path.write_text("\n".join(primary_files) + ("\n" if primary_files else ""), encoding="utf-8")
         latest_values = primary_files if latest_files is None else latest_files
-        latest_path.write_text("\n".join(latest_values) + ("\n" if latest_values else ""), encoding="utf-8")
+        if latest_available:
+            latest_path.write_text("\n".join(latest_values) + ("\n" if latest_values else ""), encoding="utf-8")
         if evidence is not None:
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
@@ -107,6 +112,12 @@ def successful_evidence(*, base_sha: str = "base123", head_sha: str = "head123",
 
 
 class ValidationLabPlanTests(unittest.TestCase):
+    RUNTIME_LANES = (
+        "rust_workspace", "rust_workspace_arm64", "arm64_capability_census",
+        "arm64_isa_proof", "ffi_abi", "android_unit", "android_lint",
+        "android_shell", "runtime_scene_telemetry",
+    )
+
     def test_docs_only_pr_has_no_validation_lab_runtime_lanes(self) -> None:
         outputs = run_plan(["docs/ci-cache-rollout.md"])
 
@@ -159,6 +170,112 @@ class ValidationLabPlanTests(unittest.TestCase):
         self.assertEqual(outputs["android_lint"], "true")
         self.assertEqual(outputs["android_shell"], "true")
         self.assertEqual(outputs["runtime_scene_telemetry"], "true")
+
+    def test_other_consumers_do_not_trigger_runtime_lanes(self) -> None:
+        for path in (
+            ".github/scripts/render_release_notes.py",
+            ".github/workflows/security-sarif.yml",
+            ".github/workflows/gradle-cache-service.yml",
+            ".github/scripts/download_interactive_build_artifact.py",
+            "infra/gradle-cache-service/Cargo.lock",
+        ):
+            with self.subTest(path=path):
+                outputs = run_plan([path])
+                self.assertTrue(all(outputs[lane] == "false" for lane in self.RUNTIME_LANES))
+
+    def test_shared_or_unknown_tooling_forces_full_even_in_mixed_diff(self) -> None:
+        for path in (
+            ".github/scripts/resolve_validation_lab_plan.py",
+            ".github/scripts/run_arm64_isa_proof.sh",
+            ".github/actions/prepare-rust-android-toolchain/action.yml",
+            ".github/scripts/future_unknown_helper.py",
+            ".github/actions/future-action/Cargo.toml",
+        ):
+            with self.subTest(path=path):
+                outputs = run_plan(["clients/android/app/src/main/Stage.kt", path])
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_other_consumer_does_not_mask_runtime_proof(self) -> None:
+        outputs = run_plan([".github/scripts/render_release_notes.py", "engine/ffi/src/lib.rs"])
+        for lane in ("rust_workspace", "rust_workspace_arm64", "arm64_capability_census", "arm64_isa_proof", "ffi_abi"):
+            self.assertEqual(outputs[lane], "true")
+        self.assertEqual(outputs["android_shell"], "false")
+
+    def test_shared_roots_and_unknown_manifest_force_full(self) -> None:
+        for path in (
+            "Cargo.toml", "Cargo.lock", "build.gradle.kts", "settings.gradle.kts",
+            "gradle.properties", "gradle/wrapper/gradle-wrapper.properties", "gradlew",
+            "future/Cargo.toml", "future/Cargo.lock",
+        ):
+            with self.subTest(path=path):
+                outputs = run_plan(["clients/android/app/src/main/Stage.kt", path])
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_unavailable_or_unproven_empty_diff_forces_full(self) -> None:
+        for options in (
+            {"primary_available": False},
+            {},
+            {"latest_available": False, "evidence": successful_evidence()},
+        ):
+            with self.subTest(options=options):
+                outputs = run_plan([], **options)
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_helper_only_predecessor_does_not_suppress_changed_arm64_proof(self) -> None:
+        for changed in ("engine/physics/src/lib.rs", "engine/hardware/src/lib.rs"):
+            with self.subTest(changed=changed):
+                outputs = run_plan(
+                    [".github/scripts/render_release_notes.py", changed],
+                    [changed],
+                    evidence=successful_evidence(),
+                )
+                self.assertEqual(outputs["prior_evidence_reused"], "true")
+                for lane in ("rust_workspace_arm64", "arm64_capability_census", "arm64_isa_proof"):
+                    self.assertEqual(outputs[lane], "true")
+
+    def test_renamed_product_file_routes_removed_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True, text=True, capture_output=True
+                ).stdout.strip()
+
+            git("init")
+            git("config", "user.name", "Validation test")
+            git("config", "user.email", "validation@example.invalid")
+            git("config", "commit.gpgsign", "false")
+            git("config", "core.hooksPath", "/dev/null")
+            source = root / "engine" / "ffi" / "contract.txt"
+            source.parent.mkdir(parents=True)
+            source.write_text("contract\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-m", "original")
+            before = git("rev-parse", "HEAD")
+            (root / "docs").mkdir()
+            git("mv", "engine/ffi/contract.txt", "docs/contract.txt")
+            git("commit", "-m", "move")
+            after = git("rev-parse", "HEAD")
+            changed = subprocess.run(
+                ["bash", str(CHANGED_FILES_SCRIPT), before, after], cwd=root,
+                check=True, text=True, capture_output=True,
+            ).stdout.splitlines()
+
+        self.assertEqual(set(changed), {"engine/ffi/contract.txt", "docs/contract.txt"})
+        outputs = run_plan(changed)
+        for lane in ("rust_workspace", "rust_workspace_arm64", "arm64_isa_proof", "ffi_abi"):
+            self.assertEqual(outputs[lane], "true")
+
+    def test_explicit_full_overrides_other_consumer_route(self) -> None:
+        for options in ({"lane_set": "full"}, {"profile": "full"}):
+            with self.subTest(options=options):
+                outputs = run_plan([".github/scripts/render_release_notes.py"], **options)
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_runtime_cpu_truth_lane_preserves_proof(self) -> None:
+        outputs = run_plan(["engine/runtime/src/lib.rs"], lane_set="runtime-cpu-truth")
+        for lane in ("arm64_isa_proof", "ffi_abi", "android_unit"):
+            self.assertEqual(outputs[lane], "true")
 
     def test_explicit_arm64_capability_census_lane_is_runnable(self) -> None:
         outputs = run_plan(
