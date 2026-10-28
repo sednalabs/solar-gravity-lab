@@ -26,8 +26,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      code-quality: write
-      pull-requests: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -51,10 +49,9 @@ jobs:
           done
           coverage xml -o coverage-python-tools.xml
 
-      - name: Upload Python tool coverage
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-code-coverage@v1
+      - name: Upload Python tool coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          file: coverage-python-tools.xml
-          language: Python
-          label: code-coverage/python-tools
+          name: python-tool-coverage
+          path: coverage-python-tools.xml
+          if-no-files-found: error
