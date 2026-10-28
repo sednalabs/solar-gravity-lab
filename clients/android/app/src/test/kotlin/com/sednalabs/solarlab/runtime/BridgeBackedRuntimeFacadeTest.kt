@@ -10,6 +10,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -553,6 +554,82 @@ class BridgeBackedRuntimeFacadeTest {
         assertEquals("second", facade.uiState.value.activeCheckpointLabel)
     }
 
+    @Test
+    fun delayedOlderSnapshotAndRenderCannotOverwriteNewerCommand() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        val releaseOld = CompletableDeferred<Unit>()
+        val delivered = CompletableDeferred<Unit>()
+        val oldLease = packetLease(0, 0, 0, 0, 0)
+        val old = snapshotSummary(bodyCount = 1, focusTargetBodyId = "earth", revision = 1)
+        val newer = snapshotSummary(bodyCount = 1, focusTargetBodyId = "moon", activeCheckpointId = "cp2", activeCheckpointLabel = "second", revision = 2)
+        val removed = snapshotSummary(bodyCount = 0, activeCheckpointId = "cp2", activeCheckpointLabel = "second", revision = 3)
+        val bridge = object : RuntimeBridge {
+            override fun connect(): Flow<RuntimeSignal> = flow {
+                emit(RuntimeSignal.Connected(17L))
+                connected.complete(Unit)
+                releaseOld.await()
+                emit(RuntimeSignal.SnapshotUpdated(old, sessionHandle = 17L))
+                emit(RuntimeSignal.RenderPacketReady(oldLease, revision = 1, sessionHandle = 17L))
+                emit(RuntimeSignal.RenderUnavailable("old render", revision = 1, sessionHandle = 17L))
+                delivered.complete(Unit)
+            }
+            override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> = emptyList()
+            override suspend fun refresh(): List<RuntimeSignal> = emptyList()
+            override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> = listOf(
+                RuntimeSignal.CommandApplied(command, command.label, if (command is RuntimeCommand.RemoveBody) removed else newer, sessionHandle = 17L))
+        }
+        val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+        val session = async { facade.startSession() }
+        connected.await()
+        facade.applyCommand(RuntimeCommand.FocusBody("moon"))
+        val stateAfterCommand = facade.uiState.value
+        releaseOld.complete(Unit)
+        delivered.await()
+        session.await()
+        assertEquals(stateAfterCommand, facade.uiState.value)
+        assertTrue(oldLease.isReleased)
+        facade.applyCommand(RuntimeCommand.RemoveBody("moon"))
+        assertEquals(null, facade.uiState.value.focusedBodyId)
+        assertEquals(3L, facade.uiState.value.snapshot?.revision)
+    }
+
+    @Test
+    fun delayedConnectedFromReplacedSessionDoesNotResetCurrentSnapshot() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        val releaseOld = CompletableDeferred<Unit>()
+        val delivered = CompletableDeferred<Unit>()
+        val bridge = object : RuntimeBridge {
+            var currentHandle = 17L
+            override fun isCurrentSession(handle: Long): Boolean = handle == currentHandle
+            override fun connect(): Flow<RuntimeSignal> = flow {
+                emit(RuntimeSignal.Connected(17L))
+                connected.complete(Unit)
+                releaseOld.await()
+                emit(RuntimeSignal.Connected(17L))
+                emit(RuntimeSignal.SnapshotUpdated(snapshotSummary(bodyCount = 1, focusTargetBodyId = "earth", revision = 50), 17L))
+                delivered.complete(Unit)
+            }
+            override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> {
+                currentHandle = 18L
+                return listOf(RuntimeSignal.Connected(18L), RuntimeSignal.SnapshotUpdated(
+                    snapshotSummary(bodyCount = 1, focusTargetBodyId = "moon", revision = 1), 18L))
+            }
+            override suspend fun refresh(): List<RuntimeSignal> = emptyList()
+            override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> = emptyList()
+        }
+        val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+        val session = async { facade.startSession() }
+        connected.await()
+        facade.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val current = facade.uiState.value
+        assertEquals(18L, current.sessionHandle)
+        assertEquals("moon", current.focusedBodyId)
+        releaseOld.complete(Unit)
+        delivered.await()
+        session.await()
+        assertEquals(current, facade.uiState.value)
+    }
+
     private fun packetLease(
         bodyCount: Int,
         tracerCount: Int,
@@ -654,6 +731,7 @@ class BridgeBackedRuntimeFacadeTest {
             focusTargetBodyId: String? = null,
             activeCheckpointId: String? = null,
             activeCheckpointLabel: String? = null,
+            revision: Long = 0,
         ): NativeSnapshotSummaryResult = NativeSnapshotSummaryResult(
             result = NativeResult(code = 0),
             scenarioId = scenarioId,
@@ -667,6 +745,7 @@ class BridgeBackedRuntimeFacadeTest {
             focusTargetBodyId = focusTargetBodyId,
             activeCheckpointId = activeCheckpointId,
             activeCheckpointLabel = activeCheckpointLabel,
+            revision = revision,
         )
     }
 

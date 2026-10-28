@@ -26,6 +26,9 @@ import java.util.Locale
  * Native transport owns ABI calls into `engine/ffi` via a JNI shim.
  */
 internal interface RuntimeBridge {
+    // Used to reject a queued signal from a session that has since been replaced.
+    fun isCurrentSession(handle: Long): Boolean = true
+
     // Streamed connection events from the runtime host.
     fun connect(): Flow<RuntimeSignal>
 
@@ -49,6 +52,8 @@ internal class JniRuntimeBridge(
     private val operationLock = Any()
     @Volatile
     private var activeSessionHandle: Long = 0L
+
+    override fun isCurrentSession(handle: Long): Boolean = activeSessionHandle == handle
 
     // Creates the native session and starts the periodic snapshot refresh loop.
     // Emitted signals are boundary-only; all rendering state remains host-owned.
@@ -453,8 +458,9 @@ internal class JniRuntimeBridge(
                 command = command,
                 commandLabel = command.label,
                 summary = commandResult,
+                sessionHandle = handle,
             )
-            signals += refreshSignalsForHandle(handle, includeSummary = false)
+            signals += refreshSignalsForHandle(handle, includeSummary = false, snapshotRevision = commandResult.revision)
             signals
         }
     }
@@ -466,8 +472,10 @@ internal class JniRuntimeBridge(
         includeSummary: Boolean,
         advancePlayback: Boolean = false,
         traceLabel: String? = null,
+        snapshotRevision: Long? = null,
     ): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
+        var renderRevision = snapshotRevision
         traceLabel?.let { label ->
             logInfo(
                 "$label.begin handle=$handle includeSummary=$includeSummary advancePlayback=$advancePlayback"
@@ -534,12 +542,14 @@ internal class JniRuntimeBridge(
                         }
                     }
                 }
-                signals += RuntimeSignal.SnapshotUpdated(summary)
+                renderRevision = summary.revision
+                signals += RuntimeSignal.SnapshotUpdated(summary, sessionHandle = handle)
             } else {
                 signals += RuntimeSignal.Notice(
                     message = "Refresh failed: ${summary.result.describe()}",
                     level = RuntimeNoticeLevel.Error,
                 )
+                return signals
             }
         }
 
@@ -568,7 +578,9 @@ internal class JniRuntimeBridge(
                     )
                 }
                 signals += RuntimeSignal.RenderUnavailable(
-                    reason = "Render export unavailable: ${error.message ?: error::class.java.simpleName}"
+                    reason = "Render export unavailable: ${error.message ?: error::class.java.simpleName}",
+                    revision = renderRevision,
+                    sessionHandle = handle,
                 )
                 return signals
             }
@@ -576,7 +588,7 @@ internal class JniRuntimeBridge(
                 traceLabel?.let { label ->
                     logInfo("$label.render.refresh.result handle=$handle lease=ready")
                 }
-                signals += RuntimeSignal.RenderPacketReady(refreshResult.lease)
+                signals += RuntimeSignal.RenderPacketReady(refreshResult.lease, revision = renderRevision, sessionHandle = handle)
             } else {
                 traceLabel?.let { label ->
                     logInfo(
@@ -584,7 +596,9 @@ internal class JniRuntimeBridge(
                     )
                 }
                 signals += RuntimeSignal.RenderUnavailable(
-                    reason = refreshResult.unavailableReason ?: "Render export unavailable"
+                    reason = refreshResult.unavailableReason ?: "Render export unavailable",
+                    revision = renderRevision,
+                    sessionHandle = handle,
                 )
             }
         }
@@ -783,6 +797,7 @@ internal class JniRuntimeBridge(
             command = command,
             commandLabel = command.label,
             summary = commandResult,
+            sessionHandle = handle,
         )
         signals += RuntimeSignal.Notice(
             message = successMessage,
@@ -878,14 +893,15 @@ internal sealed interface RuntimeSignal {
         val message: String,
         val level: RuntimeNoticeLevel = RuntimeNoticeLevel.Info,
     ) : RuntimeSignal
-    data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult) : RuntimeSignal
+    data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult, val sessionHandle: Long? = null) : RuntimeSignal
     data class CommandApplied(
         val command: RuntimeCommand,
         val commandLabel: String,
         val summary: NativeSnapshotSummaryResult,
+        val sessionHandle: Long? = null,
     ) : RuntimeSignal
-    data class RenderPacketReady(val lease: PacketLease) : RuntimeSignal
-    data class RenderUnavailable(val reason: String) : RuntimeSignal
+    data class RenderPacketReady(val lease: PacketLease, val revision: Long? = null, val sessionHandle: Long? = null) : RuntimeSignal
+    data class RenderUnavailable(val reason: String, val revision: Long? = null, val sessionHandle: Long? = null) : RuntimeSignal
     data class Unavailable(val message: String, val detail: String? = null) : RuntimeSignal
 }
 
@@ -1608,6 +1624,7 @@ internal data class NativeSnapshotSummaryResult(
     val focusTargetBodyId: String? = null,
     val activeCheckpointId: String? = null,
     val activeCheckpointLabel: String? = null,
+    val revision: Long = 0,
 )
 
 internal data class NativeVulkanScenePacketResult(

@@ -1032,7 +1032,7 @@ pub extern "C" fn sl_v2_session_apply_command(
 #[cfg(any(target_os = "android", test))]
 fn capture_session_snapshot(
     handle: SlRuntimeHandle,
-) -> Result<(SlSessionSnapshotSummary, Option<String>, Option<String>, Option<String>), SlResult> {
+) -> Result<(SlSessionSnapshotSummary, Option<String>, Option<String>, Option<String>, u64), SlResult> {
     if handle.raw == 0 {
         return Err(status(SlStatusCode::InvalidArgument));
     }
@@ -1049,7 +1049,7 @@ fn capture_session_snapshot(
         Some(checkpoint) => (Some(checkpoint.checkpoint_id.0), checkpoint.label),
         None => (None, None),
     };
-    Ok((summary, focus, checkpoint_id, checkpoint_label))
+    Ok((summary, focus, checkpoint_id, checkpoint_label, session.runtime.snapshot_revision()))
 }
 
 fn read_session_snapshot_summary(handle: SlRuntimeHandle) -> SlSessionSnapshotSummaryResult {
@@ -2620,17 +2620,19 @@ mod android_jni {
         let mut focus = None;
         let mut checkpoint_id = None;
         let mut checkpoint_label = None;
+        let mut revision = 0;
         if result.result.code == SlStatusCode::Ok {
             let captured = match u64::try_from(handle) {
                 Ok(raw) => super::capture_session_snapshot(SlRuntimeHandle { raw }),
                 Err(_) => Err(status(SlStatusCode::InvalidArgument)),
             };
             match captured {
-                Ok((summary, captured_focus, captured_id, captured_label)) => {
+                Ok((summary, captured_focus, captured_id, captured_label, captured_revision)) => {
                     result.summary = summary;
                     focus = captured_focus;
                     checkpoint_id = captured_id;
                     checkpoint_label = captured_label;
+                    revision = captured_revision;
                 }
                 Err(error) => result.result = error,
             }
@@ -2652,7 +2654,7 @@ mod android_jni {
 
         env.new_object(
             CLASS_NATIVE_SNAPSHOT_SUMMARY_RESULT,
-            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Ljava/lang/String;Ljava/lang/String;IDZDIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+            "(Lcom/sednalabs/solarlab/runtime/NativeResult;Ljava/lang/String;Ljava/lang/String;IDZDIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;J)V",
             &[
                 JValue::Object(&native_result),
                 JValue::Object(&scenario_id_obj),
@@ -2666,6 +2668,7 @@ mod android_jni {
                 JValue::Object(&focus_obj),
                 JValue::Object(&checkpoint_id_obj),
                 JValue::Object(&checkpoint_label_obj),
+                JValue::Long(i64::try_from(revision).unwrap_or(i64::MAX)),
             ],
         )
     }
@@ -3696,11 +3699,11 @@ mod tests {
             command.body_id_len = 4;
         });
         assert_eq!(sl_v2_session_apply_command(create.handle, body_command(SlCommandKind::FocusBody)).result.code, SlStatusCode::Ok);
-        let (summary, focus, _, _) = super::capture_session_snapshot(create.handle).expect("capture focused snapshot");
+        let (summary, focus, _, _, _) = super::capture_session_snapshot(create.handle).expect("capture focused snapshot");
         assert_eq!(summary.body_count, 1);
         assert_eq!(focus.as_deref(), Some("ship"));
         assert_eq!(sl_v2_session_apply_command(create.handle, body_command(SlCommandKind::RemoveBody)).result.code, SlStatusCode::Ok);
-        let (summary, focus, _, _) = super::capture_session_snapshot(create.handle).expect("capture removed snapshot");
+        let (summary, focus, _, _, _) = super::capture_session_snapshot(create.handle).expect("capture removed snapshot");
         assert_eq!(summary.body_count, 0);
         assert_eq!(focus, None);
 
@@ -3709,7 +3712,7 @@ mod tests {
             command.checkpoint_label_len = 5;
         }));
         assert_eq!(first.result.code, SlStatusCode::Ok);
-        let (summary, _, first_id, label) = super::capture_session_snapshot(create.handle).expect("capture generated checkpoint");
+        let (summary, _, first_id, label, first_revision) = super::capture_session_snapshot(create.handle).expect("capture generated checkpoint");
         assert_eq!(summary.active_checkpoint_present, 1);
         let first_id = first_id.expect("generated checkpoint ID");
         assert!(!first_id.is_empty());
@@ -3722,7 +3725,8 @@ mod tests {
             command.checkpoint_label_len = 6;
         }));
         assert_eq!(second.result.code, SlStatusCode::Ok);
-        let (_, _, second_id, label) = super::capture_session_snapshot(create.handle).expect("capture second checkpoint");
+        let (_, _, second_id, label, second_revision) = super::capture_session_snapshot(create.handle).expect("capture second checkpoint");
+        assert!(second_revision > first_revision);
         assert_eq!(second_id.as_deref(), Some("second"));
         assert_eq!(label.as_deref(), Some("second"));
 
@@ -3731,8 +3735,9 @@ mod tests {
             command.checkpoint_id_len = first_id.len() as u32;
         }));
         assert_eq!(branch.result.code, SlStatusCode::Ok);
-        let (summary, _, checkpoint_id, label) = super::capture_session_snapshot(create.handle).expect("capture branched snapshot");
+        let (summary, _, checkpoint_id, label, branch_revision) = super::capture_session_snapshot(create.handle).expect("capture branched snapshot");
         assert_eq!(summary.active_checkpoint_present, 1);
+        assert!(branch_revision > second_revision);
         assert_eq!(checkpoint_id.as_deref(), Some(first_id.as_str()));
         assert_eq!(label.as_deref(), Some("first"));
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);

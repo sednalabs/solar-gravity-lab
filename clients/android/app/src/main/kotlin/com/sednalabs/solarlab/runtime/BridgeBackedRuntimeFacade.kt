@@ -244,6 +244,22 @@ class BridgeBackedRuntimeFacade internal constructor(
     }
 
     private fun applySignal(signal: RuntimeSignal) {
+        val current = _uiState.value
+        val (handle, revision) = when (signal) {
+            is RuntimeSignal.Connected -> signal.handle to null
+            is RuntimeSignal.SnapshotUpdated -> signal.sessionHandle to signal.summary.revision
+            is RuntimeSignal.CommandApplied -> signal.sessionHandle to signal.summary.revision
+            is RuntimeSignal.RenderPacketReady -> signal.sessionHandle to signal.revision
+            is RuntimeSignal.RenderUnavailable -> signal.sessionHandle to signal.revision
+            else -> null to null
+        }
+        if ((handle != null && !bridge.isCurrentSession(handle)) ||
+            (handle != null && signal !is RuntimeSignal.Connected && handle != current.sessionHandle) ||
+            (revision != null && current.snapshot != null && revision < current.snapshot.revision)
+        ) {
+            if (signal is RuntimeSignal.RenderPacketReady) signal.lease.close()
+            return
+        }
         when (signal) {
             is RuntimeSignal.Connected -> updateWithTelemetry(
                 recordTelemetry(
@@ -260,6 +276,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                     noticeTone = ShellNoticeTone.Positive,
                     pendingActionLabel = null,
                     sessionHandle = signal.handle,
+                    snapshot = if (current.sessionHandle != signal.handle) null else current.snapshot,
                     renderStatus = current.renderStatus.copy(
                         readiness = RenderHostReadiness.Refreshing,
                         issue = null,
@@ -635,6 +652,7 @@ private fun List<String>.updatedRecentFocusedBodyIds(
 
 private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresentation {
     return SnapshotPresentation(
+        revision = revision,
         scenarioId = scenarioId,
         activeBranchId = activeBranchId,
         bodyCount = bodyCount,
