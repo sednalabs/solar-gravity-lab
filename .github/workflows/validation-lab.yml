@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/scripts/**"
+      - ".github/actions/**"
       - "Cargo.lock"
       - "Cargo.toml"
       - "clients/android/**"
