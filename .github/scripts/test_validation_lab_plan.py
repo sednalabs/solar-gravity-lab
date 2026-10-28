@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("resolve_validation_lab_plan.py")
+CHANGED_FILES_SCRIPT = Path(__file__).resolve().with_name("validation_changed_files.sh")
 
 
 def run_plan(
@@ -231,6 +232,39 @@ class ValidationLabPlanTests(unittest.TestCase):
                 self.assertEqual(outputs["prior_evidence_reused"], "true")
                 for lane in ("rust_workspace_arm64", "arm64_capability_census", "arm64_isa_proof"):
                     self.assertEqual(outputs[lane], "true")
+
+    def test_renamed_product_file_routes_removed_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True, text=True, capture_output=True
+                ).stdout.strip()
+
+            git("init")
+            git("config", "user.name", "Validation test")
+            git("config", "user.email", "validation@example.invalid")
+            git("config", "commit.gpgsign", "false")
+            git("config", "core.hooksPath", "/dev/null")
+            source = root / "engine" / "ffi" / "contract.txt"
+            source.parent.mkdir(parents=True)
+            source.write_text("contract\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-m", "original")
+            before = git("rev-parse", "HEAD")
+            (root / "docs").mkdir()
+            git("mv", "engine/ffi/contract.txt", "docs/contract.txt")
+            git("commit", "-m", "move")
+            after = git("rev-parse", "HEAD")
+            changed = subprocess.run(
+                ["bash", str(CHANGED_FILES_SCRIPT), before, after], cwd=root,
+                check=True, text=True, capture_output=True,
+            ).stdout.splitlines()
+
+        self.assertEqual(set(changed), {"engine/ffi/contract.txt", "docs/contract.txt"})
+        outputs = run_plan(changed)
+        for lane in ("rust_workspace", "rust_workspace_arm64", "arm64_isa_proof", "ffi_abi"):
+            self.assertEqual(outputs[lane], "true")
 
     def test_explicit_full_overrides_other_consumer_route(self) -> None:
         for options in ({"lane_set": "full"}, {"profile": "full"}):
