@@ -164,6 +164,7 @@ class CaptureTest(unittest.TestCase):
         self.step("controls", EXPANDED)
         (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
         self.step("search", SEARCH_VIEW)
+        capture.write_status(["baseline", "help", "frame", "home", "controls", "search", "close-search", "reopen-search"], "partial")
         self.baseline_xml.write_text(SEARCH_VIEW.replace('</node></hierarchy>',
             f'<node package="{PACKAGE}" text="Find a runtime body"/></node></hierarchy>'))
         (capture.BRIDGE / "type-earth-before.json").write_text(json.dumps(self.receipt(False)))
@@ -179,12 +180,25 @@ class CaptureTest(unittest.TestCase):
         self.step("controls", EXPANDED)
         (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
         self.step("search", SEARCH_VIEW)
+        capture.write_status(["baseline", "help", "frame", "home", "controls", "search", "close-search", "reopen-search"], "partial")
         self.baseline_xml.write_text(SEARCH_VIEW.replace('focused="true"', 'focused="false"'))
         (capture.BRIDGE / "type-earth-before.json").write_text(json.dumps(self.receipt(False)))
         with self.assertRaises(ValueError):
             capture.phase_prepare("type-earth")
         self.assertTrue((capture.OUTPUT / "type-earth-before/screen.png").exists())
         self.assertFalse((capture.BRIDGE / "type-earth-request.json").exists())
+
+    def test_close_requires_unique_enabled_clickable_target_in_dialog(self):
+        field = f'<node package="{PACKAGE}" class="android.widget.EditText" focused="true"/>'
+        title = f'<node package="{PACKAGE}" text="Find a runtime body"/>'
+        close = (f'<node package="{PACKAGE}" enabled="true" clickable="true" bounds="[700,600][900,700]">'
+                 f'<node package="{PACKAGE}" text="Close"/></node>')
+        xml = f'<hierarchy><node package="{PACKAGE}" bounds="[100,100][1000,800]">{field}{title}{close}</node></hierarchy>'
+        self.assertEqual(capture.close_search_center(ET.fromstring(xml), PACKAGE, (1080, 2400)), (800, 650))
+        for invalid in (xml.replace(close, close + close), xml.replace('clickable="true"', 'clickable="false"'),
+                        xml.replace('[100,100][1000,800]', '[100,100][1000,650]')):
+            with self.assertRaises(ValueError):
+                capture.close_search_center(ET.fromstring(invalid), PACKAGE, (1080, 2400))
 
     def test_earth_row_focus_requires_unique_visible_clickable_action(self):
         field = f'<node package="{PACKAGE}" class="android.widget.EditText" text="earth"/>'

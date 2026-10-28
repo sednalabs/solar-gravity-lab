@@ -931,7 +931,7 @@ if [[ "${session_mode}" == "capture-only" ]]; then
       --config "${openai_loop_dir}/config.json" call \
       > "${codex_bridge_dir}/search-before.json" 2>/dev/null
   capture_step search
-  for phase in type-earth focus-earth reframe-earth collapse; do
+  for phase in close-search reopen-search type-earth focus-earth reopen-search-again type-earth-again focus-earth-again collapse; do
     capture_failure_stage="${phase}"
     printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
       | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
