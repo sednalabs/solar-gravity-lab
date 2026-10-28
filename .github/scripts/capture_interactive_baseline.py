@@ -443,7 +443,10 @@ def phase_prepare(phase: str) -> None:
     elif phase in {"focus-earth", "focus-earth-again"}:
         valid_app_view(root, package)
         x, y = earth_focus_center(root, package, viewport)
-        action = {"type": "click", "x": x, "y": y}
+        serial = os.environ.get("ANDROID_SERIAL", "")
+        if not re.fullmatch(r"emulator-[0-9]+", serial):
+            raise ValueError("focus action requires a bound emulator serial")
+        action = None
     elif phase == "close-search":
         x, y = close_search_center(root, package, viewport)
         action = {"type": "click", "x": x, "y": y}
@@ -474,6 +477,8 @@ def phase_prepare(phase: str) -> None:
         action = {"type": "click", "x": x, "y": y}
     if phase in {"type-earth", "type-earth-again"}:
         request = {"tool": "adb", "serial": serial, "arguments": ["shell", "input", "text", "earth"], "timeout_seconds": 20}
+    elif phase in {"focus-earth", "focus-earth-again"}:
+        request = {"tool": "adb", "serial": serial, "arguments": ["shell", "input", "tap", str(x), str(y)], "timeout_seconds": 20}
     else:
         request = {"tool": "android_step", "arguments": {"actions": [action],
             "post_observe_scope": "screen_and_ui"}}
@@ -492,11 +497,14 @@ def phase_snapshot(phase: str) -> None:
     expected = ["baseline"] + list(PHASES[:PHASES.index(phase)])
     if status.get("status") != "partial" or status.get("completed") != expected or status.get("in_progress") != phase:
         raise ValueError("unexpected inspection sequence")
-    is_text = phase in {"type-earth", "type-earth-again"}
-    if is_text:
+    is_direct = phase in {"type-earth", "type-earth-again", "focus-earth", "focus-earth-again"}
+    if is_direct:
         receipt = json.loads((OUTPUT / phase / "adb-receipt.json").read_text())
         if receipt.get("exit_code") != 0 or receipt.get("serial") != os.environ.get("ANDROID_SERIAL"):
-            raise ValueError("ADB text command did not complete on the bound emulator")
+            raise ValueError("ADB command did not complete on the bound emulator")
+        if phase in {"focus-earth", "focus-earth-again"} and (receipt.get("screencap_exit_code") != 0 or
+                (OUTPUT / phase / "native-immediate-screen.png").stat().st_size == 0):
+            raise ValueError("immediate native screenshot was not captured")
         response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / "codex-android-observe.xml")
     else:
         response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / "codex-click-after.xml", is_step=True)
@@ -507,7 +515,7 @@ def phase_snapshot(phase: str) -> None:
     with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
         staging = Path(temporary) / "immediate"
         staging.mkdir()
-        (staging / ("observation.json" if is_text else "action-response.json")).write_bytes(response)
+        (staging / ("observation.json" if is_direct else "action-response.json")).write_bytes(response)
         (staging / "screen.png").write_bytes(png)
         (staging / "hierarchy.xml").write_bytes(xml)
         staging.rename(OUTPUT / phase / "immediate")

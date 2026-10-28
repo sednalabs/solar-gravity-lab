@@ -1008,6 +1008,43 @@ PYINPUT
         | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
           --config "${openai_loop_dir}/config.json" call \
           > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
+    elif [[ "${phase}" == "focus-earth" || "${phase}" == "focus-earth-again" ]]; then
+      if [[ "${input_profile_setup}" != "verified_0" || "${ANDROID_SERIAL:-}" != "${input_profile_serial}" ]]; then
+        return 1
+      fi
+      local tap_coordinates tap_x tap_y tap_status=0 screencap_status=0
+      if ! tap_coordinates="$(python3 - "${codex_bridge_dir}/${phase}-request.json" "${input_profile_serial}" <<'PYTAP'
+import json
+import sys
+request = json.load(open(sys.argv[1]))
+args = request.get("arguments")
+if (request.get("tool") != "adb" or request.get("serial") != sys.argv[2] or
+        not isinstance(args, list) or len(args) != 5 or args[:3] != ["shell", "input", "tap"] or
+        not all(isinstance(v, str) and v.isascii() and v.isdigit() for v in args[3:])):
+    raise SystemExit(1)
+print(args[3], args[4])
+PYTAP
+)"; then
+        return 1
+      fi
+      read -r tap_x tap_y <<< "${tap_coordinates}"
+      timeout 20s adb -s "${input_profile_serial}" shell input tap "${tap_x}" "${tap_y}" >/dev/null 2>&1 || tap_status=$?
+      timeout 20s adb -s "${input_profile_serial}" exec-out screencap -p > "dist/interactive-capture/${phase}/native-immediate-screen.png" 2>/dev/null || screencap_status=$?
+      python3 - "dist/interactive-capture/${phase}/adb-receipt.json" "${input_profile_serial}" "${tap_x}" "${tap_y}" "${tap_status}" "${screencap_status}" <<'PYTAPRECEIPT'
+import json
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(json.dumps({"tool": "adb", "serial": sys.argv[2],
+    "arguments": ["shell", "input", "tap", sys.argv[3], sys.argv[4]], "timeout_seconds": 20,
+    "exit_code": int(sys.argv[5]), "screencap_exit_code": int(sys.argv[6]), "physical_effect": "unknown"}) + "\n")
+PYTAPRECEIPT
+      if [[ "${tap_status}" != "0" || "${screencap_status}" != "0" ]]; then
+        return 1
+      fi
+      printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
+        | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+          --config "${openai_loop_dir}/config.json" call \
+          > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
     else
       node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
         --config "${openai_loop_dir}/config.json" call \

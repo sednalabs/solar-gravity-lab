@@ -202,6 +202,38 @@ class CaptureTest(unittest.TestCase):
         self.assertFalse((capture.OUTPUT / phase / "immediate").exists())
         self.assertEqual(capture.current_status()["action_effect"], "unknown")
 
+    def test_focus_adb_receipt_retains_distinct_native_and_provider_images(self):
+        capture.capture_baseline()
+        phase = "focus-earth"
+        expected = ["baseline"] + list(capture.PHASES[:capture.PHASES.index(phase)])
+        (capture.OUTPUT / phase).mkdir()
+        capture.write_status(expected, "partial", in_progress=phase, action_effect="unknown")
+        receipt = {"tool": "adb", "serial": "emulator-5554", "exit_code": 0,
+                   "screencap_exit_code": 0, "physical_effect": "unknown"}
+        (capture.OUTPUT / phase / "adb-receipt.json").write_text(json.dumps(receipt))
+        (capture.OUTPUT / phase / "native-immediate-screen.png").write_bytes(b"native-png")
+        (capture.BRIDGE / f"{phase}-response.json").write_text(json.dumps(self.receipt(False)))
+        self.baseline_xml.write_text(VIEW)
+        capture.phase_snapshot(phase)
+        self.assertEqual((capture.OUTPUT / phase / "native-immediate-screen.png").read_bytes(), b"native-png")
+        self.assertEqual((capture.OUTPUT / phase / "immediate/screen.png").read_bytes(), b"png")
+        self.assertEqual(json.loads((capture.OUTPUT / phase / "immediate/observation.json").read_text()), self.receipt(False))
+        self.assertFalse((capture.OUTPUT / phase / "immediate/action-response.json").exists())
+
+    def test_focus_screencap_failure_does_not_promote_observation(self):
+        capture.capture_baseline()
+        phase = "focus-earth"
+        expected = ["baseline"] + list(capture.PHASES[:capture.PHASES.index(phase)])
+        (capture.OUTPUT / phase).mkdir()
+        capture.write_status(expected, "partial", in_progress=phase, action_effect="unknown")
+        receipt = {"tool": "adb", "serial": "emulator-5554", "exit_code": 0,
+                   "screencap_exit_code": 124, "physical_effect": "unknown"}
+        (capture.OUTPUT / phase / "adb-receipt.json").write_text(json.dumps(receipt))
+        with self.assertRaises(ValueError):
+            capture.phase_snapshot(phase)
+        self.assertFalse((capture.OUTPUT / phase / "immediate").exists())
+        self.assertEqual(capture.current_status()["action_effect"], "unknown")
+
     def test_type_refuses_unfocused_field_and_preserves_pre_action_observation(self):
         capture.capture_baseline()
         for phase in ("help", "frame", "home"):
