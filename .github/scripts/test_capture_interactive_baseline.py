@@ -27,7 +27,7 @@ VIEW = f'<hierarchy><node package="{PACKAGE}" bounds="[0,0][1080,2400]">{STAGE}{
 LESS = f'<node package="{PACKAGE}" enabled="true" content-desc="Less" bounds="[800,2100][900,2200]"/>'
 SEARCH = f'<node package="{PACKAGE}" enabled="true" content-desc="Search" bounds="[100,1900][200,2000]"/>'
 EXPANDED = VIEW.replace(CONTROLS, CONTROLS + LESS + SEARCH)
-SEARCH_VIEW = VIEW.replace(CONTROLS, f'<node package="{PACKAGE}" class="android.widget.EditText" focused="true" bounds="[100,100][900,200]"/>')
+SEARCH_VIEW = VIEW.replace(CONTROLS, f'<node package="{PACKAGE}" class="android.widget.EditText" text="" enabled="true" focused="true" bounds="[100,100][900,200]"/>')
 
 
 class CaptureTest(unittest.TestCase):
