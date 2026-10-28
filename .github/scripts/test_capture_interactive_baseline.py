@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 import unittest
+import xml.etree.ElementTree as ET
 
 import capture_interactive_baseline as capture
 
@@ -133,11 +134,11 @@ class CaptureTest(unittest.TestCase):
             shutil.rmtree(capture.OUTPUT)
 
     def test_invalid_baseline_is_not_promoted_and_stage_is_safe(self):
-        cases = (("wrong_package", BASELINE.replace(PACKAGE, "other"), "baseline_package"),
-                 ("invalid_xml", "<hierarchy>", "baseline_hierarchy"))
-        for _, xml, stage in cases:
+        cases = (("wrong_package", BASELINE.replace(PACKAGE, "other"), "baseline_package", ValueError),
+                 ("invalid_xml", "<hierarchy>", "baseline_hierarchy", ET.ParseError))
+        for _, xml, stage, error in cases:
             self.baseline_xml.write_text(xml)
-            with self.assertRaises(ValueError):
+            with self.assertRaises(error):
                 capture.capture_baseline()
             with patch.dict(os.environ, {"INTERACTIVE_CAPTURE_FAILURE_STAGE": "baseline_validate"}):
                 capture.mark_failed()
