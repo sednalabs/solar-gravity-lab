@@ -3422,6 +3422,43 @@ mod tests {
     }
 
     #[test]
+    fn apply_command_rejects_invalid_time_inputs_without_mutation() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        let before = sl_v2_session_refresh(create.handle).summary;
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            for kind in [SlCommandKind::AdvanceEpoch, SlCommandKind::SetPlaybackRate] {
+                let result = sl_v2_session_apply_command(
+                    create.handle,
+                    test_session_command(kind, |command| {
+                        command.delta_seconds = value;
+                        command.sim_seconds_per_real_second = value;
+                    }),
+                );
+                assert_eq!(result.result.code, SlStatusCode::InvalidArgument);
+                assert_eq!(sl_v2_session_refresh(create.handle).summary, before);
+            }
+        }
+        let rate = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::SetPlaybackRate, |command| {
+                command.sim_seconds_per_real_second = 2.0;
+            }),
+        );
+        assert_eq!(rate.result.code, SlStatusCode::Ok);
+        assert_eq!(rate.summary.sim_seconds_per_real_second, 2.0);
+        let advance = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::AdvanceEpoch, |command| {
+                command.delta_seconds = 12.5;
+            }),
+        );
+        assert_eq!(advance.result.code, SlStatusCode::Ok);
+        assert_eq!(advance.summary.epoch_seconds, 12.5);
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
     fn apply_command_focus_rejects_unknown_body() {
         let create = sl_v2_session_create(new_params("sol-system", "main"));
         assert_eq!(create.result.code, SlStatusCode::Ok);

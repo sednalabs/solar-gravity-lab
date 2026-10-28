@@ -513,6 +513,24 @@ impl WorldRuntime {
         command: WorldCommand,
         recorded_at_unix_ms: i64,
     ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
+        match &command {
+            WorldCommand::AdvanceEpoch { delta_seconds }
+                if !delta_seconds.is_finite() || *delta_seconds <= 0.0 =>
+            {
+                return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
+            }
+            WorldCommand::SetPlaybackRate {
+                sim_seconds_per_real_second,
+            } if !sim_seconds_per_real_second.is_finite()
+                || *sim_seconds_per_real_second <= 0.0 =>
+            {
+                return Err(RuntimeError::InvalidPlaybackRate(
+                    *sim_seconds_per_real_second,
+                ));
+            }
+            _ => {}
+        }
+
         let mut events = Vec::new();
         let mut header = self.new_command_header(&command, recorded_at_unix_ms);
         let summary = self.command_summary(&command);
@@ -619,10 +637,6 @@ impl WorldRuntime {
                 );
             }
             WorldCommand::AdvanceEpoch { delta_seconds } => {
-                if *delta_seconds <= 0.0 {
-                    return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
-                }
-
                 let physics_policy = self.config.physics.clone();
                 let active_cpu_features = self.hardware_profile.cpu_features.clone();
                 let branch = self.active_branch_mut();
@@ -652,11 +666,6 @@ impl WorldRuntime {
             WorldCommand::SetPlaybackRate {
                 sim_seconds_per_real_second,
             } => {
-                if *sim_seconds_per_real_second <= 0.0 {
-                    return Err(RuntimeError::InvalidPlaybackRate(
-                        *sim_seconds_per_real_second,
-                    ));
-                }
                 self.active_branch_mut()
                     .world
                     .playback
@@ -2993,6 +3002,60 @@ mod tests {
         assert_eq!(descriptor.command_sequence, 2);
         assert_eq!(descriptor.epoch_seconds, 10.0);
         assert_eq!(descriptor.checkpoint_id.0, "manual-01");
+    }
+
+    #[test]
+    fn invalid_time_inputs_leave_runtime_unchanged() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        let before = runtime.snapshot();
+        let ordinal = runtime.next_command_ordinal;
+
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            let err = runtime
+                .apply_command(
+                    WorldCommand::AdvanceEpoch {
+                        delta_seconds: value,
+                    },
+                    3,
+                )
+                .expect_err("invalid epoch delta must fail");
+            assert!(
+                matches!(err, RuntimeError::InvalidEpochDelta(v) if v.to_bits() == value.to_bits())
+            );
+            let err = runtime
+                .apply_command(
+                    WorldCommand::SetPlaybackRate {
+                        sim_seconds_per_real_second: value,
+                    },
+                    3,
+                )
+                .expect_err("invalid playback rate must fail");
+            assert!(
+                matches!(err, RuntimeError::InvalidPlaybackRate(v) if v.to_bits() == value.to_bits())
+            );
+            assert_eq!(runtime.snapshot(), before);
+            assert_eq!(runtime.next_command_ordinal, ordinal);
+        }
+
+        runtime
+            .apply_command(
+                WorldCommand::SetPlaybackRate {
+                    sim_seconds_per_real_second: 2.0,
+                },
+                4,
+            )
+            .unwrap();
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 30.0,
+                },
+                5,
+            )
+            .unwrap();
+        assert_eq!(runtime.snapshot().playback.sim_seconds_per_real_second, 2.0);
+        assert_eq!(runtime.snapshot().epoch_seconds, 30.0);
     }
 
     #[test]
