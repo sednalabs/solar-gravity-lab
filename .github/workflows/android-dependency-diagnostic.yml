@@ -16,10 +16,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          ref: e0c3c30654f15e1c6438dbe97a77c91290885965
+          ref: 43508d89cfb27f066e3c2490312d9619a13a3aa0
       - name: Verify diagnostic source
         shell: bash
-        run: test "$(git rev-parse HEAD)" = e0c3c30654f15e1c6438dbe97a77c91290885965
+        run: test "$(git rev-parse HEAD)" = 43508d89cfb27f066e3c2490312d9619a13a3aa0
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
         with:
           distribution: temurin
@@ -49,6 +49,13 @@ jobs:
           def targets = [
             'org.jetbrains.kotlin:kotlin-gradle-plugin',
             'org.bitbucket.b_c:jose4j',
+            'com.google.crypto.tink:tink',
+            'com.google.code.gson:gson',
+            'com.google.code.findbugs:jsr305',
+            'com.google.errorprone:error_prone_annotations',
+            'com.google.http-client:google-http-client',
+            'joda-time:joda-time',
+            'androidx.annotation:annotation',
             'org.jdom:jdom2',
             'com.google.protobuf:protobuf-kotlin',
             'com.google.protobuf:protobuf-java',
