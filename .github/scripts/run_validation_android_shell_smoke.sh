@@ -39,12 +39,14 @@ STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
 )
 
 STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeLifecycleInstrumentationTest"
 )
 

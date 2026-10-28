@@ -31,6 +31,7 @@ object SolarLabTestTags {
     const val STAGE_FIRST_STATUS_PANEL = "stage_first.status_panel"
     const val STAGE_FIRST_ACCELERATION_PANEL = "stage_first.acceleration_panel"
     const val STAGE_FIRST_SEARCH_FIELD = "stage_first.search.field"
+    const val STAGE_FIRST_SEARCH_FRAME_REQUEST = "stage_first.search.frame_request"
     const val STAGE_FIRST_RUNTIME_REFRESH_BUTTON = "stage_first.runtime.refresh_button"
     const val STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON = "stage_first.camera.zoom_in_button"
     const val STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON = "stage_first.camera.zoom_out_button"
