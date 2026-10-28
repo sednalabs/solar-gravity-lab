@@ -191,6 +191,88 @@ def baseline_stage(stage: str) -> None:
     (BRIDGE / "baseline-stage").write_text(stage)
 
 
+# Private, stock-emulator-only diagnostic evidence; never an app-owned capture.
+LAUNCHER_DIAGNOSTIC = Path("dist/interactive-launcher-recovery")
+
+
+def launcher_observation(name: str, response_path: Path, hierarchy_path: Path) -> ET.Element:
+    if os.environ.get("INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC") != "foreground_checked":
+        raise ValueError("stock capture diagnostic context is required")
+    require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
+    response, png, xml, root = read_observation(response_path, hierarchy_path)
+    LAUNCHER_DIAGNOSTIC.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
+        staging = Path(temporary) / name
+        staging.mkdir()
+        (staging / "observation.json").write_bytes(response)
+        (staging / "screen.png").write_bytes(png)
+        (staging / "hierarchy.xml").write_bytes(xml)
+        staging.rename(LAUNCHER_DIAGNOSTIC / name)
+    return root
+
+
+def launcher_initial() -> None:
+    launcher_observation("initial", BRIDGE / "baseline-response.json", HIERARCHIES / "codex-android-observe.xml")
+    (LAUNCHER_DIAGNOSTIC / "status.json").write_text(json.dumps({
+        "status": "partial", "decision": "pending", "app_owned_proof": False,
+        "stability": "unknown", "response_session_identity": "unknown", "visual_acceptance": "pending",
+    }) + "\n")
+
+
+def launcher_decide() -> None:
+    root = launcher_observation("fresh", BRIDGE / "launcher-fresh.json", HIERARCHIES / "codex-android-observe.xml")
+    nodes = list(root.iter("node"))
+    app = os.environ["INTERACTIVE_APP_PACKAGE"]
+    titles = [n for n in nodes if n.get("resource-id") == "android:id/alertTitle"]
+    if any(n.get("package") == app for n in nodes) and not titles and all(n.get("package") == app for n in nodes):
+        decision = "skip_app_visible"
+    else:
+        title = [n for n in titles if n.get("package") == "android" and
+                 n.get("text") == "Pixel Launcher isn't responding" and n.get("enabled") == "true"]
+        waits = [n for n in nodes if n.get("package") == "android" and
+                 n.get("resource-id") == "android:id/aerr_wait" and n.get("text") == "Wait" and
+                 n.get("class") == "android.widget.Button" and n.get("enabled") == "true" and n.get("clickable") == "true"]
+        panels = [n for n in nodes if n.get("package") == "android" and n.get("resource-id") == "android:id/parentPanel"]
+        if len(titles) != 1 or len(title) != 1 or len(waits) != 1 or len(panels) != 1 or any(n.get("package") != "android" for n in nodes):
+            raise ValueError("unexpected or ambiguous system dialog")
+        panel = panels[0]
+        if title[0] not in list(panel.iter("node")) or waits[0] not in list(panel.iter("node")):
+            raise ValueError("launcher dialog controls do not share the observed panel")
+        viewport = png_dimensions((LAUNCHER_DIAGNOSTIC / "fresh/screen.png").read_bytes())
+        target = bounds(waits[0])
+        if not contains((0, 0, *viewport), target) or not contains(bounds(panel), target):
+            raise ValueError("launcher wait target is outside the observed panel")
+        x, y = (target[0] + target[2]) // 2, (target[1] + target[3]) // 2
+        for node in nodes:
+            if node is waits[0] or node.get("clickable") != "true":
+                continue
+            b = bounds(node)
+            if b[0] <= x < b[2] and b[1] <= y < b[3]:
+                raise ValueError("another clickable control overlaps Wait")
+        request = {"tool": "android_step", "arguments": {"actions": [{"type": "click", "x": x, "y": y}],
+                   "post_observe_scope": "screen_and_ui"}}
+        request_text = json.dumps(request) + "\n"
+        (LAUNCHER_DIAGNOSTIC / "action-request.json").write_text(request_text)
+        (BRIDGE / "launcher-action-request.json").write_text(request_text)
+        decision = "wait_once"
+    (LAUNCHER_DIAGNOSTIC / "status.json").write_text(json.dumps({
+        "status": "partial", "decision": decision, "action_effect": "unknown" if decision == "wait_once" else "not_applicable",
+        "app_owned_proof": False, "stability": "unknown", "response_session_identity": "unknown", "visual_acceptance": "pending",
+    }) + "\n")
+    print(decision)
+
+
+def launcher_action_receipt() -> None:
+    # Preserve the bounded raw receipt even if its outcome or post-action image is invalid.
+    path = BRIDGE / "launcher-action-response.json"
+    if path.stat().st_size > 20_000_000:
+        raise ValueError("launcher response exceeds capture bound")
+    (LAUNCHER_DIAGNOSTIC / "action-response.json").write_bytes(path.read_bytes())
+    response, png, xml, _ = read_observation(path, HIERARCHIES / "codex-click-after.xml", is_step=True)
+    (LAUNCHER_DIAGNOSTIC / "action-screen.png").write_bytes(png)
+    (LAUNCHER_DIAGNOSTIC / "action-hierarchy.xml").write_bytes(xml)
+
+
 def capture_baseline() -> None:
     baseline_stage("baseline_provider")
     require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
@@ -354,7 +436,7 @@ def phase_record(phase: str) -> None:
 FAILURE_STAGES = {"startup", "emulator", "provider", "preflight", "baseline_foreground",
     "baseline_config", "baseline_observe", "baseline_provider", "baseline_receipt", "baseline_image",
     "baseline_hierarchy", "baseline_quarantine", "baseline_package", "baseline_provenance", "baseline_publish",
-    "help", "frame", "home", "controls", "search", "unknown"}
+    "launcher_recovery", "help", "frame", "home", "controls", "search", "unknown"}
 
 
 def mark_failed() -> None:
@@ -385,6 +467,12 @@ if __name__ == "__main__":
     command = sys.argv[1:]
     if command == ["--check-provider"]:
         require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
+    elif command == ["--launcher-initial"]:
+        launcher_initial()
+    elif command == ["--launcher-decide"]:
+        launcher_decide()
+    elif command == ["--launcher-action-receipt"]:
+        launcher_action_receipt()
     elif command == ["--baseline"]:
         capture_baseline()
     elif command == ["--prepare-help"]:

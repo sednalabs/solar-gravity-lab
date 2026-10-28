@@ -78,6 +78,40 @@ class CaptureTest(unittest.TestCase):
         self.baseline_xml.write_text(settled)
         capture.phase_record(phase)
 
+    def test_launcher_wait_is_single_exact_observed_system_action(self):
+        launcher = ('<hierarchy><node package="android" resource-id="android:id/parentPanel" bounds="[70,1025][1010,1447]">'
+                    '<node package="android" resource-id="android:id/alertTitle" text="Pixel Launcher isn&amp;apos;t responding" enabled="true" bounds="[133,1072][947,1135]"/>'
+                    '<node package="android" class="android.widget.Button" resource-id="android:id/aerr_wait" text="Wait" enabled="true" clickable="true" bounds="[70,1300][1010,1426]"/>'
+                    '</node></hierarchy>').replace("&amp;apos;", "&apos;")
+        self.baseline_xml.write_text(launcher)
+        capture.launcher_initial()
+        (capture.BRIDGE / "launcher-fresh.json").write_text(json.dumps(self.receipt(False)))
+        capture.launcher_decide()
+        request = json.loads((capture.LAUNCHER_DIAGNOSTIC / "action-request.json").read_text())
+        self.assertEqual(request["arguments"]["actions"], [{"type": "click", "x": 540, "y": 1363}])
+        self.assertEqual((capture.LAUNCHER_DIAGNOSTIC / "fresh/hierarchy.xml").read_text(), launcher)
+        self.assertEqual((capture.LAUNCHER_DIAGNOSTIC / "initial/screen.png").read_bytes(), b"png")
+
+    def test_launcher_other_anr_never_prepares_action(self):
+        other = ('<hierarchy><node package="android" resource-id="android:id/alertTitle" '
+                 'text="SolarLab isn&amp;apos;t responding" enabled="true" bounds="[0,0][100,100]"/></hierarchy>').replace("&amp;apos;", "&apos;")
+        capture.launcher_initial()
+        self.baseline_xml.write_text(other)
+        (capture.BRIDGE / "launcher-fresh.json").write_text(json.dumps(self.receipt(False)))
+        with self.assertRaises(ValueError):
+            capture.launcher_decide()
+        self.assertFalse((capture.BRIDGE / "launcher-action-request.json").exists())
+        self.assertEqual((capture.LAUNCHER_DIAGNOSTIC / "fresh/hierarchy.xml").read_text(), other)
+
+    def test_launcher_app_owned_fresh_view_skips_action(self):
+        capture.launcher_initial()
+        self.baseline_xml.write_text(VIEW)
+        (capture.BRIDGE / "launcher-fresh.json").write_text(json.dumps(self.receipt(False)))
+        capture.launcher_decide()
+        status = json.loads((capture.LAUNCHER_DIAGNOSTIC / "status.json").read_text())
+        self.assertEqual(status["decision"], "skip_app_visible")
+        self.assertFalse((capture.BRIDGE / "launcher-action-request.json").exists())
+
     def test_wrong_package_retains_only_quarantined_baseline_and_stops(self):
         foreign = '<hierarchy><node package="stock.system" bounds="[0,0][1080,2400]"/></hierarchy>'
         self.baseline_xml.write_text(foreign)

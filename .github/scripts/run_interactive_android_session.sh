@@ -863,6 +863,37 @@ if [[ "${session_mode}" == "capture-only" ]]; then
   if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
     exit 1
   fi
+  capture_failure_stage="launcher_recovery"
+  INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC=foreground_checked \
+    python3 .github/scripts/capture_interactive_baseline.py --launcher-initial >/dev/null 2>&1
+  printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
+    | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+      --config "${openai_loop_dir}/config.json" call \
+      > "${codex_bridge_dir}/launcher-fresh.json" 2>/dev/null
+  launcher_decision="$(INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC=foreground_checked \
+    python3 .github/scripts/capture_interactive_baseline.py --launcher-decide 2>/dev/null)"
+  if [[ "${launcher_decision}" == "wait_once" ]]; then
+    launcher_action_status=0
+    node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+      --config "${openai_loop_dir}/config.json" call \
+      < "${codex_bridge_dir}/launcher-action-request.json" > "${codex_bridge_dir}/launcher-action-response.json" 2>/dev/null || launcher_action_status=$?
+    INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC=foreground_checked \
+      python3 .github/scripts/capture_interactive_baseline.py --launcher-action-receipt >/dev/null 2>&1
+    if [[ "${launcher_action_status}" != "0" ]]; then
+      exit 1
+    fi
+  elif [[ "${launcher_decision}" != "skip_app_visible" ]]; then
+    exit 1
+  fi
+  capture_failure_stage="baseline_observe"
+  printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
+    | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+      --config "${openai_loop_dir}/config.json" call \
+      > "${codex_bridge_dir}/baseline-response.json" 2>/dev/null
+  capture_failure_stage="baseline_foreground"
+  if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+    exit 1
+  fi
   capture_failure_stage="baseline_validate"
   INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC=foreground_checked \
     python3 .github/scripts/capture_interactive_baseline.py --baseline >/dev/null 2>&1

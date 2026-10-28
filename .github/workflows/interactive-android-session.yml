@@ -633,7 +633,9 @@ jobs:
         with:
           name: interactive-android-capture-${{ github.run_id }}
           if-no-files-found: error
-          path: dist/interactive-capture/
+          path: |
+            dist/interactive-capture/
+            dist/interactive-launcher-recovery/
 
       - name: Build interactive session summary payload
         if: ${{ always() && inputs.session_mode != 'capture-only' }}
