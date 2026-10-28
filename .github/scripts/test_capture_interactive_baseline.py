@@ -90,7 +90,7 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual((quarantine / "hierarchy.xml").read_text(), foreign)
         self.assertEqual(json.loads((quarantine / "observation.json").read_text()), self.receipt(False))
         metadata = json.loads((quarantine / "metadata.json").read_text())
-        self.assertEqual(metadata["package_validation"], "not_checked")
+        self.assertEqual(metadata["package_validation"], "mismatch")
         self.assertFalse(metadata["app_owned_proof"])
         self.assertEqual(metadata["package_node_counts"], {"stock.system": 1})
         self.assertFalse((capture.OUTPUT / "baseline").exists())
@@ -102,6 +102,7 @@ class CaptureTest(unittest.TestCase):
 
     def test_fixed_sequence_retains_each_validated_observation(self):
         capture.capture_baseline()
+        self.assertFalse((capture.OUTPUT / "quarantined-baseline").exists())
         for phase in ("help", "frame", "home"):
             self.step(phase)
         self.step("controls", EXPANDED)
