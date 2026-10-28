@@ -195,6 +195,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     bridge.refresh().forEach(::applySignal)
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
             surfaceShellFailure(
                 statusLine = "Runtime refresh failed",
@@ -228,6 +230,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     bridge.applyCommand(command).forEach(::applySignal)
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
             surfaceShellFailure(
                 statusLine = "Runtime command failed",

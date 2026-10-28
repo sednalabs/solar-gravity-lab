@@ -1,6 +1,9 @@
 package com.sednalabs.solarlab.runtime
 
 import java.util.concurrent.Executors
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -437,6 +440,45 @@ class BridgeBackedRuntimeFacadeTest {
 
         assertEquals("earth", facade.uiState.value.focusedBodyId)
         assertEquals(listOf("earth", "moon"), facade.uiState.value.recentFocusedBodyIds)
+    }
+
+    @Test
+    fun canceledRefreshAndCommandPreserveTheActiveSession() = runBlocking {
+        for (command in listOf(false, true)) {
+            val entered = CompletableDeferred<Unit>()
+            val bridge = object : RuntimeBridge {
+                override fun connect(): Flow<RuntimeSignal> = flowOf(RuntimeSignal.Connected(17L))
+                override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> = emptyList()
+                override suspend fun refresh(): List<RuntimeSignal> { entered.complete(Unit); CompletableDeferred<Unit>().await(); return emptyList() }
+                override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> { entered.complete(Unit); CompletableDeferred<Unit>().await(); return emptyList() }
+            }
+            val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+            facade.startSession()
+            val operation = async {
+                if (command) facade.applyCommand(RuntimeCommand.PausePlayback) else facade.refresh()
+            }
+            entered.await()
+            operation.cancelAndJoin()
+            assertTrue(operation.isCancelled)
+            assertEquals(SessionConnectionState.Active, facade.uiState.value.connectionState)
+            assertEquals(17L, facade.uiState.value.sessionHandle)
+            assertEquals(null, facade.uiState.value.pendingActionLabel)
+        }
+    }
+
+    @Test
+    fun refreshBoundaryFailureStillSurfaces() = runBlocking {
+        val bridge = object : RuntimeBridge {
+            override fun connect(): Flow<RuntimeSignal> = flowOf(RuntimeSignal.Connected(17L))
+            override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> = emptyList()
+            override suspend fun refresh(): List<RuntimeSignal> = throw IllegalStateException("boundary failed")
+            override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> = emptyList()
+        }
+        val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+        facade.startSession()
+        facade.refresh()
+        assertEquals(SessionConnectionState.Unavailable, facade.uiState.value.connectionState)
+        assertEquals("boundary failed", facade.uiState.value.detailLine)
     }
 
     private fun packetLease(
