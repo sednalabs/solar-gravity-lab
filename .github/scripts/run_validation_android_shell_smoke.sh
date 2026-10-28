@@ -28,9 +28,7 @@ SHELL_CORE_TEST_CLASSES=(
 )
 
 SHELL_FULL_TEST_CLASSES=(
-  "com.sednalabs.solarlab.StartupSmokeInstrumentationTest"
-  "com.sednalabs.solarlab.FocusedCompositionInstrumentationTest"
-  "com.sednalabs.solarlab.SolarLabShellLayoutTest"
+  "${SHELL_CORE_TEST_CLASSES[@]}"
   "com.sednalabs.solarlab.RotationContinuityInstrumentationTest"
   "com.sednalabs.solarlab.PlaybackContinuityInstrumentationTest"
 )
@@ -40,14 +38,13 @@ STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstSemanticIntentInstrumentationTest"
 )
 
 STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES=(
-  "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
-  "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
+  "${STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES[@]}"
   "com.sednalabs.solarlab.StageFirstRuntimeLifecycleInstrumentationTest"
+  "com.sednalabs.solarlab.StageFirstCameraGuidanceInstrumentationTest"
 )
 
 TEST_CLASSES=()
@@ -408,6 +405,16 @@ run_test_classes_individually() {
         2>&1 | tee "${class_dir}/gradle-output.txt"
     command_status=${PIPESTATUS[0]}
     set -e
+    # Gradle overwrites these paths on the next class. A failed attempt may
+    # leave earlier results in place; the copies do not establish a pass.
+    if [[ -d clients/android/app/build/outputs/androidTest-results ]]; then
+      cp -a clients/android/app/build/outputs/androidTest-results "${class_dir}/androidTest-results" ||
+        echo "Could not retain connected test results for ${class_name}" >&2
+    fi
+    if [[ -d clients/android/app/build/reports/androidTests ]]; then
+      cp -a clients/android/app/build/reports/androidTests "${class_dir}/androidTests" ||
+        echo "Could not retain connected test reports for ${class_name}" >&2
+    fi
     stop_live_logcat "${LAST_LOGCAT_PID}"
     LAST_LOGCAT_PID=""
     from_cache_count="$(grep -c 'FROM-CACHE' "${class_dir}/gradle-output.txt" || true)"
