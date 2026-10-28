@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).with_name("resolve_validation_lab_plan.py")
+SCRIPT = Path(__file__).resolve().with_name("resolve_validation_lab_plan.py")
 CHANGED_FILES_SCRIPT = Path(__file__).resolve().with_name("validation_changed_files.sh")
 
 
