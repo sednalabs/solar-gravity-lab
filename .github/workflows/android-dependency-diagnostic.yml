@@ -16,10 +16,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          ref: 001388ccea76c1e3889948cc7a0610b926404982
+          ref: e0c3c30654f15e1c6438dbe97a77c91290885965
       - name: Verify diagnostic source
         shell: bash
-        run: test "$(git rev-parse HEAD)" = 001388ccea76c1e3889948cc7a0610b926404982
+        run: test "$(git rev-parse HEAD)" = e0c3c30654f15e1c6438dbe97a77c91290885965
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
         with:
           distribution: temurin
@@ -52,6 +52,9 @@ jobs:
             'org.jdom:jdom2',
             'com.google.protobuf:protobuf-kotlin',
             'com.google.protobuf:protobuf-java',
+            'com.google.protobuf:protobuf-java-util',
+            'org.apache.commons:commons-lang3',
+            'commons-io:commons-io',
             'org.apache.commons:commons-compress',
             'org.bouncycastle:bcprov-jdk18on',
             'org.bouncycastle:bcpkix-jdk18on',
