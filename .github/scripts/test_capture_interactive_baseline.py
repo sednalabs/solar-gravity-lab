@@ -25,7 +25,9 @@ CONTROLS = (f'<node package="{PACKAGE}" text="Earth" bounds="[200,100][300,150]"
     f'<node package="{PACKAGE}" enabled="true" content-desc="Camera scale Wide; open camera controls" bounds="[600,2100][700,2200]"/>')
 VIEW = f'<hierarchy><node package="{PACKAGE}" bounds="[0,0][1080,2400]">{STAGE}{CONTROLS}</node></hierarchy>'
 LESS = f'<node package="{PACKAGE}" enabled="true" content-desc="Less" bounds="[800,2100][900,2200]"/>'
-EXPANDED = VIEW.replace(CONTROLS, CONTROLS + LESS)
+SEARCH = f'<node package="{PACKAGE}" enabled="true" content-desc="Search" bounds="[100,1900][200,2000]"/>'
+EXPANDED = VIEW.replace(CONTROLS, CONTROLS + LESS + SEARCH)
+SEARCH_VIEW = VIEW.replace(CONTROLS, f'<node package="{PACKAGE}" class="android.widget.EditText" focused="true" bounds="[100,100][900,200]"/>')
 
 
 class CaptureTest(unittest.TestCase):
@@ -80,17 +82,46 @@ class CaptureTest(unittest.TestCase):
         for phase in ("help", "frame", "home"):
             self.step(phase)
         self.step("controls", EXPANDED)
+        (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
+        self.step("search", SEARCH_VIEW)
         status = json.loads((capture.OUTPUT / "status.json").read_text())
-        self.assertEqual(status["completed"], ["baseline", "help", "frame", "home", "controls"])
+        self.assertEqual(status["completed"], ["baseline", "help", "frame", "home", "controls", "search"])
         self.assertEqual((status["status"], status["stability"], status["visual_acceptance"]), ("captured", "unknown", "pending"))
         self.assertTrue(status["provider_may_fallback"])
-        for phase in ("help", "frame", "home", "controls"):
+        self.assertEqual(json.loads((capture.OUTPUT / "search/focus-observation.json").read_text()),
+                         {"edit_text_count": 1, "focused_values": ["true"], "keyboard_visual_observation": "pending"})
+        self.assertEqual((capture.OUTPUT / "search-before/hierarchy.xml").read_text(), EXPANDED)
+        for phase in ("help", "frame", "home", "controls", "search"):
             step = capture.OUTPUT / phase
             self.assertEqual((step / "immediate/screen.png").read_bytes(), b"png")
             self.assertEqual((step / "settled/screen.png").read_bytes(), b"png")
             self.assertTrue((step / "action-request.json").exists())
             self.assertTrue((step / "immediate/action-response.json").exists())
             self.assertTrue((step / "settled/hierarchy.xml").exists())
+
+    def test_missing_search_target_preserves_fresh_observation(self):
+        capture.capture_baseline()
+        for phase in ("help", "frame", "home"):
+            self.step(phase)
+        self.step("controls", EXPANDED)
+        (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
+        self.baseline_xml.write_text(EXPANDED.replace(SEARCH, ""))
+        with self.assertRaises(ValueError):
+            capture.phase_prepare("search")
+        self.assertTrue((capture.OUTPUT / "search-before/screen.png").exists())
+        self.assertFalse((capture.BRIDGE / "search-request.json").exists())
+
+    def test_missing_search_focus_keeps_original_captures(self):
+        capture.capture_baseline()
+        for phase in ("help", "frame", "home"):
+            self.step(phase)
+        self.step("controls", EXPANDED)
+        (capture.BRIDGE / "search-before.json").write_text(json.dumps(self.receipt(False)))
+        self.step("search", VIEW)
+        focus = json.loads((capture.OUTPUT / "search/focus-observation.json").read_text())
+        self.assertEqual(focus["edit_text_count"], 0)
+        self.assertTrue((capture.OUTPUT / "search/immediate/screen.png").exists())
+        self.assertTrue((capture.OUTPUT / "search/settled/screen.png").exists())
 
     def test_partial_on_missing_expanded_control_retains_observed_evidence(self):
         capture.capture_baseline()

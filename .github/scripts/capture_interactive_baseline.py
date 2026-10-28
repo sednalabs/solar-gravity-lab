@@ -160,7 +160,7 @@ def target_center(root: ET.Element, package: str, viewport: tuple[int, int], tar
 
 
 OUTPUT = Path("dist/interactive-capture")
-PHASES = ("help", "frame", "home", "controls")
+PHASES = ("help", "frame", "home", "controls", "search")
 
 
 def valid_app_view(root: ET.Element, package: str) -> None:
@@ -228,11 +228,21 @@ def phase_prepare(phase: str) -> None:
     if (status.get("status") != "partial" or status.get("completed") != expected
             or status.get("in_progress") is not None or status.get("stop_reason") is not None):
         raise ValueError("unexpected inspection sequence")
-    previous = OUTPUT / expected[-1]
-    if expected[-1] != "baseline":
-        previous = previous / "settled"
-    png = (previous / "screen.png").read_bytes()
-    root = ET.fromstring((previous / "hierarchy.xml").read_bytes())
+    if phase == "search":
+        response, png, xml, root = read_observation(BRIDGE / "search-before.json", HIERARCHIES / "codex-android-observe.xml")
+        with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
+            staging = Path(temporary) / "before"
+            staging.mkdir()
+            (staging / "observation.json").write_bytes(response)
+            (staging / "screen.png").write_bytes(png)
+            (staging / "hierarchy.xml").write_bytes(xml)
+            staging.rename(OUTPUT / "search-before")
+    else:
+        previous = OUTPUT / expected[-1]
+        if expected[-1] != "baseline":
+            previous = previous / "settled"
+        png = (previous / "screen.png").read_bytes()
+        root = ET.fromstring((previous / "hierarchy.xml").read_bytes())
     package = os.environ["INTERACTIVE_APP_PACKAGE"]
     viewport = png_dimensions(png)
     if phase == "help":
@@ -249,6 +259,8 @@ def phase_prepare(phase: str) -> None:
                 return description == "Frame"
             if phase == "home":
                 return description == "Home"
+            if phase == "search":
+                return description == "Search"
             return description.startswith("Camera scale ") and description.endswith("; open camera controls")
         targets = [n for n in root.iter("node") if selected(n)]
         if len(targets) != 1:
@@ -305,13 +317,21 @@ def phase_record(phase: str) -> None:
         less = [node for node in root.iter("node") if node.get("content-desc") == "Less" and node.get("enabled") == "true" and node.get("package") == os.environ["INTERACTIVE_APP_PACKAGE"]]
         if len(less) != 1:
             raise ValueError("expanded controls are not uniquely observed")
+    if phase == "search":
+        fields = [node for node in root.iter("node")
+                  if node.get("package") == os.environ["INTERACTIVE_APP_PACKAGE"]
+                  and node.get("class") == "android.widget.EditText"]
+        focus = {"edit_text_count": len(fields),
+                 "focused_values": [node.get("focused") for node in fields],
+                 "keyboard_visual_observation": "pending"}
+        (OUTPUT / phase / "focus-observation.json").write_text(json.dumps(focus) + "\n")
         write_status(completed, "captured")
 
 
 FAILURE_STAGES = {"startup", "emulator", "provider", "preflight", "baseline_foreground",
     "baseline_config", "baseline_observe", "baseline_provider", "baseline_receipt", "baseline_image",
     "baseline_hierarchy", "baseline_package", "baseline_provenance", "baseline_publish",
-    "help", "frame", "home", "controls", "unknown"}
+    "help", "frame", "home", "controls", "search", "unknown"}
 
 
 def mark_failed() -> None:
@@ -352,6 +372,8 @@ if __name__ == "__main__":
         phase_prepare("home")
     elif command == ["--prepare-controls"]:
         phase_prepare("controls")
+    elif command == ["--prepare-search"]:
+        phase_prepare("search")
     elif command == ["--snapshot-help"]:
         phase_snapshot("help")
     elif command == ["--snapshot-frame"]:
@@ -360,6 +382,8 @@ if __name__ == "__main__":
         phase_snapshot("home")
     elif command == ["--snapshot-controls"]:
         phase_snapshot("controls")
+    elif command == ["--snapshot-search"]:
+        phase_snapshot("search")
     elif command == ["--record-help"]:
         phase_record("help")
     elif command == ["--record-frame"]:
@@ -368,6 +392,8 @@ if __name__ == "__main__":
         phase_record("home")
     elif command == ["--record-controls"]:
         phase_record("controls")
+    elif command == ["--record-search"]:
+        phase_record("search")
     elif command == ["--mark-failed"]:
         mark_failed()
     else:
