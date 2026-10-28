@@ -45,9 +45,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_changed_files(changed_path: Path) -> list[str]:
+def read_changed_files(changed_path: Path) -> list[str] | None:
     if not changed_path.exists():
-        return []
+        return None
     return [
         line.strip()
         for line in changed_path.read_text(encoding="utf-8").splitlines()
@@ -109,11 +109,8 @@ def has_rust_surface(files: list[str]) -> bool:
         path_matches(
             path,
             ("engine/", "proto/", "services/", "labs/", "core-math/", "core-model/", "core-simulation/"),
-            ("Cargo.toml", "Cargo.lock"),
         )
         or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
-        or path.endswith("/Cargo.toml")
-        or path.endswith("/Cargo.lock")
         for path in files
     )
 
@@ -261,7 +258,7 @@ def apply_lane_set(lanes: dict[str, bool], lane_set: str, profile: str) -> None:
     lanes[lane_map[lane_set]] = True
 
 
-def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> tuple[dict[str, bool], str]:
+def route_auto_lanes(files: list[str] | None, profile: str, evidence_reused: bool) -> tuple[dict[str, bool], str]:
     lanes = {
         "wrapper_bootstrap": False,
         "rust_workspace": False,
@@ -279,12 +276,12 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
         apply_lane_set(lanes, "full", profile)
         return lanes, "explicit checkpoint profile enables all runtime lanes"
 
-    if evidence_reused and not files:
+    if evidence_reused and files == []:
         return lanes, "exact same-PR validation evidence was reused; no validation-lab-owned runtime lanes changed"
 
     if not files:
-        lanes["rust_workspace"] = True
-        return lanes, "no changed files were available, so the Rust baseline is the conservative targeted fallback"
+        apply_lane_set(lanes, "full", profile)
+        return lanes, "changed files are unavailable or empty without reusable evidence, so validation-lab uses a full checkpoint"
 
     if is_docs_only(files):
         return lanes, "documentation-only change; docs-sanity owns this surface"
@@ -297,6 +294,8 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
     # known product path in a mixed diff. Shared tooling therefore stays broad.
     if any(
         path.startswith(".github/")
+        or path.startswith("gradle/")
+        or path in {"Cargo.toml", "Cargo.lock", "build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradlew", "gradlew.bat"}
         or not (has_rust_surface([path]) or has_android_surface([path]) or has_arm64_surface([path]))
         for path in files
     ):
@@ -309,7 +308,7 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
         lanes["runtime_scene_telemetry"] = True
     if has_ffi_surface(files):
         lanes["ffi_abi"] = True
-    if has_arm64_surface(files) and (not evidence_reused or has_runtime_scene_surface(files) or has_ffi_surface(files)):
+    if has_arm64_surface(files):
         lanes["rust_workspace_arm64"] = True
         lanes["arm64_capability_census"] = True
         lanes["arm64_isa_proof"] = True

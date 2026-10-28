@@ -22,6 +22,8 @@ def run_plan(
     head_sha: str = "head123",
     pull_request_number: str = "42",
     evidence: dict | None = None,
+    primary_available: bool = True,
+    latest_available: bool = True,
 ) -> dict[str, str]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -31,9 +33,11 @@ def run_plan(
         primary_path = plan_dir / "primary-files.txt"
         latest_path = plan_dir / "latest-files.txt"
         evidence_path = evidence_dir / "validation-summary.json"
-        primary_path.write_text("\n".join(primary_files) + ("\n" if primary_files else ""), encoding="utf-8")
+        if primary_available:
+            primary_path.write_text("\n".join(primary_files) + ("\n" if primary_files else ""), encoding="utf-8")
         latest_values = primary_files if latest_files is None else latest_files
-        latest_path.write_text("\n".join(latest_values) + ("\n" if latest_values else ""), encoding="utf-8")
+        if latest_available:
+            latest_path.write_text("\n".join(latest_values) + ("\n" if latest_values else ""), encoding="utf-8")
         if evidence is not None:
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
@@ -195,6 +199,38 @@ class ValidationLabPlanTests(unittest.TestCase):
         for lane in ("rust_workspace", "rust_workspace_arm64", "arm64_capability_census", "arm64_isa_proof", "ffi_abi"):
             self.assertEqual(outputs[lane], "true")
         self.assertEqual(outputs["android_shell"], "false")
+
+    def test_shared_roots_and_unknown_manifest_force_full(self) -> None:
+        for path in (
+            "Cargo.toml", "Cargo.lock", "build.gradle.kts", "settings.gradle.kts",
+            "gradle.properties", "gradle/wrapper/gradle-wrapper.properties", "gradlew",
+            "future/Cargo.toml", "future/Cargo.lock",
+        ):
+            with self.subTest(path=path):
+                outputs = run_plan(["clients/android/app/src/main/Stage.kt", path])
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_unavailable_or_unproven_empty_diff_forces_full(self) -> None:
+        for options in (
+            {"primary_available": False},
+            {},
+            {"latest_available": False, "evidence": successful_evidence()},
+        ):
+            with self.subTest(options=options):
+                outputs = run_plan([], **options)
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_helper_only_predecessor_does_not_suppress_changed_arm64_proof(self) -> None:
+        for changed in ("engine/physics/src/lib.rs", "engine/hardware/src/lib.rs"):
+            with self.subTest(changed=changed):
+                outputs = run_plan(
+                    [".github/scripts/render_release_notes.py", changed],
+                    [changed],
+                    evidence=successful_evidence(),
+                )
+                self.assertEqual(outputs["prior_evidence_reused"], "true")
+                for lane in ("rust_workspace_arm64", "arm64_capability_census", "arm64_isa_proof"):
+                    self.assertEqual(outputs[lane], "true")
 
     def test_explicit_full_overrides_other_consumer_route(self) -> None:
         for options in ({"lane_set": "full"}, {"profile": "full"}):
