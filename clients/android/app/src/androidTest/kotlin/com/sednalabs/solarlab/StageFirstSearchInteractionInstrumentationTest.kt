@@ -4,9 +4,13 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNode
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -109,7 +113,8 @@ class StageFirstSearchInteractionInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("earth")
         composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth"))
             .assertIsDisplayed()
-        composeRule.onNodeWithText("Close").assertIsDisplayed().performClick()
+        composeRule.onNode(hasText("Close") and hasClickAction() and hasAnyAncestor(isDialog()))
+            .assertIsDisplayed().performClick()
         composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).assertCountEquals(0)
     }
 
