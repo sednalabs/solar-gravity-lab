@@ -8,6 +8,11 @@ on:
       - ".github/workflows/docs-sanity.yml"
       - ".github/scripts/check_markdown_links.py"
       - ".github/scripts/check_public_doc_safety.py"
+      - ".github/scripts/test_interactive_android_provider_wiring.py"
+      - ".github/scripts/intake_qualified_prerelease.py"
+      - ".github/scripts/test_intake_qualified_prerelease.py"
+      - ".github/scripts/test_interactive_png.py"
+      - ".github/scripts/validate_interactive_png.py"
       - ".github/scripts/test_interactive_session_summary.py"
       - ".github/scripts/write_interactive_session_summary.py"
   push:
@@ -17,6 +22,11 @@ on:
       - ".github/workflows/docs-sanity.yml"
       - ".github/scripts/check_markdown_links.py"
       - ".github/scripts/check_public_doc_safety.py"
+      - ".github/scripts/test_interactive_android_provider_wiring.py"
+      - ".github/scripts/intake_qualified_prerelease.py"
+      - ".github/scripts/test_intake_qualified_prerelease.py"
+      - ".github/scripts/test_interactive_png.py"
+      - ".github/scripts/validate_interactive_png.py"
       - ".github/scripts/test_interactive_session_summary.py"
       - ".github/scripts/write_interactive_session_summary.py"
 
@@ -50,6 +60,19 @@ jobs:
         shell: bash
         run: python3 .github/scripts/test_interactive_session_summary.py
 
+      - name: Install PNG decoder
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Test qualified prerelease intake
+        run: python3 .github/scripts/test_intake_qualified_prerelease.py
+
+      - name: Test native Android image decoding
+        run: python3 .github/scripts/test_interactive_png.py
+
+      - name: Test interactive Android provider wiring
+        shell: bash
+        run: python3 .github/scripts/test_interactive_android_provider_wiring.py
+
       - name: Emit summary
         shell: bash
         run: |
@@ -60,5 +83,6 @@ jobs:
             echo "- validation: relative markdown links"
             echo "- validation: publication-safety guard for obvious local-only leaks"
             echo "- validation: interactive session summary rendering"
+            echo "- validation: canonical public Android provider wiring"
             echo "- scope: documentation-only workflow intended to stay cheap"
           } >> "$GITHUB_STEP_SUMMARY"

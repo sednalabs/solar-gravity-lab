@@ -45,7 +45,7 @@ def base_payload(
     if provider is DEFAULT_VALUE:
         provider = {
             "adapter": "android",
-            "transport": "android-emulator-mcp",
+            "transport": "android-computer-use-mcp",
         }
 
     summary = {
@@ -71,8 +71,9 @@ def base_payload(
             "artifact_name": "app-debug",
             "build_run_id": "123",
             "build_commit_sha": "deadbeef",
-            "android_emulator_mcp_ref": "provider-ref",
-            "mcp_toolkit_rs_ref": "toolkit-ref",
+            "android_computer_use_mcp_ref": "provider-ref",
+            "android_computer_use_mcp_sha": "a" * 40,
+            "mcp_toolkit_rs_sha": "b" * 40,
             "android_validation_mode": "shell-v2",
             "interactive_debug_profile": "hosted-debug-lite",
             "preferred_gpu_backend": "none",
@@ -96,6 +97,9 @@ def main() -> int:
     assert "- outcome statuses: `succeeded`, `observe_degraded`" in rendered
     assert "- retryability values: `none`, `observe_then_retry`" in rendered
     assert "- preferred GPU backend: `none`" in rendered
+    assert "- android-computer-use-mcp requested ref: `provider-ref`" in rendered
+    assert f"- android-computer-use-mcp resolved SHA: `{'a' * 40}`" in rendered
+    assert f"- mcp-toolkit-rs resolved SHA: `{'b' * 40}`" in rendered
 
     rendered_empty = module.render_markdown(
         base_payload({
@@ -134,6 +138,9 @@ def main() -> int:
                 "status": "ready",
                 "tool": "android_observe",
                 "response_success": True,
+                "native_image": True,
+                "response_session_identity": "unknown",
+                "exact_session_proven": False,
                 "outcome_status": "succeeded",
                 "outcome_retryability": "none",
                 "taxonomy_source": "provider_manifest",
@@ -147,6 +154,9 @@ def main() -> int:
     assert "- dynamic-tool outcome success: `true`" in rendered_proof
     assert "### Codex Android Dynamic-Tool Proof" in rendered_proof
     assert "- response success: `true`" in rendered_proof
+    assert "- decodable native PNG: `true`" in rendered_proof
+    assert "- response session identity: `unknown`" in rendered_proof
+    assert "- exact session proven: `false`" in rendered_proof
     assert "- outcome status: `succeeded`" in rendered_proof
     assert "- outcome retryability: `none`" in rendered_proof
     assert "- taxonomy source: `provider_manifest`" in rendered_proof

@@ -11,6 +11,9 @@ def parse_args() -> argparse.Namespace:
         description="Write the hosted interactive-session model-helper config."
     )
     parser.add_argument("--mcp-url", required=True)
+    parser.add_argument("--environment-id", required=True)
+    parser.add_argument("--provider-instance-id", required=True)
+    parser.add_argument("--session-id", required=True)
     parser.add_argument("--mcp-health-url", required=True)
     parser.add_argument("--session-root", required=True)
     parser.add_argument("--build-manifest", required=True)
@@ -32,6 +35,9 @@ def main() -> None:
     payload = {
         "schema_version": 1,
         "mcp_url": args.mcp_url,
+        "environment_id": args.environment_id,
+        "provider_instance_id": args.provider_instance_id,
+        "session_id": args.session_id,
         "mcp_health_url": args.mcp_health_url,
         "session_root": args.session_root,
         "build_manifest_path": args.build_manifest,
