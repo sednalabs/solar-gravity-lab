@@ -108,8 +108,23 @@ def main():
             intake.write_intake_outputs(output, {"apk_path": str(staged)})
             assert output.read_text() == f"apk_path={staged}\n"
             assert not sentinel.exists()
-        rejected(lambda: intake.write_intake_outputs(temp_dir / "bad-output", {"apk_path": "bad\ninjected=value"}))
-        assert not (temp_dir / "bad-output").exists()
+        # Exercise the complete set of output names emitted by main(), including
+        # the SHA-256 key that the capture workflow consumes.
+        outputs = {
+            "artifact_name": "artifact-80002", "build_run_id": "90002", "build_run_attempt": "1",
+            "build_commit_sha": source_sha, "bundle_dir": str(temp_dir),
+            "manifest_path": str(temp_dir / "manifest.json"), "apk_path": str(staged),
+            "apk_sha256": intake.sha256(apk), "package_name": intake.PACKAGE,
+            "activity_name": intake.ACTIVITY,
+        }
+        valid_output = temp_dir / "complete-output"
+        intake.write_intake_outputs(valid_output, outputs)
+        assert valid_output.read_text() == "".join(f"{key}={value}\n" for key, value in outputs.items())
+        for name, value in (("apk_path", "bad\ninjected=value"), ("apk_path", "bad\rinjected=value"),
+                            ("bad\ninjected", "value"), ("bad=name", "value"), ("1bad", "value")):
+            invalid_output = temp_dir / "bad-output"
+            rejected(lambda: intake.write_intake_outputs(invalid_output, {name: value}))
+            assert not invalid_output.exists()
     intake.check_apk_properties(intake.PACKAGE, "false")
     rejected(lambda: intake.check_apk_properties("wrong.package", "false"))
     rejected(lambda: intake.check_apk_properties(intake.PACKAGE, "true"))
