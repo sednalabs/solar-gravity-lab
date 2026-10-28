@@ -183,6 +183,37 @@ class ValidationLabPlanTests(unittest.TestCase):
                 outputs = run_plan([path])
                 self.assertTrue(all(outputs[lane] == "false" for lane in self.RUNTIME_LANES))
 
+    def test_interactive_capture_helpers_route_to_their_consumers(self) -> None:
+        for path in (
+            ".github/scripts/capture_interactive_baseline.py",
+            ".github/scripts/test_capture_interactive_baseline.py",
+            ".github/scripts/intake_qualified_prerelease.py",
+            ".github/scripts/test_intake_qualified_prerelease.py",
+            ".github/scripts/validate_interactive_png.py",
+            ".github/scripts/test_interactive_png.py",
+            ".github/scripts/test_interactive_android_provider_wiring.py",
+        ):
+            with self.subTest(path=path):
+                outputs = run_plan([path])
+                self.assertTrue(all(outputs[lane] == "false" for lane in self.RUNTIME_LANES))
+
+    def test_interactive_capture_helper_does_not_mask_other_routes(self) -> None:
+        helper = ".github/scripts/capture_interactive_baseline.py"
+        outputs = run_plan([helper, "engine/ffi/src/lib.rs"])
+        for lane in ("rust_workspace", "rust_workspace_arm64", "arm64_capability_census", "arm64_isa_proof", "ffi_abi"):
+            self.assertEqual(outputs[lane], "true")
+        self.assertEqual(outputs["android_shell"], "false")
+
+        for path in (".github/actions/prepare-android-sdk/action.yml", "settings.gradle.kts", ".github/scripts/unknown_interactive_helper.py"):
+            with self.subTest(path=path):
+                outputs = run_plan([helper, path])
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+        for options in ({"lane_set": "full"}, {"profile": "full"}, {"event_name": "push"}):
+            with self.subTest(options=options):
+                outputs = run_plan([helper], **options)
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
     def test_shared_or_unknown_tooling_forces_full_even_in_mixed_diff(self) -> None:
         for path in (
             ".github/scripts/resolve_validation_lab_plan.py",

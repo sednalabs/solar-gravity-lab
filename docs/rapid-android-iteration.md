@@ -61,11 +61,10 @@ Start or reuse the hosted session:
 ```bash
 gh workflow run interactive-android-session.yml \
   --ref <branch> \
-  -f ref=<branch> \
   -f build_source=artifact \
   -f android_validation_mode=stage-first-runtime \
   -f interactive_debug_profile=hosted-debug-lite \
-  -f emulator_boot_strategy=snapshot-cache \
+  -f emulator_boot_strategy=cold \
   -f session_timeout_minutes=180 \
   -f keep_session_on_failure=true
 ```

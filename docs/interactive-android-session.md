@@ -44,8 +44,20 @@ The workflow:
 
 ## Workflow inputs
 
-- `ref`
-  - branch, tag, or commit from this repo
+- `session_mode`
+  - `live` (default) opens the protected live session; `capture-only` installs a
+    qualified prerelease, verifies runtime readiness and foreground package, and
+    inspects the screen with a fixed sequence: dismiss camera help, Frame, Home,
+    and open camera controls, using freshly observed unique targets. It does
+    not start terminal or tunnel services.
+  - capture artifacts retain original PNGs, hierarchies and bounded typed
+    responses for each validated step, including observations after a one-second
+    pause. A pause or adapter outcome does not prove UI stability; stability and
+    transport attempts remain unknown, and the provider may fall back between
+    transports. Visual acceptance remains pending. A failed or ambiguous step
+    stops the sequence and retains validated partial evidence for inspection.
+  - both modes use the pinned provider revision described below
+
 - `build_source`
   - one of:
     - `artifact` (reuse a pre-built interactive artifact from a previous run)
@@ -66,12 +78,6 @@ The workflow:
     `6e44a0ea66ee0f32f7f8638971a17f5e31e9ebf4`
 - `artifact_name`
   - optional artifact name override for the reusable interactive APK bundle
-- `android_computer_use_mcp_ref`
-  - branch, tag, or commit from `sednalabs/android-computer-use-mcp`
-  - default: `0e5a3dc692f39022fa84d88c927e4a59801673e4` (provider PR 25 head)
-  - the session summary records the requested ref, resolved provider SHA, and
-    the toolkit SHA from the provider lockfile. The provider supplies screenshot
-    bytes as native image content; artifact paths are diagnostics.
 - `android_validation_mode`
   - one of:
     - `shell-v2`
@@ -89,12 +95,20 @@ The workflow:
     - playback paused until the operator explicitly resumes it
   - `full-fidelity` keeps the existing heavy immersive posture for proof work
 - `emulator_boot_strategy`
-  - `snapshot-cache` or `cold`
+  - `cold`
 - `session_timeout_minutes`
   - bounded live-debug window
   - workflow logic clamps to `30-180`
 - `keep_session_on_failure`
   - if true, preflight failure still leaves the live session up for debugging
+
+The workflow checks out the commit selected by the dispatch workflow ref. The
+selected APK source is recorded separately and may be a different commit. The
+provider checkout is pinned to `0e5a3dc692f39022fa84d88c927e4a59801673e4`
+(provider PR 25 head). The summary records that pin, the resolved provider SHA,
+and the toolkit SHA from the provider lockfile. Screenshot bytes are native
+image content; artifact paths are diagnostics. Capture failures report fixed stage
+codes and retain validated partial evidence without publishing raw logs.
 
 ## Required secrets
 
@@ -111,12 +125,9 @@ The session needs tunnel access:
   - recommended value: `solarlab-android-mcp.sednalabs.io`
   - omit only if the rollout is intentionally human-terminal-only
 
-The workflow also reuses the existing remote cache credentials already present in
-the heavier Android lanes:
-
-- `GRADLE_REMOTE_CACHE_PASSWORD`
-- `R2_CACHE_ACCESS_KEY_ID`
-- `R2_CACHE_SECRET_ACCESS_KEY`
+The session does not restore or save cross-run Cargo, SDK, AVD, Gradle, or
+remote compiler/build caches. Cold startup and inline builds may take longer;
+in-session hot installation remains available.
 
 ## Safety rules
 
@@ -219,7 +230,7 @@ The summary payloads live under:
 
 Those files are designed to answer:
 
-- which provider ref was requested and which provider and toolkit commits were used
+- which provider pin and resolved provider and toolkit commits were used
 - whether preflight passed
 - whether human terminal access came up
 - whether machine-facing MCP access came up
@@ -235,7 +246,7 @@ Recommended first run:
 1. dispatch the workflow from a `validation/*` branch
 2. keep `android_validation_mode=stage-first-runtime`
 3. keep `interactive_debug_profile=hosted-debug-lite`
-4. keep `emulator_boot_strategy=snapshot-cache`
+4. keep `emulator_boot_strategy=cold`
 5. keep the default timeout
 6. verify the workflow summary shows the browser terminal hostname
 7. if `SGL_INTERACTIVE_MCP_HOSTNAME` is configured, verify the summary shows the
@@ -266,8 +277,8 @@ process itself needs to change.
 
 ## Codex native Android tools
 
-When the selected Android provider ref includes the native Codex provider CLI,
-the hosted session stages:
+The pinned Android provider includes the native Codex provider CLI. The hosted
+session stages:
 
 - `dist/interactive-session/live-access/codex-android-tools-<provider-sha>.sh`
 

@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-name", required=True)
     parser.add_argument("--build-run-id", required=True)
     parser.add_argument("--build-commit-sha", required=True)
-    parser.add_argument("--android-computer-use-mcp-ref", required=True)
+    parser.add_argument("--android-computer-use-mcp-pin", required=True)
     parser.add_argument("--android-computer-use-mcp-sha", required=True)
     parser.add_argument("--mcp-toolkit-rs-sha", required=True)
     parser.add_argument("--android-validation-mode", required=True)
@@ -108,7 +108,7 @@ def render_markdown(payload: dict) -> str:
         f"- build artifact: `{payload['context']['artifact_name']}`",
         f"- build run id: `{payload['context']['build_run_id']}`",
         f"- build commit: `{payload['context']['build_commit_sha']}`",
-        f"- android-computer-use-mcp requested ref: `{payload['context']['android_computer_use_mcp_ref']}`",
+        f"- android-computer-use-mcp pinned SHA: `{payload['context']['android_computer_use_mcp_pin']}`",
         f"- android-computer-use-mcp resolved SHA: `{payload['context']['android_computer_use_mcp_sha']}`",
         f"- mcp-toolkit-rs resolved SHA: `{payload['context']['mcp_toolkit_rs_sha']}`",
         f"- android validation mode: `{payload['context']['android_validation_mode']}`",
@@ -392,7 +392,7 @@ def main() -> None:
             "artifact_name": args.artifact_name,
             "build_run_id": args.build_run_id,
             "build_commit_sha": args.build_commit_sha,
-            "android_computer_use_mcp_ref": args.android_computer_use_mcp_ref,
+            "android_computer_use_mcp_pin": args.android_computer_use_mcp_pin,
             "android_computer_use_mcp_sha": args.android_computer_use_mcp_sha,
             "mcp_toolkit_rs_sha": args.mcp_toolkit_rs_sha,
             "android_validation_mode": args.android_validation_mode,

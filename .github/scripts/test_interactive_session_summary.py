@@ -71,7 +71,7 @@ def base_payload(
             "artifact_name": "app-debug",
             "build_run_id": "123",
             "build_commit_sha": "deadbeef",
-            "android_computer_use_mcp_ref": "provider-ref",
+            "android_computer_use_mcp_pin": "provider-ref",
             "android_computer_use_mcp_sha": "a" * 40,
             "mcp_toolkit_rs_sha": "b" * 40,
             "android_validation_mode": "shell-v2",
@@ -97,7 +97,7 @@ def main() -> int:
     assert "- outcome statuses: `succeeded`, `observe_degraded`" in rendered
     assert "- retryability values: `none`, `observe_then_retry`" in rendered
     assert "- preferred GPU backend: `none`" in rendered
-    assert "- android-computer-use-mcp requested ref: `provider-ref`" in rendered
+    assert "- android-computer-use-mcp pinned SHA: `provider-ref`" in rendered
     assert f"- android-computer-use-mcp resolved SHA: `{'a' * 40}`" in rendered
     assert f"- mcp-toolkit-rs resolved SHA: `{'b' * 40}`" in rendered
 

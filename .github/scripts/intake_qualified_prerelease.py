@@ -84,7 +84,7 @@ def stage_apk(output_dir: Path, apk: bytes) -> Path:
 
 def write_intake_outputs(path: Path, values: dict[str, str]) -> None:
     for name, value in values.items():
-        require(bool(re.fullmatch(r"[a-z_]+", name)), "invalid output name")
+        require(bool(re.fullmatch(r"[a-z_][a-z0-9_]*", name)), "invalid output name")
         require(isinstance(value, str) and "\n" not in value and "\r" not in value, "invalid output value")
     write_outputs(path, values)
 
