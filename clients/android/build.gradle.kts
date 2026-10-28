@@ -10,6 +10,7 @@ buildscript {
             add("classpath", "org.jdom:jdom2:2.0.6.1")
             add("classpath", "org.apache.commons:commons-compress:1.26.0")
             add("classpath", "org.apache.commons:commons-lang3:3.18.0")
+            add("classpath", "com.google.crypto.tink:tink:1.10.0")
             add("classpath", "com.google.protobuf:protobuf-java:3.25.9")
             add("classpath", "com.google.protobuf:protobuf-java-util:3.25.9")
         }

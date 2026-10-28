@@ -62,6 +62,9 @@ dependencyResolutionManagement {
                             ) {
                                 add("com.google.protobuf:protobuf-java-util:3.25.9")
                             }
+                            if (module.endsWith("host-emulator-control")) {
+                                add("com.google.crypto.tink:tink:1.10.0")
+                            }
                             if (module.endsWith("host-emulator-control") || module.endsWith("result-listener-gradle")) {
                                 nettyModules.forEach { add("io.netty:$it:4.1.137.Final") }
                             }
