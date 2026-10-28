@@ -2,6 +2,7 @@ package com.sednalabs.solarlab.runtime
 
 import android.util.Log
 import com.sednalabs.solarlab.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -25,6 +26,9 @@ import java.util.Locale
  * Native transport owns ABI calls into `engine/ffi` via a JNI shim.
  */
 internal interface RuntimeBridge {
+    // Used to reject a queued signal from a session that has since been replaced.
+    fun isCurrentSession(handle: Long): Boolean = true
+
     // Streamed connection events from the runtime host.
     fun connect(): Flow<RuntimeSignal>
 
@@ -48,6 +52,8 @@ internal class JniRuntimeBridge(
     private val operationLock = Any()
     @Volatile
     private var activeSessionHandle: Long = 0L
+
+    override fun isCurrentSession(handle: Long): Boolean = activeSessionHandle == handle
 
     // Creates the native session and starts the periodic snapshot refresh loop.
     // Emitted signals are boundary-only; all rendering state remains host-owned.
@@ -79,6 +85,7 @@ internal class JniRuntimeBridge(
                 rootBranchId = DEFAULT_ROOT_BRANCH_ID,
             )
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             logError(
                 "connect.createSession.failure error=${error.message ?: error::class.java.simpleName}",
                 error,
@@ -134,88 +141,94 @@ internal class JniRuntimeBridge(
             return@callbackFlow
         }
 
-        synchronized(operationLock) {
-            synchronized(stateLock) {
-                activeSessionHandle = handle
-                renderHostAdapter.bindSession(handle)
-            }
+        try {
+            synchronized(operationLock) {
+                synchronized(stateLock) {
+                    activeSessionHandle = handle
+                    renderHostAdapter.bindSession(handle)
+                }
 
-            trySend(RuntimeSignal.Connected(handle = handle))
+                trySend(RuntimeSignal.Connected(handle = handle))
 
-            logInfo("connect.runtimeInfo.begin handle=$handle")
-            val runtimeInfoResult = runCatching {
-                transport.runtimeInfo(handle)
-            }.getOrElse { error ->
-                logError(
-                    "connect.runtimeInfo.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
-                    error,
-                )
-                trySend(
-                    RuntimeSignal.Notice(
-                        message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
-                        level = RuntimeNoticeLevel.Warning,
+                logInfo("connect.runtimeInfo.begin handle=$handle")
+                val runtimeInfoResult = runCatching {
+                    transport.runtimeInfo(handle)
+                }.getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    logError(
+                        "connect.runtimeInfo.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
+                        error,
                     )
-                )
-                null
-            }
-            runtimeInfoResult?.let { result ->
-                logInfo(
-                    "connect.runtimeInfo.result handle=$handle status=${result.result.describe()} requestedCpu=${result.requestedCpuBackendLabel()} cpu=${result.cpuBackendLabel()} solver=${result.cpuSolverPathLabel()} scheduler=${result.cpuScheduleSummary()} kernels=${result.cpuKernelCatalogSummary() ?: "none"} features=${result.cpuFeatureSummary() ?: "none"} gpu=${result.gpuBackendLabel()}"
-                )
-            }
-
-            if (runtimeInfoResult?.result?.isOk() == true) {
-                trySend(
-                    RuntimeSignal.RuntimeInfoAvailable(
-                        requestedCpuBackendLabel = runtimeInfoResult.requestedCpuBackendLabel(),
-                        cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
-                        cpuSolverPathLabel = runtimeInfoResult.cpuSolverPathLabel(),
-                        cpuFeatureSummary = runtimeInfoResult.cpuFeatureSummary(),
-                        cpuFallbackSummary = runtimeInfoResult.cpuFallbackSummary(),
-                        cpuScheduleSummary = runtimeInfoResult.cpuScheduleSummary(),
-                        cpuKernelCatalogSummary = runtimeInfoResult.cpuKernelCatalogSummary(),
-                        requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
-                        gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
-                        workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
-                        interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
+                    trySend(
+                        RuntimeSignal.Notice(
+                            message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
+                            level = RuntimeNoticeLevel.Warning,
+                        )
                     )
-                )
-            } else if (runtimeInfoResult != null) {
-                trySend(
-                    RuntimeSignal.Notice(
-                        message = "Runtime info unavailable: ${runtimeInfoResult.result.describe()}",
-                        level = RuntimeNoticeLevel.Warning,
+                    null
+                }
+                runtimeInfoResult?.let { result ->
+                    logInfo(
+                        "connect.runtimeInfo.result handle=$handle status=${result.result.describe()} requestedCpu=${result.requestedCpuBackendLabel()} cpu=${result.cpuBackendLabel()} solver=${result.cpuSolverPathLabel()} scheduler=${result.cpuScheduleSummary()} kernels=${result.cpuKernelCatalogSummary() ?: "none"} features=${result.cpuFeatureSummary() ?: "none"} gpu=${result.gpuBackendLabel()}"
                     )
-                )
-            }
+                }
 
-            val initialSignals = refreshSignalsForHandle(
-                handle,
-                includeSummary = true,
-                traceLabel = "connect.initial-refresh",
-            )
-            initialSignals.forEach { trySend(it) }
-            var latestSummary = extractLatestSnapshotSummary(initialSignals)
+                if (runtimeInfoResult?.result?.isOk() == true) {
+                    trySend(
+                        RuntimeSignal.RuntimeInfoAvailable(
+                            requestedCpuBackendLabel = runtimeInfoResult.requestedCpuBackendLabel(),
+                            cpuBackendLabel = runtimeInfoResult.cpuBackendLabel(),
+                            cpuSolverPathLabel = runtimeInfoResult.cpuSolverPathLabel(),
+                            cpuFeatureSummary = runtimeInfoResult.cpuFeatureSummary(),
+                            cpuFallbackSummary = runtimeInfoResult.cpuFallbackSummary(),
+                            cpuScheduleSummary = runtimeInfoResult.cpuScheduleSummary(),
+                            cpuKernelCatalogSummary = runtimeInfoResult.cpuKernelCatalogSummary(),
+                            requestedGpuBackendLabel = preferredGpuBackendLabel(BuildConfig.PREFERRED_GPU_BACKEND),
+                            gpuBackendLabel = runtimeInfoResult.gpuBackendLabel(),
+                            workloadSummary = runtimeInfoResult.gpuWorkloadSummary(),
+                            interopErrorBudgetSummary = runtimeInfoResult.gpuInteropErrorBudgetSummary(),
+                        )
+                    )
+                } else if (runtimeInfoResult != null) {
+                    trySend(
+                        RuntimeSignal.Notice(
+                            message = "Runtime info unavailable: ${runtimeInfoResult.result.describe()}",
+                            level = RuntimeNoticeLevel.Warning,
+                        )
+                    )
+                }
 
-            if (extractBodyCountFrom(initialSignals) == 0L) {
-                logInfo("connect.seed.begin handle=$handle")
-                ensureStartupSeedApplied(handle).forEach { trySend(it) }
-                logInfo("connect.seed.refresh.begin handle=$handle")
-                val seededSignals = refreshSignalsForHandle(
+                val initialSignals = refreshSignalsForHandle(
                     handle,
                     includeSummary = true,
-                    traceLabel = "connect.seeded-refresh",
+                    traceLabel = "connect.initial-refresh",
                 )
-                seededSignals.forEach { trySend(it) }
-                latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
-            }
+                initialSignals.forEach { trySend(it) }
+                var latestSummary = extractLatestSnapshotSummary(initialSignals)
 
-            latestSummary?.let { summary ->
-                logInfo(
-                    "connect.playback-config.begin handle=$handle paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
-                )
-                ensureStartupScenarioConfigured(handle, scenarioPack, summary).forEach { trySend(it) }
+                if (extractBodyCountFrom(initialSignals) == 0L) {
+                    logInfo("connect.seed.begin handle=$handle")
+                    ensureStartupSeedApplied(handle).forEach { trySend(it) }
+                    logInfo("connect.seed.refresh.begin handle=$handle")
+                    val seededSignals = refreshSignalsForHandle(
+                        handle,
+                        includeSummary = true,
+                        traceLabel = "connect.seeded-refresh",
+                    )
+                    seededSignals.forEach { trySend(it) }
+                    latestSummary = extractLatestSnapshotSummary(seededSignals) ?: latestSummary
+                }
+
+                latestSummary?.let { summary ->
+                    logInfo(
+                        "connect.playback-config.begin handle=$handle paused=${summary.paused} rate=${summary.simSecondsPerRealSecond}"
+                    )
+                    ensureStartupScenarioConfigured(handle, scenarioPack, summary).forEach { trySend(it) }
+                }
             }
+        } catch (error: CancellationException) {
+            synchronized(operationLock) { releaseCurrentSession() }
+            throw error
         }
 
         val refreshJob = launch {
@@ -274,6 +287,7 @@ internal class JniRuntimeBridge(
                     rootBranchId = DEFAULT_ROOT_BRANCH_ID,
                 )
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 logError(
                     "loadScenario.createSession.failure scenario=${scenarioPack.scenarioId} error=${error.message ?: error::class.java.simpleName}",
                     error,
@@ -332,6 +346,7 @@ internal class JniRuntimeBridge(
             val runtimeInfoResult = runCatching {
                 transport.runtimeInfo(handle)
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 signals += RuntimeSignal.Notice(
                     message = "Runtime info unavailable: ${error.message ?: error::class.java.simpleName}",
                     level = RuntimeNoticeLevel.Warning,
@@ -420,6 +435,7 @@ internal class JniRuntimeBridge(
             val commandResult = runCatching {
                 transport.applyCommand(handle, command.toNativePayload())
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 return@synchronized listOf(
                     RuntimeSignal.Notice(
                         message = "Command failed: ${error.message ?: error::class.java.simpleName}",
@@ -442,8 +458,9 @@ internal class JniRuntimeBridge(
                 command = command,
                 commandLabel = command.label,
                 summary = commandResult,
+                sessionHandle = handle,
             )
-            signals += refreshSignalsForHandle(handle, includeSummary = false)
+            signals += refreshSignalsForHandle(handle, includeSummary = false, snapshotRevision = commandResult.revision)
             signals
         }
     }
@@ -455,8 +472,10 @@ internal class JniRuntimeBridge(
         includeSummary: Boolean,
         advancePlayback: Boolean = false,
         traceLabel: String? = null,
+        snapshotRevision: Long? = null,
     ): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
+        var renderRevision = snapshotRevision
         traceLabel?.let { label ->
             logInfo(
                 "$label.begin handle=$handle includeSummary=$includeSummary advancePlayback=$advancePlayback"
@@ -470,6 +489,7 @@ internal class JniRuntimeBridge(
             var summary = runCatching {
                 transport.refreshSession(handle)
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 traceLabel?.let { label ->
                     logError(
                         "$label.refreshSession.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
@@ -502,6 +522,7 @@ internal class JniRuntimeBridge(
                                 ),
                             )
                         }.getOrElse { error ->
+                            if (error is CancellationException) throw error
                             signals += RuntimeSignal.Notice(
                                 message = "Live playback advance failed: ${error.message ?: error::class.java.simpleName}",
                                 level = RuntimeNoticeLevel.Warning,
@@ -521,12 +542,14 @@ internal class JniRuntimeBridge(
                         }
                     }
                 }
-                signals += RuntimeSignal.SnapshotUpdated(summary)
+                renderRevision = summary.revision
+                signals += RuntimeSignal.SnapshotUpdated(summary, sessionHandle = handle)
             } else {
                 signals += RuntimeSignal.Notice(
                     message = "Refresh failed: ${summary.result.describe()}",
                     level = RuntimeNoticeLevel.Error,
                 )
+                return signals
             }
         }
 
@@ -547,6 +570,7 @@ internal class JniRuntimeBridge(
             val refreshResult = runCatching {
                 renderHostAdapter.refreshPacket()
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 traceLabel?.let { label ->
                     logError(
                         "$label.render.refresh.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
@@ -554,7 +578,9 @@ internal class JniRuntimeBridge(
                     )
                 }
                 signals += RuntimeSignal.RenderUnavailable(
-                    reason = "Render export unavailable: ${error.message ?: error::class.java.simpleName}"
+                    reason = "Render export unavailable: ${error.message ?: error::class.java.simpleName}",
+                    revision = renderRevision,
+                    sessionHandle = handle,
                 )
                 return signals
             }
@@ -562,7 +588,7 @@ internal class JniRuntimeBridge(
                 traceLabel?.let { label ->
                     logInfo("$label.render.refresh.result handle=$handle lease=ready")
                 }
-                signals += RuntimeSignal.RenderPacketReady(refreshResult.lease)
+                signals += RuntimeSignal.RenderPacketReady(refreshResult.lease, revision = renderRevision, sessionHandle = handle)
             } else {
                 traceLabel?.let { label ->
                     logInfo(
@@ -570,7 +596,9 @@ internal class JniRuntimeBridge(
                     )
                 }
                 signals += RuntimeSignal.RenderUnavailable(
-                    reason = refreshResult.unavailableReason ?: "Render export unavailable"
+                    reason = refreshResult.unavailableReason ?: "Render export unavailable",
+                    revision = renderRevision,
+                    sessionHandle = handle,
                 )
             }
         }
@@ -592,6 +620,7 @@ internal class JniRuntimeBridge(
         val result = runCatching {
             transport.runtimeInfo(handle)
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             traceLabel?.let { label ->
                 logError(
                     "$label.runtimeInfo.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
@@ -748,6 +777,7 @@ internal class JniRuntimeBridge(
         val commandResult = runCatching {
             transport.applyCommand(handle, command.toNativePayload())
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             signals += RuntimeSignal.Notice(
                 message = "Scenario startup command failed: ${error.message ?: error::class.java.simpleName}",
                 level = RuntimeNoticeLevel.Warning,
@@ -767,6 +797,7 @@ internal class JniRuntimeBridge(
             command = command,
             commandLabel = command.label,
             summary = commandResult,
+            sessionHandle = handle,
         )
         signals += RuntimeSignal.Notice(
             message = successMessage,
@@ -781,6 +812,7 @@ internal class JniRuntimeBridge(
         val commandResult = runCatching {
             transport.applyCommand(handle, RuntimeCommand.SeedCanonicalSolarSystem.toNativePayload())
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             logError(
                 "ensureStartupSeedApplied.failure handle=$handle error=${error.message ?: error::class.java.simpleName}",
                 error,
@@ -861,14 +893,15 @@ internal sealed interface RuntimeSignal {
         val message: String,
         val level: RuntimeNoticeLevel = RuntimeNoticeLevel.Info,
     ) : RuntimeSignal
-    data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult) : RuntimeSignal
+    data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult, val sessionHandle: Long? = null) : RuntimeSignal
     data class CommandApplied(
         val command: RuntimeCommand,
         val commandLabel: String,
         val summary: NativeSnapshotSummaryResult,
+        val sessionHandle: Long? = null,
     ) : RuntimeSignal
-    data class RenderPacketReady(val lease: PacketLease) : RuntimeSignal
-    data class RenderUnavailable(val reason: String) : RuntimeSignal
+    data class RenderPacketReady(val lease: PacketLease, val revision: Long? = null, val sessionHandle: Long? = null) : RuntimeSignal
+    data class RenderUnavailable(val reason: String, val revision: Long? = null, val sessionHandle: Long? = null) : RuntimeSignal
     data class Unavailable(val message: String, val detail: String? = null) : RuntimeSignal
 }
 
@@ -1588,6 +1621,10 @@ internal data class NativeSnapshotSummaryResult(
     val simSecondsPerRealSecond: Double,
     val observerMode: Int,
     val timelineSemantics: Int,
+    val focusTargetBodyId: String? = null,
+    val activeCheckpointId: String? = null,
+    val activeCheckpointLabel: String? = null,
+    val revision: Long = 0,
 )
 
 internal data class NativeVulkanScenePacketResult(

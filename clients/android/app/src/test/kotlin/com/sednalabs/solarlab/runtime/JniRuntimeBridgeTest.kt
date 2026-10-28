@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab.runtime
 
 import com.sednalabs.solarlab.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -17,6 +18,51 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 
 class JniRuntimeBridgeTest {
+    @Test
+    fun transportCancellationPropagatesThroughRefreshAndCommand() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 1))))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        for (command in listOf(false, true)) {
+            val cancellation = CancellationException("transport canceled")
+            if (command) transport.commandError = cancellation else transport.refreshError = cancellation
+            var caught: CancellationException? = null
+            try {
+                if (command) bridge.applyCommand(RuntimeCommand.PausePlayback) else bridge.refresh()
+            } catch (error: CancellationException) {
+                caught = error
+            }
+            assertTrue(caught === cancellation)
+            transport.commandError = null
+            transport.refreshError = null
+        }
+        transport.commandError = IllegalStateException("command failed")
+        val commandNotice = bridge.applyCommand(RuntimeCommand.PausePlayback).filterIsInstance<RuntimeSignal.Notice>().single()
+        assertTrue(commandNotice.message.contains("command failed"))
+        transport.commandError = null
+        transport.refreshError = IllegalStateException("refresh failed")
+        val refreshNotice = bridge.refresh().filterIsInstance<RuntimeSignal.Notice>().single()
+        assertTrue(refreshNotice.message.contains("refresh failed"))
+    }
+
+    @Test
+    fun nativeRenderExportRethrowsCancellation() {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque())
+        val adapter = NativeRenderHostAdapter(transport)
+        adapter.bindSession(42L)
+        val cancellation = CancellationException("export canceled")
+        transport.exportError = cancellation
+        var caught: CancellationException? = null
+        try {
+            adapter.refreshPacket()
+        } catch (error: CancellationException) {
+            caught = error
+        }
+        assertTrue(caught === cancellation)
+        transport.exportError = IllegalStateException("export failed")
+        assertTrue(adapter.refreshPacket().unavailableReason!!.contains("export failed"))
+    }
+
     @Test
     fun connect_seedsDefaultSolarSystem_whenInitialSnapshotIsEmpty() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
@@ -395,6 +441,9 @@ class JniRuntimeBridgeTest {
         val refreshedHandles = CopyOnWriteArrayList<Long>()
         val appliedCommands = CopyOnWriteArrayList<NativeRuntimeCommandPayload>()
         private var latestSummary: NativeSnapshotSummaryResult? = null
+        var refreshError: Throwable? = null
+        var commandError: Throwable? = null
+        var exportError: Throwable? = null
 
         override fun ensureLibraryLoaded(): NativeLibraryLoadOutcome = NativeLibraryLoadOutcome.Success
 
@@ -430,6 +479,7 @@ class JniRuntimeBridgeTest {
             error("snapshotSummary is unused in this test")
 
         override fun refreshSession(handle: Long): NativeSnapshotSummaryResult {
+            refreshError?.let { throw it }
             refreshedHandles += handle
             val summary = refreshResults.removeFirstOrNull()
                 ?: latestSummary
@@ -442,6 +492,7 @@ class JniRuntimeBridgeTest {
             handle: Long,
             command: NativeRuntimeCommandPayload,
         ): NativeSnapshotSummaryResult {
+            commandError?.let { throw it }
             appliedCommands += command
             val current = latestSummary ?: snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT)
             val summary = when (command.kind) {
@@ -460,8 +511,10 @@ class JniRuntimeBridgeTest {
             return summary
         }
 
-        override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
+        override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? {
+            exportError?.let { throw it }
             error("exportVulkanScene is unused in this test")
+        }
 
         override fun releaseVulkanScene(packetHandle: Long) = Unit
 

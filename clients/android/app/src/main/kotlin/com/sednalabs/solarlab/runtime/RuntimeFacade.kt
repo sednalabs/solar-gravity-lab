@@ -58,6 +58,7 @@ data class SnapshotPresentation(
     val timelineSemantics: Int = 0,
     val timelineSemanticsLabel: String = "Unknown timeline semantics",
     val observerModeLabel: String,
+    val revision: Long = 0,
 )
 
 data class RenderStatusPresentation(

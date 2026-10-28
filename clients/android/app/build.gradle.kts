@@ -484,7 +484,6 @@ dependencies {
 
     implementation(project(":core-math"))
     implementation(project(":core-model"))
-    implementation(project(":core-simulation"))
     implementation(project(":render-core"))
     implementation(project(":android-vulkan-renderer"))
 
@@ -509,6 +508,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

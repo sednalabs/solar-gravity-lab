@@ -798,6 +798,13 @@ impl WorldRuntime {
         );
     }
 
+    /// Monotonic command ordinal for ordering snapshots within this session.
+    /// Failed commands may leave gaps; branch switches do not reset it.
+    #[must_use]
+    pub fn snapshot_revision(&self) -> u64 {
+        self.next_command_ordinal.saturating_sub(1)
+    }
+
     /// Return an ownership-safe world snapshot for host-visible status and
     /// checkpoint provenance capture.
     /// This method is a pure projection: it does not mutate runtime state.
