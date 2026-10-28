@@ -258,7 +258,7 @@ def launcher_decide() -> None:
     (LAUNCHER_DIAGNOSTIC / "status.json").write_text(json.dumps({
         "status": "partial", "decision": decision, "action_effect": "unknown" if decision == "wait_once" else "not_applicable",
         "transport_attempts": "unknown", "provider_may_fallback": True,
-        "owner_submissions": 1 if decision == "wait_once" else 0,
+        "owner_submission_limit": 1 if decision == "wait_once" else 0,
         "app_owned_proof": False, "stability": "unknown", "response_session_identity": "unknown", "visual_acceptance": "pending",
     }) + "\n")
     print(decision)
