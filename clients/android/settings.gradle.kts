@@ -60,7 +60,7 @@ dependencyResolutionManagement {
                                 module.endsWith("host-emulator-control") ||
                                 module.endsWith("host-logcat")
                             ) {
-                                add("com.google.protobuf:protobuf-java-util:3.25.5")
+                                add("com.google.protobuf:protobuf-java-util:3.25.9")
                             }
                             if (module.endsWith("host-emulator-control") || module.endsWith("result-listener-gradle")) {
                                 nettyModules.forEach { add("io.netty:$it:4.1.137.Final") }
@@ -84,12 +84,12 @@ dependencyResolutionManagement {
                             if (!module.endsWith(":android-device-provider-local")) {
                                 add("com.google.guava:guava:33.7.2-jre")
                             }
-                            add("com.google.protobuf:protobuf-java:3.25.5")
-                            add("com.google.protobuf:protobuf-kotlin:3.25.5")
+                            add("com.google.protobuf:protobuf-java:3.25.9")
+                            add("com.google.protobuf:protobuf-kotlin:3.25.9")
                             if (module.endsWith(":android-driver-instrumentation") ||
                                 module.endsWith(":core") || module.endsWith(":launcher")
                             ) {
-                                add("com.google.protobuf:protobuf-java-util:3.25.5")
+                                add("com.google.protobuf:protobuf-java-util:3.25.9")
                             }
                             if (module.endsWith(":core")) {
                                 nettyModules.forEach { add("io.netty:$it:4.1.137.Final") }
