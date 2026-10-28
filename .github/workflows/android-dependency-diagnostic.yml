@@ -1,0 +1,170 @@
+name: Android dependency diagnostic (temporary)
+
+on:
+  push:
+    branches:
+      - fix/android-security-diagnosis-20261029
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/isolated-gradle-home
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify diagnostic base
+        shell: bash
+        run: test "$(git rev-parse HEAD^)" = 47f25eb4c6fb9001e06819713e9d3cf7d543387d
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          sdk-root: /usr/local/lib/android/sdk
+      - name: Ensure SDK 36 platform and build tools
+        shell: bash
+        run: |
+          bash .github/scripts/ensure_android_sdk_packages.sh \
+            'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Capture dependency paths and selection reasons
+        id: capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostic-output
+          cat > "$RUNNER_TEMP/dependency-diagnostic.init.gradle" <<'GROOVY'
+          import org.gradle.api.artifacts.result.ResolvedDependencyResult
+          import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+          import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+          def safe = { value -> value.toString().replaceAll('[^A-Za-z0-9_.:+,()=/> -]', '?').take(350) }
+          def targets = [
+            'org.jetbrains.kotlin:kotlin-gradle-plugin',
+            'org.bouncycastle:bcprov-jdk18on',
+            'com.google.guava:guava',
+            'io.netty:netty-handler',
+            'io.netty:netty-codec',
+            'io.netty:netty-codec-http',
+            'io.netty:netty-codec-http2'
+          ] as Set
+
+          gradle.projectsEvaluated {
+            def root = gradle.rootProject
+            root.tasks.register('dependencySnapshot') {
+              doLast {
+                def emit = { message -> println('DEPSNAPSHOT ' + message) }
+                root.allprojects.each { project ->
+                  def inspect = { label, configuration ->
+                    if (!configuration.canBeResolved) {
+                      emit("CONFIG ${safe(label)} UNRESOLVABLE")
+                      return
+                    }
+                    emit("CONFIG ${safe(label)} BEGIN")
+                    try {
+                      def result = configuration.incoming.resolutionResult
+                      int visited = 0
+                      int matches = 0
+                      int unresolved = 0
+                      boolean truncated = false
+                      def walk
+                      walk = { component, path, seen ->
+                        if (path.size() > 30 || visited >= 200000) {
+                          truncated = true
+                          return
+                        }
+                        component.dependencies.each { dependency ->
+                          if (visited >= 200000) {
+                            truncated = true
+                          } else {
+                            visited++
+                            if (dependency instanceof UnresolvedDependencyResult) {
+                              unresolved++
+                              emit("UNRESOLVED ${safe(label)} ${safe(dependency.requested)}")
+                            } else if (dependency instanceof ResolvedDependencyResult) {
+                              def selected = dependency.selected
+                              def id = selected.id
+                              def nextPath = path + [safe(id.displayName)]
+                              if (id instanceof ModuleComponentIdentifier && targets.contains("${id.group}:${id.module}".toString())) {
+                                matches++
+                                def reasons = selected.selectionReason.descriptions.collect { safe(it.description) }.join('; ')
+                                emit("MATCH ${safe(label)} ${safe(id.displayName)} REQUESTED ${safe(dependency.requested)} REASONS ${reasons} PATH ${nextPath.join(' > ')}")
+                              }
+                              if (!seen.contains(id)) {
+                                walk(selected, nextPath, seen + [id])
+                              }
+                            }
+                          }
+                        }
+                      }
+                      walk(result.root, [safe(project.path)], [] as Set)
+                      emit("CONFIG ${safe(label)} END matches=${matches} unresolved=${unresolved} truncated=${truncated}")
+                    } catch (Exception ignored) {
+                      emit("CONFIG ${safe(label)} FAILED resolution-error")
+                    }
+                  }
+                  project.buildscript.configurations.each { config ->
+                    if (config.canBeResolved) inspect("${project.path}:buildscript:${config.name}", config)
+                  }
+                  def names = project.configurations.collect { it.name } as Set
+                  emit("INVENTORY ${safe(project.path)} ${names.collect { safe(it) }.sort().join(',')}")
+                  if (project.path == ':app') {
+                    ['debugCompileClasspath', 'debugRuntimeClasspath', 'releaseCompileClasspath',
+                     'releaseRuntimeClasspath', 'prereleaseCompileClasspath', 'prereleaseRuntimeClasspath',
+                     'debugAndroidTestCompileClasspath', 'debugAndroidTestRuntimeClasspath'].each { expected ->
+                      if (!names.contains(expected)) emit("CONFIG ${safe(project.path)}:${safe(expected)} MISSING")
+                    }
+                  }
+                  project.configurations.each { config ->
+                    def name = config.name.toLowerCase(Locale.ROOT)
+                    def relevantVariant = (project.path == ':app' || project.path == ':android-vulkan-renderer') &&
+                      (name.contains('debug') || name.contains('release') || name.contains('prerelease')) &&
+                      (name.contains('compileclasspath') || name.contains('runtimeclasspath'))
+                    def relevantTestTool = name.contains('utp') || name.contains('androidtest') || name.contains('android-test') || name.contains('android_test')
+                    if (relevantVariant || relevantTestTool) {
+                      inspect("${project.path}:${config.name}", config)
+                    }
+                  }
+                }
+                emit('APK_MEMBERSHIP UNKNOWN: no exact-candidate APK inspected')
+              }
+            }
+          }
+          GROOVY
+          set +e
+          ./gradlew -p clients/android --init-script "$RUNNER_TEMP/dependency-diagnostic.init.gradle" \
+            --no-daemon --no-build-cache --no-configuration-cache --console=plain \
+            :dependencySnapshot > "$RUNNER_TEMP/dependency-diagnostic.log" 2>&1
+          status=$?
+          set -e
+          grep '^DEPSNAPSHOT ' "$RUNNER_TEMP/dependency-diagnostic.log" > diagnostic-output/dependency-snapshot.txt || true
+          report_empty=false
+          if [[ ! -s diagnostic-output/dependency-snapshot.txt ]]; then
+            report_empty=true
+          fi
+          printf 'DEPSNAPSHOT GRADLE_EXIT %s\n' "$status" >> diagnostic-output/dependency-snapshot.txt
+          printf 'DEPSNAPSHOT QUALIFICATION unassessed/incomplete pending owner review\n' >> diagnostic-output/dependency-snapshot.txt
+          {
+            echo '## Dependency diagnostic'
+            echo 'Qualification: unassessed/incomplete pending owner review.'
+            echo 'A successful job means only that the collector finished. FAILED, MISSING, UNRESOLVED, and truncated markers require owner assessment and cannot establish absence or coverage.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" -ne 0 || "$report_empty" == true ]]; then
+            echo 'Dependency collector failed; report is incomplete.'
+            exit 1
+          fi
+      - name: Retain dependency report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-dependency-diagnostic
+          path: diagnostic-output/dependency-snapshot.txt
+          if-no-files-found: warn
+          retention-days: 7
