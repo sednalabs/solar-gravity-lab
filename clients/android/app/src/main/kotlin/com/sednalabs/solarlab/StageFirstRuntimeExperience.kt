@@ -282,7 +282,8 @@ internal fun StageFirstRuntimeExperience(
         var playbackSpeedPreset by remember { mutableStateOf(PlaybackSpeedPreset.SIX_HOURS_PER_SECOND) }
         var chromeModeName by rememberSaveable { mutableStateOf(StageChromeMode.COLLAPSED.name) }
         var traceLayerModeName by rememberSaveable { mutableStateOf(TraceLayerMode.FOCUS.name) }
-        var searchVisible by remember { mutableStateOf(false) }
+        var searchVisible by rememberSaveable { mutableStateOf(false) }
+        var requestSearchFocus by remember { mutableStateOf(false) }
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
         var pendingScenarioFrame by remember { mutableStateOf<RuntimeScenarioPack?>(null) }
@@ -616,7 +617,10 @@ internal fun StageFirstRuntimeExperience(
                 )
                 StageActionButton(
                     label = if (searchVisible) "Searching" else "Search",
-                    onClick = { searchVisible = true },
+                    onClick = {
+                        requestSearchFocus = true
+                        searchVisible = true
+                    },
                     modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
                     emphasized = searchVisible,
                     enabled = searchableBodies.isNotEmpty(),
@@ -1071,9 +1075,14 @@ internal fun StageFirstRuntimeExperience(
             RuntimeStageSearchDialog(
                 bodies = searchableBodies,
                 selectedBodyId = selectedBodyId,
-                onDismiss = { searchVisible = false },
+                requestFocus = requestSearchFocus,
+                onDismiss = {
+                    searchVisible = false
+                    requestSearchFocus = false
+                },
                 onSelectBody = { bodyId ->
                     searchVisible = false
+                    requestSearchFocus = false
                     val host = renderHostView
                     focusAndFrameRuntimeBody(bodyId)
                     if (host != null) {
@@ -1943,6 +1952,7 @@ private fun RuntimeStageMiniSignalChart(
 private fun RuntimeStageSearchDialog(
     bodies: List<RuntimeStageBody>,
     selectedBodyId: String?,
+    requestFocus: Boolean,
     onDismiss: () -> Unit,
     onSelectBody: (String) -> Unit,
 ) {
@@ -1977,9 +1987,11 @@ private fun RuntimeStageSearchDialog(
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
-                LaunchedEffect(Unit) {
-                    focusRequester.requestFocus()
-                    keyboardController?.show()
+                LaunchedEffect(requestFocus) {
+                    if (requestFocus) {
+                        focusRequester.requestFocus()
+                        keyboardController?.show()
+                    }
                 }
                 Text(
                     text = if (filteredBodies.size == 32) {
