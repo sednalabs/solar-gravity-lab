@@ -849,11 +849,17 @@ if [[ "${session_mode}" == "capture-only" ]]; then
     | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
       --config "${openai_loop_dir}/config.json" call \
       > "${codex_bridge_dir}/baseline-response.json" 2>/dev/null
-  python3 .github/scripts/capture_interactive_baseline.py >/dev/null 2>&1
+  python3 .github/scripts/capture_interactive_baseline.py --prepare >/dev/null 2>&1
   if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
-    rm -rf dist/interactive-capture
     exit 1
   fi
+  node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+    --config "${openai_loop_dir}/config.json" call \
+    < "${codex_bridge_dir}/help-request.json" > "${codex_bridge_dir}/help-response.json" 2>/dev/null
+  if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+    exit 1
+  fi
+  python3 .github/scripts/capture_interactive_baseline.py --finish >/dev/null 2>&1
   final_status="success"
   exit 0
 fi
