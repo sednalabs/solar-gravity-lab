@@ -597,7 +597,7 @@ pub fn advance_authoritative_scalar(
     bodies: &mut [MassiveBodyState],
     delta_seconds: f64,
 ) -> PhysicsInvariants {
-    if bodies.is_empty() || delta_seconds <= 0.0 {
+    if bodies.is_empty() || !delta_seconds.is_finite() || delta_seconds <= 0.0 {
         return compute_invariants(bodies);
     }
 
@@ -1051,7 +1051,7 @@ fn advance_authoritative_arm64(
     delta_seconds: f64,
     gravity_kernel: Arm64GravityKernel,
 ) -> PhysicsInvariants {
-    if bodies.is_empty() || delta_seconds <= 0.0 {
+    if bodies.is_empty() || !delta_seconds.is_finite() || delta_seconds <= 0.0 {
         return compute_invariants(bodies);
     }
 
@@ -1811,6 +1811,44 @@ mod tests {
         assert!(bodies[0].position_m.x > initial_left_x);
         assert!(bodies[1].position_m.x < initial_right_x);
         assert!(invariants.total_energy_j.is_finite());
+    }
+
+    #[test]
+    fn invalid_steps_are_noops_for_all_solver_entry_paths() {
+        let policy = test_policy();
+        let initial = moon_earth_playback_scenario();
+        let expected_invariants = compute_invariants(&initial);
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            let mut bodies = initial.clone();
+            assert_eq!(
+                advance_authoritative_scalar(&policy, &mut bodies, value),
+                expected_invariants
+            );
+            assert_eq!(bodies, initial);
+            let mut bodies = initial.clone();
+            assert_eq!(
+                advance_authoritative_arm64(
+                    &policy,
+                    &mut bodies,
+                    value,
+                    Arm64GravityKernel::PortableScalarOracle
+                ),
+                expected_invariants
+            );
+            assert_eq!(bodies, initial);
+            let mut bodies = initial.clone();
+            assert_eq!(
+                super::advance_authoritative_x64(&policy, &mut bodies, value),
+                expected_invariants
+            );
+            assert_eq!(bodies, initial);
+            let mut bodies = initial.clone();
+            assert_eq!(
+                advance_authoritative(&policy, &mut bodies, value).0,
+                expected_invariants
+            );
+            assert_eq!(bodies, initial);
+        }
     }
 
     #[test]
