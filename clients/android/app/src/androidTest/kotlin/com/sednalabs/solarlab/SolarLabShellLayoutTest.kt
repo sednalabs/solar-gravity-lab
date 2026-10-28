@@ -5,8 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
@@ -438,8 +439,15 @@ class SolarLabShellLayoutTest {
         expectedCommand: String,
         predicate: () -> Boolean,
     ) {
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            predicate()
+        try {
+            composeRule.waitUntil(timeoutMillis = 5_000) {
+                predicate()
+            }
+        } catch (failure: ComposeTimeoutException) {
+            throw AssertionError(
+                "Expected command $expectedCommand. Observed commands: ${runtimeFacade.commands}",
+                failure,
+            )
         }
         assertTrue(
             "Expected command $expectedCommand. Observed commands: ${runtimeFacade.commands}",
