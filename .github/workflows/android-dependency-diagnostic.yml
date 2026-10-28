@@ -12,16 +12,14 @@ jobs:
   dependency-diagnostic:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/isolated-gradle-home
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          fetch-depth: 2
-      - name: Verify diagnostic base
+          ref: 47f25eb4c6fb9001e06819713e9d3cf7d543387d
+      - name: Verify diagnostic source
         shell: bash
-        run: test "$(git rev-parse HEAD^)" = 47f25eb4c6fb9001e06819713e9d3cf7d543387d
+        run: test "$(git rev-parse HEAD)" = 47f25eb4c6fb9001e06819713e9d3cf7d543387d
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
         with:
           distribution: temurin
@@ -36,6 +34,8 @@ jobs:
             'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
       - name: Capture dependency paths and selection reasons
         id: capture
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/isolated-gradle-home
         shell: bash
         run: |
           set -euo pipefail
@@ -149,6 +149,8 @@ jobs:
           if [[ ! -s diagnostic-output/dependency-snapshot.txt ]]; then
             report_empty=true
           fi
+          printf 'DEPSNAPSHOT WORKFLOW_SHA %s\n' "$GITHUB_SHA" >> diagnostic-output/dependency-snapshot.txt
+          printf 'DEPSNAPSHOT SOURCE_SHA %s\n' "$(git rev-parse HEAD)" >> diagnostic-output/dependency-snapshot.txt
           printf 'DEPSNAPSHOT GRADLE_EXIT %s\n' "$status" >> diagnostic-output/dependency-snapshot.txt
           printf 'DEPSNAPSHOT QUALIFICATION unassessed/incomplete pending owner review\n' >> diagnostic-output/dependency-snapshot.txt
           {
