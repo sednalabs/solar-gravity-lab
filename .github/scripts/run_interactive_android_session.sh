@@ -620,6 +620,9 @@ import json
 import pathlib
 import sys
 
+sys.path.insert(0, ".github/scripts")
+from write_interactive_session_summary import observed_tool_names
+
 provider_manifest_ready = sys.argv[7] == "ready"
 provider_manifest_available = sys.argv[7] in {"ready", "invalid", "validation_unavailable"}
 specs_path = pathlib.Path(sys.argv[8])
@@ -663,7 +666,7 @@ print(json.dumps({
     "dynamic_tool_response_session_identity": "unknown",
     "dynamic_tool_exact_session_proven": False,
     "adapter_revision": sys.argv[13],
-    "tool_names": ["android_observe", "android_step"],
+    "tool_names": observed_tool_names(specs_path, sys.argv[9]),
 }))
 PY
 )"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -46,6 +47,33 @@ def load_json(path: Path) -> dict | None:
         return json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def observed_tool_names(specs_path: Path, specs_status: str) -> list[str] | None:
+    """Return names from validated specifications, or unknown when unavailable."""
+    if specs_status != "ready":
+        return None
+    try:
+        payload = json.loads(specs_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(payload, dict):
+        tools = payload.get("tools", payload.get("tool_specs"))
+    else:
+        tools = payload
+    if not isinstance(tools, list):
+        return None
+    names = []
+    for tool in tools:
+        if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+            return None
+        name = tool["name"]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name):
+            return None
+        names.append(name)
+    if not {"android_observe", "android_step"}.issubset(names):
+        return None
+    return sorted(set(names))
 
 
 def classify_status(
@@ -229,9 +257,12 @@ def render_markdown(payload: dict) -> str:
                 "- dynamic-tool outcome success: "
                 f"`{as_flag(codex_bridge.get('dynamic_tool_outcome_success'))}`"
             )
-        if codex_bridge.get("tool_names"):
-            tools = ", ".join(f"`{tool}`" for tool in codex_bridge.get("tool_names"))
-            lines.append(f"- model-callable tools: {tools}")
+        names = codex_bridge.get("tool_names")
+        if isinstance(names, list):
+            tools = ", ".join(f"`{tool}`" for tool in names) or "none"
+            lines.append(f"- tools advertised by validated specifications: {tools}")
+        else:
+            lines.append("- tools advertised by validated specifications: `unknown`")
 
     codex_dynamic_tool_proof_validation = payload["summary"].get(
         "codex_dynamic_tool_proof_validation"
