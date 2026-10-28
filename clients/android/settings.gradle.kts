@@ -35,6 +35,7 @@ dependencyResolutionManagement {
     // Apply constraints to the observed plugin modules, not application code.
     components {
         val utpPlugins = listOf(
+            "com.android.tools.utp:android-device-provider-ddmlib",
             "com.android.tools.utp:android-test-plugin-host-additional-test-output",
             "com.android.tools.utp:android-test-plugin-host-apk-installer",
             "com.android.tools.utp:android-test-plugin-host-coverage",
@@ -62,11 +63,21 @@ dependencyResolutionManagement {
                 }
             }
         }
-        withModule("com.google.testing.platform:android-test-plugin") {
-            if (id.version == "0.0.9-alpha03") {
-                allVariants {
-                    withDependencyConstraints {
-                        add("com.google.guava:guava:33.7.2-jre")
+        listOf(
+            "com.google.testing.platform:android-test-plugin",
+            "com.google.testing.platform:android-driver-instrumentation",
+            "com.google.testing.platform:core",
+            "com.google.testing.platform:launcher",
+        ).forEach { module ->
+            withModule(module) {
+                if (id.version == "0.0.9-alpha03") {
+                    allVariants {
+                        withDependencyConstraints {
+                            add("com.google.guava:guava:33.7.2-jre")
+                            if (module.endsWith(":core")) {
+                                nettyModules.forEach { add("io.netty:$it:4.1.137.Final") }
+                            }
+                        }
                     }
                 }
             }
