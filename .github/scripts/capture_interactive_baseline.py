@@ -436,7 +436,10 @@ def phase_prepare(phase: str) -> None:
             raise ValueError("focused input selector is ambiguous")
         if len([n for n in root.iter("node") if n.get("package") == package and n.get("text") == "Find a runtime body"]) != 1:
             raise ValueError("search dialog is not uniquely observed")
-        action = {"type": "type", "text": "earth", "selector": {"focused": True, "enabled": True, "clickable": True}}
+        serial = os.environ.get("ANDROID_SERIAL", "")
+        if not re.fullmatch(r"emulator-[0-9]+", serial):
+            raise ValueError("type action requires a bound emulator serial")
+        action = None
     elif phase in {"focus-earth", "focus-earth-again"}:
         valid_app_view(root, package)
         x, y = earth_focus_center(root, package, viewport)
@@ -469,8 +472,11 @@ def phase_prepare(phase: str) -> None:
             raise ValueError("inspection target is missing or ambiguous")
         x, y = target_center(root, package, viewport, targets[0])
         action = {"type": "click", "x": x, "y": y}
-    request = {"tool": "android_step", "arguments": {"actions": [action],
-        "post_observe_scope": "screen_and_ui"}}
+    if phase in {"type-earth", "type-earth-again"}:
+        request = {"tool": "adb", "serial": serial, "arguments": ["shell", "input", "text", "earth"], "timeout_seconds": 20}
+    else:
+        request = {"tool": "android_step", "arguments": {"actions": [action],
+            "post_observe_scope": "screen_and_ui"}}
     request_text = json.dumps(request) + "\n"
     (BRIDGE / f"{phase}-request.json").write_text(request_text)
     with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
@@ -486,8 +492,14 @@ def phase_snapshot(phase: str) -> None:
     expected = ["baseline"] + list(PHASES[:PHASES.index(phase)])
     if status.get("status") != "partial" or status.get("completed") != expected or status.get("in_progress") != phase:
         raise ValueError("unexpected inspection sequence")
-    action_type = "type" if phase in {"type-earth", "type-earth-again"} else "click"
-    response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / f"codex-{action_type}-after.xml", is_step=True, step_type=action_type)
+    is_text = phase in {"type-earth", "type-earth-again"}
+    if is_text:
+        receipt = json.loads((OUTPUT / phase / "adb-receipt.json").read_text())
+        if receipt.get("exit_code") != 0 or receipt.get("serial") != os.environ.get("ANDROID_SERIAL"):
+            raise ValueError("ADB text command did not complete on the bound emulator")
+        response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / "codex-android-observe.xml")
+    else:
+        response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / "codex-click-after.xml", is_step=True)
     if phase in {"close-search", "reopen-search", "type-earth", "focus-earth", "reopen-search-again", "type-earth-again", "focus-earth-again", "collapse"}:
         valid_continuation_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
     else:
@@ -495,7 +507,7 @@ def phase_snapshot(phase: str) -> None:
     with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
         staging = Path(temporary) / "immediate"
         staging.mkdir()
-        (staging / "action-response.json").write_bytes(response)
+        (staging / ("observation.json" if is_text else "action-response.json")).write_bytes(response)
         (staging / "screen.png").write_bytes(png)
         (staging / "hierarchy.xml").write_bytes(xml)
         staging.rename(OUTPUT / phase / "immediate")

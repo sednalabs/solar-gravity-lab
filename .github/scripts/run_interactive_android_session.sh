@@ -987,9 +987,32 @@ if [[ "${session_mode}" == "capture-only" ]]; then
     if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
       return 1
     fi
-    node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
-      --config "${openai_loop_dir}/config.json" call \
-      < "${codex_bridge_dir}/${phase}-request.json" > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
+    if [[ "${phase}" == "type-earth" || "${phase}" == "type-earth-again" ]]; then
+      if [[ "${input_profile_setup}" != "verified_0" || "${ANDROID_SERIAL:-}" != "${input_profile_serial}" ]]; then
+        return 1
+      fi
+      local input_status=0
+      timeout 20s adb -s "${input_profile_serial}" shell input text earth >/dev/null 2>&1 || input_status=$?
+      python3 - "dist/interactive-capture/${phase}/adb-receipt.json" "${input_profile_serial}" "${input_status}" <<'PYINPUT'
+import json
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(json.dumps({"tool": "adb", "serial": sys.argv[2],
+    "arguments": ["shell", "input", "text", "earth"], "timeout_seconds": 20,
+    "exit_code": int(sys.argv[3]), "physical_effect": "unknown"}) + "\n")
+PYINPUT
+      if [[ "${input_status}" != "0" ]]; then
+        return 1
+      fi
+      printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
+        | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+          --config "${openai_loop_dir}/config.json" call \
+          > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
+    else
+      node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+        --config "${openai_loop_dir}/config.json" call \
+        < "${codex_bridge_dir}/${phase}-request.json" > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
+    fi
     if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
       return 1
     fi

@@ -46,7 +46,7 @@ class CaptureTest(unittest.TestCase):
         build.parent.mkdir(parents=True)
         build.write_text(json.dumps({"artifact_kind": "qualified-prerelease", "package_name": PACKAGE}))
         env = {"INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC": "foreground_checked",
-               "INTERACTIVE_APP_PACKAGE": PACKAGE, "INTERACTIVE_WORKFLOW_SHA": "a" * 40,
+               "ANDROID_SERIAL": "emulator-5554", "INTERACTIVE_APP_PACKAGE": PACKAGE, "INTERACTIVE_WORKFLOW_SHA": "a" * 40,
                "INTERACTIVE_CHECKOUT_SHA": "b" * 40, "INTERACTIVE_MCP_ADAPTER_REVISION": capture.CAPTURE_PROVIDER_SHA,
                "INTERACTIVE_TOOLKIT_SHA": "d" * 40}
         self.environment = patch.dict(os.environ, env)
@@ -157,7 +157,7 @@ class CaptureTest(unittest.TestCase):
             self.assertTrue((step / "immediate/action-response.json").exists())
             self.assertTrue((step / "settled/hierarchy.xml").exists())
 
-    def test_type_requires_focused_empty_field_and_uses_verified_selector(self):
+    def test_type_requires_focused_empty_field_and_bound_adb_request(self):
         capture.capture_baseline()
         for phase in ("help", "frame", "home"):
             self.step(phase)
@@ -170,9 +170,37 @@ class CaptureTest(unittest.TestCase):
         (capture.BRIDGE / "type-earth-before.json").write_text(json.dumps(self.receipt(False)))
         capture.phase_prepare("type-earth")
         request = json.loads((capture.BRIDGE / "type-earth-request.json").read_text())
-        self.assertEqual(request["arguments"]["actions"], [{"type": "type", "text": "earth",
-            "selector": {"focused": True, "enabled": True, "clickable": True}}])
+        self.assertEqual(request, {"tool": "adb", "serial": "emulator-5554",
+            "arguments": ["shell", "input", "text", "earth"], "timeout_seconds": 20})
         self.assertTrue((capture.OUTPUT / "type-earth-before/screen.png").exists())
+
+    def test_adb_receipt_and_provider_observation_are_separate(self):
+        capture.capture_baseline()
+        phase = "type-earth"
+        expected = ["baseline"] + list(capture.PHASES[:capture.PHASES.index(phase)])
+        (capture.OUTPUT / phase).mkdir()
+        capture.write_status(expected, "partial", in_progress=phase, action_effect="unknown")
+        receipt = {"tool": "adb", "serial": "emulator-5554", "exit_code": 0, "physical_effect": "unknown"}
+        (capture.OUTPUT / phase / "adb-receipt.json").write_text(json.dumps(receipt))
+        (capture.BRIDGE / f"{phase}-response.json").write_text(json.dumps(self.receipt(False)))
+        self.baseline_xml.write_text(SEARCH_VIEW)
+        capture.phase_snapshot(phase)
+        self.assertEqual(json.loads((capture.OUTPUT / phase / "adb-receipt.json").read_text()), receipt)
+        self.assertEqual(json.loads((capture.OUTPUT / phase / "immediate/observation.json").read_text()), self.receipt(False))
+        self.assertFalse((capture.OUTPUT / phase / "immediate/action-response.json").exists())
+
+    def test_adb_failure_does_not_promote_observation(self):
+        capture.capture_baseline()
+        phase = "type-earth"
+        expected = ["baseline"] + list(capture.PHASES[:capture.PHASES.index(phase)])
+        (capture.OUTPUT / phase).mkdir()
+        capture.write_status(expected, "partial", in_progress=phase, action_effect="unknown")
+        receipt = {"tool": "adb", "serial": "emulator-5554", "exit_code": 124, "physical_effect": "unknown"}
+        (capture.OUTPUT / phase / "adb-receipt.json").write_text(json.dumps(receipt))
+        with self.assertRaises(ValueError):
+            capture.phase_snapshot(phase)
+        self.assertFalse((capture.OUTPUT / phase / "immediate").exists())
+        self.assertEqual(capture.current_status()["action_effect"], "unknown")
 
     def test_type_refuses_unfocused_field_and_preserves_pre_action_observation(self):
         capture.capture_baseline()
