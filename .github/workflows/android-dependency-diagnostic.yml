@@ -16,10 +16,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          ref: 47f25eb4c6fb9001e06819713e9d3cf7d543387d
+          ref: f18f8fb475e304a3f16eb73869cfc143114e748c
       - name: Verify diagnostic source
         shell: bash
-        run: test "$(git rev-parse HEAD)" = 47f25eb4c6fb9001e06819713e9d3cf7d543387d
+        run: test "$(git rev-parse HEAD)" = f18f8fb475e304a3f16eb73869cfc143114e748c
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
         with:
           distribution: temurin
@@ -49,11 +49,21 @@ jobs:
           def targets = [
             'org.jetbrains.kotlin:kotlin-gradle-plugin',
             'org.bouncycastle:bcprov-jdk18on',
+            'org.bouncycastle:bcpkix-jdk18on',
+            'org.bouncycastle:bcutil-jdk18on',
+            'com.android.tools:r8',
             'com.google.guava:guava',
             'io.netty:netty-handler',
             'io.netty:netty-codec',
             'io.netty:netty-codec-http',
-            'io.netty:netty-codec-http2'
+            'io.netty:netty-codec-http2',
+            'io.netty:netty-buffer',
+            'io.netty:netty-codec-socks',
+            'io.netty:netty-common',
+            'io.netty:netty-handler-proxy',
+            'io.netty:netty-resolver',
+            'io.netty:netty-transport',
+            'io.netty:netty-transport-native-unix-common'
           ] as Set
 
           gradle.projectsEvaluated {
@@ -61,6 +71,19 @@ jobs:
             root.tasks.register('dependencySnapshot') {
               doLast {
                 def emit = { message -> println('DEPSNAPSHOT ' + message) }
+                try {
+                  def app = root.findProject(':app')
+                  def plugin = app?.plugins?.findPlugin('com.android.application')
+                  if (plugin == null) {
+                    emit('R8_AGP_PLUGIN_LOADER UNKNOWN missing-app-plugin')
+                  } else {
+                    def versionClass = plugin.class.classLoader.loadClass('com.android.tools.r8.Version')
+                    def version = versionClass.getMethod('getVersionString').invoke(null)
+                    emit("R8_AGP_PLUGIN_LOADER ${safe(version)}")
+                  }
+                } catch (Throwable ignored) {
+                  emit('R8_AGP_PLUGIN_LOADER UNKNOWN class-or-version-unavailable')
+                }
                 root.allprojects.each { project ->
                   def inspect = { label, configuration ->
                     if (!configuration.canBeResolved) {
