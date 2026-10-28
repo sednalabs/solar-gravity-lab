@@ -54,12 +54,14 @@ internal class DeveloperTelemetryRecorder(
     private val entries = ArrayDeque<DeveloperTelemetryEvent>()
     private var droppedEntryCount: Int = 0
 
+    @Synchronized
     fun presentation(): DeveloperTelemetryPresentation = DeveloperTelemetryPresentation(
         enabled = enabled,
         entries = entries.toList(),
         droppedEntryCount = droppedEntryCount,
     )
 
+    @Synchronized
     fun record(
         level: DeveloperTelemetryLevel,
         category: String,

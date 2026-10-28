@@ -54,7 +54,13 @@ class BridgeBackedRuntimeFacade internal constructor(
      * connection flow is the primary driver for the initial shell lifecycle.
      */
     override suspend fun startSession() {
-        _uiState.update { current ->
+        updateWithTelemetry(
+            recordTelemetry(
+                level = DeveloperTelemetryLevel.Info,
+                category = "session.start",
+                message = "Opening Rust runtime session from Android shell",
+            ),
+        ) { current ->
             current.copy(
                 connectionState = SessionConnectionState.Connecting,
                 statusLine = "Preparing Rust runtime session",
@@ -77,11 +83,6 @@ class BridgeBackedRuntimeFacade internal constructor(
                 activeCheckpointId = null,
                 activeCheckpointLabel = null,
                 renderFrame = null,
-                developerTelemetry = recordTelemetry(
-                    level = DeveloperTelemetryLevel.Info,
-                    category = "session.start",
-                    message = "Opening Rust runtime session from Android shell",
-                ),
             )
         }
         try {
@@ -102,16 +103,17 @@ class BridgeBackedRuntimeFacade internal constructor(
     override suspend fun loadScenario(scenarioId: String) {
         val scenarioPack = RuntimeScenarioPacks.byId(scenarioId)
         if (scenarioPack == null) {
-            _uiState.update { current ->
+            updateWithTelemetry(
+                recordTelemetry(
+                    level = DeveloperTelemetryLevel.Warning,
+                    category = "scenario.load.rejected",
+                    message = "Unknown scenario $scenarioId",
+                ),
+            ) { current ->
                 current.copy(
                     noticeLine = "Unknown scenario pack: $scenarioId",
                     noticeTone = ShellNoticeTone.Caution,
                     pendingActionLabel = null,
-                    developerTelemetry = recordTelemetry(
-                        level = DeveloperTelemetryLevel.Warning,
-                        category = "scenario.load.rejected",
-                        message = "Unknown scenario $scenarioId",
-                    ),
                 )
             }
             return
@@ -195,6 +197,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     bridge.refresh().forEach(::applySignal)
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
             surfaceShellFailure(
                 statusLine = "Runtime refresh failed",
@@ -228,6 +232,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                     bridge.applyCommand(command).forEach(::applySignal)
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
             surfaceShellFailure(
                 statusLine = "Runtime command failed",
@@ -238,8 +244,30 @@ class BridgeBackedRuntimeFacade internal constructor(
     }
 
     private fun applySignal(signal: RuntimeSignal) {
+        val current = _uiState.value
+        val (handle, revision) = when (signal) {
+            is RuntimeSignal.Connected -> signal.handle to null
+            is RuntimeSignal.SnapshotUpdated -> signal.sessionHandle to signal.summary.revision
+            is RuntimeSignal.CommandApplied -> signal.sessionHandle to signal.summary.revision
+            is RuntimeSignal.RenderPacketReady -> signal.sessionHandle to signal.revision
+            is RuntimeSignal.RenderUnavailable -> signal.sessionHandle to signal.revision
+            else -> null to null
+        }
+        if ((handle != null && !bridge.isCurrentSession(handle)) ||
+            (handle != null && signal !is RuntimeSignal.Connected && handle != current.sessionHandle) ||
+            (revision != null && current.snapshot != null && revision < current.snapshot.revision)
+        ) {
+            if (signal is RuntimeSignal.RenderPacketReady) signal.lease.close()
+            return
+        }
         when (signal) {
-            is RuntimeSignal.Connected -> _uiState.update { current ->
+            is RuntimeSignal.Connected -> updateWithTelemetry(
+                recordTelemetry(
+                    level = DeveloperTelemetryLevel.Info,
+                    category = "session.connected",
+                    message = "Bound runtime session handle ${signal.handle}",
+                ),
+            ) { current ->
                 current.copy(
                     connectionState = SessionConnectionState.Active,
                     statusLine = "Runtime session connected",
@@ -248,19 +276,21 @@ class BridgeBackedRuntimeFacade internal constructor(
                     noticeTone = ShellNoticeTone.Positive,
                     pendingActionLabel = null,
                     sessionHandle = signal.handle,
+                    snapshot = if (current.sessionHandle != signal.handle) null else current.snapshot,
                     renderStatus = current.renderStatus.copy(
                         readiness = RenderHostReadiness.Refreshing,
                         issue = null,
                     ),
-                    developerTelemetry = recordTelemetry(
-                        level = DeveloperTelemetryLevel.Info,
-                        category = "session.connected",
-                        message = "Bound runtime session handle ${signal.handle}",
-                    ),
                 )
             }
 
-            is RuntimeSignal.RuntimeInfoAvailable -> _uiState.update { current ->
+            is RuntimeSignal.RuntimeInfoAvailable -> updateWithTelemetry(
+                recordTelemetry(
+                    level = DeveloperTelemetryLevel.Info,
+                    category = "runtime.info",
+                    message = runtimeInfoTelemetryMessage(signal),
+                ),
+            ) { current ->
                 val backendSummary = backendSummaryLabel(
                     requestedCpuBackendLabel = signal.requestedCpuBackendLabel,
                     cpuBackendLabel = signal.cpuBackendLabel,
@@ -278,111 +308,96 @@ class BridgeBackedRuntimeFacade internal constructor(
                     backendSummary = backendSummary,
                     noticeLine = "Runtime backend: $backendSummary",
                     noticeTone = ShellNoticeTone.Positive,
-                    developerTelemetry = recordTelemetry(
-                        level = DeveloperTelemetryLevel.Info,
-                        category = "runtime.info",
-                        message = runtimeInfoTelemetryMessage(signal),
-                    ),
                 )
             }
 
-            is RuntimeSignal.Notice -> _uiState.update { current ->
+            is RuntimeSignal.Notice -> updateWithTelemetry(
+                recordTelemetry(
+                    level = signal.level.toDeveloperTelemetryLevel(),
+                    category = "runtime.notice",
+                    message = signal.message,
+                ),
+            ) { current ->
                 current.copy(
                     noticeLine = signal.message,
                     noticeTone = signal.level.toShellTone(),
-                    developerTelemetry = recordTelemetry(
-                        level = signal.level.toDeveloperTelemetryLevel(),
-                        category = "runtime.notice",
-                        message = signal.message,
-                    ),
                 )
             }
 
-            is RuntimeSignal.SnapshotUpdated -> _uiState.update { current ->
-                val snapshot = signal.summary.toSnapshotPresentation(
-                    focusTargetBodyId = current.focusedBodyId,
-                    activeCheckpointId = current.activeCheckpointId,
-                    activeCheckpointLabel = current.activeCheckpointLabel,
-                )
-                val recentFocusedBodyIds = current.recentFocusedBodyIds
-                    .updatedRecentFocusedBodyIds(snapshot.focusTargetBodyId)
-                val next = current.copy(
-                    connectionState = SessionConnectionState.Active,
-                    statusLine = if (signal.summary.paused) {
-                        "Paused runtime snapshot ready"
-                    } else {
-                        "Live runtime snapshot refreshed"
-                    },
-                    detailLine = "Epoch ${signal.summary.epochSeconds.asEpochLabel()} with ${signal.summary.bodyCount} authoritative bodies",
-                    pendingActionLabel = null,
-                    snapshot = snapshot,
-                    snapshotSummary = snapshot.toSnapshotSummaryLine(),
-                    observerModeCode = signal.summary.observerMode,
-                    focusedBodyId = snapshot.focusTargetBodyId,
-                    recentFocusedBodyIds = recentFocusedBodyIds,
-                    activeCheckpointId = snapshot.activeCheckpointId,
-                    activeCheckpointLabel = snapshot.activeCheckpointLabel,
-                    renderStatus = current.renderStatus.copy(
-                        readiness = if (current.renderFrame != null) {
-                            current.renderStatus.readiness
-                        } else {
-                            RenderHostReadiness.Refreshing
-                        },
-                    ),
-                )
+            is RuntimeSignal.SnapshotUpdated -> {
+                val snapshot = signal.summary.toSnapshotPresentation()
                 val snapshotTelemetryKey = snapshot.toTelemetryKey()
-                if (snapshotTelemetryKey == lastSnapshotTelemetryKey) {
-                    next
-                } else {
+                val telemetry = if (snapshotTelemetryKey == lastSnapshotTelemetryKey) null else {
                     lastSnapshotTelemetryKey = snapshotTelemetryKey
-                    next.copy(
-                        developerTelemetry = recordTelemetry(
-                            level = DeveloperTelemetryLevel.Info,
-                            category = "snapshot.updated",
-                            message = snapshot.toTelemetrySummary(),
+                    recordTelemetry(DeveloperTelemetryLevel.Info, "snapshot.updated", snapshot.toTelemetrySummary())
+                }
+                updateWithTelemetry(telemetry) { current ->
+                    val recentFocusedBodyIds = current.recentFocusedBodyIds
+                        .updatedRecentFocusedBodyIds(snapshot.focusTargetBodyId)
+                    current.copy(
+                        connectionState = SessionConnectionState.Active,
+                        statusLine = if (signal.summary.paused) {
+                            "Paused runtime snapshot ready"
+                        } else {
+                            "Live runtime snapshot refreshed"
+                        },
+                        detailLine = "Epoch ${signal.summary.epochSeconds.asEpochLabel()} with ${signal.summary.bodyCount} authoritative bodies",
+                        pendingActionLabel = null,
+                        snapshot = snapshot,
+                        snapshotSummary = snapshot.toSnapshotSummaryLine(),
+                        observerModeCode = signal.summary.observerMode,
+                        focusedBodyId = snapshot.focusTargetBodyId,
+                        recentFocusedBodyIds = recentFocusedBodyIds,
+                        activeCheckpointId = snapshot.activeCheckpointId,
+                        activeCheckpointLabel = snapshot.activeCheckpointLabel,
+                        renderStatus = current.renderStatus.copy(
+                            readiness = if (current.renderFrame != null) {
+                                current.renderStatus.readiness
+                            } else {
+                                RenderHostReadiness.Refreshing
+                            },
                         ),
                     )
                 }
             }
 
-            is RuntimeSignal.CommandApplied -> _uiState.update { current ->
-                val focusedBodyId = signal.command.focusTargetBodyId(current.focusedBodyId)
-                val checkpointId = signal.command.activeCheckpointId(current.activeCheckpointId)
-                val checkpointLabel = signal.command.activeCheckpointLabel(current.activeCheckpointLabel)
-                val recentFocusedBodyIds = current.recentFocusedBodyIds
-                    .updatedRecentFocusedBodyIds(focusedBodyId)
-                val snapshot = signal.summary.toSnapshotPresentation(
-                    focusTargetBodyId = focusedBodyId,
-                    activeCheckpointId = checkpointId,
-                    activeCheckpointLabel = checkpointLabel,
-                )
-                current.copy(
-                    connectionState = SessionConnectionState.Active,
-                    statusLine = "Runtime command applied",
-                    detailLine = "${signal.commandLabel} at epoch ${signal.summary.epochSeconds.asEpochLabel()}",
-                    noticeLine = "Runtime accepted ${signal.commandLabel}",
-                    noticeTone = ShellNoticeTone.Positive,
-                    pendingActionLabel = null,
-                    snapshot = snapshot,
-                    snapshotSummary = snapshot.toSnapshotSummaryLine(),
-                    observerModeCode = signal.summary.observerMode,
-                    focusedBodyId = focusedBodyId,
-                    recentFocusedBodyIds = recentFocusedBodyIds,
-                    activeCheckpointId = checkpointId,
-                    activeCheckpointLabel = checkpointLabel,
-                    renderStatus = current.renderStatus.copy(
-                        readiness = if (current.renderFrame != null) {
-                            current.renderStatus.readiness
-                        } else {
-                            RenderHostReadiness.Refreshing
-                        },
-                    ),
-                    developerTelemetry = recordTelemetry(
+            is RuntimeSignal.CommandApplied -> {
+                val snapshot = signal.summary.toSnapshotPresentation()
+                updateWithTelemetry(
+                    recordTelemetry(
                         level = DeveloperTelemetryLevel.Info,
                         category = "command.applied",
                         message = "${signal.commandLabel} -> ${snapshot.toTelemetrySummary()}",
                     ),
-                )
+                ) { current ->
+                    val focusedBodyId = snapshot.focusTargetBodyId
+                    val checkpointId = snapshot.activeCheckpointId
+                    val checkpointLabel = snapshot.activeCheckpointLabel
+                    val recentFocusedBodyIds = current.recentFocusedBodyIds
+                        .updatedRecentFocusedBodyIds(focusedBodyId)
+                    current.copy(
+                        connectionState = SessionConnectionState.Active,
+                        statusLine = "Runtime command applied",
+                        detailLine = "${signal.commandLabel} at epoch ${signal.summary.epochSeconds.asEpochLabel()}",
+                        noticeLine = "Runtime accepted ${signal.commandLabel}",
+                        noticeTone = ShellNoticeTone.Positive,
+                        pendingActionLabel = null,
+                        snapshot = snapshot,
+                        snapshotSummary = snapshot.toSnapshotSummaryLine(),
+                        observerModeCode = signal.summary.observerMode,
+                        focusedBodyId = focusedBodyId,
+                        recentFocusedBodyIds = recentFocusedBodyIds,
+                        activeCheckpointId = checkpointId,
+                        activeCheckpointLabel = checkpointLabel,
+                        renderStatus = current.renderStatus.copy(
+                            readiness = if (current.renderFrame != null) {
+                                current.renderStatus.readiness
+                            } else {
+                                RenderHostReadiness.Refreshing
+                            },
+                        ),
+                    )
+                }
             }
 
             is RuntimeSignal.RenderPacketReady -> {
@@ -405,8 +420,14 @@ class BridgeBackedRuntimeFacade internal constructor(
                     } else {
                         "Waiting for non-empty render packet: bodies=${packet.bodyCount}, tracers=${packet.tracerCount}, trails=${packet.trailSpanCount}/${packet.trailVertexCount}, lights=${packet.directionalLightCount}"
                     }
-                    _uiState.update { current ->
-                        val next = current.copy(
+                    val renderTelemetryKey = packet.toTelemetryKey(sceneRevisionLabel = sceneRevisionLabel)
+                    lastRenderUnavailableReason = null
+                    val telemetry = if (renderTelemetryKey == lastRenderTelemetryKey) null else {
+                        lastRenderTelemetryKey = renderTelemetryKey
+                        recordTelemetry(DeveloperTelemetryLevel.Info, "render.ready", packet.toTelemetrySummary(sceneRevision = sceneRevisionLabel))
+                    }
+                    updateWithTelemetry(telemetry) { current ->
+                        current.copy(
                             connectionState = SessionConnectionState.Active,
                             statusLine = if (hasRenderableScene) "Render host ready" else "Render packet empty",
                             detailLine = "Scene revision $sceneRevisionLabel",
@@ -438,23 +459,15 @@ class BridgeBackedRuntimeFacade internal constructor(
                             ),
                             renderFrame = renderFrame,
                         )
-                        val renderTelemetryKey = packet.toTelemetryKey(sceneRevisionLabel = sceneRevisionLabel)
-                        lastRenderUnavailableReason = null
-                        if (renderTelemetryKey == lastRenderTelemetryKey) {
-                            next
-                        } else {
-                            lastRenderTelemetryKey = renderTelemetryKey
-                            next.copy(
-                                developerTelemetry = recordTelemetry(
-                                    level = DeveloperTelemetryLevel.Info,
-                                    category = "render.ready",
-                                    message = packet.toTelemetrySummary(sceneRevision = sceneRevisionLabel),
-                                ),
-                            )
-                        }
                     }
                 } catch (error: Throwable) {
-                    _uiState.update { current ->
+                    updateWithTelemetry(
+                        recordTelemetry(
+                            level = DeveloperTelemetryLevel.Error,
+                            category = "render.decode_failed",
+                            message = error.message ?: error::class.java.simpleName,
+                        ),
+                    ) { current ->
                         current.copy(
                             statusLine = "Render packet decode failed",
                             detailLine = error.message ?: error::class.java.simpleName,
@@ -473,11 +486,6 @@ class BridgeBackedRuntimeFacade internal constructor(
                                 issue = error.message ?: error::class.java.simpleName,
                             ),
                             renderFrame = null,
-                            developerTelemetry = recordTelemetry(
-                                level = DeveloperTelemetryLevel.Error,
-                                category = "render.decode_failed",
-                                message = error.message ?: error::class.java.simpleName,
-                            ),
                         )
                     }
                 } finally {
@@ -485,34 +493,34 @@ class BridgeBackedRuntimeFacade internal constructor(
                 }
             }
 
-            is RuntimeSignal.RenderUnavailable -> _uiState.update { current ->
-                val next = current.copy(
-                    noticeLine = signal.reason,
-                    noticeTone = ShellNoticeTone.Caution,
-                    pendingActionLabel = null,
-                    renderPacketSummary = signal.reason,
-                    renderStatus = current.renderStatus.copy(
-                        readiness = RenderHostReadiness.Unavailable,
-                        isDegraded = true,
-                        degradationReason = signal.reason,
-                        issue = signal.reason,
-                    ),
-                )
-                if (signal.reason == lastRenderUnavailableReason) {
-                    next
-                } else {
+            is RuntimeSignal.RenderUnavailable -> {
+                val telemetry = if (signal.reason == lastRenderUnavailableReason) null else {
                     lastRenderUnavailableReason = signal.reason
-                    next.copy(
-                        developerTelemetry = recordTelemetry(
-                            level = DeveloperTelemetryLevel.Warning,
-                            category = "render.unavailable",
-                            message = signal.reason,
+                    recordTelemetry(DeveloperTelemetryLevel.Warning, "render.unavailable", signal.reason)
+                }
+                updateWithTelemetry(telemetry) { current ->
+                    current.copy(
+                        noticeLine = signal.reason,
+                        noticeTone = ShellNoticeTone.Caution,
+                        pendingActionLabel = null,
+                        renderPacketSummary = signal.reason,
+                        renderStatus = current.renderStatus.copy(
+                            readiness = RenderHostReadiness.Unavailable,
+                            isDegraded = true,
+                            degradationReason = signal.reason,
+                            issue = signal.reason,
                         ),
                     )
                 }
             }
 
-            is RuntimeSignal.Unavailable -> _uiState.update { current ->
+            is RuntimeSignal.Unavailable -> updateWithTelemetry(
+                recordTelemetry(
+                    level = DeveloperTelemetryLevel.Error,
+                    category = "session.unavailable",
+                    message = signal.detail ?: signal.message,
+                ),
+            ) { current ->
                 current.copy(
                     connectionState = SessionConnectionState.Unavailable,
                     statusLine = signal.message,
@@ -536,11 +544,6 @@ class BridgeBackedRuntimeFacade internal constructor(
                         issue = signal.detail ?: signal.message,
                     ),
                     renderFrame = null,
-                    developerTelemetry = recordTelemetry(
-                        level = DeveloperTelemetryLevel.Error,
-                        category = "session.unavailable",
-                        message = signal.detail ?: signal.message,
-                    ),
                 )
             }
         }
@@ -552,18 +555,8 @@ class BridgeBackedRuntimeFacade internal constructor(
         onStart: (ShellUiState) -> ShellUiState,
         action: suspend () -> Unit,
     ) {
-        _uiState.update { current ->
-            val started = onStart(current)
-            telemetry?.let {
-                started.copy(
-                    developerTelemetry = recordTelemetry(
-                        level = it.level,
-                        category = it.category,
-                        message = it.message,
-                    ),
-                )
-            } ?: started
-        }
+        val presentation = telemetry?.let { recordTelemetry(it.level, it.category, it.message) }
+        updateWithTelemetry(presentation) { current -> onStart(current) }
         try {
             action()
         } finally {
@@ -582,7 +575,13 @@ class BridgeBackedRuntimeFacade internal constructor(
         detailLine: String,
         noticeLine: String,
     ) {
-        _uiState.update { current ->
+        updateWithTelemetry(
+            recordTelemetry(
+                level = DeveloperTelemetryLevel.Error,
+                category = "shell.failure",
+                message = "$statusLine: $detailLine",
+            ),
+        ) { current ->
             current.copy(
                 connectionState = SessionConnectionState.Unavailable,
                 statusLine = statusLine,
@@ -599,12 +598,20 @@ class BridgeBackedRuntimeFacade internal constructor(
                     issue = detailLine,
                 ),
                 renderFrame = null,
-                developerTelemetry = recordTelemetry(
-                    level = DeveloperTelemetryLevel.Error,
-                    category = "shell.failure",
-                    message = "$statusLine: $detailLine",
-                ),
             )
+        }
+    }
+
+    private fun updateWithTelemetry(
+        presentation: DeveloperTelemetryPresentation?,
+        transform: (ShellUiState) -> ShellUiState,
+    ) {
+        _uiState.update { current ->
+            val next = transform(current)
+            if (presentation != null &&
+                presentation.entries.size + presentation.droppedEntryCount >=
+                current.developerTelemetry.entries.size + current.developerTelemetry.droppedEntryCount
+            ) next.copy(developerTelemetry = presentation) else next
         }
     }
 
@@ -644,19 +651,8 @@ private fun List<String>.updatedRecentFocusedBodyIds(
 }
 
 private fun NativeSnapshotSummaryResult.toSnapshotPresentation(): SnapshotPresentation {
-    return toSnapshotPresentation(
-        focusTargetBodyId = null,
-        activeCheckpointId = null,
-        activeCheckpointLabel = null,
-    )
-}
-
-private fun NativeSnapshotSummaryResult.toSnapshotPresentation(
-    focusTargetBodyId: String?,
-    activeCheckpointId: String?,
-    activeCheckpointLabel: String?,
-): SnapshotPresentation {
     return SnapshotPresentation(
+        revision = revision,
         scenarioId = scenarioId,
         activeBranchId = activeBranchId,
         bodyCount = bodyCount,
@@ -744,28 +740,6 @@ private fun NativeVulkanScenePacket.toRenderStatusPresentation(
         degradationReason = diagnostics.toRenderIssue(),
         issue = diagnostics.toRenderIssue(),
     )
-}
-
-private fun RuntimeCommand.focusTargetBodyId(existing: String?): String? {
-    return when (this) {
-        is RuntimeCommand.FocusBody -> bodyId
-        else -> existing
-    }
-}
-
-private fun RuntimeCommand.activeCheckpointId(existing: String?): String? {
-    return when (this) {
-        is RuntimeCommand.CreateCheckpoint -> checkpointId ?: existing
-        is RuntimeCommand.CreateBranchFromCheckpoint -> checkpointId
-        else -> existing
-    }
-}
-
-private fun RuntimeCommand.activeCheckpointLabel(existing: String?): String? {
-    return when (this) {
-        is RuntimeCommand.CreateCheckpoint -> checkpointLabel ?: existing
-        else -> existing
-    }
 }
 
 private fun RuntimeCommand.userFacingAction(): String = when (this) {

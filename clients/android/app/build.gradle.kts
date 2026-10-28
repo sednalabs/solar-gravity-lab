@@ -484,7 +484,6 @@ dependencies {
 
     implementation(project(":core-math"))
     implementation(project(":core-model"))
-    implementation(project(":core-simulation"))
     implementation(project(":render-core"))
     implementation(project(":android-vulkan-renderer"))
 
