@@ -44,6 +44,16 @@ The workflow:
 
 ## Workflow inputs
 
+- `session_mode`
+  - `live` (default) opens the protected live session; `capture-only` installs a
+    qualified prerelease, verifies runtime readiness and foreground package, and
+    captures one screen and UI hierarchy without starting terminal or tunnel services
+  - capture artifacts contain the original PNG, hierarchy and bounded typed
+    observation; its adapter outcome does not prove UI stability. Stability is
+    recorded as unknown and visual acceptance remains pending. Inspect the
+    baseline before choosing a separate, freshly observed action path.
+  - capture-only requires the resolved provider SHA
+    `0e5a3dc692f39022fa84d88c927e4a59801673e4`; live mode retains its provider override
 - `ref`
   - branch, tag, or commit from this repo
 - `build_source`

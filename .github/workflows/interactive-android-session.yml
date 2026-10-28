@@ -3,6 +3,14 @@ name: interactive-android-session
 on:
   workflow_dispatch:
     inputs:
+      session_mode:
+        description: Live tunnel or isolated baseline capture
+        required: true
+        type: choice
+        options:
+          - live
+          - capture-only
+        default: live
       ref:
         description: Branch, tag, or commit to use for the interactive session
         required: false
@@ -74,7 +82,7 @@ on:
 
 concurrency:
   # The named tunnel has fixed ingress hostnames across checkout refs.
-  group: ${{ github.repository }}-${{ github.workflow }}
+  group: ${{ github.repository }}-${{ github.workflow }}${{ inputs.session_mode == 'capture-only' && '-capture' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -104,9 +112,9 @@ env:
   SCCACHE_REGION: auto
   SCCACHE_S3_USE_SSL: "true"
   SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
-  SCCACHE_AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID }}
-  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY }}
-  SCCACHE_CREDENTIAL_SOURCE: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && 'dedicated-sccache-secrets' || 'shared-r2-secrets' }}
+  SCCACHE_AWS_ACCESS_KEY_ID: ${{ inputs.session_mode != 'capture-only' && (secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ inputs.session_mode != 'capture-only' && (secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
+  SCCACHE_CREDENTIAL_SOURCE: ${{ inputs.session_mode != 'capture-only' && (secrets.SCCACHE_ACCESS_KEY_ID != '' && 'dedicated-sccache-secrets' || 'shared-r2-secrets') || 'none' }}
 
 jobs:
   interactive-session:
@@ -115,15 +123,16 @@ jobs:
     env:
       GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
       GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
-      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ inputs.session_mode != 'capture-only' && secrets.GRADLE_REMOTE_CACHE_PASSWORD || '' }}
       GRADLE_REMOTE_CACHE_PUSH: "false"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ inputs.session_mode != 'capture-only' && secrets.R2_CACHE_ACCESS_KEY_ID || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ inputs.session_mode != 'capture-only' && secrets.R2_CACHE_SECRET_ACCESS_KEY || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: ${{ inputs.session_mode != 'capture-only' }}
           ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
 
       - name: Resolve interactive session plan
@@ -193,6 +202,10 @@ jobs:
           esac
 
           build_source="${INPUT_BUILD_SOURCE:-artifact}"
+          if [[ "${{ inputs.session_mode }}" == "capture-only" && "${build_source}" != "qualified-prerelease" ]]; then
+            echo "capture-only requires a qualified prerelease" >&2
+            exit 1
+          fi
           case "${build_source}" in
             artifact|inline|qualified-prerelease)
               ;;
@@ -300,17 +313,19 @@ jobs:
           shared-key: solarlab-rust-interactive-android-${{ runner.os }}-${{ runner.arch }}
 
       - uses: ./.github/actions/install-sccache
+        if: ${{ inputs.session_mode != 'capture-only' }}
         with:
           version: v0.10.0
 
       - name: Configure sccache
+        if: ${{ inputs.session_mode != 'capture-only' }}
         id: interactive_sccache
         shell: bash
         run: bash .github/scripts/configure_sccache.sh
 
       - name: Install Android emulator runtime prerequisites
         id: android_sdk_runtime_install
-        if: ${{ steps.session_plan.outputs.build_source == 'artifact' }}
+        if: ${{ steps.session_plan.outputs.build_source != 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -350,12 +365,18 @@ jobs:
           phase_end="$(date +%s)"
           echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
 
+      - name: Install provider and image dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick protobuf-compiler
+
       - name: Install interactive live-access dependencies
+        if: ${{ inputs.session_mode != 'capture-only' }}
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y imagemagick protobuf-compiler ttyd
+          sudo apt-get install -y ttyd
           sudo systemctl disable --now ttyd.service >/dev/null 2>&1 || true
           sudo systemctl reset-failed ttyd.service >/dev/null 2>&1 || true
           sudo pkill -x ttyd >/dev/null 2>&1 || true
@@ -642,6 +663,10 @@ jobs:
           disable-animations: true
           script: bash .github/scripts/run_interactive_android_session.sh
         env:
+          INTERACTIVE_SESSION_MODE: ${{ inputs.session_mode }}
+          INTERACTIVE_WORKFLOW_SHA: ${{ github.sha }}
+          INTERACTIVE_CHECKOUT_SHA: ${{ steps.session_plan.outputs.commit_sha }}
+          INTERACTIVE_TOOLKIT_SHA: ${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}
           INTERACTIVE_APP_APK: ${{ steps.active_build.outputs.apk_path }}
           INTERACTIVE_BUILD_MANIFEST: ${{ steps.active_build.outputs.manifest_path }}
           INTERACTIVE_APP_PACKAGE: ${{ steps.active_build.outputs.package_name }}
@@ -651,20 +676,37 @@ jobs:
           INTERACTIVE_MCP_ENVIRONMENT_ID: github-actions/${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}
           INTERACTIVE_MCP_PROVIDER_INSTANCE_ID: android-computer-use-mcp/${{ steps.interactive_mcp_cache.outputs.server_sha }}
           INTERACTIVE_MCP_SESSION_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-          INTERACTIVE_CLOUDFLARED_BIN: cloudflared
-          INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
-          INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
-          INTERACTIVE_DEBUG_TUNNEL_TOKEN: ${{ secrets.SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN }}
-          INTERACTIVE_MCP_PUBLIC_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_MCP_HOSTNAME }}
+          INTERACTIVE_CLOUDFLARED_BIN: ${{ inputs.session_mode != 'capture-only' && 'cloudflared' || '' }}
+          INTERACTIVE_TTYD_BIN: ${{ inputs.session_mode != 'capture-only' && '/usr/bin/ttyd' || '' }}
+          INTERACTIVE_DEBUG_HOSTNAME: ${{ inputs.session_mode != 'capture-only' && secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME || '' }}
+          INTERACTIVE_DEBUG_TUNNEL_TOKEN: ${{ inputs.session_mode != 'capture-only' && secrets.SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN || '' }}
+          INTERACTIVE_MCP_PUBLIC_HOSTNAME: ${{ inputs.session_mode != 'capture-only' && secrets.SGL_INTERACTIVE_MCP_HOSTNAME || '' }}
           INTERACTIVE_SESSION_TIMEOUT_MINUTES: ${{ steps.session_plan.outputs.session_timeout_minutes }}
           INTERACTIVE_KEEP_SESSION_ON_FAILURE: ${{ steps.session_plan.outputs.keep_session_on_failure }}
           INTERACTIVE_EMULATOR_GRPC_PORT: ${{ env.INTERACTIVE_EMULATOR_GRPC_PORT }}
           INTERACTIVE_MCP_BIND_ADDR: ${{ env.INTERACTIVE_MCP_BIND_ADDR }}
           INTERACTIVE_SESSION_GITHUB_REPOSITORY: ${{ github.repository }}
-          INTERACTIVE_SESSION_GITHUB_TOKEN: ${{ github.token }}
+          INTERACTIVE_SESSION_GITHUB_TOKEN: ${{ inputs.session_mode != 'capture-only' && github.token || '' }}
+
+      - name: Ensure capture status exists
+        if: ${{ always() && inputs.session_mode == 'capture-only' }}
+        shell: bash
+        run: |
+          mkdir -p dist/interactive-capture
+          if [[ ! -f dist/interactive-capture/status.json ]]; then
+            printf '%s\n' '{"status":"failed","reason":"capture_not_completed","response_session_identity":"unknown"}' > dist/interactive-capture/status.json
+          fi
+
+      - name: Upload curated baseline capture
+        if: ${{ always() && inputs.session_mode == 'capture-only' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: interactive-android-capture-${{ github.run_id }}
+          if-no-files-found: error
+          path: dist/interactive-capture/
 
       - name: Build interactive session summary payload
-        if: always()
+        if: ${{ always() && inputs.session_mode != 'capture-only' }}
         shell: bash
         env:
           ACTIVE_ARTIFACT_NAME: ${{ steps.active_build.outputs.artifact_name }}
@@ -704,12 +746,12 @@ jobs:
             --output-md dist/interactive-session-summary/interactive-session-summary.md
 
       - name: Emit interactive session summary
-        if: always()
+        if: ${{ always() && inputs.session_mode != 'capture-only' }}
         shell: bash
         run: cat dist/interactive-session-summary/interactive-session-summary.md >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload interactive session artifacts
-        if: always()
+        if: ${{ always() && inputs.session_mode != 'capture-only' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: interactive-android-session-${{ github.run_id }}
@@ -719,7 +761,7 @@ jobs:
             dist/interactive-session-summary/**
 
       - name: Fail on action-required interactive session summary
-        if: always()
+        if: ${{ always() && inputs.session_mode != 'capture-only' }}
         shell: bash
         run: |
           set -euo pipefail

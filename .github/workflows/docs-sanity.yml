@@ -11,6 +11,8 @@ on:
       - ".github/scripts/test_interactive_android_provider_wiring.py"
       - ".github/scripts/intake_qualified_prerelease.py"
       - ".github/scripts/test_intake_qualified_prerelease.py"
+      - ".github/scripts/capture_interactive_baseline.py"
+      - ".github/scripts/test_capture_interactive_baseline.py"
       - ".github/scripts/test_interactive_png.py"
       - ".github/scripts/validate_interactive_png.py"
       - ".github/scripts/test_interactive_session_summary.py"
@@ -25,6 +27,8 @@ on:
       - ".github/scripts/test_interactive_android_provider_wiring.py"
       - ".github/scripts/intake_qualified_prerelease.py"
       - ".github/scripts/test_intake_qualified_prerelease.py"
+      - ".github/scripts/capture_interactive_baseline.py"
+      - ".github/scripts/test_capture_interactive_baseline.py"
       - ".github/scripts/test_interactive_png.py"
       - ".github/scripts/validate_interactive_png.py"
       - ".github/scripts/test_interactive_session_summary.py"
@@ -65,6 +69,9 @@ jobs:
 
       - name: Test qualified prerelease intake
         run: python3 .github/scripts/test_intake_qualified_prerelease.py
+
+      - name: Test curated baseline capture
+        run: python3 .github/scripts/test_capture_interactive_baseline.py
 
       - name: Test native Android image decoding
         run: python3 .github/scripts/test_interactive_png.py

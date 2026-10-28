@@ -20,6 +20,7 @@ apk_path=""
 package_id=""
 activity_name=""
 out_dir=""
+require_runtime_ready="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
     --out-dir)
       out_dir="$2"
       shift 2
+      ;;
+    --require-runtime-ready)
+      require_runtime_ready="true"
+      shift
       ;;
     -h|--help)
       usage
@@ -74,11 +79,15 @@ if curl -fsSL "${mcp_health_url}" -o "${mcp_health_file}"; then
   mcp_health_ok="true"
 fi
 
+runtime_args=()
+if [[ "${require_runtime_ready}" == "true" ]]; then
+  runtime_args+=(--require-runtime-ready)
+fi
 if bash .github/scripts/android_launch_smoke.sh \
   --package "${package_id}" \
   --activity "${activity_name}" \
   --apk "${apk_path}" \
-  --out-dir "${out_dir}/startup-smoke"; then
+  --out-dir "${out_dir}/startup-smoke" "${runtime_args[@]}"; then
   launch_smoke_ok="true"
 fi
 

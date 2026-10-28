@@ -16,6 +16,11 @@ output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 PY
 }
 
+session_mode="${INTERACTIVE_SESSION_MODE:-live}"
+if [[ "${session_mode}" != "live" && "${session_mode}" != "capture-only" ]]; then
+  echo "Invalid session mode" >&2
+  exit 1
+fi
 session_root="${INTERACTIVE_SESSION_ROOT:-dist/interactive-session}"
 startup_log_dir="${session_root}/startup-log"
 preflight_dir="${session_root}/preflight"
@@ -63,8 +68,11 @@ if ! [[ "${mcp_adapter_revision}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "INTERACTIVE_MCP_ADAPTER_REVISION must be a full lowercase Git commit SHA" >&2
   exit 1
 fi
+if [[ "${session_mode}" == "capture-only" ]]; then
+  python3 .github/scripts/capture_interactive_baseline.py --check-provider
+fi
 codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools-${mcp_adapter_revision}.sh"
-cloudflared_bin="${INTERACTIVE_CLOUDFLARED_BIN:?INTERACTIVE_CLOUDFLARED_BIN is required}"
+cloudflared_bin="${INTERACTIVE_CLOUDFLARED_BIN:-cloudflared}"
 debug_hostname="${INTERACTIVE_DEBUG_HOSTNAME:-}"
 debug_tunnel_token="${INTERACTIVE_DEBUG_TUNNEL_TOKEN:-}"
 mcp_public_hostname="${INTERACTIVE_MCP_PUBLIC_HOSTNAME:-}"
@@ -674,7 +682,9 @@ final_status="failure"
 final_reason="session_not_started"
 
 cleanup() {
-  capture_final_artifacts
+  if [[ "${session_mode}" == "live" ]]; then
+    capture_final_artifacts
+  fi
 
   for pid in "${cloudflared_pid}" "${ttyd_pid}" "${logcat_pid}" "${mcp_pid}"; do
     if [[ -n "${pid}" ]]; then
@@ -683,6 +693,9 @@ cleanup() {
     fi
   done
 
+  if [[ "${session_mode}" == "capture-only" ]]; then
+    return
+  fi
   write_session_state "$(python3 - <<'PY' "${session_start_iso}" "${final_status}" "${final_reason}" "${session_timeout_minutes}" "${finish_sentinel}"
 import json
 import sys
@@ -789,12 +802,16 @@ fi
 
 log "Running install-and-launch preflight"
 preflight_ok="true"
+runtime_args=()
+if [[ "${session_mode}" == "capture-only" ]]; then
+  runtime_args+=(--require-runtime-ready)
+fi
 if ! bash .github/scripts/run_interactive_android_preflight.sh \
   --mcp-health-url "${mcp_health_url}" \
   --apk "${app_apk}" \
   --package "${app_package}" \
   --activity "${app_activity}" \
-  --out-dir "${preflight_dir}"; then
+  --out-dir "${preflight_dir}" "${runtime_args[@]}"; then
   preflight_ok="false"
 fi
 
@@ -803,6 +820,36 @@ if [[ "${preflight_ok}" == "true" ]]; then
   write_active_build_state "ready" "${preflight_dir}/preflight.json"
 else
   append_install_history "action_required" "${preflight_dir}/preflight.json"
+fi
+
+if [[ "${session_mode}" == "capture-only" ]]; then
+  if [[ "${preflight_ok}" != "true" ]]; then
+    exit 1
+  fi
+  if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+    exit 1
+  fi
+  python3 .github/scripts/write_interactive_openai_loop_config.py \
+    --mcp-url "http://${mcp_bind_addr}/mcp" \
+    --environment-id "${mcp_environment_id}" \
+    --provider-instance-id "${mcp_provider_instance_id}" \
+    --session-id "${mcp_session_id}" \
+    --mcp-health-url "${mcp_health_url}" --session-root "${session_root}" \
+    --build-manifest "${build_manifest_path}" --mcp-workspace-dir "${mcp_workspace_dir}" \
+    --default-model "${openai_default_model}" --default-serial "${openai_default_serial}" \
+    --default-package-name "${app_package}" --default-activity "${app_activity}" \
+    --output-root "${codex_bridge_run_root}" --output-json "${openai_loop_dir}/config.json"
+  printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
+    | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+      --config "${openai_loop_dir}/config.json" call \
+      > "${codex_bridge_dir}/baseline-response.json" 2>/dev/null
+  python3 .github/scripts/capture_interactive_baseline.py >/dev/null 2>&1
+  if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+    rm -rf dist/interactive-capture
+    exit 1
+  fi
+  final_status="success"
+  exit 0
 fi
 
 stage_interactive_model_helpers
