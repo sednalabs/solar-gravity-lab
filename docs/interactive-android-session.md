@@ -50,20 +50,28 @@ The workflow:
   - one of:
     - `artifact` (reuse a pre-built interactive artifact from a previous run)
     - `inline` (assemble the APK inside the session workflow)
+    - `qualified-prerelease` (reuse an explicitly selected prerelease APK;
+      intake validates the archive, provenance, APK, package, and non-debuggable
+      manifest before launch)
   - default: `artifact`
+  - the qualified prerelease is built separately from this workflow and does not
+    use the interactive debug profile or debug-only semantic intents
 - `build_run_id`
-  - optional `interactive-android-build` workflow run ID to download and install
+  - interactive-build run ID, or required prerelease run ID for `qualified-prerelease`
+- `prerelease_artifact_id` and `prerelease_source_sha`
+  - for `qualified-prerelease`, the exact GitHub artifact ID and the APK source
+    commit SHA; the archive digest is read from GitHub and the APK digest from
+    producer provenance, then each is verified against the downloaded bytes
+  - example: run `40724619488`, artifact `12831424050`, source
+    `6e44a0ea66ee0f32f7f8638971a17f5e31e9ebf4`
 - `artifact_name`
   - optional artifact name override for the reusable interactive APK bundle
-- `android_emulator_mcp_ref`
-  - branch, tag, or commit from the maintainer-configured Android provider
-    repository
-  - default: `dffcb04ba558e7071507daec6598ca998242cf6a`
-- `mcp_toolkit_rs_ref`
-  - branch, tag, or commit from `GraciousGazelles/toolkits-mcp-toolkit-rs`
-  - default: `e5fffbd11480661e588cc03b6590726963986a95`
-  - keep this in sync with the provider's path-based toolkit dependency
-    surface
+- `android_computer_use_mcp_ref`
+  - branch, tag, or commit from `sednalabs/android-computer-use-mcp`
+  - default: `0e5a3dc692f39022fa84d88c927e4a59801673e4` (provider PR 25 head)
+  - the session summary records the requested ref, resolved provider SHA, and
+    the toolkit SHA from the provider lockfile. The provider supplies screenshot
+    bytes as native image content; artifact paths are diagnostics.
 - `android_validation_mode`
   - one of:
     - `shell-v2`
@@ -90,12 +98,9 @@ The workflow:
 
 ## Required secrets
 
-This workflow needs explicit repo reads and tunnel access:
+The public provider and toolkit do not require cross-repository read tokens.
+The session needs tunnel access:
 
-- `SGL_ANDROID_EMULATOR_MCP_READ_TOKEN`
-  - read access to the maintainer-configured Android provider repository
-- `SGL_MCP_TOOLKIT_RS_READ_TOKEN`
-  - read access to `GraciousGazelles/toolkits-mcp-toolkit-rs`
 - `SGL_INTERACTIVE_DEBUG_TUNNEL_TOKEN`
   - Cloudflare named tunnel token for the live terminal
 - `SGL_INTERACTIVE_DEBUG_HOSTNAME`
@@ -168,7 +173,7 @@ The workflow writes its main artifact bundle under:
 Expected contents:
 
 - `app/`
-- `android-emulator-mcp-artifacts/`
+- `android-computer-use-mcp-artifacts/`
 - `preflight/`
 - `startup-log/`
 - `live-access/`
@@ -198,6 +203,12 @@ The Codex-native Android provider evidence is concentrated in:
 - `codex-bridge-runs/`
 - `live-access/codex-android-tools-<provider-sha>.sh`
 
+The observation proof checks that a successful dynamic-tool response contains a
+PNG that the hosted decoder can read. The provider response does not identify
+its environment, provider instance, or session. The runner-local manifest and
+process configuration record those identities, but do not establish that the
+response itself is bound to them; native consumer acceptance remains separate.
+
 The provider manifest is Android capability metadata from the selected provider.
 Solar Lab stores and summarizes it as run evidence; it does not define the
 generic computer-use contract here.
@@ -208,7 +219,7 @@ The summary payloads live under:
 
 Those files are designed to answer:
 
-- which repo refs were used
+- which provider ref was requested and which provider and toolkit commits were used
 - whether preflight passed
 - whether human terminal access came up
 - whether machine-facing MCP access came up

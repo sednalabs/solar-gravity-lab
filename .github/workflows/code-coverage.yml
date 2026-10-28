@@ -38,6 +38,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install PNG decoder
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
       - name: Install coverage
         run: python -m pip install coverage
 
