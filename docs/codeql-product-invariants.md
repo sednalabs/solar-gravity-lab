@@ -12,13 +12,13 @@ where CodeQL can give high-signal feedback without pretending to see runtime UI
 quality:
 
 - `solar-actions-product-invariants` checks workflow proof obligations for
-  CodeQL pack compilation, stage-first Android validation, and hosted
-  interactive evidence artifacts. It also guards the advanced CodeQL workflow's
+  CodeQL pack compilation and hosted interactive evidence artifacts. It also
+  guards the advanced CodeQL workflow's
   static category-matrix shape so alert comparison does not silently lose base
   branch categories.
 - `solar-python-product-invariants` checks planner and summary helpers for
-  runtime CPU truth lanes, Rust-backed stage-first proof, and provider-manifest
-  evidence in interactive session summaries.
+  Rust-backed stage-first proof and provider-manifest evidence in interactive
+  session summaries.
 
 These packs intentionally sit beside the existing security packs rather than
 inside them. The alerts are product-contract feedback, not vulnerability
@@ -36,8 +36,10 @@ precise and tied directly to a single owned contract.
 
 ## Proof boundaries
 
-CodeQL can detect missing or weakened proof routes. It cannot prove visual or
-hardware claims by itself.
+CodeQL provides static warnings about selected proof routes. Behavioral planner
+tests check the CPU truth lane and stage-first matrix outputs; hosted lane runs
+exercise their consumers. These checks cannot prove visual or hardware claims
+by themselves.
 
 - Android camera, immersive runtime, and stage-first composition claims
   still require native Android observation or hosted interactive Android
