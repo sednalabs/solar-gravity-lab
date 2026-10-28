@@ -14,6 +14,7 @@ on:
         options:
           - artifact
           - inline
+          - qualified-prerelease
         default: artifact
       build_run_id:
         description: Optional interactive-android-build workflow run id to install into the live session
@@ -23,16 +24,19 @@ on:
         description: Optional artifact name override for the reusable interactive APK bundle
         required: false
         type: string
-      android_emulator_mcp_ref:
-        description: Branch, tag, or commit from sednalabs/android-emulator-mcp
+      prerelease_artifact_id:
+        description: Exact GitHub artifact ID for qualified-prerelease
+        required: false
+        type: string
+      prerelease_source_sha:
+        description: Exact APK source commit SHA for qualified-prerelease
+        required: false
+        type: string
+      android_computer_use_mcp_ref:
+        description: Branch, tag, or commit from sednalabs/android-computer-use-mcp
         required: true
         type: string
-        default: dffcb04ba558e7071507daec6598ca998242cf6a
-      mcp_toolkit_rs_ref:
-        description: Branch, tag, or commit from GraciousGazelles/toolkits-mcp-toolkit-rs
-        required: true
-        type: string
-        default: e5fffbd11480661e588cc03b6590726963986a95
+        default: 0e5a3dc692f39022fa84d88c927e4a59801673e4
       android_validation_mode:
         description: Which Android runtime posture to boot for live debugging
         required: true
@@ -69,7 +73,8 @@ on:
         default: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+  # The named tunnel has fixed ingress hostnames across checkout refs.
+  group: ${{ github.repository }}-${{ github.workflow }}
   cancel-in-progress: true
 
 permissions:
@@ -129,8 +134,7 @@ jobs:
           INPUT_BUILD_SOURCE: ${{ inputs.build_source }}
           INPUT_BUILD_RUN_ID: ${{ inputs.build_run_id }}
           INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name }}
-          INPUT_MCP_REF: ${{ inputs.android_emulator_mcp_ref }}
-          INPUT_TOOLKIT_REF: ${{ inputs.mcp_toolkit_rs_ref }}
+          INPUT_MCP_REF: ${{ inputs.android_computer_use_mcp_ref }}
           INPUT_VALIDATION_MODE: ${{ inputs.android_validation_mode }}
           INPUT_DEBUG_PROFILE: ${{ inputs.interactive_debug_profile }}
           INPUT_BOOT_STRATEGY: ${{ inputs.emulator_boot_strategy }}
@@ -190,7 +194,7 @@ jobs:
 
           build_source="${INPUT_BUILD_SOURCE:-artifact}"
           case "${build_source}" in
-            artifact|inline)
+            artifact|inline|qualified-prerelease)
               ;;
             *)
               echo "Unsupported build_source: ${build_source}" >&2
@@ -209,8 +213,7 @@ jobs:
             echo "build_source=${build_source}"
             echo "build_run_id=${INPUT_BUILD_RUN_ID}"
             echo "artifact_name=${artifact_name}"
-            echo "android_emulator_mcp_ref=${INPUT_MCP_REF}"
-            echo "mcp_toolkit_rs_ref=${INPUT_TOOLKIT_REF}"
+            echo "android_computer_use_mcp_ref=${INPUT_MCP_REF}"
             echo "android_validation_mode=${INPUT_VALIDATION_MODE}"
             echo "interactive_debug_profile=${INPUT_DEBUG_PROFILE}"
             echo "emulator_boot_strategy=${INPUT_BOOT_STRATEGY}"
@@ -229,7 +232,7 @@ jobs:
           echo "session_start_epoch=$(date +%s)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
-        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
+        if: ${{ steps.session_plan.outputs.build_source != 'artifact' }}
         with:
           distribution: temurin
           java-version: "17"
@@ -352,7 +355,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler ttyd
+          sudo apt-get install -y imagemagick protobuf-compiler ttyd
           sudo systemctl disable --now ttyd.service >/dev/null 2>&1 || true
           sudo systemctl reset-failed ttyd.service >/dev/null 2>&1 || true
           sudo pkill -x ttyd >/dev/null 2>&1 || true
@@ -360,23 +363,14 @@ jobs:
           bash .github/scripts/install_cloudflared.sh "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
 
-      - name: Checkout android-emulator-mcp workspace
+      - name: Checkout android-computer-use-mcp workspace
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: sednalabs/android-emulator-mcp
-          ref: ${{ steps.session_plan.outputs.android_emulator_mcp_ref }}
-          token: ${{ secrets.SGL_ANDROID_EMULATOR_MCP_READ_TOKEN }}
+          repository: sednalabs/android-computer-use-mcp
+          ref: ${{ steps.session_plan.outputs.android_computer_use_mcp_ref }}
           fetch-depth: 1
-          path: mcp-workspace/servers/android-emulator-mcp
-
-      - name: Checkout mcp-toolkit-rs workspace
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: GraciousGazelles/toolkits-mcp-toolkit-rs
-          ref: ${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}
-          token: ${{ secrets.SGL_MCP_TOOLKIT_RS_READ_TOKEN }}
-          fetch-depth: 1
-          path: mcp-workspace/toolkits/mcp-toolkit-rs
+          persist-credentials: false
+          path: mcp-workspace/servers/android-computer-use-mcp
 
       - name: Stage isolated MCP workspace
         id: stage_mcp_workspace
@@ -385,29 +379,42 @@ jobs:
           set -euo pipefail
           isolated_root="${RUNNER_TEMP}/interactive-mcp-root"
           rm -rf "${isolated_root}"
-          mkdir -p \
-            "${isolated_root}/mcp-workspace/servers" \
-            "${isolated_root}/mcp-workspace/toolkits"
+          mkdir -p "${isolated_root}/mcp-workspace/servers"
           cp -a \
-            mcp-workspace/servers/android-emulator-mcp \
-            "${isolated_root}/mcp-workspace/servers/android-emulator-mcp"
-          cp -a \
-            mcp-workspace/toolkits/mcp-toolkit-rs \
-            "${isolated_root}/mcp-workspace/toolkits/mcp-toolkit-rs"
-          echo "server_dir=${isolated_root}/mcp-workspace/servers/android-emulator-mcp" >> "${GITHUB_OUTPUT}"
+            mcp-workspace/servers/android-computer-use-mcp \
+            "${isolated_root}/mcp-workspace/servers/android-computer-use-mcp"
+          echo "server_dir=${isolated_root}/mcp-workspace/servers/android-computer-use-mcp" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve interactive MCP build cache inputs
         id: interactive_mcp_cache
         shell: bash
         run: |
           set -euo pipefail
+          toolkit_sha="$(
+            python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          revisions = set(
+              re.findall(
+                  r'git\+https://github\.com/sednalabs/mcp-toolkit-rs[^"#]*#[^"#]*?([0-9a-f]{40})',
+                  Path("mcp-workspace/servers/android-computer-use-mcp/Cargo.lock").read_text(),
+              )
+          )
+          if len(revisions) != 1:
+              raise SystemExit(
+                  f"expected one pinned sednalabs/mcp-toolkit-rs revision, found {sorted(revisions)}"
+              )
+          print(revisions.pop())
+          PY
+          )"
           {
-            echo "server_sha=$(git -C mcp-workspace/servers/android-emulator-mcp rev-parse HEAD)"
-            echo "toolkit_sha=$(git -C mcp-workspace/toolkits/mcp-toolkit-rs rev-parse HEAD)"
+            echo "server_sha=$(git -C mcp-workspace/servers/android-computer-use-mcp rev-parse HEAD)"
+            echo "toolkit_sha=${toolkit_sha}"
             echo "rustc_release=$(rustc -Vv | awk '/^release: / { print $2 }')"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Restore android-emulator-mcp target cache
+      - name: Restore android-computer-use-mcp target cache
         id: interactive_mcp_target_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -447,6 +454,19 @@ jobs:
               --expected-preferred-gpu-backend "${{ steps.session_plan.outputs.preferred_gpu_backend }}" \
               --github-output "${GITHUB_OUTPUT}"
           fi
+
+      - name: Admit qualified prerelease APK
+        id: qualified_prerelease
+        if: ${{ steps.session_plan.outputs.build_source == 'qualified-prerelease' }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PRERELEASE_RUN_ID: ${{ inputs.build_run_id }}
+          PRERELEASE_ARTIFACT_ID: ${{ inputs.prerelease_artifact_id }}
+          PRERELEASE_SOURCE_SHA: ${{ inputs.prerelease_source_sha }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/intake_qualified_prerelease.py
 
       - name: Assemble debug APK for interactive session
         id: assemble_debug
@@ -514,6 +534,17 @@ jobs:
       - name: Resolve interactive build inputs
         id: active_build
         shell: bash
+        env:
+          QUALIFIED_ARTIFACT_NAME: ${{ steps.qualified_prerelease.outputs.artifact_name }}
+          QUALIFIED_RUN_ID: ${{ steps.qualified_prerelease.outputs.build_run_id }}
+          QUALIFIED_RUN_ATTEMPT: ${{ steps.qualified_prerelease.outputs.build_run_attempt }}
+          QUALIFIED_COMMIT_SHA: ${{ steps.qualified_prerelease.outputs.build_commit_sha }}
+          QUALIFIED_BUNDLE_DIR: ${{ steps.qualified_prerelease.outputs.bundle_dir }}
+          QUALIFIED_MANIFEST_PATH: ${{ steps.qualified_prerelease.outputs.manifest_path }}
+          QUALIFIED_APK_PATH: ${{ steps.qualified_prerelease.outputs.apk_path }}
+          QUALIFIED_APK_SHA: ${{ steps.qualified_prerelease.outputs.apk_sha256 }}
+          QUALIFIED_PACKAGE: ${{ steps.qualified_prerelease.outputs.package_name }}
+          QUALIFIED_ACTIVITY: ${{ steps.qualified_prerelease.outputs.activity_name }}
         run: |
           set -euo pipefail
           if [[ "${{ steps.session_plan.outputs.build_source }}" == "artifact" ]]; then
@@ -527,6 +558,22 @@ jobs:
               echo "apk_path=${{ steps.resolve_build_artifact.outputs.apk_path }}"
               echo "apk_sha256=${{ steps.resolve_build_artifact.outputs.apk_sha256 }}"
             } >> "${GITHUB_OUTPUT}"
+          elif [[ "${{ steps.session_plan.outputs.build_source }}" == "qualified-prerelease" ]]; then
+            {
+              echo "artifact_name=${QUALIFIED_ARTIFACT_NAME}"
+              echo "build_run_id=${QUALIFIED_RUN_ID}"
+              echo "build_run_attempt=${QUALIFIED_RUN_ATTEMPT}"
+              echo "build_commit_sha=${QUALIFIED_COMMIT_SHA}"
+              echo "bundle_dir=${QUALIFIED_BUNDLE_DIR}"
+              echo "manifest_path=${QUALIFIED_MANIFEST_PATH}"
+              echo "apk_path=${QUALIFIED_APK_PATH}"
+              echo "apk_sha256=${QUALIFIED_APK_SHA}"
+              echo "package_name=${QUALIFIED_PACKAGE}"
+              echo "activity_name=${QUALIFIED_ACTIVITY}"
+              echo "validation_mode=prerelease"
+              echo "debug_profile=prerelease-non-debuggable"
+              echo "gpu_backend=unknown"
+            } >> "${GITHUB_OUTPUT}"
           else
             {
               echo "artifact_name=${{ steps.stage_inline_build.outputs.artifact_name }}"
@@ -539,15 +586,24 @@ jobs:
               echo "apk_sha256=${{ steps.stage_inline_build.outputs.apk_sha256 }}"
             } >> "${GITHUB_OUTPUT}"
           fi
+          if [[ "${{ steps.session_plan.outputs.build_source }}" != "qualified-prerelease" ]]; then
+            {
+              echo "package_name=${INTERACTIVE_APP_PACKAGE}"
+              echo "activity_name=${INTERACTIVE_APP_ACTIVITY}"
+              echo "validation_mode=${{ steps.session_plan.outputs.android_validation_mode }}"
+              echo "debug_profile=${{ steps.session_plan.outputs.interactive_debug_profile }}"
+              echo "gpu_backend=${{ steps.session_plan.outputs.preferred_gpu_backend }}"
+            } >> "${GITHUB_OUTPUT}"
+          fi
 
-      - name: Validate android-emulator-mcp provider contracts
+      - name: Validate android-computer-use-mcp provider contracts
         shell: bash
         working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
         run: |
           set -euo pipefail
           cargo test --locked -- --test-threads=1
 
-      - name: Build android-emulator-mcp release binary
+      - name: Build android-computer-use-mcp release binary
         id: build_mcp
         shell: bash
         working-directory: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
@@ -566,9 +622,9 @@ jobs:
             echo "- build source: \`${{ steps.session_plan.outputs.build_source }}\`"
             echo "- Android build setup: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
             echo "- Rust Android toolchain: \`${{ steps.session_plan.outputs.build_source == 'inline' && 'enabled' || 'skipped' }}\`"
-            echo "- android-emulator-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
-            echo "- android-emulator-mcp provider contracts: \`passed\`"
-            echo "- android-emulator-mcp build completed: \`true\`"
+            echo "- android-computer-use-mcp cache reuse: \`${{ steps.interactive_mcp_target_cache.outputs.cache-hit == 'true' && 'reused' || 'rebuilt' }}\`"
+            echo "- android-computer-use-mcp provider contracts: \`passed\`"
+            echo "- android-computer-use-mcp build completed: \`true\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Run hosted interactive Android session
@@ -588,10 +644,13 @@ jobs:
         env:
           INTERACTIVE_APP_APK: ${{ steps.active_build.outputs.apk_path }}
           INTERACTIVE_BUILD_MANIFEST: ${{ steps.active_build.outputs.manifest_path }}
-          INTERACTIVE_APP_PACKAGE: ${{ env.INTERACTIVE_APP_PACKAGE }}
-          INTERACTIVE_APP_ACTIVITY: ${{ env.INTERACTIVE_APP_ACTIVITY }}
+          INTERACTIVE_APP_PACKAGE: ${{ steps.active_build.outputs.package_name }}
+          INTERACTIVE_APP_ACTIVITY: ${{ steps.active_build.outputs.activity_name }}
           INTERACTIVE_MCP_WORKSPACE_DIR: ${{ steps.stage_mcp_workspace.outputs.server_dir }}
           INTERACTIVE_MCP_ADAPTER_REVISION: ${{ steps.interactive_mcp_cache.outputs.server_sha }}
+          INTERACTIVE_MCP_ENVIRONMENT_ID: github-actions/${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}
+          INTERACTIVE_MCP_PROVIDER_INSTANCE_ID: android-computer-use-mcp/${{ steps.interactive_mcp_cache.outputs.server_sha }}
+          INTERACTIVE_MCP_SESSION_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           INTERACTIVE_CLOUDFLARED_BIN: cloudflared
           INTERACTIVE_TTYD_BIN: /usr/bin/ttyd
           INTERACTIVE_DEBUG_HOSTNAME: ${{ secrets.SGL_INTERACTIVE_DEBUG_HOSTNAME }}
@@ -607,6 +666,13 @@ jobs:
       - name: Build interactive session summary payload
         if: always()
         shell: bash
+        env:
+          ACTIVE_ARTIFACT_NAME: ${{ steps.active_build.outputs.artifact_name }}
+          ACTIVE_RUN_ID: ${{ steps.active_build.outputs.build_run_id }}
+          ACTIVE_COMMIT_SHA: ${{ steps.active_build.outputs.build_commit_sha }}
+          ACTIVE_VALIDATION_MODE: ${{ steps.active_build.outputs.validation_mode }}
+          ACTIVE_DEBUG_PROFILE: ${{ steps.active_build.outputs.debug_profile }}
+          ACTIVE_GPU_BACKEND: ${{ steps.active_build.outputs.gpu_backend }}
         run: |
           set -euo pipefail
           mkdir -p dist/interactive-session-summary
@@ -617,15 +683,18 @@ jobs:
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
             --checkout-ref "${{ steps.session_plan.outputs.checkout_ref }}" \
+            --workflow-commit-sha "${{ github.sha }}" \
+            --checkout-commit-sha "${{ steps.session_plan.outputs.commit_sha }}" \
             --build-source "${{ steps.session_plan.outputs.build_source }}" \
-            --artifact-name "${{ steps.active_build.outputs.artifact_name }}" \
-            --build-run-id "${{ steps.active_build.outputs.build_run_id }}" \
-            --build-commit-sha "${{ steps.active_build.outputs.build_commit_sha }}" \
-            --android-emulator-mcp-ref "${{ steps.session_plan.outputs.android_emulator_mcp_ref }}" \
-            --mcp-toolkit-rs-ref "${{ steps.session_plan.outputs.mcp_toolkit_rs_ref }}" \
-            --android-validation-mode "${{ steps.session_plan.outputs.android_validation_mode }}" \
-            --interactive-debug-profile "${{ steps.session_plan.outputs.interactive_debug_profile }}" \
-            --preferred-gpu-backend "${{ steps.session_plan.outputs.preferred_gpu_backend }}" \
+            --artifact-name "${ACTIVE_ARTIFACT_NAME}" \
+            --build-run-id "${ACTIVE_RUN_ID}" \
+            --build-commit-sha "${ACTIVE_COMMIT_SHA}" \
+            --android-computer-use-mcp-ref "${{ steps.session_plan.outputs.android_computer_use_mcp_ref }}" \
+            --android-computer-use-mcp-sha "${{ steps.interactive_mcp_cache.outputs.server_sha }}" \
+            --mcp-toolkit-rs-sha "${{ steps.interactive_mcp_cache.outputs.toolkit_sha }}" \
+            --android-validation-mode "${ACTIVE_VALIDATION_MODE}" \
+            --interactive-debug-profile "${ACTIVE_DEBUG_PROFILE}" \
+            --preferred-gpu-backend "${ACTIVE_GPU_BACKEND}" \
             --emulator-boot-strategy "${{ steps.session_plan.outputs.emulator_boot_strategy }}" \
             --session-timeout-minutes "${{ steps.session_plan.outputs.session_timeout_minutes }}" \
             --keep-session-on-failure "${{ steps.session_plan.outputs.keep_session_on_failure }}" \
