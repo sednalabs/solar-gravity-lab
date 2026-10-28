@@ -43,6 +43,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -50,6 +52,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -87,6 +90,7 @@ import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
@@ -278,7 +282,7 @@ internal fun StageFirstRuntimeExperience(
         var playbackSpeedPreset by remember { mutableStateOf(PlaybackSpeedPreset.SIX_HOURS_PER_SECOND) }
         var chromeModeName by rememberSaveable { mutableStateOf(StageChromeMode.COLLAPSED.name) }
         var traceLayerModeName by rememberSaveable { mutableStateOf(TraceLayerMode.FOCUS.name) }
-        var searchVisible by rememberSaveable { mutableStateOf(false) }
+        var searchVisible by remember { mutableStateOf(false) }
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
         var pendingScenarioFrame by remember { mutableStateOf<RuntimeScenarioPack?>(null) }
@@ -292,7 +296,16 @@ internal fun StageFirstRuntimeExperience(
         var semanticFocusAcknowledgement by remember {
             mutableStateOf<RuntimeSemanticFocusAcknowledgement?>(null)
         }
+        var searchFrameRequest by remember { mutableStateOf<Pair<Long, String>?>(null) }
+        var searchFrameRequestToken by remember { mutableStateOf(0L) }
         var hostedDebugModeApplied by remember { mutableStateOf(false) }
+
+        LaunchedEffect(searchFrameRequest?.first) {
+            if (searchFrameRequest != null) {
+                delay(2200)
+                searchFrameRequest = null
+            }
+        }
 
         val stageScene = remember(uiState.renderFrame) {
             uiState.renderFrame?.toRuntimeStageScene()
@@ -867,6 +880,7 @@ internal fun StageFirstRuntimeExperience(
                     selectionCard = selectionCard,
                     scenarioLabel = timelineText,
                     semanticFocusAcknowledgement = semanticFocusAcknowledgement,
+                    searchFrameRequest = searchFrameRequest?.second,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .statusBarsPadding()
@@ -890,6 +904,7 @@ internal fun StageFirstRuntimeExperience(
                             selectionCard = selectionCard,
                             scenarioLabel = timelineText,
                             semanticFocusAcknowledgement = semanticFocusAcknowledgement,
+                            searchFrameRequest = searchFrameRequest?.second,
                             modifier = Modifier
                                 .widthIn(max = 360.dp)
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
@@ -908,6 +923,7 @@ internal fun StageFirstRuntimeExperience(
                                 renderProcessingMode = renderProcessingMode,
                                 scenarioLabel = timelineText,
                                 semanticFocusAcknowledgement = semanticFocusAcknowledgement,
+                                searchFrameRequest = searchFrameRequest?.second,
                                 compact = false,
                                 modifier = Modifier
                                     .weight(1f)
@@ -1058,7 +1074,13 @@ internal fun StageFirstRuntimeExperience(
                 onDismiss = { searchVisible = false },
                 onSelectBody = { bodyId ->
                     searchVisible = false
+                    val host = renderHostView
                     focusAndFrameRuntimeBody(bodyId)
+                    if (host != null) {
+                        searchFrameRequestToken += 1
+                        val bodyName = searchableBodies.firstOrNull { it.id == bodyId }?.displayName ?: bodyId
+                        searchFrameRequest = searchFrameRequestToken to "Frame requested · $bodyName"
+                    }
                 },
             )
         }
@@ -1365,6 +1387,7 @@ private fun RuntimeStageMissionPanel(
     renderProcessingMode: RenderProcessingMode,
     scenarioLabel: String,
     semanticFocusAcknowledgement: RuntimeSemanticFocusAcknowledgement?,
+    searchFrameRequest: String?,
     compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -1418,7 +1441,12 @@ private fun RuntimeStageMissionPanel(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "TRAJECTORY STAGE",
+                    text = searchFrameRequest ?: "TRAJECTORY STAGE",
+                    modifier = if (searchFrameRequest != null) {
+                        Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
+                    } else {
+                        Modifier
+                    },
                     color = RuntimeStageCyan,
                     style = MaterialTheme.typography.labelLarge,
                 )
@@ -1550,6 +1578,7 @@ private fun RuntimeStageCollapsedStageChip(
     selectionCard: RuntimeSelectionCard,
     scenarioLabel: String,
     semanticFocusAcknowledgement: RuntimeSemanticFocusAcknowledgement?,
+    searchFrameRequest: String?,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -1572,7 +1601,12 @@ private fun RuntimeStageCollapsedStageChip(
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 Text(
-                    text = "Trajectory stage",
+                    text = searchFrameRequest ?: "Trajectory stage",
+                    modifier = if (searchFrameRequest != null) {
+                        Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
+                    } else {
+                        Modifier
+                    },
                     color = RuntimeStageCyan.copy(alpha = 0.92f),
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
@@ -1913,6 +1947,8 @@ private fun RuntimeStageSearchDialog(
     onSelectBody: (String) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     val normalizedQuery = query.trim().lowercase(Locale.US)
     val filteredBodies = remember(bodies, normalizedQuery) {
         bodies
@@ -1936,10 +1972,15 @@ private fun RuntimeStageSearchDialog(
                     onValueChange = { query = it },
                     modifier = Modifier
                         .fillMaxWidth()
+                        .focusRequester(focusRequester)
                         .testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD),
                     label = { Text("Search by name or id") },
                     singleLine = true,
                 )
+                LaunchedEffect(Unit) {
+                    focusRequester.requestFocus()
+                    keyboardController?.show()
+                }
                 Text(
                     text = if (filteredBodies.size == 32) {
                         "32 shown · type to filter"
