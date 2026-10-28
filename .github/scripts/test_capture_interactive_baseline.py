@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract checks for the fixed native help-dismissal capture."""
+"""Contract checks for the fixed native stage inspection."""
 import base64
 import json
 import os
@@ -7,7 +7,6 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 import unittest
-import xml.etree.ElementTree as ET
 
 import capture_interactive_baseline as capture
 
@@ -18,7 +17,13 @@ STAGE = (f'<node package="{PACKAGE}" class="android.widget.FrameLayout" bounds="
          f'<node package="{PACKAGE}" class="android.view.View" NAF="true" enabled="true" clickable="true" '
          'bounds="[0,0][1080,2400]"/></node>')
 BASELINE = f'<hierarchy><node package="{PACKAGE}" bounds="[0,0][1080,2400]">{STAGE}{HELP}{BUTTON}</node></node></hierarchy>'
-AFTER = f'<hierarchy><node package="{PACKAGE}" bounds="[0,0][1080,2400]"/></hierarchy>'
+CONTROLS = (f'<node package="{PACKAGE}" text="Earth" bounds="[200,100][300,150]"/>'
+    f'<node package="{PACKAGE}" enabled="true" content-desc="Frame" bounds="[400,2100][500,2200]"/>'
+    f'<node package="{PACKAGE}" enabled="true" content-desc="Home" bounds="[200,2100][300,2200]"/>'
+    f'<node package="{PACKAGE}" enabled="true" content-desc="Camera scale Wide; open camera controls" bounds="[600,2100][700,2200]"/>')
+VIEW = f'<hierarchy><node package="{PACKAGE}" bounds="[0,0][1080,2400]">{STAGE}{CONTROLS}</node></hierarchy>'
+LESS = f'<node package="{PACKAGE}" enabled="true" content-desc="Less" bounds="[800,2100][900,2200]"/>'
+EXPANDED = VIEW.replace(CONTROLS, CONTROLS + LESS)
 
 
 class CaptureTest(unittest.TestCase):
@@ -30,10 +35,9 @@ class CaptureTest(unittest.TestCase):
         self.addCleanup(os.chdir, self.original_cwd)
         capture.HIERARCHIES.mkdir(parents=True)
         capture.BRIDGE.mkdir(parents=True)
-        self.before_xml = capture.HIERARCHIES / "codex-android-observe.xml"
-        self.after_xml = capture.HIERARCHIES / "codex-click-after.xml"
-        self.before_xml.write_text(BASELINE)
-        self.after_xml.write_text(AFTER)
+        self.baseline_xml = capture.HIERARCHIES / "codex-android-observe.xml"
+        self.action_xml = capture.HIERARCHIES / "codex-click-after.xml"
+        self.baseline_xml.write_text(BASELINE)
         build = capture.SESSION / "qualified-prerelease/qualified-prerelease-intake.json"
         build.parent.mkdir(parents=True)
         build.write_text(json.dumps({"artifact_kind": "qualified-prerelease", "package_name": PACKAGE}))
@@ -43,106 +47,133 @@ class CaptureTest(unittest.TestCase):
         self.environment = patch.dict(os.environ, env)
         self.environment.start()
         self.addCleanup(self.environment.stop)
-        self.before = self.receipt(False)
-        self.after = self.receipt(True)
-        self.write_receipts()
         self.png_check = patch.object(capture, "has_decodable_native_png", return_value=True)
         self.png_check.start()
         self.addCleanup(self.png_check.stop)
         self.dimensions = patch.object(capture, "png_dimensions", return_value=(1080, 2400))
         self.dimensions.start()
         self.addCleanup(self.dimensions.stop)
+        (capture.BRIDGE / "baseline-response.json").write_text(json.dumps(self.receipt(False)))
 
     def receipt(self, step):
         outcome = {"status": "succeeded"}
         if step:
-            outcome.update({"actionTypes": ["click"], "postconditionSatisfied": None})
+            outcome["actionTypes"] = ["click"]
         return {"success": True, "metadata": {"android": {"outcome": outcome}},
                 "contentItems": [{"type": "inputImage", "imageUrl": "data:image/png;base64," + base64.b64encode(b"png").decode()}]}
 
-    def write_receipts(self):
-        (capture.BRIDGE / "baseline-response.json").write_text(json.dumps(self.before))
-        (capture.BRIDGE / "help-response.json").write_text(json.dumps(self.after))
+    def step(self, phase, settled=VIEW):
+        capture.phase_prepare(phase)
+        request = json.loads((capture.BRIDGE / f"{phase}-request.json").read_text())
+        self.assertEqual(set(request["arguments"]["actions"][0]), {"type", "x", "y"})
+        (capture.BRIDGE / f"{phase}-response.json").write_text(json.dumps(self.receipt(True)))
+        self.action_xml.write_text(settled)
+        capture.phase_snapshot(phase)
+        (capture.BRIDGE / f"{phase}-settled.json").write_text(json.dumps(self.receipt(False)))
+        self.baseline_xml.write_text(settled)
+        capture.phase_record(phase)
 
-    def test_fixed_transition_publishes_original_evidence(self):
-        capture.prepare()
-        request = json.loads((capture.BRIDGE / "help-request.json").read_text())
-        action = request["arguments"]["actions"][0]
-        self.assertEqual((action["x"], action["y"]), (780, 400))
-        self.assertEqual(set(action), {"type", "x", "y"})
-        self.assertEqual(action["type"], "click")
-        capture.finish()
-        output = Path("dist/interactive-capture")
-        self.assertEqual((output / "baseline.png").read_bytes(), b"png")
-        self.assertEqual((output / "after-help.png").read_bytes(), b"png")
-        self.assertEqual((output / "baseline.xml").read_text(), BASELINE)
-        self.assertEqual((output / "after-help.xml").read_text(), AFTER)
-        self.assertEqual(json.loads((output / "help-response.json").read_text()), self.after)
-        status = json.loads((output / "status.json").read_text())
-        self.assertEqual((status["stability"], status["visual_acceptance"]), ("unknown", "pending"))
-        self.assertEqual(status["transport_attempts"], "unknown")
+    def test_fixed_sequence_retains_each_validated_observation(self):
+        capture.capture_baseline()
+        for phase in ("help", "frame", "home"):
+            self.step(phase)
+        self.step("controls", EXPANDED)
+        status = json.loads((capture.OUTPUT / "status.json").read_text())
+        self.assertEqual(status["completed"], ["baseline", "help", "frame", "home", "controls"])
+        self.assertEqual((status["status"], status["stability"], status["visual_acceptance"]), ("captured", "unknown", "pending"))
         self.assertTrue(status["provider_may_fallback"])
+        for phase in ("help", "frame", "home", "controls"):
+            step = capture.OUTPUT / phase
+            self.assertEqual((step / "immediate/screen.png").read_bytes(), b"png")
+            self.assertEqual((step / "settled/screen.png").read_bytes(), b"png")
+            self.assertTrue((step / "action-request.json").exists())
+            self.assertTrue((step / "immediate/action-response.json").exists())
+            self.assertTrue((step / "settled/hierarchy.xml").exists())
 
-    def assert_no_action(self, xml):
-        self.before_xml.write_text(xml)
+    def test_partial_on_missing_expanded_control_retains_observed_evidence(self):
+        capture.capture_baseline()
+        for phase in ("help", "frame", "home"):
+            self.step(phase)
         with self.assertRaises(ValueError):
-            capture.prepare()
-        self.assertFalse((capture.BRIDGE / "help-request.json").exists())
-        self.assertFalse(Path("dist/interactive-capture").exists())
+            self.step("controls")
+        capture.mark_failed()
+        status = json.loads((capture.OUTPUT / "status.json").read_text())
+        self.assertEqual((status["status"], status["stop_reason"]), ("partial", "inspection_stopped"))
+        self.assertTrue((capture.OUTPUT / "controls/settled/screen.png").exists())
 
-    def test_missing_or_ambiguous_controls(self):
-        self.assert_no_action(BASELINE.replace(BUTTON, ""))
-        self.assert_no_action(BASELINE.replace(BUTTON, BUTTON + BUTTON))
-        self.assert_no_action(BASELINE.replace(HELP, HELP + HELP).replace('</node></node></hierarchy>', '</node></node></node></hierarchy>'))
+    def test_ambiguous_or_wrong_control_stops_before_action(self):
+        capture.capture_baseline()
+        self.step("help")
+        hierarchy = capture.OUTPUT / "help/settled/hierarchy.xml"
+        hierarchy.write_text(VIEW.replace('content-desc="Frame"', 'content-desc="Other"'))
+        with self.assertRaises(ValueError):
+            capture.phase_prepare("frame")
+        self.assertFalse((capture.BRIDGE / "frame-request.json").exists())
+        hierarchy.write_text(VIEW.replace('content-desc="Frame"', 'content-desc="Home"'))
+        with self.assertRaises(ValueError):
+            capture.phase_prepare("frame")
+        hierarchy.write_text(VIEW.replace('package="app.internal" enabled="true" content-desc="Frame"', 'package="other" enabled="true" content-desc="Frame"'))
+        with self.assertRaises(ValueError):
+            capture.phase_prepare("frame")
 
-    def test_wrong_package_disabled_and_bad_bounds(self):
-        self.assert_no_action(BASELINE.replace('package="app.internal" enabled="true" content-desc="Got it"', 'package="other" enabled="true" content-desc="Got it"'))
-        self.assert_no_action(BASELINE.replace('enabled="true" content-desc="Got it"', 'enabled="false" content-desc="Got it"'))
-        self.assert_no_action(BASELINE.replace('[700,340][860,460]', '[700,340][700,460]'))
-        self.assert_no_action(BASELINE.replace('[700,340][860,460]', '[1000,340][1200,460]'))
-        self.assert_no_action(BASELINE.replace('[700,340][860,460]', '[50,50][200,200]'))
-        overlapping = f'<node package="{PACKAGE}" clickable="true" text="Other control" bounds="[700,340][860,460]"/>'
-        self.assert_no_action(BASELINE.replace(HELP, overlapping + HELP))
-        # A different actionable child of the help overlay is not the target.
-        self.assert_no_action(BASELINE.replace(BUTTON, BUTTON + overlapping))
-        # A full-screen leaf from another package or in front of help is not the stage.
-        self.assert_no_action(BASELINE.replace(STAGE, STAGE.replace(f'package="{PACKAGE}" class="android.view.View"', 'package="other" class="android.view.View"')))
-        self.assert_no_action(BASELINE.replace(STAGE, "").replace(BUTTON + '</node>', BUTTON + '</node>' + STAGE))
-        self.assert_no_action(BASELINE.replace(STAGE, STAGE + STAGE))
-
-    def test_wrong_provider_and_failed_outcome(self):
-        with patch.dict(os.environ, {"INTERACTIVE_MCP_ADAPTER_REVISION": "c" * 40}):
+    def test_original_help_overlap_guard_rejects_foreign_controls(self):
+        extra = f'<node package="{PACKAGE}" clickable="true" text="Other" bounds="[700,340][860,460]"/>'
+        for invalid in (BASELINE.replace(BUTTON, BUTTON + extra),
+                        BASELINE.replace(STAGE, STAGE.replace(f'package="{PACKAGE}" class="android.view.View"', 'package="other" class="android.view.View"')),
+                        BASELINE.replace(STAGE, "").replace(BUTTON + '</node>', BUTTON + '</node>' + STAGE)):
+            self.baseline_xml.write_text(invalid)
             with self.assertRaises(ValueError):
-                capture.prepare()
-        self.before["metadata"]["android"]["outcome"]["status"] = "observe_degraded"
-        self.write_receipts()
-        with self.assertRaises(ValueError):
-            capture.prepare()
-        self.assertFalse((capture.BRIDGE / "help-request.json").exists())
+                capture.capture_baseline()
+            self.assertFalse(capture.OUTPUT.exists())
 
-    def test_failed_postcondition_or_help_remaining_publishes_nothing(self):
-        capture.prepare()
-        self.after["metadata"]["android"]["outcome"]["status"] = "postcondition_failed"
-        self.write_receipts()
+    def test_failed_action_retains_only_prior_validated_evidence(self):
+        capture.capture_baseline()
+        capture.phase_prepare("help")
+        (capture.BRIDGE / "help-response.json").write_text(json.dumps({"success": False}))
+        self.action_xml.write_text(VIEW)
         with self.assertRaises(ValueError):
-            capture.finish()
-        self.after["metadata"]["android"]["outcome"]["status"] = "succeeded"
-        self.write_receipts()
-        self.after_xml.write_text(BASELINE)
-        with self.assertRaises(ValueError):
-            capture.finish()
-        self.after_xml.write_text(f'<hierarchy><node package="{PACKAGE}" text="Got it"/></hierarchy>')
-        with self.assertRaises(ValueError):
-            capture.finish()
-        self.after_xml.write_text('<hierarchy><node package="other"/></hierarchy>')
-        with self.assertRaises(ValueError):
-            capture.finish()
-        self.assertFalse(Path("dist/interactive-capture").exists())
+            capture.phase_snapshot("help")
+        capture.mark_failed()
+        self.assertTrue((capture.OUTPUT / "baseline/screen.png").exists())
+        self.assertTrue((capture.OUTPUT / "help/action-request.json").exists())
+        self.assertFalse((capture.OUTPUT / "help/immediate").exists())
+        status = json.loads((capture.OUTPUT / "status.json").read_text())
+        self.assertEqual((status["stop_reason"], status["action_effect"]), ("inspection_stopped", "unknown"))
 
-    def test_malformed_or_empty_hierarchy(self):
-        self.assert_no_action('<hierarchy/>')
-        with self.assertRaises(ET.ParseError):
-            self.assert_no_action('<hierarchy>')
+    def prepare_immediate(self):
+        capture.capture_baseline()
+        capture.phase_prepare("help")
+        response = json.dumps(self.receipt(True))
+        (capture.BRIDGE / "help-response.json").write_text(response)
+        self.action_xml.write_text(VIEW)
+        capture.phase_snapshot("help")
+        return response
+
+    def assert_checkpoint(self, response):
+        status = json.loads((capture.OUTPUT / "status.json").read_text())
+        self.assertEqual((status["status"], status["in_progress"], status["action_effect"]),
+                         ("partial", "help", "observation_captured"))
+        self.assertEqual((capture.OUTPUT / "help/immediate/action-response.json").read_text(), response)
+        self.assertEqual((capture.OUTPUT / "help/immediate/screen.png").read_bytes(), b"png")
+        self.assertEqual((capture.OUTPUT / "help/immediate/hierarchy.xml").read_text(), VIEW)
+        self.assertFalse((capture.OUTPUT / "help/settled").exists())
+
+    def test_valid_immediate_survives_stop_before_followup(self):
+        response = self.prepare_immediate()
+        # Cleanup after a foreground or delayed-call failure preserves custody.
+        capture.mark_failed()
+        self.assert_checkpoint(response)
+        with self.assertRaises(ValueError):
+            capture.phase_prepare("help")
+
+    def test_invalid_followup_does_not_promote_immediate(self):
+        response = self.prepare_immediate()
+        (capture.BRIDGE / "help-settled.json").write_text(json.dumps({"success": False}))
+        self.baseline_xml.write_text(VIEW)
+        with self.assertRaises(ValueError):
+            capture.phase_record("help")
+        capture.mark_failed()
+        self.assert_checkpoint(response)
 
 
 if __name__ == "__main__":

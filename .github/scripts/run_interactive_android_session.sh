@@ -700,6 +700,9 @@ cleanup() {
   done
 
   if [[ "${session_mode}" == "capture-only" ]]; then
+    if [[ "${final_status}" != "success" ]]; then
+      python3 .github/scripts/capture_interactive_baseline.py --mark-failed >/dev/null 2>&1 || true
+    fi
     return
   fi
   write_session_state "$(python3 - <<'PY' "${session_start_iso}" "${final_status}" "${final_reason}" "${session_timeout_minutes}" "${finish_sentinel}"
@@ -849,17 +852,34 @@ if [[ "${session_mode}" == "capture-only" ]]; then
     | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
       --config "${openai_loop_dir}/config.json" call \
       > "${codex_bridge_dir}/baseline-response.json" 2>/dev/null
-  python3 .github/scripts/capture_interactive_baseline.py --prepare >/dev/null 2>&1
-  if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
-    exit 1
-  fi
-  node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
-    --config "${openai_loop_dir}/config.json" call \
-    < "${codex_bridge_dir}/help-request.json" > "${codex_bridge_dir}/help-response.json" 2>/dev/null
-  if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
-    exit 1
-  fi
-  python3 .github/scripts/capture_interactive_baseline.py --finish >/dev/null 2>&1
+  python3 .github/scripts/capture_interactive_baseline.py --baseline >/dev/null 2>&1
+  capture_step() {
+    local phase="$1"
+    python3 .github/scripts/capture_interactive_baseline.py "--prepare-${phase}" >/dev/null 2>&1
+    if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+      return 1
+    fi
+    node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+      --config "${openai_loop_dir}/config.json" call \
+      < "${codex_bridge_dir}/${phase}-request.json" > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
+    if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+      return 1
+    fi
+    python3 .github/scripts/capture_interactive_baseline.py "--snapshot-${phase}" >/dev/null 2>&1
+    sleep 1
+    printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
+      | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+        --config "${openai_loop_dir}/config.json" call \
+        > "${codex_bridge_dir}/${phase}-settled.json" 2>/dev/null
+    if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
+      return 1
+    fi
+    python3 .github/scripts/capture_interactive_baseline.py "--record-${phase}" >/dev/null 2>&1
+  }
+  capture_step help
+  capture_step frame
+  capture_step home
+  capture_step controls
   final_status="success"
   exit 0
 fi

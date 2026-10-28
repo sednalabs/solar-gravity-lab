@@ -47,13 +47,15 @@ The workflow:
 - `session_mode`
   - `live` (default) opens the protected live session; `capture-only` installs a
     qualified prerelease, verifies runtime readiness and foreground package, and
-    observes the screen and dismisses the camera help only when its freshly
-    observed control is unique and valid, without starting terminal or tunnel services
-  - capture artifacts contain the original PNGs, hierarchies and bounded typed
-    responses before and after dismissal. Adapter outcomes do not prove UI
-    stability, which is recorded as unknown; visual acceptance remains pending.
-    Inspect the post-help image before choosing any further action. The provider
-    may fall back between input transports; transport attempts are unknown.
+    inspects the screen with a fixed sequence: dismiss camera help, Frame, Home,
+    and open camera controls, using freshly observed unique targets. It does
+    not start terminal or tunnel services.
+  - capture artifacts retain original PNGs, hierarchies and bounded typed
+    responses for each validated step, including observations after a one-second
+    pause. A pause or adapter outcome does not prove UI stability; stability and
+    transport attempts remain unknown, and the provider may fall back between
+    transports. Visual acceptance remains pending. A failed or ambiguous step
+    stops the sequence and retains validated partial evidence for inspection.
   - capture-only requires the resolved provider SHA
     `0e5a3dc692f39022fa84d88c927e4a59801673e4`; live mode retains its provider override
 - `ref`

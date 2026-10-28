@@ -85,7 +85,16 @@ def help_center(root: ET.Element, package: str, viewport: tuple[int, int]) -> tu
     width, height = viewport
     if width <= 0 or height <= 0 or not contains((0, 0, width, height), help_bounds) or not contains(help_bounds, dismiss_bounds):
         raise ValueError("help or dismiss control is outside the viewport")
-    x, y = (dismiss_bounds[0] + dismiss_bounds[2]) // 2, (dismiss_bounds[1] + dismiss_bounds[3]) // 2
+    return target_center(root, package, viewport, dismiss_node)
+
+
+def target_center(root: ET.Element, package: str, viewport: tuple[int, int], target: ET.Element) -> tuple[int, int]:
+    nodes = list(root.iter("node"))
+    width, height = viewport
+    target_bounds = bounds(target)
+    if target.get("package") != package or target.get("enabled") != "true" or width <= 0 or height <= 0 or not contains((0, 0, width, height), target_bounds):
+        raise ValueError("invalid target state or bounds")
+    x, y = (target_bounds[0] + target_bounds[2]) // 2, (target_bounds[1] + target_bounds[3]) // 2
     parents = {child: parent for parent in root.iter() for child in parent}
 
     def ancestry(node):
@@ -94,8 +103,8 @@ def help_center(root: ET.Element, package: str, viewport: tuple[int, int]) -> tu
             chain.append(parents[chain[-1]])
         return chain
 
-    target_ancestry = set(ancestry(dismiss_node))
-    help_chain = ancestry(help_node)
+    target_ancestry = set(ancestry(target))
+    target_chain = ancestry(target)
 
     def is_observed_backdrop(node, node_bounds):
         parent = parents.get(node)
@@ -115,13 +124,13 @@ def help_center(root: ET.Element, package: str, viewport: tuple[int, int]) -> tu
         ):
             return False
         stage_chain = ancestry(node)
-        common = next((ancestor for ancestor in stage_chain if ancestor in help_chain), None)
-        if common is None or common is node or common is help_node:
+        common = next((ancestor for ancestor in stage_chain if ancestor in target_chain), None)
+        if common is None or common is node or common is target:
             return False
         stage_branch = stage_chain[stage_chain.index(common) - 1]
-        help_branch = help_chain[help_chain.index(common) - 1]
+        target_branch = target_chain[target_chain.index(common) - 1]
         siblings = list(common)
-        return siblings.index(stage_branch) < siblings.index(help_branch)
+        return siblings.index(stage_branch) < siblings.index(target_branch)
 
     backdrops = []
     for node in nodes:
@@ -137,29 +146,42 @@ def help_center(root: ET.Element, package: str, viewport: tuple[int, int]) -> tu
             continue
         raise ValueError("another actionable control overlaps the help target")
     if len(backdrops) != 1:
-        raise ValueError("expected one matching stage backdrop behind help")
+        raise ValueError("expected one matching stage backdrop behind target")
     return x, y
 
 
-def prepare() -> None:
-    require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
-    _, png, _, root = read_observation(BRIDGE / "baseline-response.json", HIERARCHIES / "codex-android-observe.xml")
-    x, y = help_center(root, os.environ["INTERACTIVE_APP_PACKAGE"], png_dimensions(png))
-    request = {"tool": "android_step", "arguments": {"actions": [{"type": "click", "x": x, "y": y}],
-        "post_observe_scope": "screen_and_ui"}}
-    (BRIDGE / "help-request.json").write_text(json.dumps(request) + "\n")
+
+OUTPUT = Path("dist/interactive-capture")
+PHASES = ("help", "frame", "home", "controls")
 
 
-def finish() -> None:
-    require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
-    before, before_png, before_xml, before_root = read_observation(BRIDGE / "baseline-response.json", HIERARCHIES / "codex-android-observe.xml")
-    help_center(before_root, os.environ["INTERACTIVE_APP_PACKAGE"], png_dimensions(before_png))
-    after, after_png, after_xml, after_root = read_observation(BRIDGE / "help-response.json", HIERARCHIES / "codex-click-after.xml", is_step=True)
-    after_nodes = list(after_root.iter("node"))
-    if any(node.get("content-desc") in {HELP, DISMISS} or node.get("text") in {HELP, DISMISS} for node in after_nodes):
+def valid_app_view(root: ET.Element, package: str) -> None:
+    nodes = list(root.iter("node"))
+    if not any(node.get("package") == package for node in nodes):
+        raise ValueError("hierarchy does not contain the expected package")
+    if any(node.get("content-desc") in {HELP, DISMISS} or node.get("text") in {HELP, DISMISS} for node in nodes):
         raise ValueError("help remains visible after dismissal")
-    if not any(node.get("package") == os.environ["INTERACTIVE_APP_PACKAGE"] for node in after_nodes):
-        raise ValueError("post-action hierarchy does not contain the expected package")
+
+
+def write_status(completed: list[str], status: str, stop_reason: str | None = None,
+                 in_progress: str | None = None, action_effect: str | None = None) -> None:
+    payload = {"status": status, "completed": completed, "stop_reason": stop_reason,
+               "in_progress": in_progress, "action_effect": action_effect,
+               "stability": "unknown", "response_session_identity": "unknown",
+               "transport_attempts": "unknown", "provider_may_fallback": True, "visual_acceptance": "pending"}
+    temporary = OUTPUT / "status.tmp"
+    temporary.write_text(json.dumps(payload) + "\n")
+    temporary.replace(OUTPUT / "status.json")
+
+
+def current_status() -> dict:
+    return json.loads((OUTPUT / "status.json").read_text())
+
+
+def capture_baseline() -> None:
+    require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
+    response, png, xml, root = read_observation(BRIDGE / "baseline-response.json", HIERARCHIES / "codex-android-observe.xml")
+    help_center(root, os.environ["INTERACTIVE_APP_PACKAGE"], png_dimensions(png))
     build = json.loads((SESSION / "qualified-prerelease/qualified-prerelease-intake.json").read_text())
     if build.get("artifact_kind") != "qualified-prerelease" or build.get("package_name") != os.environ["INTERACTIVE_APP_PACKAGE"]:
         raise ValueError("unexpected capture build")
@@ -167,26 +189,145 @@ def finish() -> None:
         "provider_sha": os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"], "toolkit_sha": os.environ["INTERACTIVE_TOOLKIT_SHA"],
         "build": build, "foreground_package": os.environ["INTERACTIVE_APP_PACKAGE"], "response_session_identity": "unknown", "stability": "unknown",
         "transport_attempts": "unknown", "provider_may_fallback": True}
-    output = Path("dist/interactive-capture")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=output.parent) as temporary:
+    with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
         staging = Path(temporary) / "capture"
-        staging.mkdir()
-        for name, data in (("baseline.png", before_png), ("baseline.xml", before_xml), ("observation.json", before),
-                           ("after-help.png", after_png), ("after-help.xml", after_xml), ("help-response.json", after)):
-            (staging / name).write_bytes(data)
-        (staging / "help-request.json").write_bytes((BRIDGE / "help-request.json").read_bytes())
+        baseline = staging / "baseline"
+        baseline.mkdir(parents=True)
+        (baseline / "observation.json").write_bytes(response)
+        (baseline / "screen.png").write_bytes(png)
+        (baseline / "hierarchy.xml").write_bytes(xml)
         (staging / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
-        (staging / "status.json").write_text(json.dumps({"status": "captured", "transition": "help-dismissed", "stability": "unknown", "response_session_identity": "unknown", "transport_attempts": "unknown", "provider_may_fallback": True, "visual_acceptance": "pending"}) + "\n")
-        staging.rename(output)
+        (staging / "status.json").write_text(json.dumps({"status": "partial", "completed": ["baseline"],
+            "stability": "unknown", "response_session_identity": "unknown", "transport_attempts": "unknown",
+            "provider_may_fallback": True, "visual_acceptance": "pending"}) + "\n")
+        staging.rename(OUTPUT)
+
+
+def phase_prepare(phase: str) -> None:
+    require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
+    status = current_status()
+    expected = ["baseline"] + list(PHASES[:PHASES.index(phase)])
+    if (status.get("status") != "partial" or status.get("completed") != expected
+            or status.get("in_progress") is not None or status.get("stop_reason") is not None):
+        raise ValueError("unexpected inspection sequence")
+    previous = OUTPUT / expected[-1]
+    if expected[-1] != "baseline":
+        previous = previous / "settled"
+    png = (previous / "screen.png").read_bytes()
+    root = ET.fromstring((previous / "hierarchy.xml").read_bytes())
+    package = os.environ["INTERACTIVE_APP_PACKAGE"]
+    viewport = png_dimensions(png)
+    if phase == "help":
+        x, y = help_center(root, package, viewport)
+    else:
+        valid_app_view(root, package)
+        if phase == "frame":
+            earth = [n for n in root.iter("node") if n.get("text") == "Earth" and n.get("package") == package]
+            if len(earth) != 1:
+                raise ValueError("Earth selection is not uniquely visible")
+        def selected(node):
+            description = node.get("content-desc", "")
+            if phase == "frame":
+                return description == "Frame"
+            if phase == "home":
+                return description == "Home"
+            return description.startswith("Camera scale ") and description.endswith("; open camera controls")
+        targets = [n for n in root.iter("node") if selected(n)]
+        if len(targets) != 1:
+            raise ValueError("inspection target is missing or ambiguous")
+        x, y = target_center(root, package, viewport, targets[0])
+    request = {"tool": "android_step", "arguments": {"actions": [{"type": "click", "x": x, "y": y}],
+        "post_observe_scope": "screen_and_ui"}}
+    request_text = json.dumps(request) + "\n"
+    (BRIDGE / f"{phase}-request.json").write_text(request_text)
+    with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
+        staging = Path(temporary) / "step"
+        staging.mkdir()
+        (staging / "action-request.json").write_text(request_text)
+        staging.rename(OUTPUT / phase)
+    write_status(expected, "partial", in_progress=phase, action_effect="unknown")
+
+
+def phase_snapshot(phase: str) -> None:
+    status = current_status()
+    expected = ["baseline"] + list(PHASES[:PHASES.index(phase)])
+    if status.get("status") != "partial" or status.get("completed") != expected or status.get("in_progress") != phase:
+        raise ValueError("unexpected inspection sequence")
+    response, png, xml, root = read_observation(BRIDGE / f"{phase}-response.json", HIERARCHIES / "codex-click-after.xml", is_step=True)
+    valid_app_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
+    with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
+        staging = Path(temporary) / "immediate"
+        staging.mkdir()
+        (staging / "action-response.json").write_bytes(response)
+        (staging / "screen.png").write_bytes(png)
+        (staging / "hierarchy.xml").write_bytes(xml)
+        staging.rename(OUTPUT / phase / "immediate")
+    write_status(expected, "partial", in_progress=phase, action_effect="observation_captured")
+
+
+def phase_record(phase: str) -> None:
+    status = current_status()
+    expected = ["baseline"] + list(PHASES[:PHASES.index(phase)])
+    if (status.get("status") != "partial" or status.get("completed") != expected
+            or status.get("in_progress") != phase or status.get("action_effect") != "observation_captured"
+            or status.get("stop_reason") is not None):
+        raise ValueError("unexpected inspection sequence")
+    response, png, xml, root = read_observation(BRIDGE / f"{phase}-settled.json", HIERARCHIES / "codex-android-observe.xml")
+    valid_app_view(root, os.environ["INTERACTIVE_APP_PACKAGE"])
+    with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
+        staging = Path(temporary) / "settled"
+        staging.mkdir()
+        (staging / "observation.json").write_bytes(response)
+        (staging / "screen.png").write_bytes(png)
+        (staging / "hierarchy.xml").write_bytes(xml)
+        staging.rename(OUTPUT / phase / "settled")
+    completed = expected + [phase]
+    write_status(completed, "partial")
+    if phase == "controls":
+        less = [node for node in root.iter("node") if node.get("content-desc") == "Less" and node.get("enabled") == "true" and node.get("package") == os.environ["INTERACTIVE_APP_PACKAGE"]]
+        if len(less) != 1:
+            raise ValueError("expanded controls are not uniquely observed")
+        write_status(completed, "captured")
+
+
+def mark_failed() -> None:
+    if (OUTPUT / "status.json").exists():
+        status = current_status()
+        write_status(status.get("completed", []), "partial", "inspection_stopped",
+                     status.get("in_progress"), status.get("action_effect"))
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--check-provider"]:
+    command = sys.argv[1:]
+    if command == ["--check-provider"]:
         require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
-    elif sys.argv[1:] == ["--prepare"]:
-        prepare()
-    elif sys.argv[1:] == ["--finish"]:
-        finish()
+    elif command == ["--baseline"]:
+        capture_baseline()
+    elif command == ["--prepare-help"]:
+        phase_prepare("help")
+    elif command == ["--prepare-frame"]:
+        phase_prepare("frame")
+    elif command == ["--prepare-home"]:
+        phase_prepare("home")
+    elif command == ["--prepare-controls"]:
+        phase_prepare("controls")
+    elif command == ["--snapshot-help"]:
+        phase_snapshot("help")
+    elif command == ["--snapshot-frame"]:
+        phase_snapshot("frame")
+    elif command == ["--snapshot-home"]:
+        phase_snapshot("home")
+    elif command == ["--snapshot-controls"]:
+        phase_snapshot("controls")
+    elif command == ["--record-help"]:
+        phase_record("help")
+    elif command == ["--record-frame"]:
+        phase_record("frame")
+    elif command == ["--record-home"]:
+        phase_record("home")
+    elif command == ["--record-controls"]:
+        phase_record("controls")
+    elif command == ["--mark-failed"]:
+        mark_failed()
     else:
-        raise SystemExit("expected --check-provider, --prepare, or --finish")
+        raise SystemExit("invalid fixed inspection command")

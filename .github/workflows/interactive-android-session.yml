@@ -691,13 +691,17 @@ jobs:
       - name: Ensure capture status exists
         if: ${{ always() && inputs.session_mode == 'capture-only' }}
         shell: bash
+        env:
+          CAPTURE_STEP_OUTCOME: ${{ steps.interactive_session.outcome }}
         run: |
           mkdir -p dist/interactive-capture
           if [[ ! -f dist/interactive-capture/status.json ]]; then
             printf '%s\n' '{"status":"failed","reason":"capture_not_completed","response_session_identity":"unknown"}' > dist/interactive-capture/status.json
+          elif [[ "${CAPTURE_STEP_OUTCOME}" != "success" ]]; then
+            python3 .github/scripts/capture_interactive_baseline.py --mark-failed
           fi
 
-      - name: Upload curated baseline capture
+      - name: Upload curated stage inspection
         if: ${{ always() && inputs.session_mode == 'capture-only' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
