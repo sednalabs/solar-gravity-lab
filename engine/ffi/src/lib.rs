@@ -1042,8 +1042,8 @@ fn capture_session_snapshot(
     let session = registry
         .get(handle)
         .ok_or_else(|| status(SlStatusCode::NotReady))?;
-    let summary = snapshot_summary(&session.runtime)?;
     let snapshot = session.runtime.snapshot();
+    let summary = snapshot_summary_from_snapshot(&snapshot)?;
     let focus = snapshot.observer.focus_body_id.map(|id| id.0);
     let (checkpoint_id, checkpoint_label) = match snapshot.active_checkpoint {
         Some(checkpoint) => (Some(checkpoint.checkpoint_id.0), checkpoint.label),
@@ -1387,8 +1387,12 @@ fn cpu_acceleration_modes(cpu_backend: &CpuBackend, cpu_features: &[String]) -> 
 }
 
 fn snapshot_summary(runtime: &WorldRuntime) -> Result<SlSessionSnapshotSummary, SlResult> {
-    let snapshot = runtime.snapshot();
+    snapshot_summary_from_snapshot(&runtime.snapshot())
+}
 
+fn snapshot_summary_from_snapshot(
+    snapshot: &solarlab_runtime::WorldSnapshot,
+) -> Result<SlSessionSnapshotSummary, SlResult> {
     Ok(SlSessionSnapshotSummary {
         scenario_id: encode_identifier(&snapshot.scenario_id.0)?,
         scenario_id_len: string_length_to_u32(&snapshot.scenario_id.0),
