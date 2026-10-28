@@ -2,6 +2,9 @@ package com.sednalabs.solarlab.runtime
 
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -465,6 +468,41 @@ class BridgeBackedRuntimeFacadeTest {
             assertEquals(17L, facade.uiState.value.sessionHandle)
             assertEquals(null, facade.uiState.value.pendingActionLabel)
         }
+    }
+
+    @Test
+    fun boundaryCancellationIsRethrown() = runBlocking {
+        val bridge = object : RuntimeBridge {
+            override fun connect(): Flow<RuntimeSignal> = flowOf(RuntimeSignal.Connected(17L))
+            override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> = emptyList()
+            override suspend fun refresh(): List<RuntimeSignal> = throw CancellationException("cancel refresh")
+            override suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal> = throw CancellationException("cancel command")
+        }
+        val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+        facade.startSession()
+        for (command in listOf(false, true)) {
+            var propagated = false
+            try {
+                if (command) facade.applyCommand(RuntimeCommand.PausePlayback) else facade.refresh()
+            } catch (error: CancellationException) {
+                propagated = true
+            }
+            assertTrue(propagated)
+            assertEquals(SessionConnectionState.Active, facade.uiState.value.connectionState)
+        }
+    }
+
+    @Test
+    fun concurrentActionsRecordEachRequestOnce() = runBlocking {
+        val sink = RecordingTelemetrySink()
+        val facade = BridgeBackedRuntimeFacade(
+            FakeRuntimeBridge(flowOf(RuntimeSignal.Connected(17L))),
+            DeveloperTelemetryRecorder(maxEntries = 128, enabled = true, sinks = listOf(sink)),
+        )
+        facade.startSession()
+        (0 until 64).map { async(Dispatchers.Default) { facade.refresh() } }.awaitAll()
+        assertEquals(64, sink.events.count { it.category == "session.refresh" })
+        assertEquals(64, facade.uiState.value.developerTelemetry.entries.count { it.category == "session.refresh" })
     }
 
     @Test
