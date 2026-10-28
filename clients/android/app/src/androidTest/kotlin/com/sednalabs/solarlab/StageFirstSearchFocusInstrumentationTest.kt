@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
@@ -57,11 +58,16 @@ class StageFirstSearchFocusInstrumentationTest {
         }
         composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
 
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                    .assertTextContains("Earth")
-            }.isSuccess
+        var lastSelectionFailure: Throwable? = null
+        try {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                runCatching {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                        .assertTextContains("Earth")
+                }.onFailure { lastSelectionFailure = it }.isSuccess
+            }
+        } catch (failure: ComposeTimeoutException) {
+            throw AssertionError("Selection title did not update to Earth", lastSelectionFailure ?: failure)
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
