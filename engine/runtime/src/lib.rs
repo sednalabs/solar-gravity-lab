@@ -25,14 +25,14 @@ use solarlab_history::{
     HistoryEvent, OrbitArchive, OrbitArchiveFamily, OrbitArchiveQuery, OrbitSample,
 };
 use solarlab_physics::{
-    advance_authoritative_with_features, compute_invariants,
+    advance_authoritative_with_features, checked_substep_count, compute_invariants,
     solver_execution_report_for_backend_with_body_count, MassiveBodyState, PhysicsInvariants,
     PhysicsPolicy, SolverExecutionReport,
 };
 use solarlab_scene::{
-    CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody,
-    SceneBodyKind, SceneCelestialAppearance, SceneCometVisualGuide, ScenePacketMetadata,
-    SceneProvenanceRef, SceneTracer, SceneTrail, SceneTrailFamily,
+    CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody, SceneBodyKind,
+    SceneCelestialAppearance, SceneCometVisualGuide, ScenePacketMetadata, SceneProvenanceRef,
+    SceneTracer, SceneTrail, SceneTrailFamily,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -514,10 +514,16 @@ impl WorldRuntime {
         recorded_at_unix_ms: i64,
     ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
         match &command {
-            WorldCommand::AdvanceEpoch { delta_seconds }
-                if !delta_seconds.is_finite() || *delta_seconds <= 0.0 =>
-            {
-                return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
+            WorldCommand::AdvanceEpoch { delta_seconds } => {
+                let world = &self.active_branch().world;
+                if !delta_seconds.is_finite()
+                    || *delta_seconds <= 0.0
+                    || next_epoch(world.epoch_seconds, *delta_seconds).is_none()
+                    || (!world.bodies.is_empty()
+                        && checked_substep_count(&self.config.physics, *delta_seconds).is_none())
+                {
+                    return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
+                }
             }
             WorldCommand::SetPlaybackRate {
                 sim_seconds_per_real_second,
@@ -1884,6 +1890,12 @@ fn build_historical_orbit_archives(
         .collect()
 }
 
+// A positive delta can be absorbed by floating-point rounding at large epochs.
+fn next_epoch(epoch_seconds: f64, delta_seconds: f64) -> Option<f64> {
+    let next = epoch_seconds + delta_seconds;
+    (epoch_seconds.is_finite() && next.is_finite() && next > epoch_seconds).then_some(next)
+}
+
 fn build_prediction_archives(
     bodies: &[BodyState],
     starting_epoch_seconds: f64,
@@ -1893,7 +1905,10 @@ fn build_prediction_archives(
     physics_policy: &PhysicsPolicy,
     active_cpu_features: &[String],
 ) -> Vec<OrbitArchive> {
-    if prediction_step_seconds <= 0.0 || prediction_sample_count == 0 || body_ids.is_empty() {
+    if checked_substep_count(physics_policy, prediction_step_seconds).is_none()
+        || prediction_sample_count == 0
+        || body_ids.is_empty()
+    {
         return Vec::new();
     }
 
@@ -1908,6 +1923,9 @@ fn build_prediction_archives(
         .collect::<HashMap<_, _>>();
 
     for _ in 0..prediction_sample_count {
+        let Some(next_epoch_seconds) = next_epoch(epoch_seconds, prediction_step_seconds) else {
+            return Vec::new();
+        };
         let _ = advance_authoritative_with_features(
             physics_policy,
             &mut solver_bodies,
@@ -1915,7 +1933,7 @@ fn build_prediction_archives(
             active_cpu_features,
         );
         apply_solver_state_to_world_bodies(&mut projected_bodies, &solver_bodies);
-        epoch_seconds += prediction_step_seconds;
+        epoch_seconds = next_epoch_seconds;
 
         for body in projected_bodies
             .iter()
@@ -3063,6 +3081,121 @@ mod tests {
             .unwrap();
         assert_eq!(runtime.snapshot().playback.sim_seconds_per_real_second, 2.0);
         assert_eq!(runtime.snapshot().epoch_seconds, 30.0);
+    }
+
+    #[test]
+    fn rejects_unrepresentable_advance_before_mutation_but_allows_empty_world_jumps() {
+        let mut runtime = new_runtime();
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: f64::MAX,
+                },
+                1,
+            )
+            .unwrap();
+        let before = runtime.snapshot();
+        let ordinal = runtime.next_command_ordinal;
+        assert!(matches!(
+            runtime.apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: f64::MAX
+                },
+                2
+            ),
+            Err(RuntimeError::InvalidEpochDelta(_))
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(runtime.next_command_ordinal, ordinal);
+
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        runtime.config.physics.max_substep_seconds = f64::MIN_POSITIVE;
+        let before = runtime.snapshot();
+        let ordinal = runtime.next_command_ordinal;
+        assert!(matches!(
+            runtime.apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 1.0 }, 3),
+            Err(RuntimeError::InvalidEpochDelta(_))
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(runtime.next_command_ordinal, ordinal);
+        runtime.config.physics.max_substep_seconds = 60.0;
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 30.0,
+                },
+                4,
+            )
+            .unwrap();
+        assert_eq!(runtime.snapshot().epoch_seconds, 30.0);
+    }
+
+    #[test]
+    fn rejects_absorbed_epoch_delta_before_integrating_moving_bodies() {
+        let mut runtime = new_runtime();
+        runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: f64::MAX,
+                },
+                1,
+            )
+            .unwrap();
+        spawn_two_body_system(&mut runtime);
+        let before = runtime.snapshot();
+        let ordinal = runtime.next_command_ordinal;
+        assert!(matches!(
+            runtime.apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 1.0 }, 3),
+            Err(RuntimeError::InvalidEpochDelta(1.0))
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(runtime.next_command_ordinal, ordinal);
+    }
+
+    #[test]
+    fn prediction_rejects_absorbed_and_overflowing_epochs() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        runtime.config.physics.max_substep_seconds = f64::MAX;
+        let snapshot = runtime.snapshot();
+        let ids = vec![snapshot.bodies[0].body_id.clone()];
+        let predict = |epoch, delta, count| {
+            super::build_prediction_archives(
+                &snapshot.bodies,
+                epoch,
+                &ids,
+                delta,
+                count,
+                &runtime.config.physics,
+                &runtime.hardware_profile.cpu_features,
+            )
+        };
+        assert!(predict(f64::MAX, 1.0, 1).is_empty());
+        assert!(predict(f64::MAX / 2.0, f64::MAX / 2.0, 2).is_empty());
+        let normal = predict(0.0, 1.0, 2);
+        assert_eq!(normal.len(), 1);
+        assert_eq!(normal[0].samples[0].epoch_seconds, 1.0);
+        assert_eq!(normal[0].samples[1].epoch_seconds, 2.0);
+    }
+
+    #[test]
+    fn prediction_does_not_publish_samples_for_unrepresentable_steps() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        runtime.config.physics.max_substep_seconds = f64::MIN_POSITIVE;
+        let snapshot = runtime.snapshot();
+        let ids = vec![snapshot.bodies[0].body_id.clone()];
+        let archives = super::build_prediction_archives(
+            &snapshot.bodies,
+            snapshot.epoch_seconds,
+            &ids,
+            1.0,
+            2,
+            &runtime.config.physics,
+            &runtime.hardware_profile.cpu_features,
+        );
+        assert!(archives.is_empty());
     }
 
     #[test]

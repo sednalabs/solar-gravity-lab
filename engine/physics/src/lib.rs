@@ -592,22 +592,44 @@ const HOST_RELATIVE_SHORT_WINDOW_THRESHOLD_SIM_SECONDS_PER_REAL_SECOND: f64 = 2_
 const ADAPTIVE_TILED_SCHEDULER_MIN_BODIES: usize = 96;
 const ARM64_GRAVITY_TILE_SIZE_BODIES: usize = 32;
 
+// The exclusive bound avoids rounding usize::MAX up to 2^64 on 64-bit hosts.
+fn checked_substep_count_float(
+    delta_seconds: f64,
+    max_substep_seconds: f64,
+    exclusive_limit: f64,
+) -> Option<f64> {
+    if !delta_seconds.is_finite() || delta_seconds <= 0.0 {
+        return None;
+    }
+    let max_substep_seconds = if max_substep_seconds.is_finite() && max_substep_seconds > 0.0 {
+        max_substep_seconds
+    } else {
+        delta_seconds
+    };
+    let count = (delta_seconds / max_substep_seconds).ceil().max(1.0);
+    (count.is_finite() && count < exclusive_limit).then_some(count)
+}
+
+/// Returns the integration step count, or None when the requested plan is invalid
+/// or cannot be represented by the platform's usize. This does not limit work.
+#[must_use]
+pub fn checked_substep_count(policy: &PhysicsPolicy, delta_seconds: f64) -> Option<usize> {
+    let exclusive_limit = 2.0_f64.powi(usize::BITS as i32);
+    checked_substep_count_float(delta_seconds, policy.max_substep_seconds, exclusive_limit)
+        .map(|count| count as usize)
+}
+
 pub fn advance_authoritative_scalar(
     policy: &PhysicsPolicy,
     bodies: &mut [MassiveBodyState],
     delta_seconds: f64,
 ) -> PhysicsInvariants {
-    if bodies.is_empty() || !delta_seconds.is_finite() || delta_seconds <= 0.0 {
+    if bodies.is_empty() {
         return compute_invariants(bodies);
     }
-
-    let max_substep_seconds =
-        if policy.max_substep_seconds.is_finite() && policy.max_substep_seconds > 0.0 {
-            policy.max_substep_seconds
-        } else {
-            delta_seconds
-        };
-    let step_count = (delta_seconds / max_substep_seconds).ceil().max(1.0) as usize;
+    let Some(step_count) = checked_substep_count(policy, delta_seconds) else {
+        return compute_invariants(bodies);
+    };
     let dt_seconds = delta_seconds / step_count as f64;
 
     for _ in 0..step_count {
@@ -1051,17 +1073,12 @@ fn advance_authoritative_arm64(
     delta_seconds: f64,
     gravity_kernel: Arm64GravityKernel,
 ) -> PhysicsInvariants {
-    if bodies.is_empty() || !delta_seconds.is_finite() || delta_seconds <= 0.0 {
+    if bodies.is_empty() {
         return compute_invariants(bodies);
     }
-
-    let max_substep_seconds =
-        if policy.max_substep_seconds.is_finite() && policy.max_substep_seconds > 0.0 {
-            policy.max_substep_seconds
-        } else {
-            delta_seconds
-        };
-    let step_count = (delta_seconds / max_substep_seconds).ceil().max(1.0) as usize;
+    let Some(step_count) = checked_substep_count(policy, delta_seconds) else {
+        return compute_invariants(bodies);
+    };
     let dt_seconds = delta_seconds / step_count as f64;
 
     for _ in 0..step_count {
@@ -1846,6 +1863,57 @@ mod tests {
             assert_eq!(
                 advance_authoritative(&policy, &mut bodies, value).0,
                 expected_invariants
+            );
+            assert_eq!(bodies, initial);
+        }
+    }
+
+    #[test]
+    fn substep_count_checks_integer_boundaries_without_integrating() {
+        for bits in [32, 64] {
+            let limit = 2.0_f64.powi(bits);
+            let below = f64::from_bits(limit.to_bits() - 1).floor();
+            assert_eq!(
+                super::checked_substep_count_float(below, 1.0, limit),
+                Some(below)
+            );
+            assert_eq!(super::checked_substep_count_float(limit, 1.0, limit), None);
+            assert_eq!(
+                super::checked_substep_count_float(f64::MAX, f64::MIN_POSITIVE, limit),
+                None
+            );
+        }
+        assert_eq!(super::checked_substep_count(&test_policy(), 60.0), Some(60));
+    }
+
+    #[test]
+    fn unrepresentable_steps_leave_all_solver_paths_unchanged() {
+        let mut policy = test_policy();
+        policy.max_substep_seconds = f64::MIN_POSITIVE;
+        let initial = moon_earth_playback_scenario();
+        let expected = compute_invariants(&initial);
+        for delta in [1.0, f64::MAX] {
+            let mut bodies = initial.clone();
+            assert_eq!(
+                advance_authoritative_scalar(&policy, &mut bodies, delta),
+                expected
+            );
+            assert_eq!(bodies, initial);
+            let mut bodies = initial.clone();
+            assert_eq!(
+                advance_authoritative_arm64(
+                    &policy,
+                    &mut bodies,
+                    delta,
+                    Arm64GravityKernel::PortableScalarOracle
+                ),
+                expected
+            );
+            assert_eq!(bodies, initial);
+            let mut bodies = initial.clone();
+            assert_eq!(
+                super::advance_authoritative_x64(&policy, &mut bodies, delta),
+                expected
             );
             assert_eq!(bodies, initial);
         }
