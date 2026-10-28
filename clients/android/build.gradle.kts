@@ -1,7 +1,20 @@
+// Constraints apply only to the buildscript/plugin classpath.
+buildscript {
+    dependencies {
+        constraints {
+            add("classpath", "org.bouncycastle:bcprov-jdk18on:1.85")
+            add("classpath", "org.bouncycastle:bcpkix-jdk18on:1.85")
+            add("classpath", "org.bouncycastle:bcutil-jdk18on:1.85")
+            add("classpath", "com.google.guava:guava:33.7.2-jre")
+        }
+        add("classpath", platform("io.netty:netty-bom:4.1.137.Final"))
+    }
+}
+
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.jvm) apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.10" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.21" apply false
 }
