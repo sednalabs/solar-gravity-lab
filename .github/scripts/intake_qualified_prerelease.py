@@ -9,10 +9,9 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 import zipfile
 
-from download_interactive_build_artifact import GitHubApiClient, require_token, write_outputs
+from download_interactive_build_artifact import GITHUB_CREDENTIAL_ENV, GitHubApiClient, require_token, write_outputs
 
 REPOSITORY = "sednalabs/solar-gravity-lab"
 PACKAGE = "com.sednalabs.solarlab.internal"
@@ -101,9 +100,8 @@ def main() -> None:
     artifact_id = os.environ["PRERELEASE_ARTIFACT_ID"]
     source_sha = os.environ["PRERELEASE_SOURCE_SHA"]
     check_inputs(repository, run_id, artifact_id, source_sha)
-    output_dir = Path(sys.argv[1]).resolve()
-    analyzer = sys.argv[2]
-    client = GitHubApiClient(repository, require_token("GITHUB_TOKEN"))
+    output_dir = Path("dist/interactive-session/qualified-prerelease").resolve()
+    client = GitHubApiClient(repository, require_token(GITHUB_CREDENTIAL_ENV))
     run = client.get_json(f"/repos/{repository}/actions/runs/{run_id}")
     artifact = client.get_json(f"/repos/{repository}/actions/artifacts/{artifact_id}")
     archive_sha = check_identity(repository, run_id, artifact_id, run, artifact)
@@ -115,7 +113,7 @@ def main() -> None:
     apk_path = stage_apk(output_dir, apk)
 
     def apk_property(name: str) -> str:
-        return subprocess.check_output([analyzer, "manifest", name, str(apk_path)], text=True).strip()
+        return subprocess.check_output(["apkanalyzer", "manifest", name, str(apk_path)], text=True).strip()
 
     check_apk_properties(apk_property("application-id"), apk_property("debuggable"))
     (output_dir / "build-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")

@@ -43,7 +43,7 @@ def main():
     # The second valid fixture has a different producer workflow head and APK
     # source, as supported by dispatching a producer workflow with a ref input.
     cases = [
-        ("40724619488", "12831424050", "6e44a0ea66ee0f32f7f8638971a17f5e31e9ebf4", "6e44a0ea66ee0f32f7f8638971a17f5e31e9ebf4", b"fixture-one"),
+        ("90001", "80001", "a" * 40, "a" * 40, b"fixture-one"),
         ("90002", "80002", "b" * 40, "c" * 40, b"fixture-two"),
     ]
     for run_id, artifact_id, source_sha, workflow_sha, apk in cases:
@@ -93,7 +93,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         temp_dir = Path(temp)
         sentinel = temp_dir / "executed"
-        for filename in ("$(touch executed).apk", "`touch executed`.apk", "bad\ninjected=value.apk"):
+        for index, filename in enumerate(("$(touch executed).apk", "`touch executed`.apk", "bad\ninjected=value.apk")):
             malicious = copy.deepcopy(provenance)
             malicious["artifact_name"] = filename
             data = bundle(malicious, metadata, {"dist/" + filename: apk})
@@ -104,7 +104,7 @@ def main():
             assert staged == temp_dir / "qualified-prerelease.apk"
             assert staged.read_bytes() == apk
             assert actual_provenance["artifact_name"] == filename
-            output = temp_dir / "outputs"
+            output = temp_dir / f"outputs-{index}"
             intake.write_intake_outputs(output, {"apk_path": str(staged)})
             assert output.read_text() == f"apk_path={staged}\n"
             assert not sentinel.exists()

@@ -466,9 +466,7 @@ jobs:
           PRERELEASE_SOURCE_SHA: ${{ inputs.prerelease_source_sha }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/intake_qualified_prerelease.py \
-            "${INTERACTIVE_SESSION_ROOT}/qualified-prerelease" \
-            "${ANDROID_SDK_ROOT_DEFAULT}/cmdline-tools/latest/bin/apkanalyzer"
+          python3 .github/scripts/intake_qualified_prerelease.py
 
       - name: Assemble debug APK for interactive session
         id: assemble_debug
