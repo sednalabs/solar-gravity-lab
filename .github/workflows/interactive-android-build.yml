@@ -1,95 +1,78 @@
-name: interactive-android-build
-
+# Temporary qualification harness; never merge or reuse as a product workflow.
+name: temporary-inline-qualification
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Branch, tag, or commit to build for interactive reuse
-        required: false
-        type: string
-      android_validation_mode:
-        description: Which Android runtime posture to build for hosted debugging
-        required: true
-        type: choice
-        options:
-          - shell-v2
-          - stage-first-runtime
-        default: stage-first-runtime
-      interactive_debug_profile:
-        description: Runtime posture for the hosted debug build artifact
-        required: true
-        type: choice
-        options:
-          - hosted-debug-lite
-          - full-fidelity
-        default: hosted-debug-lite
-
-concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref != '' && inputs.ref || github.ref_name }}-${{ inputs.android_validation_mode }}-${{ inputs.interactive_debug_profile }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
-
 env:
-  STANDALONE_GRADLE_CACHE_DIR: ~/.cache/standalone-gradle
+  ANDROID_SDK_ROOT_DEFAULT: /usr/local/lib/android/sdk
   ANDROID_PLATFORM_PACKAGE: "platforms;android-36"
   ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;36.0.0"
-  ANDROID_SYSTEM_IMAGE_PACKAGE: "system-images;android-35;google_apis;x86_64"
   ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
   ANDROID_NDK_VERSION: "27.3.13750724"
   ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  INTERACTIVE_SESSION_ROOT: dist/interactive-session
   INTERACTIVE_APP_PACKAGE: com.sednalabs.solarlab
   INTERACTIVE_APP_ACTIVITY: com.sednalabs.solarlab.MainActivity
-  SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
-  SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
-  SCCACHE_REGION: auto
-  SCCACHE_S3_USE_SSL: "true"
-  SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
-  SCCACHE_AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID }}
-  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY }}
-  SCCACHE_CREDENTIAL_SOURCE: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && 'dedicated-sccache-secrets' || 'shared-r2-secrets' }}
-
 jobs:
-  build-interactive-artifact:
-    name: Build reusable interactive Android artifact
+  inline-qualification:
     runs-on: ubuntu-24.04
-    outputs:
-      artifact_name: ${{ steps.plan.outputs.artifact_name }}
-      checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
-      commit_sha: ${{ steps.plan.outputs.commit_sha }}
-      version_name: ${{ steps.bundle.outputs.version_name }}
+    timeout-minutes: 120
     env:
-      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
-      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
-      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      GRADLE_REMOTE_CACHE_PUSH: "true"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      RUSTC_WRAPPER: ""
     steps:
+      - name: Isolate Gradle user home
+        shell: bash
+        run: printf 'GRADLE_USER_HOME=%s/interactive-gradle-home\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
+          persist-credentials: false
+          ref: ${{ github.sha }}
 
-      - name: Resolve interactive build plan
-        id: plan
+      - name: Resolve interactive session plan
+        id: session_plan
         shell: bash
         env:
-          INPUT_REF: ${{ inputs.ref }}
-          INPUT_VALIDATION_MODE: ${{ inputs.android_validation_mode }}
-          INPUT_DEBUG_PROFILE: ${{ inputs.interactive_debug_profile }}
+          INPUT_BUILD_SOURCE: "inline"
+          INPUT_BUILD_RUN_ID: ""
+          INPUT_ARTIFACT_NAME: ""
+          INPUT_VALIDATION_MODE: "stage-first-runtime"
+          INPUT_DEBUG_PROFILE: "hosted-debug-lite"
+          INPUT_BOOT_STRATEGY: "cold"
+          INPUT_TIMEOUT_MINUTES: "90"
+          INPUT_KEEP_SESSION_ON_FAILURE: "false"
         run: |
           set -euo pipefail
 
-          checkout_ref="${INPUT_REF:-}"
-          if [[ -z "${checkout_ref}" ]]; then
-            checkout_ref="${GITHUB_REF_NAME}"
+          checkout_ref="${GITHUB_REF}"
+          commit_sha="$(git rev-parse HEAD)"
+          if [[ "${commit_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Checkout does not match the selected workflow commit" >&2
+            exit 1
+          fi
+          if [[ "${INPUT_BOOT_STRATEGY}" != "cold" ]]; then
+            echo "Only cold emulator boot is supported" >&2
+            exit 1
+          fi
+
+          session_timeout_minutes="${INPUT_TIMEOUT_MINUTES:-90}"
+          if ! [[ "${session_timeout_minutes}" =~ ^[0-9]+$ ]]; then
+            echo "session_timeout_minutes must be an integer minute count" >&2
+            exit 1
+          fi
+          if (( session_timeout_minutes < 30 )); then
+            session_timeout_minutes=30
+          fi
+          if (( session_timeout_minutes > 180 )); then
+            session_timeout_minutes=180
           fi
 
           debug_stage_first_client="true"
           preferred_gpu_backend="vulkan"
+          hosted_debug_lite_mode="false"
           case "${INPUT_VALIDATION_MODE}" in
             shell-v2)
               debug_stage_first_client="false"
@@ -105,35 +88,76 @@ jobs:
               ;;
           esac
 
-          artifact_name="interactive-android-build-${INPUT_VALIDATION_MODE}-${INPUT_DEBUG_PROFILE}"
+          case "${INPUT_DEBUG_PROFILE}" in
+            full-fidelity)
+              hosted_debug_lite_mode="false"
+              ;;
+            hosted-debug-lite)
+              hosted_debug_lite_mode="true"
+              ;;
+            *)
+              echo "Unsupported interactive_debug_profile: ${INPUT_DEBUG_PROFILE}" >&2
+              exit 1
+              ;;
+          esac
+
+          build_source="${INPUT_BUILD_SOURCE:-artifact}"
+          if [[ "live" == "capture-only" && "${build_source}" != "qualified-prerelease" ]]; then
+            echo "capture-only requires a qualified prerelease" >&2
+            exit 1
+          fi
+          case "${build_source}" in
+            artifact|inline|qualified-prerelease)
+              ;;
+            *)
+              echo "Unsupported build_source: ${build_source}" >&2
+              exit 1
+              ;;
+          esac
+
+          artifact_name="${INPUT_ARTIFACT_NAME:-}"
+          if [[ -z "${artifact_name}" ]]; then
+            artifact_name="interactive-android-build-${INPUT_VALIDATION_MODE}-${INPUT_DEBUG_PROFILE}"
+          fi
 
           {
             echo "checkout_ref=${checkout_ref}"
-            echo "commit_sha=$(git rev-parse HEAD)"
+            echo "commit_sha=${commit_sha}"
+            echo "build_source=${build_source}"
+            echo "build_run_id=${INPUT_BUILD_RUN_ID}"
             echo "artifact_name=${artifact_name}"
+            echo "android_validation_mode=${INPUT_VALIDATION_MODE}"
+            echo "interactive_debug_profile=${INPUT_DEBUG_PROFILE}"
+            echo "emulator_boot_strategy=${INPUT_BOOT_STRATEGY}"
+            echo "session_timeout_minutes=${session_timeout_minutes}"
+            echo "keep_session_on_failure=${INPUT_KEEP_SESSION_ON_FAILURE}"
             echo "debug_stage_first_client=${debug_stage_first_client}"
             echo "preferred_gpu_backend=${preferred_gpu_backend}"
+            echo "hosted_debug_lite_mode=${hosted_debug_lite_mode}"
           } >> "${GITHUB_OUTPUT}"
 
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        if: ${{ steps.session_plan.outputs.build_source != 'artifact' }}
         with:
           distribution: temurin
           java-version: "17"
 
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         with:
-          cache-read-only: false
-          cache-cleanup: on-success
+          cache-disabled: true
           add-job-summary: on-failure
-          gradle-home-cache-excludes: |
-            caches/build-cache-1
 
       - uses: ./.github/actions/prepare-android-sdk
         with:
-          sdk-root: /usr/local/lib/android/sdk
+          sdk-root: ${{ env.ANDROID_SDK_ROOT_DEFAULT }}
           ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Accept Android SDK licenses and install build toolchain
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Accept Android SDK licenses and install Android build toolchain
+        id: android_sdk_build_install
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -145,39 +169,39 @@ jobs:
             "${ANDROID_NDK_PACKAGE}"
 
       - name: Install Rust Android toolchain
+        id: rust_android_toolchain
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
+          phase_start="$(date +%s)"
           rustup target add aarch64-linux-android x86_64-linux-android
-          if ! command -v cargo-ndk >/dev/null 2>&1; then
+          if command -v cargo-ndk >/dev/null 2>&1; then
+            echo "cargo-ndk already available."
+          else
             cargo install cargo-ndk --locked
           fi
+          phase_end="$(date +%s)"
+          echo "rust_android_toolchain_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
 
-      - uses: ./.github/actions/rust-shared-cache
-        with:
-          shared-key: solarlab-rust-interactive-android-${{ runner.os }}-${{ runner.arch }}
-
-      - uses: ./.github/actions/install-sccache
-        with:
-          version: v0.10.0
-
-      - name: Configure sccache
-        shell: bash
-        run: bash .github/scripts/configure_sccache.sh
-
-      - name: Assemble debug APK for interactive artifact
+      - name: Assemble debug APK for interactive session
+        id: assemble_debug
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
+          phase_start="$(date +%s)"
           ./gradlew -p clients/android \
-            --parallel \
-            :app:assembleDebug \
-            -Psolarlab.debugStageFirstClient=${{ steps.plan.outputs.debug_stage_first_client }} \
-            -Psolarlab.preferredGpuBackend=${{ steps.plan.outputs.preferred_gpu_backend }} \
-            -Psolarlab.hostedDebugProfile=${{ inputs.interactive_debug_profile }}
+            :app:assembleDebug --no-build-cache --no-configuration-cache \
+            -Psolarlab.debugStageFirstClient=${{ steps.session_plan.outputs.debug_stage_first_client }} \
+            -Psolarlab.preferredGpuBackend=${{ steps.session_plan.outputs.preferred_gpu_backend }} \
+            -Psolarlab.hostedDebugProfile=${{ steps.session_plan.outputs.interactive_debug_profile }}
+          phase_end="$(date +%s)"
+          echo "assemble_seconds=$((phase_end - phase_start))" >> "${GITHUB_OUTPUT}"
 
       - name: Derive debug APK metadata
         id: apk_meta
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -189,50 +213,132 @@ jobs:
               Path("clients/android/app/build/outputs/apk/debug/output-metadata.json").read_text()
           )
           element = metadata["elements"][0]
+          version_name = element["versionName"]
+          safe_version = "".join(
+              ch if ch.isalnum() or ch in "._-" else "-"
+              for ch in version_name
+          )
           print(f"apk_name={element['outputFile']}")
-          print(f"version_name={element['versionName']}")
+          print(f"version_name={version_name}")
+          print(f"safe_version={safe_version}")
           PY
 
-      - name: Stage canonical interactive build bundle
-        id: bundle
+      - name: Stage inline interactive build bundle
+        id: stage_inline_build
+        if: ${{ steps.session_plan.outputs.build_source == 'inline' }}
         shell: bash
         run: |
           set -euo pipefail
           python3 .github/scripts/stage_interactive_build_bundle.py \
             --apk-path "clients/android/app/build/outputs/apk/debug/${{ steps.apk_meta.outputs.apk_name }}" \
-            --output-dir "dist/interactive-build-bundle" \
-            --artifact-name "${{ steps.plan.outputs.artifact_name }}" \
+            --output-dir "${INTERACTIVE_SESSION_ROOT}/build-cache/run-${{ github.run_id }}/${{ steps.session_plan.outputs.artifact_name }}" \
+            --artifact-name "${{ steps.session_plan.outputs.artifact_name }}" \
             --repository "${{ github.repository }}" \
-            --workflow "interactive-android-build" \
+            --workflow "temporary-inline-qualification" \
             --run-id "${{ github.run_id }}" \
             --run-attempt "${{ github.run_attempt }}" \
-            --checkout-ref "${{ steps.plan.outputs.checkout_ref }}" \
-            --commit-sha "${{ steps.plan.outputs.commit_sha }}" \
-            --android-validation-mode "${{ inputs.android_validation_mode }}" \
-            --interactive-debug-profile "${{ inputs.interactive_debug_profile }}" \
-            --preferred-gpu-backend "${{ steps.plan.outputs.preferred_gpu_backend }}" \
+            --checkout-ref "${{ steps.session_plan.outputs.checkout_ref }}" \
+            --commit-sha "${{ steps.session_plan.outputs.commit_sha }}" \
+            --android-validation-mode "${{ steps.session_plan.outputs.android_validation_mode }}" \
+            --interactive-debug-profile "${{ steps.session_plan.outputs.interactive_debug_profile }}" \
+            --preferred-gpu-backend "${{ steps.session_plan.outputs.preferred_gpu_backend }}" \
             --package-name "${INTERACTIVE_APP_PACKAGE}" \
             --activity-name "${INTERACTIVE_APP_ACTIVITY}" \
             --version-name "${{ steps.apk_meta.outputs.version_name }}" \
             --github-output "${GITHUB_OUTPUT}"
 
-      - name: Emit interactive build summary
+      - name: Resolve interactive build inputs
+        id: active_build
         shell: bash
+        env:
+          QUALIFIED_ARTIFACT_NAME: ${{ steps.qualified_prerelease.outputs.artifact_name }}
+          QUALIFIED_RUN_ID: ${{ steps.qualified_prerelease.outputs.build_run_id }}
+          QUALIFIED_RUN_ATTEMPT: ${{ steps.qualified_prerelease.outputs.build_run_attempt }}
+          QUALIFIED_COMMIT_SHA: ${{ steps.qualified_prerelease.outputs.build_commit_sha }}
+          QUALIFIED_BUNDLE_DIR: ${{ steps.qualified_prerelease.outputs.bundle_dir }}
+          QUALIFIED_MANIFEST_PATH: ${{ steps.qualified_prerelease.outputs.manifest_path }}
+          QUALIFIED_APK_PATH: ${{ steps.qualified_prerelease.outputs.apk_path }}
+          QUALIFIED_APK_SHA: ${{ steps.qualified_prerelease.outputs.apk_sha256 }}
+          QUALIFIED_PACKAGE: ${{ steps.qualified_prerelease.outputs.package_name }}
+          QUALIFIED_ACTIVITY: ${{ steps.qualified_prerelease.outputs.activity_name }}
         run: |
-          {
-            echo "## interactive-android-build"
-            echo "- ref: \`${{ steps.plan.outputs.checkout_ref }}\`"
-            echo "- commit: \`${{ steps.plan.outputs.commit_sha }}\`"
-            echo "- artifact: \`${{ steps.plan.outputs.artifact_name }}\`"
-            echo "- validation mode: \`${{ inputs.android_validation_mode }}\`"
-            echo "- debug profile: \`${{ inputs.interactive_debug_profile }}\`"
-            echo "- preferred GPU backend: \`${{ steps.plan.outputs.preferred_gpu_backend }}\`"
-            echo "- version: \`${{ steps.bundle.outputs.version_name }}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          set -euo pipefail
+          if [[ "${{ steps.session_plan.outputs.build_source }}" == "artifact" ]]; then
+            {
+              echo "artifact_name=${{ steps.resolve_build_artifact.outputs.artifact_name }}"
+              echo "build_run_id=${{ steps.resolve_build_artifact.outputs.build_run_id }}"
+              echo "build_run_attempt=${{ steps.resolve_build_artifact.outputs.build_run_attempt }}"
+              echo "build_commit_sha=${{ steps.resolve_build_artifact.outputs.build_commit_sha }}"
+              echo "bundle_dir=${{ steps.resolve_build_artifact.outputs.bundle_dir }}"
+              echo "manifest_path=${{ steps.resolve_build_artifact.outputs.manifest_path }}"
+              echo "apk_path=${{ steps.resolve_build_artifact.outputs.apk_path }}"
+              echo "apk_sha256=${{ steps.resolve_build_artifact.outputs.apk_sha256 }}"
+            } >> "${GITHUB_OUTPUT}"
+          elif [[ "${{ steps.session_plan.outputs.build_source }}" == "qualified-prerelease" ]]; then
+            {
+              echo "artifact_name=${QUALIFIED_ARTIFACT_NAME}"
+              echo "build_run_id=${QUALIFIED_RUN_ID}"
+              echo "build_run_attempt=${QUALIFIED_RUN_ATTEMPT}"
+              echo "build_commit_sha=${QUALIFIED_COMMIT_SHA}"
+              echo "bundle_dir=${QUALIFIED_BUNDLE_DIR}"
+              echo "manifest_path=${QUALIFIED_MANIFEST_PATH}"
+              echo "apk_path=${QUALIFIED_APK_PATH}"
+              echo "apk_sha256=${QUALIFIED_APK_SHA}"
+              echo "package_name=${QUALIFIED_PACKAGE}"
+              echo "activity_name=${QUALIFIED_ACTIVITY}"
+              echo "validation_mode=prerelease"
+              echo "debug_profile=prerelease-non-debuggable"
+              echo "gpu_backend=unknown"
+            } >> "${GITHUB_OUTPUT}"
+          else
+            {
+              echo "artifact_name=${{ steps.stage_inline_build.outputs.artifact_name }}"
+              echo "build_run_id=${{ github.run_id }}"
+              echo "build_run_attempt=${{ github.run_attempt }}"
+              echo "build_commit_sha=${{ steps.session_plan.outputs.commit_sha }}"
+              echo "bundle_dir=${{ steps.stage_inline_build.outputs.bundle_dir }}"
+              echo "manifest_path=${{ steps.stage_inline_build.outputs.manifest_path }}"
+              echo "apk_path=${{ steps.stage_inline_build.outputs.apk_path }}"
+              echo "apk_sha256=${{ steps.stage_inline_build.outputs.apk_sha256 }}"
+            } >> "${GITHUB_OUTPUT}"
+          fi
+          if [[ "${{ steps.session_plan.outputs.build_source }}" != "qualified-prerelease" ]]; then
+            {
+              echo "package_name=${INTERACTIVE_APP_PACKAGE}"
+              echo "activity_name=${INTERACTIVE_APP_ACTIVITY}"
+              echo "validation_mode=${{ steps.session_plan.outputs.android_validation_mode }}"
+              echo "debug_profile=${{ steps.session_plan.outputs.interactive_debug_profile }}"
+              echo "gpu_backend=${{ steps.session_plan.outputs.preferred_gpu_backend }}"
+            } >> "${GITHUB_OUTPUT}"
+          fi
 
-      - name: Upload interactive build artifact
+      - name: Verify staged bundle
+        shell: bash
+        env:
+          MANIFEST_PATH: ${{ steps.active_build.outputs.manifest_path }}
+          APK_PATH: ${{ steps.active_build.outputs.apk_path }}
+          APK_SHA: ${{ steps.active_build.outputs.apk_sha256 }}
+          BUILD_SHA: ${{ steps.active_build.outputs.build_commit_sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYVERIFY'
+          import hashlib, json, os
+          from pathlib import Path
+          apk = Path(os.environ["APK_PATH"])
+          manifest = json.loads(Path(os.environ["MANIFEST_PATH"]).read_text())
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          assert digest == os.environ["APK_SHA"] == manifest["apk_sha256"]
+          assert apk.name == manifest["apk_filename"]
+          assert manifest["commit_sha"] == os.environ["BUILD_SHA"] == os.environ["GITHUB_SHA"]
+          assert manifest["workflow"] == "temporary-inline-qualification"
+          print("Staged APK and manifest match the selected workflow commit and digest.")
+          PYVERIFY
+
+      - name: Upload qualified build evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ${{ steps.plan.outputs.artifact_name }}
+          name: temporary-inline-build-${{ github.run_id }}
           if-no-files-found: error
-          path: dist/interactive-build-bundle/**
+          path: |
+            ${{ steps.active_build.outputs.manifest_path }}
+            ${{ steps.active_build.outputs.apk_path }}
