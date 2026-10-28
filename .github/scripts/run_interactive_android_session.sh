@@ -687,6 +687,36 @@ logcat_pid=""
 final_status="failure"
 final_reason="session_not_started"
 capture_failure_stage="startup"
+input_profile_dir="dist/interactive-input-profile"
+input_profile_serial=""
+input_profile_original="unknown"
+input_profile_ime="unknown"
+input_profile_simulation="unknown"
+input_profile_qemu="unknown"
+input_profile_api="unknown"
+input_profile_setup="not_started"
+input_profile_readback="unknown"
+input_profile_restoration="not_required"
+input_profile_restore_readback="unknown"
+input_profile_may_need_restore="false"
+
+write_input_profile() {
+  mkdir -p "${input_profile_dir}"
+  python3 - "${input_profile_dir}/input-profile.json" "${input_profile_serial}" "${input_profile_original}" \
+    "${input_profile_ime}" "${input_profile_simulation}" "${input_profile_qemu}" "${input_profile_api}" \
+    "${input_profile_setup}" "${input_profile_readback}" "${input_profile_restoration}" "${input_profile_restore_readback}" <<'PYPROFILE'
+import json
+from pathlib import Path
+import sys
+path, serial, original, ime, simulation, qemu, api, setup, readback, restoration, restored = sys.argv[1:]
+payload = {"profile": "ordinary_keyboard_touch", "stylus_support_tested": False,
+           "serial": serial, "original_stylus_handwriting_enabled": None if original == "null" else original,
+           "selected_ime": ime, "simulate_stylus_with_touch": simulation, "qemu": qemu, "api": api,
+           "setup": setup, "setup_readback": readback, "restoration": restoration,
+           "restoration_readback": None if restored == "null" else restored}
+Path(path).write_text(json.dumps(payload, indent=2) + "\n")
+PYPROFILE
+}
 
 cleanup() {
   if [[ "${session_mode}" == "live" ]]; then
@@ -701,8 +731,28 @@ cleanup() {
   done
 
   if [[ "${session_mode}" == "capture-only" ]]; then
+    if [[ "${input_profile_may_need_restore}" == "true" ]]; then
+      input_profile_restoration="failed"
+      input_profile_restore_command="ok"
+      if [[ "${input_profile_original}" == "null" ]]; then
+        timeout 20s adb -s "${input_profile_serial}" shell settings delete secure stylus_handwriting_enabled >/dev/null 2>&1 || input_profile_restore_command="failed"
+      else
+        timeout 20s adb -s "${input_profile_serial}" shell settings put secure stylus_handwriting_enabled "${input_profile_original}" >/dev/null 2>&1 || input_profile_restore_command="failed"
+      fi
+      if input_profile_restore_readback="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure stylus_handwriting_enabled 2>/dev/null | tr -d '\r')" &&
+        [[ "${input_profile_restore_command}" == "ok" && "${input_profile_restore_readback}" == "${input_profile_original}" ]]; then
+        input_profile_restoration="verified"
+      else
+        final_status="failure"
+        capture_failure_stage="input_profile_restore"
+      fi
+    fi
+    write_input_profile || { final_status="failure"; capture_failure_stage="input_profile_restore"; }
     if [[ "${final_status}" != "success" ]]; then
       INTERACTIVE_CAPTURE_FAILURE_STAGE="${capture_failure_stage}" python3 .github/scripts/capture_interactive_baseline.py --mark-failed >/dev/null 2>&1 || true
+      if [[ "${capture_failure_stage}" == "input_profile_restore" ]]; then
+        exit 1
+      fi
     fi
     return
   fi
@@ -728,6 +778,39 @@ trap cleanup EXIT
 
 capture_failure_stage="emulator"
 adb wait-for-device
+if [[ "${session_mode}" == "capture-only" ]]; then
+  capture_failure_stage="input_profile"
+  input_profile_setup="failed"
+  input_profile_serial="${openai_default_serial}"
+  if ! [[ "${input_profile_serial}" =~ ^emulator-[0-9]+$ ]] ||
+     [[ -n "${ANDROID_SERIAL:-}" && "${ANDROID_SERIAL}" != "${input_profile_serial}" ]]; then
+    exit 1
+  fi
+  export ANDROID_SERIAL="${input_profile_serial}"
+  input_profile_qemu="$(timeout 20s adb -s "${input_profile_serial}" shell getprop ro.kernel.qemu | tr -d '\r')"
+  input_profile_api="$(timeout 20s adb -s "${input_profile_serial}" shell getprop ro.build.version.sdk | tr -d '\r')"
+  if [[ "${input_profile_qemu}" != "1" || "${input_profile_api}" != "35" ]]; then
+    exit 1
+  fi
+  input_profile_original="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure stylus_handwriting_enabled | tr -d '\r')"
+  if ! [[ "${input_profile_original}" == "null" || "${input_profile_original}" =~ ^[0-9]+$ ]]; then
+    exit 1
+  fi
+  input_profile_ime="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure default_input_method | tr -d '\r')"
+  input_profile_simulation="$(timeout 20s adb -s "${input_profile_serial}" shell getprop persist.debug.input.simulate_stylus_with_touch | tr -d '\r')"
+  if [[ -z "${input_profile_ime}" || ${#input_profile_ime} -gt 160 || ${#input_profile_simulation} -gt 32 ]]; then
+    exit 1
+  fi
+  input_profile_may_need_restore="true"
+  write_input_profile
+  timeout 20s adb -s "${input_profile_serial}" shell settings put secure stylus_handwriting_enabled 0 >/dev/null
+  input_profile_readback="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure stylus_handwriting_enabled | tr -d '\r')"
+  if [[ "${input_profile_readback}" != "0" ]]; then
+    exit 1
+  fi
+  input_profile_setup="verified_0"
+  write_input_profile
+fi
 adb logcat -c || true
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
 adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1 || true

@@ -641,6 +641,7 @@ jobs:
           path: |
             dist/interactive-capture/
             dist/interactive-launcher-recovery/
+            dist/interactive-input-profile/
 
       - name: Build interactive session summary payload
         if: ${{ always() && inputs.session_mode != 'capture-only' }}

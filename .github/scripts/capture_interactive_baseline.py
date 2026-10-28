@@ -560,7 +560,7 @@ def phase_record(phase: str) -> None:
 FAILURE_STAGES = {"startup", "emulator", "provider", "preflight", "baseline_foreground",
     "baseline_config", "baseline_observe", "baseline_provider", "baseline_receipt", "baseline_image",
     "baseline_hierarchy", "baseline_quarantine", "baseline_package", "baseline_provenance", "baseline_publish",
-    "launcher_recovery", "help", "frame", "home", "controls", "search",
+    "launcher_recovery", "input_profile", "input_profile_restore", "help", "frame", "home", "controls", "search",
     "close-search", "reopen-search", "type-earth", "focus-earth", "reopen-search-again",
     "type-earth-again", "focus-earth-again", "collapse", "unknown"}
 
