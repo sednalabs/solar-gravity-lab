@@ -74,37 +74,39 @@ jobs:
                       int matches = 0
                       int unresolved = 0
                       boolean truncated = false
-                      def walk
-                      walk = { component, path, seen ->
-                        if (path.size() > 30 || visited >= 200000) {
-                          truncated = true
-                          return
-                        }
-                        component.dependencies.each { dependency ->
+                      // Breadth-first search inspects each selected component once.
+                      // Every target edge from an inspected component is reported,
+                      // with one shortest representative path, not every root path.
+                      def queue = new ArrayDeque()
+                      def first = result.root
+                      def seen = [first.id] as Set
+                      queue.add([component: first, path: [safe(project.path)]])
+                      while (!queue.isEmpty() && !truncated) {
+                        def current = queue.removeFirst()
+                        for (def dependency : current.component.dependencies) {
                           if (visited >= 200000) {
                             truncated = true
-                          } else {
-                            visited++
-                            if (dependency instanceof UnresolvedDependencyResult) {
-                              unresolved++
-                              emit("UNRESOLVED ${safe(label)} ${safe(dependency.requested)}")
-                            } else if (dependency instanceof ResolvedDependencyResult) {
-                              def selected = dependency.selected
-                              def id = selected.id
-                              def nextPath = path + [safe(id.displayName)]
-                              if (id instanceof ModuleComponentIdentifier && targets.contains("${id.group}:${id.module}".toString())) {
-                                matches++
-                                def reasons = selected.selectionReason.descriptions.collect { safe(it.description) }.join('; ')
-                                emit("MATCH ${safe(label)} ${safe(id.displayName)} REQUESTED ${safe(dependency.requested)} REASONS ${reasons} PATH ${nextPath.join(' > ')}")
-                              }
-                              if (!seen.contains(id)) {
-                                walk(selected, nextPath, seen + [id])
-                              }
+                            break
+                          }
+                          visited++
+                          if (dependency instanceof UnresolvedDependencyResult) {
+                            unresolved++
+                            emit("UNRESOLVED ${safe(label)} FROM ${safe(current.component.id.displayName)} ${safe(dependency.requested)}")
+                          } else if (dependency instanceof ResolvedDependencyResult) {
+                            def selected = dependency.selected
+                            def id = selected.id
+                            def nextPath = current.path + [safe(id.displayName)]
+                            if (id instanceof ModuleComponentIdentifier && targets.contains("${id.group}:${id.module}".toString())) {
+                              matches++
+                              def reasons = selected.selectionReason.descriptions.collect { safe(it.description) }.join('; ')
+                              emit("MATCH ${safe(label)} ${safe(id.displayName)} REQUESTED ${safe(dependency.requested)} FROM ${safe(current.component.id.displayName)} REASONS ${reasons} REPRESENTATIVE_PATH ${nextPath.join(' > ')}")
+                            }
+                            if (seen.add(id)) {
+                              queue.add([component: selected, path: nextPath])
                             }
                           }
                         }
                       }
-                      walk(result.root, [safe(project.path)], [] as Set)
                       emit("CONFIG ${safe(label)} END matches=${matches} unresolved=${unresolved} truncated=${truncated}")
                     } catch (Exception ignored) {
                       emit("CONFIG ${safe(label)} FAILED resolution-error")
@@ -133,6 +135,7 @@ jobs:
                     }
                   }
                 }
+                emit('PATH_COVERAGE one shortest representative path per inspected incoming edge; not all root paths')
                 emit('APK_MEMBERSHIP UNKNOWN: no exact-candidate APK inspected')
               }
             }
