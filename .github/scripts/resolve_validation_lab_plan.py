@@ -59,10 +59,32 @@ def path_matches(path: str, prefixes: tuple[str, ...], names: tuple[str, ...] = 
     return path in names or path.startswith(prefixes)
 
 
-def is_workflow_or_validation_tool(path: str) -> bool:
-    return path.startswith(".github/workflows/") or path.startswith(".github/actions/") or path.startswith(
-        ".github/scripts/"
-    )
+def is_other_consumer_surface(path: str) -> bool:
+    # These paths are owned by other workflows or by the cache service, not
+    # validation-lab's runtime jobs. Unknown CI files still take the full route.
+    return path.startswith("infra/gradle-cache-service/") or path in {
+        ".github/workflows/release-notes-from-inventory.yml",
+        ".github/workflows/security-sarif.yml",
+        ".github/workflows/gradle-cache-service.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/codeql-query-tests.yml",
+        ".github/workflows/interactive-android-build.yml",
+        ".github/workflows/interactive-android-session.yml",
+        ".github/scripts/render_release_notes.py",
+        ".github/scripts/generate_release_changelog.py",
+        ".github/scripts/resolve_prerelease_apk_request.py",
+        ".github/scripts/test_prerelease_apk_request.py",
+        ".github/scripts/download_interactive_build_artifact.py",
+        ".github/scripts/test_download_interactive_build_artifact.py",
+        ".github/scripts/stage_interactive_build_bundle.py",
+        ".github/scripts/run_interactive_android_preflight.sh",
+        ".github/scripts/run_interactive_android_session.sh",
+        ".github/scripts/install_cloudflared.sh",
+        ".github/scripts/write_interactive_openai_loop_config.py",
+        ".github/scripts/inventory_claim_surfaces.py",
+        ".github/scripts/test_inventory_claim_surfaces.py",
+        ".github/scripts/test_codeql_static_workflow.py",
+    }
 
 
 def is_docs_only(files: list[str]) -> bool:
@@ -253,6 +275,10 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
         "runtime_scene_telemetry": False,
     }
 
+    if profile in {"broad", "full"}:
+        apply_lane_set(lanes, "full", profile)
+        return lanes, "explicit checkpoint profile enables all runtime lanes"
+
     if evidence_reused and not files:
         return lanes, "exact same-PR validation evidence was reused; no validation-lab-owned runtime lanes changed"
 
@@ -263,11 +289,19 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
     if is_docs_only(files):
         return lanes, "documentation-only change; docs-sanity owns this surface"
 
-    if any(is_workflow_or_validation_tool(path) for path in files):
-        for lane in lanes:
-            if lane != "wrapper_bootstrap":
-                lanes[lane] = True
-        return lanes, "workflow or validation tooling changed, so validation-lab uses a full checkpoint"
+    files = [path for path in files if not is_docs_only([path]) and not is_other_consumer_surface(path)]
+    if not files:
+        return lanes, "change is owned by other consumers; no validation-lab runtime lanes changed"
+
+    # Classify each path independently: an unknown file must not hide behind a
+    # known product path in a mixed diff. Shared tooling therefore stays broad.
+    if any(
+        path.startswith(".github/")
+        or not (has_rust_surface([path]) or has_android_surface([path]) or has_arm64_surface([path]))
+        for path in files
+    ):
+        apply_lane_set(lanes, "full", profile)
+        return lanes, "unknown or shared validation surface changed, so validation-lab uses a full checkpoint"
 
     if has_rust_surface(files):
         lanes["rust_workspace"] = True
@@ -290,11 +324,6 @@ def route_auto_lanes(files: list[str], profile: str, evidence_reused: bool) -> t
     if profile == "frontier":
         if lanes["rust_workspace"] or lanes["android_unit"] or lanes["android_lint"]:
             lanes["android_shell"] = lanes["android_shell"] or has_android_surface(files)
-    if profile in {"broad", "full"}:
-        for lane in lanes:
-            if lane != "wrapper_bootstrap":
-                lanes[lane] = True
-
     if not any(lanes.values()):
         lanes["rust_workspace"] = True
         return lanes, "change did not match a narrower route, so the Rust baseline is the conservative fallback"

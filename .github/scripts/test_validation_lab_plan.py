@@ -107,6 +107,12 @@ def successful_evidence(*, base_sha: str = "base123", head_sha: str = "head123",
 
 
 class ValidationLabPlanTests(unittest.TestCase):
+    RUNTIME_LANES = (
+        "rust_workspace", "rust_workspace_arm64", "arm64_capability_census",
+        "arm64_isa_proof", "ffi_abi", "android_unit", "android_lint",
+        "android_shell", "runtime_scene_telemetry",
+    )
+
     def test_docs_only_pr_has_no_validation_lab_runtime_lanes(self) -> None:
         outputs = run_plan(["docs/ci-cache-rollout.md"])
 
@@ -159,6 +165,47 @@ class ValidationLabPlanTests(unittest.TestCase):
         self.assertEqual(outputs["android_lint"], "true")
         self.assertEqual(outputs["android_shell"], "true")
         self.assertEqual(outputs["runtime_scene_telemetry"], "true")
+
+    def test_other_consumers_do_not_trigger_runtime_lanes(self) -> None:
+        for path in (
+            ".github/scripts/render_release_notes.py",
+            ".github/workflows/security-sarif.yml",
+            ".github/workflows/gradle-cache-service.yml",
+            ".github/scripts/download_interactive_build_artifact.py",
+            "infra/gradle-cache-service/Cargo.lock",
+        ):
+            with self.subTest(path=path):
+                outputs = run_plan([path])
+                self.assertTrue(all(outputs[lane] == "false" for lane in self.RUNTIME_LANES))
+
+    def test_shared_or_unknown_tooling_forces_full_even_in_mixed_diff(self) -> None:
+        for path in (
+            ".github/scripts/resolve_validation_lab_plan.py",
+            ".github/scripts/run_arm64_isa_proof.sh",
+            ".github/actions/prepare-rust-android-toolchain/action.yml",
+            ".github/scripts/future_unknown_helper.py",
+            ".github/actions/future-action/Cargo.toml",
+        ):
+            with self.subTest(path=path):
+                outputs = run_plan(["clients/android/app/src/main/Stage.kt", path])
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_other_consumer_does_not_mask_runtime_proof(self) -> None:
+        outputs = run_plan([".github/scripts/render_release_notes.py", "engine/ffi/src/lib.rs"])
+        for lane in ("rust_workspace", "rust_workspace_arm64", "arm64_capability_census", "arm64_isa_proof", "ffi_abi"):
+            self.assertEqual(outputs[lane], "true")
+        self.assertEqual(outputs["android_shell"], "false")
+
+    def test_explicit_full_overrides_other_consumer_route(self) -> None:
+        for options in ({"lane_set": "full"}, {"profile": "full"}):
+            with self.subTest(options=options):
+                outputs = run_plan([".github/scripts/render_release_notes.py"], **options)
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_runtime_cpu_truth_lane_preserves_proof(self) -> None:
+        outputs = run_plan(["engine/runtime/src/lib.rs"], lane_set="runtime-cpu-truth")
+        for lane in ("arm64_isa_proof", "ffi_abi", "android_unit"):
+            self.assertEqual(outputs[lane], "true")
 
     def test_explicit_arm64_capability_census_lane_is_runnable(self) -> None:
         outputs = run_plan(
