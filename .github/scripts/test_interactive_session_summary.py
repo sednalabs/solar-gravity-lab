@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import tempfile
 import sys
 from pathlib import Path
 
@@ -88,6 +90,28 @@ def base_payload(
 def main() -> int:
     module = load_summary_module()
 
+    with tempfile.TemporaryDirectory() as temp_dir:
+        specs = Path(temp_dir) / "specs.json"
+        specs.write_text(json.dumps({"tools": [{"name": "android_observe"}, {"name": "android_step"}]}))
+        names = module.observed_tool_names(specs, "ready")
+        assert names == ["android_observe", "android_step"]
+        specs.write_text(json.dumps({"tools": [{"name": "android_observe"}]}))
+        assert module.observed_tool_names(specs, "invalid") is None
+        assert module.observed_tool_names(specs, "ready") is None
+        assert module.observed_tool_names(specs, "validation_unavailable") is None
+        specs.write_text("{")
+        assert module.observed_tool_names(specs, "invalid") is None
+        assert module.observed_tool_names(specs, "ready") is None
+        specs.unlink()
+        assert module.observed_tool_names(specs, "ready") is None
+
+    for status in ("invalid", "validation_unavailable"):
+        output = module.render_markdown(base_payload(None, codex_bridge={
+            "dynamic_tool_specs_status": status, "tool_names": None,
+        }))
+        assert "- tools advertised by validated specifications: `unknown`" in output
+        assert "`android_observe`" not in output and "`android_step`" not in output
+
     rendered = module.render_markdown(
         base_payload({
             "statuses": ["succeeded", "observe_degraded"],
@@ -148,6 +172,7 @@ def main() -> int:
             },
         ),
     )
+    assert "- tools advertised by validated specifications: `android_observe`, `android_step`" in rendered_proof
     assert "- dynamic-tool specs: `ready`" in rendered_proof
     assert "- dynamic-tool proof: `ready`" in rendered_proof
     assert "- dynamic-tool outcome contract proven: `true`" in rendered_proof
