@@ -797,7 +797,7 @@ if [[ "${session_mode}" == "capture-only" ]]; then
     exit 1
   fi
   input_profile_ime="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure default_input_method | tr -d '\r')"
-  input_profile_simulation="$(timeout 20s adb -s "${input_profile_serial}" shell getprop persist.debug.input.simulate_stylus_with_touch | tr -d '\r')"
+  input_profile_simulation="$(timeout 20s adb -s "${input_profile_serial}" shell getprop debug.input.simulate_stylus_with_touch | tr -d '\r')"
   if [[ -z "${input_profile_ime}" || ${#input_profile_ime} -gt 160 || ${#input_profile_simulation} -gt 32 ]]; then
     exit 1
   fi
