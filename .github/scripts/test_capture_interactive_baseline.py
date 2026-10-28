@@ -45,7 +45,8 @@ class CaptureTest(unittest.TestCase):
         build = capture.SESSION / "qualified-prerelease/qualified-prerelease-intake.json"
         build.parent.mkdir(parents=True)
         build.write_text(json.dumps({"artifact_kind": "qualified-prerelease", "package_name": PACKAGE}))
-        env = {"INTERACTIVE_APP_PACKAGE": PACKAGE, "INTERACTIVE_WORKFLOW_SHA": "a" * 40,
+        env = {"INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC": "foreground_checked",
+               "INTERACTIVE_APP_PACKAGE": PACKAGE, "INTERACTIVE_WORKFLOW_SHA": "a" * 40,
                "INTERACTIVE_CHECKOUT_SHA": "b" * 40, "INTERACTIVE_MCP_ADAPTER_REVISION": capture.CAPTURE_PROVIDER_SHA,
                "INTERACTIVE_TOOLKIT_SHA": "d" * 40}
         self.environment = patch.dict(os.environ, env)
@@ -76,6 +77,28 @@ class CaptureTest(unittest.TestCase):
         (capture.BRIDGE / f"{phase}-settled.json").write_text(json.dumps(self.receipt(False)))
         self.baseline_xml.write_text(settled)
         capture.phase_record(phase)
+
+    def test_wrong_package_retains_only_quarantined_baseline_and_stops(self):
+        foreign = '<hierarchy><node package="stock.system" bounds="[0,0][1080,2400]"/></hierarchy>'
+        self.baseline_xml.write_text(foreign)
+        with self.assertRaises(ValueError):
+            capture.capture_baseline()
+        with patch.dict(os.environ, {"INTERACTIVE_CAPTURE_FAILURE_STAGE": "baseline_validate"}):
+            capture.mark_failed()
+        quarantine = capture.OUTPUT / "quarantined-baseline"
+        self.assertEqual((quarantine / "screen.png").read_bytes(), b"png")
+        self.assertEqual((quarantine / "hierarchy.xml").read_text(), foreign)
+        self.assertEqual(json.loads((quarantine / "observation.json").read_text()), self.receipt(False))
+        metadata = json.loads((quarantine / "metadata.json").read_text())
+        self.assertEqual(metadata["package_validation"], "not_checked")
+        self.assertFalse(metadata["app_owned_proof"])
+        self.assertEqual(metadata["package_node_counts"], {"stock.system": 1})
+        self.assertFalse((capture.OUTPUT / "baseline").exists())
+        self.assertFalse((capture.BRIDGE / "help-request.json").exists())
+        self.assertFalse((capture.BRIDGE / "search-request.json").exists())
+        status = capture.current_status()
+        self.assertEqual(status["completed"], [])
+        self.assertEqual(status["failure_stage"], "baseline_package")
 
     def test_fixed_sequence_retains_each_validated_observation(self):
         capture.capture_baseline()

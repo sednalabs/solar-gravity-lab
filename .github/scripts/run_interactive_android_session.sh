@@ -864,7 +864,8 @@ if [[ "${session_mode}" == "capture-only" ]]; then
     exit 1
   fi
   capture_failure_stage="baseline_validate"
-  python3 .github/scripts/capture_interactive_baseline.py --baseline >/dev/null 2>&1
+  INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC=foreground_checked \
+    python3 .github/scripts/capture_interactive_baseline.py --baseline >/dev/null 2>&1
   capture_step() {
     local phase="$1"
     capture_failure_stage="${phase}"

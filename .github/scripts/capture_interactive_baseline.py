@@ -195,6 +195,28 @@ def capture_baseline() -> None:
     baseline_stage("baseline_provider")
     require_capture_provider(os.environ["INTERACTIVE_MCP_ADAPTER_REVISION"])
     response, png, xml, root = read_observation(BRIDGE / "baseline-response.json", HIERARCHIES / "codex-android-observe.xml", mark=baseline_stage)
+    if os.environ.get("INTERACTIVE_STOCK_CAPTURE_DIAGNOSTIC") != "foreground_checked":
+        raise ValueError("stock capture diagnostic context is required")
+    baseline_stage("baseline_quarantine")
+    package_counts = {}
+    for node in root.iter("node"):
+        package = node.get("package")
+        if package:
+            package_counts[package] = package_counts.get(package, 0) + 1
+    OUTPUT.mkdir(parents=True, exist_ok=False)
+    with tempfile.TemporaryDirectory(dir=BRIDGE) as temporary:
+        quarantine = Path(temporary) / "quarantined-baseline"
+        quarantine.mkdir()
+        (quarantine / "observation.json").write_bytes(response)
+        (quarantine / "screen.png").write_bytes(png)
+        (quarantine / "hierarchy.xml").write_bytes(xml)
+        (quarantine / "metadata.json").write_text(json.dumps({
+            "package_validation": "not_checked", "app_owned_proof": False,
+            "foreground_activity_check": "passed_before_capture_validation",
+            "package_node_counts": package_counts, "visual_acceptance": "pending",
+            "response_session_identity": "unknown", "stability": "unknown",
+        }) + "\n")
+        quarantine.rename(OUTPUT / "quarantined-baseline")
     baseline_stage("baseline_package")
     if not any(node.get("package") == os.environ["INTERACTIVE_APP_PACKAGE"] for node in root.iter("node")):
         raise ValueError("hierarchy does not contain the expected package")
@@ -218,7 +240,9 @@ def capture_baseline() -> None:
         (staging / "status.json").write_text(json.dumps({"status": "partial", "completed": ["baseline"],
             "stability": "unknown", "response_session_identity": "unknown", "transport_attempts": "unknown",
             "provider_may_fallback": True, "visual_acceptance": "pending"}) + "\n")
-        staging.rename(OUTPUT)
+        baseline.rename(OUTPUT / "baseline")
+        (staging / "provenance.json").rename(OUTPUT / "provenance.json")
+        (staging / "status.json").rename(OUTPUT / "status.json")
 
 
 def phase_prepare(phase: str) -> None:
@@ -330,7 +354,7 @@ def phase_record(phase: str) -> None:
 
 FAILURE_STAGES = {"startup", "emulator", "provider", "preflight", "baseline_foreground",
     "baseline_config", "baseline_observe", "baseline_provider", "baseline_receipt", "baseline_image",
-    "baseline_hierarchy", "baseline_package", "baseline_provenance", "baseline_publish",
+    "baseline_hierarchy", "baseline_quarantine", "baseline_package", "baseline_provenance", "baseline_publish",
     "help", "frame", "home", "controls", "search", "unknown"}
 
 
