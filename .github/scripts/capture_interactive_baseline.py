@@ -45,7 +45,7 @@ def main() -> None:
     root = ET.fromstring(xml)
     if root.tag != "hierarchy" or not list(root.iter("node")):
         raise ValueError("native hierarchy missing or empty")
-    build = json.loads(Path(os.environ["INTERACTIVE_BUILD_MANIFEST"]).read_text())
+    build = json.loads((session / "qualified-prerelease/qualified-prerelease-intake.json").read_text())
     if build.get("artifact_kind") != "qualified-prerelease" or build.get("package_name") != os.environ["INTERACTIVE_APP_PACKAGE"]:
         raise ValueError("unexpected capture build")
     provenance = {

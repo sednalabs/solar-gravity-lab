@@ -70,6 +70,12 @@ if ! [[ "${mcp_adapter_revision}" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 if [[ "${session_mode}" == "capture-only" ]]; then
   python3 .github/scripts/capture_interactive_baseline.py --check-provider
+  resolved_manifest="$(realpath -e "${build_manifest_path}")"
+  expected_manifest="$(realpath -e "dist/interactive-session/qualified-prerelease/qualified-prerelease-intake.json")"
+  if [[ "${resolved_manifest}" != "${expected_manifest}" ]]; then
+    echo "Capture build record does not match the qualified intake" >&2
+    exit 1
+  fi
 fi
 codex_dynamic_tool_helper_path="${live_access_dir}/codex-android-tools-${mcp_adapter_revision}.sh"
 cloudflared_bin="${INTERACTIVE_CLOUDFLARED_BIN:-cloudflared}"

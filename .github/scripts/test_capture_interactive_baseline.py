@@ -21,7 +21,8 @@ class CaptureTest(unittest.TestCase):
         hierarchy = Path("dist/interactive-session/android-computer-use-mcp-artifacts/uiautomator/codex-android-observe.xml")
         hierarchy.parent.mkdir(parents=True)
         hierarchy.write_text('<hierarchy><node text="screen"/></hierarchy>')
-        self.build = Path("build.json")
+        self.build = Path("dist/interactive-session/qualified-prerelease/qualified-prerelease-intake.json")
+        self.build.parent.mkdir(parents=True)
         self.build.write_text(json.dumps({"artifact_kind": "qualified-prerelease", "package_name": "app.internal"}))
         env = {"INTERACTIVE_MCP_WORKSPACE_DIR": "provider", "INTERACTIVE_BUILD_MANIFEST": str(self.build),
                "INTERACTIVE_APP_PACKAGE": "app.internal", "INTERACTIVE_WORKFLOW_SHA": "a" * 40,
