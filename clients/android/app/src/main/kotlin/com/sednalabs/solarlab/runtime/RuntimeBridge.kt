@@ -59,6 +59,21 @@ internal class JniRuntimeBridge(
     private var activeSessionHandle: Long = 0L
     private data class PlaybackSample(val handle: Long, val revision: Long, val epoch: Double, val atNanos: Long)
     private var playbackSample: PlaybackSample? = null
+    private var lastObservation: Pair<Long, Long>? = null
+
+    private fun rememberRevision(handle: Long, revision: Long) {
+        val previous = lastObservation
+        if (previous == null || previous.first != handle || revision > previous.second) {
+            lastObservation = handle to revision
+        }
+    }
+
+    private fun clearPlaybackMeasurement(handle: Long, signals: MutableList<RuntimeSignal>) {
+        playbackSample = null
+        lastObservation?.takeIf { it.first == handle }?.let { (_, revision) ->
+            signals += RuntimeSignal.PlaybackMeasurementCleared(handle, revision)
+        }
+    }
     private var advanceMayBeActive = false
     private data class AdvanceIntent(val high: Long, val low: Long, val generation: Long, val baseOrdinal: Long, val delta: Double, val recordedAt: Long) {
         fun matches(result: NativeAdvanceResult): Boolean = result.intentHigh == high && result.intentLow == low &&
@@ -505,6 +520,7 @@ internal class JniRuntimeBridge(
                 )
             }
 
+            rememberRevision(handle, commandResult.revision)
             val signals = mutableListOf<RuntimeSignal>()
             signals += RuntimeSignal.CommandApplied(
                 command = command,
@@ -548,6 +564,7 @@ internal class JniRuntimeBridge(
                         error,
                     )
                 }
+                clearPlaybackMeasurement(handle, signals)
                 signals += RuntimeSignal.Notice(
                     message = "Refresh unavailable: ${error.message ?: error::class.java.simpleName}",
                     level = RuntimeNoticeLevel.Error,
@@ -561,17 +578,18 @@ internal class JniRuntimeBridge(
             }
 
             if (summary.result.isOk()) {
+                rememberRevision(handle, summary.revision)
                 if (advancePlayback && !summary.paused) {
                     val tick = runCatching {
                         transport.playbackTick(handle, REFRESH_INTERVAL_MS.toDouble() / 1_000.0, System.currentTimeMillis())
                     }.getOrElse { error ->
                         if (error is CancellationException) throw error
-                        playbackSample = null
-                        signals += RuntimeSignal.PlaybackMeasurementCleared(handle, summary.revision)
+                        clearPlaybackMeasurement(handle, signals)
                         signals += RuntimeSignal.Notice("Playback unavailable: ${error.message ?: error::class.java.simpleName}", RuntimeNoticeLevel.Warning)
                         null
                     }
                     if (tick != null && tick.code == 0) {
+                        rememberRevision(handle, tick.committedRevision)
                         val now = System.nanoTime()
                         val previous = playbackSample
                         val elapsed = if (previous != null) (now - previous.atNanos) / 1_000_000_000.0 else 0.0
@@ -585,26 +603,23 @@ internal class JniRuntimeBridge(
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: Throwable) {
-                            playbackSample = null
-                            signals += RuntimeSignal.PlaybackMeasurementCleared(handle, summary.revision)
+                            clearPlaybackMeasurement(handle, signals)
                             signals += RuntimeSignal.Notice("Playback snapshot unavailable: ${error.message ?: error::class.java.simpleName}", RuntimeNoticeLevel.Error)
                             return signals
                         }
                         if (!summary.result.isOk()) {
-                            playbackSample = null
-                            signals += RuntimeSignal.PlaybackMeasurementCleared(handle, summary.revision)
+                            clearPlaybackMeasurement(handle, signals)
                             signals += RuntimeSignal.Notice("Playback snapshot unavailable: ${summary.result.describe()}", RuntimeNoticeLevel.Error)
                             return signals
                         }
+                        rememberRevision(handle, summary.revision)
                         if (summary.revision == tick.committedRevision && summary.epochSeconds == tick.committedEpochSeconds) {
                             signals += RuntimeSignal.PlaybackMeasured(handle, tick.committedRevision, tick.requestedSeconds, tick.appliedSeconds, tick.limited, achieved)
                         } else {
-                            playbackSample = null
-                            signals += RuntimeSignal.PlaybackMeasurementCleared(handle, summary.revision)
+                            clearPlaybackMeasurement(handle, signals)
                         }
                     } else if (tick != null) {
-                        playbackSample = null
-                        signals += RuntimeSignal.PlaybackMeasurementCleared(handle, summary.revision)
+                        clearPlaybackMeasurement(handle, signals)
                         signals += RuntimeSignal.Notice("Playback tick rejected (status ${tick.code})", RuntimeNoticeLevel.Warning)
                     }
                 } else if (summary.paused) {
@@ -613,6 +628,7 @@ internal class JniRuntimeBridge(
                 renderRevision = summary.revision
                 signals += RuntimeSignal.SnapshotUpdated(summary, sessionHandle = handle)
             } else {
+                clearPlaybackMeasurement(handle, signals)
                 signals += RuntimeSignal.Notice(
                     message = "Refresh failed: ${summary.result.describe()}",
                     level = RuntimeNoticeLevel.Error,
@@ -756,6 +772,7 @@ internal class JniRuntimeBridge(
             transport.destroySession(handle)
             activeSessionHandle = 0L
             playbackSample = null
+            lastObservation = null
         }
     }
 

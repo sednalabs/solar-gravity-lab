@@ -364,7 +364,7 @@ class JniRuntimeBridgeTest {
         withTimeout(2_500) {
             while (
                 transport.refreshedHandles.size < 3 ||
-                transport.appliedCommands.none { isProgressingAdvanceEpochCommand(it) }
+                transport.playbackTicks == 0
             ) {
                 delay(25)
             }
@@ -378,9 +378,44 @@ class JniRuntimeBridgeTest {
             transport.refreshedHandles.size >= 3,
         )
         assertTrue(
-            "Expected live playback to keep emitting advance-epoch commands",
-            transport.appliedCommands.any { isProgressingAdvanceEpochCommand(it) },
+            "Expected live playback to keep issuing bounded ticks",
+            transport.playbackTicks > 0,
         )
+    }
+
+    @Test
+    fun postTickSnapshotFailureClearsDisplayedMeasurementAtNonzeroRevision() = runBlocking {
+        exerciseMeasurementFailure(postTick = true)
+    }
+
+    @Test
+    fun initialSnapshotExceptionClearsDisplayedMeasurementAtNonzeroRevision() = runBlocking {
+        exerciseMeasurementFailure(postTick = false)
+    }
+
+    private suspend fun exerciseMeasurementFailure(postTick: Boolean) {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(
+            snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0).copy(revision = 10),
+        )))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        val facade = BridgeBackedRuntimeFacade(bridge)
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val job = scope.launch { facade.startSession() }
+        try {
+            withTimeout(8_000) {
+                while (facade.uiState.value.playbackMeasurement?.achievedRate == null) delay(25)
+            }
+            val previous = requireNotNull(facade.uiState.value.playbackMeasurement)
+            assertTrue(previous.revision > 0)
+            if (postTick) transport.failAfterTick = true else transport.refreshError = IllegalStateException("initial refresh failed")
+            withTimeout(8_000) {
+                while (facade.uiState.value.playbackMeasurement != null) delay(25)
+            }
+            assertEquals(null, facade.uiState.value.playbackMeasurement)
+        } finally {
+            job.cancel()
+            scope.cancel()
+        }
     }
 
     private suspend fun collectSignalsUntil(
@@ -441,7 +476,10 @@ class JniRuntimeBridgeTest {
         val refreshedHandles = CopyOnWriteArrayList<Long>()
         val appliedCommands = CopyOnWriteArrayList<NativeRuntimeCommandPayload>()
         private var latestSummary: NativeSnapshotSummaryResult? = null
-        var refreshError: Throwable? = null
+        @Volatile var refreshError: Throwable? = null
+        @Volatile var failAfterTick = false
+        @Volatile var playbackTicks = 0
+        private var failRefresh = false
         var commandError: Throwable? = null
         var exportError: Throwable? = null
 
@@ -480,6 +518,10 @@ class JniRuntimeBridgeTest {
 
         override fun refreshSession(handle: Long): NativeSnapshotSummaryResult {
             refreshError?.let { throw it }
+            if (failRefresh) {
+                failRefresh = false
+                return snapshotSummary(bodyCount = 0).copy(result = NativeResult(code = 3), revision = 0)
+            }
             refreshedHandles += handle
             val summary = refreshResults.removeFirstOrNull()
                 ?: latestSummary
@@ -509,6 +551,19 @@ class JniRuntimeBridgeTest {
             }
             latestSummary = summary
             return summary
+        }
+
+        override fun playbackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult {
+            playbackTicks++
+            val current = requireNotNull(latestSummary)
+            val delta = realSeconds * current.simSecondsPerRealSecond
+            val next = current.copy(epochSeconds = current.epochSeconds + delta, revision = current.revision + 1)
+            latestSummary = next
+            if (failAfterTick) {
+                failAfterTick = false
+                failRefresh = true
+            }
+            return NativePlaybackTickResult(0, delta, delta, false, next.epochSeconds, next.revision)
         }
 
         override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? {
