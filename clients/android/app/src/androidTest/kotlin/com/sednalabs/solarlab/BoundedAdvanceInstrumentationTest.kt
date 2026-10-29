@@ -11,6 +11,7 @@ import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -103,6 +104,74 @@ class BoundedAdvanceInstrumentationTest {
             val after = requireNotNull(runtime.uiState.value.snapshot)
             assertEquals(before.revision + 1, after.revision)
             assertTrue(after.paused)
+        }
+    }
+
+    @Test
+    fun activeAdvanceSurvivesActivityRecreationAndCancelsWithoutPublishingPartialWorld() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var facade: RuntimeFacade? = null
+            scenario.onActivity { facade = it.runtimeFacadeForTesting }
+            val runtime = requireNotNull(facade)
+            waitUntil { (runtime.uiState.value.snapshot?.bodyCount ?: 0) > 0 && runtime.uiState.value.renderFrame != null }
+            runBlocking { runtime.applyCommand(RuntimeCommand.PausePlayback) }
+            waitUntil { runtime.uiState.value.snapshot?.paused == true }
+            val before = requireNotNull(runtime.uiState.value.snapshot)
+            val handle = requireNotNull(runtime.uiState.value.sessionHandle)
+            val native = JniNativeRuntimeTransport
+            val previous = native.queryAdvance(handle)
+            assertEquals(0, previous.code)
+            assertTrue(previous.state != 1)
+            try {
+                // Large enough to remain staged through recreation; always cancelled below.
+                runBlocking { runtime.applyCommand(RuntimeCommand.AdvanceEpoch(1_000_000_000.0)) }
+                waitUntil {
+                    val operation = native.queryAdvance(handle)
+                    operation.code == 0 && operation.state == 1 && operation.completedSteps > 0
+                }
+                val running = native.queryAdvance(handle)
+                assertEquals(1, running.state)
+                assertEquals(previous.generation + 1, running.generation)
+                assertEquals(previous.currentNextOrdinal, running.baseOrdinal)
+                assertTrue(running.completedSteps < running.totalSteps)
+                val stagedBefore = native.refreshSession(handle)
+                assertEquals(before.epochSeconds, stagedBefore.epochSeconds, 0.0)
+                assertEquals(before.revision, stagedBefore.revision)
+
+                scenario.recreate()
+                var recreatedFacade: RuntimeFacade? = null
+                scenario.onActivity { recreatedFacade = it.runtimeFacadeForTesting }
+                assertSame(runtime, recreatedFacade)
+                assertEquals(handle, runtime.uiState.value.sessionHandle)
+                val reattached = native.queryAdvance(handle)
+                assertEquals(0, reattached.code)
+                assertEquals(1, reattached.state)
+                assertEquals(running.generation, reattached.generation)
+                assertEquals(running.intentHigh, reattached.intentHigh)
+                assertEquals(running.intentLow, reattached.intentLow)
+                assertEquals(running.baseOrdinal, reattached.baseOrdinal)
+                assertEquals(running.currentNextOrdinal, reattached.currentNextOrdinal)
+                assertTrue(reattached.completedSteps >= running.completedSteps)
+                assertTrue(runtime.uiState.value.manualAdvance != null)
+                val stagedAfter = native.refreshSession(handle)
+                assertEquals(before.epochSeconds, stagedAfter.epochSeconds, 0.0)
+                assertEquals(before.revision, stagedAfter.revision)
+
+                runtime.cancelManualAdvance()
+                waitUntil { runtime.uiState.value.manualAdvanceOutcome == ManualAdvanceOutcome.Cancelled }
+                val cancelled = native.queryAdvance(handle)
+                assertEquals(3, cancelled.state)
+                assertEquals(running.generation, cancelled.generation)
+                assertEquals(running.intentHigh, cancelled.intentHigh)
+                assertEquals(running.intentLow, cancelled.intentLow)
+                val finalSnapshot = native.refreshSession(handle)
+                assertEquals(before.epochSeconds, finalSnapshot.epochSeconds, 0.0)
+                assertEquals(before.revision, finalSnapshot.revision)
+                assertEquals(previous.currentNextOrdinal, cancelled.currentNextOrdinal)
+            } finally {
+                runtime.cancelManualAdvance()
+                waitUntil { native.queryAdvance(handle).state != 1 && runtime.uiState.value.manualAdvance == null }
+            }
         }
     }
 
