@@ -64,14 +64,23 @@ def png_dimensions(png: bytes) -> tuple[int, int]:
     return int(dimensions[0]), int(dimensions[1])
 
 
-def bounds(node: ET.Element) -> tuple[int, int, int, int]:
+def optional_bounds(node: ET.Element) -> tuple[int, int, int, int] | None:
     match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
     if not match:
         raise ValueError("invalid control bounds")
     left, top, right, bottom = map(int, match.groups())
-    if right <= left or bottom <= top:
-        raise ValueError("empty control bounds")
+    if right < left or bottom < top:
+        raise ValueError("invalid control bounds")
+    if right == left or bottom == top:
+        return None
     return left, top, right, bottom
+
+
+def bounds(node: ET.Element) -> tuple[int, int, int, int]:
+    rect = optional_bounds(node)
+    if rect is None:
+        raise ValueError("empty control bounds")
+    return rect
 
 
 def contains(outer, inner) -> bool:
@@ -146,7 +155,9 @@ def target_center(root: ET.Element, package: str, viewport: tuple[int, int], tar
             continue
         if node.get("clickable") != "true" and node.get("focusable") != "true":
             continue
-        node_bounds = bounds(node)
+        node_bounds = optional_bounds(node)
+        if node_bounds is None:
+            continue
         if not (node_bounds[0] <= x < node_bounds[2] and node_bounds[1] <= y < node_bounds[3]):
             continue
         if is_observed_backdrop(node, node_bounds):

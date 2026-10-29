@@ -80,7 +80,9 @@ def matching(root, description):
 
 
 def fully_visible(root, node, viewport):
-    target = base.bounds(node)
+    target = base.optional_bounds(node)
+    if target is None:
+        return False
     if not base.contains((0, 0, *viewport), target):
         return False
     parents = {child: parent for parent in root.iter() for child in parent}
@@ -111,17 +113,24 @@ def progress(root):
     return any(0 < done <= total and total > 64 for done, total in result)
 
 
-def scroll_labels(root):
+def scroll_labels(root, viewport):
     views = [n for n in root.iter('node') if n.get('package') == PACKAGE and
              n.get('class') == 'android.widget.ScrollView' and n.get('enabled') == 'true' and
              n.get('scrollable') == 'true']
     if len(views) != 1:
         raise ValueError('unique cockpit scroll view unavailable')
+    view = base.bounds(views[0])
     labels = {}
     for node in views[0].iter('node'):
         label = node.get('content-desc', '')
         if label:
-            labels.setdefault(label, []).append(base.bounds(node))
+            rect = base.optional_bounds(node)
+            if rect is None or not (rect[0] < view[2] and rect[2] > view[0] and
+                                    rect[1] < view[3] and rect[3] > view[1] and
+                                    rect[0] < viewport[0] and rect[2] > 0 and
+                                    rect[1] < viewport[1] and rect[3] > 0):
+                continue
+            labels.setdefault(label, []).append(rect)
     return {label: rects[0] for label, rects in labels.items() if len(rects) == 1}
 
 
@@ -166,7 +175,7 @@ def scroll(root, viewport, direction, directory):
     response = directory / 'observation-response.json'
     provider(request, response)
     after = save(directory / 'after', observation(response))
-    before_labels, after_labels = scroll_labels(root), scroll_labels(after)
+    before_labels, after_labels = scroll_labels(root, viewport), scroll_labels(after, viewport)
     if not any(direction * (after_labels[label][1] - rect[1]) < 0
                for label, rect in before_labels.items() if label in after_labels):
         raise ValueError('cockpit movement not observed; no further swipe permitted')

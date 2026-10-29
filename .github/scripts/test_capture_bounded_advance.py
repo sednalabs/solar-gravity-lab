@@ -49,6 +49,41 @@ class AdvanceGuards(unittest.TestCase):
         target = list(root.iter('node'))[1]
         self.assertFalse(capture.fully_visible(root, target, (400, 400)))
 
+    def test_empty_clipped_labels_are_not_motion_witnesses_or_targets(self):
+        root = tree('<node package="example.app" class="android.widget.ScrollView" enabled="true" '
+                    'scrollable="true" bounds="[0,1680][1080,2400]">'
+                    '<node package="example.app" class="android.view.View" content-desc="Scenario" '
+                    'enabled="true" clickable="false" bounds="[0,0][0,0]"/>' +
+                    node('Less', '[380,1730][611,1856]') +
+                    node('Offscreen', '[0,2500][100,2600]') + '</node>')
+        self.assertEqual(capture.scroll_labels(root, (1080, 2400)), {'Less': (380, 1730, 611, 1856)})
+        with patch.object(capture.base, 'target_center', return_value=(495, 1793)) as center:
+            self.assertEqual(capture.find_target(root, 'Less', (1080, 2400)), (495, 1793))
+            self.assertIsNone(capture.find_target(root, 'Scenario', (1080, 2400)))
+            center.assert_called_once()
+
+    def test_duplicate_visible_target_still_fails(self):
+        root = tree(node('Less', '[0,100][100,200]'), node('Less', '[100,100][200,200]'))
+        with self.assertRaisesRegex(ValueError, 'ambiguous visible target'):
+            capture.find_target(root, 'Less', (400, 400))
+
+    def test_malformed_target_bounds_still_fail_closed(self):
+        root = tree(node('Less', 'invalid'))
+        with self.assertRaisesRegex(ValueError, 'invalid control bounds'):
+            capture.find_target(root, 'Less', (400, 400))
+
+    def test_empty_other_actionable_node_does_not_obscure_visible_target(self):
+        root = tree('<node class="android.widget.FrameLayout" package="example.app" bounds="[0,0][400,400]">'
+                    '<node class="android.widget.FrameLayout" package="example.app" bounds="[0,0][400,400]">'
+                    '<node class="android.view.View" package="example.app" NAF="true" enabled="true" '
+                    'clickable="true" bounds="[0,0][400,400]"/></node>'
+                    '<node class="android.view.View" package="example.app" enabled="true" '
+                    'clickable="true" content-desc="Less" bounds="[100,100][200,200]"/>'
+                    '<node class="android.view.View" package="example.app" enabled="true" '
+                    'clickable="true" content-desc="Scenario" bounds="[0,0][0,0]"/>'
+                    '</node>')
+        self.assertEqual(capture.find_target(root, 'Less', (400, 400)), (150, 150))
+
     def test_scroll_retains_actual_adb_receipt_and_distinct_provider_observation(self):
         root = tree('<node package="example.app" class="android.widget.ScrollView" enabled="true" '
                     'scrollable="true" bounds="[0,1680][1080,2400]">' +
