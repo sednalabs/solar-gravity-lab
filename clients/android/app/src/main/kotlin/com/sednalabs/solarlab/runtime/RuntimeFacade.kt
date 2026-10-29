@@ -93,6 +93,7 @@ data class ManualAdvancePresentation(
 )
 
 data class PlaybackMeasurement(
+    val revision: Long,
     val requestedSeconds: Double,
     val appliedSeconds: Double,
     val limited: Boolean,

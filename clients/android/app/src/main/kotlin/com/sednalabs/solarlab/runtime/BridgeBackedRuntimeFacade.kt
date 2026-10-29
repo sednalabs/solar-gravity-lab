@@ -336,7 +336,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             beginAttempted = true
             operation = try {
                 withContext(boundaryDispatcher) {
-                    bridge.beginAdvance(intent.mostSignificantBits, intent.leastSignificantBits, previous.generation, deltaSeconds, recordedAtUnixMs)
+                    bridge.beginAdvance(intent.mostSignificantBits, intent.leastSignificantBits, previous.generation, baseOrdinal, deltaSeconds, recordedAtUnixMs)
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -347,6 +347,9 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
             if (operation!!.code != 0) {
                 terminal = true
+                if (operation!!.code == 5) {
+                    withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) }
+                }
                 error("Advance could not start (status ${operation!!.code})")
             }
             check(isOurs(operation!!)) { "Advance identity could not be reconciled" }
@@ -402,9 +405,6 @@ class BridgeBackedRuntimeFacade internal constructor(
                     if (resolved != null && resolved.code == 0 && isOurs(resolved) && resolved.state in 2..3) {
                         terminal = true
                         runCatching { withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) } }
-                    } else if (operation == null && resolved != null && resolved.code == 0 && !isOurs(resolved)) {
-                        // A successful query proves this intent did not reserve the session.
-                        terminal = true
                     }
                 }
             }
@@ -439,6 +439,7 @@ class BridgeBackedRuntimeFacade internal constructor(
         val (handle, revision) = when (signal) {
             is RuntimeSignal.Connected -> signal.handle to null
             is RuntimeSignal.PlaybackMeasured -> signal.sessionHandle to signal.revision
+            is RuntimeSignal.PlaybackMeasurementCleared -> signal.sessionHandle to signal.revision
             is RuntimeSignal.SnapshotUpdated -> signal.sessionHandle to signal.summary.revision
             is RuntimeSignal.CommandApplied -> signal.sessionHandle to signal.summary.revision
             is RuntimeSignal.RenderPacketReady -> signal.sessionHandle to signal.revision
@@ -453,8 +454,9 @@ class BridgeBackedRuntimeFacade internal constructor(
             return
         }
         when (signal) {
+            is RuntimeSignal.PlaybackMeasurementCleared -> _uiState.update { it.copy(playbackMeasurement = null) }
             is RuntimeSignal.PlaybackMeasured -> _uiState.update { current ->
-                current.copy(playbackMeasurement = PlaybackMeasurement(signal.requestedSeconds, signal.appliedSeconds, signal.limited, signal.achievedRate))
+                current.copy(playbackMeasurement = PlaybackMeasurement(signal.revision, signal.requestedSeconds, signal.appliedSeconds, signal.limited, signal.achievedRate))
             }
             is RuntimeSignal.Connected -> updateWithTelemetry(
                 recordTelemetry(
@@ -539,7 +541,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                         detailLine = "Epoch ${signal.summary.epochSeconds.asEpochLabel()} with ${signal.summary.bodyCount} authoritative bodies",
                         pendingActionLabel = null,
                         snapshot = snapshot,
-                        playbackMeasurement = if (snapshot.paused) null else current.playbackMeasurement,
+                        playbackMeasurement = current.playbackMeasurement?.takeIf { !snapshot.paused && it.revision == snapshot.revision },
                         snapshotSummary = snapshot.toSnapshotSummaryLine(),
                         observerModeCode = signal.summary.observerMode,
                         focusedBodyId = snapshot.focusTargetBodyId,
@@ -579,7 +581,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                         noticeTone = ShellNoticeTone.Positive,
                         pendingActionLabel = null,
                         snapshot = snapshot,
-                        playbackMeasurement = if (snapshot.paused) null else current.playbackMeasurement,
+                        playbackMeasurement = current.playbackMeasurement?.takeIf { !snapshot.paused && it.revision == snapshot.revision },
                         snapshotSummary = snapshot.toSnapshotSummaryLine(),
                         observerModeCode = signal.summary.observerMode,
                         focusedBodyId = focusedBodyId,
