@@ -25,9 +25,10 @@ use solarlab_history::{
     HistoryEvent, OrbitArchive, OrbitArchiveFamily, OrbitArchiveQuery, OrbitSample,
 };
 use solarlab_physics::{
-    advance_authoritative_with_features, checked_substep_count, compute_invariants,
-    solver_execution_report_for_backend_with_body_count, MassiveBodyState, PhysicsInvariants,
-    PhysicsPolicy, SolverExecutionReport,
+    advance_authoritative_with_features, advance_fixed_steps, checked_substep_count,
+    compute_invariants, fixed_step_plan, solver_execution_report_for_backend_with_body_count,
+    FixedStepPlan, MassiveBodyState, PhysicsInvariants, PhysicsPolicy, SolverExecutionReport,
+    MAX_INCREMENTAL_STEPS,
 };
 use solarlab_scene::{
     CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody, SceneBodyKind,
@@ -250,6 +251,9 @@ pub enum RuntimeError {
     UnknownScenario(ScenarioId),
     InvalidEpochDelta(f64),
     InvalidPlaybackRate(f64),
+    AdvanceBusy,
+    AdvanceStale,
+    AdvanceWorkLimit,
     UnknownCheckpoint(CheckpointId),
     DuplicateCheckpoint(CheckpointId),
     DuplicateBranch(BranchId),
@@ -315,6 +319,34 @@ struct BranchState {
 const TRAIL_HISTORY_MAX_SAMPLES: usize = 96;
 const RENDER_SCENE_ORBIT_BODY_LIMIT: usize = 8;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdvanceState {
+    Running,
+    Committed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug)]
+pub struct AdvanceOperation {
+    pub state: AdvanceState,
+    pub generation: u64,
+    pub intent: [u64; 2],
+    pub base_ordinal: u64,
+    pub requested_seconds: f64,
+    pub recorded_at_unix_ms: i64,
+    pub completed_steps: usize,
+    pub total_steps: usize,
+    plan: Option<FixedStepPlan>,
+    bodies: Vec<MassiveBodyState>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PlaybackTickResult {
+    pub requested_seconds: f64,
+    pub applied_seconds: f64,
+    pub limited: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct WorldRuntime {
     /// Simulation-owned mutable state and history.
@@ -335,6 +367,8 @@ pub struct WorldRuntime {
     next_command_ordinal: u64,
     next_checkpoint_ordinal: u64,
     next_branch_ordinal: u64,
+    advance_generation: u64,
+    advance_operation: Option<AdvanceOperation>,
 }
 
 impl WorldRuntime {
@@ -396,6 +430,8 @@ impl WorldRuntime {
             next_command_ordinal: 1,
             next_checkpoint_ordinal: 1,
             next_branch_ordinal: 1,
+            advance_generation: 0,
+            advance_operation: None,
         };
 
         let active_branch_id = runtime.active_branch_id.clone();
@@ -420,6 +456,9 @@ impl WorldRuntime {
         &mut self,
         command: ApplyUpdateManifestCommand,
     ) -> Result<ApplyUpdateManifestResult, RuntimeError> {
+        if self.advance_running() {
+            return Err(RuntimeError::AdvanceBusy);
+        }
         let branch = self.active_branch_mut();
 
         let plan = plan_manifest_update(
@@ -468,6 +507,9 @@ impl WorldRuntime {
         &mut self,
         command: MountPackageCommand,
     ) -> Result<MountedManifestState, RuntimeError> {
+        if self.advance_running() {
+            return Err(RuntimeError::AdvanceBusy);
+        }
         // Mark a package as explicitly mounted for shell intent visibility.
         // Mount intent is tracked by runtime and contributes to snapshot/reporting.
         let branch = self.active_branch_mut();
@@ -505,6 +547,195 @@ impl WorldRuntime {
         Ok(mounted_manifest)
     }
 
+    fn advance_running(&self) -> bool {
+        self.advance_operation
+            .as_ref()
+            .is_some_and(|op| op.state == AdvanceState::Running)
+    }
+
+    #[must_use]
+    pub fn query_advance(&self) -> Option<&AdvanceOperation> {
+        self.advance_operation.as_ref()
+    }
+
+    pub fn begin_advance(
+        &mut self,
+        intent: [u64; 2],
+        expected_generation: u64,
+        delta: f64,
+        recorded_at_unix_ms: i64,
+    ) -> Result<&AdvanceOperation, RuntimeError> {
+        if let Some(op) = self.advance_operation.as_ref() {
+            if op.intent == intent {
+                if op.generation.checked_sub(1) == Some(expected_generation)
+                    && op.requested_seconds.to_bits() == delta.to_bits()
+                    && op.recorded_at_unix_ms == recorded_at_unix_ms
+                {
+                    return Ok(self.advance_operation.as_ref().expect("operation exists"));
+                }
+                return Err(RuntimeError::AdvanceStale);
+            }
+        }
+        if self.advance_running() {
+            return Err(RuntimeError::AdvanceBusy);
+        }
+        if expected_generation != self.advance_generation {
+            return Err(RuntimeError::AdvanceStale);
+        }
+        if !self.active_branch().world.playback.paused {
+            return Err(RuntimeError::AdvanceBusy);
+        }
+        let world = &self.active_branch().world;
+        if !delta.is_finite() || delta <= 0.0 || next_epoch(world.epoch_seconds, delta).is_none() {
+            return Err(RuntimeError::InvalidEpochDelta(delta));
+        }
+        if self.next_command_ordinal > i64::MAX as u64 {
+            return Err(RuntimeError::AdvanceWorkLimit);
+        }
+        let generation = self
+            .advance_generation
+            .checked_add(1)
+            .filter(|g| *g <= i64::MAX as u64)
+            .ok_or(RuntimeError::AdvanceStale)?;
+        let bodies = world_bodies_to_solver_state(&world.bodies);
+        let plan = if bodies.is_empty() {
+            None
+        } else {
+            Some(
+                fixed_step_plan(
+                    &self.config.physics,
+                    delta,
+                    bodies.len(),
+                    &self.hardware_profile.cpu_features,
+                )
+                .ok_or(RuntimeError::InvalidEpochDelta(delta))?,
+            )
+        };
+        let total_steps = plan.as_ref().map_or(0, |p| p.total_steps);
+        if total_steps > i64::MAX as usize {
+            return Err(RuntimeError::AdvanceWorkLimit);
+        }
+        self.advance_generation = generation;
+        self.advance_operation = Some(AdvanceOperation {
+            state: AdvanceState::Running,
+            generation,
+            intent,
+            base_ordinal: self.next_command_ordinal,
+            requested_seconds: delta,
+            recorded_at_unix_ms,
+            completed_steps: 0,
+            total_steps,
+            plan,
+            bodies,
+        });
+        Ok(self.advance_operation.as_ref().expect("operation exists"))
+    }
+
+    pub fn continue_advance(
+        &mut self,
+        generation: u64,
+        expected_completed: usize,
+    ) -> Result<&AdvanceOperation, RuntimeError> {
+        let op = self
+            .advance_operation
+            .as_mut()
+            .ok_or(RuntimeError::AdvanceStale)?;
+        if op.generation != generation || op.completed_steps != expected_completed {
+            return Err(RuntimeError::AdvanceStale);
+        }
+        if op.state != AdvanceState::Running {
+            return Ok(self.advance_operation.as_ref().expect("operation exists"));
+        }
+        let count = (op.total_steps - op.completed_steps).min(MAX_INCREMENTAL_STEPS);
+        if let Some(plan) = &op.plan {
+            advance_fixed_steps(plan, &mut op.bodies, count)
+                .map_err(|()| RuntimeError::AdvanceStale)?;
+        }
+        op.completed_steps += count;
+        if op.completed_steps == op.total_steps {
+            let mut op = self.advance_operation.take().expect("operation exists");
+            let report = op
+                .plan
+                .as_ref()
+                .map(FixedStepPlan::report)
+                .unwrap_or_else(|| self.active_branch().world.solver_execution.clone());
+            let staged = std::mem::take(&mut op.bodies);
+            self.apply_command_inner(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: op.requested_seconds,
+                },
+                op.recorded_at_unix_ms,
+                Some((staged, report)),
+            )?;
+            op.state = AdvanceState::Committed;
+            self.advance_operation = Some(op);
+        }
+        Ok(self.advance_operation.as_ref().expect("operation exists"))
+    }
+
+    pub fn cancel_advance(&mut self, generation: u64) -> Result<&AdvanceOperation, RuntimeError> {
+        let op = self
+            .advance_operation
+            .as_mut()
+            .ok_or(RuntimeError::AdvanceStale)?;
+        if op.generation != generation {
+            return Err(RuntimeError::AdvanceStale);
+        }
+        if op.state == AdvanceState::Running {
+            op.state = AdvanceState::Cancelled;
+            op.bodies.clear();
+            op.plan = None;
+        }
+        Ok(self.advance_operation.as_ref().expect("operation exists"))
+    }
+
+    pub fn playback_tick(
+        &mut self,
+        real_seconds: f64,
+        recorded_at_unix_ms: i64,
+    ) -> Result<PlaybackTickResult, RuntimeError> {
+        if self.advance_running() {
+            return Err(RuntimeError::AdvanceBusy);
+        }
+        if !real_seconds.is_finite() || real_seconds <= 0.0 {
+            return Err(RuntimeError::InvalidEpochDelta(real_seconds));
+        }
+        let world = &self.active_branch().world;
+        if world.playback.paused {
+            return Ok(PlaybackTickResult {
+                requested_seconds: 0.0,
+                applied_seconds: 0.0,
+                limited: false,
+            });
+        }
+        let requested = real_seconds * world.playback.sim_seconds_per_real_second;
+        if !requested.is_finite() || requested <= 0.0 {
+            return Err(RuntimeError::InvalidEpochDelta(requested));
+        }
+        let max_step = self.config.physics.max_substep_seconds;
+        let max_delta = if max_step.is_finite() && max_step > 0.0 {
+            max_step * MAX_INCREMENTAL_STEPS as f64
+        } else {
+            requested
+        };
+        let applied = if world.bodies.is_empty() {
+            requested
+        } else {
+            requested.min(max_delta)
+        };
+        self.apply_command(
+            WorldCommand::AdvanceEpoch {
+                delta_seconds: applied,
+            },
+            recorded_at_unix_ms,
+        )?;
+        Ok(PlaybackTickResult {
+            requested_seconds: requested,
+            applied_seconds: applied,
+            limited: applied < requested,
+        })
+    }
+
     /// Main mutation pipeline for simulation and history state.
     /// Every command is converted into recorded events and an authoritative state
     /// transition for the active branch.
@@ -513,6 +744,18 @@ impl WorldRuntime {
         command: WorldCommand,
         recorded_at_unix_ms: i64,
     ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
+        self.apply_command_inner(command, recorded_at_unix_ms, None)
+    }
+
+    fn apply_command_inner(
+        &mut self,
+        command: WorldCommand,
+        recorded_at_unix_ms: i64,
+        staged: Option<(Vec<MassiveBodyState>, SolverExecutionReport)>,
+    ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
+        if self.advance_running() {
+            return Err(RuntimeError::AdvanceBusy);
+        }
         match &command {
             WorldCommand::AdvanceEpoch { delta_seconds } => {
                 let world = &self.active_branch().world;
@@ -523,6 +766,13 @@ impl WorldRuntime {
                         && checked_substep_count(&self.config.physics, *delta_seconds).is_none())
                 {
                     return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
+                }
+                if staged.is_none()
+                    && !world.bodies.is_empty()
+                    && checked_substep_count(&self.config.physics, *delta_seconds)
+                        .is_some_and(|n| n > MAX_INCREMENTAL_STEPS)
+                {
+                    return Err(RuntimeError::AdvanceWorkLimit);
                 }
             }
             WorldCommand::SetPlaybackRate {
@@ -646,13 +896,20 @@ impl WorldRuntime {
                 let physics_policy = self.config.physics.clone();
                 let active_cpu_features = self.hardware_profile.cpu_features.clone();
                 let branch = self.active_branch_mut();
-                let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
-                let (invariants, solver_execution) = advance_authoritative_with_features(
-                    &physics_policy,
-                    &mut solver_bodies,
-                    *delta_seconds,
-                    &active_cpu_features,
-                );
+                let (solver_bodies, invariants, solver_execution) =
+                    if let Some((solver_bodies, report)) = staged {
+                        let invariants = compute_invariants(&solver_bodies);
+                        (solver_bodies, invariants, report)
+                    } else {
+                        let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
+                        let (invariants, report) = advance_authoritative_with_features(
+                            &physics_policy,
+                            &mut solver_bodies,
+                            *delta_seconds,
+                            &active_cpu_features,
+                        );
+                        (solver_bodies, invariants, report)
+                    };
                 apply_solver_state_to_world_bodies(&mut branch.world.bodies, &solver_bodies);
                 branch.world.invariants = invariants;
                 branch.world.solver_execution = solver_execution;
@@ -2881,14 +3138,7 @@ mod tests {
             )
             .expect("spawn should succeed");
 
-        runtime
-            .apply_command(
-                WorldCommand::AdvanceEpoch {
-                    delta_seconds: 120.0,
-                },
-                2,
-            )
-            .expect("epoch advance should succeed");
+        advance_staged_for_test(&mut runtime, 120.0, 2);
 
         let checkpoint_events = runtime
             .apply_command(
@@ -3132,6 +3382,179 @@ mod tests {
     }
 
     #[test]
+    fn staged_advance_preserves_strict_schedule_and_atomic_history() {
+        for delta in [130.0, 130.5] {
+            let mut runtime = new_runtime();
+            spawn_two_body_system(&mut runtime);
+            let before = runtime.snapshot();
+            let before_revision = runtime.snapshot_revision();
+            let mut oracle = super::world_bodies_to_solver_state(&before.bodies);
+            solarlab_physics::advance_authoritative_scalar(
+                &runtime.config.physics,
+                &mut oracle,
+                delta,
+            );
+            let op = runtime.begin_advance([1, 2], 0, delta, 7).unwrap().clone();
+            assert_eq!(op.total_steps, delta.ceil() as usize);
+            assert_eq!(runtime.snapshot(), before);
+            assert_eq!(runtime.snapshot_revision(), before_revision);
+            assert!(matches!(
+                runtime.apply_command(WorldCommand::ResumePlayback, 8),
+                Err(RuntimeError::AdvanceBusy)
+            ));
+            assert!(matches!(
+                runtime.begin_advance([3, 4], 0, delta, 7),
+                Err(RuntimeError::AdvanceBusy)
+            ));
+            assert_eq!(
+                runtime
+                    .begin_advance([1, 2], 0, delta, 7)
+                    .unwrap()
+                    .generation,
+                op.generation
+            );
+            let first = runtime.continue_advance(op.generation, 0).unwrap().clone();
+            assert_eq!(first.completed_steps, 64);
+            assert_eq!(runtime.snapshot(), before);
+            assert!(matches!(
+                runtime.continue_advance(op.generation, 0),
+                Err(RuntimeError::AdvanceStale)
+            ));
+            let second = runtime.continue_advance(op.generation, 64).unwrap().clone();
+            let done = runtime
+                .continue_advance(op.generation, second.completed_steps)
+                .unwrap()
+                .clone();
+            assert_eq!(done.state, super::AdvanceState::Committed);
+            assert_eq!(runtime.snapshot().epoch_seconds, delta);
+            assert_eq!(
+                super::world_bodies_to_solver_state(&runtime.snapshot().bodies),
+                oracle
+            );
+            assert_eq!(runtime.snapshot_revision(), before_revision + 1);
+            assert_eq!(runtime.query_advance().unwrap().generation, op.generation);
+        }
+    }
+
+    #[test]
+    fn cancellation_and_empty_world_begin_do_not_commit() {
+        let mut runtime = new_runtime();
+        let before = runtime.snapshot();
+        let ordinal = runtime.snapshot_revision();
+        let op = runtime
+            .begin_advance([5, 6], 0, f64::MAX, 1)
+            .unwrap()
+            .clone();
+        assert_eq!(op.total_steps, 0);
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(
+            runtime.cancel_advance(op.generation).unwrap().state,
+            super::AdvanceState::Cancelled
+        );
+        assert_eq!(runtime.snapshot_revision(), ordinal);
+        assert_eq!(runtime.snapshot(), before);
+        let next = runtime
+            .begin_advance([7, 8], op.generation, f64::MAX, 2)
+            .unwrap()
+            .clone();
+        assert!(matches!(
+            runtime.begin_advance([5, 6], 0, f64::MAX, 1),
+            Err(RuntimeError::AdvanceBusy)
+        ));
+        assert_eq!(
+            runtime.continue_advance(next.generation, 0).unwrap().state,
+            super::AdvanceState::Committed
+        );
+        assert_eq!(runtime.snapshot().epoch_seconds, f64::MAX);
+        assert_eq!(runtime.snapshot_revision(), ordinal + 1);
+    }
+
+    #[test]
+    fn cancellation_after_partial_chunk_discards_staged_work() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        let before = runtime.snapshot();
+        let revision = runtime.snapshot_revision();
+        let op = runtime
+            .begin_advance([9, 10], 0, 130.5, 11)
+            .unwrap()
+            .clone();
+        assert_eq!(
+            runtime
+                .continue_advance(op.generation, 0)
+                .unwrap()
+                .completed_steps,
+            64
+        );
+        assert_eq!(
+            runtime.cancel_advance(op.generation).unwrap().state,
+            super::AdvanceState::Cancelled
+        );
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(runtime.snapshot_revision(), revision);
+        assert_eq!(
+            runtime.query_advance().unwrap().state,
+            super::AdvanceState::Cancelled
+        );
+        let next = runtime
+            .begin_advance([11, 12], op.generation, 2.0, 12)
+            .unwrap()
+            .clone();
+        assert!(matches!(
+            runtime.begin_advance([9, 10], 0, 130.5, 11),
+            Err(RuntimeError::AdvanceBusy)
+        ));
+        assert_eq!(
+            runtime.cancel_advance(next.generation).unwrap().state,
+            super::AdvanceState::Cancelled
+        );
+        assert!(matches!(
+            runtime.begin_advance([9, 10], 0, 130.5, 11),
+            Err(RuntimeError::AdvanceStale)
+        ));
+        runtime.advance_generation = i64::MAX as u64;
+        assert!(matches!(
+            runtime.begin_advance([13, 14], i64::MAX as u64, 1.0, 13),
+            Err(RuntimeError::AdvanceStale)
+        ));
+    }
+
+    #[test]
+    fn oversized_synchronous_and_limited_tick_are_truthful() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        let before = runtime.snapshot();
+        let ordinal = runtime.snapshot_revision();
+        assert!(matches!(
+            runtime.apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 65.0
+                },
+                1
+            ),
+            Err(RuntimeError::AdvanceWorkLimit)
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(runtime.snapshot_revision(), ordinal);
+        runtime
+            .apply_command(
+                WorldCommand::SetPlaybackRate {
+                    sim_seconds_per_real_second: 1000.0,
+                },
+                2,
+            )
+            .unwrap();
+        runtime
+            .apply_command(WorldCommand::ResumePlayback, 3)
+            .unwrap();
+        let tick = runtime.playback_tick(0.5, 4).unwrap();
+        assert_eq!(tick.requested_seconds, 500.0);
+        assert_eq!(tick.applied_seconds, 64.0);
+        assert!(tick.limited);
+        assert_eq!(runtime.snapshot().epoch_seconds, 64.0);
+    }
+
+    #[test]
     fn rejects_absorbed_epoch_delta_before_integrating_moving_bodies() {
         let mut runtime = new_runtime();
         runtime
@@ -3272,14 +3695,7 @@ mod tests {
         let snapshot_t0 = runtime.snapshot();
         let moon_t0 = body_position(&snapshot_t0, &BodyId("moon".into())).clone();
 
-        runtime
-            .apply_command(
-                WorldCommand::AdvanceEpoch {
-                    delta_seconds: 86_400.0,
-                },
-                3,
-            )
-            .expect("advance epoch should succeed");
+        advance_staged_for_test(&mut runtime, 86_400.0, 3);
 
         let snapshot_t1 = runtime.snapshot();
         let moon_t1 = body_position(&snapshot_t1, &BodyId("moon".into()));
@@ -3342,14 +3758,7 @@ mod tests {
         let pluto_t0 = body_position(&snapshot_t0, &BodyId("pluto".into()));
         let relative_t0 = relative_position(&pluto_t0, &sun_t0);
 
-        runtime
-            .apply_command(
-                WorldCommand::AdvanceEpoch {
-                    delta_seconds: 31_536_000.0,
-                },
-                3,
-            )
-            .expect("advance epoch should succeed");
+        advance_staged_for_test(&mut runtime, 31_536_000.0, 3);
 
         let snapshot_t1 = runtime.snapshot();
         let sun_t1 = body_position(&snapshot_t1, &BodyId("sun".into()));
@@ -3377,14 +3786,7 @@ mod tests {
         let moon_relative_t0 = relative_position(&moon_t0, &earth_t0);
         let pluto_relative_t0 = relative_position(&pluto_t0, &sun_t0);
 
-        runtime
-            .apply_command(
-                WorldCommand::AdvanceEpoch {
-                    delta_seconds: 86_400.0,
-                },
-                99,
-            )
-            .expect("advance epoch should succeed");
+        advance_staged_for_test(&mut runtime, 86_400.0, 99);
 
         let snapshot_t1 = runtime.snapshot();
         let earth_t1 = body_position(&snapshot_t1, &BodyId("earth".into()));
@@ -3465,14 +3867,7 @@ mod tests {
             .expect("probe spawn should succeed");
 
         for runtime in [&mut baseline, &mut with_tracer] {
-            runtime
-                .apply_command(
-                    WorldCommand::AdvanceEpoch {
-                        delta_seconds: 120.0,
-                    },
-                    4,
-                )
-                .expect("advance should succeed");
+            advance_staged_for_test(runtime, 120.0, 4);
         }
 
         let baseline_snapshot = baseline.snapshot();
@@ -4562,6 +4957,25 @@ mod tests {
                 _ => None,
             })
             .expect("branch event should exist")
+    }
+
+    fn advance_staged_for_test(runtime: &mut WorldRuntime, delta: f64, recorded: i64) {
+        let prior = runtime.query_advance().map_or(0, |op| op.generation);
+        let op = runtime
+            .begin_advance([prior + 1, 0], prior, delta, recorded)
+            .expect("begin advance")
+            .clone();
+        let mut completed = 0;
+        loop {
+            let progress = runtime
+                .continue_advance(op.generation, completed)
+                .expect("advance chunk")
+                .clone();
+            if progress.state == super::AdvanceState::Committed {
+                break;
+            }
+            completed = progress.completed_steps;
+        }
     }
 
     fn new_runtime() -> WorldRuntime {

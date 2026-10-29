@@ -29,7 +29,10 @@ typedef enum SlStatusCode {
   SL_STATUS_OK = 0,
   SL_STATUS_INVALID_ARGUMENT = 1,
   SL_STATUS_NOT_READY = 2,
-  SL_STATUS_INTERNAL_ERROR = 3
+  SL_STATUS_INTERNAL_ERROR = 3,
+  SL_STATUS_BUSY = 4,
+  SL_STATUS_STALE = 5,
+  SL_STATUS_WORK_LIMIT = 6
 } SlStatusCode;
 
 typedef struct SlResult {
@@ -377,6 +380,32 @@ typedef struct SlBufferViewResult {
 // - session_*: create/read/command/refresh lifecycle
 // - *_session_export_*: render extraction + packet handle ownership flow
 // - *_buffer/release: borrowed packet view + explicit release
+typedef struct SlAdvanceResult {
+  SlResult result;
+  uint32_t state; // 0 none, 1 running, 2 committed, 3 cancelled
+  uint64_t generation;
+  uint64_t intent_high;
+  uint64_t intent_low;
+  uint64_t base_ordinal;
+  double requested_seconds;
+  uint64_t completed_steps;
+  uint64_t total_steps;
+  int64_t recorded_at_unix_ms;
+} SlAdvanceResult;
+
+typedef struct SlPlaybackTickResult {
+  SlResult result;
+  double requested_seconds;
+  double applied_seconds;
+  uint8_t limited;
+} SlPlaybackTickResult;
+
+SlAdvanceResult sl_v2_session_begin_advance(SlRuntimeHandle handle, uint64_t intent_high, uint64_t intent_low, uint64_t expected_generation, double delta_seconds, int64_t recorded_at_unix_ms);
+SlAdvanceResult sl_v2_session_continue_advance(SlRuntimeHandle handle, uint64_t generation, uint64_t expected_completed);
+SlAdvanceResult sl_v2_session_cancel_advance(SlRuntimeHandle handle, uint64_t generation);
+SlAdvanceResult sl_v2_session_query_advance(SlRuntimeHandle handle);
+SlPlaybackTickResult sl_v2_session_playback_tick(SlRuntimeHandle handle, double real_seconds, int64_t recorded_at_unix_ms);
+
 uint32_t sl_v2_abi_version(void);
 SlSessionCreateResult sl_v2_session_create(SlSessionCreateParams params);
 SlResult sl_v2_session_destroy(SlRuntimeHandle handle);

@@ -726,18 +726,29 @@ fn host_relative_turning_angles(
         .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
         .expect("canonical seed should succeed");
 
+    runtime
+        .apply_command(WorldCommand::PausePlayback, 2)
+        .expect("pause before staged playback comparison");
     let mut host_relative_vectors = Vec::with_capacity(ticks + 1);
     host_relative_vectors.push(moon_from_earth(&runtime.snapshot()));
 
     for step in 0..ticks {
-        runtime
-            .apply_command(
-                WorldCommand::AdvanceEpoch {
-                    delta_seconds: tick_seconds,
-                },
-                i64::try_from(step).expect("step index should fit in i64") + 100,
-            )
-            .expect("advance epoch should succeed");
+        let recorded = i64::try_from(step).expect("step index should fit in i64") + 100;
+        let prior = runtime.query_advance().map_or(0, |op| op.generation);
+        let op = runtime
+            .begin_advance([prior + 1, 0], prior, tick_seconds, recorded)
+            .expect("begin advance")
+            .clone();
+        let mut completed = 0;
+        loop {
+            let progress = runtime
+                .continue_advance(op.generation, completed)
+                .expect("continue advance");
+            if progress.state == solarlab_runtime::AdvanceState::Committed {
+                break;
+            }
+            completed = progress.completed_steps;
+        }
         host_relative_vectors.push(moon_from_earth(&runtime.snapshot()));
     }
 
