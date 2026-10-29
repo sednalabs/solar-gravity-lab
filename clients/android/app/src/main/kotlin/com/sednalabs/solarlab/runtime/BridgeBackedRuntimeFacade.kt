@@ -1,5 +1,12 @@
 package com.sednalabs.solarlab.runtime
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +18,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android-local implementation of `RuntimeFacade`.
@@ -26,8 +35,16 @@ class BridgeBackedRuntimeFacade internal constructor(
     private val bridge: RuntimeBridge,
     private val developerTelemetryRecorder: DeveloperTelemetryRecorder = defaultDeveloperTelemetryRecorder(),
     private val boundaryDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
+    private val operationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : RuntimeFacade {
     constructor() : this(JniRuntimeBridge())
+    constructor(operationScope: CoroutineScope) : this(JniRuntimeBridge(), operationScope = operationScope)
+
+    private val manualLock = Any()
+    private var manualJob: Job? = null
+    private val manualCancelRequested = AtomicBoolean(false)
+    private data class AdvanceIdentity(val intent: UUID, val baseOrdinal: Long, val delta: Double, val recordedAt: Long, val priorGeneration: Long)
+    private var unresolvedAdvance: AdvanceIdentity? = null
 
     private var lastSnapshotTelemetryKey: String? = null
     private var lastRenderTelemetryKey: String? = null
@@ -101,6 +118,10 @@ class BridgeBackedRuntimeFacade internal constructor(
     }
 
     override suspend fun loadScenario(scenarioId: String) {
+        cancelManualAdvance()
+        synchronized(manualLock) { manualJob }?.join()
+        if (_uiState.value.manualAdvance != null) return
+        _uiState.update { it.copy(playbackMeasurement = null) }
         val scenarioPack = RuntimeScenarioPacks.byId(scenarioId)
         if (scenarioPack == null) {
             updateWithTelemetry(
@@ -209,6 +230,12 @@ class BridgeBackedRuntimeFacade internal constructor(
     }
 
     override suspend fun applyCommand(command: RuntimeCommand) {
+        if (command is RuntimeCommand.AdvanceEpoch) {
+            startManualAdvance(command.deltaSeconds)
+            return
+        }
+        if (_uiState.value.manualAdvance != null) return
+        _uiState.update { it.copy(playbackMeasurement = null) }
         val actionLabel = command.userFacingAction()
         try {
             runShellAction(
@@ -243,10 +270,175 @@ class BridgeBackedRuntimeFacade internal constructor(
         }
     }
 
+    override fun cancelManualAdvance() {
+        manualCancelRequested.set(true)
+        _uiState.update { current ->
+            current.copy(manualAdvance = current.manualAdvance?.copy(cancelRequested = true, status = "Cancelling"))
+        }
+        synchronized(manualLock) {
+            val identity = unresolvedAdvance
+            if (manualJob == null && identity != null) {
+                val job = operationScope.launch(start = CoroutineStart.LAZY) {
+                    try { reconcileUnknownAdvance(identity) }
+                    finally { synchronized(manualLock) { manualJob = null } }
+                }
+                manualJob = job
+                job.start()
+            }
+        }
+    }
+
+    private fun startManualAdvance(deltaSeconds: Double) {
+        synchronized(manualLock) {
+            val state = _uiState.value
+            if (manualJob != null || state.manualAdvance != null || state.sessionHandle == null ||
+                state.snapshot?.paused != true
+            ) return
+            manualCancelRequested.set(false)
+            _uiState.update { it.copy(manualAdvance = ManualAdvancePresentation(), playbackMeasurement = null) }
+            val intent = UUID.randomUUID()
+            val recordedAtUnixMs = System.currentTimeMillis()
+            val baseOrdinal = state.snapshot.revision + 1
+            val job = operationScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    executeManualAdvance(intent, baseOrdinal, deltaSeconds, recordedAtUnixMs)
+                } finally {
+                    synchronized(manualLock) { manualJob = null }
+                }
+            }
+            manualJob = job
+            job.start()
+        }
+    }
+
+    private suspend fun executeManualAdvance(intent: UUID, baseOrdinal: Long, deltaSeconds: Double, recordedAtUnixMs: Long) {
+        var operation: NativeAdvanceResult? = null
+        var expectedGeneration: Long? = null
+        var beginAttempted = false
+        var terminal = false
+        fun isOurs(result: NativeAdvanceResult): Boolean =
+            result.intentHigh == intent.mostSignificantBits && result.intentLow == intent.leastSignificantBits &&
+                result.baseOrdinal == baseOrdinal && result.requestedSeconds.toBits() == deltaSeconds.toBits() &&
+                result.recordedAtUnixMs == recordedAtUnixMs &&
+                expectedGeneration?.let { result.generation == it + 1 } == true
+        suspend fun query(): NativeAdvanceResult = withContext(boundaryDispatcher) { bridge.queryAdvance() }
+        try {
+            val previous = query()
+            check(previous.code == 0 && previous.state != 1) { "Another advance is active or cannot be queried" }
+            expectedGeneration = previous.generation
+            synchronized(manualLock) {
+                unresolvedAdvance = AdvanceIdentity(intent, baseOrdinal, deltaSeconds, recordedAtUnixMs, previous.generation)
+            }
+            if (manualCancelRequested.get()) {
+                terminal = true
+                return
+            }
+            beginAttempted = true
+            operation = try {
+                withContext(boundaryDispatcher) {
+                    bridge.beginAdvance(intent.mostSignificantBits, intent.leastSignificantBits, previous.generation, deltaSeconds, recordedAtUnixMs)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                val recovered = query()
+                if (recovered.code != 0 || !isOurs(recovered)) throw error
+                recovered
+            }
+            if (operation!!.code != 0) {
+                terminal = true
+                error("Advance could not start (status ${operation!!.code})")
+            }
+            check(isOurs(operation!!)) { "Advance identity could not be reconciled" }
+            while (operation!!.state == 1) {
+                val current = operation!!
+                _uiState.update { state -> state.copy(manualAdvance = ManualAdvancePresentation(
+                    completedSteps = current.completedSteps,
+                    totalSteps = current.totalSteps,
+                    cancelRequested = manualCancelRequested.get(),
+                    status = if (manualCancelRequested.get()) "Cancelling" else "Advancing",
+                )) }
+                yield()
+                operation = if (manualCancelRequested.get()) {
+                    try {
+                        withContext(boundaryDispatcher) { bridge.cancelAdvance(current.generation) }
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                        query()
+                    }
+                } else {
+                    try {
+                        withContext(boundaryDispatcher) { bridge.continueAdvance(current.generation, current.completedSteps) }
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                        val recovered = query()
+                        if (recovered.code != 0 || !isOurs(recovered) ||
+                            (recovered.state == 1 && recovered.completedSteps == current.completedSteps)
+                        ) throw error
+                        recovered
+                    }
+                }
+                check(operation!!.code == 0 && isOurs(operation!!)) { "Advance status could not be reconciled" }
+            }
+            terminal = operation!!.state == 2 || operation!!.state == 3
+            check(terminal) { "Advance status is unknown" }
+            withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) }
+            val message = if (operation!!.state == 2) "Advance complete" else "Advance cancelled"
+            _uiState.update { it.copy(noticeLine = message, noticeTone = ShellNoticeTone.Neutral) }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            _uiState.update { it.copy(noticeLine = "Advance unavailable: ${error.message ?: error::class.java.simpleName}", noticeTone = ShellNoticeTone.Caution) }
+        } finally {
+            if (!beginAttempted) terminal = true
+            if (!terminal) {
+                withContext(NonCancellable) {
+                    val resolved = runCatching {
+                        val current = query()
+                        if (current.code == 0 && isOurs(current) && current.state == 1) {
+                            val result = withContext(boundaryDispatcher) { bridge.cancelAdvance(current.generation) }
+                            if (result.code == 0 && isOurs(result)) result else query()
+                        } else current
+                    }.getOrNull()
+                    if (resolved != null && resolved.code == 0 && isOurs(resolved) && resolved.state in 2..3) {
+                        terminal = true
+                        runCatching { withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) } }
+                    } else if (operation == null && resolved != null && resolved.code == 0 && !isOurs(resolved)) {
+                        // A successful query proves this intent did not reserve the session.
+                        terminal = true
+                    }
+                }
+            }
+            if (terminal) synchronized(manualLock) { unresolvedAdvance = null }
+            _uiState.update { current -> current.copy(manualAdvance = if (terminal) null else
+                current.manualAdvance?.copy(status = "Advance status unknown", cancelRequested = false)) }
+        }
+    }
+
+    private suspend fun reconcileUnknownAdvance(identity: AdvanceIdentity) {
+        fun matches(result: NativeAdvanceResult) = result.code == 0 &&
+            result.intentHigh == identity.intent.mostSignificantBits && result.intentLow == identity.intent.leastSignificantBits &&
+            result.baseOrdinal == identity.baseOrdinal && result.requestedSeconds.toBits() == identity.delta.toBits() &&
+            result.recordedAtUnixMs == identity.recordedAt && result.generation == identity.priorGeneration + 1
+        val resolved = runCatching {
+            var result = withContext(boundaryDispatcher) { bridge.queryAdvance() }
+            if (matches(result) && result.state == 1) {
+                result = withContext(boundaryDispatcher) { bridge.cancelAdvance(result.generation) }
+            }
+            if (matches(result) && result.state in 2..3) {
+                withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) }
+                true
+            } else false
+        }.getOrElse { error -> if (error is CancellationException) throw error else false }
+        if (resolved) synchronized(manualLock) { unresolvedAdvance = null }
+        _uiState.update { current -> current.copy(manualAdvance = if (resolved) null else
+            current.manualAdvance?.copy(status = "Advance status unknown", cancelRequested = false)) }
+    }
+
     private fun applySignal(signal: RuntimeSignal) {
         val current = _uiState.value
         val (handle, revision) = when (signal) {
             is RuntimeSignal.Connected -> signal.handle to null
+            is RuntimeSignal.PlaybackMeasured -> signal.sessionHandle to signal.revision
             is RuntimeSignal.SnapshotUpdated -> signal.sessionHandle to signal.summary.revision
             is RuntimeSignal.CommandApplied -> signal.sessionHandle to signal.summary.revision
             is RuntimeSignal.RenderPacketReady -> signal.sessionHandle to signal.revision
@@ -261,6 +453,9 @@ class BridgeBackedRuntimeFacade internal constructor(
             return
         }
         when (signal) {
+            is RuntimeSignal.PlaybackMeasured -> _uiState.update { current ->
+                current.copy(playbackMeasurement = PlaybackMeasurement(signal.requestedSeconds, signal.appliedSeconds, signal.limited, signal.achievedRate))
+            }
             is RuntimeSignal.Connected -> updateWithTelemetry(
                 recordTelemetry(
                     level = DeveloperTelemetryLevel.Info,
@@ -344,6 +539,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                         detailLine = "Epoch ${signal.summary.epochSeconds.asEpochLabel()} with ${signal.summary.bodyCount} authoritative bodies",
                         pendingActionLabel = null,
                         snapshot = snapshot,
+                        playbackMeasurement = if (snapshot.paused) null else current.playbackMeasurement,
                         snapshotSummary = snapshot.toSnapshotSummaryLine(),
                         observerModeCode = signal.summary.observerMode,
                         focusedBodyId = snapshot.focusTargetBodyId,
@@ -383,6 +579,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                         noticeTone = ShellNoticeTone.Positive,
                         pendingActionLabel = null,
                         snapshot = snapshot,
+                        playbackMeasurement = if (snapshot.paused) null else current.playbackMeasurement,
                         snapshotSummary = snapshot.toSnapshotSummaryLine(),
                         observerModeCode = signal.summary.observerMode,
                         focusedBodyId = focusedBodyId,

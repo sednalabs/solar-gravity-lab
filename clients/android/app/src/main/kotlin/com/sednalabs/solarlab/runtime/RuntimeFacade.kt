@@ -22,6 +22,8 @@ interface RuntimeFacade {
 
     // Apply shell-level command through the runtime boundary.
     suspend fun applyCommand(command: RuntimeCommand)
+
+    fun cancelManualAdvance() {}
 }
 
 enum class SessionConnectionState {
@@ -83,6 +85,20 @@ data class RenderStatusPresentation(
     val issue: String? = null,
 )
 
+data class ManualAdvancePresentation(
+    val completedSteps: Long = 0,
+    val totalSteps: Long = 0,
+    val cancelRequested: Boolean = false,
+    val status: String = "Preparing",
+)
+
+data class PlaybackMeasurement(
+    val requestedSeconds: Double,
+    val appliedSeconds: Double,
+    val limited: Boolean,
+    val achievedRate: Double?,
+)
+
 data class ShellUiState(
     val connectionState: SessionConnectionState = SessionConnectionState.Connecting,
     val statusLine: String,
@@ -90,6 +106,8 @@ data class ShellUiState(
     val noticeLine: String? = null,
     val noticeTone: ShellNoticeTone = ShellNoticeTone.Neutral,
     val pendingActionLabel: String? = null,
+    val manualAdvance: ManualAdvancePresentation? = null,
+    val playbackMeasurement: PlaybackMeasurement? = null,
     val sessionHandle: Long? = null,
     val backendSummary: String? = null,
     val snapshot: SnapshotPresentation? = null,
