@@ -64,6 +64,19 @@ class PrereleaseJniR8ContractTest(unittest.TestCase):
         )
         self.assertEqual({dto_classes[0]}, missing)
 
+    def test_bounded_advance_dtos_are_checked_in_the_packaged_apk(self) -> None:
+        verifier = load_verifier()
+        required = set(verifier.required_jni_dto_classes(verifier.DEFAULT_FFI_SOURCE))
+        bounded_dtos = {
+            "com.sednalabs.solarlab.runtime.NativeAdvanceResult",
+            "com.sednalabs.solarlab.runtime.NativePlaybackTickResult",
+        }
+        self.assertTrue(bounded_dtos.issubset(required))
+        self.assertEqual(
+            bounded_dtos,
+            verifier.missing_jni_dto_classes(verifier.DEFAULT_FFI_SOURCE, required - bounded_dtos),
+        )
+
     def test_dex_enumeration_uses_the_fixed_sdk_command(self) -> None:
         verifier = load_verifier()
         completed = Mock(
