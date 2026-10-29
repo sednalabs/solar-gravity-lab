@@ -2034,6 +2034,83 @@ mod tests {
         }
     }
 
+    // Run once with a single-CPU affinity and once with multiple available CPUs.
+    // The emitted marker identifies the path actually selected by dispatch.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm64_dense_selected_chunk_schedule_matches_bulk() {
+        assert!(
+            arm64_neon_runtime_available(),
+            "native NEON is required for this proof"
+        );
+        let features = detect_cpu_features();
+        assert!(features.iter().any(|feature| feature == "neon"));
+        let workers = runtime_worker_budget();
+        let expected_path = if workers > 1 {
+            "simd.arm64.neon-f64-parallel-tiled-pairwise"
+        } else {
+            "simd.arm64.neon-f64-tiled-pairwise"
+        };
+        if let Ok(required) = std::env::var("SOLARLAB_EXPECT_DENSE_PATH") {
+            assert_eq!(
+                expected_path, required,
+                "runner did not select required backend"
+            );
+        }
+        let mut policy = test_policy();
+        policy.solver_backend = SolverBackend::SimdArm64;
+        for delta in [130.0, 130.5] {
+            let initial = dense_kernel_parity_scenario(128);
+            let mut bulk = initial.clone();
+            let mut chunked = initial;
+            let (expected_invariants, report) =
+                super::advance_authoritative_with_features(&policy, &mut bulk, delta, &features);
+            let plan = super::fixed_step_plan(&policy, delta, chunked.len(), &features).unwrap();
+            assert_eq!(report.effective_backend, SolverBackend::SimdArm64);
+            assert_eq!(report.path_id, expected_path);
+            assert_eq!(plan.report(), report);
+            let mut remaining = plan.total_steps;
+            let mut chunks = Vec::new();
+            while remaining > 0 {
+                let count = remaining.min(super::MAX_INCREMENTAL_STEPS);
+                super::advance_fixed_steps(&plan, &mut chunked, count).unwrap();
+                remaining -= count;
+                chunks.push(count);
+            }
+            assert_eq!(
+                chunks,
+                if delta == 130.0 {
+                    vec![64, 64, 2]
+                } else {
+                    vec![64, 64, 3]
+                }
+            );
+            for (actual, expected) in chunked.iter().zip(&bulk) {
+                for (a, b) in [
+                    (actual.mass_kg, expected.mass_kg),
+                    (actual.position_m.x, expected.position_m.x),
+                    (actual.position_m.y, expected.position_m.y),
+                    (actual.position_m.z, expected.position_m.z),
+                    (actual.velocity_mps.x, expected.velocity_mps.x),
+                    (actual.velocity_mps.y, expected.velocity_mps.y),
+                    (actual.velocity_mps.z, expected.velocity_mps.z),
+                ] {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                }
+            }
+            assert_eq!(compute_invariants(&chunked), expected_invariants);
+            println!(
+                "DENSE_CHUNK_PROOF path={} workers={} bodies={} delta={} steps={} chunks={:?}",
+                report.path_id,
+                workers,
+                chunked.len(),
+                delta,
+                plan.total_steps,
+                chunks
+            );
+        }
+    }
+
     #[test]
     fn advance_authoritative_reports_effective_backend_and_path() {
         let policy = test_policy();

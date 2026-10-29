@@ -3509,6 +3509,93 @@ mod tests {
     }
 
     #[test]
+    fn catalog_jupiter_io_staged_chunks_match_strict_short_horizon() {
+        let seed =
+            solarlab_data::scenario_pack_seed("showcase.jupiter-system").expect("catalog scenario");
+        let selected: Vec<_> = seed
+            .bodies
+            .into_iter()
+            .filter(|body| ["sun", "jupiter", "io"].contains(&body.body_id.as_str()))
+            .collect();
+        assert_eq!(selected.len(), 3);
+        for delta in [130.0, 130.5] {
+            let mut runtime = new_runtime();
+            for (index, body) in selected.iter().enumerate() {
+                runtime
+                    .apply_command(
+                        WorldCommand::SpawnBody {
+                            body: BodyState {
+                                body_id: BodyId(body.body_id.clone()),
+                                body_class: body.body_class.clone(),
+                                mass_kg: body.mass_kg,
+                                source_mass_kg: BodyState::default_source_mass_kg(
+                                    &body.body_class,
+                                    body.mass_kg,
+                                ),
+                                radius_m: body.radius_m,
+                                position_m: body.position_m,
+                                velocity_mps: body.velocity_mps,
+                            },
+                        },
+                        index as i64,
+                    )
+                    .unwrap();
+            }
+            let before = runtime.snapshot();
+            let mut strict = super::world_bodies_to_solver_state(&before.bodies);
+            let invariants = solarlab_physics::advance_authoritative_scalar(
+                &runtime.config.physics,
+                &mut strict,
+                delta,
+            );
+            let base = runtime.snapshot_revision() + 1;
+            let op = runtime
+                .begin_advance([81, 82], 0, base, delta, 7)
+                .unwrap()
+                .clone();
+            let mut completed = 0;
+            let mut chunks = Vec::new();
+            loop {
+                let (progress, events) =
+                    runtime.continue_advance(op.generation, completed).unwrap();
+                chunks.push(progress.completed_steps - completed);
+                completed = progress.completed_steps;
+                if progress.state == super::AdvanceState::Committed {
+                    assert!(!events.is_empty());
+                    break;
+                }
+                assert!(events.is_empty());
+            }
+            assert_eq!(
+                chunks,
+                if delta == 130.0 {
+                    vec![64, 64, 2]
+                } else {
+                    vec![64, 64, 3]
+                }
+            );
+            let after = runtime.snapshot();
+            let actual = super::world_bodies_to_solver_state(&after.bodies);
+            for (a, b) in actual.iter().zip(&strict) {
+                for (x, y) in [
+                    (a.mass_kg, b.mass_kg),
+                    (a.position_m.x, b.position_m.x),
+                    (a.position_m.y, b.position_m.y),
+                    (a.position_m.z, b.position_m.z),
+                    (a.velocity_mps.x, b.velocity_mps.x),
+                    (a.velocity_mps.y, b.velocity_mps.y),
+                    (a.velocity_mps.z, b.velocity_mps.z),
+                ] {
+                    assert_eq!(x.to_bits(), y.to_bits());
+                }
+            }
+            assert_eq!(after.invariants, invariants);
+            assert_eq!(after.epoch_seconds, delta);
+            assert_eq!(runtime.snapshot_revision(), base);
+        }
+    }
+
+    #[test]
     fn cancellation_and_empty_world_begin_do_not_commit() {
         let mut runtime = new_runtime();
         let before = runtime.snapshot();
