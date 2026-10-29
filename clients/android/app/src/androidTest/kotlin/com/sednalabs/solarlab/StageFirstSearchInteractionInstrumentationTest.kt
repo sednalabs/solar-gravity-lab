@@ -4,6 +4,10 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -85,6 +89,34 @@ class StageFirstSearchInteractionInstrumentationTest {
             composeRule.mainClock.autoAdvance = true
         }
     }
+    @Test
+    fun focusedSearchKeepsCloseAndResultsAvailable() {
+        assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
+            .performScrollToIfPossible().performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
+            .performScrollToIfPossible().performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            runCatching {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).assertIsFocused()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("earth")
+        composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth"))
+            .assertIsDisplayed()
+        composeRule.onNode(hasText("Close") and hasClickAction() and hasAnyAncestor(isDialog()))
+            .assertIsDisplayed().performClick()
+        composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).assertCountEquals(0)
+    }
+
     @Test
     fun openSearchAndQuerySurviveActivityRecreation() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)

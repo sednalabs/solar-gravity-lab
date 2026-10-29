@@ -18,8 +18,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -60,6 +62,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -404,6 +407,13 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
+        fun showFrameRequest(bodyId: String) {
+            if (renderHostView == null) return
+            searchFrameRequestToken += 1
+            val bodyName = searchableBodies.firstOrNull { it.id == bodyId }?.displayName ?: bodyId
+            searchFrameRequest = searchFrameRequestToken to "Frame requested · $bodyName"
+        }
+
         fun focusAndFrameRuntimeBody(
             bodyId: String,
             acknowledgement: RuntimeSemanticFocusAcknowledgement? = null,
@@ -541,7 +551,9 @@ internal fun StageFirstRuntimeExperience(
                     if (stageChromeModeFromName(chromeModeName) == StageChromeMode.MINIMAL) {
                         chromeModeName = StageChromeMode.COLLAPSED.name
                     }
+                    renderHostView ?: return@LaunchedEffect
                     focusAndFrameRuntimeBody(resolvedBodyId, acknowledgement)
+                    showFrameRequest(resolvedBodyId)
                     appliedSemanticActionToken = pendingSemanticAction.token
                 }
 
@@ -1083,13 +1095,8 @@ internal fun StageFirstRuntimeExperience(
                 onSelectBody = { bodyId ->
                     searchVisible = false
                     requestSearchFocus = false
-                    val host = renderHostView
                     focusAndFrameRuntimeBody(bodyId)
-                    if (host != null) {
-                        searchFrameRequestToken += 1
-                        val bodyName = searchableBodies.firstOrNull { it.id == bodyId }?.displayName ?: bodyId
-                        searchFrameRequest = searchFrameRequestToken to "Frame requested · $bodyName"
-                    }
+                    showFrameRequest(bodyId)
                 },
             )
         }
@@ -1969,6 +1976,8 @@ private fun RuntimeStageSearchDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.safeDrawingPadding().imePadding(),
+        properties = DialogProperties(decorFitsSystemWindows = false),
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Close")
