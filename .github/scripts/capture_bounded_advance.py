@@ -26,9 +26,16 @@ NEXT = {'pause': 'Start', 'preset-1d': '1 d', 'preset-7d': '7 d', 'preset-30d': 
 
 
 def provider(request, response):
-    response.write_bytes(subprocess.run(['node', str(CLI), '--config', str(CONFIG), 'call'],
-        input=(json.dumps(request) + '\n').encode(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        check=True, timeout=90).stdout)
+    try:
+        result = subprocess.run(['node', str(CLI), '--config', str(CONFIG), 'call'],
+            input=(json.dumps(request) + '\n').encode(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            check=False, timeout=90)
+    except subprocess.TimeoutExpired as error:
+        response.write_bytes(error.stdout or b'')
+        raise
+    response.write_bytes(result.stdout)
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, result.args)
 
 
 def foreground():
@@ -104,6 +111,20 @@ def progress(root):
     return any(0 < done <= total and total > 64 for done, total in result)
 
 
+def scroll_labels(root):
+    views = [n for n in root.iter('node') if n.get('package') == PACKAGE and
+             n.get('class') == 'android.widget.ScrollView' and n.get('enabled') == 'true' and
+             n.get('scrollable') == 'true']
+    if len(views) != 1:
+        raise ValueError('unique cockpit scroll view unavailable')
+    labels = {}
+    for node in views[0].iter('node'):
+        label = node.get('content-desc', '')
+        if label:
+            labels.setdefault(label, []).append(base.bounds(node))
+    return {label: rects[0] for label, rects in labels.items() if len(rects) == 1}
+
+
 def scroll(root, viewport, direction, directory):
     candidates = [n for n in root.iter('node') if n.get('package') == PACKAGE and
                   n.get('class') == 'android.widget.ScrollView' and n.get('enabled') == 'true' and
@@ -114,17 +135,41 @@ def scroll(root, viewport, direction, directory):
     height = bottom - top
     if height < 240 or right - left < 100:
         raise ValueError('cockpit scroll view too small')
+    if direction not in (-1, 1):
+        raise ValueError('invalid cockpit scroll direction')
     x = (left + right) // 2
-    y = top + (3 * height // 4 if direction > 0 else height // 4)
-    request = {'tool': 'android_step', 'arguments': {'actions': [
-        {'type': 'scroll', 'x': x, 'y': y, 'scroll_y': direction * (height // 2)}],
-        'post_observe_scope': 'screen_and_ui'}}
+    start_y = top + (3 * height // 4 if direction > 0 else height // 4)
+    end_y = top + (height // 4 if direction > 0 else 3 * height // 4)
+    command = ['adb', '-s', SERIAL, 'shell', 'input', 'swipe', str(x), str(start_y),
+               str(x), str(end_y), '500']
     directory.mkdir(parents=True, exist_ok=False)
-    (directory / 'request.json').write_text(json.dumps(request) + '\n')
-    response = base.BRIDGE / 'bounded-scroll.json'
+    (directory / 'request.json').write_text(json.dumps({
+        'tool': 'adb', 'serial': SERIAL, 'arguments': command[3:], 'timeout_seconds': 20,
+        'physical_effect': 'unknown'}) + '\n')
     foreground()
+    try:
+        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                check=False, timeout=20)
+    except subprocess.TimeoutExpired:
+        (directory / 'adb-receipt.json').write_text(json.dumps({
+            'tool': 'adb', 'serial': SERIAL, 'arguments': command[3:], 'timeout_seconds': 20,
+            'exit_code': None, 'timed_out': True, 'physical_effect': 'unknown'}) + '\n')
+        raise
+    (directory / 'adb-receipt.json').write_text(json.dumps({
+        'tool': 'adb', 'serial': SERIAL, 'arguments': command[3:], 'timeout_seconds': 20,
+        'exit_code': result.returncode, 'timed_out': False, 'physical_effect': 'unknown'}) + '\n')
+    if result.returncode != 0:
+        raise ValueError('ADB swipe did not complete on the bound emulator')
+    request = {'tool': 'android_observe', 'arguments': {'scope': 'screen_and_ui'}}
+    (directory / 'observation-request.json').write_text(json.dumps(request) + '\n')
+    foreground()
+    response = directory / 'observation-response.json'
     provider(request, response)
-    save(directory / 'after', observation(response, step=True, step_type='scroll'))
+    after = save(directory / 'after', observation(response))
+    before_labels, after_labels = scroll_labels(root), scroll_labels(after)
+    if not any(direction * (after_labels[label][1] - rect[1]) < 0
+               for label, rect in before_labels.items() if label in after_labels):
+        raise ValueError('cockpit movement not observed; no further swipe permitted')
 
 
 def postcondition(phase, root):

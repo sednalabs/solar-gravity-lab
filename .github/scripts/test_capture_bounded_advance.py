@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Hosted guards for the private bounded-advance capture."""
+import json
 import os
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 
 with patch.dict(os.environ, {'INTERACTIVE_APP_PACKAGE': 'example.app', 'ANDROID_SERIAL': 'emulator-5554',
@@ -44,6 +48,72 @@ class AdvanceGuards(unittest.TestCase):
                     node('Step', '[0,250][100,350]') + '</node>')
         target = list(root.iter('node'))[1]
         self.assertFalse(capture.fully_visible(root, target, (400, 400)))
+
+    def test_scroll_retains_actual_adb_receipt_and_distinct_provider_observation(self):
+        root = tree('<node package="example.app" class="android.widget.ScrollView" enabled="true" '
+                    'scrollable="true" bounds="[0,1680][1080,2400]">' +
+                    node('Less', '[0,1900][100,2000]') + '</node>')
+        observed_root = tree('<node package="example.app" text="Earth"/>',
+                             '<node package="example.app" class="android.widget.ScrollView" enabled="true" '
+                             'scrollable="true" bounds="[0,1680][1080,2400]">' +
+                             node('Less', '[0,1700][100,1800]') + '</node>')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / 'scroll-0'
+            with patch.object(capture, 'foreground'), \
+                 patch.object(capture.subprocess, 'run', return_value=Mock(returncode=0)) as run, \
+                 patch.object(capture, 'provider', side_effect=lambda request, path: path.write_bytes(b'provider response')) as provider, \
+                 patch.object(capture, 'observation', return_value=(b'provider response', b'png', b'<hierarchy/>', observed_root)) as observation:
+                capture.scroll(root, (1080, 2400), 1, directory)
+            run.assert_called_once_with(['adb', '-s', 'emulator-5554', 'shell', 'input', 'swipe',
+                                         '540', '2220', '540', '1860', '500'],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        check=False, timeout=20)
+            receipt = json.loads((directory / 'adb-receipt.json').read_text())
+            self.assertEqual(receipt['exit_code'], 0)
+            self.assertEqual(receipt['physical_effect'], 'unknown')
+            self.assertEqual(json.loads((directory / 'observation-request.json').read_text())['tool'], 'android_observe')
+            provider.assert_called_once()
+            observation.assert_called_once_with(directory / 'observation-response.json')
+            self.assertEqual((directory / 'observation-response.json').read_bytes(), b'provider response')
+            self.assertEqual((directory / 'after/receipt.json').read_bytes(), b'provider response')
+            self.assertEqual((directory / 'after/screen.png').read_bytes(), b'png')
+
+    def test_unchanged_scroll_retains_observation_and_stops(self):
+        root = tree('<node package="example.app" class="android.widget.ScrollView" enabled="true" '
+                    'scrollable="true" bounds="[0,1680][1080,2400]">' +
+                    node('Less', '[0,1900][100,2000]') + '</node>')
+        after = tree('<node package="example.app" text="Earth"/>',
+                     '<node package="example.app" class="android.widget.ScrollView" enabled="true" '
+                     'scrollable="true" bounds="[0,1680][1080,2400]">' +
+                     node('Less', '[0,1900][100,2000]') + '</node>')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / 'scroll-0'
+            with patch.object(capture, 'foreground'), \
+                 patch.object(capture.subprocess, 'run', return_value=Mock(returncode=0)) as run, \
+                 patch.object(capture, 'provider', side_effect=lambda request, path: path.write_bytes(b'response')), \
+                 patch.object(capture, 'observation', return_value=(b'response', b'png', b'<hierarchy/>', after)):
+                with self.assertRaisesRegex(ValueError, 'movement not observed'):
+                    capture.scroll(root, (1080, 2400), 1, directory)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual((directory / 'after/screen.png').read_bytes(), b'png')
+            self.assertEqual((directory / 'observation-response.json').read_bytes(), b'response')
+
+    def test_scroll_timeout_records_unknown_effect_and_never_observes_or_retries(self):
+        root = tree('<node package="example.app" class="android.widget.ScrollView" enabled="true" '
+                    'scrollable="true" bounds="[0,1680][1080,2400]"/>')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / 'scroll-0'
+            with patch.object(capture, 'foreground'), \
+                 patch.object(capture.subprocess, 'run', side_effect=subprocess.TimeoutExpired('adb', 20)) as run, \
+                 patch.object(capture, 'provider') as provider:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    capture.scroll(root, (1080, 2400), 1, directory)
+            self.assertEqual(run.call_count, 1)
+            provider.assert_not_called()
+            receipt = json.loads((directory / 'adb-receipt.json').read_text())
+            self.assertIsNone(receipt['exit_code'])
+            self.assertTrue(receipt['timed_out'])
+            self.assertEqual(receipt['physical_effect'], 'unknown')
 
     def test_ineffective_collapse_is_not_accepted(self):
         with self.assertRaises(ValueError):
