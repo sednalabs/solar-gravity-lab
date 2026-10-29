@@ -534,6 +534,8 @@ pub struct SlPlaybackTickResult {
     pub requested_seconds: f64,
     pub applied_seconds: f64,
     pub limited: u8,
+    pub committed_epoch_seconds: f64,
+    pub committed_revision: u64,
 }
 
 #[repr(C)]
@@ -1113,6 +1115,7 @@ pub extern "C" fn sl_v2_session_begin_advance(
     intent_high: u64,
     intent_low: u64,
     expected_generation: u64,
+    expected_base_ordinal: u64,
     delta_seconds: f64,
     recorded_at_unix_ms: i64,
 ) -> SlAdvanceResult {
@@ -1121,6 +1124,7 @@ pub extern "C" fn sl_v2_session_begin_advance(
             .begin_advance(
                 [intent_high, intent_low],
                 expected_generation,
+                expected_base_ordinal,
                 delta_seconds,
                 recorded_at_unix_ms,
             )
@@ -1164,6 +1168,8 @@ pub extern "C" fn sl_v2_session_playback_tick(
         requested_seconds: 0.0,
         applied_seconds: 0.0,
         limited: 0,
+        committed_epoch_seconds: 0.0,
+        committed_revision: 0,
     };
     if handle.raw == 0 {
         return output;
@@ -1185,6 +1191,8 @@ pub extern "C" fn sl_v2_session_playback_tick(
             output.requested_seconds = tick.requested_seconds;
             output.applied_seconds = tick.applied_seconds;
             output.limited = u8::from(tick.limited);
+            output.committed_epoch_seconds = tick.committed_epoch_seconds;
+            output.committed_revision = tick.committed_revision;
         }
         Err(error) => output.result = runtime_error_to_status(error),
     }
@@ -2368,6 +2376,7 @@ mod android_jni {
         intent_high: jlong,
         intent_low: jlong,
         expected_generation: jlong,
+        expected_base_ordinal: jlong,
         delta: jdouble,
         recorded: jlong,
     ) -> jobject {
@@ -2376,6 +2385,7 @@ mod android_jni {
             intent_high as u64,
             intent_low as u64,
             expected_generation as u64,
+            expected_base_ordinal as u64,
             delta,
             recorded,
         );
@@ -2441,12 +2451,14 @@ mod android_jni {
         );
         env.new_object(
             CLASS_NATIVE_PLAYBACK_TICK_RESULT,
-            "(IDDZ)V",
+            "(IDDZDJ)V",
             &[
                 JValue::Int(status_code_as_i32(result.result.code)),
                 JValue::Double(result.requested_seconds),
                 JValue::Double(result.applied_seconds),
                 JValue::Bool(result.limited),
+                JValue::Double(result.committed_epoch_seconds),
+                JValue::Long(result.committed_revision as i64),
             ],
         )
         .map_or_else(|_| JObject::null().into_raw(), |o| o.into_raw())
@@ -3784,7 +3796,7 @@ mod tests {
             .code,
             SlStatusCode::Ok
         );
-        let op = super::sl_v2_session_begin_advance(full.handle, 11, 12, 0, 384.0, 1);
+        let op = super::sl_v2_session_begin_advance(full.handle, 11, 12, 0, 3, 384.0, 1);
         assert_eq!(op.total_steps, 384);
         let mut continuation = Vec::new();
         for index in 0..6 {
@@ -3842,7 +3854,7 @@ mod tests {
     fn advance_session_api_recovers_terminal_and_preserves_empty_atomicity() {
         let create = sl_v2_session_create(new_params("sol-system", "main"));
         assert_eq!(create.result.code, SlStatusCode::Ok);
-        let start = super::sl_v2_session_begin_advance(create.handle, 1, 2, 0, 130.5, 7);
+        let start = super::sl_v2_session_begin_advance(create.handle, 1, 2, 0, 1, 130.5, 7);
         assert_eq!(start.result.code, SlStatusCode::Ok);
         assert_eq!(start.state, 1);
         assert_eq!(start.total_steps, 0);
@@ -3850,9 +3862,9 @@ mod tests {
             sl_v2_session_refresh(create.handle).summary.epoch_seconds,
             0.0
         );
-        let duplicate = super::sl_v2_session_begin_advance(create.handle, 1, 2, 0, 130.5, 7);
+        let duplicate = super::sl_v2_session_begin_advance(create.handle, 1, 2, 0, 1, 130.5, 7);
         assert_eq!(duplicate.generation, start.generation);
-        let competing = super::sl_v2_session_begin_advance(create.handle, 3, 4, 0, 130.5, 7);
+        let competing = super::sl_v2_session_begin_advance(create.handle, 3, 4, 0, 1, 130.5, 7);
         assert_eq!(competing.result.code, SlStatusCode::Busy);
         let done = super::sl_v2_session_continue_advance(create.handle, start.generation, 0);
         assert_eq!(done.state, 2);
@@ -3861,6 +3873,76 @@ mod tests {
             sl_v2_session_refresh(create.handle).summary.epoch_seconds,
             130.5
         );
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn begin_advance_rejects_stale_base_before_reservation() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        let failed = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::FocusBody, |command| {
+                command.body_id[..7].copy_from_slice(b"missing");
+                command.body_id_len = 7;
+            }),
+        );
+        assert_eq!(failed.result.code, SlStatusCode::InvalidArgument);
+        let stale = super::sl_v2_session_begin_advance(create.handle, 7, 8, 0, 1, 10.0, 2);
+        assert_eq!(stale.result.code, SlStatusCode::Stale);
+        assert_eq!(super::sl_v2_session_query_advance(create.handle).state, 0);
+        let started = super::sl_v2_session_begin_advance(create.handle, 7, 8, 0, 2, 10.0, 2);
+        assert_eq!(started.result.code, SlStatusCode::Ok);
+        assert_eq!(started.base_ordinal, 2);
+        assert_eq!(
+            super::sl_v2_session_query_advance(create.handle).generation,
+            started.generation
+        );
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn playback_tick_reports_epoch_and_revision_at_commit() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            sl_v2_session_apply_command(
+                create.handle,
+                test_session_command(SlCommandKind::SetPlaybackRate, |command| {
+                    command.sim_seconds_per_real_second = 2.0;
+                })
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        assert_eq!(
+            sl_v2_session_apply_command(
+                create.handle,
+                test_session_command(SlCommandKind::ResumePlayback, |_| {})
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        let tick = super::sl_v2_session_playback_tick(create.handle, 0.5, 3);
+        assert_eq!(tick.result.code, SlStatusCode::Ok);
+        assert_eq!(tick.applied_seconds, 1.0);
+        assert_eq!(tick.committed_epoch_seconds, 1.0);
+        let revision = tick.committed_revision;
+        assert_eq!(
+            sl_v2_session_apply_command(
+                create.handle,
+                test_session_command(SlCommandKind::PausePlayback, |_| {})
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        let (_, _, _, _, current_revision) =
+            super::capture_session_snapshot(create.handle).unwrap();
+        assert_eq!(current_revision, revision + 1);
+        assert_eq!(tick.committed_revision, revision);
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
 

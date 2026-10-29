@@ -398,9 +398,11 @@ typedef struct SlPlaybackTickResult {
   double requested_seconds;
   double applied_seconds;
   uint8_t limited;
+  double committed_epoch_seconds;
+  uint64_t committed_revision;
 } SlPlaybackTickResult;
 
-SlAdvanceResult sl_v2_session_begin_advance(SlRuntimeHandle handle, uint64_t intent_high, uint64_t intent_low, uint64_t expected_generation, double delta_seconds, int64_t recorded_at_unix_ms);
+SlAdvanceResult sl_v2_session_begin_advance(SlRuntimeHandle handle, uint64_t intent_high, uint64_t intent_low, uint64_t expected_generation, uint64_t expected_base_ordinal, double delta_seconds, int64_t recorded_at_unix_ms);
 SlAdvanceResult sl_v2_session_continue_advance(SlRuntimeHandle handle, uint64_t generation, uint64_t expected_completed);
 SlAdvanceResult sl_v2_session_cancel_advance(SlRuntimeHandle handle, uint64_t generation);
 SlAdvanceResult sl_v2_session_query_advance(SlRuntimeHandle handle);

@@ -345,6 +345,8 @@ pub struct PlaybackTickResult {
     pub requested_seconds: f64,
     pub applied_seconds: f64,
     pub limited: bool,
+    pub committed_epoch_seconds: f64,
+    pub committed_revision: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -562,12 +564,14 @@ impl WorldRuntime {
         &mut self,
         intent: [u64; 2],
         expected_generation: u64,
+        expected_base_ordinal: u64,
         delta: f64,
         recorded_at_unix_ms: i64,
     ) -> Result<&AdvanceOperation, RuntimeError> {
         if let Some(op) = self.advance_operation.as_ref() {
             if op.intent == intent {
                 if op.generation.checked_sub(1) == Some(expected_generation)
+                    && op.base_ordinal == expected_base_ordinal
                     && op.requested_seconds.to_bits() == delta.to_bits()
                     && op.recorded_at_unix_ms == recorded_at_unix_ms
                 {
@@ -579,7 +583,9 @@ impl WorldRuntime {
         if self.advance_running() {
             return Err(RuntimeError::AdvanceBusy);
         }
-        if expected_generation != self.advance_generation {
+        if expected_generation != self.advance_generation
+            || expected_base_ordinal != self.next_command_ordinal
+        {
             return Err(RuntimeError::AdvanceStale);
         }
         if !self.active_branch().world.playback.paused {
@@ -631,11 +637,13 @@ impl WorldRuntime {
         Ok(self.advance_operation.as_ref().expect("operation exists"))
     }
 
+    /// Returns commit events only on the call that first settles the operation.
+    /// Later terminal readback returns an empty event vector.
     pub fn continue_advance(
         &mut self,
         generation: u64,
         expected_completed: usize,
-    ) -> Result<&AdvanceOperation, RuntimeError> {
+    ) -> Result<(&AdvanceOperation, Vec<RuntimeEvent>), RuntimeError> {
         let op = self
             .advance_operation
             .as_mut()
@@ -644,8 +652,12 @@ impl WorldRuntime {
             return Err(RuntimeError::AdvanceStale);
         }
         if op.state != AdvanceState::Running {
-            return Ok(self.advance_operation.as_ref().expect("operation exists"));
+            return Ok((
+                self.advance_operation.as_ref().expect("operation exists"),
+                Vec::new(),
+            ));
         }
+        let mut events = Vec::new();
         let count = (op.total_steps - op.completed_steps).min(MAX_INCREMENTAL_STEPS);
         if let Some(plan) = &op.plan {
             advance_fixed_steps(plan, &mut op.bodies, count)
@@ -660,7 +672,7 @@ impl WorldRuntime {
                 .map(FixedStepPlan::report)
                 .unwrap_or_else(|| self.active_branch().world.solver_execution.clone());
             let staged = std::mem::take(&mut op.bodies);
-            self.apply_command_inner(
+            events = self.apply_command_inner(
                 WorldCommand::AdvanceEpoch {
                     delta_seconds: op.requested_seconds,
                 },
@@ -670,7 +682,10 @@ impl WorldRuntime {
             op.state = AdvanceState::Committed;
             self.advance_operation = Some(op);
         }
-        Ok(self.advance_operation.as_ref().expect("operation exists"))
+        Ok((
+            self.advance_operation.as_ref().expect("operation exists"),
+            events,
+        ))
     }
 
     pub fn cancel_advance(&mut self, generation: u64) -> Result<&AdvanceOperation, RuntimeError> {
@@ -701,11 +716,16 @@ impl WorldRuntime {
             return Err(RuntimeError::InvalidEpochDelta(real_seconds));
         }
         let world = &self.active_branch().world;
+        if self.snapshot_revision() > i64::MAX as u64 {
+            return Err(RuntimeError::AdvanceWorkLimit);
+        }
         if world.playback.paused {
             return Ok(PlaybackTickResult {
                 requested_seconds: 0.0,
                 applied_seconds: 0.0,
                 limited: false,
+                committed_epoch_seconds: world.epoch_seconds,
+                committed_revision: self.snapshot_revision(),
             });
         }
         let requested = real_seconds * world.playback.sim_seconds_per_real_second;
@@ -718,11 +738,18 @@ impl WorldRuntime {
         } else {
             requested
         };
-        let applied = if world.bodies.is_empty() {
+        let allowance = if world.bodies.is_empty() {
             requested
         } else {
             requested.min(max_delta)
         };
+        let epoch = world.epoch_seconds;
+        if self.next_command_ordinal > i64::MAX as u64 {
+            return Err(RuntimeError::AdvanceWorkLimit);
+        }
+        let next = representable_epoch_within(epoch, allowance)
+            .ok_or(RuntimeError::InvalidEpochDelta(allowance))?;
+        let applied = next - epoch;
         self.apply_command(
             WorldCommand::AdvanceEpoch {
                 delta_seconds: applied,
@@ -733,6 +760,8 @@ impl WorldRuntime {
             requested_seconds: requested,
             applied_seconds: applied,
             limited: applied < requested,
+            committed_epoch_seconds: next,
+            committed_revision: self.snapshot_revision(),
         })
     }
 
@@ -2147,6 +2176,31 @@ fn build_historical_orbit_archives(
         .collect()
 }
 
+// Select the greatest representable epoch no later than the requested bound.
+fn representable_epoch_within(epoch: f64, allowance: f64) -> Option<f64> {
+    if !epoch.is_finite() || !allowance.is_finite() || allowance <= 0.0 {
+        return None;
+    }
+    let mut next = epoch + allowance;
+    if next.is_infinite() {
+        next = f64::MAX;
+    }
+    if next - epoch > allowance {
+        next = if next > 0.0 {
+            f64::from_bits(next.to_bits() - 1)
+        } else if next < 0.0 {
+            f64::from_bits(next.to_bits() + 1)
+        } else {
+            -f64::from_bits(1)
+        };
+    }
+    let delta = next - epoch;
+    if !delta.is_finite() || delta <= 0.0 || delta > allowance || epoch + delta != next {
+        return None;
+    }
+    Some(next)
+}
+
 // A positive delta can be absorbed by floating-point rounding at large epochs.
 fn next_epoch(epoch_seconds: f64, delta_seconds: f64) -> Option<f64> {
     let next = epoch_seconds + delta_seconds;
@@ -3394,7 +3448,10 @@ mod tests {
                 &mut oracle,
                 delta,
             );
-            let op = runtime.begin_advance([1, 2], 0, delta, 7).unwrap().clone();
+            let op = runtime
+                .begin_advance([1, 2], 0, before_revision + 1, delta, 7)
+                .unwrap()
+                .clone();
             assert_eq!(op.total_steps, delta.ceil() as usize);
             assert_eq!(runtime.snapshot(), before);
             assert_eq!(runtime.snapshot_revision(), before_revision);
@@ -3403,27 +3460,36 @@ mod tests {
                 Err(RuntimeError::AdvanceBusy)
             ));
             assert!(matches!(
-                runtime.begin_advance([3, 4], 0, delta, 7),
+                runtime.begin_advance([3, 4], 0, before_revision + 1, delta, 7),
                 Err(RuntimeError::AdvanceBusy)
             ));
             assert_eq!(
                 runtime
-                    .begin_advance([1, 2], 0, delta, 7)
+                    .begin_advance([1, 2], 0, before_revision + 1, delta, 7)
                     .unwrap()
                     .generation,
                 op.generation
             );
-            let first = runtime.continue_advance(op.generation, 0).unwrap().clone();
+            let first = runtime
+                .continue_advance(op.generation, 0)
+                .unwrap()
+                .0
+                .clone();
             assert_eq!(first.completed_steps, 64);
             assert_eq!(runtime.snapshot(), before);
             assert!(matches!(
                 runtime.continue_advance(op.generation, 0),
                 Err(RuntimeError::AdvanceStale)
             ));
-            let second = runtime.continue_advance(op.generation, 64).unwrap().clone();
+            let second = runtime
+                .continue_advance(op.generation, 64)
+                .unwrap()
+                .0
+                .clone();
             let done = runtime
                 .continue_advance(op.generation, second.completed_steps)
                 .unwrap()
+                .0
                 .clone();
             assert_eq!(done.state, super::AdvanceState::Committed);
             assert_eq!(runtime.snapshot().epoch_seconds, delta);
@@ -3442,7 +3508,7 @@ mod tests {
         let before = runtime.snapshot();
         let ordinal = runtime.snapshot_revision();
         let op = runtime
-            .begin_advance([5, 6], 0, f64::MAX, 1)
+            .begin_advance([5, 6], 0, 1, f64::MAX, 1)
             .unwrap()
             .clone();
         assert_eq!(op.total_steps, 0);
@@ -3454,15 +3520,19 @@ mod tests {
         assert_eq!(runtime.snapshot_revision(), ordinal);
         assert_eq!(runtime.snapshot(), before);
         let next = runtime
-            .begin_advance([7, 8], op.generation, f64::MAX, 2)
+            .begin_advance([7, 8], op.generation, 1, f64::MAX, 2)
             .unwrap()
             .clone();
         assert!(matches!(
-            runtime.begin_advance([5, 6], 0, f64::MAX, 1),
+            runtime.begin_advance([5, 6], 0, 1, f64::MAX, 1),
             Err(RuntimeError::AdvanceBusy)
         ));
         assert_eq!(
-            runtime.continue_advance(next.generation, 0).unwrap().state,
+            runtime
+                .continue_advance(next.generation, 0)
+                .unwrap()
+                .0
+                .state,
             super::AdvanceState::Committed
         );
         assert_eq!(runtime.snapshot().epoch_seconds, f64::MAX);
@@ -3476,13 +3546,14 @@ mod tests {
         let before = runtime.snapshot();
         let revision = runtime.snapshot_revision();
         let op = runtime
-            .begin_advance([9, 10], 0, 130.5, 11)
+            .begin_advance([9, 10], 0, revision + 1, 130.5, 11)
             .unwrap()
             .clone();
         assert_eq!(
             runtime
                 .continue_advance(op.generation, 0)
                 .unwrap()
+                .0
                 .completed_steps,
             64
         );
@@ -3497,11 +3568,11 @@ mod tests {
             super::AdvanceState::Cancelled
         );
         let next = runtime
-            .begin_advance([11, 12], op.generation, 2.0, 12)
+            .begin_advance([11, 12], op.generation, revision + 1, 2.0, 12)
             .unwrap()
             .clone();
         assert!(matches!(
-            runtime.begin_advance([9, 10], 0, 130.5, 11),
+            runtime.begin_advance([9, 10], 0, revision + 1, 130.5, 11),
             Err(RuntimeError::AdvanceBusy)
         ));
         assert_eq!(
@@ -3509,14 +3580,148 @@ mod tests {
             super::AdvanceState::Cancelled
         );
         assert!(matches!(
-            runtime.begin_advance([9, 10], 0, 130.5, 11),
+            runtime.begin_advance([9, 10], 0, revision + 1, 130.5, 11),
             Err(RuntimeError::AdvanceStale)
         ));
         runtime.advance_generation = i64::MAX as u64;
         assert!(matches!(
-            runtime.begin_advance([13, 14], i64::MAX as u64, 1.0, 13),
+            runtime.begin_advance([13, 14], i64::MAX as u64, revision + 1, 1.0, 13),
             Err(RuntimeError::AdvanceStale)
         ));
+    }
+
+    #[test]
+    fn playback_tick_integrates_the_representable_committed_delta() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        runtime.active_branch_mut().world.epoch_seconds = 1.0e16;
+        runtime
+            .apply_command(
+                WorldCommand::SetPlaybackRate {
+                    sim_seconds_per_real_second: 6.0,
+                },
+                1,
+            )
+            .unwrap();
+        runtime
+            .apply_command(WorldCommand::ResumePlayback, 2)
+            .unwrap();
+        let mut strict = runtime.clone();
+        strict
+            .apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 2.0 }, 3)
+            .unwrap();
+        let before_epoch = runtime.snapshot().epoch_seconds;
+        let result = runtime.playback_tick(0.5, 3).unwrap();
+        assert_eq!(result.requested_seconds, 3.0);
+        assert_eq!(result.applied_seconds, 2.0);
+        assert!(result.limited);
+        assert_eq!(
+            result.committed_epoch_seconds - before_epoch,
+            result.applied_seconds
+        );
+        assert_eq!(result.committed_revision, runtime.snapshot_revision());
+        assert_eq!(runtime.snapshot(), strict.snapshot());
+
+        let mut fractional = new_runtime();
+        fractional.active_branch_mut().world.epoch_seconds = 1.0;
+        fractional
+            .apply_command(
+                WorldCommand::SetPlaybackRate {
+                    sim_seconds_per_real_second: 0.2,
+                },
+                1,
+            )
+            .unwrap();
+        fractional
+            .apply_command(WorldCommand::ResumePlayback, 2)
+            .unwrap();
+        let before_epoch = fractional.snapshot().epoch_seconds;
+        let result = fractional.playback_tick(0.5, 3).unwrap();
+        assert!(result.applied_seconds > 0.0 && result.applied_seconds <= result.requested_seconds);
+        assert_eq!(
+            result.committed_epoch_seconds - before_epoch,
+            result.applied_seconds
+        );
+        assert_eq!(
+            fractional.snapshot().epoch_seconds,
+            result.committed_epoch_seconds
+        );
+
+        runtime.active_branch_mut().world.epoch_seconds = f64::MAX;
+        let before = runtime.snapshot();
+        let revision = runtime.snapshot_revision();
+        assert!(matches!(
+            runtime.playback_tick(0.5, 4),
+            Err(RuntimeError::InvalidEpochDelta(_))
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(runtime.snapshot_revision(), revision);
+    }
+
+    #[test]
+    fn stale_begin_base_after_failed_command_cannot_reserve() {
+        let mut runtime = new_runtime();
+        let observed_base = runtime.snapshot_revision() + 1;
+        assert!(matches!(
+            runtime.apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(BodyId("missing".into()))
+                },
+                1
+            ),
+            Err(RuntimeError::UnknownBody(_))
+        ));
+        assert!(matches!(
+            runtime.begin_advance([31, 32], 0, observed_base, 10.0, 2),
+            Err(RuntimeError::AdvanceStale)
+        ));
+        assert!(runtime.query_advance().is_none());
+        assert_eq!(runtime.advance_generation, 0);
+        let actual_base = runtime.snapshot_revision() + 1;
+        let op = runtime
+            .begin_advance([31, 32], 0, actual_base, 10.0, 2)
+            .unwrap()
+            .clone();
+        assert_eq!(runtime.query_advance().unwrap().intent, [31, 32]);
+        assert_eq!(
+            runtime
+                .begin_advance([31, 32], 0, actual_base, 10.0, 2)
+                .unwrap()
+                .generation,
+            op.generation
+        );
+        assert!(matches!(
+            runtime.begin_advance([31, 32], 0, observed_base, 10.0, 2),
+            Err(RuntimeError::AdvanceStale)
+        ));
+        assert_eq!(runtime.query_advance().unwrap().generation, op.generation);
+    }
+
+    #[test]
+    fn final_staged_commit_delivers_events_exactly_once() {
+        let mut runtime = new_runtime();
+        spawn_two_body_system(&mut runtime);
+        let mut direct = runtime.clone();
+        let direct_events = direct
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 10.5,
+                },
+                7,
+            )
+            .unwrap();
+        let generation = runtime
+            .begin_advance([21, 22], 0, runtime.snapshot_revision() + 1, 10.5, 7)
+            .unwrap()
+            .generation;
+        let (operation, events) = runtime.continue_advance(generation, 0).unwrap();
+        assert_eq!(operation.state, super::AdvanceState::Committed);
+        let completed = operation.completed_steps;
+        assert_eq!(events, direct_events);
+        let (operation, repeated_events) = runtime.continue_advance(generation, completed).unwrap();
+        assert_eq!(operation.state, super::AdvanceState::Committed);
+        assert!(repeated_events.is_empty());
+        assert_eq!(runtime.snapshot(), direct.snapshot());
     }
 
     #[test]
@@ -4962,7 +5167,13 @@ mod tests {
     fn advance_staged_for_test(runtime: &mut WorldRuntime, delta: f64, recorded: i64) {
         let prior = runtime.query_advance().map_or(0, |op| op.generation);
         let op = runtime
-            .begin_advance([prior + 1, 0], prior, delta, recorded)
+            .begin_advance(
+                [prior + 1, 0],
+                prior,
+                runtime.snapshot_revision() + 1,
+                delta,
+                recorded,
+            )
             .expect("begin advance")
             .clone();
         let mut completed = 0;
@@ -4970,6 +5181,7 @@ mod tests {
             let progress = runtime
                 .continue_advance(op.generation, completed)
                 .expect("advance chunk")
+                .0
                 .clone();
             if progress.state == super::AdvanceState::Committed {
                 break;

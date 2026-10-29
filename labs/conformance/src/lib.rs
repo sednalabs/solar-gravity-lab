@@ -736,14 +736,21 @@ fn host_relative_turning_angles(
         let recorded = i64::try_from(step).expect("step index should fit in i64") + 100;
         let prior = runtime.query_advance().map_or(0, |op| op.generation);
         let op = runtime
-            .begin_advance([prior + 1, 0], prior, tick_seconds, recorded)
+            .begin_advance(
+                [prior + 1, 0],
+                prior,
+                runtime.snapshot_revision() + 1,
+                tick_seconds,
+                recorded,
+            )
             .expect("begin advance")
             .clone();
         let mut completed = 0;
         loop {
             let progress = runtime
                 .continue_advance(op.generation, completed)
-                .expect("continue advance");
+                .expect("continue advance")
+                .0;
             if progress.state == solarlab_runtime::AdvanceState::Committed {
                 break;
             }
