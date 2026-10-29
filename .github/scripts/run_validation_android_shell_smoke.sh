@@ -39,6 +39,7 @@ STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSemanticIntentInstrumentationTest"
+  "com.sednalabs.solarlab.BoundedAdvanceInstrumentationTest"
 )
 
 STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES=(

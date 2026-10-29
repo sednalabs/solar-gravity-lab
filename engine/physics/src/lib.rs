@@ -619,6 +619,71 @@ pub fn checked_substep_count(policy: &PhysicsPolicy, delta_seconds: f64) -> Opti
         .map(|count| count as usize)
 }
 
+/// A fixed integration schedule shared by incremental and blocking callers.
+#[derive(Clone, Debug)]
+pub struct FixedStepPlan {
+    pub total_steps: usize,
+    dt_seconds: f64,
+    decision: DispatchDecision,
+    report: SolverExecutionReport,
+    body_count: usize,
+}
+
+pub const MAX_INCREMENTAL_STEPS: usize = 64;
+
+pub fn fixed_step_plan(
+    policy: &PhysicsPolicy,
+    delta_seconds: f64,
+    body_count: usize,
+    features: &[String],
+) -> Option<FixedStepPlan> {
+    let total_steps = checked_substep_count(policy, delta_seconds)?;
+    let normalized = normalize_cpu_features(features);
+    let decision =
+        dispatch_solver_backend_with_body_count(&policy.solver_backend, &normalized, body_count);
+    let report = solver_execution_report_for_backend_with_body_count(
+        &policy.solver_backend,
+        &normalized,
+        body_count,
+    );
+    Some(FixedStepPlan {
+        total_steps,
+        dt_seconds: delta_seconds / total_steps as f64,
+        decision,
+        report,
+        body_count,
+    })
+}
+
+/// Execute at most one bounded segment without changing its fixed step size.
+pub fn advance_fixed_steps(
+    plan: &FixedStepPlan,
+    bodies: &mut [MassiveBodyState],
+    count: usize,
+) -> Result<(), ()> {
+    if count > MAX_INCREMENTAL_STEPS || bodies.len() != plan.body_count {
+        return Err(());
+    }
+    let kernel = if plan.decision.effective_backend == SolverBackend::SimdArm64 {
+        Some(
+            plan.decision
+                .arm64_gravity_kernel
+                .unwrap_or(Arm64GravityKernel::PortableScalarOracle),
+        )
+    } else {
+        None
+    };
+    integrate_fixed_steps(bodies, plan.dt_seconds, count, kernel);
+    Ok(())
+}
+
+impl FixedStepPlan {
+    #[must_use]
+    pub fn report(&self) -> SolverExecutionReport {
+        self.report.clone()
+    }
+}
+
 pub fn advance_authoritative_scalar(
     policy: &PhysicsPolicy,
     bodies: &mut [MassiveBodyState],
@@ -632,9 +697,7 @@ pub fn advance_authoritative_scalar(
     };
     let dt_seconds = delta_seconds / step_count as f64;
 
-    for _ in 0..step_count {
-        integrate_substep(bodies, dt_seconds);
-    }
+    integrate_fixed_steps(bodies, dt_seconds, step_count, None);
 
     compute_invariants(bodies)
 }
@@ -1081,9 +1144,7 @@ fn advance_authoritative_arm64(
     };
     let dt_seconds = delta_seconds / step_count as f64;
 
-    for _ in 0..step_count {
-        integrate_substep_arm64(bodies, dt_seconds, gravity_kernel);
-    }
+    integrate_fixed_steps(bodies, dt_seconds, step_count, Some(gravity_kernel));
 
     compute_invariants(bodies)
 }
@@ -1136,6 +1197,21 @@ pub fn compute_invariants(bodies: &[MassiveBodyState]) -> PhysicsInvariants {
         } else {
             Vector3d::default()
         },
+    }
+}
+
+fn integrate_fixed_steps(
+    bodies: &mut [MassiveBodyState],
+    dt_seconds: f64,
+    count: usize,
+    kernel: Option<Arm64GravityKernel>,
+) {
+    for _ in 0..count {
+        if let Some(kernel) = kernel {
+            integrate_substep_arm64(bodies, dt_seconds, kernel);
+        } else {
+            integrate_substep(bodies, dt_seconds);
+        }
     }
 }
 
@@ -1916,6 +1992,122 @@ mod tests {
                 expected
             );
             assert_eq!(bodies, initial);
+        }
+    }
+
+    #[test]
+    fn fixed_step_chunks_match_bulk_including_fractional_schedule() {
+        for backend in [
+            SolverBackend::ReferenceScalar,
+            SolverBackend::SimdArm64,
+            SolverBackend::SimdX64,
+        ] {
+            let mut policy = test_policy();
+            policy.solver_backend = backend;
+            for delta in [130.0, 130.5] {
+                let initial = moon_earth_playback_scenario();
+                let mut bulk = initial.clone();
+                let mut chunked = initial;
+                let features = super::detect_cpu_features();
+                let (expected_invariants, expected_report) =
+                    super::advance_authoritative_with_features(
+                        &policy, &mut bulk, delta, &features,
+                    );
+                let plan =
+                    super::fixed_step_plan(&policy, delta, chunked.len(), &features).unwrap();
+                assert_eq!(plan.report(), expected_report);
+                let mut remaining = plan.total_steps;
+                while remaining > 0 {
+                    let count = remaining.min(super::MAX_INCREMENTAL_STEPS);
+                    super::advance_fixed_steps(&plan, &mut chunked, count).unwrap();
+                    remaining -= count;
+                }
+                assert_eq!(chunked, bulk);
+                assert_eq!(compute_invariants(&chunked), expected_invariants);
+                assert!(super::advance_fixed_steps(
+                    &plan,
+                    &mut chunked,
+                    super::MAX_INCREMENTAL_STEPS + 1
+                )
+                .is_err());
+            }
+        }
+    }
+
+    // Run once with a single-CPU affinity and once with multiple available CPUs.
+    // The emitted marker identifies the path actually selected by dispatch.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm64_dense_selected_chunk_schedule_matches_bulk() {
+        assert!(
+            arm64_neon_runtime_available(),
+            "native NEON is required for this proof"
+        );
+        let features = detect_cpu_features();
+        assert!(features.iter().any(|feature| feature == "neon"));
+        let workers = runtime_worker_budget();
+        let expected_path = if workers > 1 {
+            "simd.arm64.neon-f64-parallel-tiled-pairwise"
+        } else {
+            "simd.arm64.neon-f64-tiled-pairwise"
+        };
+        if let Ok(required) = std::env::var("SOLARLAB_EXPECT_DENSE_PATH") {
+            assert_eq!(
+                expected_path, required,
+                "runner did not select required backend"
+            );
+        }
+        let mut policy = test_policy();
+        policy.solver_backend = SolverBackend::SimdArm64;
+        for delta in [130.0, 130.5] {
+            let initial = dense_kernel_parity_scenario(128);
+            let mut bulk = initial.clone();
+            let mut chunked = initial;
+            let (expected_invariants, report) =
+                super::advance_authoritative_with_features(&policy, &mut bulk, delta, &features);
+            let plan = super::fixed_step_plan(&policy, delta, chunked.len(), &features).unwrap();
+            assert_eq!(report.effective_backend, SolverBackend::SimdArm64);
+            assert_eq!(report.path_id, expected_path);
+            assert_eq!(plan.report(), report);
+            let mut remaining = plan.total_steps;
+            let mut chunks = Vec::new();
+            while remaining > 0 {
+                let count = remaining.min(super::MAX_INCREMENTAL_STEPS);
+                super::advance_fixed_steps(&plan, &mut chunked, count).unwrap();
+                remaining -= count;
+                chunks.push(count);
+            }
+            assert_eq!(
+                chunks,
+                if delta == 130.0 {
+                    vec![64, 64, 2]
+                } else {
+                    vec![64, 64, 3]
+                }
+            );
+            for (actual, expected) in chunked.iter().zip(&bulk) {
+                for (a, b) in [
+                    (actual.mass_kg, expected.mass_kg),
+                    (actual.position_m.x, expected.position_m.x),
+                    (actual.position_m.y, expected.position_m.y),
+                    (actual.position_m.z, expected.position_m.z),
+                    (actual.velocity_mps.x, expected.velocity_mps.x),
+                    (actual.velocity_mps.y, expected.velocity_mps.y),
+                    (actual.velocity_mps.z, expected.velocity_mps.z),
+                ] {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                }
+            }
+            assert_eq!(compute_invariants(&chunked), expected_invariants);
+            println!(
+                "DENSE_CHUNK_PROOF path={} workers={} bodies={} delta={} steps={} chunks={:?}",
+                report.path_id,
+                workers,
+                chunked.len(),
+                delta,
+                plan.total_steps,
+                chunks
+            );
         }
     }
 

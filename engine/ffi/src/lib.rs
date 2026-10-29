@@ -66,6 +66,9 @@ pub enum SlStatusCode {
     InvalidArgument = 1,
     NotReady = 2,
     InternalError = 3,
+    Busy = 4,
+    Stale = 5,
+    WorkLimit = 6,
 }
 
 #[repr(C)]
@@ -507,6 +510,33 @@ pub struct SlSessionCommand {
     pub delta_seconds: f64,
     pub sim_seconds_per_real_second: f64,
     pub recorded_at_unix_ms: i64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlAdvanceResult {
+    pub result: SlResult,
+    pub state: u32,
+    pub generation: u64,
+    pub intent_high: u64,
+    pub intent_low: u64,
+    pub base_ordinal: u64,
+    pub requested_seconds: f64,
+    pub completed_steps: u64,
+    pub total_steps: u64,
+    pub recorded_at_unix_ms: i64,
+    pub current_next_ordinal: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlPlaybackTickResult {
+    pub result: SlResult,
+    pub requested_seconds: f64,
+    pub applied_seconds: f64,
+    pub limited: u8,
+    pub committed_epoch_seconds: f64,
+    pub committed_revision: u64,
 }
 
 #[repr(C)]
@@ -1027,12 +1057,167 @@ pub extern "C" fn sl_v2_session_apply_command(
     }
 }
 
+fn advance_result(
+    result: SlResult,
+    op: Option<&solarlab_runtime::AdvanceOperation>,
+) -> SlAdvanceResult {
+    let mut output = SlAdvanceResult {
+        result,
+        state: 0,
+        generation: 0,
+        intent_high: 0,
+        intent_low: 0,
+        base_ordinal: 0,
+        requested_seconds: 0.0,
+        completed_steps: 0,
+        total_steps: 0,
+        recorded_at_unix_ms: 0,
+        current_next_ordinal: 0,
+    };
+    if let Some(op) = op {
+        output.state = match op.state {
+            solarlab_runtime::AdvanceState::Running => 1,
+            solarlab_runtime::AdvanceState::Committed => 2,
+            solarlab_runtime::AdvanceState::Cancelled => 3,
+        };
+        output.generation = op.generation;
+        output.intent_high = op.intent[0];
+        output.intent_low = op.intent[1];
+        output.base_ordinal = op.base_ordinal;
+        output.requested_seconds = op.requested_seconds;
+        output.completed_steps = op.completed_steps as u64;
+        output.total_steps = op.total_steps as u64;
+        output.recorded_at_unix_ms = op.recorded_at_unix_ms;
+    }
+    output
+}
+
+fn with_advance(
+    handle: SlRuntimeHandle,
+    f: impl FnOnce(&mut WorldRuntime) -> Result<(), RuntimeError>,
+) -> SlAdvanceResult {
+    if handle.raw == 0 {
+        return advance_result(status(SlStatusCode::InvalidArgument), None);
+    }
+    let Ok(mut registry) = registry().lock() else {
+        return advance_result(status(SlStatusCode::InternalError), None);
+    };
+    let Some(session) = registry.get_mut(handle) else {
+        return advance_result(status(SlStatusCode::NotReady), None);
+    };
+    let mut output = match f(&mut session.runtime) {
+        Ok(()) => advance_result(status(SlStatusCode::Ok), session.runtime.query_advance()),
+        Err(e) => advance_result(runtime_error_to_status(e), None),
+    };
+    output.current_next_ordinal = session.runtime.next_command_ordinal();
+    output
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_begin_advance(
+    handle: SlRuntimeHandle,
+    intent_high: u64,
+    intent_low: u64,
+    expected_generation: u64,
+    expected_base_ordinal: u64,
+    delta_seconds: f64,
+    recorded_at_unix_ms: i64,
+) -> SlAdvanceResult {
+    with_advance(handle, |runtime| {
+        runtime
+            .begin_advance(
+                [intent_high, intent_low],
+                expected_generation,
+                expected_base_ordinal,
+                delta_seconds,
+                recorded_at_unix_ms,
+            )
+            .map(|_| ())
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_continue_advance(
+    handle: SlRuntimeHandle,
+    generation: u64,
+    expected_completed: u64,
+) -> SlAdvanceResult {
+    let Ok(completed) = usize::try_from(expected_completed) else {
+        return advance_result(status(SlStatusCode::InvalidArgument), None);
+    };
+    with_advance(handle, |runtime| {
+        runtime.continue_advance(generation, completed).map(|_| ())
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_cancel_advance(
+    handle: SlRuntimeHandle,
+    generation: u64,
+) -> SlAdvanceResult {
+    with_advance(handle, |runtime| {
+        runtime.cancel_advance(generation).map(|_| ())
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_query_advance(handle: SlRuntimeHandle) -> SlAdvanceResult {
+    with_advance(handle, |_| Ok(()))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn sl_v2_session_playback_tick(
+    handle: SlRuntimeHandle,
+    real_seconds: f64,
+    recorded_at_unix_ms: i64,
+) -> SlPlaybackTickResult {
+    let mut output = SlPlaybackTickResult {
+        result: status(SlStatusCode::InvalidArgument),
+        requested_seconds: 0.0,
+        applied_seconds: 0.0,
+        limited: 0,
+        committed_epoch_seconds: 0.0,
+        committed_revision: 0,
+    };
+    if handle.raw == 0 {
+        return output;
+    }
+    let Ok(mut registry) = registry().lock() else {
+        output.result = status(SlStatusCode::InternalError);
+        return output;
+    };
+    let Some(session) = registry.get_mut(handle) else {
+        output.result = status(SlStatusCode::NotReady);
+        return output;
+    };
+    match session
+        .runtime
+        .playback_tick(real_seconds, recorded_at_unix_ms)
+    {
+        Ok(tick) => {
+            output.result = status(SlStatusCode::Ok);
+            output.requested_seconds = tick.requested_seconds;
+            output.applied_seconds = tick.applied_seconds;
+            output.limited = u8::from(tick.limited);
+            output.committed_epoch_seconds = tick.committed_epoch_seconds;
+            output.committed_revision = tick.committed_revision;
+        }
+        Err(error) => output.result = runtime_error_to_status(error),
+    }
+    output
+}
+
 // JNI needs metadata absent from the stable C summary layout. Capture both
 // views under the registry lock so they describe the same runtime state.
 #[cfg(any(target_os = "android", test))]
 fn capture_session_snapshot(
     handle: SlRuntimeHandle,
-) -> Result<(SlSessionSnapshotSummary, Option<String>, Option<String>, Option<String>, u64), SlResult> {
+) -> Result<
+    (
+        SlSessionSnapshotSummary,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        u64,
+    ),
+    SlResult,
+> {
     if handle.raw == 0 {
         return Err(status(SlStatusCode::InvalidArgument));
     }
@@ -1803,6 +1988,9 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
         | RuntimeError::PackageNotInstalled(_)
         | RuntimeError::MountedPackageMissingFromStore(_) => status(SlStatusCode::InvalidArgument),
         RuntimeError::PackageApplyFailed(_) => status(SlStatusCode::InternalError),
+        RuntimeError::AdvanceBusy => status(SlStatusCode::Busy),
+        RuntimeError::AdvanceStale => status(SlStatusCode::Stale),
+        RuntimeError::AdvanceWorkLimit => status(SlStatusCode::WorkLimit),
     }
 }
 
@@ -2004,6 +2192,12 @@ fn empty_vulkan_scene_packet_info() -> SlVulkanScenePacketInfo {
     }
 }
 
+// Java uses zero as an unavailable begin precondition; C retains the full u64.
+#[cfg(any(target_os = "android", test))]
+fn jni_next_ordinal(ordinal: u64) -> i64 {
+    i64::try_from(ordinal).unwrap_or(0)
+}
+
 #[cfg(target_os = "android")]
 // JNI is a thin forwarding layer over C APIs.
 // Handles are still 64-bit integer capabilities; JNI must not copy/stash runtime
@@ -2024,6 +2218,8 @@ mod android_jni {
     use jni::JNIEnv;
 
     const CLASS_NATIVE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeResult";
+    const CLASS_NATIVE_ADVANCE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeAdvanceResult";
+    const CLASS_NATIVE_PLAYBACK_TICK_RESULT: &str = "com/sednalabs/solarlab/runtime/NativePlaybackTickResult";
     const CLASS_NATIVE_CREATE_SESSION_RESULT: &str =
         "com/sednalabs/solarlab/runtime/NativeCreateSessionResult";
     const CLASS_NATIVE_RUNTIME_INFO_RESULT: &str =
@@ -2157,6 +2353,126 @@ mod android_jni {
             Ok(value) => value.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
+    }
+
+    fn advance_object<'local>(
+        env: &mut JNIEnv<'local>,
+        result: super::SlAdvanceResult,
+    ) -> jni::errors::Result<JObject<'local>> {
+        env.new_object(
+            CLASS_NATIVE_ADVANCE_RESULT,
+            "(IIJJJJDJJJJ)V",
+            &[
+                JValue::Int(status_code_as_i32(result.result.code)),
+                JValue::Int(result.state as i32),
+                JValue::Long(result.generation as i64),
+                JValue::Long(result.intent_high as i64),
+                JValue::Long(result.intent_low as i64),
+                JValue::Long(result.base_ordinal as i64),
+                JValue::Double(result.requested_seconds),
+                JValue::Long(result.completed_steps as i64),
+                JValue::Long(result.total_steps as i64),
+                JValue::Long(result.recorded_at_unix_ms),
+                JValue::Long(super::jni_next_ordinal(result.current_next_ordinal)),
+            ],
+        )
+    }
+
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeBeginAdvance(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+        intent_high: jlong,
+        intent_low: jlong,
+        expected_generation: jlong,
+        expected_base_ordinal: jlong,
+        delta: jdouble,
+        recorded: jlong,
+    ) -> jobject {
+        let result = super::sl_v2_session_begin_advance(
+            SlRuntimeHandle { raw: handle as u64 },
+            intent_high as u64,
+            intent_low as u64,
+            expected_generation as u64,
+            expected_base_ordinal as u64,
+            delta,
+            recorded,
+        );
+        advance_object(&mut env, result)
+            .map_or_else(|_| JObject::null().into_raw(), |o| o.into_raw())
+    }
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeContinueAdvance(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+        generation: jlong,
+        completed: jlong,
+    ) -> jobject {
+        let result = super::sl_v2_session_continue_advance(
+            SlRuntimeHandle { raw: handle as u64 },
+            generation as u64,
+            completed as u64,
+        );
+        advance_object(&mut env, result)
+            .map_or_else(|_| JObject::null().into_raw(), |o| o.into_raw())
+    }
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeCancelAdvance(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+        generation: jlong,
+    ) -> jobject {
+        let result = super::sl_v2_session_cancel_advance(
+            SlRuntimeHandle { raw: handle as u64 },
+            generation as u64,
+        );
+        advance_object(&mut env, result)
+            .map_or_else(|_| JObject::null().into_raw(), |o| o.into_raw())
+    }
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeQueryAdvance(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+    ) -> jobject {
+        let result = super::sl_v2_session_query_advance(SlRuntimeHandle { raw: handle as u64 });
+        advance_object(&mut env, result)
+            .map_or_else(|_| JObject::null().into_raw(), |o| o.into_raw())
+    }
+    #[allow(non_snake_case)]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativePlaybackTick(
+        mut env: JNIEnv,
+        _this: JObject,
+        handle: jlong,
+        real_seconds: jdouble,
+        recorded: jlong,
+    ) -> jobject {
+        let result = super::sl_v2_session_playback_tick(
+            SlRuntimeHandle { raw: handle as u64 },
+            real_seconds,
+            recorded,
+        );
+        env.new_object(
+            CLASS_NATIVE_PLAYBACK_TICK_RESULT,
+            "(IDDZDJ)V",
+            &[
+                JValue::Int(status_code_as_i32(result.result.code)),
+                JValue::Double(result.requested_seconds),
+                JValue::Double(result.applied_seconds),
+                JValue::Bool(result.limited),
+                JValue::Double(result.committed_epoch_seconds),
+                JValue::Long(result.committed_revision as i64),
+            ],
+        )
+        .map_or_else(|_| JObject::null().into_raw(), |o| o.into_raw())
     }
 
     #[allow(non_snake_case)]
@@ -2863,6 +3179,9 @@ mod android_jni {
             SlStatusCode::InvalidArgument => "invalid argument",
             SlStatusCode::NotReady => "not ready",
             SlStatusCode::InternalError => "internal error",
+            SlStatusCode::Busy => "busy",
+            SlStatusCode::Stale => "stale",
+            SlStatusCode::WorkLimit => "work limit",
         }
     }
 
@@ -2872,6 +3191,9 @@ mod android_jni {
             SlStatusCode::InvalidArgument => 1,
             SlStatusCode::NotReady => 2,
             SlStatusCode::InternalError => 3,
+            SlStatusCode::Busy => 4,
+            SlStatusCode::Stale => 5,
+            SlStatusCode::WorkLimit => 6,
         }
     }
 
@@ -3457,6 +3779,222 @@ mod tests {
         let packet = sl_v2_session_export_vulkan_scene(super::SlRuntimeHandle { raw: 777_777 });
         assert_eq!(packet.result.code, SlStatusCode::NotReady);
         assert_eq!(packet.handle.raw, 0);
+    }
+
+    /// Hosted-only measurement; values are call wall times, not lock-hold durations.
+    #[test]
+    #[ignore]
+    fn bounded_advance_ffi_wall_timing_probe() {
+        use std::time::Instant;
+        let full = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(full.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            sl_v2_session_apply_command(
+                full.handle,
+                test_session_command(SlCommandKind::SeedCanonicalSolarSystem, |_| {})
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        assert_eq!(sl_v2_session_refresh(full.handle).summary.body_count, 365);
+        assert_eq!(
+            sl_v2_session_apply_command(
+                full.handle,
+                test_session_command(SlCommandKind::PausePlayback, |_| {})
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        let op = super::sl_v2_session_begin_advance(full.handle, 11, 12, 0, 3, 384.0, 1);
+        assert_eq!(op.total_steps, 384);
+        let mut continuation = Vec::new();
+        for index in 0..6 {
+            let started = Instant::now();
+            let result =
+                super::sl_v2_session_continue_advance(full.handle, op.generation, index * 64);
+            let elapsed = started.elapsed().as_secs_f64();
+            assert_eq!(result.result.code, SlStatusCode::Ok);
+            assert_eq!(result.completed_steps, (index + 1) * 64);
+            if index > 0 {
+                continuation.push(elapsed);
+            }
+        }
+        let small = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(small.result.code, SlStatusCode::Ok);
+        for (id, mass, x, velocity) in [
+            ("sun", 1.98847e30, 0.0, 0.0),
+            ("earth", 5.972e24, 1.496e11, 29_780.0),
+            ("moon", 7.342e22, 1.499844e11, 30_802.0),
+        ] {
+            let result = sl_v2_session_apply_command(
+                small.handle,
+                test_session_command(SlCommandKind::SpawnBody, |command| {
+                    command.body_id[..id.len()].copy_from_slice(id.as_bytes());
+                    command.body_id_len = id.len() as u32;
+                    command.body_mass_kg = mass;
+                    command.body_source_mass_kg = mass;
+                    command.body_position.x = x;
+                    command.body_velocity.y = velocity;
+                }),
+            );
+            assert_eq!(result.result.code, SlStatusCode::Ok);
+        }
+        assert_eq!(sl_v2_session_refresh(small.handle).summary.body_count, 3);
+        let mut exports = Vec::new();
+        for index in 0..6 {
+            let started = Instant::now();
+            let result = sl_v2_session_export_vulkan_scene(small.handle);
+            let elapsed = started.elapsed().as_secs_f64();
+            assert_eq!(result.result.code, SlStatusCode::Ok);
+            assert_eq!(
+                sl_v2_vulkan_scene_packet_release(result.handle).code,
+                SlStatusCode::Ok
+            );
+            if index > 0 {
+                exports.push(elapsed);
+            }
+        }
+        println!("BOUNDED_ADVANCE_FFI_TIMING_JSON={{\"backend\":\"reference_scalar\",\"continuation_seed\":\"canonical\",\"continuation_bodies\":365,\"continuation_steps\":64,\"scene_seed\":\"sun-earth-moon-approx\",\"scene_bodies\":3,\"scene_prediction_steps\":43200,\"warmups\":1,\"last_continuation_includes_final_commit\":true,\"continuation_wall_seconds\":{:?},\"scene_export_wall_seconds\":{:?}}}", continuation, exports);
+        assert_eq!(sl_v2_session_destroy(full.handle).code, SlStatusCode::Ok);
+        assert_eq!(sl_v2_session_destroy(small.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn advance_session_api_recovers_terminal_and_preserves_empty_atomicity() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        let start = super::sl_v2_session_begin_advance(create.handle, 1, 2, 0, 1, 130.5, 7);
+        assert_eq!(start.result.code, SlStatusCode::Ok);
+        assert_eq!(start.state, 1);
+        assert_eq!(start.total_steps, 0);
+        assert_eq!(
+            sl_v2_session_refresh(create.handle).summary.epoch_seconds,
+            0.0
+        );
+        let duplicate = super::sl_v2_session_begin_advance(create.handle, 1, 2, 0, 1, 130.5, 7);
+        assert_eq!(duplicate.generation, start.generation);
+        let competing = super::sl_v2_session_begin_advance(create.handle, 3, 4, 0, 1, 130.5, 7);
+        assert_eq!(competing.result.code, SlStatusCode::Busy);
+        let done = super::sl_v2_session_continue_advance(create.handle, start.generation, 0);
+        assert_eq!(done.state, 2);
+        assert_eq!(super::sl_v2_session_query_advance(create.handle).state, 2);
+        assert_eq!(
+            sl_v2_session_refresh(create.handle).summary.epoch_seconds,
+            130.5
+        );
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn jni_ordinal_projection_preserves_terminal_status_at_boundary() {
+        let mut result = super::advance_result(super::status(SlStatusCode::Ok), None);
+        result.state = 2;
+        result.current_next_ordinal = i64::MAX as u64 + 1;
+        assert_eq!(super::jni_next_ordinal(result.current_next_ordinal), 0);
+        assert_eq!(result.result.code, SlStatusCode::Ok);
+        assert_eq!(result.state, 2);
+        assert_eq!(super::jni_next_ordinal(i64::MAX as u64), i64::MAX);
+        assert_eq!(result.current_next_ordinal, i64::MAX as u64 + 1);
+    }
+
+    #[test]
+    fn c_query_supplies_begin_ordinal_after_rejected_command() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        let before = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(before.result.code, SlStatusCode::Ok);
+        let failed = sl_v2_session_apply_command(
+            create.handle,
+            test_session_command(SlCommandKind::FocusBody, |command| {
+                command.body_id[..7].copy_from_slice(b"missing");
+                command.body_id_len = 7;
+            }),
+        );
+        assert_eq!(failed.result.code, SlStatusCode::InvalidArgument);
+        let after = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(after.result.code, SlStatusCode::Ok);
+        assert!(after.current_next_ordinal > before.current_next_ordinal);
+        let stale = super::sl_v2_session_begin_advance(
+            create.handle,
+            7,
+            8,
+            before.generation,
+            before.current_next_ordinal,
+            10.0,
+            2,
+        );
+        assert_eq!(stale.result.code, SlStatusCode::Stale);
+        let query = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(query.state, 0);
+        let started = super::sl_v2_session_begin_advance(
+            create.handle,
+            7,
+            8,
+            query.generation,
+            query.current_next_ordinal,
+            10.0,
+            2,
+        );
+        assert_eq!(started.result.code, SlStatusCode::Ok);
+        assert_eq!(started.base_ordinal, query.current_next_ordinal);
+        let recovered = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(recovered.generation, started.generation);
+        assert_eq!(recovered.current_next_ordinal, query.current_next_ordinal);
+        let done = super::sl_v2_session_continue_advance(
+            create.handle,
+            recovered.generation,
+            recovered.completed_steps,
+        );
+        assert_eq!(done.state, 2);
+        assert!(done.current_next_ordinal > done.base_ordinal);
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn playback_tick_reports_epoch_and_revision_at_commit() {
+        let create = sl_v2_session_create(new_params("sol-system", "main"));
+        assert_eq!(create.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            sl_v2_session_apply_command(
+                create.handle,
+                test_session_command(SlCommandKind::SetPlaybackRate, |command| {
+                    command.sim_seconds_per_real_second = 2.0;
+                })
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        assert_eq!(
+            sl_v2_session_apply_command(
+                create.handle,
+                test_session_command(SlCommandKind::ResumePlayback, |_| {})
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        let tick = super::sl_v2_session_playback_tick(create.handle, 0.5, 3);
+        assert_eq!(tick.result.code, SlStatusCode::Ok);
+        assert_eq!(tick.applied_seconds, 1.0);
+        assert_eq!(tick.committed_epoch_seconds, 1.0);
+        let revision = tick.committed_revision;
+        assert_eq!(
+            sl_v2_session_apply_command(
+                create.handle,
+                test_session_command(SlCommandKind::PausePlayback, |_| {})
+            )
+            .result
+            .code,
+            SlStatusCode::Ok
+        );
+        let (_, _, _, _, current_revision) =
+            super::capture_session_snapshot(create.handle).unwrap();
+        assert_eq!(current_revision, revision + 1);
+        assert_eq!(tick.committed_revision, revision);
+        assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
 
     #[test]

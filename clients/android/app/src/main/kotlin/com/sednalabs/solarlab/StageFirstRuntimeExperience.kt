@@ -81,6 +81,7 @@ import com.graciousgazelles.solarlab.render.core.RenderTrail as StageRenderTrail
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.PlaybackSpeedPreset
+import com.sednalabs.solarlab.runtime.ManualAdvanceOutcome
 import com.sednalabs.solarlab.runtime.StepQuantumPreset
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
@@ -385,7 +386,13 @@ internal fun StageFirstRuntimeExperience(
                     "Drag to orbit. Pinch to zoom and move two fingers to pan. Tap to select and double-tap to enter close orbit."
             }
         }
-        val canSendCommands = uiState.connectionState == SessionConnectionState.Active
+        val compactPlaybackStatus = uiState.manualAdvance?.let { "${it.status} ${it.completedSteps}/${it.totalSteps}" }
+            ?: uiState.manualAdvanceOutcome?.stageLabel()
+            ?: uiState.snapshot?.let { snapshot ->
+                "Requested ${formatPlaybackRateLabel(snapshot.simSecondsPerRealSecond, playbackSpeedPreset)} · achieved " +
+                    (uiState.playbackMeasurement?.achievedRate?.let { "%.2f sim s/s".format(it) } ?: "unavailable")
+            }
+        val canSendCommands = uiState.connectionState == SessionConnectionState.Active && uiState.manualAdvance == null
         val isRunning = uiState.snapshot?.paused == false
         val cameraControlsEnabled = runtimeSessionHandle != 0L || stageScene?.scene != null
         val refreshRuntime: () -> Unit = {
@@ -652,6 +659,14 @@ internal fun StageFirstRuntimeExperience(
                 )
             }
             val primaryControls: @Composable () -> Unit = {
+                uiState.manualAdvance?.let { advance ->
+                    StageActionButton(
+                        label = "Cancel advance",
+                        onClick = runtimeFacade::cancelManualAdvance,
+                        enabled = !advance.cancelRequested,
+                        dense = compactLayout,
+                    )
+                }
                 StageActionButton(
                     label = if (compactLayout) "In" else "Zoom +",
                     onClick = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
@@ -752,7 +767,8 @@ internal fun StageFirstRuntimeExperience(
             val secondaryControls: @Composable () -> Unit = {
                 StageActionButton(
                     label = if (compactLayout) stepQuantumPreset.label else "Step ${stepQuantumPreset.label}",
-                    onClick = { stepQuantumPreset = stepQuantumPreset.shifted(1) },
+                    onClick = { stepQuantumPreset = stepQuantumPreset.nextCyclic() },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STEP_DURATION),
                     dense = compactLayout,
                 )
                 StageActionButton(
@@ -897,6 +913,7 @@ internal fun StageFirstRuntimeExperience(
                     scenarioLabel = timelineText,
                     semanticFocusAcknowledgement = semanticFocusAcknowledgement,
                     searchFrameRequest = searchFrameRequest?.second,
+                    advanceStatus = compactPlaybackStatus,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .statusBarsPadding()
@@ -921,6 +938,7 @@ internal fun StageFirstRuntimeExperience(
                             scenarioLabel = timelineText,
                             semanticFocusAcknowledgement = semanticFocusAcknowledgement,
                             searchFrameRequest = searchFrameRequest?.second,
+                            advanceStatus = compactPlaybackStatus,
                             modifier = Modifier
                                 .widthIn(max = 360.dp)
                                 .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
@@ -965,6 +983,11 @@ internal fun StageFirstRuntimeExperience(
                         .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    uiState.manualAdvance?.let { advance ->
+                        StageControlRail(modifier = Modifier.align(Alignment.CenterHorizontally), compact = true, fillMaxWidth = false) {
+                            StageActionButton(label = "Cancel advance", onClick = runtimeFacade::cancelManualAdvance, enabled = !advance.cancelRequested, dense = true)
+                        }
+                    }
                     StageControlRail(
                         modifier = Modifier.align(Alignment.CenterHorizontally),
                         compact = true,
@@ -1595,6 +1618,7 @@ private fun RuntimeStageCollapsedStageChip(
     scenarioLabel: String,
     semanticFocusAcknowledgement: RuntimeSemanticFocusAcknowledgement?,
     searchFrameRequest: String?,
+    advanceStatus: String?,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -1645,10 +1669,10 @@ private fun RuntimeStageCollapsedStageChip(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = runtimeStageCompactScenarioLabel(scenarioLabel),
+                    text = advanceStatus ?: runtimeStageCompactScenarioLabel(scenarioLabel),
                     color = RuntimeStageTextDim.copy(alpha = 0.86f),
                     style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -1850,6 +1874,16 @@ private fun RuntimeStageTimelineRail(
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
+            uiState.manualAdvanceOutcome?.takeIf { uiState.manualAdvance == null }?.let { outcome ->
+                Text(text = outcome.stageLabel(), color = RuntimeStageTextDim, style = MaterialTheme.typography.labelSmall)
+            }
+            Text(
+                text = uiState.manualAdvance?.let { "${it.status} ${it.completedSteps}/${it.totalSteps} steps" }
+                    ?: "Requested $speedLabel · achieved " + (uiState.playbackMeasurement?.achievedRate?.let { "%.2f sim s/s".format(it) } ?: "unavailable") +
+                        if (uiState.playbackMeasurement?.limited == true) " · limited" else "",
+                color = RuntimeStageTextDim,
+                style = MaterialTheme.typography.labelSmall,
+            )
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3109,10 +3143,14 @@ private fun observerModeFromRuntimeCode(code: Int?): ObserverMode = when (code) 
     else -> ObserverMode.FREE
 }
 
-private fun StepQuantumPreset.shifted(direction: Int): StepQuantumPreset {
+private fun StepQuantumPreset.nextCyclic(): StepQuantumPreset {
     val entries = StepQuantumPreset.entries
-    val index = entries.indexOf(this).coerceAtLeast(0)
-    return entries[(index + direction).coerceIn(0, entries.lastIndex)]
+    return entries[(entries.indexOf(this) + 1) % entries.size]
+}
+
+private fun ManualAdvanceOutcome.stageLabel(): String = when (this) {
+    ManualAdvanceOutcome.Complete -> "Advance complete"
+    ManualAdvanceOutcome.Cancelled -> "Advance cancelled"
 }
 
 private fun PlaybackSpeedPreset.shifted(direction: Int): PlaybackSpeedPreset {

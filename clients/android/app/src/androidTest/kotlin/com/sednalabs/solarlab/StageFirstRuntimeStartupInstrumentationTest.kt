@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -43,6 +44,13 @@ class StageFirstRuntimeStartupInstrumentationTest {
             .performScrollToIfPossible()
             .assertIsDisplayed()
             .performClick()
+
+        val duration = composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STEP_DURATION)
+        duration.performScrollToIfPossible().assertTextContains("6 h").performClick()
+        duration.performScrollToIfPossible().assertTextContains("1 d").performClick()
+        duration.performScrollToIfPossible().assertTextContains("7 d").performClick()
+        duration.performScrollToIfPossible().assertTextContains("30 d").performClick()
+        duration.performScrollToIfPossible().assertTextContains("1 s")
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON)
             .performScrollToIfPossible()

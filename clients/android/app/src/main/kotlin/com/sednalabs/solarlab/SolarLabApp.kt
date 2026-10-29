@@ -161,7 +161,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                 ) {
                     val isWide = maxWidth >= 920.dp
                     val canSendCommands = uiState.connectionState == SessionConnectionState.Active &&
-                        uiState.pendingActionLabel == null
+                        uiState.pendingActionLabel == null && uiState.manualAdvance == null
                     val canRefresh = canSendCommands
 
                     if (isWide) {
@@ -203,6 +203,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                                         enabled = canSendCommands,
                                         onRefresh = onRefresh,
                                         onCommand = onCommand,
+                                        onCancelAdvance = runtimeFacade::cancelManualAdvance,
                                     )
                                     RuntimeDetailPanel(uiState = uiState)
                                 }
@@ -216,6 +217,7 @@ fun SolarLabApp(runtimeFacade: RuntimeFacade) {
                             onRefresh = onRefresh,
                             onCommand = onCommand,
                             onFocusBodyRequested = onFocusBodyRequested,
+                            onCancelAdvance = runtimeFacade::cancelManualAdvance,
                         )
                     }
                 }
@@ -233,6 +235,7 @@ private fun ImmersiveStageShell(
     onRefresh: () -> Unit,
     onCommand: (RuntimeCommand) -> Unit,
     onFocusBodyRequested: (String?) -> Unit,
+    onCancelAdvance: () -> Unit,
 ) {
     var showOverlay by rememberSaveable { mutableStateOf(false) }
     var stageCameraModeName by rememberSaveable {
@@ -436,6 +439,7 @@ private fun ImmersiveStageShell(
                             enabled = canSendCommands,
                             onRefresh = onRefresh,
                             onCommand = onCommand,
+                            onCancelAdvance = onCancelAdvance,
                         )
                         RuntimeDetailPanel(uiState = uiState)
                     }
@@ -1615,6 +1619,7 @@ private fun ControlDeck(
     enabled: Boolean,
     onRefresh: () -> Unit,
     onCommand: (RuntimeCommand) -> Unit,
+    onCancelAdvance: () -> Unit,
 ) {
     var focusCatalogQuery by rememberSaveable { mutableStateOf("") }
     var focusBodyInput by rememberSaveable { mutableStateOf("") }
@@ -1639,6 +1644,15 @@ private fun ControlDeck(
 
     LabPanel {
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            uiState.manualAdvance?.let { advance ->
+                Text("${advance.status} ${advance.completedSteps}/${advance.totalSteps} steps")
+                FilledTonalButton(onClick = onCancelAdvance, enabled = !advance.cancelRequested) { Text("Cancel advance") }
+            }
+            uiState.snapshot?.let { snapshot ->
+                Text("Requested ${snapshot.simSecondsPerRealSecond} sim s/s · achieved " +
+                    (uiState.playbackMeasurement?.achievedRate?.let { "%.2f sim s/s".format(it) } ?: "unavailable") +
+                    if (uiState.playbackMeasurement?.limited == true) " · limited" else "")
+            }
             Text(
                 text = "Control deck",
                 style = MaterialTheme.typography.titleLarge,

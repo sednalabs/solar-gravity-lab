@@ -16,6 +16,17 @@ python3 .github/scripts/collect_android_capability_census.py \
 # dispatch/activation + scalar-equivalence ISA proof assertions.
 cargo test -p solarlab-physics --lib -- --nocapture
 
+# Exercise the actual staged dense backend under both worker budgets. Affinity
+# is applied before launching a separate test process because the budget is cached.
+SOLARLAB_EXPECT_DENSE_PATH=simd.arm64.neon-f64-parallel-tiled-pairwise \
+  cargo test -p solarlab-physics --lib tests::arm64_dense_selected_chunk_schedule_matches_bulk -- --exact --nocapture \
+  2>&1 | tee dist/arm64-isa-proof/dense-chunk-multi-worker.txt
+
+single_cpu="$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"
+SOLARLAB_EXPECT_DENSE_PATH=simd.arm64.neon-f64-tiled-pairwise \
+  taskset -c "${single_cpu}" cargo test -p solarlab-physics --lib tests::arm64_dense_selected_chunk_schedule_matches_bulk -- --exact --nocapture \
+  2>&1 | tee dist/arm64-isa-proof/dense-chunk-single-cpu.txt
+
 # Runtime telemetry should surface solver execution report fields cleanly.
 cargo test -p solarlab-runtime --lib telemetry_report
 

@@ -67,8 +67,8 @@ class MainActivity : ComponentActivity() {
 }
 
 internal class RuntimeSessionViewModel : ViewModel() {
-    val runtimeFacade: RuntimeFacade = BridgeBackedRuntimeFacade()
     private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val runtimeFacade: RuntimeFacade = BridgeBackedRuntimeFacade(runtimeScope)
     private var sessionStarted: Boolean = false
 
     fun ensureStarted() {

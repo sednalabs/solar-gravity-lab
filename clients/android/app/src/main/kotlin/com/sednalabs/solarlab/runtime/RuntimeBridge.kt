@@ -40,6 +40,11 @@ internal interface RuntimeBridge {
 
     // Command path: apply intent and surface resulting state deltas.
     suspend fun applyCommand(command: RuntimeCommand): List<RuntimeSignal>
+
+    suspend fun queryAdvance(): NativeAdvanceResult = error("Incremental advance is unavailable")
+    suspend fun beginAdvance(intentHigh: Long, intentLow: Long, expectedGeneration: Long, expectedBaseOrdinal: Long, deltaSeconds: Double, recordedAtUnixMs: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
+    suspend fun continueAdvance(generation: Long, expectedCompleted: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
+    suspend fun cancelAdvance(generation: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
 }
 
 internal class JniRuntimeBridge(
@@ -52,6 +57,30 @@ internal class JniRuntimeBridge(
     private val operationLock = Any()
     @Volatile
     private var activeSessionHandle: Long = 0L
+    private data class PlaybackSample(val handle: Long, val revision: Long, val epoch: Double, val atNanos: Long)
+    private var playbackSample: PlaybackSample? = null
+    private var lastObservation: Pair<Long, Long>? = null
+
+    private fun rememberRevision(handle: Long, revision: Long) {
+        val previous = lastObservation
+        if (previous == null || previous.first != handle || revision > previous.second) {
+            lastObservation = handle to revision
+        }
+    }
+
+    private fun clearPlaybackMeasurement(handle: Long, signals: MutableList<RuntimeSignal>) {
+        playbackSample = null
+        lastObservation?.takeIf { it.first == handle }?.let { (_, revision) ->
+            signals += RuntimeSignal.PlaybackMeasurementCleared(handle, revision)
+        }
+    }
+    private var advanceMayBeActive = false
+    private data class AdvanceIntent(val high: Long, val low: Long, val generation: Long, val baseOrdinal: Long, val delta: Double, val recordedAt: Long) {
+        fun matches(result: NativeAdvanceResult): Boolean = result.intentHigh == high && result.intentLow == low &&
+            result.generation == generation + 1 && result.baseOrdinal == baseOrdinal &&
+            result.requestedSeconds.toBits() == delta.toBits() && result.recordedAtUnixMs == recordedAt
+    }
+    private var advanceIntent: AdvanceIntent? = null
 
     override fun isCurrentSession(handle: Long): Boolean = activeSessionHandle == handle
 
@@ -259,6 +288,7 @@ internal class JniRuntimeBridge(
 
     override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> {
         return synchronized(operationLock) {
+            playbackSample = null
             val scenarioPack = RuntimeScenarioPacks.byId(scenarioId)
                 ?: return@synchronized listOf(
                     RuntimeSignal.Unavailable(
@@ -402,6 +432,42 @@ internal class JniRuntimeBridge(
         }
     }
 
+    private inline fun <T> withActiveSession(action: (Long) -> T): T = synchronized(operationLock) {
+        val handle = activeSessionHandle
+        check(handle != 0L) { "No active runtime session" }
+        action(handle)
+    }
+
+    override suspend fun queryAdvance(): NativeAdvanceResult = withActiveSession { handle ->
+        transport.queryAdvance(handle).also {
+            if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) {
+                advanceMayBeActive = false
+                advanceIntent = null
+            }
+        }
+    }
+
+    override suspend fun beginAdvance(intentHigh: Long, intentLow: Long, expectedGeneration: Long, expectedBaseOrdinal: Long, deltaSeconds: Double, recordedAtUnixMs: Long): NativeAdvanceResult =
+        withActiveSession { handle ->
+            advanceMayBeActive = true
+            advanceIntent = AdvanceIntent(intentHigh, intentLow, expectedGeneration, expectedBaseOrdinal, deltaSeconds, recordedAtUnixMs)
+            transport.beginAdvance(handle, intentHigh, intentLow, expectedGeneration, expectedBaseOrdinal, deltaSeconds, recordedAtUnixMs)
+                .also {
+                    if (it.code != 0 || (it.state in 2..3 && advanceIntent?.matches(it) == true)) {
+                        advanceMayBeActive = false
+                        advanceIntent = null
+                    }
+                }
+        }
+
+    override suspend fun continueAdvance(generation: Long, expectedCompleted: Long): NativeAdvanceResult =
+        withActiveSession { handle -> transport.continueAdvance(handle, generation, expectedCompleted)
+            .also { if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) { advanceMayBeActive = false; advanceIntent = null } } }
+
+    override suspend fun cancelAdvance(generation: Long): NativeAdvanceResult =
+        withActiveSession { handle -> transport.cancelAdvance(handle, generation)
+            .also { if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) { advanceMayBeActive = false; advanceIntent = null } } }
+
     // Explicit pull refresh for currently bound session; reuses handle snapshot guard.
     override suspend fun refresh(): List<RuntimeSignal> {
         return synchronized(operationLock) {
@@ -432,6 +498,7 @@ internal class JniRuntimeBridge(
                 )
             }
 
+            playbackSample = null
             val commandResult = runCatching {
                 transport.applyCommand(handle, command.toNativePayload())
             }.getOrElse { error ->
@@ -453,6 +520,7 @@ internal class JniRuntimeBridge(
                 )
             }
 
+            rememberRevision(handle, commandResult.revision)
             val signals = mutableListOf<RuntimeSignal>()
             signals += RuntimeSignal.CommandApplied(
                 command = command,
@@ -496,6 +564,7 @@ internal class JniRuntimeBridge(
                         error,
                     )
                 }
+                clearPlaybackMeasurement(handle, signals)
                 signals += RuntimeSignal.Notice(
                     message = "Refresh unavailable: ${error.message ?: error::class.java.simpleName}",
                     level = RuntimeNoticeLevel.Error,
@@ -509,42 +578,57 @@ internal class JniRuntimeBridge(
             }
 
             if (summary.result.isOk()) {
+                rememberRevision(handle, summary.revision)
                 if (advancePlayback && !summary.paused) {
-                    val deltaSeconds = (REFRESH_INTERVAL_MS.toDouble() / 1_000.0) *
-                        summary.simSecondsPerRealSecond.coerceAtLeast(0.0)
-                    if (deltaSeconds > 0.0) {
-                        val advanceResult = runCatching {
-                            transport.applyCommand(
-                                handle,
-                                NativeRuntimeCommandPayload(
-                                    kind = NATIVE_COMMAND_ADVANCE_EPOCH,
-                                    deltaSeconds = deltaSeconds,
-                                ),
-                            )
-                        }.getOrElse { error ->
-                            if (error is CancellationException) throw error
-                            signals += RuntimeSignal.Notice(
-                                message = "Live playback advance failed: ${error.message ?: error::class.java.simpleName}",
-                                level = RuntimeNoticeLevel.Warning,
-                            )
-                            null
-                        }
-
-                        if (advanceResult != null) {
-                            if (advanceResult.result.isOk()) {
-                                summary = advanceResult
-                            } else {
-                                signals += RuntimeSignal.Notice(
-                                    message = "Live playback advance rejected: ${advanceResult.result.describe()}",
-                                    level = RuntimeNoticeLevel.Warning,
-                                )
-                            }
-                        }
+                    val tick = runCatching {
+                        transport.playbackTick(handle, REFRESH_INTERVAL_MS.toDouble() / 1_000.0, System.currentTimeMillis())
+                    }.getOrElse { error ->
+                        if (error is CancellationException) throw error
+                        clearPlaybackMeasurement(handle, signals)
+                        signals += RuntimeSignal.Notice("Playback unavailable: ${error.message ?: error::class.java.simpleName}", RuntimeNoticeLevel.Warning)
+                        null
                     }
+                    if (tick != null && tick.code == 0) {
+                        rememberRevision(handle, tick.committedRevision)
+                        val now = System.nanoTime()
+                        val previous = playbackSample
+                        val elapsed = if (previous != null) (now - previous.atNanos) / 1_000_000_000.0 else 0.0
+                        val delta = if (previous != null) tick.committedEpochSeconds - previous.epoch else 0.0
+                        val achieved = if (previous != null && previous.handle == handle &&
+                            tick.committedRevision == previous.revision + 1 && elapsed > 0.0 && delta > 0.0 && delta.isFinite()
+                        ) delta / elapsed else null
+                        playbackSample = PlaybackSample(handle, tick.committedRevision, tick.committedEpochSeconds, now)
+                        summary = try {
+                            transport.refreshSession(handle)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Throwable) {
+                            clearPlaybackMeasurement(handle, signals)
+                            signals += RuntimeSignal.Notice("Playback snapshot unavailable: ${error.message ?: error::class.java.simpleName}", RuntimeNoticeLevel.Error)
+                            return signals
+                        }
+                        if (!summary.result.isOk()) {
+                            clearPlaybackMeasurement(handle, signals)
+                            signals += RuntimeSignal.Notice("Playback snapshot unavailable: ${summary.result.describe()}", RuntimeNoticeLevel.Error)
+                            return signals
+                        }
+                        rememberRevision(handle, summary.revision)
+                        if (summary.revision == tick.committedRevision && summary.epochSeconds == tick.committedEpochSeconds) {
+                            signals += RuntimeSignal.PlaybackMeasured(handle, tick.committedRevision, tick.requestedSeconds, tick.appliedSeconds, tick.limited, achieved)
+                        } else {
+                            clearPlaybackMeasurement(handle, signals)
+                        }
+                    } else if (tick != null) {
+                        clearPlaybackMeasurement(handle, signals)
+                        signals += RuntimeSignal.Notice("Playback tick rejected (status ${tick.code})", RuntimeNoticeLevel.Warning)
+                    }
+                } else if (summary.paused) {
+                    playbackSample = null
                 }
                 renderRevision = summary.revision
                 signals += RuntimeSignal.SnapshotUpdated(summary, sessionHandle = handle)
             } else {
+                clearPlaybackMeasurement(handle, signals)
                 signals += RuntimeSignal.Notice(
                     message = "Refresh failed: ${summary.result.describe()}",
                     level = RuntimeNoticeLevel.Error,
@@ -670,9 +754,25 @@ internal class JniRuntimeBridge(
             if (handle == 0L) {
                 return
             }
+            if (advanceMayBeActive) {
+                val current = transport.queryAdvance(handle)
+                check(current.code == 0) { "Cannot reconcile pending advance before session teardown" }
+                if (current.state == 1) {
+                    check(advanceIntent?.matches(current) == true) { "Pending advance identity is unresolved before session teardown" }
+                    val cancelled = transport.cancelAdvance(handle, current.generation)
+                    check(cancelled.code == 0 && cancelled.state in 2..3 && advanceIntent?.matches(cancelled) == true) { "Cannot reconcile advance cancellation before session teardown" }
+                }
+                check(current.state in 2..3 && advanceIntent?.matches(current) == true || current.state == 1) {
+                    "Pending advance identity is unresolved before session teardown"
+                }
+                advanceMayBeActive = false
+                advanceIntent = null
+            }
             renderHostAdapter.releasePacket()
             transport.destroySession(handle)
             activeSessionHandle = 0L
+            playbackSample = null
+            lastObservation = null
         }
     }
 
@@ -893,6 +993,8 @@ internal sealed interface RuntimeSignal {
         val message: String,
         val level: RuntimeNoticeLevel = RuntimeNoticeLevel.Info,
     ) : RuntimeSignal
+    data class PlaybackMeasurementCleared(val sessionHandle: Long, val revision: Long) : RuntimeSignal
+    data class PlaybackMeasured(val sessionHandle: Long, val revision: Long, val requestedSeconds: Double, val appliedSeconds: Double, val limited: Boolean, val achievedRate: Double?) : RuntimeSignal
     data class SnapshotUpdated(val summary: NativeSnapshotSummaryResult, val sessionHandle: Long? = null) : RuntimeSignal
     data class CommandApplied(
         val command: RuntimeCommand,
@@ -1143,6 +1245,12 @@ internal interface NativeRuntimeTransport {
 
     fun applyCommand(handle: Long, command: NativeRuntimeCommandPayload): NativeSnapshotSummaryResult
 
+    fun beginAdvance(handle: Long, intentHigh: Long, intentLow: Long, expectedGeneration: Long, expectedBaseOrdinal: Long, deltaSeconds: Double, recordedAtUnixMs: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
+    fun continueAdvance(handle: Long, generation: Long, expectedCompleted: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
+    fun cancelAdvance(handle: Long, generation: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
+    fun queryAdvance(handle: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
+    fun playbackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult = error("Bounded playback is unavailable")
+
     fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult?
 
     fun releaseVulkanScene(packetHandle: Long)
@@ -1314,6 +1422,19 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         simSecondsPerRealSecond = command.simSecondsPerRealSecond,
         recordedAtUnixMs = command.recordedAtUnixMs,
     )
+
+    override fun beginAdvance(handle: Long, intentHigh: Long, intentLow: Long, expectedGeneration: Long, expectedBaseOrdinal: Long, deltaSeconds: Double, recordedAtUnixMs: Long): NativeAdvanceResult =
+        nativeBeginAdvance(handle, intentHigh, intentLow, expectedGeneration, expectedBaseOrdinal, deltaSeconds, recordedAtUnixMs)
+    override fun continueAdvance(handle: Long, generation: Long, expectedCompleted: Long): NativeAdvanceResult = nativeContinueAdvance(handle, generation, expectedCompleted)
+    override fun cancelAdvance(handle: Long, generation: Long): NativeAdvanceResult = nativeCancelAdvance(handle, generation)
+    override fun queryAdvance(handle: Long): NativeAdvanceResult = nativeQueryAdvance(handle)
+    override fun playbackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult = nativePlaybackTick(handle, realSeconds, recordedAtUnixMs)
+
+    private external fun nativeBeginAdvance(handle: Long, intentHigh: Long, intentLow: Long, expectedGeneration: Long, expectedBaseOrdinal: Long, deltaSeconds: Double, recordedAtUnixMs: Long): NativeAdvanceResult
+    private external fun nativeContinueAdvance(handle: Long, generation: Long, expectedCompleted: Long): NativeAdvanceResult
+    private external fun nativeCancelAdvance(handle: Long, generation: Long): NativeAdvanceResult
+    private external fun nativeQueryAdvance(handle: Long): NativeAdvanceResult
+    private external fun nativePlaybackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult
 
     override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
         nativeExportVulkanScene(handle)
@@ -1610,6 +1731,29 @@ internal data class NativeRuntimeInfoResult(
         )
     }
 }
+
+internal data class NativeAdvanceResult(
+    val code: Int,
+    val state: Int,
+    val generation: Long,
+    val intentHigh: Long,
+    val intentLow: Long,
+    val baseOrdinal: Long,
+    val requestedSeconds: Double,
+    val completedSteps: Long,
+    val totalSteps: Long,
+    val recordedAtUnixMs: Long,
+    val currentNextOrdinal: Long,
+)
+
+internal data class NativePlaybackTickResult(
+    val code: Int,
+    val requestedSeconds: Double,
+    val appliedSeconds: Double,
+    val limited: Boolean,
+    val committedEpochSeconds: Double,
+    val committedRevision: Long,
+)
 
 internal data class NativeSnapshotSummaryResult(
     val result: NativeResult,
