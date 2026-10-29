@@ -391,6 +391,7 @@ typedef struct SlAdvanceResult {
   uint64_t completed_steps;
   uint64_t total_steps;
   int64_t recorded_at_unix_ms;
+  uint64_t current_next_ordinal;
 } SlAdvanceResult;
 
 typedef struct SlPlaybackTickResult {
@@ -402,6 +403,23 @@ typedef struct SlPlaybackTickResult {
   uint64_t committed_revision;
 } SlPlaybackTickResult;
 
+// Staged manual-advance protocol (one active operation per paused session):
+// Query first. Use its current_next_ordinal and current/recent generation as
+// begin preconditions, and retain a caller-generated 128-bit intent plus all
+// immutable parameters. Begin reserves without changing the published world.
+// Continue with the returned generation and completed_steps; each call runs at
+// most the server's step allowance. The final continue atomically commits the
+// original full advance and its single history entry. Cancel discards staged
+// work; if already committed it reports committed. Session destruction discards
+// any uncommitted work. Reads continue to show the committed world; conflicting
+// mutations return BUSY. Invalid parameters return INVALID_ARGUMENT; stale
+// generation, ordinal, operation or progress returns STALE; synchronous work
+// above the allowance returns WORK_LIMIT. A lost reply is not proof of failure:
+// query and reconcile the retained generation, intent and immutable parameters;
+// do not blindly issue a new intent or assume a stale observation means no commit.
+// One terminal result is retained until superseded; no persistence is promised.
+// base_ordinal identifies the operation; current_next_ordinal is the session's
+// current begin precondition and may change after unrelated failed commands.
 SlAdvanceResult sl_v2_session_begin_advance(SlRuntimeHandle handle, uint64_t intent_high, uint64_t intent_low, uint64_t expected_generation, uint64_t expected_base_ordinal, double delta_seconds, int64_t recorded_at_unix_ms);
 SlAdvanceResult sl_v2_session_continue_advance(SlRuntimeHandle handle, uint64_t generation, uint64_t expected_completed);
 SlAdvanceResult sl_v2_session_cancel_advance(SlRuntimeHandle handle, uint64_t generation);

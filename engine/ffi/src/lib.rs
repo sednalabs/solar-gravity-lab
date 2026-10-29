@@ -525,6 +525,7 @@ pub struct SlAdvanceResult {
     pub completed_steps: u64,
     pub total_steps: u64,
     pub recorded_at_unix_ms: i64,
+    pub current_next_ordinal: u64,
 }
 
 #[repr(C)]
@@ -1071,6 +1072,7 @@ fn advance_result(
         completed_steps: 0,
         total_steps: 0,
         recorded_at_unix_ms: 0,
+        current_next_ordinal: 0,
     };
     if let Some(op) = op {
         output.state = match op.state {
@@ -1103,10 +1105,12 @@ fn with_advance(
     let Some(session) = registry.get_mut(handle) else {
         return advance_result(status(SlStatusCode::NotReady), None);
     };
-    match f(&mut session.runtime) {
+    let mut output = match f(&mut session.runtime) {
         Ok(()) => advance_result(status(SlStatusCode::Ok), session.runtime.query_advance()),
         Err(e) => advance_result(runtime_error_to_status(e), None),
-    }
+    };
+    output.current_next_ordinal = session.runtime.next_command_ordinal();
+    output
 }
 
 #[unsafe(no_mangle)]
@@ -2347,11 +2351,15 @@ mod android_jni {
 
     fn advance_object<'local>(
         env: &mut JNIEnv<'local>,
-        result: super::SlAdvanceResult,
+        mut result: super::SlAdvanceResult,
     ) -> jni::errors::Result<JObject<'local>> {
+        if result.current_next_ordinal > i64::MAX as u64 {
+            result.result = status(SlStatusCode::WorkLimit);
+            result.current_next_ordinal = 0;
+        }
         env.new_object(
             CLASS_NATIVE_ADVANCE_RESULT,
-            "(IIJJJJDJJJ)V",
+            "(IIJJJJDJJJJ)V",
             &[
                 JValue::Int(status_code_as_i32(result.result.code)),
                 JValue::Int(result.state as i32),
@@ -2363,6 +2371,7 @@ mod android_jni {
                 JValue::Long(result.completed_steps as i64),
                 JValue::Long(result.total_steps as i64),
                 JValue::Long(result.recorded_at_unix_ms),
+                JValue::Long(result.current_next_ordinal as i64),
             ],
         )
     }
@@ -3877,9 +3886,11 @@ mod tests {
     }
 
     #[test]
-    fn begin_advance_rejects_stale_base_before_reservation() {
+    fn c_query_supplies_begin_ordinal_after_rejected_command() {
         let create = sl_v2_session_create(new_params("sol-system", "main"));
         assert_eq!(create.result.code, SlStatusCode::Ok);
+        let before = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(before.result.code, SlStatusCode::Ok);
         let failed = sl_v2_session_apply_command(
             create.handle,
             test_session_command(SlCommandKind::FocusBody, |command| {
@@ -3888,16 +3899,42 @@ mod tests {
             }),
         );
         assert_eq!(failed.result.code, SlStatusCode::InvalidArgument);
-        let stale = super::sl_v2_session_begin_advance(create.handle, 7, 8, 0, 1, 10.0, 2);
-        assert_eq!(stale.result.code, SlStatusCode::Stale);
-        assert_eq!(super::sl_v2_session_query_advance(create.handle).state, 0);
-        let started = super::sl_v2_session_begin_advance(create.handle, 7, 8, 0, 2, 10.0, 2);
-        assert_eq!(started.result.code, SlStatusCode::Ok);
-        assert_eq!(started.base_ordinal, 2);
-        assert_eq!(
-            super::sl_v2_session_query_advance(create.handle).generation,
-            started.generation
+        let after = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(after.result.code, SlStatusCode::Ok);
+        assert!(after.current_next_ordinal > before.current_next_ordinal);
+        let stale = super::sl_v2_session_begin_advance(
+            create.handle,
+            7,
+            8,
+            before.generation,
+            before.current_next_ordinal,
+            10.0,
+            2,
         );
+        assert_eq!(stale.result.code, SlStatusCode::Stale);
+        let query = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(query.state, 0);
+        let started = super::sl_v2_session_begin_advance(
+            create.handle,
+            7,
+            8,
+            query.generation,
+            query.current_next_ordinal,
+            10.0,
+            2,
+        );
+        assert_eq!(started.result.code, SlStatusCode::Ok);
+        assert_eq!(started.base_ordinal, query.current_next_ordinal);
+        let recovered = super::sl_v2_session_query_advance(create.handle);
+        assert_eq!(recovered.generation, started.generation);
+        assert_eq!(recovered.current_next_ordinal, query.current_next_ordinal);
+        let done = super::sl_v2_session_continue_advance(
+            create.handle,
+            recovered.generation,
+            recovered.completed_steps,
+        );
+        assert_eq!(done.state, 2);
+        assert!(done.current_next_ordinal > done.base_ordinal);
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
     }
 

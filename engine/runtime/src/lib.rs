@@ -1097,6 +1097,12 @@ impl WorldRuntime {
         self.next_command_ordinal.saturating_sub(1)
     }
 
+    /// Current command ordinal required by a new staged advance.
+    #[must_use]
+    pub fn next_command_ordinal(&self) -> u64 {
+        self.next_command_ordinal
+    }
+
     /// Return an ownership-safe world snapshot for host-visible status and
     /// checkpoint provenance capture.
     /// This method is a pure projection: it does not mutate runtime state.
