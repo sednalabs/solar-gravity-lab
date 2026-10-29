@@ -1726,6 +1726,7 @@ internal data class NativeAdvanceResult(
     val completedSteps: Long,
     val totalSteps: Long,
     val recordedAtUnixMs: Long,
+    val currentNextOrdinal: Long,
 )
 
 internal data class NativePlaybackTickResult(

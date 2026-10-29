@@ -298,10 +298,9 @@ class BridgeBackedRuntimeFacade internal constructor(
             _uiState.update { it.copy(manualAdvance = ManualAdvancePresentation(), manualAdvanceOutcome = null, playbackMeasurement = null) }
             val intent = UUID.randomUUID()
             val recordedAtUnixMs = System.currentTimeMillis()
-            val baseOrdinal = state.snapshot.revision + 1
             val job = operationScope.launch(start = CoroutineStart.LAZY) {
                 try {
-                    executeManualAdvance(intent, baseOrdinal, deltaSeconds, recordedAtUnixMs)
+                    executeManualAdvance(intent, deltaSeconds, recordedAtUnixMs)
                 } finally {
                     synchronized(manualLock) { manualJob = null }
                 }
@@ -311,7 +310,8 @@ class BridgeBackedRuntimeFacade internal constructor(
         }
     }
 
-    private suspend fun executeManualAdvance(intent: UUID, baseOrdinal: Long, deltaSeconds: Double, recordedAtUnixMs: Long) {
+    private suspend fun executeManualAdvance(intent: UUID, deltaSeconds: Double, recordedAtUnixMs: Long) {
+        var baseOrdinal = 0L
         var operation: NativeAdvanceResult? = null
         var expectedGeneration: Long? = null
         var beginAttempted = false
@@ -325,7 +325,8 @@ class BridgeBackedRuntimeFacade internal constructor(
         suspend fun query(): NativeAdvanceResult = withContext(boundaryDispatcher) { bridge.queryAdvance() }
         try {
             val previous = query()
-            check(previous.code == 0 && previous.state != 1) { "Another advance is active or cannot be queried" }
+            check(previous.code == 0 && previous.state != 1 && previous.currentNextOrdinal > 0) { "Another advance is active or cannot be queried" }
+            baseOrdinal = previous.currentNextOrdinal
             expectedGeneration = previous.generation
             synchronized(manualLock) {
                 unresolvedAdvance = AdvanceIdentity(intent, baseOrdinal, deltaSeconds, recordedAtUnixMs, previous.generation)

@@ -40,7 +40,7 @@ class ManualAdvanceFacadeTest {
     }
 
     @Test
-    fun staleDisplayedOrdinalIsRejectedWithoutReservationAndRefreshed() = runBlocking {
+    fun ordinalRaceAfterQueryIsRejectedWithoutReservationAndRefreshed() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val bridge = StagedBridge(staleBase = true)
@@ -53,6 +53,23 @@ class ManualAdvanceFacadeTest {
             assertEquals(0, bridge.continues)
             assertEquals(0, bridge.cancels)
             assertEquals(0, bridge.queryAdvance().state)
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun staleDisplayUsesAuthoritativeQueryOrdinal() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val bridge = StagedBridge(ordinalAhead = true)
+            val facade = BridgeBackedRuntimeFacade(bridge, operationScope = scope)
+            facade.startSession()
+            facade.applyCommand(RuntimeCommand.AdvanceEpoch(130.0))
+            withTimeout(5_000) { bridge.chunkStarted.await() }
+            assertEquals(6L, bridge.requestedBase)
+            facade.cancelManualAdvance()
+            bridge.allowChunk.complete(Unit)
+            withTimeout(5_000) { facade.uiState.first { it.manualAdvance == null } }
+            assertEquals(1, bridge.cancels)
         } finally { scope.cancel() }
     }
 
@@ -90,6 +107,7 @@ class ManualAdvanceFacadeTest {
 
     private class StagedBridge(
         private val staleBase: Boolean = false,
+        private val ordinalAhead: Boolean = false,
         private val lostBegin: Boolean = false,
         private val mismatchedBase: Boolean = false,
     ) : RuntimeBridge {
@@ -105,7 +123,7 @@ class ManualAdvanceFacadeTest {
             bodyCount = 1, epochSeconds = 0.0, paused = true, simSecondsPerRealSecond = 1.0,
             observerMode = 0, timelineSemantics = 1, revision = 4,
         )
-        private var result = NativeAdvanceResult(0, 0, 0, 0, 0, 0, 0.0, 0, 0, 0)
+        private var result = NativeAdvanceResult(0, 0, 0, 0, 0, 0, 0.0, 0, 0, 0, if (ordinalAhead) 6 else 5)
         override fun connect() = flowOf(RuntimeSignal.Connected(1), RuntimeSignal.SnapshotUpdated(snapshot, 1))
         override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> = emptyList()
         override suspend fun refresh(): List<RuntimeSignal> = listOf(RuntimeSignal.SnapshotUpdated(if (staleBase) snapshot.copy(revision = 5) else snapshot, 1))
@@ -117,7 +135,7 @@ class ManualAdvanceFacadeTest {
                 beginFinished.complete(Unit)
                 return result.copy(code = 5)
             }
-            result = NativeAdvanceResult(0, 1, expectedGeneration + 1, intentHigh, intentLow, expectedBaseOrdinal + if (mismatchedBase) 1 else 0, deltaSeconds, 0, 130, recordedAtUnixMs)
+            result = NativeAdvanceResult(0, 1, expectedGeneration + 1, intentHigh, intentLow, expectedBaseOrdinal + if (mismatchedBase) 1 else 0, deltaSeconds, 0, 130, recordedAtUnixMs, expectedBaseOrdinal)
             beginFinished.complete(Unit)
             if (lostBegin) error("Lost begin reply")
             return result
