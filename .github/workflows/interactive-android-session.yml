@@ -303,7 +303,9 @@ jobs:
       - name: Validate private capture fixtures
         if: ${{ inputs.session_mode == 'capture-only' }}
         shell: bash
-        run: python3 .github/scripts/test_capture_interactive_baseline.py
+        run: |
+          python3 .github/scripts/test_capture_interactive_baseline.py
+          python3 .github/scripts/test_capture_bounded_advance.py
 
       - name: Install interactive live-access dependencies
         if: ${{ inputs.session_mode != 'capture-only' }}
@@ -641,7 +643,6 @@ jobs:
           path: |
             dist/interactive-capture/
             dist/interactive-launcher-recovery/
-            dist/interactive-input-profile/
 
       - name: Build interactive session summary payload
         if: ${{ always() && inputs.session_mode != 'capture-only' }}

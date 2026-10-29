@@ -687,36 +687,6 @@ logcat_pid=""
 final_status="failure"
 final_reason="session_not_started"
 capture_failure_stage="startup"
-input_profile_dir="dist/interactive-input-profile"
-input_profile_serial=""
-input_profile_original="unknown"
-input_profile_ime="unknown"
-input_profile_simulation="unknown"
-input_profile_qemu="unknown"
-input_profile_api="unknown"
-input_profile_setup="not_started"
-input_profile_readback="unknown"
-input_profile_restoration="not_required"
-input_profile_restore_readback="unknown"
-input_profile_may_need_restore="false"
-
-write_input_profile() {
-  mkdir -p "${input_profile_dir}"
-  python3 - "${input_profile_dir}/input-profile.json" "${input_profile_serial}" "${input_profile_original}" \
-    "${input_profile_ime}" "${input_profile_simulation}" "${input_profile_qemu}" "${input_profile_api}" \
-    "${input_profile_setup}" "${input_profile_readback}" "${input_profile_restoration}" "${input_profile_restore_readback}" <<'PYPROFILE'
-import json
-from pathlib import Path
-import sys
-path, serial, original, ime, simulation, qemu, api, setup, readback, restoration, restored = sys.argv[1:]
-payload = {"profile": "ordinary_keyboard_touch", "stylus_support_tested": False,
-           "serial": serial, "original_stylus_handwriting_enabled": None if original == "null" else original,
-           "selected_ime": ime, "simulate_stylus_with_touch": simulation, "qemu": qemu, "api": api,
-           "setup": setup, "setup_readback": readback, "restoration": restoration,
-           "restoration_readback": None if restored == "null" else restored}
-Path(path).write_text(json.dumps(payload, indent=2) + "\n")
-PYPROFILE
-}
 
 cleanup() {
   if [[ "${session_mode}" == "live" ]]; then
@@ -731,28 +701,8 @@ cleanup() {
   done
 
   if [[ "${session_mode}" == "capture-only" ]]; then
-    if [[ "${input_profile_may_need_restore}" == "true" ]]; then
-      input_profile_restoration="failed"
-      input_profile_restore_command="ok"
-      if [[ "${input_profile_original}" == "null" ]]; then
-        timeout 20s adb -s "${input_profile_serial}" shell settings delete secure stylus_handwriting_enabled >/dev/null 2>&1 || input_profile_restore_command="failed"
-      else
-        timeout 20s adb -s "${input_profile_serial}" shell settings put secure stylus_handwriting_enabled "${input_profile_original}" >/dev/null 2>&1 || input_profile_restore_command="failed"
-      fi
-      if input_profile_restore_readback="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure stylus_handwriting_enabled 2>/dev/null | tr -d '\r')" &&
-        [[ "${input_profile_restore_command}" == "ok" && "${input_profile_restore_readback}" == "${input_profile_original}" ]]; then
-        input_profile_restoration="verified"
-      else
-        final_status="failure"
-        capture_failure_stage="input_profile_restore"
-      fi
-    fi
-    write_input_profile || { final_status="failure"; capture_failure_stage="input_profile_restore"; }
     if [[ "${final_status}" != "success" ]]; then
       INTERACTIVE_CAPTURE_FAILURE_STAGE="${capture_failure_stage}" python3 .github/scripts/capture_interactive_baseline.py --mark-failed >/dev/null 2>&1 || true
-      if [[ "${capture_failure_stage}" == "input_profile_restore" ]]; then
-        exit 1
-      fi
     fi
     return
   fi
@@ -779,37 +729,14 @@ trap cleanup EXIT
 capture_failure_stage="emulator"
 adb wait-for-device
 if [[ "${session_mode}" == "capture-only" ]]; then
-  capture_failure_stage="input_profile"
-  input_profile_setup="failed"
-  input_profile_serial="${openai_default_serial}"
-  if ! [[ "${input_profile_serial}" =~ ^emulator-[0-9]+$ ]] ||
-     [[ -n "${ANDROID_SERIAL:-}" && "${ANDROID_SERIAL}" != "${input_profile_serial}" ]]; then
+  if ! [[ "${openai_default_serial}" =~ ^emulator-[0-9]+$ ]] ||
+     [[ -n "${ANDROID_SERIAL:-}" && "${ANDROID_SERIAL}" != "${openai_default_serial}" ]]; then
     exit 1
   fi
-  export ANDROID_SERIAL="${input_profile_serial}"
-  input_profile_qemu="$(timeout 20s adb -s "${input_profile_serial}" shell getprop ro.kernel.qemu | tr -d '\r')"
-  input_profile_api="$(timeout 20s adb -s "${input_profile_serial}" shell getprop ro.build.version.sdk | tr -d '\r')"
-  if [[ "${input_profile_qemu}" != "1" || "${input_profile_api}" != "35" ]]; then
-    exit 1
-  fi
-  input_profile_original="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure stylus_handwriting_enabled | tr -d '\r')"
-  if ! [[ "${input_profile_original}" == "null" || "${input_profile_original}" =~ ^[0-9]+$ ]]; then
-    exit 1
-  fi
-  input_profile_ime="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure default_input_method | tr -d '\r')"
-  input_profile_simulation="$(timeout 20s adb -s "${input_profile_serial}" shell getprop debug.input.simulate_stylus_with_touch | tr -d '\r')"
-  if [[ -z "${input_profile_ime}" || ${#input_profile_ime} -gt 160 || ${#input_profile_simulation} -gt 32 ]]; then
-    exit 1
-  fi
-  input_profile_may_need_restore="true"
-  write_input_profile
-  timeout 20s adb -s "${input_profile_serial}" shell settings put secure stylus_handwriting_enabled 0 >/dev/null
-  input_profile_readback="$(timeout 20s adb -s "${input_profile_serial}" shell settings get secure stylus_handwriting_enabled | tr -d '\r')"
-  if [[ "${input_profile_readback}" != "0" ]]; then
-    exit 1
-  fi
-  input_profile_setup="verified_0"
-  write_input_profile
+  export ANDROID_SERIAL="${openai_default_serial}"
+  [[ "$(timeout 20s adb -s "${ANDROID_SERIAL}" shell getprop ro.kernel.qemu | tr -d '\r')" == "1" ]]
+  [[ "$(timeout 20s adb -s "${ANDROID_SERIAL}" shell getprop ro.build.version.sdk | tr -d '\r')" == "35" ]]
+
 fi
 adb logcat -c || true
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
@@ -987,69 +914,9 @@ if [[ "${session_mode}" == "capture-only" ]]; then
     if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
       return 1
     fi
-    if [[ "${phase}" == "type-earth" || "${phase}" == "type-earth-again" ]]; then
-      if [[ "${input_profile_setup}" != "verified_0" || "${ANDROID_SERIAL:-}" != "${input_profile_serial}" ]]; then
-        return 1
-      fi
-      local input_status=0
-      timeout 20s adb -s "${input_profile_serial}" shell input text earth >/dev/null 2>&1 || input_status=$?
-      python3 - "dist/interactive-capture/${phase}/adb-receipt.json" "${input_profile_serial}" "${input_status}" <<'PYINPUT'
-import json
-from pathlib import Path
-import sys
-Path(sys.argv[1]).write_text(json.dumps({"tool": "adb", "serial": sys.argv[2],
-    "arguments": ["shell", "input", "text", "earth"], "timeout_seconds": 20,
-    "exit_code": int(sys.argv[3]), "physical_effect": "unknown"}) + "\n")
-PYINPUT
-      if [[ "${input_status}" != "0" ]]; then
-        return 1
-      fi
-      printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
-        | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
-          --config "${openai_loop_dir}/config.json" call \
-          > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
-    elif [[ "${phase}" == "focus-earth" || "${phase}" == "focus-earth-again" ]]; then
-      if [[ "${input_profile_setup}" != "verified_0" || "${ANDROID_SERIAL:-}" != "${input_profile_serial}" ]]; then
-        return 1
-      fi
-      local tap_coordinates tap_x tap_y tap_status=0 screencap_status=0
-      if ! tap_coordinates="$(python3 - "${codex_bridge_dir}/${phase}-request.json" "${input_profile_serial}" <<'PYTAP'
-import json
-import sys
-request = json.load(open(sys.argv[1]))
-args = request.get("arguments")
-if (request.get("tool") != "adb" or request.get("serial") != sys.argv[2] or
-        not isinstance(args, list) or len(args) != 5 or args[:3] != ["shell", "input", "tap"] or
-        not all(isinstance(v, str) and v.isascii() and v.isdigit() for v in args[3:])):
-    raise SystemExit(1)
-print(args[3], args[4])
-PYTAP
-)"; then
-        return 1
-      fi
-      read -r tap_x tap_y <<< "${tap_coordinates}"
-      timeout 20s adb -s "${input_profile_serial}" shell input tap "${tap_x}" "${tap_y}" >/dev/null 2>&1 || tap_status=$?
-      timeout 20s adb -s "${input_profile_serial}" exec-out screencap -p > "dist/interactive-capture/${phase}/native-immediate-screen.png" 2>/dev/null || screencap_status=$?
-      python3 - "dist/interactive-capture/${phase}/adb-receipt.json" "${input_profile_serial}" "${tap_x}" "${tap_y}" "${tap_status}" "${screencap_status}" <<'PYTAPRECEIPT'
-import json
-from pathlib import Path
-import sys
-Path(sys.argv[1]).write_text(json.dumps({"tool": "adb", "serial": sys.argv[2],
-    "arguments": ["shell", "input", "tap", sys.argv[3], sys.argv[4]], "timeout_seconds": 20,
-    "exit_code": int(sys.argv[5]), "screencap_exit_code": int(sys.argv[6]), "physical_effect": "unknown"}) + "\n")
-PYTAPRECEIPT
-      if [[ "${tap_status}" != "0" || "${screencap_status}" != "0" ]]; then
-        return 1
-      fi
-      printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
-        | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
-          --config "${openai_loop_dir}/config.json" call \
-          > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
-    else
-      node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
-        --config "${openai_loop_dir}/config.json" call \
-        < "${codex_bridge_dir}/${phase}-request.json" > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
-    fi
+    node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
+      --config "${openai_loop_dir}/config.json" call \
+      < "${codex_bridge_dir}/${phase}-request.json" > "${codex_bridge_dir}/${phase}-response.json" 2>/dev/null
     if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | grep -F "${app_package}/" >/dev/null; then
       return 1
     fi
@@ -1068,20 +935,8 @@ PYTAPRECEIPT
   capture_step frame
   capture_step home
   capture_step controls
-  capture_failure_stage="search"
-  printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
-    | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
-      --config "${openai_loop_dir}/config.json" call \
-      > "${codex_bridge_dir}/search-before.json" 2>/dev/null
-  capture_step search
-  for phase in close-search reopen-search type-earth focus-earth reopen-search-again type-earth-again focus-earth-again collapse; do
-    capture_failure_stage="${phase}"
-    printf '%s\n' '{"tool":"android_observe","arguments":{"scope":"screen_and_ui"}}' \
-      | node "${mcp_workspace_dir}/adapters/codex/bin/codex-android-tools.mjs" \
-        --config "${openai_loop_dir}/config.json" call \
-        > "${codex_bridge_dir}/${phase}-before.json" 2>/dev/null
-    capture_step "${phase}"
-  done
+  capture_failure_stage="bounded-advance"
+  python3 .github/scripts/capture_bounded_advance.py
   final_status="success"
   exit 0
 fi
