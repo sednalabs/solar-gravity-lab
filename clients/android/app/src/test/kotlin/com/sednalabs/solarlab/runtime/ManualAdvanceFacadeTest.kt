@@ -30,6 +30,7 @@ class ManualAdvanceFacadeTest {
             bridge.allowChunk.complete(Unit)
             withTimeout(5_000) { facade.uiState.first { it.manualAdvance == null } }
             assertEquals(1, bridge.cancels)
+            assertEquals(ManualAdvanceOutcome.Cancelled, facade.uiState.value.manualAdvanceOutcome)
             assertEquals(0.0, facade.uiState.value.snapshot!!.epochSeconds, 0.0)
             assertEquals(4L, facade.uiState.value.snapshot!!.revision)
             assertTrue(facade.uiState.value.snapshot!!.paused)

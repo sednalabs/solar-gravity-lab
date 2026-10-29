@@ -92,6 +92,11 @@ data class ManualAdvancePresentation(
     val status: String = "Preparing",
 )
 
+enum class ManualAdvanceOutcome {
+    Complete,
+    Cancelled,
+}
+
 data class PlaybackMeasurement(
     val revision: Long,
     val requestedSeconds: Double,
@@ -108,6 +113,7 @@ data class ShellUiState(
     val noticeTone: ShellNoticeTone = ShellNoticeTone.Neutral,
     val pendingActionLabel: String? = null,
     val manualAdvance: ManualAdvancePresentation? = null,
+    val manualAdvanceOutcome: ManualAdvanceOutcome? = null,
     val playbackMeasurement: PlaybackMeasurement? = null,
     val sessionHandle: Long? = null,
     val backendSummary: String? = null,

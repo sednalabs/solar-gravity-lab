@@ -81,6 +81,7 @@ import com.graciousgazelles.solarlab.render.core.RenderTrail as StageRenderTrail
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.PlaybackSpeedPreset
+import com.sednalabs.solarlab.runtime.ManualAdvanceOutcome
 import com.sednalabs.solarlab.runtime.StepQuantumPreset
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
@@ -386,6 +387,7 @@ internal fun StageFirstRuntimeExperience(
             }
         }
         val compactPlaybackStatus = uiState.manualAdvance?.let { "${it.status} ${it.completedSteps}/${it.totalSteps}" }
+            ?: uiState.manualAdvanceOutcome?.stageLabel()
             ?: uiState.snapshot?.let { snapshot ->
                 "Requested ${formatPlaybackRateLabel(snapshot.simSecondsPerRealSecond, playbackSpeedPreset)} · achieved " +
                     (uiState.playbackMeasurement?.achievedRate?.let { "%.2f sim s/s".format(it) } ?: "unavailable")
@@ -765,7 +767,8 @@ internal fun StageFirstRuntimeExperience(
             val secondaryControls: @Composable () -> Unit = {
                 StageActionButton(
                     label = if (compactLayout) stepQuantumPreset.label else "Step ${stepQuantumPreset.label}",
-                    onClick = { stepQuantumPreset = stepQuantumPreset.shifted(1) },
+                    onClick = { stepQuantumPreset = stepQuantumPreset.nextCyclic() },
+                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STEP_DURATION),
                     dense = compactLayout,
                 )
                 StageActionButton(
@@ -1870,6 +1873,9 @@ private fun RuntimeStageTimelineRail(
                     color = RuntimeStageGold,
                     style = MaterialTheme.typography.labelLarge,
                 )
+            }
+            uiState.manualAdvanceOutcome?.takeIf { uiState.manualAdvance == null }?.let { outcome ->
+                Text(text = outcome.stageLabel(), color = RuntimeStageTextDim, style = MaterialTheme.typography.labelSmall)
             }
             Text(
                 text = uiState.manualAdvance?.let { "${it.status} ${it.completedSteps}/${it.totalSteps} steps" }
@@ -3137,10 +3143,14 @@ private fun observerModeFromRuntimeCode(code: Int?): ObserverMode = when (code) 
     else -> ObserverMode.FREE
 }
 
-private fun StepQuantumPreset.shifted(direction: Int): StepQuantumPreset {
+private fun StepQuantumPreset.nextCyclic(): StepQuantumPreset {
     val entries = StepQuantumPreset.entries
-    val index = entries.indexOf(this).coerceAtLeast(0)
-    return entries[(index + direction).coerceIn(0, entries.lastIndex)]
+    return entries[(entries.indexOf(this) + 1) % entries.size]
+}
+
+private fun ManualAdvanceOutcome.stageLabel(): String = when (this) {
+    ManualAdvanceOutcome.Complete -> "Advance complete"
+    ManualAdvanceOutcome.Cancelled -> "Advance cancelled"
 }
 
 private fun PlaybackSpeedPreset.shifted(direction: Int): PlaybackSpeedPreset {

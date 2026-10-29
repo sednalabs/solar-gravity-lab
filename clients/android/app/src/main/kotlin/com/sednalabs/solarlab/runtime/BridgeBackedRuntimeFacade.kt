@@ -121,7 +121,7 @@ class BridgeBackedRuntimeFacade internal constructor(
         cancelManualAdvance()
         synchronized(manualLock) { manualJob }?.join()
         if (_uiState.value.manualAdvance != null) return
-        _uiState.update { it.copy(playbackMeasurement = null) }
+        _uiState.update { it.copy(playbackMeasurement = null, manualAdvanceOutcome = null) }
         val scenarioPack = RuntimeScenarioPacks.byId(scenarioId)
         if (scenarioPack == null) {
             updateWithTelemetry(
@@ -235,7 +235,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             return
         }
         if (_uiState.value.manualAdvance != null) return
-        _uiState.update { it.copy(playbackMeasurement = null) }
+        _uiState.update { it.copy(playbackMeasurement = null, manualAdvanceOutcome = null) }
         val actionLabel = command.userFacingAction()
         try {
             runShellAction(
@@ -295,7 +295,7 @@ class BridgeBackedRuntimeFacade internal constructor(
                 state.snapshot?.paused != true
             ) return
             manualCancelRequested.set(false)
-            _uiState.update { it.copy(manualAdvance = ManualAdvancePresentation(), playbackMeasurement = null) }
+            _uiState.update { it.copy(manualAdvance = ManualAdvancePresentation(), manualAdvanceOutcome = null, playbackMeasurement = null) }
             val intent = UUID.randomUUID()
             val recordedAtUnixMs = System.currentTimeMillis()
             val baseOrdinal = state.snapshot.revision + 1
@@ -316,6 +316,7 @@ class BridgeBackedRuntimeFacade internal constructor(
         var expectedGeneration: Long? = null
         var beginAttempted = false
         var terminal = false
+        var outcome: ManualAdvanceOutcome? = null
         fun isOurs(result: NativeAdvanceResult): Boolean =
             result.intentHigh == intent.mostSignificantBits && result.intentLow == intent.leastSignificantBits &&
                 result.baseOrdinal == baseOrdinal && result.requestedSeconds.toBits() == deltaSeconds.toBits() &&
@@ -385,6 +386,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
             terminal = operation!!.state == 2 || operation!!.state == 3
             check(terminal) { "Advance status is unknown" }
+            outcome = if (operation!!.state == 2) ManualAdvanceOutcome.Complete else ManualAdvanceOutcome.Cancelled
             withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) }
             val message = if (operation!!.state == 2) "Advance complete" else "Advance cancelled"
             _uiState.update { it.copy(noticeLine = message, noticeTone = ShellNoticeTone.Neutral) }
@@ -404,13 +406,16 @@ class BridgeBackedRuntimeFacade internal constructor(
                     }.getOrNull()
                     if (resolved != null && resolved.code == 0 && isOurs(resolved) && resolved.state in 2..3) {
                         terminal = true
+                        outcome = if (resolved.state == 2) ManualAdvanceOutcome.Complete else ManualAdvanceOutcome.Cancelled
                         runCatching { withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) } }
                     }
                 }
             }
             if (terminal) synchronized(manualLock) { unresolvedAdvance = null }
-            _uiState.update { current -> current.copy(manualAdvance = if (terminal) null else
-                current.manualAdvance?.copy(status = "Advance status unknown", cancelRequested = false)) }
+            _uiState.update { current -> current.copy(
+                manualAdvance = if (terminal) null else current.manualAdvance?.copy(status = "Advance status unknown", cancelRequested = false),
+                manualAdvanceOutcome = outcome ?: current.manualAdvanceOutcome,
+            ) }
         }
     }
 
@@ -426,12 +431,14 @@ class BridgeBackedRuntimeFacade internal constructor(
             }
             if (matches(result) && result.state in 2..3) {
                 withContext(boundaryDispatcher) { bridge.refresh().forEach(::applySignal) }
-                true
-            } else false
-        }.getOrElse { error -> if (error is CancellationException) throw error else false }
-        if (resolved) synchronized(manualLock) { unresolvedAdvance = null }
-        _uiState.update { current -> current.copy(manualAdvance = if (resolved) null else
-            current.manualAdvance?.copy(status = "Advance status unknown", cancelRequested = false)) }
+                if (result.state == 2) ManualAdvanceOutcome.Complete else ManualAdvanceOutcome.Cancelled
+            } else null
+        }.getOrElse { error -> if (error is CancellationException) throw error else null }
+        if (resolved != null) synchronized(manualLock) { unresolvedAdvance = null }
+        _uiState.update { current -> current.copy(
+            manualAdvance = if (resolved != null) null else current.manualAdvance?.copy(status = "Advance status unknown", cancelRequested = false),
+            manualAdvanceOutcome = resolved ?: current.manualAdvanceOutcome,
+        ) }
     }
 
     private fun applySignal(signal: RuntimeSignal) {

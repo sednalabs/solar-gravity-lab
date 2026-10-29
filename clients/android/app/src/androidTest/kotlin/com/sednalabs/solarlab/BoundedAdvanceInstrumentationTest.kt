@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.sednalabs.solarlab.runtime.JniNativeRuntimeTransport
+import com.sednalabs.solarlab.runtime.ManualAdvanceOutcome
 import com.sednalabs.solarlab.runtime.NativeLibraryLoadOutcome
 import com.sednalabs.solarlab.runtime.NativeRuntimeCommandPayload
 import com.sednalabs.solarlab.runtime.NATIVE_COMMAND_SEED_CANONICAL_SOLAR_SYSTEM
@@ -91,7 +92,7 @@ class BoundedAdvanceInstrumentationTest {
             waitUntil { runtime.uiState.value.snapshot?.paused == true }
             val before = requireNotNull(runtime.uiState.value.snapshot)
             runBlocking { runtime.applyCommand(RuntimeCommand.AdvanceEpoch(2.0)) }
-            waitUntil { runtime.uiState.value.manualAdvance == null && runtime.uiState.value.snapshot?.epochSeconds == before.epochSeconds + 2.0 }
+            waitUntil { runtime.uiState.value.manualAdvanceOutcome == ManualAdvanceOutcome.Complete && runtime.uiState.value.snapshot?.epochSeconds == before.epochSeconds + 2.0 }
             val after = requireNotNull(runtime.uiState.value.snapshot)
             assertEquals(before.revision + 1, after.revision)
             assertTrue(after.paused)
