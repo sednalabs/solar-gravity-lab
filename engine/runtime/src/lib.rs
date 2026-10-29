@@ -595,7 +595,7 @@ impl WorldRuntime {
         if !delta.is_finite() || delta <= 0.0 || next_epoch(world.epoch_seconds, delta).is_none() {
             return Err(RuntimeError::InvalidEpochDelta(delta));
         }
-        if self.next_command_ordinal > i64::MAX as u64 {
+        if self.next_command_ordinal >= i64::MAX as u64 {
             return Err(RuntimeError::AdvanceWorkLimit);
         }
         let generation = self
@@ -744,7 +744,7 @@ impl WorldRuntime {
             requested.min(max_delta)
         };
         let epoch = world.epoch_seconds;
-        if self.next_command_ordinal > i64::MAX as u64 {
+        if self.next_command_ordinal >= i64::MAX as u64 {
             return Err(RuntimeError::AdvanceWorkLimit);
         }
         let next = representable_epoch_within(epoch, allowance)
@@ -3701,6 +3701,52 @@ mod tests {
             Err(RuntimeError::AdvanceStale)
         ));
         assert_eq!(runtime.query_advance().unwrap().generation, op.generation);
+    }
+
+    #[test]
+    fn ordinal_boundary_preserves_terminal_recovery_and_rejects_new_work() {
+        let mut runtime = new_runtime();
+        runtime.next_command_ordinal = i64::MAX as u64 - 1;
+        let base = runtime.next_command_ordinal();
+        let op = runtime
+            .begin_advance([51, 52], 0, base, 1.0, 3)
+            .unwrap()
+            .clone();
+        let (done, events) = runtime.continue_advance(op.generation, 0).unwrap();
+        assert_eq!(done.state, super::AdvanceState::Committed);
+        assert!(!events.is_empty());
+        assert_eq!(runtime.next_command_ordinal(), i64::MAX as u64);
+        let before = runtime.snapshot();
+        assert!(matches!(
+            runtime.begin_advance([53, 54], op.generation, i64::MAX as u64, 1.0, 4),
+            Err(RuntimeError::AdvanceWorkLimit)
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        runtime.active_branch_mut().world.playback.paused = false;
+        let before = runtime.snapshot();
+        assert!(matches!(
+            runtime.playback_tick(0.5, 5),
+            Err(RuntimeError::AdvanceWorkLimit)
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        assert!(matches!(
+            runtime.apply_command(
+                WorldCommand::FocusBody {
+                    body_id: Some(BodyId("missing".into()))
+                },
+                6
+            ),
+            Err(RuntimeError::UnknownBody(_))
+        ));
+        assert_eq!(runtime.next_command_ordinal(), i64::MAX as u64 + 1);
+        let terminal = runtime.query_advance().unwrap();
+        assert_eq!(terminal.state, super::AdvanceState::Committed);
+        assert_eq!(terminal.generation, op.generation);
+        let (terminal, repeated_events) = runtime
+            .continue_advance(op.generation, op.total_steps)
+            .unwrap();
+        assert_eq!(terminal.state, super::AdvanceState::Committed);
+        assert!(repeated_events.is_empty());
     }
 
     #[test]

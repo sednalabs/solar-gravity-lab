@@ -420,6 +420,8 @@ typedef struct SlPlaybackTickResult {
 // One terminal result is retained until superseded; no persistence is promised.
 // base_ordinal identifies the operation; current_next_ordinal is the session's
 // current begin precondition and may change after unrelated failed commands.
+// C receives the full uint64_t value. JNI projects an ordinal beyond signed Long
+// as zero (unavailable precondition) without changing a retained operation status.
 SlAdvanceResult sl_v2_session_begin_advance(SlRuntimeHandle handle, uint64_t intent_high, uint64_t intent_low, uint64_t expected_generation, uint64_t expected_base_ordinal, double delta_seconds, int64_t recorded_at_unix_ms);
 SlAdvanceResult sl_v2_session_continue_advance(SlRuntimeHandle handle, uint64_t generation, uint64_t expected_completed);
 SlAdvanceResult sl_v2_session_cancel_advance(SlRuntimeHandle handle, uint64_t generation);

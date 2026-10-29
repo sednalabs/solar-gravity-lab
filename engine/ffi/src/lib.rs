@@ -2192,6 +2192,12 @@ fn empty_vulkan_scene_packet_info() -> SlVulkanScenePacketInfo {
     }
 }
 
+// Java uses zero as an unavailable begin precondition; C retains the full u64.
+#[cfg(any(target_os = "android", test))]
+fn jni_next_ordinal(ordinal: u64) -> i64 {
+    i64::try_from(ordinal).unwrap_or(0)
+}
+
 #[cfg(target_os = "android")]
 // JNI is a thin forwarding layer over C APIs.
 // Handles are still 64-bit integer capabilities; JNI must not copy/stash runtime
@@ -2351,12 +2357,8 @@ mod android_jni {
 
     fn advance_object<'local>(
         env: &mut JNIEnv<'local>,
-        mut result: super::SlAdvanceResult,
+        result: super::SlAdvanceResult,
     ) -> jni::errors::Result<JObject<'local>> {
-        if result.current_next_ordinal > i64::MAX as u64 {
-            result.result = status(SlStatusCode::WorkLimit);
-            result.current_next_ordinal = 0;
-        }
         env.new_object(
             CLASS_NATIVE_ADVANCE_RESULT,
             "(IIJJJJDJJJJ)V",
@@ -2371,7 +2373,7 @@ mod android_jni {
                 JValue::Long(result.completed_steps as i64),
                 JValue::Long(result.total_steps as i64),
                 JValue::Long(result.recorded_at_unix_ms),
-                JValue::Long(result.current_next_ordinal as i64),
+                JValue::Long(super::jni_next_ordinal(result.current_next_ordinal)),
             ],
         )
     }
@@ -3883,6 +3885,18 @@ mod tests {
             130.5
         );
         assert_eq!(sl_v2_session_destroy(create.handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn jni_ordinal_projection_preserves_terminal_status_at_boundary() {
+        let mut result = super::advance_result(super::status(SlStatusCode::Ok), None);
+        result.state = 2;
+        result.current_next_ordinal = i64::MAX as u64 + 1;
+        assert_eq!(super::jni_next_ordinal(result.current_next_ordinal), 0);
+        assert_eq!(result.result.code, SlStatusCode::Ok);
+        assert_eq!(result.state, 2);
+        assert_eq!(super::jni_next_ordinal(i64::MAX as u64), i64::MAX);
+        assert_eq!(result.current_next_ordinal, i64::MAX as u64 + 1);
     }
 
     #[test]
