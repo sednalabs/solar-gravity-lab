@@ -1672,7 +1672,7 @@ private fun RuntimeStageCollapsedStageChip(
                     text = advanceStatus ?: runtimeStageCompactScenarioLabel(scenarioLabel),
                     color = RuntimeStageTextDim.copy(alpha = 0.86f),
                     style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
