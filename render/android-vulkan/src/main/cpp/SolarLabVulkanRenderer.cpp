@@ -524,8 +524,14 @@ bool SolarLabVulkanRenderer::Render() {
         return false;
     }
 
+    presentedFraction_ = pendingPresentationFraction_;
     lastError_.clear();
     return true;
+}
+
+double SolarLabVulkanRenderer::PresentedFraction() const {
+    std::scoped_lock lock(stateMutex_);
+    return presentedFraction_;
 }
 
 std::string SolarLabVulkanRenderer::LastError() const {
@@ -2401,7 +2407,9 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
         .presentation = {static_cast<float>(presentationFraction), 0.0f, 0.0f, 0.0f},
     };
 
-    return UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_);
+    if (!UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_)) return false;
+    pendingPresentationFraction_ = static_cast<double>(uniformData.presentation[0]);
+    return true;
 }
 
 // Refreshes compute descriptor sets after scene-buffer replacement so compaction kernels read the

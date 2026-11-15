@@ -38,4 +38,9 @@ int main() {
     assert(InterpolationFraction(0.0, 1.0, 0.5) == 0.0);
     assert(InterpolationFraction(1.0, 1.0, 0.0) == 1.0);
     assert(Mix(100.0, 200.0, 0.5) == 150.0);
+    const double earthRadiusM = 6'371'010.0;
+    const double probeDistanceM = earthRadiusM + 800'000.0;
+    // A frame centred on the probe includes the far edge of Earth, with padding.
+    assert(ContextFrameRadius(1'000.0, probeDistanceM, earthRadiusM) > probeDistanceM + earthRadiusM);
+    assert(ContextFrameRadius(50'000'000.0, probeDistanceM, earthRadiusM) == 50'000'000.0);
 }

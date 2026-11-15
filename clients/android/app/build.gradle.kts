@@ -41,6 +41,9 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
     abstract val rustcVersion: Property<String>
 
     @get:Input
+    abstract val sourceCommit: Property<String>
+
+    @get:Input
     abstract val cargoNdkVersion: Property<String>
 
     @get:Input
@@ -85,6 +88,7 @@ abstract class BuildSolarlabNativeTask : DefaultTask() {
             workingDir = workspaceRoot
             environment("ANDROID_NDK_HOME", ndkDir.absolutePath)
             environment("ANDROID_NDK_ROOT", ndkDir.absolutePath)
+            environment("SOLARLAB_BUILD_COMMIT", sourceCommit.get())
             commandLine(
                 "cargo",
                 "ndk",
@@ -337,6 +341,16 @@ fun Project.resolvedNdkIdentity(workspaceRootDir: File): Provider<String> =
 
 val workspaceRootDir = rootProject.projectDir.resolve("../..").canonicalFile
 val solarlabGeneratedJniLibsDir = layout.buildDirectory.dir("generated/jniLibs/solarlab_v2")
+val solarlabBuildCommit = providers.gradleProperty("solarlab.buildCommit")
+    .orElse(providers.environmentVariable("SOLARLAB_BUILD_COMMIT"))
+    .orElse(project.commandOutput("git", "-C", workspaceRootDir.absolutePath, "rev-parse", "HEAD"))
+    .map { revision ->
+        revision.trim().lowercase().also {
+            if (!it.matches(Regex("[0-9a-f]{40}"))) {
+                throw GradleException("solarlab.buildCommit / SOLARLAB_BUILD_COMMIT must be a full Git commit SHA.")
+            }
+        }
+    }
 val solarlabVersionCode = project.stringPropertyOrEnv("solarlab.versionCode", "SOLARLAB_VERSION_CODE")
     ?.toIntOrNull()
     ?: 1
@@ -388,6 +402,7 @@ val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
         }
     )
     rustcVersion.set(project.commandOutput("rustc", "-V"))
+    sourceCommit.set(solarlabBuildCommit)
     cargoNdkVersion.set(project.commandOutput("cargo", "ndk", "--version"))
     ndkIdentity.set(project.resolvedNdkIdentity(workspaceRootDir))
 }

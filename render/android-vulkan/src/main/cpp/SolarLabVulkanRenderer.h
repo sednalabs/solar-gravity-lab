@@ -89,6 +89,7 @@ public:
     void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
         double previousOffsetX = 0.0, double previousOffsetY = 0.0, double previousOffsetZ = 0.0);
     bool Render();
+    double PresentedFraction() const;
 
     std::string LastError() const;
     std::string BackendLabel() const;
@@ -424,6 +425,8 @@ private:
     double cameraViewRadiusM_ = 0.0;
     double cameraYawRadians_ = 0.0;
     double cameraPitchRadians_ = 0.0;
+    double pendingPresentationFraction_ = 1.0;
+    double presentedFraction_ = 1.0;
 
     std::string lastError_;
     std::string backendLabelCache_;

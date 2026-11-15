@@ -80,7 +80,7 @@ impl WorldRuntime {
         }
         let mut branches: Vec<_> = self.branches.values().cloned().collect();
         branches.sort_by(|a, b| a.descriptor.branch_id.0.cmp(&b.descriptor.branch_id.0));
-        let saved = SavedSession {
+        let mut saved = SavedSession {
             format: FORMAT.into(),
             version: VERSION,
             model: MODEL.into(),
@@ -97,6 +97,9 @@ impl WorldRuntime {
             branches,
         };
         saved.validate()?;
+        // Validate the same derived state that import reconstructs. Work only on the
+        // cloned document, so rejection leaves the live session and history untouched.
+        saved.restore_computed_states(&self.config, &self.hardware_profile)?;
         let bytes =
             serde_json::to_vec(&saved).map_err(|_| SessionPersistenceError::InvalidDocument)?;
         if bytes.len() > MAX_SAVED_SESSION_BYTES {
@@ -114,10 +117,11 @@ impl WorldRuntime {
         if bytes.len() > MAX_SAVED_SESSION_BYTES {
             return Err(SessionPersistenceError::TooLarge);
         }
-        let saved: SavedSession =
+        let mut saved: SavedSession =
             serde_json::from_slice(bytes).map_err(|_| SessionPersistenceError::InvalidDocument)?;
         saved.validate()?;
         let config = saved.config.to_runtime()?;
+        saved.restore_computed_states(&config, &hardware_profile)?;
         let mut runtime = Self {
             scenario_id: ScenarioId(saved.scenario_id),
             config,
@@ -134,20 +138,6 @@ impl WorldRuntime {
             advance_generation: 0,
             advance_operation: None,
         };
-        for branch in runtime.branches.values_mut() {
-            restore_computed_state(
-                &mut branch.world,
-                &runtime.config,
-                &runtime.hardware_profile,
-            )?;
-            for checkpoint in &mut branch.checkpoints {
-                restore_computed_state(
-                    &mut checkpoint.state,
-                    &runtime.config,
-                    &runtime.hardware_profile,
-                )?;
-            }
-        }
         runtime.active_branch_mut().world.playback.paused = true;
         Ok(runtime)
     }
@@ -212,6 +202,20 @@ fn finite_vector(v: Vector3d) -> bool {
 }
 
 impl SavedSession {
+    fn restore_computed_states(
+        &mut self,
+        config: &RuntimeConfig,
+        hardware: &HardwareProfile,
+    ) -> Result<(), SessionPersistenceError> {
+        for branch in &mut self.branches {
+            restore_computed_state(&mut branch.world, config, hardware)?;
+            for checkpoint in &mut branch.checkpoints {
+                restore_computed_state(&mut checkpoint.state, config, hardware)?;
+            }
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> Result<(), SessionPersistenceError> {
         use SessionPersistenceError::InvalidState as invalid;
         if self.format != FORMAT || self.version != VERSION || self.model != MODEL {
@@ -459,6 +463,141 @@ mod tests {
     use super::*;
     fn runtime() -> WorldRuntime {
         super::super::tests::new_runtime()
+    }
+
+    fn spawn_finite_body_with_overflowing_invariants(world: &mut WorldRuntime) {
+        let earth = world
+            .snapshot()
+            .bodies
+            .into_iter()
+            .find(|body| body.body_id.0 == "earth")
+            .unwrap();
+        world
+            .apply_command(
+                WorldCommand::SpawnBody {
+                    body: BodyState {
+                        body_id: BodyId("overflow-probe".into()),
+                        body_class: BodyClass::Spacecraft,
+                        mass_kg: 1.0e300,
+                        source_mass_kg: 1.0e300,
+                        radius_m: 1.0,
+                        position_m: Vector3d {
+                            x: earth.position_m.x + 7.17e6,
+                            ..earth.position_m
+                        },
+                        velocity_mps: earth.velocity_mps,
+                    },
+                },
+                2,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn failed_save_rejects_finite_body_overflow_without_changing_live_session() {
+        let mut world =
+            super::super::tests::new_runtime_with_scenario(solarlab_data::EARTH_MOON_LAB_ID);
+        world
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .unwrap();
+        let original_bodies = world.snapshot().bodies;
+        spawn_finite_body_with_overflowing_invariants(&mut world);
+        let branches_before = serde_json::to_value(&world.branches).unwrap();
+        let branch_before = world.active_branch_id.clone();
+        let command_ordinal_before = world.next_command_ordinal;
+        let energy_before = world.snapshot().invariants.total_energy_j.to_bits();
+
+        assert_eq!(
+            world.export_saved_session().unwrap_err(),
+            SessionPersistenceError::InvalidState("physical values overflow invariant calculation")
+        );
+
+        assert_eq!(
+            serde_json::to_value(&world.branches).unwrap(),
+            branches_before
+        );
+        assert_eq!(world.active_branch_id, branch_before);
+        assert_eq!(world.next_command_ordinal, command_ordinal_before);
+        assert_eq!(
+            world.snapshot().invariants.total_energy_j.to_bits(),
+            energy_before
+        );
+        // A rejected save does not replace or poison the session: the user can remove
+        // the offending body and immediately save/reopen the original physical state.
+        world
+            .apply_command(
+                WorldCommand::RemoveBody {
+                    body_id: BodyId("overflow-probe".into()),
+                },
+                3,
+            )
+            .unwrap();
+        let reopened = WorldRuntime::import_saved_session(
+            &world.export_saved_session().unwrap(),
+            world.hardware_profile.clone(),
+        )
+        .unwrap();
+        assert_eq!(reopened.snapshot().bodies, original_bodies);
+    }
+
+    #[test]
+    fn save_checks_inactive_branches_and_checkpoints_for_invariant_overflow() {
+        for overflow_in_checkpoint in [false, true] {
+            let mut world =
+                super::super::tests::new_runtime_with_scenario(solarlab_data::EARTH_MOON_LAB_ID);
+            world
+                .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+                .unwrap();
+            world
+                .apply_command(
+                    WorldCommand::CreateCheckpoint {
+                        checkpoint_id: Some(CheckpointId("healthy".into())),
+                        label: None,
+                    },
+                    1,
+                )
+                .unwrap();
+            spawn_finite_body_with_overflowing_invariants(&mut world);
+            if overflow_in_checkpoint {
+                world
+                    .apply_command(
+                        WorldCommand::CreateCheckpoint {
+                            checkpoint_id: Some(CheckpointId("overflow".into())),
+                            label: None,
+                        },
+                        3,
+                    )
+                    .unwrap();
+                world
+                    .apply_command(
+                        WorldCommand::RemoveBody {
+                            body_id: BodyId("overflow-probe".into()),
+                        },
+                        4,
+                    )
+                    .unwrap();
+            } else {
+                world
+                    .apply_command(
+                        WorldCommand::CreateBranchFromCheckpoint {
+                            checkpoint_id: CheckpointId("healthy".into()),
+                            new_branch_id: Some(BranchId("healthy-branch".into())),
+                        },
+                        3,
+                    )
+                    .unwrap();
+            }
+            assert!(world.snapshot().invariants.total_energy_j.is_finite());
+            let before = world.snapshot();
+            assert_eq!(
+                world.export_saved_session().unwrap_err(),
+                SessionPersistenceError::InvalidState(
+                    "physical values overflow invariant calculation"
+                ),
+                "checkpoint-only overflow: {overflow_in_checkpoint}"
+            );
+            assert_eq!(world.snapshot(), before);
+        }
     }
 
     #[test]

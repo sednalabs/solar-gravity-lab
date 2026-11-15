@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -73,6 +74,9 @@ internal object LabTags {
     const val SAVED_DIALOG = "lab.saved.dialog"
     const val EDITOR = "lab.editor"
     const val INSPECTOR = "lab.inspector"
+    const val COMPACT_HEADER = "lab.compact.header"
+    const val COMPACT_PLAYBACK = "lab.compact.playback"
+    const val TOOLS_PANEL = "lab.tools"
     fun focus(bodyId: String) = "lab.focus.$bodyId"
     fun load(id: String) = "lab.saved.load.$id"
     fun component(kind: String, axis: String) = "lab.edit.$kind.$axis"
@@ -135,13 +139,18 @@ internal fun EarthMoonLabChrome(
     val canEdit = ready && uiState.manualAdvance == null && uiState.pendingActionLabel == null
     val compactScenario = if (snapshot?.scenarioId == "lab.earth-moon") "EARTH–MOON LABORATORY" else scenarioTitle.uppercase(Locale.US)
 
-    Box(modifier = modifier.fillMaxSize().testTag(LabTags.ROOT)) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().testTag(LabTags.ROOT)) {
+        val compactHeight = maxHeight < 520.dp && maxWidth > maxHeight
         // Quiet edge shading gives controls contrast without washing out the astronomical scene.
         Box(
-            Modifier.fillMaxWidth().height(190.dp)
+            Modifier.fillMaxWidth().height(if (compactHeight) 110.dp else 190.dp)
                 .background(Brush.verticalGradient(listOf(Color(0xCC04080E), Color.Transparent))),
         )
-        if (mode != StageChromeMode.MINIMAL) {
+        if (compactHeight && mode != StageChromeMode.MINIMAL) {
+            CompactHeightLabChrome(uiState, selectedBody, selectedName, selectionDescription,
+                compactScenario, availableBodyIds, mode, traceMode, cameraBand, stepPreset,
+                playbackPreset, pendingFrameName, actions)
+        } else if (mode != StageChromeMode.MINIMAL) {
             Column(
                 modifier = Modifier.align(Alignment.TopStart).fillMaxWidth()
                     .statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
@@ -170,7 +179,7 @@ internal fun EarthMoonLabChrome(
                             fontWeight = FontWeight.Light, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            selectedBody?.let { "Radius ${formatLabDistance(it.radiusM)} · tap to inspect" }
+                            selectedBody?.let { "Radius ${formatLabDistance(it.radiusM)}" }
                                 ?: "A small world of possibilities",
                             color = LabMuted, fontSize = 12.sp,
                         )
@@ -272,6 +281,118 @@ internal fun EarthMoonLabChrome(
     }
 }
 
+/** Short windows reserve separate header, stage/tools, and playback regions. */
+@Composable
+private fun CompactHeightLabChrome(
+    uiState: ShellUiState,
+    selectedBody: RuntimeStageBody?,
+    selectedName: String,
+    selectionDescription: String?,
+    scenarioTitle: String,
+    availableBodyIds: Set<String>,
+    mode: StageChromeMode,
+    traceMode: TraceLayerMode,
+    cameraBand: CameraScaleBand,
+    stepPreset: StepQuantumPreset,
+    playbackPreset: PlaybackSpeedPreset,
+    pendingFrameName: String?,
+    actions: LabStageActions,
+) {
+    val running = uiState.snapshot?.paused == false
+    val ready = uiState.connectionState == SessionConnectionState.Active
+    val canEdit = ready && uiState.manualAdvance == null && uiState.pendingActionLabel == null
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+        .padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Row(Modifier.fillMaxWidth().testTag(LabTags.COMPACT_HEADER),
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.width(172.dp).testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL)) {
+                Text(selectedName,
+                    Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                        .semantics { contentDescription = selectionDescription ?: selectedName },
+                    color = LabInk, fontSize = 24.sp, fontWeight = FontWeight.Light,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(scenarioTitle, Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
+                    color = LabMuted, fontSize = 9.sp, letterSpacing = 0.7.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                pendingFrameName?.let {
+                    Text(it, Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST),
+                        color = LabBlue, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                if ("earth" in availableBodyIds) {
+                    LabTextAction("Earth", { actions.focus("earth") }, tag = LabTags.focus("earth"),
+                        active = selectedBody?.id == "earth")
+                }
+                if ("moon" in availableBodyIds) {
+                    LabTextAction("Moon", { actions.focus("moon") }, tag = LabTags.focus("moon"),
+                        active = selectedBody?.id == "moon")
+                }
+                LabTextAction("Overview", actions.home, tag = SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON)
+                LabTextAction("Frame", actions.frame, tag = SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON,
+                    enabled = selectedBody != null)
+                LabTextAction("Help", actions.help, tag = SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON)
+            }
+            LabTextAction("Find", actions.search, tag = SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON,
+                enabled = availableBodyIds.isNotEmpty())
+            LabTextAction("Model", actions.science, tag = LabTags.SCIENCE)
+        }
+
+        // Tools scroll only within the available middle region. Neither playback
+        // nor the selected body can be covered by an expanded panel.
+        Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 6.dp)) {
+            if (mode == StageChromeMode.EXPANDED) {
+                LabToolsPanel(traceMode, cameraBand, stepPreset, ready, actions,
+                    Modifier.align(Alignment.CenterEnd).widthIn(max = 520.dp).fillMaxWidth(0.72f))
+            }
+        }
+
+        Surface(modifier = Modifier.fillMaxWidth().testTag(LabTags.COMPACT_PLAYBACK),
+            color = LabPanel, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, LabLine)) {
+            Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = actions.togglePlayback,
+                    modifier = Modifier.size(52.dp).testTag(LabTags.PLAY_PAUSE)
+                        .semantics { contentDescription = if (running) "Pause simulation" else "Run simulation" },
+                    shape = CircleShape, enabled = canEdit,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = LabBlue, contentColor = Color(0xFF102233)),
+                ) { LabPlaybackGlyph(running, Color(0xFF102233)) }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.width(152.dp)) {
+                    Text(if (running) "RUNNING" else "PAUSED", color = LabMuted,
+                        fontSize = 9.sp, fontFamily = FontFamily.Monospace, letterSpacing = 0.8.sp)
+                    Text(formatLabEpoch(uiState.snapshot?.epochSeconds ?: 0.0), color = LabInk,
+                        fontSize = 15.sp, fontFamily = FontFamily.Monospace,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (running) uiState.playbackMeasurement?.achievedRate?.let { rate ->
+                        Text("${if (uiState.playbackMeasurement?.limited == true) "Limited" else "Achieved"} ${formatLabRate(rate)}",
+                            color = LabBlue, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    uiState.manualAdvance?.let { advance ->
+                        LabTextAction("Cancel advance", actions.cancelAdvance, enabled = !advance.cancelRequested)
+                    }
+                    LabTextAction("−", actions.speedDown, tag = LabTags.SPEED_DOWN,
+                        description = "Slower simulation", enabled = canEdit)
+                    Text(playbackPreset.label, color = LabBlue, fontSize = 12.sp, maxLines = 1)
+                    LabTextAction("+", actions.speedUp, tag = LabTags.SPEED_UP,
+                        description = "Faster simulation", enabled = canEdit)
+                    LabTextAction("Inspect", actions.inspect, tag = LabTags.INSPECT,
+                        enabled = canEdit && selectedBody != null)
+                    LabTextAction("Add probe", actions.addProbe, tag = LabTags.ADD_PROBE,
+                        enabled = canEdit && "earth" in availableBodyIds)
+                    LabTextAction("Saved", actions.saved, tag = LabTags.SAVED, enabled = ready)
+                }
+                LabTextAction(if (mode == StageChromeMode.EXPANDED) "Less" else "Tools", actions.toggleTools,
+                    tag = SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON, active = mode == StageChromeMode.EXPANDED)
+            }
+        }
+    }
+}
+
 @Composable
 private fun LabToolsPanel(
     traceMode: TraceLayerMode,
@@ -279,8 +400,10 @@ private fun LabToolsPanel(
     stepPreset: StepQuantumPreset,
     ready: Boolean,
     actions: LabStageActions,
+    modifier: Modifier = Modifier,
 ) {
-    Surface(color = LabPanel, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, LabLine)) {
+    Surface(modifier = modifier.testTag(LabTags.TOOLS_PANEL), color = LabPanel,
+        shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, LabLine)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 186.dp).verticalScroll(rememberScrollState())
             .padding(horizontal = 10.dp, vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.horizontalScroll(rememberScrollState())) {

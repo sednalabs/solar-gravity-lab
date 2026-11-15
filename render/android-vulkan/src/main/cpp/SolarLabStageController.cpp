@@ -673,10 +673,9 @@ SolarLabStageController::CameraSnapshot SolarLabStageController::PresentedCamera
 }
 
 double SolarLabStageController::PresentationFractionLocked() const {
-    return solarlab::presentation::InterpolationFraction(
-        solarlab::presentation::MonotonicSeconds(),
-        runtimeScene_.presentationStartedAtSeconds,
-        runtimeScene_.presentationDurationSeconds);
+    // Input and transition continuity use the frame submitted for display, not a newer
+    // wall-clock position. A slow final present must still schedule a fraction-one frame.
+    return renderer_.PresentedFraction();
 }
 
 void SolarLabStageController::ClearCameraPresentationLocked() {
@@ -781,7 +780,21 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         return std::nullopt;
     }
 
-    const double suggestedRadiusM = BodyFrameViewRadiusM(body->frameRadiusM);
+    double suggestedRadiusM = BodyFrameViewRadiusM(body->frameRadiusM);
+    if (runtimeScene_.scenarioId == "lab.earth-moon" && body->kind == kKindProbe) {
+        const auto earth = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+            [](const RuntimeBodyProxy& candidate) { return LowercaseAscii(candidate.bodyId) == "earth"; });
+        if (earth != runtimeScene_.pickBodies.end()) {
+            // A probe's physical radius is too small to make its orbit legible. Keep Earth
+            // in the frame while centring/following the probe; its marker remains scale-aware.
+            const double earthDistanceM = Magnitude(MakeFloat3(
+                body->positionRelativeX - earth->positionRelativeX,
+                body->positionRelativeY - earth->positionRelativeY,
+                body->positionRelativeZ - earth->positionRelativeZ));
+            suggestedRadiusM = solarlab::presentation::ContextFrameRadius(
+                suggestedRadiusM, earthDistanceM, SafeBodyRadiusM(earth->radiusM));
+        }
+    }
     const double viewRadiusM = Clamp(suggestedRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
     return CameraSnapshot{
         .centerX = runtimeScene_.sceneOriginX + body->positionRelativeX,
@@ -1143,7 +1156,8 @@ bool SolarLabStageController::Render(bool refreshRuntimeScene) {
 
 bool SolarLabStageController::HasPendingPresentation() const {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    return RuntimeSessionBoundLocked() && PresentationFractionLocked() < 1.0;
+    return RuntimeSessionBoundLocked() && runtimeScene_.presentationDurationSeconds > 0.0 &&
+        PresentationFractionLocked() < 1.0;
 }
 
 std::string SolarLabStageController::LastError() const {
@@ -1468,7 +1482,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 .frameRadiusM = frameRadiusM,
                 .kind = kind,
             });
-            if (!ShouldIncludeAuthoritativeBody(body->radius_m, body->emissive_luminance, selected)) {
+            if (body->kind != SL_SCENE_BODY_KIND_SPACECRAFT &&
+                !ShouldIncludeAuthoritativeBody(body->radius_m, body->emissive_luminance, selected)) {
                 continue;
             }
             authoritativePositionsM.push_back(body->position_from_origin_m.x);

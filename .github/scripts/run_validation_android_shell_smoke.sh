@@ -140,8 +140,9 @@ capture_lab_journey_evidence() {
   mkdir -p "${evidence_dir}"
   # The complete user journey records its own native screenshots. Keep them on
   # successful runs too, even when expensive general diagnostics are failure-only.
+  # MediaStore Downloads survive the connected-test package uninstall.
   timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" \
-    adb pull "/sdcard/Android/data/${APP_PACKAGE}/files/lab-evidence/." \
+    adb pull "/sdcard/Download/solarlab-validation/lab-evidence/." \
     "${evidence_dir}" >"${evidence_dir}/adb-pull.txt" 2>&1 || true
 }
 
@@ -300,6 +301,7 @@ run_test_batch() {
   class_arg="$(IFS=,; echo "${TEST_CLASSES[*]}")"
   run_timeout_seconds="${ANDROID_TEST_RUN_TIMEOUT_SECONDS:-$((CLASS_TIMEOUT_SECONDS * ${#TEST_CLASSES[@]}))}"
 
+  bash .github/scripts/clear_stale_launcher_anr.sh "${run_dir}" || return 1
   capture_device_state "${run_dir}" "pre"
 
   echo "::group::InstrumentationBatch"
@@ -407,6 +409,7 @@ run_test_classes_individually() {
     mkdir -p "${class_dir}"
     adb logcat -c || true
 
+    bash .github/scripts/clear_stale_launcher_anr.sh "${class_dir}" || return 1
     capture_device_state "${class_dir}" "pre"
 
     echo "Running ${class_name}"

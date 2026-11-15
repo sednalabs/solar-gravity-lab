@@ -18,11 +18,11 @@ on:
         required: false
         type: string
       version_name:
-        description: Optional semver versionName override (for example 0.1.0 or 0.1.1-alpha.1)
+        description: SemVer versionName (optional only for a release/<semver> ref)
         required: false
         type: string
       version_code:
-        description: Optional versionCode override
+        description: Optional versionCode override (otherwise derived from SemVer)
         required: false
         type: string
       release_channel:
@@ -340,35 +340,20 @@ jobs:
           cache-version: ${{ env.ANDROID_RUST_TOOLCHAIN_CACHE_VERSION }}
           shared-cache-hit: ${{ steps.prerelease_rust_shared_cache.outputs.cache-hit }}
 
-      - name: Resolve prerelease version defaults
-        id: resolved_version
-        shell: bash
-        env:
-          INPUT_VERSION_NAME: ${{ needs.route.outputs.version_name != '' && needs.route.outputs.version_name || inputs.version_name }}
-          INPUT_VERSION_CODE: ${{ needs.route.outputs.version_code != '' && needs.route.outputs.version_code || inputs.version_code }}
-        run: |
-          set -euo pipefail
-          version_name_override="${INPUT_VERSION_NAME:-}"
-          version_code_override="${INPUT_VERSION_CODE:-}"
-
-          if [[ -z "${version_name_override}" ]]; then
-            git fetch --force --prune origin '+refs/tags/v*:refs/tags/v*'
-            version_name_override="0.1.0"
-          fi
-
-          {
-            echo "version_name=${version_name_override}"
-            echo "version_code=${version_code_override}"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Assemble prerelease APK
         id: assemble_prerelease
         env:
-          SOLARLAB_VERSION_NAME: ${{ steps.resolved_version.outputs.version_name }}
-          SOLARLAB_VERSION_CODE: ${{ steps.resolved_version.outputs.version_code }}
+          SOLARLAB_VERSION_NAME: ${{ needs.route.outputs.version_name }}
+          SOLARLAB_VERSION_CODE: ${{ needs.route.outputs.version_code }}
+          SOLARLAB_BUILD_COMMIT: ${{ steps.git_meta.outputs.head_sha }}
+          SOLARLAB_PREFERRED_GPU_BACKEND: vulkan
+          SOLARLAB_HOSTED_DEBUG_PROFILE: full-fidelity
         shell: bash
         run: |
           set -euo pipefail
+          : "${SOLARLAB_VERSION_NAME:?Release gate did not resolve versionName}"
+          : "${SOLARLAB_VERSION_CODE:?Release gate did not resolve versionCode}"
+          : "${SOLARLAB_BUILD_COMMIT:?Checkout did not resolve source commit}"
           mkdir -p dist/gradle
           phase_start="$(date +%s)"
           build_variant="${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
@@ -825,6 +810,10 @@ jobs:
           mapfile -t release_assets < <(printf '%s\n' "${release_assets[@]}" | sort -u)
 
           if gh release view "$TAG_NAME" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+              echo "Refuses to replace an existing release from a push: $TAG_NAME. Use a new version." >&2
+              exit 1
+            fi
             gh release edit "$TAG_NAME" \
               --repo "${{ github.repository }}" \
               --title "$RELEASE_TITLE" \

@@ -847,6 +847,11 @@ internal fun StageFirstRuntimeExperience(
                                 if (command is RuntimeCommand.SpawnBody) {
                                     selectedBodyId = command.bodyId
                                     observerMode = ObserverMode.FREE
+                                    // Keep the new probe inspectable while showing its
+                                    // Earth-orbit context instead of framing its metre-scale body.
+                                    renderHostView?.setObserverMode(ObserverMode.FREE)
+                                    renderHostView?.frameBody("earth")
+                                    renderHostView?.setSelectedBodyId(command.bodyId)
                                     syncObserver(command.bodyId, ObserverMode.FREE)
                                 }
                             }

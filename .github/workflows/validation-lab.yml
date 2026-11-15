@@ -204,7 +204,9 @@ jobs:
         id: checkout_ref
         shell: bash
         env:
-          EVENT_SHA: ${{ github.sha }}
+          # Qualify the same immutable commit that can later be installed.
+          # PR merge refs have a different commit identity even when the tree matches.
+          EVENT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
 
@@ -265,6 +267,9 @@ jobs:
 
       - name: Verify Android Rust cache key isolation
         run: python3 .github/scripts/test_rust_android_toolchain_cache_key.py
+
+      - name: Verify release version routing
+        run: python3 .github/scripts/test_prerelease_apk_request.py
 
       - name: Verify Rust JNI R8 keep-rule coverage
         run: python3 .github/scripts/test_prerelease_jni_r8_contract.py

@@ -98,4 +98,8 @@ inline double Mix(double previous, double current, double fraction) {
     return previous + (current - previous) * fraction;
 }
 
+inline double ContextFrameRadius(double preferredRadiusM, double contextDistanceM, double contextRadiusM) {
+    return std::max(preferredRadiusM, (contextDistanceM + contextRadiusM) * 1.18);
+}
+
 }  // namespace solarlab::presentation

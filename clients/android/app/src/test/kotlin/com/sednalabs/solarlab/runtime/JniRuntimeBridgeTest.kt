@@ -64,7 +64,7 @@ class JniRuntimeBridgeTest {
     }
 
     @Test
-    fun connect_seedsDefaultSolarSystem_whenInitialSnapshotIsEmpty() = runBlocking {
+    fun connect_seedsPausedEarthMoonLab_whenInitialSnapshotIsEmpty() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
                 listOf(
@@ -90,17 +90,18 @@ class JniRuntimeBridgeTest {
         }
 
         assertEquals(listOf(42L), transport.runtimeInfoHandles)
+        assertEquals(listOf("lab.earth-moon"), transport.createdScenarioIds)
         assertEquals(listOf(42L, 42L, 42L), transport.refreshedHandles)
         assertEquals(listOf(42L), renderHostAdapter.boundSessionHandles)
         assertEquals(3, renderHostAdapter.refreshCount)
         assertEquals(1, renderHostAdapter.releaseCount)
 
         assertTrue(
-            "Expected startup to seed canonical world",
+            "Expected startup to seed the selected scenario through Rust",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM) },
         )
-        assertTrue(
-            "Expected startup to resume playback for visible motion",
+        assertFalse(
+            "Expected the laboratory to remain paused for inspection",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) },
         )
         assertTrue(
@@ -117,10 +118,11 @@ class JniRuntimeBridgeTest {
                 .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
                 .any { it.summary.bodyCount == STARTUP_EXPECTED_BODY_COUNT }
         )
+        assertTrue(signals.filterIsInstance<RuntimeSignal.SnapshotUpdated>().last().summary.paused)
     }
 
     @Test
-    fun connect_doesNotSeedDefaultSolarSystem_whenSnapshotAlreadyContainsBodies() = runBlocking {
+    fun connect_doesNotReseedLab_whenSnapshotAlreadyContainsBodies() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
                 listOf(snapshotSummary(bodyCount = 2))
@@ -146,8 +148,8 @@ class JniRuntimeBridgeTest {
             "Seed should not be issued when snapshot already has bodies",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM) },
         )
-        assertTrue(
-            "Expected startup to resume playback for visible motion",
+        assertFalse(
+            "Expected the laboratory to remain paused for inspection",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) },
         )
         assertTrue(
@@ -180,8 +182,7 @@ class JniRuntimeBridgeTest {
 
         withTimeout(2_000) {
             while (
-                transport.refreshedHandles.isEmpty() ||
-                transport.appliedCommands.none { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) } ||
+                transport.refreshedHandles.size < 2 ||
                 transport.appliedCommands.none { hasCommandKind(it, COMMAND_KIND_SET_PLAYBACK_RATE) }
             ) {
                 delay(25)
@@ -235,6 +236,26 @@ class JniRuntimeBridgeTest {
         assertEquals("opencl", runtimeInfo.gpuBackendLabel)
         assertTrue(runtimeInfo.workloadSummary?.contains("long-horizon") == true)
         assertTrue(runtimeInfo.interopErrorBudgetSummary?.contains("checkpoint-publication") == true)
+    }
+
+    @Test
+    fun loadScenario_canonicalSolarSystemRetainsFullCatalogAndLivePlayback() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(
+            snapshotSummary(scenarioId = "sol-system", bodyCount = 0),
+            snapshotSummary(scenarioId = "sol-system", bodyCount = 365),
+        )))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+
+        val signals = bridge.loadScenario("sol-system")
+
+        assertEquals(listOf("sol-system"), transport.createdScenarioIds)
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM) })
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) })
+        val finalSummary = signals.filterIsInstance<RuntimeSignal.SnapshotUpdated>().last().summary
+        assertEquals("sol-system", finalSummary.scenarioId)
+        assertEquals(365, finalSummary.bodyCount)
+        assertFalse(finalSummary.paused)
+        assertEquals(21_600.0, finalSummary.simSecondsPerRealSecond, 0.0)
     }
 
     @Test
@@ -324,7 +345,7 @@ class JniRuntimeBridgeTest {
         }
 
         bridge.loadScenario("showcase.jupiter-system")
-        assertEquals(listOf("sol-system", "showcase.jupiter-system"), transport.createdScenarioIds)
+        assertEquals(listOf("lab.earth-moon", "showcase.jupiter-system"), transport.createdScenarioIds)
         assertEquals(listOf(42L), transport.destroyedHandles)
         assertEquals(listOf(42L, 84L), renderHostAdapter.boundSessionHandles)
 
@@ -342,13 +363,7 @@ class JniRuntimeBridgeTest {
     fun connect_keepsRefreshing_whenPlaybackIsLive() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
-                listOf(
-                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
-                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
-                    // Startup playback configuration performs one extra refresh before the
-                    // periodic live-refresh loop starts issuing advance-epoch commands.
-                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
-                )
+                listOf(snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT))
             ),
         )
         val bridge = JniRuntimeBridge(
@@ -360,6 +375,11 @@ class JniRuntimeBridgeTest {
         val job = scope.launch {
             bridge.connect().collect { /* keep session alive for periodic refresh */ }
         }
+
+        withTimeout(2_000) {
+            while (transport.refreshedHandles.size < 2) delay(25)
+        }
+        bridge.applyCommand(RuntimeCommand.ResumePlayback)
 
         withTimeout(2_500) {
             while (
@@ -395,13 +415,17 @@ class JniRuntimeBridgeTest {
 
     private suspend fun exerciseMeasurementFailure(postTick: Boolean) {
         val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(
-            snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0).copy(revision = 10),
+            snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT).copy(revision = 10),
         )))
         val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
         val facade = BridgeBackedRuntimeFacade(bridge)
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         val job = scope.launch { facade.startSession() }
         try {
+            withTimeout(2_000) {
+                while (transport.refreshedHandles.size < 2) delay(25)
+            }
+            facade.applyCommand(RuntimeCommand.ResumePlayback)
             withTimeout(8_000) {
                 while (facade.uiState.value.playbackMeasurement?.achievedRate == null) delay(25)
             }
@@ -593,10 +617,10 @@ class JniRuntimeBridgeTest {
         fun isProgressingAdvanceEpochCommand(command: NativeRuntimeCommandPayload): Boolean =
             command.kind == COMMAND_KIND_ADVANCE_EPOCH && command.deltaSeconds > 0.0
 
-        const val STARTUP_EXPECTED_BODY_COUNT = 365
+        const val STARTUP_EXPECTED_BODY_COUNT = 3
 
         fun snapshotSummary(
-            scenarioId: String = "sol-system",
+            scenarioId: String = "lab.earth-moon",
             bodyCount: Int,
             paused: Boolean = true,
             simSecondsPerRealSecond: Double = 1.0,
