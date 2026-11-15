@@ -81,9 +81,13 @@ public:
         std::vector<int32_t> tracerFarKinds,
         std::vector<double> trailPositionsM,
         std::vector<int32_t> trailColorsArgb,
-        std::vector<int32_t> trailVertexCounts);
+        std::vector<int32_t> trailVertexCounts,
+        std::vector<double> authoritativePreviousPositionsM = {},
+        double presentationStartedAtSeconds = 0.0,
+        double presentationDurationSeconds = 0.0);
 
-    void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians);
+    void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
+        double previousOffsetX = 0.0, double previousOffsetY = 0.0, double previousOffsetZ = 0.0);
     bool Render();
 
     std::string LastError() const;
@@ -98,6 +102,9 @@ private:
         double sceneOriginY = 0.0;
         double sceneOriginZ = 0.0;
         std::vector<double> authoritativePositionsM;
+        std::vector<double> authoritativePreviousPositionsM;
+        double presentationStartedAtSeconds = 0.0;
+        double presentationDurationSeconds = 0.0;
         std::vector<double> authoritativeSourceMassesKg;
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
@@ -165,6 +172,9 @@ private:
         float cometVelocityX = 0.0f;
         float cometVelocityY = 0.0f;
         float cometVelocityZ = 1.0f;
+        float previousX = 0.0f;
+        float previousY = 0.0f;
+        float previousZ = 0.0f;
     };
 
     struct CheapPointVertex {
@@ -227,6 +237,7 @@ private:
         std::array<float, 4> forwardAndDepth{};
         std::array<float, 4> viewport{};
         std::array<float, 4> primaryLightPositionRelativeAndFlags{};
+        std::array<float, 4> presentation{};
     };
 
     struct ComputePushConstants {
@@ -407,6 +418,9 @@ private:
     double cameraCenterX_ = 0.0;
     double cameraCenterY_ = 0.0;
     double cameraCenterZ_ = 0.0;
+    double cameraPreviousOffsetX_ = 0.0;
+    double cameraPreviousOffsetY_ = 0.0;
+    double cameraPreviousOffsetZ_ = 0.0;
     double cameraViewRadiusM_ = 0.0;
     double cameraYawRadians_ = 0.0;
     double cameraPitchRadians_ = 0.0;

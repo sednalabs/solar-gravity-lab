@@ -7,6 +7,18 @@ import org.junit.Test
 
 class RuntimeScenarioPacksTest {
     @Test
+    fun defaultLaboratoryIsPausedAndIdentifiesScientificScope() {
+        val pack = RuntimeScenarioPacks.requireKnown(RuntimeScenarioPacks.DEFAULT_SCENARIO_ID)
+        assertEquals("lab.earth-moon", pack.scenarioId)
+        assertTrue(pack.startPaused)
+        assertEquals("earth", pack.defaultFocusBodyId)
+        assertTrue(pack.provenance.orEmpty().contains("DE441"))
+        assertTrue(pack.referenceEpoch.orEmpty().contains("TDB"))
+        assertTrue(pack.modelSummary.orEmpty().contains("not modelled"))
+        assertNotNull(RuntimeScenarioPacks.byId("sol-system"))
+    }
+
+    @Test
     fun catalog_containsUniqueScenarioIdsAndDefault() {
         val ids = RuntimeScenarioPacks.all.map { it.scenarioId }
 

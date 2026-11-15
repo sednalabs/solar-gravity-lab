@@ -1,16 +1,16 @@
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BodyId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ScenarioId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BranchId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CheckpointId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ObserverMode {
     Free,
     FollowSelected,
@@ -18,13 +18,13 @@ pub enum ObserverMode {
     SystemFrame,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum TimelineSemantics {
     AbsoluteEpoch,
     BranchedSandbox,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BodyClass {
     Star,
     Planet,
@@ -41,7 +41,7 @@ pub enum BodyClass {
 ///
 /// These categories describe how a body should be presented; they never alter
 /// mass, integration, collision, ephemeris, or any other physics input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CelestialMaterialFamily {
     StellarPhotosphere,
     Terrestrial,
@@ -57,7 +57,7 @@ pub enum CelestialMaterialFamily {
 }
 
 /// Describes how authoritative a visual fact is without overstating accuracy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppearanceProvenance {
     /// Curated for a named canonical body from published physical dimensions.
     CuratedPhysicalGuide,
@@ -67,7 +67,7 @@ pub enum AppearanceProvenance {
     DerivedClassDefault,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct BodyOrientation {
     /// Unit north-pole direction in the renderer-neutral world frame.
     pub north_pole_ws: Vector3d,
@@ -76,7 +76,7 @@ pub struct BodyOrientation {
     pub reference_meridian_radians: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct RingSystemAppearance {
     pub inner_radius_m: f64,
     pub outer_radius_m: f64,
@@ -84,14 +84,14 @@ pub struct RingSystemAppearance {
     pub optical_depth: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct AtmosphereAppearance {
     pub outer_radius_m: f64,
     /// Normalized renderer input. This is intentionally not a pressure value.
     pub optical_density: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct CometAppearanceInputs {
     pub nucleus_radius_m: f64,
     pub coma_radius_m: f64,
@@ -103,7 +103,7 @@ pub struct CometAppearanceInputs {
 ///
 /// Dynamic directions such as a comet's anti-solar vector belong to the scene
 /// projection, while this structure contains stable authored inputs.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct CelestialAppearanceFacts {
     pub material: CelestialMaterialFamily,
     pub provenance: AppearanceProvenance,
@@ -133,14 +133,14 @@ impl Default for CelestialAppearanceFacts {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ProvenanceRef {
     pub source: String,
     pub version: String,
     pub manifest_digest: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Vector3d {
     pub x: f64,
     pub y: f64,

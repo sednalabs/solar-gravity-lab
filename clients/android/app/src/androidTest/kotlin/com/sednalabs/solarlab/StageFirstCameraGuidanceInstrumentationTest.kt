@@ -37,7 +37,7 @@ class StageFirstCameraGuidanceInstrumentationTest {
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
             .assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)
+        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE)
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON)
             .assertIsDisplayed()

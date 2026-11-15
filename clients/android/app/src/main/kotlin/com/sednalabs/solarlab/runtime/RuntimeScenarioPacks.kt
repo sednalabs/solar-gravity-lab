@@ -9,14 +9,30 @@ data class RuntimeScenarioPack(
     val defaultObserverMode: RuntimeObserverMode,
     val startPaused: Boolean,
     val simSecondsPerRealSecond: Double,
+    val provenance: String? = null,
+    val referenceEpoch: String? = null,
+    val modelSummary: String? = null,
 )
 
 object RuntimeScenarioPacks {
-    const val DEFAULT_SCENARIO_ID = "sol-system"
+    const val DEFAULT_SCENARIO_ID = "lab.earth-moon"
 
     val all: List<RuntimeScenarioPack> = listOf(
         RuntimeScenarioPack(
             scenarioId = DEFAULT_SCENARIO_ID,
+            title = "Earth–Moon laboratory",
+            description = "Explore our nearest neighbour, change an orbit, and make the experiment yours.",
+            tags = listOf("laboratory", "earth-moon", "jpl-horizons", "de441"),
+            defaultFocusBodyId = "earth",
+            defaultObserverMode = RuntimeObserverMode.FollowSelected,
+            startPaused = true,
+            simSecondsPerRealSecond = 3_600.0,
+            provenance = "JPL Horizons · DE441",
+            referenceEpoch = "1 January 2000, 12:00 TDB · ICRF",
+            modelSummary = "Real starting states. Newtonian Sun, Earth and Moon gravity. Other planets, tides, relativity and collisions are not modelled. Added probes feel gravity without changing the planets.",
+        ),
+        RuntimeScenarioPack(
+            scenarioId = "sol-system",
             title = "Canonical solar system",
             description = "Full canonical startup catalog for broad visual and runtime smoke checks.",
             tags = listOf("canonical", "wide", "default"),

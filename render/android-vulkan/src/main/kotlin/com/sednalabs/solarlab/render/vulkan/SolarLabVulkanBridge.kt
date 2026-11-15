@@ -257,7 +257,11 @@ internal object SolarLabVulkanBridge {
         return nativePickRuntimeBodyId(handle, screenXPx, screenYPx, viewportWidthPx, viewportHeightPx)?.takeIf { it.isNotBlank() }
     }
 
-    fun render(handle: Long): Boolean = isLibraryLoaded && handle != 0L && nativeRender(handle)
+    fun render(handle: Long, refreshRuntimeScene: Boolean = true): Boolean =
+        isLibraryLoaded && handle != 0L && nativeRender(handle, refreshRuntimeScene)
+
+    fun hasPendingPresentation(handle: Long): Boolean =
+        isLibraryLoaded && handle != 0L && nativeHasPendingPresentation(handle)
 
     private fun DoubleArray.toCameraState(): CameraState? {
         if (size < 6) return null
@@ -443,7 +447,8 @@ internal object SolarLabVulkanBridge {
         viewportWidthPx: Int,
         viewportHeightPx: Int,
     ): String?
-    private external fun nativeRender(handle: Long): Boolean
+    private external fun nativeRender(handle: Long, refreshRuntimeScene: Boolean): Boolean
+    private external fun nativeHasPendingPresentation(handle: Long): Boolean
     private external fun nativeGetLastError(handle: Long): String
     private external fun nativeGetBackendLabel(handle: Long): String
     private external fun nativeGetSceneSummary(handle: Long): String

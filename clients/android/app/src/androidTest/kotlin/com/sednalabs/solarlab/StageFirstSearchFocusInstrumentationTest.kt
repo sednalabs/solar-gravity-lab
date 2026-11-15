@@ -11,6 +11,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.runBlocking
+import com.sednalabs.solarlab.runtime.SessionConnectionState
 import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -25,6 +27,7 @@ class StageFirstSearchFocusInstrumentationTest {
     @Test
     fun searchFocus_updatesVisibleSelectionCard() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
+        loadCanonicalCatalogue()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).fetchSemanticsNodes().isNotEmpty()
@@ -93,6 +96,7 @@ class StageFirstSearchFocusInstrumentationTest {
     @Test
     fun connectorFocusAlias_exposesCorrelatedResolvedAcknowledgement() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.DEBUG)
+        loadCanonicalCatalogue()
         val requestId = "connector-request-42"
         val expectedAcknowledgement =
             "Halley. SolarLab semantic focus acknowledged; " +
@@ -128,4 +132,15 @@ class StageFirstSearchFocusInstrumentationTest {
             SolarLabSemanticActionBridge.clearPendingReplay()
         }
     }
+    private fun loadCanonicalCatalogue() {
+        val facade = composeRule.activity.runtimeFacadeForTesting
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            facade.uiState.value.connectionState == SessionConnectionState.Active
+        }
+        runBlocking { facade.loadScenario("sol-system") }
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            facade.uiState.value.renderFrame?.bodies?.any { it.bodyId == "halley" } == true
+        }
+    }
+
 }

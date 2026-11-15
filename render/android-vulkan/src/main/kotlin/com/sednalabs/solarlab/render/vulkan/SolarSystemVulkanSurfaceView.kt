@@ -1,11 +1,14 @@
 package com.sednalabs.solarlab.render.vulkan
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.Surface
@@ -63,6 +66,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var runtimeSessionHandle: Long = 0L
     private var deferredRenderDepth: Int = 0
     private var renderDeferred: Boolean = false
+    private var hostResumed: Boolean = false
+    private var framePosted: Boolean = false
+    private val frameGate = PresentationFrameGate()
+    private val choreographer = Choreographer.getInstance()
+    private val frameCallback = Choreographer.FrameCallback {
+        framePosted = false
+        drawRequestedFrame()
+    }
     private var cameraTransition: ValueAnimator? = null
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
     private var lastReportedCameraScaleBand: CameraScaleBand? = null
@@ -212,6 +223,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val generation = activeSurfaceGeneration
         surfaceReady = false
         activeSurfaceGeneration = 0L
+        cancelScheduledFrame()
+        frameGate.stopPresentation()
         if (generation != 0L) {
             serializedRenderer.surfaceDestroyed(generation)
         }
@@ -238,7 +251,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             deferredRenderDepth -= 1
             if (deferredRenderDepth == 0 && renderDeferred) {
                 renderDeferred = false
-                renderLatestScene()
+                scheduleFrame()
             }
         }
     }
@@ -463,6 +476,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (released) return
         released = true
         cancelCameraTransition()
+        cancelScheduledFrame()
+        frameGate.stopPresentation()
         surfaceReady = false
         activeSurfaceGeneration = 0L
         latestPacket = null
@@ -476,18 +491,25 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun onHostResume() {
+        if (released) return
+        hostResumed = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val refreshRateHz = display?.mode?.refreshRate?.takeIf { it >= 60f }
                 ?: display?.refreshRate?.takeIf { it >= 60f }
-                ?: 120f
+                ?: 60f
             holder.surface?.takeIf(Surface::isValid)?.setFrameRate(
                 refreshRateHz,
                 Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
             )
         }
+        renderLatestScene()
     }
 
     override fun onHostPause() {
+        hostResumed = false
+        cancelCameraTransition()
+        cancelScheduledFrame()
+        frameGate.stopPresentation()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             holder.surface?.takeIf(Surface::isValid)?.setFrameRate(
                 0f,
@@ -561,6 +583,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 }
                 cameraGestures.onUp()
                 parent?.requestDisallowInterceptTouchEvent(false)
+                // Refresh camera-dependent tracer budgets after the gesture, not on every move.
+                renderLatestScene()
                 return true
             }
 
@@ -699,7 +723,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                             viewportHeightPx = viewportHeight,
                         )
                     }
-                    renderLatestScene()
+                    renderLatestScene(refreshRuntimeScene = false)
                 } else {
                     cameraState = MultiscaleOrbitCameraController.orbitAroundViewportPoint(
                         cameraState = cameraState,
@@ -740,7 +764,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                             viewportHeightPx = viewportHeight,
                         )
                     }
-                    renderLatestScene()
+                    renderLatestScene(refreshRuntimeScene = false)
                 } else {
                     var transformedCamera = cameraState
                     if (update.distanceXPx != 0f || update.distanceYPx != 0f) {
@@ -856,6 +880,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     ),
                 )
             }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    renderLatestScene()
+                }
+            })
             start()
         }
     }
@@ -875,7 +904,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     pitchRadians = nextCamera.pitchRadians,
                 )
             }
-            renderLatestScene()
+            renderLatestScene(refreshRuntimeScene = false)
         } else {
             onCameraChanged()
         }
@@ -973,17 +1002,37 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun renderLatestScene() {
-        if (!surfaceReady || released) return
+    private fun renderLatestScene(refreshRuntimeScene: Boolean = true) {
+        if (released) return
+        frameGate.request(refreshRuntimeScene)
         if (deferredRenderDepth > 0) {
             renderDeferred = true
             return
         }
+        scheduleFrame()
+    }
+
+    private fun canPresent(): Boolean = surfaceReady && hostResumed && !released
+
+    private fun scheduleFrame() {
+        if (framePosted || deferredRenderDepth > 0 || !frameGate.canSchedule(canPresent())) return
+        framePosted = true
+        choreographer.postFrameCallback(frameCallback)
+    }
+
+    private fun cancelScheduledFrame() {
+        if (!framePosted) return
+        choreographer.removeFrameCallback(frameCallback)
+        framePosted = false
+    }
+
+    private fun drawRequestedFrame() {
+        val request = frameGate.begin(canPresent()) ?: return
         val generation = activeSurfaceGeneration
         if (isRuntimeBound()) {
             serializedRenderer.query(
                 requireSurface = true,
-                action = { handle -> renderNativeFrame(handle) },
+                action = { handle -> renderNativeFrame(handle, request.refreshRuntimeScene) },
                 onResult = { result -> onNativeFrameRendered(generation, result, cameraLabel = null) },
             )
             return
@@ -1001,26 +1050,30 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             )
             packetDirty = false
         }
-        val packet = latestPacket ?: return
+        val packet = latestPacket ?: run {
+            frameGate.complete(false)
+            return
+        }
         val cameraLabel = cameraTelemetryLabel()
         serializedRenderer.query(
             requireSurface = true,
             action = { handle ->
                 SolarLabVulkanBridge.submitScene(handle, packet)
-                renderNativeFrame(handle)
+                renderNativeFrame(handle, refreshRuntimeScene = true)
             },
             onResult = { result -> onNativeFrameRendered(generation, result, cameraLabel) },
         )
     }
 
-    private fun renderNativeFrame(handle: Long): NativeRenderResult {
-        val rendered = SolarLabVulkanBridge.render(handle)
+    private fun renderNativeFrame(handle: Long, refreshRuntimeScene: Boolean): NativeRenderResult {
+        val rendered = SolarLabVulkanBridge.render(handle, refreshRuntimeScene)
         return NativeRenderResult(
             rendered = rendered,
             error = if (rendered) null else SolarLabVulkanBridge.lastError(handle),
-            backendLabel = SolarLabVulkanBridge.backendLabel(handle),
-            sceneSummary = SolarLabVulkanBridge.sceneSummary(handle),
+            backendLabel = if (refreshRuntimeScene) SolarLabVulkanBridge.backendLabel(handle) else null,
+            sceneSummary = if (refreshRuntimeScene) SolarLabVulkanBridge.sceneSummary(handle) else null,
             cameraState = SolarLabVulkanBridge.cameraState(handle),
+            hasPendingPresentation = rendered && SolarLabVulkanBridge.hasPendingPresentation(handle),
         )
     }
 
@@ -1029,15 +1082,26 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         result: NativeRenderResult?,
         cameraLabel: String?,
     ) {
-        if (released || generation == 0L || generation != activeSurfaceGeneration || result == null) return
+        val currentSurface = !released && generation != 0L && generation == activeSurfaceGeneration
+        frameGate.complete(currentSurface && hostResumed && result?.hasPendingPresentation == true)
+        if (!currentSurface || result == null) {
+            scheduleFrame()
+            return
+        }
         if (!result.rendered) {
+            surfaceReady = false
+            frameGate.stopPresentation()
             fatalInitCallback(result.error ?: "Native Vulkan rendering failed.")
             return
         }
         result.cameraState?.let { cameraState = it }
-        val detail = cameraLabel?.let { "$it · ${result.sceneSummary}" } ?: result.sceneSummary
-        reportStatus("${result.backendLabel} active. $detail")
+        // Display-only frames must not trigger Compose/runtime publication loops.
+        if (result.sceneSummary != null && result.backendLabel != null) {
+            val detail = cameraLabel?.let { "$it · ${result.sceneSummary}" } ?: result.sceneSummary
+            reportStatus("${result.backendLabel} active. $detail")
+        }
         reportCameraScaleBand()
+        scheduleFrame()
     }
 
     private fun onSurfaceReadyResult(result: SerializedVulkanRenderer.SurfaceResult) {
@@ -1163,9 +1227,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private data class NativeRenderResult(
         val rendered: Boolean,
         val error: String?,
-        val backendLabel: String,
-        val sceneSummary: String,
+        val backendLabel: String?,
+        val sceneSummary: String?,
         val cameraState: CameraState?,
+        val hasPendingPresentation: Boolean,
     )
 }
 

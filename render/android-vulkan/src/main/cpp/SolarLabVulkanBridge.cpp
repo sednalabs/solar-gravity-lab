@@ -489,9 +489,16 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativePickRuntime
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeRender(
+    JNIEnv*, jclass, jlong handle, jboolean refreshRuntimeScene) {
+    auto* controller = FromHandle(handle);
+    return controller != nullptr && controller->Render(refreshRuntimeScene == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeHasPendingPresentation(
     JNIEnv*, jclass, jlong handle) {
     auto* controller = FromHandle(handle);
-    return controller != nullptr && controller->Render() ? JNI_TRUE : JNI_FALSE;
+    return controller != nullptr && controller->HasPendingPresentation() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

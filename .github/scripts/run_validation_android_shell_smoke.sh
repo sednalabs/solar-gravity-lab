@@ -34,6 +34,7 @@ SHELL_FULL_TEST_CLASSES=(
 )
 
 STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
+  "com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
@@ -132,6 +133,16 @@ run_binary_capture() {
   if ! timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" "$@" > "${output_path}"; then
     true
   fi
+}
+
+capture_lab_journey_evidence() {
+  local evidence_dir="$1/lab-evidence"
+  mkdir -p "${evidence_dir}"
+  # The complete user journey records its own native screenshots. Keep them on
+  # successful runs too, even when expensive general diagnostics are failure-only.
+  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" \
+    adb pull "/sdcard/Android/data/${APP_PACKAGE}/files/lab-evidence/." \
+    "${evidence_dir}" >"${evidence_dir}/adb-pull.txt" 2>&1 || true
 }
 
 capture_device_state() {
@@ -318,6 +329,9 @@ run_test_batch() {
   if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
     capture_device_state "${run_dir}" "post"
   fi
+  if [[ "${VALIDATION_MODE}" == "stage-first-runtime" ]]; then
+    capture_lab_journey_evidence "${run_dir}"
+  fi
 
   {
     printf 'test_classes=%s\n' "${class_arg}"
@@ -455,6 +469,9 @@ run_test_classes_individually() {
 
     if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
       capture_device_state "${class_dir}" "post"
+    fi
+    if [[ "${class_name}" == "com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest" ]]; then
+      capture_lab_journey_evidence "${class_dir}"
     fi
 
     {

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod canonical_startup;
 mod celestial_appearance;
+mod earth_moon_lab;
 mod scenario_packs;
 
 pub use canonical_startup::{
@@ -11,12 +12,17 @@ pub use canonical_startup::{
     CANONICAL_STARTUP_SYNTHETIC_OORT_CLOUD_COUNT,
 };
 pub use celestial_appearance::canonical_celestial_appearance;
+pub use earth_moon_lab::{
+    earth_moon_lab_bodies, EarthMoonReferenceEpoch, EARTH_MOON_LAB_DATASET_ID,
+    EARTH_MOON_LAB_DIGEST, EARTH_MOON_LAB_EPOCH_JD_TDB, EARTH_MOON_LAB_ID,
+    EARTH_MOON_LAB_MAX_SUBSTEP_SECONDS, EARTH_MOON_REFERENCE_EPOCHS,
+};
 pub use scenario_packs::{
     scenario_pack_catalog, scenario_pack_seed, ScenarioPackDescriptor, ScenarioPackSeed,
     DEFAULT_SCENARIO_PACK_ID,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PackageKind {
     Scenario,
     EphemerisBundle,
@@ -34,7 +40,7 @@ impl PackageKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Digest {
     pub algorithm: String,
     pub value: Vec<u8>,
@@ -57,7 +63,7 @@ impl Digest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SemVer {
     pub major: u32,
     pub minor: u32,
@@ -318,7 +324,7 @@ pub struct RequiredPackageFailure {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct StoredPackage {
     pub package_id: String,
     pub kind: PackageKind,
@@ -341,7 +347,7 @@ impl StoredPackage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PackageStoreState {
     pub packages_by_id: BTreeMap<String, StoredPackage>,
 }
@@ -355,7 +361,7 @@ impl PackageStoreState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct InstalledManifestState {
     pub manifest_id: String,
     pub manifest_version: SemVer,
@@ -364,7 +370,7 @@ pub struct InstalledManifestState {
     pub installed_package_ids: BTreeSet<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct LocalDataState {
     pub package_store: PackageStoreState,
     pub installed_manifest: Option<InstalledManifestState>,

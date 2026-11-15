@@ -36,7 +36,7 @@ class StageFirstRuntimeStartupInstrumentationTest {
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
             .assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)
+        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE)
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON)
             .assertIsDisplayed()

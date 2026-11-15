@@ -7,6 +7,7 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 forwardAndDepth;
     vec4 viewport;
     vec4 primaryLightPositionRelativeAndFlags;
+    vec4 presentation;
 } uScene;
 
 layout(location = 0) in vec3 inPositionM;
@@ -24,6 +25,7 @@ layout(location = 11) in vec4 inCometRadiiAndTailLengths;
 layout(location = 12) in vec3 inCometAntiSolarDirectionWs;
 layout(location = 13) in vec3 inCometVelocityDirectionWs;
 layout(location = 14) in vec3 inRingPlaneNormalWs;
+layout(location = 15) in vec3 inPreviousPositionM;
 
 layout(location = 0) out vec4 vColor;
 layout(location = 1) flat out uint vKind;
@@ -39,7 +41,7 @@ layout(location = 10) flat out vec2 vAtmosphereRatioAndDensity;
 layout(location = 11) flat out vec4 vCometRatios;
 layout(location = 12) flat out vec3 vCometAntiSolarCamera;
 layout(location = 13) flat out vec3 vCometVelocityCamera;
-layout(location = 14) flat out float vSurfaceDetail;
+layout(location = 14) flat out vec3 vSurfaceMetrics;
 layout(location = 15) flat out vec3 vRingPlaneCamera;
 
 const uint KIND_STAR = 0u;
@@ -96,7 +98,7 @@ vec2 clipXY(vec3 cameraRelativeM) {
 float clipDepth01(vec3 cameraRelativeM) {
     float halfDepth = max(uScene.forwardAndDepth.w, 1e-6);
     float centeredDepth = dot(cameraRelativeM, uScene.forwardAndDepth.xyz);
-    return clamp(0.5 + (centeredDepth / (halfDepth * 2.0)), 0.0, 1.0);
+    return 0.5 + (centeredDepth / (halfDepth * 2.0));
 }
 
 vec3 directionToCamera(vec3 worldDirection) {
@@ -110,7 +112,8 @@ vec3 directionToCamera(vec3 worldDirection) {
 }
 
 void main() {
-    vec3 relative = cameraRelative(inPositionM);
+    vec3 positionM = mix(inPreviousPositionM, inPositionM, uScene.presentation.x);
+    vec3 relative = cameraRelative(positionM);
     vec2 centerClip = clipXY(relative);
 
     float metersPerPixel = max(uScene.centerRelativeAndMetrics.w, 1e-6);
@@ -125,10 +128,10 @@ void main() {
         diameterPx / max(uScene.viewport.x, 1.0),
         diameterPx / max(uScene.viewport.y, 1.0)
     );
-    // Keep a co-located trajectory from winning an equal-depth comparison and
-    // visibly painting through the body it describes.
-    float bodyDepth = max(0.0, clipDepth01(relative) - 1e-5);
-    gl_Position = vec4(centerClip + cornerClipOffset, bodyDepth, 1.0);
+    // The fragment shader resolves the analytic surface depth instead of writing
+    // this flat quad's centre depth. Keep the quad available across a clip plane.
+    float bodyDepth = clipDepth01(relative);
+    gl_Position = vec4(centerClip + cornerClipOffset, clamp(bodyDepth, 0.0, 1.0), 1.0);
 
     vec4 color = unpackArgb(inColorArgb);
     color.a *= inAlpha;
@@ -156,10 +159,14 @@ void main() {
     vCometVelocityCamera = directionToCamera(inCometVelocityDirectionWs);
     vRingPlaneCamera = directionToCamera(inRingPlaneNormalWs);
     float physicalDiameterPx = (max(inPhysicalRadiusM, 0.0) / metersPerPixel) * 2.0;
-    vSurfaceDetail = smoothstep(7.0, 72.0, physicalDiameterPx);
+    vSurfaceMetrics = vec3(
+        smoothstep(7.0, 72.0, physicalDiameterPx),
+        bodyDepth,
+        diameterPx * 0.5 * metersPerPixel / (2.0 * max(uScene.forwardAndDepth.w, 1e-6))
+    );
 
     if (uScene.primaryLightPositionRelativeAndFlags.w > 0.5) {
-        vec3 toLightWorld = normalize(uScene.primaryLightPositionRelativeAndFlags.xyz - inPositionM);
+        vec3 toLightWorld = normalize(uScene.primaryLightPositionRelativeAndFlags.xyz - positionM);
         vLightDirection = normalize(vec3(
             dot(toLightWorld, uScene.rightAndSpan.xyz),
             -dot(toLightWorld, uScene.upAndSpan.xyz),

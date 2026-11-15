@@ -1,6 +1,8 @@
 package com.sednalabs.solarlab.runtime
 
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Public seam for shell/runtime orchestration.
@@ -10,6 +12,11 @@ interface RuntimeFacade {
     val uiState: StateFlow<ShellUiState>
 
     val scenarioPacks: List<RuntimeScenarioPack>
+
+    val savedExperiments: StateFlow<List<SavedExperimentInfo>> get() = emptySavedExperiments
+    suspend fun saveExperiment(name: String) {}
+    suspend fun loadExperiment(id: String) {}
+    suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
 
     // One-time bind/handshake into native runtime.
     suspend fun startSession()
@@ -130,3 +137,5 @@ data class ShellUiState(
     val renderFrame: RenderFrame? = null,
     val developerTelemetry: DeveloperTelemetryPresentation = DeveloperTelemetryPresentation(),
 )
+
+private val emptySavedExperiments: StateFlow<List<SavedExperimentInfo>> = MutableStateFlow<List<SavedExperimentInfo>>(emptyList()).asStateFlow()

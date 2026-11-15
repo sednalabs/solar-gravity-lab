@@ -86,7 +86,8 @@ public:
     std::optional<CameraSnapshot> ResolveRuntimeBodyFrame(const std::string& bodyId) const;
     std::string PickRuntimeBodyId(float screenXPx, float screenYPx, int viewportWidthPx, int viewportHeightPx);
 
-    bool Render();
+    bool Render(bool refreshRuntimeScene = true);
+    bool HasPendingPresentation() const;
 
     std::string LastError() const;
     std::string BackendLabel() const;
@@ -98,7 +99,11 @@ public:
         double positionRelativeX = 0.0;
         double positionRelativeY = 0.0;
         double positionRelativeZ = 0.0;
+        double previousRelativeX = 0.0;
+        double previousRelativeY = 0.0;
+        double previousRelativeZ = 0.0;
         float radiusM = 0.0f;
+        float visualRadiusM = 0.0f;
         float frameRadiusM = 0.0f;
         uint32_t kind = 0;
     };
@@ -110,6 +115,15 @@ private:
         double sceneOriginX = 0.0;
         double sceneOriginY = 0.0;
         double sceneOriginZ = 0.0;
+        std::string scenarioId;
+        std::string branchId;
+        double observedAtSeconds = 0.0;
+        double presentationStartedAtSeconds = 0.0;
+        double presentationDurationSeconds = 0.0;
+        double cameraPreviousOffsetX = 0.0;
+        double cameraPreviousOffsetY = 0.0;
+        double cameraPreviousOffsetZ = 0.0;
+        bool snapshotValid = false;
         std::string packetSummary;
         std::vector<RuntimeBodyProxy> pickBodies;
     };
@@ -119,8 +133,12 @@ private:
     void SetErrorLocked(const std::string& message);
     bool RefreshRuntimeSceneLocked();
     void PushCameraLocked();
+    CameraSnapshot PresentedCameraLocked(double fraction) const;
+    double PresentationFractionLocked() const;
+    void ClearCameraPresentationLocked();
     bool RuntimeSessionBoundLocked() const;
     double MinimumViewRadiusLocked() const;
+    std::optional<CameraSnapshot> ResolveRuntimeHomeCameraLocked() const;
     void InitializeFreeCameraFromRuntimePacketLocked(
         double sceneOriginX,
         double sceneOriginY,
@@ -152,6 +170,7 @@ private:
     double cameraYawRadians_ = -0.5934119456780721;
     double cameraPitchRadians_ = 1.0995574287564276;
     bool runtimeCameraInitialized_ = false;
+    bool runtimeHomePending_ = false;
     uint64_t cameraRevisionCounter_ = 1;
     int surfaceWidthPx_ = 1;
     int surfaceHeightPx_ = 1;

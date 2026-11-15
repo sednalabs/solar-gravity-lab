@@ -9,6 +9,7 @@ import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -18,10 +19,15 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PlaybackContinuityInstrumentationTest {
     @Test
-    fun mainActivity_autoPlayback_advancesEpoch_afterStartup() {
+    fun mainActivity_liveScenario_advancesEpoch_afterLoading() {
         Log.i(LOG_TAG, "PlaybackContinuityInstrumentationTest.begin")
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val facade = scenario.withRuntimeFacade()
+
+            waitForState(facade) { it.connectionState == SessionConnectionState.Active }
+            // The default laboratory intentionally starts paused. This test exercises
+            // the existing live-playback scenario, not an implicit startup preference.
+            runBlocking { facade.loadScenario("sol-system") }
 
             waitForState(facade) { state ->
                 state.connectionState == SessionConnectionState.Active &&
@@ -54,7 +60,7 @@ class PlaybackContinuityInstrumentationTest {
                     "epoch=${finalSnapshot.epochSeconds} paused=${finalSnapshot.paused}",
             )
 
-            assertFalse("Playback should be live after startup", finalSnapshot.paused)
+            assertFalse("Playback should be live after loading a live scenario", finalSnapshot.paused)
             assertTrue(
                 "Epoch should advance in live playback mode. baseline=$baselineEpoch final=${finalSnapshot.epochSeconds}",
                 finalSnapshot.epochSeconds > baselineEpoch,

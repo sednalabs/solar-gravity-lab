@@ -1,4 +1,5 @@
 #include "SolarLabVulkanRenderer.h"
+#include "SolarLabPresentation.h"
 
 #include <android/asset_manager.h>
 #include <android/log.h>
@@ -166,7 +167,6 @@ Float3 Normalize(Float3 value, Float3 fallback) {
 
 constexpr float kOrbitMinPitchRadians = 12.0f * 0.017453292519943295769f;
 constexpr float kOrbitMaxPitchRadians = 88.0f * 0.017453292519943295769f;
-constexpr float kDefaultDepthExtentFactor = 48.0f;
 
 }  // namespace
 
@@ -370,13 +370,19 @@ void SolarLabVulkanRenderer::SubmitScene(
     std::vector<int32_t> tracerFarKinds,
     std::vector<double> trailPositionsM,
     std::vector<int32_t> trailColorsArgb,
-    std::vector<int32_t> trailVertexCounts) {
+    std::vector<int32_t> trailVertexCounts,
+    std::vector<double> authoritativePreviousPositionsM,
+    double presentationStartedAtSeconds,
+    double presentationDurationSeconds) {
     std::scoped_lock lock(stateMutex_);
     sceneBuffers_.sourceRevision = sourceRevision;
     sceneBuffers_.sceneOriginX = sceneOriginX;
     sceneBuffers_.sceneOriginY = sceneOriginY;
     sceneBuffers_.sceneOriginZ = sceneOriginZ;
     sceneBuffers_.authoritativePositionsM = std::move(authoritativePositionsM);
+    sceneBuffers_.authoritativePreviousPositionsM = std::move(authoritativePreviousPositionsM);
+    sceneBuffers_.presentationStartedAtSeconds = presentationStartedAtSeconds;
+    sceneBuffers_.presentationDurationSeconds = presentationDurationSeconds;
     sceneBuffers_.authoritativeSourceMassesKg = std::move(authoritativeSourceMassesKg);
     sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
     sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
@@ -409,11 +415,15 @@ void SolarLabVulkanRenderer::SubmitScene(
     }
 }
 
-void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians) {
+void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
+    double previousOffsetX, double previousOffsetY, double previousOffsetZ) {
     std::scoped_lock lock(stateMutex_);
     cameraCenterX_ = centerX;
     cameraCenterY_ = centerY;
     cameraCenterZ_ = centerZ;
+    cameraPreviousOffsetX_ = previousOffsetX;
+    cameraPreviousOffsetY_ = previousOffsetY;
+    cameraPreviousOffsetZ_ = previousOffsetZ;
     cameraViewRadiusM_ = viewRadiusM;
     cameraYawRadians_ = yawRadians;
     cameraPitchRadians_ = pitchRadians;
@@ -1399,6 +1409,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
         MakeAttributeDescription(12, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, cometAntiSolarX)),
         MakeAttributeDescription(13, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, cometVelocityX)),
         MakeAttributeDescription(14, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, ringPlaneX)),
+        MakeAttributeDescription(15, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, previousX)),
     };
     if (!CreateGraphicsPipeline(
             "billboard",
@@ -1818,6 +1829,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         if (!std::isfinite(visualRadiusM) || visualRadiusM <= 0.0f) {
             visualRadiusM = std::max(physicalRadiusM, 1.0f);
         }
+        const auto& previousPositions = sceneBuffers_.authoritativePreviousPositionsM.size() ==
+            sceneBuffers_.authoritativePositionsM.size()
+                ? sceneBuffers_.authoritativePreviousPositionsM
+                : sceneBuffers_.authoritativePositionsM;
         authoritativeVertices.push_back(BillboardVertex{
             .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
@@ -1851,6 +1866,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .cometVelocityX = appearance.cometVelocityX,
             .cometVelocityY = appearance.cometVelocityY,
             .cometVelocityZ = appearance.cometVelocityZ,
+            .previousX = static_cast<float>(previousPositions[base]),
+            .previousY = static_cast<float>(previousPositions[base + 1U]),
+            .previousZ = static_cast<float>(previousPositions[base + 2U]),
         });
         authoritativeInfluences.push_back(AuthoritativeInfluenceBody{
             .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
@@ -1879,6 +1897,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .kind = static_cast<uint32_t>(sceneBuffers_.tracerNearKinds[index]),
             .alpha = kNearTracerAlpha,
             .physicalRadiusM = sceneBuffers_.tracerNearRadiiM[index],
+            .previousX = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base]),
+            .previousY = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base + 1U]),
+            .previousZ = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base + 2U]),
         });
     }
 
@@ -2286,12 +2307,15 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
 
     const float widthPx = static_cast<float>(std::max<uint32_t>(swapchainExtent_.width, 1U));
     const float heightPx = static_cast<float>(std::max<uint32_t>(swapchainExtent_.height, 1U));
-    const float minDimensionPx = std::max(1.0f, std::min(widthPx, heightPx));
-    const float viewRadiusM = static_cast<float>(std::max(cameraViewRadiusM_, 1.0));
-    const float halfSpanX = std::max(viewRadiusM * (widthPx / minDimensionPx), 1.0e-6f);
-    const float halfSpanY = std::max(viewRadiusM * (heightPx / minDimensionPx), 1.0e-6f);
-    const float halfDepth = std::max(viewRadiusM * kDefaultDepthExtentFactor, 1.0e-3f);
-    const float metersPerPixel = std::max((2.0f * viewRadiusM) / minDimensionPx, 1.0e-6f);
+    const auto projection = solarlab::presentation::MakeProjection(cameraViewRadiusM_,
+        static_cast<int>(swapchainExtent_.width), static_cast<int>(swapchainExtent_.height));
+    const float halfSpanX = static_cast<float>(projection.halfSpanX);
+    const float halfSpanY = static_cast<float>(projection.halfSpanY);
+    const float halfDepth = static_cast<float>(projection.halfDepth);
+    const float metersPerPixel = static_cast<float>(projection.metersPerPixel);
+    const double presentationFraction = solarlab::presentation::InterpolationFraction(
+        solarlab::presentation::MonotonicSeconds(), sceneBuffers_.presentationStartedAtSeconds,
+        sceneBuffers_.presentationDurationSeconds);
     const float maxPointSizePx = enabledFeatures_.largePoints
         ? std::max(1.0f, std::min(physicalDeviceProperties_.limits.pointSizeRange[1], kDefaultMaxPointSizePx))
         : 1.0f;
@@ -2311,9 +2335,9 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
     const Float3 up = Normalize(Cross(right, forward), MakeFloat3(0.0f, 0.0f, 1.0f));
 
     const Float3 centerRelative = MakeFloat3(
-        static_cast<float>(cameraCenterX_ - sceneBuffers_.sceneOriginX),
-        static_cast<float>(cameraCenterY_ - sceneBuffers_.sceneOriginY),
-        static_cast<float>(cameraCenterZ_ - sceneBuffers_.sceneOriginZ));
+        static_cast<float>(cameraCenterX_ + cameraPreviousOffsetX_ * (1.0 - presentationFraction) - sceneBuffers_.sceneOriginX),
+        static_cast<float>(cameraCenterY_ + cameraPreviousOffsetY_ * (1.0 - presentationFraction) - sceneBuffers_.sceneOriginY),
+        static_cast<float>(cameraCenterZ_ + cameraPreviousOffsetZ_ * (1.0 - presentationFraction) - sceneBuffers_.sceneOriginZ));
 
     std::array<float, 4> primaryLightPositionRelativeAndFlags{
         0.0f,
@@ -2329,10 +2353,14 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
             continue;
         }
         const size_t base = index * 3U;
+        const auto& previous = sceneBuffers_.authoritativePreviousPositionsM.size() ==
+            sceneBuffers_.authoritativePositionsM.size()
+                ? sceneBuffers_.authoritativePreviousPositionsM
+                : sceneBuffers_.authoritativePositionsM;
         primaryLightPositionRelativeAndFlags = {
-            static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
-            static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
-            static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 2U]),
+            static_cast<float>(solarlab::presentation::Mix(previous[base], sceneBuffers_.authoritativePositionsM[base], presentationFraction)),
+            static_cast<float>(solarlab::presentation::Mix(previous[base + 1U], sceneBuffers_.authoritativePositionsM[base + 1U], presentationFraction)),
+            static_cast<float>(solarlab::presentation::Mix(previous[base + 2U], sceneBuffers_.authoritativePositionsM[base + 2U], presentationFraction)),
             1.0f,
         };
         break;
@@ -2370,6 +2398,7 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
             enabledFeatures_.largePoints ? 1.0f : 0.0f,
         },
         .primaryLightPositionRelativeAndFlags = primaryLightPositionRelativeAndFlags,
+        .presentation = {static_cast<float>(presentationFraction), 0.0f, 0.0f, 0.0f},
     };
 
     return UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_);

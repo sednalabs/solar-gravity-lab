@@ -35,6 +35,10 @@ internal interface RuntimeBridge {
     // Fresh-session scenario replacement for visual iteration.
     suspend fun loadScenario(scenarioId: String): List<RuntimeSignal>
 
+    suspend fun exportSavedSession(): SavedRuntimeSession = error("Experiment saving is unavailable")
+    suspend fun importSavedSession(bytes: ByteArray): List<RuntimeSignal> = error("Experiment loading is unavailable")
+    suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
+
     // Synchronous refresh/query path for already-bound handles.
     suspend fun refresh(): List<RuntimeSignal>
 
@@ -430,6 +434,43 @@ internal class JniRuntimeBridge(
 
             signals
         }
+    }
+
+    override suspend fun exportSavedSession(): SavedRuntimeSession = withActiveSession { handle ->
+        val summary = transport.snapshotSummary(handle)
+        check(summary.result.isOk()) { "The current experiment is unavailable" }
+        SavedRuntimeSession(summary.scenarioId, transport.exportSavedSession(handle))
+    }
+
+    override suspend fun importSavedSession(bytes: ByteArray): List<RuntimeSignal> = withActiveSession { oldHandle ->
+        val created = transport.importSavedSession(oldHandle, bytes)
+        if (!created.result.isOk() || created.handle == 0L || created.abiVersion != ABI_VERSION) {
+            if (created.handle != 0L && created.handle != oldHandle) transport.destroySession(created.handle)
+            error("Experiment could not be opened: ${created.result.describe()}")
+        }
+        check(created.handle != oldHandle) { "Import did not create a new session" }
+        // Validate and create first; a malformed save never destroys the live experiment.
+        synchronized(stateLock) {
+            renderHostAdapter.releasePacket()
+            renderHostAdapter.bindSession(created.handle)
+            activeSessionHandle = created.handle
+        }
+        playbackSample = null
+        lastObservation = null
+        advanceMayBeActive = false
+        advanceIntent = null
+        transport.destroySession(oldHandle)
+        listOf(RuntimeSignal.Connected(created.handle)) +
+            runtimeInfoSignalsForHandle(created.handle, "savedExperiment.runtime-info") +
+            refreshSignalsForHandle(created.handle, includeSummary = true)
+    }
+
+    override suspend fun inspectBody(bodyId: String): RuntimeBodyState? = withActiveSession { handle ->
+        val values = transport.inspectBody(handle, bodyId) ?: return@withActiveSession null
+        require(values.size == 10 && values.all(Double::isFinite)) { "Invalid body state from runtime" }
+        val bodyClass = RuntimeBodyClass.values().firstOrNull { it.nativeCode.toDouble() == values[0] }
+            ?: error("Unknown native body class")
+        RuntimeBodyState(bodyId, bodyClass, values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8], values[9])
     }
 
     private inline fun <T> withActiveSession(action: (Long) -> T): T = synchronized(operationLock) {
@@ -949,7 +990,9 @@ internal class JniRuntimeBridge(
         private const val LOG_TAG = "SolarLabRuntimeBridge"
         private const val ABI_VERSION = 12
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
-        private const val REFRESH_INTERVAL_MS = 500L
+        // Physics observations run independently of display refresh. The native renderer
+        // interpolates committed snapshots while each authority tick remains work-bounded.
+        private const val REFRESH_INTERVAL_MS = 100L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
 
         private fun refreshIntervalMillis(): Long =
@@ -1251,6 +1294,10 @@ internal interface NativeRuntimeTransport {
     fun queryAdvance(handle: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
     fun playbackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult = error("Bounded playback is unavailable")
 
+    fun exportSavedSession(handle: Long): ByteArray = error("Experiment saving is unavailable")
+    fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = error("Experiment loading is unavailable")
+    fun inspectBody(handle: Long, bodyId: String): DoubleArray? = null
+
     fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult?
 
     fun releaseVulkanScene(packetHandle: Long)
@@ -1435,6 +1482,14 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private external fun nativeCancelAdvance(handle: Long, generation: Long): NativeAdvanceResult
     private external fun nativeQueryAdvance(handle: Long): NativeAdvanceResult
     private external fun nativePlaybackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult
+
+    override fun exportSavedSession(handle: Long): ByteArray = nativeExportSavedSession(handle)
+    override fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = nativeImportSavedSession(templateHandle, bytes)
+    override fun inspectBody(handle: Long, bodyId: String): DoubleArray? = nativeInspectBody(handle, bodyId.toByteArray(StandardCharsets.UTF_8))
+
+    private external fun nativeExportSavedSession(handle: Long): ByteArray
+    private external fun nativeImportSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult
+    private external fun nativeInspectBody(handle: Long, bodyId: ByteArray): DoubleArray?
 
     override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
         nativeExportVulkanScene(handle)

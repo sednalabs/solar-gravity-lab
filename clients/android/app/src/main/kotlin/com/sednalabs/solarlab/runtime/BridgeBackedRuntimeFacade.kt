@@ -17,6 +17,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import java.io.File
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -36,9 +39,13 @@ class BridgeBackedRuntimeFacade internal constructor(
     private val developerTelemetryRecorder: DeveloperTelemetryRecorder = defaultDeveloperTelemetryRecorder(),
     private val boundaryDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
     private val operationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val experimentStore: ExperimentStore? = null,
 ) : RuntimeFacade {
     constructor() : this(JniRuntimeBridge())
     constructor(operationScope: CoroutineScope) : this(JniRuntimeBridge(), operationScope = operationScope)
+    constructor(operationScope: CoroutineScope, experimentDirectory: File) : this(
+        JniRuntimeBridge(), operationScope = operationScope, experimentStore = FileExperimentStore(experimentDirectory),
+    )
 
     private val manualLock = Any()
     private var manualJob: Job? = null
@@ -62,6 +69,10 @@ class BridgeBackedRuntimeFacade internal constructor(
 
     override val uiState: StateFlow<ShellUiState> = _uiState.asStateFlow()
 
+    private val experimentMutex = Mutex()
+    private val _savedExperiments = MutableStateFlow<List<SavedExperimentInfo>>(emptyList())
+    override val savedExperiments: StateFlow<List<SavedExperimentInfo>> = _savedExperiments.asStateFlow()
+
     override val scenarioPacks: List<RuntimeScenarioPack> = RuntimeScenarioPacks.all
 
     /**
@@ -71,6 +82,7 @@ class BridgeBackedRuntimeFacade internal constructor(
      * connection flow is the primary driver for the initial shell lifecycle.
      */
     override suspend fun startSession() {
+        refreshSavedExperiments()
         updateWithTelemetry(
             recordTelemetry(
                 level = DeveloperTelemetryLevel.Info,
@@ -114,6 +126,72 @@ class BridgeBackedRuntimeFacade internal constructor(
                 detailLine = error.message ?: error::class.java.simpleName,
                 noticeLine = "Android shell caught an unhandled startup failure instead of crashing",
             )
+        }
+    }
+
+    private suspend fun refreshSavedExperiments() {
+        try {
+            _savedExperiments.value = withContext(Dispatchers.IO) { experimentStore?.list().orEmpty() }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            _uiState.update { it.copy(noticeLine = "Saved experiments are unavailable: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+        }
+    }
+
+    override suspend fun inspectBody(bodyId: String): RuntimeBodyState? = try {
+        withContext(boundaryDispatcher) { bridge.inspectBody(bodyId) }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        _uiState.update { it.copy(noticeLine = "Could not inspect body: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+        null
+    }
+
+    override suspend fun saveExperiment(name: String) = experimentMutex.withLock {
+        _uiState.update { it.copy(pendingActionLabel = "Saving experiment") }
+        try {
+            val store = checkNotNull(experimentStore) { "Experiment storage is unavailable" }
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance before saving" }
+            val session = withContext(boundaryDispatcher) { bridge.exportSavedSession() }
+            // Once file I/O starts, observe the atomic commit even if the caller's UI is
+            // destroyed. Never report cancellation for a save that already committed.
+            val saved = withContext(NonCancellable + Dispatchers.IO) { store.save(name, session) }
+            withContext(NonCancellable) {
+                refreshSavedExperiments()
+                _uiState.update { it.copy(pendingActionLabel = null, noticeLine = "Saved ${saved.name}", noticeTone = ShellNoticeTone.Positive) }
+            }
+        } catch (error: CancellationException) {
+            _uiState.update { it.copy(pendingActionLabel = null) }
+            throw error
+        } catch (error: Throwable) {
+            _uiState.update { it.copy(pendingActionLabel = null, noticeLine = "Could not save experiment: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+        }
+    }
+
+    override suspend fun loadExperiment(id: String) = experimentMutex.withLock {
+        _uiState.update { it.copy(pendingActionLabel = "Opening experiment") }
+        try {
+            val store = checkNotNull(experimentStore) { "Experiment storage is unavailable" }
+            val saved = withContext(Dispatchers.IO) { store.read(id) }
+            cancelManualAdvance()
+            synchronized(manualLock) { manualJob }?.join()
+            check(_uiState.value.manualAdvance == null) { "Cancel the current advance before opening an experiment" }
+            // Import builds a new native session before replacing the live one. Ensure
+            // its resulting signals are applied even if the originating sheet closes.
+            withContext(NonCancellable + boundaryDispatcher) {
+                bridge.importSavedSession(saved.bytes).forEach(::applySignal)
+                _uiState.update { it.copy(
+                    pendingActionLabel = null, playbackMeasurement = null,
+                    manualAdvanceOutcome = null, recentFocusedBodyIds = listOfNotNull(it.focusedBodyId),
+                    noticeLine = "Opened ${saved.info.name} · paused", noticeTone = ShellNoticeTone.Positive,
+                ) }
+            }
+        } catch (error: CancellationException) {
+            _uiState.update { it.copy(pendingActionLabel = null) }
+            throw error
+        } catch (error: Throwable) {
+            _uiState.update { it.copy(pendingActionLabel = null, noticeLine = "Could not open experiment: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
         }
     }
 

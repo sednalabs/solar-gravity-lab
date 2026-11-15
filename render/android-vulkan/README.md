@@ -27,3 +27,32 @@ the GPU scene.
 The forward Android build maps this directory to the Gradle project
 `:android-vulkan-renderer`. Keep JNI package names, consumer R8 rules, shader
 asset paths, and CMake inputs synchronized when moving bridge entry points.
+
+## Earth–Moon presentation
+
+The native stage shares its orthographic viewport scale with touch projection. Body picking
+tests the front surface of the displayed sphere before considering padded touch targets;
+the billboard fragment shader writes the same analytic sphere depth. The Earth–Moon
+laboratory's Home frame includes Earth and Moon while keeping the Sun available for lighting.
+
+Runtime snapshots remain authoritative. Forward playback interpolates only presentation
+positions between matching snapshots, rebased to the current scene origin. Follow cameras
+and the primary light use the same interpolation fraction. Pausing, changing history or
+changing the set of bodies snaps to the current snapshot. Trails and tracer streams continue
+to represent the current exported snapshot rather than interpolated physics.
+
+Android requests display callbacks while an update or interpolation is pending. A frame gate
+coalesces invalidations and permits one native render in flight; pause and surface teardown
+stop scheduling. Display-only frames update uniforms and reuse uploaded scene buffers, without
+exporting the Rust scene again. This is a scheduling policy, not a measured frame-rate claim.
+
+The pure native geometry test can run without an Android SDK:
+
+```sh
+g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/solarlab-presentation-test
+/tmp/solarlab-presentation-test
+```
+
+`PresentationFrameGateTest` covers coalescing, pending interpolation, and inactive surfaces.
+The Android build must also compile the shaders and JNI changes. Native screenshots and a
+device walkthrough remain necessary to accept appearance, touch, rotation, and playback.

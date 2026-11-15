@@ -4,6 +4,10 @@
 //! runtime architecture. All external integrations (FFI, JNI, adapters,
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
+mod lab_step;
+mod persistence;
+pub use persistence::{SessionPersistenceError, MAX_SAVED_SESSION_BYTES};
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem::size_of;
 use std::time::Instant;
@@ -36,7 +40,7 @@ use solarlab_scene::{
     SceneTracer, SceneTrail, SceneTrailFamily,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct BodyState {
     pub body_id: BodyId,
     pub body_class: BodyClass,
@@ -73,7 +77,7 @@ impl BodyState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct PlaybackState {
     /// Playback controls are intentionally small and copy-friendly so shell snapshots
     /// can transport sim-speed intent without runtime coupling.
@@ -81,7 +85,7 @@ pub struct PlaybackState {
     pub sim_seconds_per_real_second: f64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct ObserverState {
     /// Observer state is persisted in snapshots to preserve viewer semantics when
     /// replaying snapshots or restoring checkpoints.
@@ -120,10 +124,23 @@ pub struct MountedManifestState {
     pub mounted_packages: Vec<MountedPackageState>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct TrailSample {
     pub epoch_seconds: f64,
     pub position_m: Vector3d,
+}
+
+/// Pinned identity of the initial-condition source. Edits and subsequent propagation
+/// remain this runtime's model; this metadata never claims that edited states are JPL predictions.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct InitialConditionsProvenance {
+    pub dataset_id: String,
+    pub version: String,
+    pub digest: String,
+    pub epoch_jd_tdb: f64,
+    pub frame: String,
+    pub center: String,
+    pub time_scale: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -145,6 +162,7 @@ pub struct WorldSnapshot {
     pub observer: ObserverState,
     pub playback: PlaybackState,
     pub mounted_manifest: Option<MountedManifestState>,
+    pub initial_conditions_provenance: Option<InitialConditionsProvenance>,
     pub trail_history_by_body: HashMap<BodyId, Vec<TrailSample>>,
     pub orbit_archives: Vec<OrbitArchive>,
     pub solver_execution: SolverExecutionReport,
@@ -288,26 +306,30 @@ pub struct ApplyUpdateManifestResult {
     pub mounted_manifest: Option<MountedManifestState>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 struct BranchWorldState {
     epoch_seconds: f64,
     bodies: Vec<BodyState>,
     observer: ObserverState,
     playback: PlaybackState,
+    #[serde(skip)]
     invariants: PhysicsInvariants,
     local_data_state: LocalDataState,
     mounted_package_ids: BTreeSet<String>,
+    #[serde(default)]
+    initial_conditions_provenance: Option<InitialConditionsProvenance>,
     trail_history_by_body: HashMap<BodyId, Vec<TrailSample>>,
+    #[serde(skip, default = "SolverExecutionReport::reference_scalar")]
     solver_execution: SolverExecutionReport,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 struct CheckpointRecord {
     descriptor: CheckpointDescriptor,
     state: BranchWorldState,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 struct BranchState {
     descriptor: BranchDescriptor,
     world: BranchWorldState,
@@ -412,6 +434,7 @@ impl WorldRuntime {
                 invariants: PhysicsInvariants::default(),
                 local_data_state: LocalDataState::empty(),
                 mounted_package_ids: BTreeSet::new(),
+                initial_conditions_provenance: None,
                 trail_history_by_body: HashMap::new(),
                 solver_execution: initial_solver_execution,
             },
@@ -560,6 +583,14 @@ impl WorldRuntime {
         self.advance_operation.as_ref()
     }
 
+    fn effective_physics_policy(&self) -> PhysicsPolicy {
+        if self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID {
+            lab_step::for_world(&self.config.physics, &self.active_branch().world.bodies)
+        } else {
+            self.config.physics.clone()
+        }
+    }
+
     pub fn begin_advance(
         &mut self,
         intent: [u64; 2],
@@ -609,7 +640,7 @@ impl WorldRuntime {
         } else {
             Some(
                 fixed_step_plan(
-                    &self.config.physics,
+                    &self.effective_physics_policy(),
                     delta,
                     bodies.len(),
                     &self.hardware_profile.cpu_features,
@@ -732,7 +763,7 @@ impl WorldRuntime {
         if !requested.is_finite() || requested <= 0.0 {
             return Err(RuntimeError::InvalidEpochDelta(requested));
         }
-        let max_step = self.config.physics.max_substep_seconds;
+        let max_step = self.effective_physics_policy().max_substep_seconds;
         let max_delta = if max_step.is_finite() && max_step > 0.0 {
             max_step * MAX_INCREMENTAL_STEPS as f64
         } else {
@@ -792,13 +823,13 @@ impl WorldRuntime {
                     || *delta_seconds <= 0.0
                     || next_epoch(world.epoch_seconds, *delta_seconds).is_none()
                     || (!world.bodies.is_empty()
-                        && checked_substep_count(&self.config.physics, *delta_seconds).is_none())
+                        && checked_substep_count(&self.effective_physics_policy(), *delta_seconds).is_none())
                 {
                     return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
                 }
                 if staged.is_none()
                     && !world.bodies.is_empty()
-                    && checked_substep_count(&self.config.physics, *delta_seconds)
+                    && checked_substep_count(&self.effective_physics_policy(), *delta_seconds)
                         .is_some_and(|n| n > MAX_INCREMENTAL_STEPS)
                 {
                     return Err(RuntimeError::AdvanceWorkLimit);
@@ -830,7 +861,17 @@ impl WorldRuntime {
                 if self.active_branch().world.bodies.is_empty() {
                     let seed = scenario_pack_seed(&self.scenario_id.0)
                         .ok_or_else(|| RuntimeError::UnknownScenario(self.scenario_id.clone()))?;
+                    let initial_conditions_provenance = (self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID).then(|| InitialConditionsProvenance {
+                        dataset_id: solarlab_data::EARTH_MOON_LAB_DATASET_ID.into(),
+                        version: "1.0.0".into(),
+                        digest: solarlab_data::EARTH_MOON_LAB_DIGEST.into(),
+                        epoch_jd_tdb: solarlab_data::EARTH_MOON_LAB_EPOCH_JD_TDB,
+                        frame: "ICRF".into(),
+                        center: "solar-system-barycentre".into(),
+                        time_scale: "TDB".into(),
+                    });
                     let branch = self.active_branch_mut();
+                    branch.world.initial_conditions_provenance = initial_conditions_provenance;
                     branch.world.bodies = seed
                         .bodies
                         .into_iter()
@@ -922,7 +963,7 @@ impl WorldRuntime {
                 );
             }
             WorldCommand::AdvanceEpoch { delta_seconds } => {
-                let physics_policy = self.config.physics.clone();
+                let physics_policy = self.effective_physics_policy();
                 let active_cpu_features = self.hardware_profile.cpu_features.clone();
                 let branch = self.active_branch_mut();
                 let (solver_bodies, invariants, solver_execution) =
@@ -1132,6 +1173,7 @@ impl WorldRuntime {
             observer: active.world.observer.clone(),
             playback: active.world.playback.clone(),
             mounted_manifest,
+            initial_conditions_provenance: active.world.initial_conditions_provenance.clone(),
             trail_history_by_body: active.world.trail_history_by_body.clone(),
             orbit_archives,
             solver_execution: active.world.solver_execution.clone(),
@@ -1149,7 +1191,7 @@ impl WorldRuntime {
         build_orbit_archives(
             active,
             query,
-            &self.config.physics,
+            &self.effective_physics_policy(),
             &self.hardware_profile.cpu_features,
         )
     }
@@ -1834,7 +1876,15 @@ fn runtime_trail_history_counts(
 }
 
 fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
-    let mounted_manifest = snapshot.mounted_manifest.as_ref()?;
+    let Some(mounted_manifest) = snapshot.mounted_manifest.as_ref() else {
+        return snapshot.initial_conditions_provenance.as_ref().map(|seed| SceneProvenanceRef {
+            source: seed.dataset_id.clone(),
+            version: seed.version.clone(),
+            manifest_id: seed.dataset_id.clone(),
+            manifest_digest: Some(seed.digest.clone()),
+            package_digest: None,
+        });
+    };
     Some(SceneProvenanceRef {
         source: mounted_manifest.channel.clone(),
         version: semver_to_string(&mounted_manifest.manifest_version),
@@ -1876,6 +1926,10 @@ fn scene_revision_from_snapshot(
         snapshot.epoch_seconds,
         snapshot.observer.mode
     );
+    if let Some(seed) = &snapshot.initial_conditions_provenance {
+        use std::fmt::Write as _;
+        let _ = write!(&mut revision, "|seed={}|version={}|digest={}", seed.dataset_id, seed.version, seed.digest);
+    }
     for (body_state, body_scene) in snapshot.bodies.iter().zip(bodies.iter()) {
         let selected = selected_body_id == Some(&body_state.body_id);
         use std::fmt::Write as _;
@@ -3081,7 +3135,7 @@ mod tests {
                 .trail_history_counts
                 .iter()
                 .map(|entry| entry.sample_count)
-                .sum()
+                .sum::<usize>()
         );
         assert_eq!(report.trail_history_counts.len(), 2);
         assert_eq!(
@@ -5329,11 +5383,11 @@ mod tests {
         }
     }
 
-    fn new_runtime() -> WorldRuntime {
+    pub(super) fn new_runtime() -> WorldRuntime {
         new_runtime_with_scenario("sol-system")
     }
 
-    fn new_runtime_with_scenario(scenario_id: &str) -> WorldRuntime {
+    pub(super) fn new_runtime_with_scenario(scenario_id: &str) -> WorldRuntime {
         WorldRuntime::new(
             ScenarioId(scenario_id.into()),
             BranchId("main".into()),
@@ -5649,7 +5703,7 @@ mod tests {
         }
     }
 
-    fn seed_major_bodies(runtime: &mut WorldRuntime) {
+    pub(super) fn seed_major_bodies(runtime: &mut WorldRuntime) {
         use solarlab_data::canonical_startup_seed;
 
         let seed = canonical_startup_seed();

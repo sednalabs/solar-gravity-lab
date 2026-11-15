@@ -428,6 +428,18 @@ SlAdvanceResult sl_v2_session_cancel_advance(SlRuntimeHandle handle, uint64_t ge
 SlAdvanceResult sl_v2_session_query_advance(SlRuntimeHandle handle);
 SlPlaybackTickResult sl_v2_session_playback_tick(SlRuntimeHandle handle, double real_seconds, int64_t recorded_at_unix_ms);
 
+// Versioned authoritative experiment documents, limited to 16 MiB. Export never
+// includes a staged advance: BUSY means wait or cancel before saving. A capacity
+// query (capacity=0) returns WORK_LIMIT plus required length and does not pin a
+// snapshot. Import validates before creating a new paused session; template is
+// unchanged and still caller-owned. Native handles are never saved.
+typedef struct SlSaveWriteResult {
+  SlResult result;
+  uint32_t length;
+} SlSaveWriteResult;
+SlSaveWriteResult sl_v2_session_export_save(SlRuntimeHandle handle, uint8_t *buffer, uint32_t capacity);
+SlSessionCreateResult sl_v2_session_import_save(SlRuntimeHandle template_handle, const uint8_t *bytes, uint32_t length);
+
 uint32_t sl_v2_abi_version(void);
 SlSessionCreateResult sl_v2_session_create(SlSessionCreateParams params);
 SlResult sl_v2_session_destroy(SlRuntimeHandle handle);

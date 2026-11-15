@@ -14,7 +14,7 @@ layout(location = 10) flat in vec2 vAtmosphereRatioAndDensity;
 layout(location = 11) flat in vec4 vCometRatios;
 layout(location = 12) flat in vec3 vCometAntiSolarCamera;
 layout(location = 13) flat in vec3 vCometVelocityCamera;
-layout(location = 14) flat in float vSurfaceDetail;
+layout(location = 14) flat in vec3 vSurfaceMetrics;
 layout(location = 15) flat in vec3 vRingPlaneCamera;
 layout(location = 0) out vec4 outColor;
 
@@ -31,6 +31,8 @@ const uint MATERIAL_COMET = 8u;
 const uint HAS_RING_SYSTEM = 1u << 0u;
 const uint HAS_ATMOSPHERE = 1u << 1u;
 const uint HAS_COMET = 1u << 2u;
+
+#define vSurfaceDetail vSurfaceMetrics.x
 
 float hash21(vec2 point) {
     vec3 p3 = fract(vec3(point.xyx) * 0.1031);
@@ -211,6 +213,7 @@ void main() {
     bool hasRing = (vAppearanceFlags & HAS_RING_SYSTEM) != 0u;
     bool insideRing = false;
     bool ringInFront = false;
+    float ringZ = 0.0;
     float ringAlpha = 0.0;
     vec3 ringColor = vec3(0.82, 0.70, 0.50);
     if (hasRing) {
@@ -218,7 +221,7 @@ void main() {
         float normalZ = abs(ringNormal.z) < 0.055
             ? (ringNormal.z < 0.0 ? -0.055 : 0.055)
             : ringNormal.z;
-        float ringZ = -(ringNormal.x * cameraUv.x + ringNormal.y * cameraUv.y) / normalZ;
+        ringZ = -(ringNormal.x * cameraUv.x + ringNormal.y * cameraUv.y) / normalZ;
         float ringRadius = length(vec3(cameraUv, ringZ));
         float innerRadius = max(vRingRatiosAndOpticalDepth.x, vBodyRadiusUv);
         float outerRadius = max(vRingRatiosAndOpticalDepth.y, innerRadius + 1e-5);
@@ -263,5 +266,11 @@ void main() {
     if (accumulated.a <= 0.001) {
         discard;
     }
+    float frontSurfaceZ = insideRing && ringInFront ? ringZ : bodyZ;
+    float surfaceDepth = vSurfaceMetrics.y - frontSurfaceZ * vSurfaceMetrics.z;
+    if (surfaceDepth < 0.0 || surfaceDepth > 1.0) {
+        discard;
+    }
+    gl_FragDepth = surfaceDepth;
     outColor = accumulated;
 }

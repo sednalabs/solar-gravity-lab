@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use solarlab_domain::{BodyClass, ObserverMode, Vector3d};
 
-use crate::{canonical_startup_seed, CanonicalBodySpec};
+use crate::{canonical_startup_seed, earth_moon_lab_bodies, CanonicalBodySpec, EARTH_MOON_LAB_ID};
 
 pub const DEFAULT_SCENARIO_PACK_ID: &str = "sol-system";
 
@@ -36,6 +36,7 @@ pub struct ScenarioPackSeed {
 #[must_use]
 pub fn scenario_pack_catalog() -> Vec<ScenarioPackDescriptor> {
     [
+        earth_moon_lab_descriptor(),
         canonical_descriptor(),
         inner_system_descriptor(),
         earth_moon_descriptor(),
@@ -51,6 +52,11 @@ pub fn scenario_pack_catalog() -> Vec<ScenarioPackDescriptor> {
 #[must_use]
 pub fn scenario_pack_seed(scenario_id: &str) -> Option<ScenarioPackSeed> {
     match scenario_id.trim() {
+        EARTH_MOON_LAB_ID => Some(seed_from_descriptor(
+            earth_moon_lab_descriptor(),
+            3_600.0,
+            earth_moon_lab_bodies(),
+        )),
         DEFAULT_SCENARIO_PACK_ID | "" => Some(canonical_pack_seed()),
         "showcase.inner-system" => Some(inner_system_pack_seed()),
         "showcase.earth-moon" => Some(earth_moon_pack_seed()),
@@ -60,6 +66,18 @@ pub fn scenario_pack_seed(scenario_id: &str) -> Option<ScenarioPackSeed> {
         "stress.s25-tile-swarm" => Some(s25_tile_swarm_pack_seed()),
         _ => None,
     }
+}
+
+fn earth_moon_lab_descriptor() -> ScenarioPackDescriptor {
+    descriptor(
+        EARTH_MOON_LAB_ID,
+        "Earth–Moon laboratory",
+        "A quiet starting point for exploring our nearest neighbour. JPL DE441 starting states; a Newtonian Sun–Earth–Moon experiment thereafter.",
+        ["laboratory", "earth-moon", "jpl-horizons", "de441"],
+        Some("earth"),
+        ObserverMode::FollowSelected,
+        true,
+    )
 }
 
 fn canonical_descriptor() -> ScenarioPackDescriptor {
@@ -475,6 +493,29 @@ mod tests {
 
         assert_eq!(ids.len(), catalog.len());
         assert!(ids.contains(DEFAULT_SCENARIO_PACK_ID));
+        assert!(ids.contains(EARTH_MOON_LAB_ID));
+    }
+
+    #[test]
+    fn earth_moon_laboratory_contains_only_the_three_real_bodies() {
+        let lab = scenario_pack_seed(EARTH_MOON_LAB_ID).expect("laboratory seed");
+        assert_eq!(lab.bodies.len(), 3);
+        assert_eq!(
+            lab.bodies
+                .iter()
+                .map(|body| body.body_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sun", "earth", "moon"]
+        );
+        assert!(lab.start_paused);
+        assert_eq!(lab.default_focus_body_id.as_deref(), Some("earth"));
+        let earth = &lab.bodies[1];
+        let moon = &lab.bodies[2];
+        let separation = ((moon.position_m.x - earth.position_m.x).powi(2)
+            + (moon.position_m.y - earth.position_m.y).powi(2)
+            + (moon.position_m.z - earth.position_m.z).powi(2))
+        .sqrt();
+        assert!((350_000_000.0..410_000_000.0).contains(&separation));
     }
 
     #[test]

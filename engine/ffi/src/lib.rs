@@ -39,6 +39,9 @@ use solarlab_vulkan_adapter::{
     VulkanTrailVertex,
 };
 
+mod persistence;
+pub use persistence::{sl_v2_session_export_save, sl_v2_session_import_save, SlSaveWriteResult};
+
 pub const SOLARLAB_V2_ABI_VERSION: u32 = 12;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
@@ -1424,7 +1427,9 @@ fn build_session(
             solver_backend: requested_solver_backend.clone(),
             integrator: IntegratorKind::LeapfrogKickDriftKick,
             collision_model: CollisionModel::None,
-            max_substep_seconds: 1.0,
+            max_substep_seconds: if scenario_id == solarlab_data::EARTH_MOON_LAB_ID {
+                solarlab_data::EARTH_MOON_LAB_MAX_SUBSTEP_SECONDS
+            } else { 1.0 },
         },
         timeline_semantics,
         live_updates_enabled: params.live_updates_enabled != 0,
@@ -2204,6 +2209,7 @@ fn jni_next_ordinal(ordinal: u64) -> i64 {
 // pointers and must treat every handle as invalid after its corresponding destroy/
 // release call.
 mod android_jni {
+    mod persistence;
     use super::{
         sl_v2_session_apply_command, sl_v2_session_create, sl_v2_session_destroy,
         sl_v2_session_export_vulkan_scene, sl_v2_session_refresh, sl_v2_session_runtime_info,
@@ -4499,7 +4505,7 @@ mod tests {
         scene_revision.split("|diag:").next().unwrap_or_default()
     }
 
-    fn new_params(scenario: &str, branch: &str) -> SlSessionCreateParams {
+    pub(super) fn new_params(scenario: &str, branch: &str) -> SlSessionCreateParams {
         let mut scenario_id = [0u8; SL_V2_ID_CAPACITY];
         scenario_id[..scenario.len()].copy_from_slice(scenario.as_bytes());
 

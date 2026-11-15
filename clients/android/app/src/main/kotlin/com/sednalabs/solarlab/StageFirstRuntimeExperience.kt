@@ -85,6 +85,8 @@ import com.sednalabs.solarlab.runtime.ManualAdvanceOutcome
 import com.sednalabs.solarlab.runtime.StepQuantumPreset
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
+import com.sednalabs.solarlab.runtime.RuntimeBodyState
+import com.sednalabs.solarlab.runtime.ShellNoticeTone
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPack
@@ -278,6 +280,7 @@ internal fun StageFirstRuntimeExperience(
         val coroutineScope = rememberCoroutineScope()
 
         val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
+        val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
@@ -290,6 +293,15 @@ internal fun StageFirstRuntimeExperience(
         var requestSearchFocus by remember { mutableStateOf(false) }
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
+        var scienceVisible by rememberSaveable { mutableStateOf(false) }
+        var savedVisible by rememberSaveable { mutableStateOf(false) }
+        var inspectorVisible by remember { mutableStateOf(false) }
+        var inspectedBody by remember { mutableStateOf<RuntimeBodyState?>(null) }
+        var editorSession by remember { mutableStateOf<LabBodyEditorSession?>(null) }
+        var editorCommitting by remember { mutableStateOf(false) }
+        var editorError by remember { mutableStateOf<String?>(null) }
+        var labNotice by remember { mutableStateOf<String?>(null) }
+        var framedLabSession by rememberSaveable { mutableStateOf(0L) }
         var pendingScenarioFrame by remember { mutableStateOf<RuntimeScenarioPack?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var cameraScaleBand by remember { mutableStateOf(CameraScaleBand.SYSTEM) }
@@ -434,7 +446,48 @@ internal fun StageFirstRuntimeExperience(
 
         fun resetRuntimeCamera() {
             semanticFocusAcknowledgement = null
+            observerMode = ObserverMode.FREE
+            syncObserver(selectedBodyId, ObserverMode.FREE)
+            renderHostView?.setObserverMode(ObserverMode.FREE)
             renderHostView?.resetCamera()
+        }
+
+        fun inspectSelectedBody() {
+            val bodyId = selectedBodyId ?: return
+            coroutineScope.launch {
+                runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                inspectedBody = runtimeFacade.inspectBody(bodyId)
+                inspectorVisible = inspectedBody != null
+                if (!inspectorVisible) labNotice = "This body is no longer available. Select another body."
+            }
+        }
+
+        fun editInspectedBody() {
+            val bodyId = inspectedBody?.bodyId ?: return
+            coroutineScope.launch {
+                runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                val body = runtimeFacade.inspectBody(bodyId) ?: return@launch
+                val earth = runtimeFacade.inspectBody("earth")
+                editorSession = LabBodyEditorSession(body, earth, false, searchableBodies.map { it.id }.toSet(),
+                    referenceAxes = if (uiState.snapshot?.scenarioId == "lab.earth-moon") "ICRF axes" else "scenario axes")
+                editorError = null
+                inspectorVisible = false
+            }
+        }
+
+        fun addProbe() {
+            coroutineScope.launch {
+                runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                val earth = runtimeFacade.inspectBody("earth")
+                if (earth == null) {
+                    labNotice = "Load an Earth scene before creating this probe."
+                    return@launch
+                }
+                val ids = searchableBodies.map { it.id }.toSet()
+                editorSession = LabBodyEditorSession(labProbeSeed(earth, ids), earth, true, ids,
+                    referenceAxes = if (uiState.snapshot?.scenarioId == "lab.earth-moon") "ICRF axes" else "scenario axes")
+                editorError = null
+            }
         }
 
         fun loadScenarioPack(scenarioId: String) {
@@ -454,8 +507,12 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        BackHandler(enabled = searchVisible || scenarioPickerVisible || debugVisible) {
+        BackHandler(enabled = searchVisible || scenarioPickerVisible || debugVisible || scienceVisible || savedVisible || inspectorVisible || editorSession != null) {
             when {
+                editorSession != null -> if (!editorCommitting) editorSession = null
+                inspectorVisible -> inspectorVisible = false
+                savedVisible -> savedVisible = false
+                scienceVisible -> scienceVisible = false
                 searchVisible -> searchVisible = false
                 scenarioPickerVisible -> scenarioPickerVisible = false
                 debugVisible -> debugVisible = false
@@ -507,7 +564,22 @@ internal fun StageFirstRuntimeExperience(
             selectedBodyId = focusBodyId
             observerMode = scenarioObserverMode
             pendingScenarioFrame = null
-            hostView.focusAndFrameBody(focusBodyId, scenarioObserverMode)
+            if (scenarioPack.scenarioId == "lab.earth-moon") {
+                resetRuntimeCamera()
+                framedLabSession = runtimeSessionHandle
+            } else {
+                hostView.focusAndFrameBody(focusBodyId, scenarioObserverMode)
+            }
+        }
+
+        LaunchedEffect(runtimeSessionHandle, uiState.snapshot?.scenarioId, renderHostView, searchableBodies) {
+            if (runtimeSessionHandle != 0L && framedLabSession != runtimeSessionHandle &&
+                uiState.snapshot?.scenarioId == "lab.earth-moon" && renderHostView != null &&
+                searchableBodies.any { it.id == "earth" } && searchableBodies.any { it.id == "moon" }) {
+                // Native Home frames the Earth–Moon pair while retaining the Sun in the model.
+                resetRuntimeCamera()
+                framedLabSession = runtimeSessionHandle
+            }
         }
 
         LaunchedEffect(canSendCommands, uiState.snapshot?.paused) {
@@ -604,227 +676,7 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            RuntimeStageVoid,
-                            Color(0xFF06101C),
-                            Color(0xFF0B1829),
-                        )
-                    )
-                ),
-        ) {
-            val compactLayout = maxWidth < RuntimeStageCompactWidthBreakpoint
-            val expandedCockpitMaxHeight = maxHeight * expandedStageDeckMaxHeightFraction(compactLayout)
-            val expandedCockpitScrollState = rememberScrollState()
-            val cockpitBackendStatus = if (compactLayout) {
-                runtimeStageCompactBackendStatus(backendStatus)
-            } else {
-                backendStatus
-            }
-            val actionButtons: @Composable () -> Unit = {
-                StageControlsButton(
-                    label = "Clean stage",
-                    onClick = { chromeModeName = StageChromeMode.MINIMAL.name },
-                )
-                StageControlsButton(
-                    label = "Less",
-                    onClick = { chromeModeName = chromeMode.toggle().name },
-                )
-                StageActionButton(
-                    label = if (searchVisible) "Searching" else "Search",
-                    onClick = {
-                        requestSearchFocus = true
-                        searchVisible = true
-                    },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
-                    emphasized = searchVisible,
-                    enabled = searchableBodies.isNotEmpty(),
-                )
-                StageActionButton(
-                    label = if (scenarioPickerVisible) "Scenarios" else "Scenario",
-                    onClick = { scenarioPickerVisible = true },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON),
-                    emphasized = scenarioPickerVisible,
-                    enabled = scenarioPacks.isNotEmpty(),
-                )
-                StageActionButton(
-                    label = if (debugVisible) "Debugging" else "Debug",
-                    onClick = { debugVisible = true },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
-                    emphasized = debugVisible,
-                )
-            }
-            val primaryControls: @Composable () -> Unit = {
-                uiState.manualAdvance?.let { advance ->
-                    StageActionButton(
-                        label = "Cancel advance",
-                        onClick = runtimeFacade::cancelManualAdvance,
-                        enabled = !advance.cancelRequested,
-                        dense = compactLayout,
-                    )
-                }
-                StageActionButton(
-                    label = if (compactLayout) "In" else "Zoom +",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Out" else "Zoom -",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = "Home",
-                    onClick = ::resetRuntimeCamera,
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Frame" else "Frame selected",
-                    onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
-                    enabled = cameraControlsEnabled && selectedBodyId != null,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
-                    dense = compactLayout,
-                )
-                CameraScaleBand.entries.forEach { scaleBand ->
-                    StageActionButton(
-                        label = scaleBand.label,
-                        onClick = { renderHostView?.setCameraScaleBand(scaleBand) },
-                        enabled = cameraControlsEnabled,
-                        modifier = Modifier.testTag(
-                            SolarLabTestTags.stageFirstCameraScalePresetTag(scaleBand.name),
-                        ),
-                        contentDescription = "Set camera scale to ${scaleBand.label}",
-                        emphasized = cameraScaleBand == scaleBand,
-                        dense = compactLayout,
-                    )
-                }
-                StageActionButton(
-                    label = "Help",
-                    onClick = { cameraCoachVisible = true },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (isRunning) "Pause" else "Start",
-                    onClick = {
-                        if (isRunning) {
-                            sendRuntimeCommand(RuntimeCommand.PausePlayback)
-                        } else {
-                            sendRuntimeCommand(RuntimeCommand.ResumePlayback)
-                        }
-                    },
-                    emphasized = isRunning,
-                    enabled = canSendCommands,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Step" else "Step once",
-                    onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
-                    enabled = canSendCommands && !isRunning,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Next" else "Forward step",
-                    onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
-                    enabled = canSendCommands && !isRunning,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = observerMode.runtimeDisplayLabel(),
-                    onClick = {
-                        observerMode = when (observerMode) {
-                            ObserverMode.FREE -> ObserverMode.FOLLOW_SELECTED
-                            ObserverMode.FOLLOW_SELECTED -> ObserverMode.FOLLOW_SELECTED_HOST
-                            ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
-                        }
-                        syncObserver(selectedBodyId, observerMode)
-                    },
-                    enabled = selectedBodyId != null || observerMode != ObserverMode.FREE,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = "Refresh",
-                    onClick = {
-                        selectedBodyId = null
-                        observerMode = ObserverMode.FREE
-                        resetRuntimeCamera()
-                        refreshRuntime()
-                    },
-                    enabled = true,
-                    dense = compactLayout,
-                )
-            }
-            val secondaryControls: @Composable () -> Unit = {
-                StageActionButton(
-                    label = if (compactLayout) stepQuantumPreset.label else "Step ${stepQuantumPreset.label}",
-                    onClick = { stepQuantumPreset = stepQuantumPreset.nextCyclic() },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STEP_DURATION),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Slow" else "Slower",
-                    onClick = {
-                        val nextPreset = playbackSpeedPreset.shifted(-1)
-                        playbackSpeedPreset = nextPreset
-                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
-                    },
-                    enabled = canSendCommands,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) playbackSpeedPreset.label else "Faster · ${playbackSpeedPreset.label}",
-                    onClick = {
-                        val nextPreset = playbackSpeedPreset.shifted(1)
-                        playbackSpeedPreset = nextPreset
-                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
-                    },
-                    enabled = canSendCommands,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Tracers -" else "Fewer tracers",
-                    onClick = { traceLayerModeName = traceLayerMode.less().name },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON),
-                    contentDescription = "Show fewer tracers; currently ${traceLayerButtonLabel(traceLayerMode, true)}",
-                    enabled = traceLayerMode != TraceLayerMode.OFF,
-                    secondary = true,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Tracers +" else "More tracers",
-                    onClick = { traceLayerModeName = traceLayerMode.more().name },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON),
-                    contentDescription = "Show more tracers; currently ${traceLayerButtonLabel(traceLayerMode, true)}",
-                    enabled = traceLayerMode != TraceLayerMode.ALL,
-                    secondary = true,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = when (renderProcessingMode) {
-                        RenderProcessingMode.DEFAULT -> if (compactLayout) "Detail" else "Rendering: Standard"
-                        RenderProcessingMode.LOW -> if (compactLayout) "Lite" else "Rendering: Simplified"
-                    },
-                    onClick = {
-                        renderProcessingMode = when (renderProcessingMode) {
-                            RenderProcessingMode.DEFAULT -> RenderProcessingMode.LOW
-                            RenderProcessingMode.LOW -> RenderProcessingMode.DEFAULT
-                        }
-                    },
-                    secondary = true,
-                    dense = compactLayout,
-                )
-            }
-
+        Box(Modifier.fillMaxSize().background(Color(0xFF02050B))) {
             if (attachRenderHost) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -907,203 +759,131 @@ internal fun StageFirstRuntimeExperience(
                 }
             }
 
-            if (chromeMode == StageChromeMode.COLLAPSED) {
-                RuntimeStageCollapsedStageChip(
-                    selectionCard = selectionCard,
-                    scenarioLabel = timelineText,
-                    semanticFocusAcknowledgement = semanticFocusAcknowledgement,
-                    searchFrameRequest = searchFrameRequest?.second,
-                    advanceStatus = compactPlaybackStatus,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                        .widthIn(max = if (compactLayout) 300.dp else 380.dp)
-                        .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                )
-            }
-
-            if (chromeMode == StageChromeMode.EXPANDED) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    if (compactLayout) {
-                        RuntimeStageCollapsedStageChip(
-                            selectionCard = selectionCard,
-                            scenarioLabel = timelineText,
-                            semanticFocusAcknowledgement = semanticFocusAcknowledgement,
-                            searchFrameRequest = searchFrameRequest?.second,
-                            advanceStatus = compactPlaybackStatus,
-                            modifier = Modifier
-                                .widthIn(max = 360.dp)
-                                .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                        )
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            RuntimeStageMissionPanel(
-                                uiState = uiState,
-                                selectionCard = selectionCard,
-                                selectedBody = selectedBody,
-                                observerMode = observerMode,
-                                renderProcessingMode = renderProcessingMode,
-                                scenarioLabel = timelineText,
-                                semanticFocusAcknowledgement = semanticFocusAcknowledgement,
-                                searchFrameRequest = searchFrameRequest?.second,
-                                compact = false,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                            )
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                actionButtons()
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (chromeMode == StageChromeMode.COLLAPSED) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    uiState.manualAdvance?.let { advance ->
-                        StageControlRail(modifier = Modifier.align(Alignment.CenterHorizontally), compact = true, fillMaxWidth = false) {
-                            StageActionButton(label = "Cancel advance", onClick = runtimeFacade::cancelManualAdvance, enabled = !advance.cancelRequested, dense = true)
-                        }
-                    }
-                    StageControlRail(
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        compact = true,
-                        fillMaxWidth = false,
-                    ) {
-                        StageActionButton(
-                            label = "Home",
-                            onClick = ::resetRuntimeCamera,
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
-                            enabled = cameraControlsEnabled,
-                            dense = true,
-                        )
-                        StageActionButton(
-                            label = "Frame",
-                            onClick = {
-                                selectedBodyId?.let(::focusAndFrameRuntimeBody)
-                                    ?: resetRuntimeCamera()
-                            },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
-                            enabled = cameraControlsEnabled,
-                            dense = true,
-                        )
-                        Box(modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)) {
-                            StageControlsButton(
-                                label = cameraScaleBand.label,
-                                onClick = { chromeModeName = StageChromeMode.EXPANDED.name },
-                                contentDescription = "Camera scale ${cameraScaleBand.label}; open camera controls",
-                                dense = true,
-                            )
-                        }
-                        StageActionButton(
-                            label = "Help",
-                            onClick = { cameraCoachVisible = true },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
-                            dense = true,
-                        )
-                    }
-                }
-            } else if (chromeMode == StageChromeMode.EXPANDED) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .heightIn(max = expandedCockpitMaxHeight)
-                        .verticalScroll(expandedCockpitScrollState)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (compactLayout) {
-                        StageControlRail(compact = true) {
-                            actionButtons()
-                        }
-                    }
-                    RuntimeStageTimelineRail(
-                        uiState = uiState,
-                        fallbackSpeedPreset = playbackSpeedPreset,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    RuntimeStageCommandDeck(
-                        compact = compactLayout,
-                        primaryControls = primaryControls,
-                        secondaryControls = secondaryControls,
-                    )
-                    StagePanel(
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
-                    ) {
-                        Text(
-                            text = cockpitBackendStatus,
-                            color = RuntimeStageCyan,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = if (compactLayout) 2 else Int.MAX_VALUE,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        accelerationReadout?.let { readout ->
-                            Spacer(modifier = Modifier.height(8.dp))
-                            RuntimeStageAccelerationPanel(
-                                readout = readout,
-                                compact = compactLayout,
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = interactionHintText,
-                            color = RuntimeStageTextDim,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = if (compactLayout) 1 else Int.MAX_VALUE,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-
-            if (chromeMode == StageChromeMode.MINIMAL) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                ) {
-                    StageControlsButton(
-                        label = "Controls",
-                        onClick = { chromeModeName = StageChromeMode.COLLAPSED.name },
-                        dense = true,
-                    )
-                }
-            }
-
-            if (cameraCoachVisible) {
-                StageCameraCoach(
-                    onDismiss = {
-                        markStageCameraCoachSeen(context)
-                        cameraCoachVisible = false
+            EarthMoonLabChrome(
+                uiState = uiState,
+                selectedBody = selectedBody,
+                selectedName = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: activeScenarioPack.title,
+                selectionDescription = semanticFocusAcknowledgement?.contentDescription,
+                scenarioTitle = activeScenarioPack.title,
+                availableBodyIds = searchableBodies.map { it.id }.toSet(),
+                mode = chromeMode,
+                traceMode = traceLayerMode,
+                cameraBand = cameraScaleBand,
+                stepPreset = stepQuantumPreset,
+                playbackPreset = playbackSpeedPreset,
+                pendingFrameName = searchFrameRequest?.second,
+                actions = LabStageActions(
+                    focus = { focusAndFrameRuntimeBody(it) },
+                    home = ::resetRuntimeCamera,
+                    frame = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
+                    togglePlayback = { sendRuntimeCommand(if (isRunning) RuntimeCommand.PausePlayback else RuntimeCommand.ResumePlayback) },
+                    speedDown = {
+                        playbackSpeedPreset = playbackSpeedPreset.shifted(-1)
+                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(playbackSpeedPreset.simSecondsPerRealSecond))
                     },
-                )
+                    speedUp = {
+                        playbackSpeedPreset = playbackSpeedPreset.shifted(1)
+                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(playbackSpeedPreset.simSecondsPerRealSecond))
+                    },
+                    step = {
+                        coroutineScope.launch {
+                            runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                            runtimeFacade.applyCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds))
+                        }
+                    },
+                    cycleStep = { stepQuantumPreset = stepQuantumPreset.nextCyclic() },
+                    inspect = ::inspectSelectedBody,
+                    addProbe = ::addProbe,
+                    saved = { savedVisible = true },
+                    science = { scienceVisible = true },
+                    search = { requestSearchFocus = true; searchVisible = true },
+                    scenarios = { scenarioPickerVisible = true },
+                    toggleTools = { chromeModeName = chromeMode.toggle().name },
+                    hideChrome = { chromeModeName = StageChromeMode.MINIMAL.name },
+                    help = { cameraCoachVisible = true },
+                    zoomIn = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
+                    zoomOut = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
+                    setScale = { renderHostView?.setCameraScaleBand(it) },
+                    fewerTraces = { traceLayerModeName = traceLayerMode.less().name },
+                    moreTraces = { traceLayerModeName = traceLayerMode.more().name },
+                    debug = { debugVisible = true },
+                    cancelAdvance = runtimeFacade::cancelManualAdvance,
+                ),
+            )
+            if (cameraCoachVisible) {
+                StageCameraCoach(onDismiss = {
+                    markStageCameraCoachSeen(context)
+                    cameraCoachVisible = false
+                })
             }
+        }
+
+        if (scienceVisible) LabScienceDialog(uiState, activeScenarioPack, onDismiss = { scienceVisible = false })
+        if (inspectorVisible) {
+            LabBodyInspectorDialog(
+                body = inspectedBody,
+                bodyName = inspectedBody?.bodyId?.let(::displayNameForBodyId) ?: "Inspect body",
+                onDismiss = { inspectorVisible = false },
+                onEdit = ::editInspectedBody,
+            )
+        }
+        editorSession?.let { session ->
+            LabBodyEditorDialog(
+                session = session,
+                committing = editorCommitting,
+                error = editorError,
+                onDismiss = { editorSession = null },
+                onCommit = { command ->
+                    editorCommitting = true
+                    editorError = null
+                    coroutineScope.launch {
+                        try {
+                            runtimeFacade.applyCommand(command)
+                            val state = runtimeFacade.uiState.value
+                            if (state.noticeTone == ShellNoticeTone.Critical || state.noticeTone == ShellNoticeTone.Caution) {
+                                editorError = state.noticeLine ?: "The change could not be applied."
+                            } else {
+                                editorSession = null
+                                if (command is RuntimeCommand.SpawnBody) {
+                                    selectedBodyId = command.bodyId
+                                    observerMode = ObserverMode.FREE
+                                    syncObserver(command.bodyId, ObserverMode.FREE)
+                                }
+                            }
+                        } finally {
+                            editorCommitting = false
+                        }
+                    }
+                },
+            )
+        }
+        if (savedVisible) {
+            LabSavedExperimentsDialog(
+                experiments = savedExperiments,
+                uiState = uiState,
+                onDismiss = { savedVisible = false },
+                onSave = { name ->
+                    coroutineScope.launch {
+                        runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                        runtimeFacade.saveExperiment(name)
+                    }
+                },
+                onLoad = { id ->
+                    coroutineScope.launch {
+                        runtimeFacade.loadExperiment(id)
+                        val state = runtimeFacade.uiState.value
+                        if (state.connectionState == SessionConnectionState.Active && state.noticeTone == ShellNoticeTone.Positive) {
+                            savedVisible = false
+                            selectedBodyId = state.focusedBodyId
+                            resetRuntimeCamera()
+                        }
+                    }
+                },
+            )
+        }
+        labNotice?.let { notice ->
+            AlertDialog(onDismissRequest = { labNotice = null }, title = { Text("Experiment") },
+                text = { Text(notice) }, confirmButton = { TextButton(onClick = { labNotice = null }) { Text("OK") } })
         }
 
         if (searchVisible) {
@@ -2017,7 +1797,7 @@ private fun RuntimeStageSearchDialog(
                 Text("Close")
             }
         },
-        title = { Text("Find a runtime body") },
+        title = { Text("Find a body") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
@@ -2146,7 +1926,7 @@ private fun RuntimeStageScenarioDialog(
             }
         },
         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG),
-        title = { Text("Scenario packs") },
+        title = { Text("Explore a scene") },
         text = {
             Column(
                 modifier = Modifier
@@ -2156,7 +1936,7 @@ private fun RuntimeStageScenarioDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "Deterministic scenes for visual polish, camera checks, and fast Android tool iteration.",
+                    text = "Choose a starting point for your next experiment. Save your current state first if you want to keep it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2203,8 +1983,7 @@ private fun RuntimeStageScenarioDialog(
                                 )
                                 Text(
                                     text = listOf(
-                                        pack.scenarioId,
-                                        "focus=${pack.defaultFocusBodyId ?: "none"}",
+                                        if (pack.tags.contains("stress")) "Performance experiment" else "Built-in scene",
                                         if (pack.startPaused) "paused" else "live",
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.labelSmall,

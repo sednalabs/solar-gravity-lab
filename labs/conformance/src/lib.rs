@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+mod earth_moon_reference;
+
 use serde::Serialize;
 use serde_json::{json, Value};
 use solarlab_data::canonical_startup_seed;
@@ -112,6 +114,10 @@ pub fn report_exit_code(report: &ConformanceReport) -> u8 {
 
 fn scenario_registry() -> Vec<ScenarioDefinition> {
     vec![
+        ScenarioDefinition {
+            id: "earth-moon-reference",
+            run: earth_moon_reference::run,
+        },
         ScenarioDefinition {
             id: "major-body-orbit-telemetry",
             run: run_major_body_orbit_telemetry,
@@ -985,6 +991,7 @@ mod tests {
         assert_eq!(
             scenario_ids(),
             vec![
+                "earth-moon-reference",
                 "major-body-orbit-telemetry",
                 "added-body-repeatability",
                 "collision-playback-cap",
