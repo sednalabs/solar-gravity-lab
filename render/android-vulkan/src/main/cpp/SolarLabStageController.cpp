@@ -862,8 +862,8 @@ void SolarLabStageController::SetRuntimeSelectedBodyId(const std::string& bodyId
         return;
     }
     runtimeSelectedBodyId_ = bodyId;
-    ClearCameraPresentationLocked();
     if (runtimeObserverModeCode_ != kObserverModeFree) {
+        ClearCameraPresentationLocked();
         runtimeCameraInitialized_ = false;
     }
     ++cameraRevisionCounter_;
@@ -1322,15 +1322,20 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::unordered_map<std::string, const RuntimeBodyProxy*> previousBodies;
     previousBodies.reserve(runtimeScene_.pickBodies.size());
     for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);
-    if (matchingBodies) {
+    std::optional<Float3> nextEarthPosition;
+    if (bodiesView && bodiesView->data) {
         const auto* raw = static_cast<const uint8_t*>(bodiesView->data);
         const uint32_t stride = bodiesView->stride_bytes == 0 ? sizeof(SlVulkanBodyInstance) : bodiesView->stride_bytes;
         for (uint32_t index = 0; index < bodiesView->element_count; ++index) {
             const auto* body = reinterpret_cast<const SlVulkanBodyInstance*>(raw + stride * index);
-            const auto previous = previousBodies.find(DecodeInlineUtf8(body->body_id, body->body_id_len));
+            const auto bodyId = DecodeInlineUtf8(body->body_id, body->body_id_len);
+            if (bodyId == "earth") {
+                nextEarthPosition = nextOrigin + MakeFloat3(body->position_from_origin_m.x,
+                    body->position_from_origin_m.y, body->position_from_origin_m.z);
+            }
+            const auto previous = previousBodies.find(bodyId);
             if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
                 matchingBodies = false;
-                break;
             }
         }
     }
@@ -1388,6 +1393,33 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             packetResult.info.camera.target_from_origin_m.z,
             packetResult.info.camera.vertical_fov_degrees,
             false);
+    }
+
+    if (!cameraLocked && scenarioId == "lab.earth-moon" && runtimeScene_.scenarioId == scenarioId &&
+        nextEarthPosition && (newSnapshot || !preservePresentation)) {
+        const auto previousEarth = previousBodies.find("earth");
+        if (previousEarth != previousBodies.end()) {
+            const auto& earth = *previousEarth->second;
+            const Float3 displayedEarth = oldOrigin + MakeFloat3(
+                solarlab::presentation::Mix(earth.previousRelativeX, earth.positionRelativeX, previousFraction),
+                solarlab::presentation::Mix(earth.previousRelativeY, earth.positionRelativeY, previousFraction),
+                solarlab::presentation::Mix(earth.previousRelativeZ, earth.positionRelativeZ, previousFraction));
+            // Laboratory free navigation is local to Earth, in non-rotating axes. Carry the
+            // user's existing offset with the reference translation, without changing pan,
+            // orientation, scale, bodies or physics. Use the displayed sample so detaching
+            // follow or panning halfway through an interpolation does not introduce drift.
+            cameraCenterX_ = solarlab::presentation::TranslateWithReference(
+                previousCamera.centerX, displayedEarth.x, nextEarthPosition->x);
+            cameraCenterY_ = solarlab::presentation::TranslateWithReference(
+                previousCamera.centerY, displayedEarth.y, nextEarthPosition->y);
+            cameraCenterZ_ = solarlab::presentation::TranslateWithReference(
+                previousCamera.centerZ, displayedEarth.z, nextEarthPosition->z);
+            if (interpolate) {
+                runtimeScene_.cameraPreviousOffsetX = previousCamera.centerX - cameraCenterX_;
+                runtimeScene_.cameraPreviousOffsetY = previousCamera.centerY - cameraCenterY_;
+                runtimeScene_.cameraPreviousOffsetZ = previousCamera.centerZ - cameraCenterZ_;
+            }
+        }
     }
 
     std::vector<double> authoritativePositionsM;

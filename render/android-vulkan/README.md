@@ -34,6 +34,10 @@ The native stage shares its orthographic viewport scale with touch projection. B
 tests the front surface of the displayed sphere before considering padded touch targets;
 the billboard fragment shader writes the same analytic sphere depth. The Earth–Moon
 laboratory's Home frame includes Earth and Moon while keeping the Sun available for lighting.
+Free navigation in this laboratory travels with Earth's translation in non-rotating axes,
+preserving the user's local pan, orientation and zoom during accelerated solar motion. The
+Moon and probes retain their movement relative to Earth. Other scenarios keep their existing
+free-camera behaviour.
 
 Runtime snapshots remain authoritative. Forward playback interpolates only presentation
 positions between matching snapshots, rebased to the current scene origin. Follow cameras

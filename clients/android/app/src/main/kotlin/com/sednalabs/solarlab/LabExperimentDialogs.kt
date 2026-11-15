@@ -363,7 +363,7 @@ internal fun LabSavedExperimentsDialog(
 internal fun LabScienceDialog(uiState: ShellUiState, scenarioPack: RuntimeScenarioPack, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("A small, honest universe") },
+        title = { Text("The physics behind the lab") },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Back to the lab") } },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 450.dp).verticalScroll(rememberScrollState()),
@@ -373,7 +373,12 @@ internal fun LabScienceDialog(uiState: ShellUiState, scenarioPack: RuntimeScenar
                 LabScienceSection("Initial conditions", scenarioPack.provenance?.let { provenance ->
                     "$provenance. Reference epoch: ${scenarioPack.referenceEpoch ?: "recorded by the scene"}. These reference vectors seed the simulation; subsequent motion is computed by this model and will diverge from the full ephemeris."
                 } ?: "This built-in scene uses approximate initial conditions. It is an experiment, not a live astronomical ephemeris.")
-                LabScienceSection("What you see", "Planet surfaces and atmospheric light are illustrative. Small objects have a minimum screen size so you can find them. The time display is elapsed simulation time from the scenario epoch.")
+                LabScienceSection("What you see", buildString {
+                    if (scenarioPack.scenarioId == "lab.earth-moon") {
+                        append("The overview travels with Earth. Trails show motion relative to Earth using matching recorded or predicted Earth positions. ")
+                    }
+                    append("Planet surfaces and atmospheric light are illustrative. Small objects have a minimum screen size so you can find them. The time display is elapsed simulation time from the scenario epoch.")
+                })
                 LabScienceSection("Your experiment", "Editing a body changes its initial position or velocity. A probe feels gravity by default without attracting the other bodies; enable Exert gravity to give it gravitational source mass.")
                 LabScienceSection("Limits", "This model does not include relativistic corrections, tides, atmospheric drag or a resolved collision/debris simulation. Large time speeds can be limited to protect numerical accuracy. A reference seed does not make the subsequent simplified propagation a DE441 solution.")
                 uiState.renderStatus.provenanceSource?.takeIf(String::isNotBlank)?.let {

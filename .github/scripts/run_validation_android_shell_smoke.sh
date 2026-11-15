@@ -229,7 +229,7 @@ resolve_test_classes() {
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
-        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
+        "-Psolarlab.hostedDebugProfile=full-fidelity"
       )
       ;;
     *)
@@ -265,7 +265,7 @@ resolve_test_classes() {
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
-        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
+        "-Psolarlab.hostedDebugProfile=full-fidelity"
       )
       case "${TEST_SCOPE}" in
         core)

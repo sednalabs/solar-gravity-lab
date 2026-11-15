@@ -102,4 +102,8 @@ inline double ContextFrameRadius(double preferredRadiusM, double contextDistance
     return std::max(preferredRadiusM, (contextDistanceM + contextRadiusM) * 1.18);
 }
 
+inline double TranslateWithReference(double coordinate, double previousReference, double currentReference) {
+    return coordinate + (currentReference - previousReference);
+}
+
 }  // namespace solarlab::presentation

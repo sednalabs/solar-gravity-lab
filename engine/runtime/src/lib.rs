@@ -6,6 +6,7 @@
 //! semantics.
 mod lab_step;
 mod persistence;
+mod trail_frame;
 pub use persistence::{SessionPersistenceError, MAX_SAVED_SESSION_BYTES};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -1714,11 +1715,14 @@ fn extract_scene_trails(snapshot: &WorldSnapshot) -> Vec<SceneTrail> {
         .orbit_archives
         .iter()
         .filter_map(|archive| {
-            let samples_m = archive
-                .samples
-                .iter()
-                .map(|sample| sample.position_m)
-                .collect::<Vec<_>>();
+            let samples_m =
+                trail_frame::earth_relative_samples(snapshot, archive).unwrap_or_else(|| {
+                    archive
+                        .samples
+                        .iter()
+                        .map(|sample| sample.position_m)
+                        .collect()
+                });
             if samples_m.is_empty() {
                 return None;
             }
