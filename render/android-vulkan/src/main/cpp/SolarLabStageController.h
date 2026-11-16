@@ -139,6 +139,7 @@ private:
     bool RuntimeSessionBoundLocked() const;
     double MinimumViewRadiusLocked() const;
     std::optional<CameraSnapshot> ResolveRuntimeHomeCameraLocked() const;
+    std::optional<CameraSnapshot> ResolveRuntimeBodyFrameLocked(const std::string& bodyId) const;
     void InitializeFreeCameraFromRuntimePacketLocked(
         double sceneOriginX,
         double sceneOriginY,

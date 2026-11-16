@@ -769,6 +769,11 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
 std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeBodyFrame(
     const std::string& bodyId) const {
     std::lock_guard<std::mutex> lock(stateMutex_);
+    return ResolveRuntimeBodyFrameLocked(bodyId);
+}
+
+std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeBodyFrameLocked(
+    const std::string& bodyId) const {
     const std::string normalizedBodyId = LowercaseAscii(bodyId);
     const auto body = std::find_if(
         runtimeScene_.pickBodies.begin(),
@@ -1363,6 +1368,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     const bool traceLayerEnabled = runtimeTraceLayerModeCode_ != kTraceLayerModeOff;
     const bool focusTraceLayer = runtimeTraceLayerModeCode_ == kTraceLayerModeFocus;
     const std::string normalizedSelectedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
+    const bool initialLabBodyFrame = !runtimeCameraInitialized_ &&
+        runtimeObserverModeCode_ == kObserverModeFollowSelected && scenarioId == "lab.earth-moon" &&
+        (normalizedSelectedBodyId == "earth" || normalizedSelectedBodyId == "moon");
     if (cameraLocked) {
         // Locked observer modes keep the native camera centered on the selected runtime frame
         // while preserving user-controlled orbit and scale after the initial lock-on.
@@ -1754,6 +1762,22 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     if (newSnapshot) runtimeScene_.observedAtSeconds = observedAt;
     runtimeScene_.uploadedRevision = static_cast<int64_t>(syntheticRevision);
     runtimeScene_.pickBodies = std::move(pickBodies);
+    if (initialLabBodyFrame) {
+        // A focus request may arrive before the native surface or body proxies exist.
+        // Complete its laboratory framing from the first available packet instead of
+        // retaining the runtime camera's wider bootstrap radius. Reuse explicit Frame's
+        // policy once, so later user zoom and probe/context framing remain untouched.
+        if (const auto frame = ResolveRuntimeBodyFrameLocked(normalizedSelectedBodyId)) {
+            cameraCenterX_ = frame->centerX;
+            cameraCenterY_ = frame->centerY;
+            cameraCenterZ_ = frame->centerZ;
+            cameraViewRadiusM_ = frame->viewRadiusM;
+            cameraYawRadians_ = frame->yawRadians;
+            cameraPitchRadians_ = frame->pitchRadians;
+            ClearCameraPresentationLocked();
+            ++cameraRevisionCounter_;
+        }
+    }
     if (runtimeHomePending_ || initialLabHome) {
         if (const auto home = ResolveRuntimeHomeCameraLocked()) {
             cameraCenterX_ = home->centerX;

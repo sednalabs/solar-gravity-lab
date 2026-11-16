@@ -45,6 +45,9 @@ Android performs display rotation. This matches the shader viewport and touch co
 without rotating and stretching a landscape buffer. Swapchain creation logs the requested,
 surface and buffer extents plus both transforms so native rotation evidence can verify the
 actual presentation contract, in addition to the pure projection formulas.
+An initial laboratory follow of Earth or Moon uses the same close frame as an explicit
+Frame request after the first native bodies arrive. This also handles focus requested
+before surface creation; later camera updates preserve user zoom.
 Free navigation in this laboratory travels with Earth's translation in non-rotating axes,
 preserving the user's local pan, orientation and zoom during accelerated solar motion. The
 Moon and probes retain their movement relative to Earth. Other scenarios keep their existing

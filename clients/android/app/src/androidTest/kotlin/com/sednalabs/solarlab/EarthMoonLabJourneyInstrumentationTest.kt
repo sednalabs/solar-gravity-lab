@@ -56,7 +56,7 @@ class EarthMoonLabJourneyInstrumentationTest {
         composeRule.waitUntil(30_000) { facade.uiState.value.snapshot?.scenarioId == "lab.earth-moon" }
         dismissCoach()
         composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
-        capture("earth-moon-initial-hero.png", requireRoundBody = true)
+        capture("earth-moon-initial-hero.png", requireRoundBody = true, minimumBodyViewportFraction = 0.40)
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON).performClick()
         capture("earth-moon-overview.png")
         composeRule.onNodeWithTag(LabTags.focus("earth")).performClick()
@@ -178,7 +178,11 @@ class EarthMoonLabJourneyInstrumentationTest {
         }
     }
 
-    private fun capture(name: String, requireRoundBody: Boolean = false) {
+    private fun capture(
+        name: String,
+        requireRoundBody: Boolean = false,
+        minimumBodyViewportFraction: Double = 0.0,
+    ) {
         composeRule.waitForIdle()
         // Compose idle does not wait for the native camera's 240 ms ValueAnimator
         // or for Vulkan presentation. Allow a bounded camera settle, then require
@@ -198,6 +202,7 @@ class EarthMoonLabJourneyInstrumentationTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val stage = captureNativeSurface(requireNotNull(surface))
         val bodyAxes = if (requireRoundBody) measureCentralBodyAxes(stage) else null
+        val minimumBodyDiameter = maxOf(32, (minOf(stage.width, stage.height) * minimumBodyViewportFraction).toInt())
         writeImage("${name.removeSuffix(".png")}-stage.png", stage)
         val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
         writeImage(name, image)
@@ -205,30 +210,37 @@ class EarthMoonLabJourneyInstrumentationTest {
             assertTrue("A close-view body should occupy the native stage centre: $horizontal × $vertical px", horizontal >= 32 && vertical >= 32)
             val ratio = horizontal.toDouble() / vertical
             assertTrue("Native planet should remain round after surface resize: $horizontal × $vertical px", ratio in 0.67..1.5)
+            if (minimumBodyViewportFraction > 0.0) {
+                assertTrue("Opening Earth should occupy at least ${minimumBodyViewportFraction * 100}% of the short viewport: " +
+                    "$horizontal × $vertical px, minimum $minimumBodyDiameter px",
+                    horizontal >= minimumBodyDiameter && vertical >= minimumBodyDiameter)
+            }
         }
     }
 
     private fun measureCentralBodyAxes(image: Bitmap): Pair<Int, Int> {
-        // The paused Earth close view is centred. Measure the longest visible
-        // diameter on each centre line; a five-pixel thickness excludes thin
-        // trajectory lines. Tolerance allows lighting while catching stretched
-        // landscape buffers (the observed failure was more than 4:1).
+        // The paused Earth close view is centred. Measure between the outermost
+        // visible points on each centre line, allowing dark oceans between them.
+        // A five-pixel thickness excludes thin trajectory lines. Tolerance allows
+        // lighting while catching stretched landscape buffers (observed >4:1).
         fun visible(x: Int, y: Int): Boolean {
             val pixel = image.getPixel(x, y)
             return android.graphics.Color.red(pixel) + android.graphics.Color.green(pixel) +
                 android.graphics.Color.blue(pixel) > 18
         }
-        fun longestRun(size: Int, occupied: (Int) -> Boolean): Int {
-            var current = 0
-            var longest = 0
+        fun outerExtent(size: Int, occupied: (Int) -> Boolean): Int {
+            var first = -1
+            var last = -1
             for (coordinate in size / 10 until size * 9 / 10) {
-                current = if (occupied(coordinate)) current + 1 else 0
-                longest = maxOf(longest, current)
+                if (occupied(coordinate)) {
+                    if (first < 0) first = coordinate
+                    last = coordinate
+                }
             }
-            return longest
+            return if (first >= 0) last - first + 1 else 0
         }
-        val horizontal = longestRun(image.width) { x -> (-2..2).all { visible(x, image.height / 2 + it) } }
-        val vertical = longestRun(image.height) { y -> (-2..2).all { visible(image.width / 2 + it, y) } }
+        val horizontal = outerExtent(image.width) { x -> (-2..2).all { visible(x, image.height / 2 + it) } }
+        val vertical = outerExtent(image.height) { y -> (-2..2).all { visible(image.width / 2 + it, y) } }
         return horizontal to vertical
     }
 
