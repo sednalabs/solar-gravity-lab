@@ -103,12 +103,13 @@ internal fun labDraftValidation(draft: LabBodyDraft, session: LabBodyEditorSessi
         if (session.existingBodyIds.any { it.equals(draft.name, ignoreCase = true) }) {
             return "A body already has this name. Choose another."
         }
-        val mass = draft.massKg.toDoubleOrNull()
-        val radius = draft.radiusM.toDoubleOrNull()
-        if (mass == null || !mass.isFinite() || mass <= 0.0 || radius == null || !radius.isFinite() || radius <= 0.0) {
-            return "Mass and radius must be finite numbers greater than zero."
-        }
     }
+    val mass = draft.massKg.toDoubleOrNull()
+    val radius = draft.radiusM.toDoubleOrNull()
+    if (mass == null || !mass.isFinite() || mass < 0.0 || radius == null || !radius.isFinite() || radius <= 0.0) {
+        return "Mass must be finite and non-negative; radius must be finite and positive."
+    }
+    if (draft.sourceGravity && mass == 0.0) return "An attracting probe needs a positive mass."
     return null
 }
 
@@ -136,7 +137,13 @@ internal fun labDraftCommand(draft: LabBodyDraft, session: LabBodyEditorSession)
             sourceMassKg = if (draft.sourceGravity) mass else 0.0,
         )
     } else {
-        RuntimeCommand.SetBodyKinematics(session.body.bodyId, x, y, z, vx, vy, vz)
+        // Kinematics-only edits preserve an explicitly authored source/physical
+        // mass ratio, rather than silently normalising existing saved worlds.
+        val mass = draft.massKg.toDouble()
+        val source = if (draft.massKg == initial.massKg && draft.sourceGravity == initial.sourceGravity)
+            session.body.sourceMassKg else if (draft.sourceGravity) mass else 0.0
+        RuntimeCommand.SetBodyProperties(session.body.bodyId, mass, source,
+            draft.radiusM.toDouble(), x, y, z, vx, vy, vz)
     }
 }
 
@@ -166,7 +173,7 @@ internal fun LabBodyInspectorDialog(
         modifier = Modifier.testTag(LabTags.INSPECTOR),
         title = { Text(bodyName) },
         confirmButton = { TextButton(onClick = onEdit, enabled = body != null,
-            modifier = Modifier.testTag(LabTags.EDIT)) { Text("Edit position & velocity") } },
+            modifier = Modifier.testTag(LabTags.EDIT)) { Text("Edit mass & motion") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
@@ -254,7 +261,7 @@ internal fun LabBodyEditorDialog(
                 LabVectorFields("Velocity · km/s", "velocity", draft.velocityKmPerSecond, !committing) { axis, value ->
                     draft = draft.copy(velocityKmPerSecond = draft.velocityKmPerSecond.toMutableList().also { it[axis] = value })
                 }
-                if (session.creating) {
+                run {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(value = draft.massKg, onValueChange = { draft = draft.copy(massKg = it) },
                             modifier = Modifier.weight(1f).testTag(SolarLabTestTags.SPAWN_BODY_MASS_FIELD),
@@ -264,10 +271,11 @@ internal fun LabBodyEditorDialog(
                             label = { Text("Radius · m") }, singleLine = true, enabled = !committing)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = draft.sourceGravity, onCheckedChange = { draft = draft.copy(sourceGravity = it) }, enabled = !committing)
+                        Checkbox(checked = draft.sourceGravity, onCheckedChange = { draft = draft.copy(sourceGravity = it) }, enabled = !committing,
+                            modifier = Modifier.testTag("lab.edit.gravity"))
                         Column {
-                            Text("Exert gravity", style = MaterialTheme.typography.bodyMedium)
-                            Text("Off: a non-perturbing test particle.", style = MaterialTheme.typography.bodySmall,
+                            Text("Attracts other bodies", style = MaterialTheme.typography.bodyMedium)
+                            Text(if (draft.sourceGravity) "On: this mass changes other bodies’ motion." else "Off: mass is recorded, but other bodies are not perturbed.", style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

@@ -166,6 +166,7 @@ pub enum SlCommandKind {
     CreateCheckpoint = 9,
     CreateBranchFromCheckpoint = 10,
     SeedCanonicalSolarSystem = 11,
+    SetBodyProperties = 12,
 }
 
 #[repr(C)]
@@ -1900,6 +1901,14 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
         SlCommandKind::RemoveBody => Ok(WorldCommand::RemoveBody {
             body_id: BodyId(decode_identifier(&command.body_id, command.body_id_len)?),
         }),
+        SlCommandKind::SetBodyProperties => Ok(WorldCommand::SetBodyProperties {
+            body_id: BodyId(decode_identifier(&command.body_id, command.body_id_len)?),
+            mass_kg: command.body_mass_kg,
+            source_mass_kg: command.body_source_mass_kg,
+            radius_m: command.body_radius_m,
+            position_m: decode_vector3d(command.body_position),
+            velocity_mps: decode_vector3d(command.body_velocity),
+        }),
         SlCommandKind::SetBodyKinematics => {
             let body_id = decode_identifier(&command.body_id, command.body_id_len)?;
             Ok(WorldCommand::SetBodyKinematics {
@@ -1987,6 +1996,7 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
         | RuntimeError::UnknownScenario(_)
         | RuntimeError::InvalidEpochDelta(_)
         | RuntimeError::InvalidPlaybackRate(_)
+        | RuntimeError::InvalidBodyProperties
         | RuntimeError::UnknownCheckpoint(_)
         | RuntimeError::DuplicateCheckpoint(_)
         | RuntimeError::DuplicateBranch(_)
@@ -2802,6 +2812,7 @@ mod android_jni {
             9 => Ok(SlCommandKind::CreateCheckpoint),
             10 => Ok(SlCommandKind::CreateBranchFromCheckpoint),
             11 => Ok(SlCommandKind::SeedCanonicalSolarSystem),
+            12 => Ok(SlCommandKind::SetBodyProperties),
             _ => Err(status(SlStatusCode::InvalidArgument)),
         }
     }

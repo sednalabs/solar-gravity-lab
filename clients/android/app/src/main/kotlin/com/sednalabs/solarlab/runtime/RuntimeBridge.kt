@@ -1160,6 +1160,15 @@ sealed interface RuntimeCommand {
         override val label: String = "body.remove"
     }
 
+    data class SetBodyProperties(
+        val bodyId: String,
+        val massKg: Double,
+        val sourceMassKg: Double,
+        val radiusM: Double,
+        val positionX: Double, val positionY: Double, val positionZ: Double,
+        val velocityX: Double, val velocityY: Double, val velocityZ: Double,
+    ) : RuntimeCommand { override val label: String = "body.set_properties" }
+
     data class SetBodyKinematics(
         val bodyId: String,
         val positionX: Double,
@@ -1291,6 +1300,14 @@ private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when
     is RuntimeCommand.RemoveBody -> NativeRuntimeCommandPayload(
         kind = NATIVE_COMMAND_REMOVE_BODY,
         bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+    )
+
+    is RuntimeCommand.SetBodyProperties -> NativeRuntimeCommandPayload(
+        kind = 12, // Additive SlCommandKind::SetBodyProperties; existing ABI fields.
+        bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+        bodyMassKg = massKg, bodySourceMassKg = sourceMassKg, bodyRadiusM = radiusM,
+        bodyPositionX = positionX, bodyPositionY = positionY, bodyPositionZ = positionZ,
+        bodyVelocityX = velocityX, bodyVelocityY = velocityY, bodyVelocityZ = velocityZ,
     )
 
     is RuntimeCommand.SetBodyKinematics -> NativeRuntimeCommandPayload(

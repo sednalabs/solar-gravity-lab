@@ -30,7 +30,7 @@ class LabBodyAuthoringTest {
     @Test
     fun untouchedEditorFieldsPreserveAuthoritativeDoubleBits() {
         val session = LabBodyEditorSession(moon, earth, false, setOf("earth", "moon"))
-        val command = labDraftCommand(session.initialDraft(), session) as RuntimeCommand.SetBodyKinematics
+        val command = labDraftCommand(session.initialDraft(), session) as RuntimeCommand.SetBodyProperties
         assertEquals(moon.positionX.toBits(), command.positionX.toBits())
         assertEquals(moon.positionY.toBits(), command.positionY.toBits())
         assertEquals(moon.positionZ.toBits(), command.positionZ.toBits())
@@ -45,7 +45,7 @@ class LabBodyAuthoringTest {
         val draft = session.initialDraft().copy(velocityKmPerSecond = listOf("0.125", "0.987987654321", "0.017123456789"))
         // Only replace X in the real initial list so the other values follow their exact-state path.
         val adjusted = draft.copy(velocityKmPerSecond = session.initialDraft().velocityKmPerSecond.toMutableList().also { it[0] = "0.125" })
-        val command = labDraftCommand(adjusted, session) as RuntimeCommand.SetBodyKinematics
+        val command = labDraftCommand(adjusted, session) as RuntimeCommand.SetBodyProperties
         assertEquals(earth.velocityX + 125.0, command.velocityX, 0.0)
         assertEquals(moon.velocityY.toBits(), command.velocityY.toBits())
         assertEquals(moon.velocityZ.toBits(), command.velocityZ.toBits())

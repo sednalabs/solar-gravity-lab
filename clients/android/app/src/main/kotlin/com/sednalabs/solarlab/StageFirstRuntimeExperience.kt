@@ -1336,6 +1336,8 @@ internal fun StageFirstRuntimeExperience(
                         committing = labInteraction.committing,
                         altitudeLocked = draft.altitudeLocked,
                         headingDegreesText = draft.headingDegreesText,
+                        massKgText = draft.massKgText,
+                        sourceGravity = draft.sourceGravity,
                     ),
                     actions = LabPlacementActions(
                         onHostChange = ::changePlacementHost,
@@ -1347,6 +1349,8 @@ internal fun StageFirstRuntimeExperience(
                         onCancel = ::cancelProbePlacement,
                         onAltitudeLockChange = { labInteraction.changeDraft(draft.copy(altitudeLocked = it)) },
                         onHeadingChange = { labInteraction.changeDraft(draft.copy(headingDegreesText = it)) },
+                        onMassChange = { labInteraction.changeDraft(draft.copy(massKgText = it)) },
+                        onSourceGravityChange = { labInteraction.changeDraft(draft.copy(sourceGravity = it)) },
                     ),
                     modifier = panelModifier,
                 )

@@ -5,6 +5,7 @@
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
 mod lab_prediction;
+mod body_properties;
 mod lab_step;
 mod persistence;
 mod probe_authoring;
@@ -231,6 +232,15 @@ pub enum WorldCommand {
         position_m: Vector3d,
         velocity_mps: Vector3d,
     },
+    /// Atomically edits physical properties and kinematics without replacing identity/history.
+    SetBodyProperties {
+        body_id: BodyId,
+        mass_kg: f64,
+        source_mass_kg: f64,
+        radius_m: f64,
+        position_m: Vector3d,
+        velocity_mps: Vector3d,
+    },
     /// Advances the system epoch.
     /// This invokes the authoritative physics solver for the delta duration.
     AdvanceEpoch { delta_seconds: f64 },
@@ -275,6 +285,7 @@ pub enum RuntimeError {
     UnknownScenario(ScenarioId),
     InvalidEpochDelta(f64),
     InvalidPlaybackRate(f64),
+    InvalidBodyProperties,
     AdvanceBusy,
     AdvanceStale,
     AdvanceWorkLimit,
@@ -857,6 +868,15 @@ impl WorldRuntime {
             _ => {}
         }
 
+        // Validate before consuming an ordinal or changing history/world state.
+        if let WorldCommand::SetBodyProperties {
+            body_id, mass_kg, source_mass_kg, radius_m, position_m, velocity_mps,
+        } = &command {
+            body_properties::validate(
+                &self.active_branch().world.bodies, body_id, *mass_kg,
+                *source_mass_kg, *radius_m, *position_m, *velocity_mps,
+            )?;
+        }
         let mut events = Vec::new();
         let mut header = self.new_command_header(&command, recorded_at_unix_ms);
         let summary = self.command_summary(&command);
@@ -971,6 +991,22 @@ impl WorldRuntime {
                     branch.world.epoch_seconds,
                     *position_m,
                 );
+            }
+            WorldCommand::SetBodyProperties {
+                body_id, mass_kg, source_mass_kg, radius_m, position_m, velocity_mps,
+            } => {
+                let branch = self.active_branch_mut();
+                let body = branch.world.bodies.iter_mut()
+                    .find(|body| body.body_id == *body_id)
+                    .expect("body-properties preflight established identity");
+                body.mass_kg = *mass_kg;
+                body.source_mass_kg = *source_mass_kg;
+                body.radius_m = *radius_m;
+                body.position_m = *position_m;
+                body.velocity_mps = *velocity_mps;
+                branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+                push_trail_sample(&mut branch.world.trail_history_by_body,
+                    body_id, branch.world.epoch_seconds, *position_m);
             }
             WorldCommand::AdvanceEpoch { delta_seconds } => {
                 let physics_policy = self.effective_physics_policy();
@@ -1292,6 +1328,7 @@ impl WorldRuntime {
             WorldCommand::SpawnBody { .. } => "body.spawn",
             WorldCommand::RemoveBody { .. } => "body.remove",
             WorldCommand::SetBodyKinematics { .. } => "body.set_kinematics",
+            WorldCommand::SetBodyProperties { .. } => "body.set_properties",
             WorldCommand::AdvanceEpoch { .. } => "timeline.advance_epoch",
             WorldCommand::PausePlayback => "playback.pause",
             WorldCommand::ResumePlayback => "playback.resume",
@@ -1311,6 +1348,8 @@ impl WorldRuntime {
             WorldCommand::SeedCanonicalSolarSystem => "seed canonical startup solar system".into(),
             WorldCommand::SpawnBody { body } => format!("spawn {}", body.body_id.0),
             WorldCommand::RemoveBody { body_id } => format!("remove {}", body_id.0),
+            WorldCommand::SetBodyProperties { body_id, mass_kg, source_mass_kg, .. } =>
+                format!("set properties {} mass={} kg source={} kg", body_id.0, mass_kg, source_mass_kg),
             WorldCommand::SetBodyKinematics { body_id, .. } => {
                 format!("set kinematics {}", body_id.0)
             }

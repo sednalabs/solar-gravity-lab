@@ -44,17 +44,24 @@ internal data class LabProbeDraft(
     val speedKmPerSecondText: String = "0",
     val headingDegreesText: String = "90",
     val altitudeLocked: Boolean = false,
+    val massKgText: String = "1000",
+    val sourceGravity: Boolean = false,
 ) {
+    val massKg: Double? get() = massKgText.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+    val sourceMassKg: Double get() = if (sourceGravity) massKg ?: 0.0 else 0.0
     val altitudeM: Double? get() = altitudeKmText.toDoubleOrNull()?.times(1_000.0)?.takeIf(Double::isFinite)
     val distanceM: Double? get() = altitudeM?.plus(reference.radiusM)
     val radialUnit: Vector3d get() = plane.axisU * cos(azimuthRadians) + plane.axisV * sin(azimuthRadians)
     val tangentUnit: Vector3d get() = plane.axisU * -sin(azimuthRadians) + plane.axisV * cos(azimuthRadians)
     val positionM: Vector3d? get() = distanceM?.let { reference.labPosition() + radialUnit * it }
     val circularSpeedMps: Double? get() = distanceM?.takeIf { it > 0.0 }?.let {
-        sqrt(6.67430e-11 * reference.sourceMassKg / it)
+        sqrt(6.67430e-11 * (reference.sourceMassKg + sourceMassKg) / it)
     }?.takeIf(Double::isFinite)
 
     val validationError: String? get() = when {
+        massKg == null -> "Enter a finite, non-negative mass in kilograms. Scientific notation is supported."
+        sourceGravity && massKg == 0.0 -> "An attracting probe needs a positive mass."
+        motion == LabPlacementMotion.CIRCULAR && circularSpeedMps == null -> "Mass is too large for a finite orbit speed."
         altitudeM == null -> "Enter an altitude in kilometres."
         altitudeM!! < 1_000.0 -> "Place the probe at least 1 km above the surface."
         altitudeM!! > 5.0e12 -> "Choose an altitude below 5 billion kilometres."
@@ -85,7 +92,7 @@ internal data class LabProbeDraft(
         val velocity = reference.labVelocity() + (relativeVelocityMps() ?: return null)
         return RuntimeBodyState(
             bodyId = probeId, bodyClass = RuntimeBodyClass.Spacecraft,
-            massKg = 1_000.0, sourceMassKg = 0.0, radiusM = 2.0,
+            massKg = requireNotNull(massKg), sourceMassKg = sourceMassKg, radiusM = 2.0,
             positionX = position.x, positionY = position.y, positionZ = position.z,
             velocityX = velocity.x, velocityY = velocity.y, velocityZ = velocity.z,
         )

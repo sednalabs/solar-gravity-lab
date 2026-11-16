@@ -81,6 +81,8 @@ internal data class LabPlacementUiState(
     val committing: Boolean = false,
     val altitudeLocked: Boolean = false,
     val headingDegreesText: String = "90",
+    val massKgText: String = "1000",
+    val sourceGravity: Boolean = false,
 )
 
 internal data class LabPlacementActions(
@@ -93,6 +95,8 @@ internal data class LabPlacementActions(
     val onCancel: () -> Unit,
     val onAltitudeLockChange: (Boolean) -> Unit = {},
     val onHeadingChange: (String) -> Unit = {},
+    val onMassChange: (String) -> Unit = {},
+    val onSourceGravityChange: (Boolean) -> Unit = {},
 )
 
 internal object LabPlacementTags {
@@ -103,6 +107,9 @@ internal object LabPlacementTags {
     const val ALTITUDE_LOCK = "lab.placement.altitude.lock"
     const val SPEED = "lab.placement.speed"
     const val HEADING = "lab.placement.heading"
+    const val MASS = "lab.placement.mass"
+    const val GRAVITY = "lab.placement.gravity"
+    const val SECTION_BODY = "lab.placement.section.body"
     const val PREVIEW = "lab.placement.preview"
     const val CREATE = LabTags.PROBE_COMMIT
     const val CANCEL = "lab.placement.cancel"
@@ -119,7 +126,7 @@ internal object LabPlacementMetrics {
     val LandscapeWidth = 344.dp
 }
 
-private enum class PlacementSection { POSITION, MOTION }
+private enum class PlacementSection { POSITION, MOTION, BODY }
 
 /** The scene has one title; the panel below it describes position and motion. */
 @Composable
@@ -166,6 +173,7 @@ internal fun LabPlacementSheet(
     val section = PlacementSection.valueOf(sectionName)
     val positionScroll = rememberScrollState()
     val motionScroll = rememberScrollState()
+    val bodyScroll = rememberScrollState()
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     fun showSection(value: PlacementSection) {
@@ -196,13 +204,37 @@ internal fun LabPlacementSheet(
                         LabPlacementMotion.CUSTOM -> "${state.speedKmPerSecondText} km/s · ${state.headingDegreesText}°"
                     }, section == PlacementSection.MOTION, !state.committing, LabPlacementTags.SECTION_MOTION,
                         Modifier.weight(1f)) { showSection(PlacementSection.MOTION) }
+                    PlacementSectionTab("Mass", "${state.massKgText} kg",
+                        section == PlacementSection.BODY, !state.committing, LabPlacementTags.SECTION_BODY,
+                        Modifier.weight(1f)) { showSection(PlacementSection.BODY) }
                 }
                 HorizontalDivider(color = LabLine.copy(alpha = 0.6f))
                 Column(Modifier.weight(1f).fillMaxWidth()
-                    .verticalScroll(if (section == PlacementSection.POSITION) positionScroll else motionScroll)
+                    .verticalScroll(when (section) { PlacementSection.POSITION -> positionScroll; PlacementSection.MOTION -> motionScroll; PlacementSection.BODY -> bodyScroll })
                     .testTag(LabPlacementTags.CONTENT)
                     .padding(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (section == PlacementSection.POSITION) {
+                    if (section == PlacementSection.BODY) {
+                        PlacementNumberField(state.massKgText, "Probe mass · kg", LabPlacementTags.MASS,
+                            !state.committing, Modifier.fillMaxWidth(), actions.onMassChange)
+                        FlowRow(Modifier.fillMaxWidth()) {
+                            listOf("1,000 kg" to "1000", "1 million kg" to "1e6", "Moon mass" to "7.342e22").forEach { (label, value) ->
+                                PlacementChoice(label, state.massKgText == value, !state.committing,
+                                    "lab.placement.mass.$value") { actions.onMassChange(value) }
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = state.sourceGravity, onCheckedChange = actions.onSourceGravityChange,
+                                enabled = !state.committing,
+                                modifier = Modifier.size(48.dp).testTag(LabPlacementTags.GRAVITY)
+                                    .semantics { contentDescription = "Probe attracts other bodies" })
+                            Text("Attracts other bodies", color = LabInk)
+                        }
+                        Text(if (state.sourceGravity) "This mass changes the motion of Earth, Moon and other probes. The preview recalculates those forces."
+                            else "Feels gravity without perturbing other bodies. Mass is still saved. Turn attraction on for massive-body experiments.",
+                            color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                        Text("Kilograms; scientific notation such as 1e20 is accepted. Radius stays 2 m until edited; mass does not imply realistic density.",
+                            color = LabMuted, fontSize = 11.sp, lineHeight = 16.sp)
+                    } else if (section == PlacementSection.POSITION) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("Around", color = LabMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
                             FlowRow(Modifier.weight(1f)) {
