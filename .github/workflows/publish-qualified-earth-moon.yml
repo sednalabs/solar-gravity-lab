@@ -1,0 +1,33 @@
+name: Publish qualified Earth–Moon preview
+
+on:
+  push:
+    branches:
+      - release-publish/0.2.0-alpha.1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-qualified-earth-moon-0.2.0-alpha.1
+  cancel-in-progress: false
+
+jobs:
+  publish-qualified:
+    if: github.repository == 'sednalabs/solar-gravity-lab'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify and publish the unchanged qualified APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 .github/scripts/publish_earth_moon_alpha1.py
+          --archive qualified-alpha1.zip
+          --destination published-assets

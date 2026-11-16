@@ -120,6 +120,9 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Verify release note body bounds
+        run: python3 .github/scripts/test_render_release_notes.py
+
       - name: Resolve release request
         id: route
         shell: bash
@@ -497,6 +500,15 @@ jobs:
           print(f"commit_count={payload['commit_count']}")
           PY
 
+      - name: Render bounded GitHub release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/render_release_notes.py \
+            --inventory "dist/changelog-${{ steps.meta.outputs.safe_version }}.json" \
+            --repo "${{ github.repository }}" \
+            --output "dist/release-notes-${{ steps.meta.outputs.safe_version }}.md"
+
       - name: Generate build provenance
         shell: bash
         run: |
@@ -688,9 +700,10 @@ jobs:
           # by filename rather than assuming they sit directly under dist/.
           changelog_json="$(find dist -type f -name 'changelog-*.json' | sort | head -n 1)"
           changelog_md="$(find dist -type f -name 'changelog-*.md' | sort | head -n 1)"
+          release_notes_md="$(find dist -type f -name 'release-notes-*.md' | sort | head -n 1)"
           metadata_path="$(find dist -type f -name 'output-metadata.json' | sort | head -n 1)"
 
-          if [[ -z "$changelog_json" || -z "$changelog_md" || -z "$metadata_path" ]]; then
+          if [[ -z "$changelog_json" || -z "$changelog_md" || -z "$release_notes_md" || -z "$metadata_path" ]]; then
             echo "Missing release artifacts in downloaded dist directory." >&2
             find dist -type f || true
             exit 1
@@ -699,6 +712,7 @@ jobs:
           {
             echo "changelog_json=$changelog_json"
             echo "changelog_md=$changelog_md"
+            echo "release_notes_md=$release_notes_md"
             echo "metadata_path=$metadata_path"
           } >> "$GITHUB_OUTPUT"
 
@@ -787,7 +801,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          release_notes="${{ steps.release_artifacts.outputs.changelog_md }}"
+          release_notes="${{ steps.release_artifacts.outputs.release_notes_md }}"
           metadata_path="${{ steps.release_artifacts.outputs.metadata_path }}"
           release_provenance_path="$(find dist -type f -name 'release-provenance-*.json' | sort | head -n 1)"
           if [[ -z "$release_provenance_path" ]]; then
