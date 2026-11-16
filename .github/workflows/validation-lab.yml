@@ -544,6 +544,7 @@ jobs:
           set -euo pipefail
           python3 tools/generate_earth_moon_reference.py --check
           python3 render/android-vulkan/src/test/python/test_surface_frame.py
+          python3 render/android-vulkan/src/test/python/test_compute_contract.py
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/solarlab-presentation-test
           /tmp/solarlab-presentation-test
           cargo test --workspace
@@ -647,7 +648,7 @@ jobs:
                             "source": Path("dist/physics-throughput-arm64/source.txt").read_text().strip()}))
           PY
           taskset -c "$single_cpu" "$benchmark_binary" --samples 11 \
-            --workloads canonical-mixed-365,sparse-1024,dense-1024 \
+            --workloads canonical-mixed-365,sparse-1024,dense-128,dense-192,dense-256,dense-512,dense-1024 \
             | tee dist/physics-throughput-arm64/measurements-one-cpu.ndjson
           python3 - <<'PY'
           import json
@@ -656,10 +657,10 @@ jobs:
           assert rows[0]["arch"] == "aarch64", "Expected the native ARM release binary"
           assert rows[0]["available_workers"] == 1, "Benchmark did not observe single-CPU affinity"
           measurements = [row for row in rows if row["kind"] == "measurement"]
-          assert len(measurements) == 6, "Expected three workloads and two backends"
+          assert len(measurements) == 14, "Expected seven workloads and two backends"
           assert all(row["active_workers"] == 1 for row in measurements), "Single-CPU run selected multiple workers"
           arm_measurements = [row for row in measurements if row["requested"] == "SimdArm64"]
-          assert len(arm_measurements) == 3, "Expected three native ARM measurements"
+          assert len(arm_measurements) == 7, "Expected seven native ARM measurements"
           assert all(row["path"].startswith("simd.arm64.neon-") for row in arm_measurements), "ARM benchmark fell back from NEON"
           PY
 

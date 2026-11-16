@@ -3,14 +3,21 @@
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, std140) uniform SceneUniforms {
-    vec4 centerSpan;
-    vec4 metrics;
+    vec4 centerRelativeAndMetrics;
+    vec4 rightAndSpan;
+    vec4 upAndSpan;
+    vec4 forwardAndDepth;
     vec4 viewport;
 } uScene;
 
+// Scalar std430 fields match the 40-byte C++ state and 20-byte graphics vertex.
 struct FarTracerState {
-    vec2 positionM;
-    vec2 velocityMps;
+    float x;
+    float y;
+    float z;
+    float vx;
+    float vy;
+    float vz;
     uint colorArgb;
     uint densityWeight;
     uint stableId;
@@ -18,7 +25,9 @@ struct FarTracerState {
 };
 
 struct DensityPointVertex {
-    vec2 positionM;
+    float x;
+    float y;
+    float z;
     uint colorArgb;
     uint densityWeight;
 };
@@ -51,14 +60,18 @@ layout(push_constant) uniform PushConstants {
 
 const uint kFarTileMaxCapacity = 8u;
 
-bool isInsideExtendedView(vec2 positionM) {
-    vec2 delta = abs(positionM - uScene.centerSpan.xy);
-    vec2 span = max(uScene.centerSpan.zw, vec2(1e-6)) * 1.08;
-    return all(lessThanEqual(delta, span));
+vec2 cameraPlanePosition(vec3 positionM) {
+    vec3 relative = positionM - uScene.centerRelativeAndMetrics.xyz;
+    return vec2(dot(relative, uScene.rightAndSpan.xyz), dot(relative, uScene.upAndSpan.xyz));
+}
+
+bool isInsideExtendedView(vec3 positionM) {
+    vec2 span = max(vec2(uScene.rightAndSpan.w, uScene.upAndSpan.w), vec2(1e-6)) * 1.08;
+    return all(lessThanEqual(abs(cameraPlanePosition(positionM)), span));
 }
 
 uint farStrideForZoom(uint densityWeight) {
-    float zoom = max(uScene.metrics.x / 5.0e8, 1.0);
+    float zoom = max(uScene.centerRelativeAndMetrics.w / 5.0e8, 1.0);
     uint zoomStride = 1u + uint(clamp(floor(log2(zoom)), 0.0, 6.0));
     return max(max(densityWeight, 1u), zoomStride);
 }
@@ -75,14 +88,16 @@ void main() {
     }
 
     FarTracerState candidate = uSource.src[index];
-    if (!isInsideExtendedView(candidate.positionM)) {
+    vec3 positionM = vec3(candidate.x, candidate.y, candidate.z);
+    if (!isInsideExtendedView(positionM)) {
         return;
     }
 
     uint stride = farStrideForZoom(candidate.densityWeight);
-    vec2 relative = candidate.positionM - uScene.centerSpan.xy;
-    vec2 span = max(uScene.centerSpan.zw, vec2(1e-6));
-    vec2 uv = relative / span * 0.5 + 0.5;
+    vec2 relative = cameraPlanePosition(positionM);
+    vec2 span = max(vec2(uScene.rightAndSpan.w, uScene.upAndSpan.w), vec2(1e-6));
+    // Vulkan's window Y points down, as in density_point.vert and native picking.
+    vec2 uv = vec2(relative.x, -relative.y) / span * 0.5 + 0.5;
     uvec2 viewportPx = max(uvec2(uScene.viewport.xy), uvec2(1u));
     vec2 clampedUv = clamp(uv, vec2(0.0), vec2(0.999999));
     uvec2 pixel = uvec2(floor(clampedUv * vec2(viewportPx)));
@@ -91,6 +106,9 @@ void main() {
     uvec2 tileCoord = pixel >> tileShift;
     uvec2 tileGrid = (viewportPx + ((1u << tileShift) - 1u)) >> tileShift;
     uint tileIndex = tileCoord.x + (tileCoord.y * max(tileGrid.x, 1u));
+    if (tileIndex >= uPush.tileCounterCount) {
+        return;
+    }
     uint tileCapacity = farTileCapacity(stride);
     uint slot = atomicAdd(uTiles.counts[tileIndex], 1u);
     if (slot >= tileCapacity) {
@@ -102,7 +120,9 @@ void main() {
 
     uint outputIndex = tileIndex * kFarTileMaxCapacity + slot;
     uOutput.dst[outputIndex] = DensityPointVertex(
-        candidate.positionM,
+        candidate.x,
+        candidate.y,
+        candidate.z,
         candidate.colorArgb,
         candidate.densityWeight
     );

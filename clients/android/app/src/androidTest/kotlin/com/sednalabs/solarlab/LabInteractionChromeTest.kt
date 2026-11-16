@@ -214,7 +214,7 @@ class LabInteractionChromeTest {
             composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE).performScrollTo().performClick()
             waitForKeyboard(keyboardBottom, shown = true)
             composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE).performTextReplacement("1250")
-                .performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE).performScrollTo().assertIsDisplayed()
             assertReachable(LabPlacementTags.CREATE)
             assertReachable(LabPlacementTags.CANCEL)
             assertReachable(LabPlacementTags.SECTION_MOTION)

@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 
 use solarlab_domain::Vector3d;
 
+#[cfg(any(target_arch = "aarch64", test))]
+mod pair_work;
 #[cfg(test)]
 mod throughput_tests;
 #[cfg(target_arch = "x86_64")]
@@ -99,8 +101,13 @@ pub struct SolverScheduleReport {
     pub candidate_workers: u32,
     pub body_count: u32,
     pub estimated_pair_count: u64,
+    /// Coarse body granularity used to cap the parallel worker budget.
     pub tile_size_bodies: u32,
+    /// Budget tiles, not the worker's actual row assignment. Parallel force
+    /// work uses balanced nonempty pair partitions, including split long rows.
     pub tile_count: u32,
+    /// Nonempty pair partitions in the active or candidate parallel plan,
+    /// according to `mode`.
     pub parallel_tile_workers: u32,
 }
 
@@ -873,12 +880,35 @@ fn physical_pair_count(body_count: usize, source_count: usize) -> u64 {
 }
 
 fn enough_parallel_pair_work(body_count: usize, source_count: usize) -> bool {
+    enough_parallel_pair_work_with_budget(body_count, source_count, runtime_worker_budget())
+}
+
+fn enough_parallel_pair_work_with_budget(
+    body_count: usize,
+    source_count: usize,
+    worker_budget: usize,
+) -> bool {
+    // Provisional work grain, informed by hosted full/single-CPU measurements:
+    // 5,355 canonical pairs lost to thread startup, while 523,776 dense pairs
+    // benefited from four workers. Require the old 96-source work grain for
+    // each selected worker; intermediate workloads qualify the crossover.
+    let workers = nonempty_parallel_worker_count(body_count, source_count, worker_budget).max(1);
     body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
         && physical_pair_count(body_count, source_count)
             >= physical_pair_count(
                 ADAPTIVE_TILED_SCHEDULER_MIN_BODIES,
                 ADAPTIVE_TILED_SCHEDULER_MIN_BODIES,
-            )
+            ).saturating_mul(workers as u64)
+}
+
+fn nonempty_parallel_worker_count(
+    body_count: usize,
+    source_count: usize,
+    worker_budget: usize,
+) -> usize {
+    worker_budget
+        .min(body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES))
+        .min(physical_pair_count(body_count, source_count).min(usize::MAX as u64) as usize)
 }
 
 fn solver_schedule_report_for_arm64_kernel_with_source_count(
@@ -893,18 +923,19 @@ fn solver_schedule_report_for_arm64_kernel_with_source_count(
     let candidate_parallel = arm64_solver_active
         && enough_parallel_pair_work(body_count, source_count)
         && worker_budget > 1;
-    let tile_count = if arm64_solver_active && enough_parallel_pair_work(body_count, source_count) {
+    let tile_count = if arm64_solver_active
+        && (parallel_tiled_active || enough_parallel_pair_work(body_count, source_count)) {
         body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES)
     } else {
         0
     };
     let active_workers = if parallel_tiled_active {
-        worker_budget.min(tile_count).max(1)
+        nonempty_parallel_worker_count(body_count, source_count, worker_budget).max(1)
     } else {
         1
     };
     let candidate_workers = if candidate_parallel {
-        worker_budget.min(tile_count).max(1)
+        nonempty_parallel_worker_count(body_count, source_count, worker_budget).max(1)
     } else {
         active_workers
     };
@@ -1380,8 +1411,8 @@ fn integrate_fixed_steps_with_kernel(
     // them would change rounding and the staged/bulk schedule contract.
     let sources = source_indices(bodies);
     let mut accelerations = vec![Vector3d::default(); bodies.len()];
-    let mut partials = Vec::new();
-    gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut partials);
+    let mut scratch = GravityScratch::default();
+    gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
     let half_dt = 0.5 * dt_seconds;
     for _ in 0..count {
         for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
@@ -1397,7 +1428,7 @@ fn integrate_fixed_steps_with_kernel(
                 body.position_m = add(body.position_m, scale(body.velocity_mps, dt_seconds));
             }
         }
-        gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut partials);
+        gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
         for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
             if matches!(kernel, GravityKernel::Arm64(_)) {
                 body.velocity_mps.x = acceleration.x.mul_add(half_dt, body.velocity_mps.x);
@@ -1516,12 +1547,20 @@ fn interaction_partners(
     }
 }
 
+#[derive(Default)]
+struct GravityScratch {
+    #[cfg(target_arch = "aarch64")]
+    parallel_partitions: Option<Vec<pair_work::PairPartition>>,
+    #[cfg(target_arch = "aarch64")]
+    partials: Vec<Vec<Vector3d>>,
+}
+
 fn gravity_accelerations_into(
     bodies: &[MassiveBodyState],
     sources: &[usize],
     accelerations: &mut [Vector3d],
     kernel: GravityKernel,
-    partials: &mut Vec<Vec<Vector3d>>,
+    scratch: &mut GravityScratch,
 ) {
     accelerations.fill(Vector3d::default());
     match kernel {
@@ -1530,7 +1569,7 @@ fn gravity_accelerations_into(
             sources,
             accelerations,
             kernel,
-            partials,
+            scratch,
         ),
         GravityKernel::Scalar => {
             pairwise_gravity_accelerations_into(bodies, sources, accelerations)
@@ -1616,7 +1655,7 @@ fn pairwise_gravity_accelerations_arm64(
         &source_indices(bodies),
         &mut accelerations,
         gravity_kernel,
-        &mut Vec::new(),
+        &mut GravityScratch::default(),
     );
     accelerations
 }
@@ -1626,7 +1665,7 @@ fn pairwise_gravity_accelerations_arm64_into(
     sources: &[usize],
     accelerations: &mut [Vector3d],
     gravity_kernel: Arm64GravityKernel,
-    partials: &mut Vec<Vec<Vector3d>>,
+    scratch: &mut GravityScratch,
 ) {
     match gravity_kernel {
         Arm64GravityKernel::NeonF64Pairwise => {
@@ -1640,7 +1679,7 @@ fn pairwise_gravity_accelerations_arm64_into(
                 bodies,
                 sources,
                 accelerations,
-                partials,
+                scratch,
             )
         }
         Arm64GravityKernel::PortableScalarOracle => {
@@ -1706,7 +1745,7 @@ fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
     bodies: &[MassiveBodyState],
     sources: &[usize],
     accelerations: &mut [Vector3d],
-    partials: &mut Vec<Vec<Vector3d>>,
+    scratch: &mut GravityScratch,
 ) {
     assert!(
         arm64_neon_runtime_available(),
@@ -1719,7 +1758,7 @@ fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
             bodies,
             sources,
             accelerations,
-            partials,
+            scratch,
             runtime_worker_budget(),
         )
     }
@@ -1730,7 +1769,7 @@ fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
     _bodies: &[MassiveBodyState],
     _sources: &[usize],
     _accelerations: &mut [Vector3d],
-    _partials: &mut Vec<Vec<Vector3d>>,
+    _scratch: &mut GravityScratch,
 ) {
     panic!("Arm64 parallel tiled NEON solver selected on a non-aarch64 host")
 }
@@ -1768,8 +1807,8 @@ mod arm64_neon {
     use solarlab_domain::Vector3d;
 
     use super::{
-        interaction_partners, MassiveBodyState, ARM64_GRAVITY_TILE_SIZE_BODIES, G_M3_PER_KG_S2,
-        MIN_DISTANCE_M2,
+        interaction_partners, nonempty_parallel_worker_count, pair_work, GravityScratch,
+        MassiveBodyState, ARM64_GRAVITY_TILE_SIZE_BODIES, G_M3_PER_KG_S2, MIN_DISTANCE_M2,
     };
 
     #[target_feature(enable = "neon")]
@@ -1815,42 +1854,42 @@ mod arm64_neon {
         bodies: &[MassiveBodyState],
         sources: &[usize],
         accelerations: &mut [Vector3d],
-        partials: &mut Vec<Vec<Vector3d>>,
+        scratch: &mut GravityScratch,
         worker_budget: usize,
     ) {
         if bodies.len() < 2 || worker_budget <= 1 {
             return pairwise_gravity_accelerations_neon_f64_tiled(bodies, sources, accelerations);
         }
-        let tile_count = bodies.len().div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES);
-        let worker_count = worker_budget.min(tile_count).max(1);
-        // Workers keep their scratch across force evaluations. The reduction
-        // always follows worker index, independent of completion order.
-        partials.resize_with(worker_count, || vec![Vector3d::default(); bodies.len()]);
+        let partitions = scratch.parallel_partitions.get_or_insert_with(|| {
+            pair_work::balanced_pair_partitions(
+                bodies.len(),
+                sources,
+                nonempty_parallel_worker_count(bodies.len(), sources.len(), worker_budget),
+            )
+        });
+        if partitions.is_empty() {
+            return;
+        }
+        if partitions.len() == 1 {
+            return pairwise_gravity_accelerations_neon_f64_tiled(bodies, sources, accelerations);
+        }
+        // Source membership is fixed for the segment. Reuse its balanced pair
+        // partitions and worker scratch across sweeps. Contiguous pair order
+        // and worker-index reduction do not depend on thread completion order.
+        scratch.partials.resize_with(partitions.len(), || {
+            vec![Vector3d::default(); bodies.len()]
+        });
         std::thread::scope(|scope| {
-            for (worker_index, local) in partials.iter_mut().enumerate() {
+            for (partition, local) in partitions.iter().zip(&mut scratch.partials) {
                 local.fill(Vector3d::default());
                 scope.spawn(move || {
-                    for tile_index in (worker_index..tile_count).step_by(worker_count) {
-                        let start = tile_index * ARM64_GRAVITY_TILE_SIZE_BODIES;
-                        let end =
-                            ((tile_index + 1) * ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
-                        for i in start..end {
-                            interaction_partners(
-                                bodies,
-                                sources,
-                                i,
-                                i + 1,
-                                bodies.len(),
-                                |j| unsafe {
-                                    accumulate_pair(bodies, local, i, j);
-                                },
-                            );
-                        }
-                    }
+                    partition.for_each_pair(sources, |i, j| unsafe {
+                        accumulate_pair(bodies, local, i, j);
+                    });
                 });
             }
         });
-        for partial in partials {
+        for partial in &scratch.partials {
             for (target, contribution) in accelerations.iter_mut().zip(partial) {
                 target.x += contribution.x;
                 target.y += contribution.y;
@@ -2464,7 +2503,7 @@ mod tests {
         let mut policy = test_policy();
         policy.solver_backend = SolverBackend::SimdArm64;
         for delta in [130.0, 130.5] {
-            let initial = dense_kernel_parity_scenario(128);
+            let initial = dense_kernel_parity_scenario(512);
             let mut bulk = initial.clone();
             let mut chunked = initial;
             let (expected_invariants, report) =
@@ -2933,7 +2972,7 @@ mod tests {
     fn solver_schedule_report_truthfully_marks_adaptive_tiling_as_candidate() {
         let scalar_schedule = solver_schedule_report(192, false);
         let arm64_tiny_schedule = solver_schedule_report(8, true);
-        let arm64_large_schedule = solver_schedule_report(192, true);
+        let arm64_large_schedule = solver_schedule_report(512, true);
 
         assert_eq!(scalar_schedule.mode, SolverScheduleMode::SingleWorker);
         assert_eq!(scalar_schedule.tile_count, 0);
@@ -2942,10 +2981,10 @@ mod tests {
         assert_eq!(arm64_tiny_schedule.tile_count, 0);
         assert_eq!(arm64_tiny_schedule.parallel_tile_workers, 0);
         assert_eq!(arm64_large_schedule.active_workers, 1);
-        assert_eq!(arm64_large_schedule.body_count, 192);
-        assert_eq!(arm64_large_schedule.estimated_pair_count, 18_336);
+        assert_eq!(arm64_large_schedule.body_count, 512);
+        assert_eq!(arm64_large_schedule.estimated_pair_count, 130_816);
         assert_eq!(arm64_large_schedule.tile_size_bodies, 32);
-        assert_eq!(arm64_large_schedule.tile_count, 6);
+        assert_eq!(arm64_large_schedule.tile_count, 16);
 
         if arm64_large_schedule.candidate_workers > 1 {
             assert_eq!(
@@ -2954,7 +2993,7 @@ mod tests {
             );
             assert_eq!(
                 arm64_large_schedule.parallel_tile_workers,
-                arm64_large_schedule.candidate_workers.min(6)
+                arm64_large_schedule.candidate_workers.min(16)
             );
         } else {
             assert_eq!(arm64_large_schedule.mode, SolverScheduleMode::SingleWorker);

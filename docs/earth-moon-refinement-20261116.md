@@ -27,6 +27,13 @@ The geography, physical radius, actual light direction and analytic depth remain
 in the existing renderer. Atmospheric colour and surface orientation are
 illustrative, as stated in the app's science information.
 
+The denser scenario paths also receive a correctness repair: medium/far GPU
+compaction had retained an older 2D uniform and vertex layout while graphics
+consumed 3D vertices. The shared contract now preserves Z/VZ, camera-plane culling,
+window tile coordinates and packed strides. Far-buffer fills and counter readbacks
+have their required Vulkan usage flags and transfer/compute/graphics dependencies.
+Native acceptance exercises those paths and checks visible projected output.
+
 ### Simulate with a qualified numerical policy
 
 The exact-work optimisation, conserved diagnostics, AVX2 path and local benchmark

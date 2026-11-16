@@ -78,6 +78,25 @@ coalesces invalidations and permits one native render in flight; pause and surfa
 stop scheduling. Display-only frames update uniforms and reuse uploaded scene buffers, without
 exporting the Rust scene again. This is a scheduling policy, not a measured frame-rate claim.
 
+## Medium and far compute contract
+
+The medium/far compaction kernels consume the same camera basis, viewport and
+metres-per-pixel uniform prefix as their graphics shaders. Source state retains all
+three position and velocity components in a scalar-packed 40-byte record; compacted
+output is the same 20-byte three-dimensional vertex consumed by direct drawing.
+Compaction only selects and bins exported points. It does not integrate positions.
+Far tiles use window coordinates, including Vulkan's downward window Y, and publish
+both zero-filled slots and shader writes before the fixed-capacity draw. Tile counters
+have explicit transfer-source usage and a compute/clear-to-readback dependency.
+
+This corrects an older mismatch in which the compute kernels still interpreted a 2D
+uniform/output layout after graphics had moved to 3D. The lightweight
+`src/test/python/test_compute_contract.py` regression checks the actual shader/C++
+layouts and camera transform, including nonzero Z and portrait/landscape tile placement.
+Native stress qualification must additionally verify projected visible points and
+readbacks on a Vulkan device; successful shader compilation or nonzero dispatch alone
+does not establish correct rendering.
+
 ## GPU resource reuse
 
 The existing graphics fence still protects all scene writes. New packets retain compatible

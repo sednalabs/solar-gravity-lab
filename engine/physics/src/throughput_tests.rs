@@ -102,6 +102,94 @@ fn sparse_traversal_visits_only_physical_pairs_in_original_order() {
 }
 
 #[test]
+fn balanced_pair_partitions_cover_each_physical_pair_once_in_scalar_order() {
+    for count in [0, 1, 2, 19, 365] {
+        for pattern in 0..4 {
+            let sources: Vec<_> = (0..count)
+                .filter(|&index| match pattern {
+                    0 => false,
+                    1 => true,
+                    2 => index < 15,
+                    _ => index % 7 == 2,
+                })
+                .collect();
+            let expected: Vec<_> = (0..count)
+                .flat_map(|i| (i + 1..count).map(move |j| (i, j)))
+                .filter(|&(i, j)| sources.contains(&i) || sources.contains(&j))
+                .collect();
+            for workers in [1, 2, 4, 8, 16] {
+                let partitions = pair_work::balanced_pair_partitions(count, &sources, workers);
+                let mut actual = Vec::new();
+                for partition in &partitions {
+                    partition.for_each_pair(&sources, |i, j| actual.push((i, j)));
+                }
+                assert_eq!(actual, expected, "count={count}, pattern={pattern}, workers={workers}");
+                assert!(partitions.iter().all(|partition| partition.pair_count() > 0));
+                let loads: Vec<_> = partitions.iter().map(|partition| partition.pair_count()).collect();
+                if !loads.is_empty() {
+                    assert!(loads.iter().max().unwrap() - loads.iter().min().unwrap() <= 1);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn clustered_sources_and_a_single_long_row_use_every_nonempty_worker() {
+    for (count, sources) in [
+        (365, (0..15).collect::<Vec<_>>()),
+        (365, (350..365).collect()),
+        (1024, vec![0]),
+        (1024, vec![1023]),
+    ] {
+        for budget in [1, 2, 4, 8, 16] {
+            let workers = nonempty_parallel_worker_count(count, sources.len(), budget);
+            let partitions = pair_work::balanced_pair_partitions(count, &sources, workers);
+            assert_eq!(partitions.len(), workers);
+            let loads: Vec<_> = partitions.iter().map(|partition| partition.pair_count()).collect();
+            assert_eq!(loads.iter().sum::<usize>() as u64, physical_pair_count(count, sources.len()));
+            assert!(loads.iter().all(|&load| load > 0));
+            assert!(loads.iter().max().unwrap() - loads.iter().min().unwrap() <= 1);
+            if sources == [0] {
+                for partition in partitions {
+                    partition.for_each_pair(&sources, |i, _| assert_eq!(i, 0));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn balanced_arm64_clustered_source_steps_repeat_and_match_scalar_and_chunks() {
+    if !cfg!(target_arch = "aarch64") || !arm64_neon_runtime_available() {
+        return;
+    }
+    for (count, sources) in [(365, 15), (1024, 1), (128, 128)] {
+        let mut initial = fixture(count, false);
+        for body in &mut initial[sources..] {
+            body.mass_kg = 0.0;
+        }
+        let mut scalar = initial.clone();
+        integrate_fixed_steps(&mut scalar, 0.375, 25, None);
+        let kernel = Some(Arm64GravityKernel::NeonF64ParallelTiledPairwise);
+        let mut expected = initial.clone();
+        integrate_fixed_steps(&mut expected, 0.375, 25, kernel);
+        let agreement = solver_equivalence_metrics(&scalar, &expected);
+        assert!(agreement.max_abs_error <= 1.0e-3, "{agreement:?}");
+        assert!(agreement.max_relative_error <= 1.0e-12, "{agreement:?}");
+        for _ in 0..3 {
+            let mut repeated = initial.clone();
+            integrate_fixed_steps(&mut repeated, 0.375, 25, kernel);
+            assert_eq!(repeated, expected);
+        }
+        let mut chunked = initial;
+        integrate_fixed_steps(&mut chunked, 0.375, 7, kernel);
+        integrate_fixed_steps(&mut chunked, 0.375, 18, kernel);
+        assert_eq!(chunked, expected);
+    }
+}
+
+#[test]
 fn cached_fma_schedule_preserves_uncached_kernel_results() {
     let mut kernels = vec![Arm64GravityKernel::PortableScalarOracle];
     if cfg!(target_arch = "aarch64") && arm64_neon_runtime_available() {
@@ -309,6 +397,20 @@ fn sparse_workload_report_does_not_schedule_workers_for_empty_pairs() {
         dense.active_workers as usize,
         runtime_worker_budget().min(6)
     );
+}
+
+#[test]
+fn useful_pair_grain_is_required_per_worker_before_parallel_activation() {
+    // The measured canonical scene must not pay for four per-sweep threads;
+    // genuinely dense work remains eligible, with an explicit worker budget.
+    assert!(!enough_parallel_pair_work_with_budget(365, 15, 4));
+    assert!(!enough_parallel_pair_work_with_budget(1024, 3, 4));
+    assert!(!enough_parallel_pair_work_with_budget(128, 128, 4));
+    assert!(enough_parallel_pair_work_with_budget(192, 192, 4));
+    assert!(enough_parallel_pair_work_with_budget(1024, 1024, 4));
+    assert!(enough_parallel_pair_work_with_budget(365, 15, 1));
+    assert!(!enough_parallel_pair_work_with_budget(192, 192, 8));
+    assert!(enough_parallel_pair_work_with_budget(512, 512, 8));
 }
 
 #[test]

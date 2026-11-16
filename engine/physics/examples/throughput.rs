@@ -64,7 +64,8 @@ fn fixture(name: &str) -> Vec<MassiveBodyState> {
             }
             lab
         }
-        "dense-1024" => (0..1024)
+        "dense-128" | "dense-192" | "dense-256" | "dense-512" | "dense-1024" =>
+            (0..name.trim_start_matches("dense-").parse::<usize>().expect("dense body count"))
             .map(|index| {
                 let phase = index as f64 * 0.618_033_988_749_895;
                 MassiveBodyState {
@@ -130,7 +131,7 @@ fn main() {
         SolverBackend::SimdX64
     };
     let workloads = option("--workloads")
-        .unwrap_or("lab-3,lab-probe-4,canonical-mixed-365,sparse-1024,dense-1024");
+        .unwrap_or("lab-3,lab-probe-4,canonical-mixed-365,sparse-1024,dense-128,dense-192,dense-256,dense-512,dense-1024");
     println!("{{\"kind\":\"environment\",\"arch\":\"{}\",\"available_workers\":{},\"features\":{:?},\"steps\":{},\"samples\":{},\"measurement\":\"working-copy plus authoritative advance plus invariants; two warmups; calibrated >=20ms batch\"}}",
         std::env::consts::ARCH, std::thread::available_parallelism().map(usize::from).unwrap_or(1), features, steps, samples);
     for name in workloads.split(',') {

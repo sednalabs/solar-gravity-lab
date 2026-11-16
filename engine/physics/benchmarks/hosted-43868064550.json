@@ -1,0 +1,894 @@
+{
+  "run_id": 43868064550,
+  "run_url": "https://github.com/sednalabs/solar-gravity-lab/actions/runs/43868064550",
+  "source_sha": "7ebf9d27e2b0dca9fb010463925c7115557d76b2",
+  "scope": "Hosted CPU microbenchmark; not device, thermal, renderer or whole-app performance.",
+  "hosts": {
+    "arm64": {
+      "artifact_id": 14226772019,
+      "archive_sha256": "2ae0e3e47771e090be7430232645434183a0cfd56348e7b2a45b7abd1700091c",
+      "cpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "aarch64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "4"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-3"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "ARM"
+          },
+          {
+            "field": "Model name:",
+            "data": "Neoverse-N2"
+          },
+          {
+            "field": "Model:",
+            "data": "0"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "1"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "4"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "r0p0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "2000.00"
+          },
+          {
+            "field": "Flags:",
+            "data": "fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm uscat ilrcpc flagm sb paca pacg dcpodp sve2 sveaes svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (4 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (4 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "4 MiB (4 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "128 MiB (1 instance)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-3"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; CSV2, BHB"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      },
+      "full": {
+        "affinity": {
+          "affinity": "full",
+          "cpus": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "source": "7ebf9d27e2b0dca9fb010463925c7115557d76b2"
+        },
+        "environment": {
+          "kind": "environment",
+          "arch": "aarch64",
+          "available_workers": 4,
+          "features": [
+            "aes",
+            "bf16",
+            "cpuid",
+            "crc",
+            "dcpodp",
+            "dcpop",
+            "dotprod",
+            "evtstrm",
+            "fcma",
+            "fhm",
+            "flagm",
+            "flagm2",
+            "fp",
+            "fp16",
+            "frint",
+            "i8mm",
+            "ilrcpc",
+            "jscvt",
+            "lrcpc",
+            "lse",
+            "lse2",
+            "neon",
+            "paca",
+            "pacg",
+            "pmull",
+            "rdm",
+            "sb",
+            "sha1",
+            "sha2",
+            "sha3",
+            "sha512",
+            "sm3",
+            "sm4",
+            "sve",
+            "sve-i8mm",
+            "sve2",
+            "sveaes",
+            "svebf16",
+            "svebitperm",
+            "svesha3",
+            "svesm4",
+            "uscat"
+          ],
+          "steps": 64,
+          "samples": 11,
+          "measurement": "working-copy plus authoritative advance plus invariants; two warmups; calibrated >=20ms batch"
+        },
+        "measurements": [
+          {
+            "kind": "measurement",
+            "workload": "lab-3",
+            "bodies": 3,
+            "sources": 3,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 4096,
+            "min_us": 5.925,
+            "median_us": 5.932,
+            "p90_us": 5.936,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "lab-3",
+            "bodies": 3,
+            "sources": 3,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 4096,
+            "min_us": 5.826,
+            "median_us": 5.831,
+            "p90_us": 5.841,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "lab-probe-4",
+            "bodies": 4,
+            "sources": 3,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 4096,
+            "min_us": 7.538,
+            "median_us": 7.543,
+            "p90_us": 7.549,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "lab-probe-4",
+            "bodies": 4,
+            "sources": 3,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 4096,
+            "min_us": 7.2,
+            "median_us": 7.207,
+            "p90_us": 7.233,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "canonical-mixed-365",
+            "bodies": 365,
+            "sources": 15,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 8,
+            "min_us": 2508.927,
+            "median_us": 2510.148,
+            "p90_us": 2512.356,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "canonical-mixed-365",
+            "bodies": 365,
+            "sources": 15,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-parallel-tiled-pairwise",
+            "active_workers": 4,
+            "repeats": 4,
+            "min_us": 6892.072,
+            "median_us": 7090.657,
+            "p90_us": 7167.72,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "sparse-1024",
+            "bodies": 1024,
+            "sources": 3,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 16,
+            "min_us": 1734.304,
+            "median_us": 1734.785,
+            "p90_us": 1736.631,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "sparse-1024",
+            "bodies": 1024,
+            "sources": 3,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 16,
+            "min_us": 1547.256,
+            "median_us": 1547.796,
+            "p90_us": 1548.186,
+            "max_abs_oracle_error": 1.4551915228366852e-11,
+            "max_relative_oracle_error": 1.2336296197834854e-15
+          },
+          {
+            "kind": "measurement",
+            "workload": "dense-1024",
+            "bodies": 1024,
+            "sources": 1024,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 1,
+            "min_us": 232031.436,
+            "median_us": 232067.382,
+            "p90_us": 232230.994,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "dense-1024",
+            "bodies": 1024,
+            "sources": 1024,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-parallel-tiled-pairwise",
+            "active_workers": 4,
+            "repeats": 1,
+            "min_us": 60633.437,
+            "median_us": 62267.889,
+            "p90_us": 63292.419,
+            "max_abs_oracle_error": 2.168404344971009e-19,
+            "max_relative_oracle_error": 2.168404344971009e-19
+          }
+        ]
+      },
+      "one_cpu": {
+        "affinity": {
+          "affinity": "one-cpu",
+          "cpus": [
+            0
+          ],
+          "source": "7ebf9d27e2b0dca9fb010463925c7115557d76b2"
+        },
+        "environment": {
+          "kind": "environment",
+          "arch": "aarch64",
+          "available_workers": 1,
+          "features": [
+            "aes",
+            "bf16",
+            "cpuid",
+            "crc",
+            "dcpodp",
+            "dcpop",
+            "dotprod",
+            "evtstrm",
+            "fcma",
+            "fhm",
+            "flagm",
+            "flagm2",
+            "fp",
+            "fp16",
+            "frint",
+            "i8mm",
+            "ilrcpc",
+            "jscvt",
+            "lrcpc",
+            "lse",
+            "lse2",
+            "neon",
+            "paca",
+            "pacg",
+            "pmull",
+            "rdm",
+            "sb",
+            "sha1",
+            "sha2",
+            "sha3",
+            "sha512",
+            "sm3",
+            "sm4",
+            "sve",
+            "sve-i8mm",
+            "sve2",
+            "sveaes",
+            "svebf16",
+            "svebitperm",
+            "svesha3",
+            "svesm4",
+            "uscat"
+          ],
+          "steps": 64,
+          "samples": 11,
+          "measurement": "working-copy plus authoritative advance plus invariants; two warmups; calibrated >=20ms batch"
+        },
+        "measurements": [
+          {
+            "kind": "measurement",
+            "workload": "canonical-mixed-365",
+            "bodies": 365,
+            "sources": 15,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 8,
+            "min_us": 2508.495,
+            "median_us": 2510.22,
+            "p90_us": 2511.919,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "canonical-mixed-365",
+            "bodies": 365,
+            "sources": 15,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-tiled-pairwise",
+            "active_workers": 1,
+            "repeats": 8,
+            "min_us": 2735.577,
+            "median_us": 2737.129,
+            "p90_us": 2739.653,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "sparse-1024",
+            "bodies": 1024,
+            "sources": 3,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 16,
+            "min_us": 1733.12,
+            "median_us": 1733.699,
+            "p90_us": 1734.805,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "sparse-1024",
+            "bodies": 1024,
+            "sources": 3,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 16,
+            "min_us": 1534.756,
+            "median_us": 1535.108,
+            "p90_us": 1535.444,
+            "max_abs_oracle_error": 1.4551915228366852e-11,
+            "max_relative_oracle_error": 1.2336296197834854e-15
+          },
+          {
+            "kind": "measurement",
+            "workload": "dense-1024",
+            "bodies": 1024,
+            "sources": 1024,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 1,
+            "min_us": 232002.492,
+            "median_us": 232047.478,
+            "p90_us": 232247.923,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "dense-1024",
+            "bodies": 1024,
+            "sources": 1024,
+            "requested": "SimdArm64",
+            "path": "simd.arm64.neon-f64-tiled-pairwise",
+            "active_workers": 1,
+            "repeats": 1,
+            "min_us": 199881.135,
+            "median_us": 199905.704,
+            "p90_us": 200004.802,
+            "max_abs_oracle_error": 3.2526065174565133e-19,
+            "max_relative_oracle_error": 3.2526065174565133e-19
+          }
+        ]
+      },
+      "shared_binary_sha256": "75a71b3f8953ddfe2bdbba871f26ddc287aa189b5e01054db69ce72f58c4be8b"
+    },
+    "x64": {
+      "artifact_id": 14225134429,
+      "archive_sha256": "36664a68a21a23ae45bf3cb58aa21181e58a656e43e646e11192c60c63e76885",
+      "cpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "48 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "4"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-3"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "AuthenticAMD"
+          },
+          {
+            "field": "Model name:",
+            "data": "AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "field": "CPU family:",
+            "data": "25"
+          },
+          {
+            "field": "Model:",
+            "data": "17"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "2"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "1"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "5192.29"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology tsc_reliable nonstop_tsc cpuid extd_apicid aperfmperf tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves user_shstk avx512_bf16 clzero xsaveerptr rdpru arat npt nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold v_vmsave_vmload avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm"
+          },
+          {
+            "field": "Virtualization:",
+            "data": "AMD-V"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "Microsoft"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "64 KiB (2 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "64 KiB (2 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "2 MiB (2 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "32 MiB (1 instance)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-3"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Vulnerable: Safe RET, no microcode"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Vulnerable"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; Retpolines; STIBP disabled; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Vulnerable: No microcode"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      },
+      "full": {
+        "affinity": null,
+        "environment": {
+          "kind": "environment",
+          "arch": "x86_64",
+          "available_workers": 4,
+          "features": [
+            "avx2",
+            "fma",
+            "sse2"
+          ],
+          "steps": 64,
+          "samples": 11,
+          "measurement": "working-copy plus authoritative advance plus invariants; two warmups; calibrated >=20ms batch"
+        },
+        "measurements": [
+          {
+            "kind": "measurement",
+            "workload": "lab-3",
+            "bodies": 3,
+            "sources": 3,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 8192,
+            "min_us": 2.64,
+            "median_us": 2.643,
+            "p90_us": 2.646,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "lab-3",
+            "bodies": 3,
+            "sources": 3,
+            "requested": "SimdX64",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 8192,
+            "min_us": 2.647,
+            "median_us": 2.65,
+            "p90_us": 2.653,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "lab-probe-4",
+            "bodies": 4,
+            "sources": 3,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 8192,
+            "min_us": 3.645,
+            "median_us": 3.65,
+            "p90_us": 3.66,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "lab-probe-4",
+            "bodies": 4,
+            "sources": 3,
+            "requested": "SimdX64",
+            "path": "simd.x64.avx2-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 8192,
+            "min_us": 2.838,
+            "median_us": 2.841,
+            "p90_us": 2.847,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "canonical-mixed-365",
+            "bodies": 365,
+            "sources": 15,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 16,
+            "min_us": 1975.921,
+            "median_us": 1978.137,
+            "p90_us": 1989.683,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "canonical-mixed-365",
+            "bodies": 365,
+            "sources": 15,
+            "requested": "SimdX64",
+            "path": "simd.x64.avx2-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 64,
+            "min_us": 492.27,
+            "median_us": 493.06,
+            "p90_us": 493.917,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "sparse-1024",
+            "bodies": 1024,
+            "sources": 3,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 16,
+            "min_us": 1345.153,
+            "median_us": 1347.729,
+            "p90_us": 1351.354,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "sparse-1024",
+            "bodies": 1024,
+            "sources": 3,
+            "requested": "SimdX64",
+            "path": "simd.x64.avx2-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 64,
+            "min_us": 458.445,
+            "median_us": 459.648,
+            "p90_us": 461.515,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "dense-1024",
+            "bodies": 1024,
+            "sources": 1024,
+            "requested": "ReferenceScalar",
+            "path": "scalar.reference",
+            "active_workers": 1,
+            "repeats": 1,
+            "min_us": 183606.353,
+            "median_us": 183719.872,
+            "p90_us": 183952.107,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          },
+          {
+            "kind": "measurement",
+            "workload": "dense-1024",
+            "bodies": 1024,
+            "sources": 1024,
+            "requested": "SimdX64",
+            "path": "simd.x64.avx2-f64-pairwise",
+            "active_workers": 1,
+            "repeats": 1,
+            "min_us": 79862.01,
+            "median_us": 79969.719,
+            "p90_us": 80125.991,
+            "max_abs_oracle_error": 0,
+            "max_relative_oracle_error": 0
+          }
+        ]
+      }
+    }
+  }
+}

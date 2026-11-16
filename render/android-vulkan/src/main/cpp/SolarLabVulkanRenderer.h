@@ -193,8 +193,10 @@ private:
     struct MediumTracerState {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
+        float vz = 0.0f;
         uint32_t colorArgb = 0;
         float sizePx = 1.0f;
         uint32_t stableId = 0;
@@ -212,13 +214,22 @@ private:
     struct FarTracerState {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
+        float vz = 0.0f;
         uint32_t colorArgb = 0;
         uint32_t densityWeight = 1;
         uint32_t stableId = 0;
         uint32_t reserved = 0;
     };
+
+    // The compute shaders use scalar std430 members: vec3 would add padding and
+    // break the tightly packed three-dimensional vertex input used by graphics.
+    static_assert(sizeof(CheapPointVertex) == 20 && offsetof(CheapPointVertex, colorArgb) == 12);
+    static_assert(sizeof(DensityPointVertex) == 20 && offsetof(DensityPointVertex, densityWeight) == 16);
+    static_assert(sizeof(MediumTracerState) == 40 && offsetof(MediumTracerState, colorArgb) == 24);
+    static_assert(sizeof(FarTracerState) == 40 && offsetof(FarTracerState, stableId) == 32);
 
     struct TrailVertex {
         float x = 0.0f;

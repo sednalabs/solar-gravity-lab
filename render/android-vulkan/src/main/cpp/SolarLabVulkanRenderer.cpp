@@ -2059,8 +2059,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         tracerMediumStates.push_back(MediumTracerState{
             .x = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 2U]),
             .vx = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base]),
             .vy = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base + 1U]),
+            .vz = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base + 2U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerMediumColorsArgb[index]), kMediumTracerAlpha),
             .sizePx = sizePx,
             .stableId = static_cast<uint32_t>(sceneBuffers_.tracerMediumStableIds[index]),
@@ -2093,8 +2095,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         tracerFarStates.push_back(FarTracerState{
             .x = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 2U]),
             .vx = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base]),
             .vy = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base + 1U]),
+            .vz = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base + 2U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerFarColorsArgb[index]), kFarTracerAlpha),
             .densityWeight = densityWeight,
             .stableId = static_cast<uint32_t>(sceneBuffers_.tracerFarStableIds[index]),
@@ -2334,7 +2338,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter grid was empty");
         } else if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<uint32_t>(farOutputVertexCapacity, 1U)) * sizeof(DensityPointVertex),
-                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 sceneGpuStreams_.tracerFarCompute.label,
                 sceneGpuStreams_.tracerFarCompute.outputVertexBuffer)) {
             disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "device-local compute output allocation failed");
@@ -2355,7 +2359,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             sceneGpuStreams_.tracerFarCompute.outputVertexCapacity = farOutputVertexCapacity;
             if (!ensureDeviceLocalComputeBuffer(
                     static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                     "tracer-far-tile-counters",
                     sceneGpuStreams_.tracerFarCompute.tileCounterBuffer)) {
                 disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter buffer allocation failed");
@@ -2843,20 +2847,22 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
      * graphics pipeline attempts to read them as vertex data or indirect parameters.
      * 
      * Pipeline Barrier:
-     * - srcStage: COMPUTE_SHADER
+     * - srcStage: COMPUTE_SHADER and TRANSFER (empty-slot clears)
      * - dstStage: DRAW_INDIRECT (for the command buffer) and VERTEX_INPUT (for the vertex data)
-     * - srcAccess: SHADER_WRITE
+     * - srcAccess: SHADER_WRITE and TRANSFER_WRITE
      * - dstAccess: INDIRECT_COMMAND_READ and VERTEX_ATTRIBUTE_READ
      */
     const VkMemoryBarrier computeToGraphicsBarrier{
         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = nullptr,
-        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        // Unoccupied far slots are zeroed by transfer and read by the fixed-count
+        // draw too. Publish those clears as well as the slots compute populated.
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
     };
     vkCmdPipelineBarrier(
         commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
         0,
         1,
@@ -2871,7 +2877,7 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
             .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
             .pNext = nullptr,
-            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2884,7 +2890,7 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
             .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
             .pNext = nullptr,
-            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2893,10 +2899,23 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
             .size = sizeof(VkDrawIndirectCommand),
         });
     }
+    if (runFar && sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.buffer != VK_NULL_HANDLE) {
+        computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.buffer,
+            .offset = 0,
+            .size = static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
+        });
+    }
     if (!computeToTransferBarriers.empty()) {
         vkCmdPipelineBarrier(
             commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
             0,
             0,

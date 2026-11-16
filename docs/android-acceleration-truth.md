@@ -57,9 +57,13 @@ these fields separately:
   gravity acceleration kernels guarded by runtime feature detection and
   scalar-oracle parity tests. Runtime dispatch selects tiled paths only for
   sufficient useful source/target pair work, and selects the parallel tiled path
-  only when worker budget is available. The threshold retains the former dense
-  96-body work level (4,560 pairs); source-free pairs do not count. Active worker
-  reporting is capped to the tile count that can actually receive work.
+  only when useful work covers the selected worker budget. The conservative
+  scheduling guard requires the former dense 96-body work grain (4,560 useful
+  pairs) per selected worker; source-free pairs do not count. Parallel workers
+  receive balanced contiguous ranges of the useful pair stream, including split
+  source rows. The 32-body tile fields cap the worker budget; they no longer
+  describe which rows each worker receives. This guard is provisional and the
+  hosted intermediate-size measurements document its crossover limits.
 - The Arm64 kernel registry also names candidate lanes for SVE, SVE2, SME,
   SME2, SVE-I8MM, DotProd, I8MM, BF16, FP16, FHM, RDM, and FCMA so future
   acceleration work has stable path IDs before those paths become active.
@@ -96,6 +100,12 @@ The continued Earth–Moon delivery adds measured and inspectable paths:
   `resources=[alloc:...,upload:...,record:...,reuse:...,cpuBytes:...]` in the
   native summary reports the observed work. These counters are not frame-rate
   or energy measurements.
+- Medium/far compute compaction shares the 3D camera-uniform prefix and exact
+  packed vertex strides with graphics. Source records retain Z and VZ, culling
+  projects into the camera plane, and far tile Y matches the window coordinate
+  system. Transfer usage flags and dependencies cover both filled empty slots
+  and shader-written counters. Native dense-scene proof must check projected
+  output and completed readbacks, as well as dispatch counts.
 - Optional Android Performance Hint sessions attach to the stable render
   executor thread. They report measured elapsed render-cycle duration against
   the display period and close on lifecycle changes or idle. The `ADPF[...]`
