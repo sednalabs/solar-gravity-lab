@@ -38,12 +38,13 @@ jobs:
             out='\n'.join(f'{i+1}: {lines[i]}' for i in sorted(selected))
             (root/'.github/recovery'/ (path.replace('/','__')+'.txt')).write_text(out+'\n')
           command=['gh','api','repos/sednalabs/solar-gravity-lab/actions/jobs/133670504545/logs']
-          log=subprocess.run(command,text=True,capture_output=True,check=True).stdout.splitlines()
-          selected=set()
+          result=subprocess.run(command,text=True,capture_output=True)
+          log=result.stdout.splitlines(); selected=set()
           for i,line in enumerate(log):
             if re.search(r'E TestRunner: failed:|E TestRunner: (java.lang|androidx)|TestRunner: run finished:',line):
               selected.update(range(max(0,i-2),min(len(log),i+8)))
-          (root/'.github/recovery/native-failures.txt').write_text('\n'.join(log[i] for i in sorted(selected))+'\n')
+          summary='\n'.join(log[i] for i in sorted(selected)) if result.returncode==0 else 'Historical log unavailable: '+result.stderr[-2000:]
+          (root/'.github/recovery/native-failures.txt').write_text(summary+'\n')
           PY
           git config user.name 'Solar Gravity Lab repair workbench'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
