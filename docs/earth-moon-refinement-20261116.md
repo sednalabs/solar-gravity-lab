@@ -38,6 +38,12 @@ Native acceptance exercises those paths and checks visible projected output.
 
 The exact-work optimisation, conserved diagnostics, AVX2 path and local benchmark
 provenance are documented in [physics benchmarks](../engine/physics/benchmarks/README.md).
+The reconstructed ARM64 scheduling gate requires 8,128 *useful* gravitational
+pairs per selected worker, informed by hosted four-core dense-192 versus
+dense-256 measurements. It avoids the measured startup regression at dense-192
+while allowing dense-256 to use four workers; affinity-dependent results remain
+platform-specific and require another exact-source hosted proof. This is a
+dispatch change only, not an altered force law or claimed S25 gain.
 The [V2 lab step policy](../engine/physics/benchmarks/lab-step-policy.md) adds
 osculating periapsis refinement for exterior motion. It is a fixed-operation
 step ceiling, not an adaptive integrator or a general close-encounter guarantee.

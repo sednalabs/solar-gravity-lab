@@ -883,22 +883,22 @@ fn enough_parallel_pair_work(body_count: usize, source_count: usize) -> bool {
     enough_parallel_pair_work_with_budget(body_count, source_count, runtime_worker_budget())
 }
 
+// Provisional ARM64 crossover from hosted Neoverse-N2 measurements:
+// 192 dense bodies (18,336 useful pairs) lost to four per-sweep workers, but
+// 256 dense bodies (32,640 pairs) benefited. Keep the scheduling threshold
+// separate from the 32-body tile size and the useful-pair counter.
+const ARM64_MIN_USEFUL_PAIRS_PER_WORKER: u64 = 8_128;
+
 fn enough_parallel_pair_work_with_budget(
     body_count: usize,
     source_count: usize,
     worker_budget: usize,
 ) -> bool {
-    // Provisional work grain, informed by hosted full/single-CPU measurements:
-    // 5,355 canonical pairs lost to thread startup, while 523,776 dense pairs
-    // benefited from four workers. Require the old 96-source work grain for
-    // each selected worker; intermediate workloads qualify the crossover.
-    let workers = nonempty_parallel_worker_count(body_count, source_count, worker_budget).max(1);
-    body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
+    let workers = nonempty_parallel_worker_count(body_count, source_count, worker_budget);
+    workers > 0
+        && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
         && physical_pair_count(body_count, source_count)
-            >= physical_pair_count(
-                ADAPTIVE_TILED_SCHEDULER_MIN_BODIES,
-                ADAPTIVE_TILED_SCHEDULER_MIN_BODIES,
-            ).saturating_mul(workers as u64)
+            >= ARM64_MIN_USEFUL_PAIRS_PER_WORKER.saturating_mul(workers as u64)
 }
 
 fn nonempty_parallel_worker_count(

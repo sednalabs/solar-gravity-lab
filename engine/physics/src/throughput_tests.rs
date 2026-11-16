@@ -401,16 +401,42 @@ fn sparse_workload_report_does_not_schedule_workers_for_empty_pairs() {
 
 #[test]
 fn useful_pair_grain_is_required_per_worker_before_parallel_activation() {
-    // The measured canonical scene must not pay for four per-sweep threads;
-    // genuinely dense work remains eligible, with an explicit worker budget.
+    // Four workers require >= 8,128 useful pairs each, not merely 8,128
+    // bodies or arbitrary N² pairs. The observed 192->256 dense crossover
+    // must remain observable in scheduling reports and explicit budget tests.
+    assert_eq!(ARM64_MIN_USEFUL_PAIRS_PER_WORKER, 8_128);
     assert!(!enough_parallel_pair_work_with_budget(365, 15, 4));
     assert!(!enough_parallel_pair_work_with_budget(1024, 3, 4));
     assert!(!enough_parallel_pair_work_with_budget(128, 128, 4));
-    assert!(enough_parallel_pair_work_with_budget(192, 192, 4));
-    assert!(enough_parallel_pair_work_with_budget(1024, 1024, 4));
-    assert!(enough_parallel_pair_work_with_budget(365, 15, 1));
-    assert!(!enough_parallel_pair_work_with_budget(192, 192, 8));
+    assert!(!enough_parallel_pair_work_with_budget(192, 192, 4));
+    assert!(enough_parallel_pair_work_with_budget(192, 192, 2));
+    assert!(!enough_parallel_pair_work_with_budget(192, 192, 3));
+    assert!(!enough_parallel_pair_work_with_budget(365, 15, 1));
+    assert!(enough_parallel_pair_work_with_budget(256, 256, 4));
+    assert!(!enough_parallel_pair_work_with_budget(256, 256, 8));
     assert!(enough_parallel_pair_work_with_budget(512, 512, 8));
+    assert!(enough_parallel_pair_work_with_budget(1024, 1024, 4));
+    assert!(!enough_parallel_pair_work_with_budget(1024, 0, 4));
+}
+
+#[test]
+fn useful_pair_grain_matches_measured_dense_crossover_and_candidate_workers() {
+    let candidates = [
+        (128, 128, 8_128, 4, false),
+        (192, 192, 18_336, 4, false),
+        (256, 256, 32_640, 4, true),
+        (365, 15, 5_355, 4, false),
+        (512, 512, 130_816, 4, true),
+        (1024, 3, 3_066, 4, false),
+    ];
+    for (bodies, sources, useful_pairs, workers, should_parallel) in candidates {
+        assert_eq!(physical_pair_count(bodies, sources), useful_pairs);
+        assert_eq!(
+            enough_parallel_pair_work_with_budget(bodies, sources, workers),
+            should_parallel,
+            "body count {bodies} source count {sources}",
+        );
+    }
 }
 
 #[test]
