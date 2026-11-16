@@ -310,6 +310,10 @@ internal fun StageFirstRuntimeExperience(
         var chromeModeName by rememberSaveable { mutableStateOf(StageChromeMode.COLLAPSED.name) }
         var traceLayerModeName by rememberSaveable { mutableStateOf(TraceLayerMode.FOCUS.name) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
+        // Dialog-local rememberSaveable is attached to the transient dialog
+        // composition. Keep the query in the Activity's saveable owner so
+        // rotation/recreation cannot discard an in-progress object search.
+        var searchQuery by rememberSaveable { mutableStateOf("") }
         var requestSearchFocus by remember { mutableStateOf(false) }
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
@@ -1271,7 +1275,7 @@ internal fun StageFirstRuntimeExperience(
                     addProbe = ::addProbe,
                     saved = { savedVisible = true },
                     science = { scienceVisible = true },
-                    search = { requestSearchFocus = false; searchVisible = true },
+                    search = { searchQuery = ""; requestSearchFocus = false; searchVisible = true },
                     scenarios = { scenarioPickerVisible = true },
                     toggleTools = { chromeModeName = chromeMode.toggle().name },
                     hideChrome = { chromeModeName = StageChromeMode.MINIMAL.name },
@@ -1457,6 +1461,8 @@ internal fun StageFirstRuntimeExperience(
             RuntimeStageSearchDialog(
                 bodies = searchableBodies,
                 selectedBodyId = selectedBodyId,
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
                 requestFocus = requestSearchFocus,
                 onDismiss = {
                     searchVisible = false
@@ -2340,11 +2346,12 @@ private fun RuntimeStageMiniSignalChart(
 private fun RuntimeStageSearchDialog(
     bodies: List<RuntimeStageBody>,
     selectedBodyId: String?,
+    query: String,
+    onQueryChange: (String) -> Unit,
     requestFocus: Boolean,
     onDismiss: () -> Unit,
     onSelectBody: (String) -> Unit,
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val normalizedQuery = query.trim().lowercase(Locale.US)
@@ -2369,7 +2376,7 @@ private fun RuntimeStageSearchDialog(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = onQueryChange,
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focusRequester)

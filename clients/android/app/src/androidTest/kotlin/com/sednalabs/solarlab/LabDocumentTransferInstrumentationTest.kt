@@ -6,13 +6,16 @@ import android.content.ContentValues
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
@@ -320,6 +323,29 @@ class LabDocumentTransferInstrumentationTest {
             }
             current = candidate.parent
             candidate.recycle()
+        }
+        // Android DocumentsUI can expose a non-clickable accessibility text
+        // child under roots_list even when the *visible row* accepts touch.
+        // Exercise the actual screen location rather than pretending ACTION_CLICK
+        // succeeded; the caller independently waits for the drawer to close.
+        if (description == "Downloads location") {
+            val bounds = Rect().also(node::getBoundsInScreen)
+            assertTrue("Observed Downloads row must have screen bounds", !bounds.isEmpty)
+            val x = bounds.exactCenterX()
+            val y = bounds.exactCenterY()
+            val now = SystemClock.uptimeMillis()
+            val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
+            val up = MotionEvent.obtain(now, now + 72L, MotionEvent.ACTION_UP, x, y, 0)
+            try {
+                down.source = InputDevice.SOURCE_TOUCHSCREEN
+                up.source = InputDevice.SOURCE_TOUCHSCREEN
+                assertTrue("Inject a real tap on the observed Downloads row", automation.injectInputEvent(down, true))
+                assertTrue("Complete the Downloads row tap", automation.injectInputEvent(up, true))
+            } finally {
+                down.recycle()
+                up.recycle()
+            }
+            return
         }
         throw AssertionError("The observed $description has no clickable target\n${pickerTree()}")
     }
