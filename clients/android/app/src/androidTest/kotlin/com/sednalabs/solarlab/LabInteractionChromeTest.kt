@@ -19,6 +19,7 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -72,17 +73,25 @@ class LabInteractionChromeTest {
     fun landscapeKeepsObjectActionsAndCameraOutsidePlayback() {
         orient(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, Configuration.ORIENTATION_LANDSCAPE)
         val received = mutableListOf<String>()
-        showChrome(received)
+        showChrome(received, canUndo = true)
         assertReachable(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON)
         assertReachable(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
         assertReachable(LabTags.FOLLOW)
         assertReachable(LabTags.INSPECT)
         assertReachable(LabTags.PLAY_PAUSE)
         assertReachable(LabTags.ADD_PROBE)
+        assertReachable(LabTags.UNDO)
         assertSeparateRegions()
+        val header = composeRule.onNodeWithTag(LabTags.COMPACT_HEADER).fetchSemanticsNode().boundsInRoot
+        val undo = composeRule.onNodeWithTag(LabTags.UNDO).fetchSemanticsNode().boundsInRoot
+        val zoomOut = composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON)
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Landscape Undo stays inside the header, clear of zoom-out",
+            undo.top >= header.top && undo.bottom <= header.bottom && undo.bottom <= zoomOut.top)
         composeRule.onNodeWithTag(LabTags.MODE_3D).performClick()
         composeRule.onNodeWithTag(LabTags.FOLLOW).performClick()
-        composeRule.runOnIdle { assertEquals(listOf("mode-THREE_DIMENSIONAL", "follow"), received) }
+        composeRule.onNodeWithTag(LabTags.UNDO).performClick()
+        composeRule.runOnIdle { assertEquals(listOf("mode-THREE_DIMENSIONAL", "follow", "undo"), received) }
     }
 
     @Test
@@ -113,11 +122,21 @@ class LabInteractionChromeTest {
         }
         composeRule.onNodeWithTag(LabPlacementTags.CREATE).assertIsDisplayed().assertIsNotEnabled()
         composeRule.onNodeWithTag(LabPlacementTags.CANCEL).assertIsDisplayed().assertIsEnabled()
-        composeRule.onNodeWithTag(LabPlacementTags.host("moon")).performScrollTo().performClick()
-        composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE).performScrollTo().performTextReplacement("1500")
-        composeRule.onNodeWithTag(LabPlacementTags.motion(LabPlacementMotion.CUSTOM)).performScrollTo().performClick()
-        composeRule.onNodeWithTag(LabPlacementTags.HEADING).performScrollTo().performTextReplacement("135")
-        composeRule.onNodeWithTag(LabPlacementTags.SPEED).performScrollTo().performTextReplacement("1.2")
+        composeRule.onNodeWithTag(LabPlacementTags.host("moon"))
+            .performScrollTo().assertIsDisplayed().performClick().assertIsSelected()
+        composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE)
+            .performScrollTo().assertIsDisplayed().performTextReplacement("1500")
+        for (motion in listOf(LabPlacementMotion.RELEASE, LabPlacementMotion.CIRCULAR, LabPlacementMotion.CUSTOM)) {
+            composeRule.onNodeWithTag(LabPlacementTags.motion(motion))
+                .performScrollTo().assertIsDisplayed().assertIsEnabled()
+                .assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+                .performClick().assertIsSelected()
+            composeRule.runOnIdle { assertEquals("The visible motion choice updates the model", motion, state.motion) }
+        }
+        composeRule.onNodeWithTag(LabPlacementTags.HEADING)
+            .performScrollTo().assertIsDisplayed().performTextReplacement("135")
+        composeRule.onNodeWithTag(LabPlacementTags.SPEED)
+            .performScrollTo().assertIsDisplayed().performTextReplacement("1.2")
         composeRule.runOnIdle {
             assertEquals("moon", state.hostBodyId)
             assertEquals("1500", state.altitudeKmText)
@@ -149,7 +168,7 @@ class LabInteractionChromeTest {
         assertTrue("Zoom belongs to the scene, clear of playback", zoom.top >= header.bottom && zoom.bottom <= dock.top)
     }
 
-    private fun showChrome(received: MutableList<String>) {
+    private fun showChrome(received: MutableList<String>, canUndo: Boolean = false) {
         val state = ShellUiState(statusLine = "Ready", connectionState = SessionConnectionState.Active,
             snapshot = SnapshotPresentation(scenarioId = "lab.earth-moon", activeBranchId = "main", bodyCount = 3,
                 epochSeconds = 0.0, paused = true, simSecondsPerRealSecond = 3_600.0, observerModeLabel = "Free"))
@@ -166,8 +185,10 @@ class LabInteractionChromeTest {
                         scenarios = {}, toggleTools = {}, hideChrome = {}, help = {},
                         zoomIn = { received += "zoom-in" }, zoomOut = { received += "zoom-out" },
                         setScale = {}, fewerTraces = {}, moreTraces = {}, debug = {}, cancelAdvance = {},
-                        setViewMode = { received += "mode-${it.name}" }, toggleFollow = { received += "follow" }),
-                    navigation = LabNavigationUiState(metresPerPixel = 50_000.0, selectionSubtitle = "6,371 km radius"))
+                        setViewMode = { received += "mode-${it.name}" }, toggleFollow = { received += "follow" },
+                        undo = { received += "undo" }),
+                    navigation = LabNavigationUiState(metresPerPixel = 50_000.0, canUndo = canUndo,
+                        selectionSubtitle = "6,371 km radius"))
             }
         }
     }

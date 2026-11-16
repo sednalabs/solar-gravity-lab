@@ -141,3 +141,11 @@ internal fun labCross(a: Vector3d, b: Vector3d) = Vector3d(a.y * b.z - a.z * b.y
 internal fun labLength(value: Vector3d): Double = sqrt(labDot(value, value))
 internal fun labUnit(value: Vector3d): Vector3d? = labLength(value).takeIf { it.isFinite() && it > 1.0e-12 }?.let { value * (1.0 / it) }
 internal fun labDecimal(value: Double): String = String.format(Locale.US, "%.3f", value).trimEnd('0').trimEnd('.')
+internal fun labPreviewDuration(seconds: Double): String {
+    val minutes = Math.round(seconds / 60.0).coerceAtLeast(1)
+    return when {
+        minutes < 60 -> "$minutes min"
+        minutes % 60 == 0L -> "${minutes / 60} h"
+        else -> "${minutes / 60} h ${minutes % 60} min"
+    }
+}

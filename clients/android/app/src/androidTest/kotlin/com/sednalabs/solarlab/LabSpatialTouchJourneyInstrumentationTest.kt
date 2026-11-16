@@ -2,8 +2,10 @@ package com.sednalabs.solarlab
 
 import android.content.ContentValues
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.InputDevice
@@ -46,6 +48,8 @@ class LabSpatialTouchJourneyInstrumentationTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
     private val evidencePath = "${Environment.DIRECTORY_DOWNLOADS}/solarlab-validation/lab-evidence/touch-${System.currentTimeMillis()}/"
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private var recordingOutput: ParcelFileDescriptor? = null
+    private val recordingPath get() = "/sdcard/${evidencePath}touch-journey.mp4"
 
     @Test fun navigateIdentifyPlaceCancelCommitRunAndUndoByTouch() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
@@ -104,7 +108,25 @@ class LabSpatialTouchJourneyInstrumentationTest {
             }
             waitForPreview()
             composeRule.onNodeWithTag(LabPlacementTags.HEADING).performScrollTo().assertIsDisplayed()
+            val authoredHeading = composeRule.onNodeWithTag(LabPlacementTags.HEADING)
+                .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
             capture("04b-velocity-drag.png")
+            composeRule.runOnUiThread { composeRule.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            composeRule.waitUntil(15_000) {
+                composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && currentViewport() != null
+            }
+            settle()
+            waitForPreview()
+            composeRule.onNodeWithTag(LabPlacementTags.HEADING).performScrollTo().assertIsDisplayed()
+            assertEquals("Rotating must retain the uncommitted velocity draft", authoredHeading,
+                composeRule.onNodeWithTag(LabPlacementTags.HEADING).fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+            assertNull(runBlocking { facade.inspectBody("probe-1") })
+            capture("04c-retained-landscape-draft.png")
+            composeRule.runOnUiThread { composeRule.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+            composeRule.waitUntil(15_000) {
+                composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT && currentViewport() != null
+            }
+            settle()
             composeRule.onNodeWithTag(LabPlacementTags.CANCEL).performClick()
             composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(LabPlacementTags.ROOT).fetchSemanticsNodes().isEmpty() }
             assertEquals(baselineCount, facade.uiState.value.snapshot!!.bodyCount)
@@ -152,10 +174,17 @@ class LabSpatialTouchJourneyInstrumentationTest {
             assertEquals(epochBeforeZoom, facade.uiState.value.snapshot!!.epochSeconds, 0.0)
             capture("08-undo-restored-experiment.png")
         } finally {
-            recordingPid?.let { shell("kill -2 $it") }
+            shell("kill -2 $recordingPid")
+            val stopDeadline = SystemClock.uptimeMillis() + 3_000
+            while (SystemClock.uptimeMillis() < stopDeadline && shell("pidof screenrecord").split(' ').contains(recordingPid)) {
+                SystemClock.sleep(100)
+            }
+            recordingOutput?.close()
+            recordingOutput = null
             shell("settings put system show_touches 0")
             composeRule.runOnUiThread { composeRule.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
         }
+        assertTrue("The native touch journey must retain a screen recording", (shell("stat -c %s $recordingPath").toLongOrNull() ?: 0L) > 1_024L)
     }
 
     private fun waitForPreview() {
@@ -167,8 +196,10 @@ class LabSpatialTouchJourneyInstrumentationTest {
     }
 
     private fun settle() {
-        SystemClock.sleep(800)
+        composeRule.waitForIdle()
+        SystemClock.sleep(500)
         composeRule.waitUntil(15_000) { currentViewport() != null }
+        composeRule.waitForIdle()
     }
 
     private fun findHost(view: View): SolarSystemRenderHostView? {
@@ -223,6 +254,8 @@ class LabSpatialTouchJourneyInstrumentationTest {
     }
 
     private fun capture(name: String) {
+        settle()
+        instrumentation.waitForIdleSync()
         val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
         val resolver = instrumentation.targetContext.contentResolver
         val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
@@ -241,11 +274,23 @@ class LabSpatialTouchJourneyInstrumentationTest {
         }
     }.getOrDefault("")
 
-    private fun startRecording(): String? {
+    private fun startRecording(): String {
         shell("settings put system show_touches 1")
         val path = "/sdcard/$evidencePath"
         shell("mkdir -p $path")
-        val pid = shell("screenrecord --bit-rate 2500000 --time-limit 180 ${path}touch-journey.mp4 >/dev/null 2>&1 & echo \$!")
-        return pid.takeIf { it.matches(Regex("[0-9]+")) }
+        // UiAutomation launches a command directly, not through a shell. Keep
+        // the returned pipe alive while screenrecord runs, then send SIGINT.
+        recordingOutput = instrumentation.uiAutomation.executeShellCommand(
+            "screenrecord --size 720x1600 --bit-rate 2500000 --time-limit 180 $recordingPath")
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val pid = shell("pidof screenrecord")
+            if (pid.matches(Regex("[0-9]+"))) return pid
+            SystemClock.sleep(100)
+        }
+        recordingOutput?.close()
+        recordingOutput = null
+        shell("settings put system show_touches 0")
+        error("The native screen recording did not start")
     }
 }

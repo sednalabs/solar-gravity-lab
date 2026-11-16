@@ -15,6 +15,8 @@ import com.sednalabs.solarlab.runtime.ProbePreviewResult
 import com.sednalabs.solarlab.runtime.RuntimeBodyState
 
 /** Short-lived authoring state. A draft cannot outlive its authoritative session. */
+internal data class LabObjectFacts(val bodyId: String, val summary: String)
+
 internal class LabInteractionState(val operationScope: CoroutineScope? = null) {
     var boundSessionHandle = 0L
     var appliedCommitUiId: String? = null
@@ -40,7 +42,7 @@ internal class LabInteractionState(val operationScope: CoroutineScope? = null) {
     var beforePlacementSelection: String? = null
     var beforePlacementObserver = ObserverMode.FREE
     var feedback by mutableStateOf<String?>(null)
-    var selectedFacts by mutableStateOf<String?>(null)
+    var selectedFacts by mutableStateOf<LabObjectFacts?>(null)
 
     fun changeDraft(next: LabProbeDraft) {
         if (next == draft) return

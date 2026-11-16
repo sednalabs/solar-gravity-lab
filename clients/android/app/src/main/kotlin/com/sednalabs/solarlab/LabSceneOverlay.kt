@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
@@ -185,11 +186,18 @@ internal fun LabSceneOverlay(
         }
 
         if (draft != null && projectedDraft != null) {
-            val left = (projectedDraft.xPx + 14f * density).coerceIn(4f * density, max(4f * density, state.widthPx - 142f * density))
-            val top = (projectedDraft.yPx - 34f * density).coerceIn(4f * density, max(4f * density, state.heightPx - 48f * density))
-            Text("${draft.probeId.replace('-', ' ')} · ${draft.altitudeKmText} km", color = SpatialGold, fontSize = 12.sp,
+            val labelWidth = 176f * density
+            val left = (if ((arrowTip?.xPx ?: projectedDraft.xPx) >= projectedDraft.xPx)
+                projectedDraft.xPx - labelWidth - 14f * density else projectedDraft.xPx + 14f * density)
+                .coerceIn(4f * density, max(4f * density, state.widthPx - labelWidth - 4f * density))
+            val top = (if ((arrowTip?.yPx ?: projectedDraft.yPx) < projectedDraft.yPx)
+                projectedDraft.yPx + 16f * density else projectedDraft.yPx - 34f * density)
+                .coerceIn(4f * density, max(4f * density, state.heightPx - 48f * density))
+            Text("${draft.probeId.replace('-', ' ').replaceFirstChar { it.uppercase() }} · ${draft.altitudeKmText} km", color = SpatialGold, fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.offset { IntOffset(left.roundToInt(), top.roundToInt()) }
+                    .widthIn(max = 176.dp)
                     .testTag(LabSpatialTags.DRAFT)
                     .semantics { contentDescription = "Draft ${draft.probeId}, altitude ${draft.altitudeKmText} kilometres" })
             if (!committing && arrowTip != null && arrowTip.xPx in 24f * density..state.widthPx - 24f * density &&

@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab.runtime
 
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.flowOf
@@ -8,7 +9,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -39,7 +42,11 @@ class ProbeAuthoringTest {
 
     @Test
     fun facadeRunsPreviewOffCallerWithoutChangingDisplayedStateAndPublishesCommittedTruth() = runBlocking {
-        Executors.newSingleThreadExecutor { task -> Thread(task, "probe-boundary") }.asCoroutineDispatcher().use { dispatcher ->
+        val callerThread = Thread.currentThread()
+        val boundaryThread = AtomicReference<Thread>()
+        Executors.newSingleThreadExecutor { task ->
+            Thread(task, "probe-boundary").also(boundaryThread::set)
+        }.asCoroutineDispatcher().use { dispatcher ->
             val bridge = ProbeBridge(native().toPreview(42, candidate, "earth"))
             val facade = BridgeBackedRuntimeFacade(bridge, boundaryDispatcher = dispatcher,
                 developerTelemetryRecorder = DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
@@ -47,7 +54,11 @@ class ProbeAuthoringTest {
             val before = facade.uiState.value
             val preview = facade.previewProbe(candidate, "earth", 10.0)
             assertEquals(before, facade.uiState.value)
-            assertTrue(bridge.threads.all { it == "probe-boundary" })
+            // Coroutine debug instrumentation may decorate thread names. Verify the
+            // actual executor worker instead, including that the bridge was called.
+            assertEquals(1, bridge.threads.size)
+            assertSame(boundaryThread.get(), bridge.threads.single())
+            assertNotSame(callerThread, bridge.threads.single())
             val receipt = facade.commitProbe(preview)
             assertEquals(receipt, facade.lastProbeCommit.value)
             assertEquals(4, facade.uiState.value.snapshot!!.bodyCount)
@@ -140,7 +151,7 @@ class ProbeAuthoringTest {
         var allowCommit: CompletableDeferred<Unit>? = null
         var commandSignals: List<RuntimeSignal> = emptyList()
         var loadSignals: List<RuntimeSignal> = emptyList()
-        val threads = mutableListOf<String>()
+        val threads = mutableListOf<Thread>()
         private val snapshot = NativeSnapshotSummaryResult(NativeResult(0), "lab.earth-moon", "main", 3, 0.0, true, 1.0, 0, 1, revision = 7)
         override fun connect() = flowOf(RuntimeSignal.Connected(42), RuntimeSignal.SnapshotUpdated(snapshot, 42))
         override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> = loadSignals
@@ -150,7 +161,7 @@ class ProbeAuthoringTest {
             snapshot.copy(bodyCount = 4, revision = 10), 42)
         override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult {
             failure?.let { throw it }
-            threads += Thread.currentThread().name
+            threads += Thread.currentThread()
             return preview
         }
         override suspend fun commitProbe(preview: ProbePreviewResult): Pair<ProbeCommitResult, List<RuntimeSignal>> {

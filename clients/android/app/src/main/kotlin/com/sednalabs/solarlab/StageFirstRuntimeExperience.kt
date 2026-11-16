@@ -480,6 +480,7 @@ internal fun StageFirstRuntimeExperience(
 
         fun selectRuntimeBody(bodyId: String) {
             if (labInteraction.draft != null) return
+            labInteraction.feedback = null
             selectedBodyId = bodyId
             observerMode = ObserverMode.FREE
             semanticFocusAcknowledgement = null
@@ -590,7 +591,7 @@ internal fun StageFirstRuntimeExperience(
                     observerMode = ObserverMode.FREE
                     syncObserver(selectedBodyId, ObserverMode.FREE)
                     selectedBodyId?.let { renderHostView?.frameBody(it) }
-                    labInteraction.feedback = "Placement undone · returned to the time before the edit"
+                    labInteraction.feedback = "Placement undone · paused"
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
@@ -761,7 +762,7 @@ internal fun StageFirstRuntimeExperience(
                 observerMode = ObserverMode.FREE
                 renderHostView?.setSelectedBodyId(commit.bodyId)
                 renderHostView?.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
-                labInteraction.feedback = "Probe placed · your experiment is paused"
+                labInteraction.feedback = "Probe placed · paused"
             }
         }
 
@@ -801,7 +802,7 @@ internal fun StageFirstRuntimeExperience(
             while (true) {
                 val captured = runtimeFacade.uiState.value.snapshot
                 if (captured?.paused != true) {
-                    labInteraction.selectedFacts = "Simulation running · pause for exact details"
+                    labInteraction.selectedFacts = LabObjectFacts(id, "Simulation running · pause for exact details")
                     delay(700)
                     continue
                 }
@@ -813,12 +814,13 @@ internal fun StageFirstRuntimeExperience(
                         runtimeFacade.uiState.value.snapshot?.paused != true) continue
                     val hosts = listOfNotNull(earth, moon).filter { it.bodyId != id }
                     val reference = hosts.minByOrNull { labLength(body.labPosition() - it.labPosition()) / it.radiusM.coerceAtLeast(1.0) }
-                    labInteraction.selectedFacts = when {
+                    val summary = when {
                         id == "earth" -> "Our home world · radius ${formatLabDistance(body.radiusM)}"
                         id == "moon" && earth != null -> "${formatLabDistance(labLength(body.labPosition() - earth.labPosition()))} from Earth"
                         reference != null -> "${formatLabDistance(labLength(body.labPosition() - reference.labPosition()) - reference.radiusM)} above ${displayNameForBodyId(reference.bodyId)} · ${labDecimal(labLength(body.labVelocity() - reference.labVelocity()) / 1_000.0)} km/s"
                         else -> "Radius ${formatLabDistance(body.radiusM)}"
                     }
+                    labInteraction.selectedFacts = LabObjectFacts(id, summary)
                 }
                 delay(700)
             }
@@ -1146,13 +1148,6 @@ internal fun StageFirstRuntimeExperience(
                     if (!labInteraction.committing) labInteraction.draft?.let { labInteraction.changeDraft(it.withVelocityPoint(point, scale)) }
                 },
             )
-            labInteraction.feedback?.let { message ->
-                Surface(Modifier.align(Alignment.BottomCenter).padding(12.dp),
-                    color = Color(0xF0182B36), shape = RoundedCornerShape(16.dp)) {
-                    Text(message, Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                        color = Color(0xFFB9F0E6), fontSize = 12.sp)
-                }
-            }
             }
 
             if (!placing) EarthMoonLabChrome(
@@ -1173,7 +1168,8 @@ internal fun StageFirstRuntimeExperience(
                     followingSelection = observerMode == ObserverMode.FOLLOW_SELECTED,
                     metresPerPixel = labInteraction.viewport?.metresPerPixel,
                     canUndo = lastProbeCommit != null && !labInteraction.undoing,
-                    selectionSubtitle = labInteraction.selectedFacts,
+                    selectionSubtitle = labInteraction.feedback
+                        ?: labInteraction.selectedFacts?.takeIf { it.bodyId == selectedBodyId }?.summary,
                 ),
                 actions = LabStageActions(
                     focus = { focusAndFrameRuntimeBody(it) },
@@ -1260,7 +1256,7 @@ internal fun StageFirstRuntimeExperience(
                         speedKmPerSecondText = if (draft.motion == LabPlacementMotion.CIRCULAR) labDecimal((draft.circularSpeedMps ?: 0.0) / 1_000.0) else draft.speedKmPerSecondText,
                         direction = draft.direction,
                         previewStatus = previewStatus,
-                        previewHorizonText = preview?.let { "Next ${labDecimal(it.horizonSeconds / 60.0)} minutes${if (it.limited) " · bounded preview" else ""}" },
+                        previewHorizonText = preview?.let { "Next ${labPreviewDuration(it.horizonSeconds)}${if (it.limited) " · bounded preview" else ""}" },
                         error = draft.validationError ?: labInteraction.error,
                         canCreate = preview != null && preview.candidate == draft.candidate() && !labInteraction.previewing,
                         committing = labInteraction.committing,

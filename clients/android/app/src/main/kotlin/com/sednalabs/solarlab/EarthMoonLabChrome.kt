@@ -196,7 +196,7 @@ internal fun EarthMoonLabChrome(
             .background(Brush.verticalGradient(listOf(Color(0xE6050C16), Color.Transparent))))
 
         if (mode != StageChromeMode.MINIMAL) {
-            LabSceneHeader(scenarioName, availableBodyIds, navigation, actions, landscape,
+            LabSceneHeader(scenarioName, availableBodyIds, navigation, actions, landscape, canEdit,
                 Modifier.align(Alignment.TopCenter).statusBarsPadding().height(headerHeight))
             LabBottomDock(uiState, selectedBody, selectedName, selectionDescription,
                 navigation, playbackPreset, actions, landscape, canEdit,
@@ -217,7 +217,7 @@ internal fun EarthMoonLabChrome(
             navigation.metresPerPixel?.takeIf { it.isFinite() && it > 0.0 }?.let {
                 LabScaleRuler(it, Modifier.align(Alignment.BottomStart).padding(bottom = 12.dp))
             }
-            if (navigation.canUndo) {
+            if (navigation.canUndo && !landscape) {
                 Surface(Modifier.align(Alignment.BottomEnd).padding(bottom = 10.dp),
                     color = LabPanel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, LabLine)) {
                     LabTextAction("Undo", actions.undo, tag = LabTags.UNDO, enabled = canEdit)
@@ -246,6 +246,7 @@ private fun LabSceneHeader(
     navigation: LabNavigationUiState,
     actions: LabStageActions,
     landscape: Boolean,
+    canEdit: Boolean,
     modifier: Modifier,
 ) {
     Column(modifier.fillMaxWidth().testTag(LabTags.COMPACT_HEADER).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -263,6 +264,9 @@ private fun LabSceneHeader(
                 Spacer(Modifier.width(12.dp))
                 LabDestinations(availableBodyIds, actions)
                 Spacer(Modifier.width(12.dp))
+            }
+            if (landscape && navigation.canUndo) {
+                LabTextAction("Undo", actions.undo, tag = LabTags.UNDO, enabled = canEdit)
             }
             LabTextAction("Objects", actions.search, tag = SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON,
                 enabled = availableBodyIds.isNotEmpty())

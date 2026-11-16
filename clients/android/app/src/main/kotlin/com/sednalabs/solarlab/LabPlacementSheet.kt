@@ -2,9 +2,10 @@ package com.sednalabs.solarlab
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,7 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -104,6 +107,7 @@ internal object LabPlacementTags {
  * A nonmodal panel. The host reserves a bounded region below or beside the scene;
  * only the panel receives input, so the ghost and velocity arrow remain touchable.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LabPlacementSheet(
     state: LabPlacementUiState,
@@ -133,7 +137,7 @@ internal fun LabPlacementSheet(
                     color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Around", color = LabMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    FlowRow(Modifier.weight(1f)) {
                         state.hosts.forEach { host ->
                             PlacementChoice(host.name, state.hostBodyId == host.id, !state.committing,
                                 LabPlacementTags.host(host.id)) { actions.onHostChange(host.id) }
@@ -154,7 +158,7 @@ internal fun LabPlacementSheet(
                     }
                 }
                 PlacementAltitudeSlider(state, actions.onAltitudeChange)
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     LabPlacementMotion.entries.forEach { motion ->
                         PlacementChoice(when (motion) {
                             LabPlacementMotion.CIRCULAR -> "Circular orbit"
@@ -236,22 +240,23 @@ private fun PlacementNumberField(
     onChange: (String) -> Unit,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
     OutlinedTextField(value = value, onValueChange = onChange,
         label = { Text(label, fontSize = 12.sp) }, modifier = modifier.testTag(tag),
         singleLine = true, enabled = enabled, shape = RoundedCornerShape(12.dp),
         textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
+        keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); keyboard?.hide() }))
 }
 
 @Composable
-private fun PlacementChoice(label: String, selected: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
+private fun PlacementChoice(label: String, isSelected: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
     TextButton(onClick = onClick, enabled = enabled,
-        modifier = Modifier.heightIn(min = 48.dp).testTag(tag),
+        modifier = Modifier.heightIn(min = 48.dp).testTag(tag).semantics { selected = isSelected },
         contentPadding = PaddingValues(horizontal = 12.dp), shape = RoundedCornerShape(13.dp),
-        colors = ButtonDefaults.textButtonColors(contentColor = if (selected) LabGold else LabMuted,
-            containerColor = if (selected) ColorGoldWash else androidx.compose.ui.graphics.Color.Transparent)) {
-        Text(label, fontSize = 12.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+        colors = ButtonDefaults.textButtonColors(contentColor = if (isSelected) LabGold else LabMuted,
+            containerColor = if (isSelected) ColorGoldWash else androidx.compose.ui.graphics.Color.Transparent)) {
+        Text(label, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
