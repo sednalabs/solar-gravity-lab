@@ -519,12 +519,16 @@ bool SolarLabVulkanRenderer::Render() {
     };
 
     const auto presentResult = vkQueuePresentKHR(presentQueue_, &presentInfo);
-    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR) {
         SetError("Swapchain present reported it is out of date.");
         return false;
     }
-    if (presentResult != VK_SUCCESS) {
-        SetError("vkQueuePresentKHR failed.");
+    // Android reports SUBOPTIMAL after successfully queuing an image when the
+    // window's rotation differs from our intentional identity pre-transform.
+    // That is expected for compositor-managed rotation, not a lost surface.
+    // Accept it just as acquire does, or Kotlin stops scheduling after one frame.
+    if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR) {
+        SetError("vkQueuePresentKHR failed with result=" + std::to_string(presentResult) + ".");
         return false;
     }
 

@@ -22,6 +22,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
@@ -130,7 +132,7 @@ class EarthMoonLabJourneyInstrumentationTest {
         composeRule.activityRule.scenario.recreate()
         composeRule.waitUntil(20_000) { composeRule.onAllNodesWithTag(LabTags.PLAY_PAUSE).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.paused == true)
-        capture("earth-moon-reopened.png")
+        capture("earth-moon-reopened.png", verifySystemBarBackground = true)
         captureLandscapeLayout()
     }
 
@@ -182,6 +184,7 @@ class EarthMoonLabJourneyInstrumentationTest {
         name: String,
         requireRoundBody: Boolean = false,
         minimumBodyViewportFraction: Double = 0.0,
+        verifySystemBarBackground: Boolean = false,
     ) {
         composeRule.waitForIdle()
         // Compose idle does not wait for the native camera's 240 ms ValueAnimator
@@ -205,7 +208,11 @@ class EarthMoonLabJourneyInstrumentationTest {
         val minimumBodyDiameter = maxOf(32, (minOf(stage.width, stage.height) * minimumBodyViewportFraction).toInt())
         writeImage("${name.removeSuffix(".png")}-stage.png", stage)
         val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+        val systemBarWhiteFractions = if (verifySystemBarBackground) measureSystemBarWhiteFractions(image) else emptyList()
         writeImage(name, image)
+        systemBarWhiteFractions.forEach { (bar, fraction) ->
+            assertTrue("Recreated $bar bar must not expose a white window background (${fraction * 100}% near-white)", fraction < 0.5)
+        }
         bodyAxes?.let { (horizontal, vertical) ->
             assertTrue("A close-view body should occupy the native stage centre: $horizontal × $vertical px", horizontal >= 32 && vertical >= 32)
             val ratio = horizontal.toDouble() / vertical
@@ -215,6 +222,36 @@ class EarthMoonLabJourneyInstrumentationTest {
                     "$horizontal × $vertical px, minimum $minimumBodyDiameter px",
                     horizontal >= minimumBodyDiameter && vertical >= minimumBodyDiameter)
             }
+        }
+    }
+
+    private fun measureSystemBarWhiteFractions(image: Bitmap): List<Pair<String, Double>> {
+        var statusBarHeight = 0
+        var navigationBarHeight = 0
+        composeRule.runOnUiThread {
+            ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)?.let { insets ->
+                statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                navigationBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            }
+        }
+        fun whiteFraction(top: Int, bottom: Int): Double {
+            var white = 0
+            var total = 0
+            for (y in top until bottom step 4) {
+                for (x in 0 until image.width step 4) {
+                    val pixel = image.getPixel(x, y)
+                    if (android.graphics.Color.red(pixel) > 220 && android.graphics.Color.green(pixel) > 220 &&
+                        android.graphics.Color.blue(pixel) > 220) white += 1
+                    total += 1
+                }
+            }
+            return if (total > 0) white.toDouble() / total else 0.0
+        }
+        // White clock/battery/navigation glyphs occupy a small part of a dark bar.
+        // The observed light-theme fallback filled the entire region after recreation.
+        return buildList {
+            if (statusBarHeight > 0) add("status" to whiteFraction(0, statusBarHeight.coerceAtMost(image.height)))
+            if (navigationBarHeight > 0) add("navigation" to whiteFraction((image.height - navigationBarHeight).coerceAtLeast(0), image.height))
         }
     }
 

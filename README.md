@@ -2,6 +2,37 @@
 
 Solar Gravity Lab now runs on the canonical Rust runtime mainline.
 
+## Earth–Moon laboratory
+
+The Android preview opens a paused Earth–Moon laboratory with a close view of
+Earth, offline NASA surface maps, and controls that remain usable in portrait
+and landscape. This is the first complete experience built on the existing
+Rust simulation and native Vulkan renderer.
+
+- Explore Earth, the Moon, or the whole system, with persistent playback controls.
+- Inspect and edit authoritative position and velocity, or add an orbiting probe
+  that does not perturb the canonical bodies.
+- Run an experiment, save it locally, replace the scene, and reopen the saved
+  world paused with its branch history and source metadata intact.
+- Read the model, epoch, source credits and limitations in the app's Model panel.
+
+Installable Android previews are published on the
+[Releases page](https://github.com/sednalabs/solar-gravity-lab/releases).
+They require Android 12 or newer and use the separate
+`com.sednalabs.solarlab.internal` package. Read the
+[release-channel guide](docs/release-channels.md) before replacing an older
+preview: stable signing and upgrade continuity are still separate work, and
+uninstalling the app removes its local experiments.
+
+The initial Sun/Earth/Moon state is a recorded JPL Horizons DE441 snapshot at
+J2000, advanced by the documented Newtonian model. The
+[reference data and qualification notes](data/earth-moon-lab/README.md) distinguish
+external ephemeris differences from integration convergence. Surface orientation,
+atmosphere and display colour are illustrative; this is not a live ephemeris or
+weather feed.
+
+## Platform
+
 The long-term product shape is:
 
 - a Rust-owned authoritative simulation/runtime core
@@ -10,9 +41,9 @@ The long-term product shape is:
 - a renderer-independent scene contract with backend adapters
 - optional hardware fast paths behind open, portable interfaces
 
-The existing Kotlin/Android/Vulkan code remains in this repository only as
-legacy reference material while the Rust-native platform continues to replace
-those seams.
+The root `app`, `core-*` and `feature-lab` modules remain as legacy reference
+material. The canonical Kotlin/Compose shell in `clients/android` and native
+Vulkan renderer in `render/android-vulkan` are active parts of the product.
 
 ## Status
 

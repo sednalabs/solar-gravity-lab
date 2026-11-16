@@ -45,6 +45,9 @@ Android performs display rotation. This matches the shader viewport and touch co
 without rotating and stretching a landscape buffer. Swapchain creation logs the requested,
 surface and buffer extents plus both transforms so native rotation evidence can verify the
 actual presentation contract, in addition to the pure projection formulas.
+Android's `VK_SUBOPTIMAL_KHR` result is accepted as a completed present: it is expected
+when the compositor handles a non-identity display rotation. A genuinely out-of-date
+swapchain remains an error. This keeps focus and camera updates alive after rotation.
 An initial laboratory follow of Earth or Moon uses the same close frame as an explicit
 Frame request after the first native bodies arrive. This also handles focus requested
 before surface creation; later camera updates preserve user zoom.

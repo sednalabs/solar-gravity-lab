@@ -6,6 +6,14 @@ once per Vulkan device using Android's native image decoder. The two RGBA maps
 occupy 4 MiB of GPU buffer storage; bilinear lookup wraps longitude and clamps
 latitude. Camera navigation does not rotate the map's body-fixed meridian.
 
+Earth receives an illustrative display-colour treatment in the fragment shader.
+Low-luminance, blue-dominant ocean pixels receive a bounded lift toward a readable
+blue; neutral terrain and bright ice do not receive this ocean tint. A monotonic 0.72 power
+curve then lifts Earth's directly lit dark tones, with black and full white fixed.
+This retains the existing Sun direction, diffuse-light terminator, limb contribution,
+silhouette and geography. It is not calibrated radiometry. The original asset bytes
+remain unchanged, and the Moon and other materials do not receive this treatment.
+
 | File | Source and credit | SHA-256 |
 | --- | --- | --- |
 | `earth-nasa.png` | [Blue Marble, SVS 2915](https://svs.gsfc.nasa.gov/2915/). NASA/Goddard Space Flight Center Scientific Visualization Studio; Blue Marble data courtesy of Reto Stöckli (NASA/GSFC) and NASA's Earth Observatory. | `d1d3cb36ae6ae452c43cdf7ae0ffc13a959e8a5a2358f58b05e5f623c15119f9` |

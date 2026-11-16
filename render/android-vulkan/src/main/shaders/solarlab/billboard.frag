@@ -107,7 +107,16 @@ vec3 mappedSurface(int map, vec3 local) {
 
 vec3 surfaceColor(vec3 normal, float sphereZ) {
     vec3 local = bodyLocalNormal(normal);
-    if ((vAppearanceFlags & HAS_EARTH_MAP) != 0u) return mappedSurface(0, local);
+    if ((vAppearanceFlags & HAS_EARTH_MAP) != 0u) {
+        vec3 mapped = mappedSurface(0, local);
+        float luminance = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+        float blueDominance = mapped.b - max(mapped.r, mapped.g);
+        float darkOcean = smoothstep(0.025, 0.10, blueDominance) *
+            (1.0 - smoothstep(0.12, 0.35, luminance));
+        // Illustrative display colour: reveal the map's dark blue ocean without
+        // tinting neutral terrain or bright ice. Geography and the source asset stay intact.
+        return mix(mapped, max(mapped, vec3(0.035, 0.22, 0.46)), darkOcean * 0.85);
+    }
     if ((vAppearanceFlags & HAS_MOON_MAP) != 0u) return mappedSurface(1, local);
     float latitude = local.y;
     float longitude = atan(local.z, local.x);
@@ -178,6 +187,12 @@ vec3 litSurface(vec3 normal, vec3 color, float sphereZ) {
     float diffuse = max(dot(normal, normalize(vLightDirection)), 0.0);
     float rim = pow(1.0 - sphereZ, 2.2);
     vec3 shaded = color * (0.16 + 0.84 * diffuse);
+    if ((vAppearanceFlags & HAS_EARTH_MAP) != 0u) {
+        // A bounded, monotonic Earth-only tone curve keeps dark regions readable.
+        // The Sun's diffuse term and terminator remain unchanged; zero and full
+        // white remain fixed, and the existing limb contribution is added below.
+        shaded = pow(clamp(shaded, vec3(0.0), vec3(1.0)), vec3(0.72));
+    }
     shaded += min(color + vec3(0.18), vec3(1.0)) * rim * 0.15;
     return min(shaded, vec3(1.0));
 }
