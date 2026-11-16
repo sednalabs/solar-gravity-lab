@@ -1,0 +1,444 @@
+269: #[derive(Clone, Debug, PartialEq)]
+270: pub enum RuntimeError {
+271:     /// Stable runtime-facing invalid-state errors intended to map cleanly to ABI status
+272:     /// responses.
+273:     DuplicateBody(BodyId),
+274:     UnknownBody(BodyId),
+275:     UnknownScenario(ScenarioId),
+276:     InvalidEpochDelta(f64),
+277:     InvalidPlaybackRate(f64),
+278:     AdvanceBusy,
+279:     AdvanceStale,
+280:     AdvanceWorkLimit,
+281:     UnknownCheckpoint(CheckpointId),
+282:     DuplicateCheckpoint(CheckpointId),
+283:     DuplicateBranch(BranchId),
+284:     PackagePlanFailed(UpdatePlanError),
+285:     PackageApplyFailed(ApplyUpdateError),
+286:     NoInstalledManifestAvailable,
+287:     PackageNotInstalled(String),
+288:     MountedPackageMissingFromStore(String),
+289: }
+290: 
+291: #[derive(Clone, Debug, PartialEq, Eq)]
+292: pub struct ApplyUpdateManifestCommand {
+293:     /// One explicit package update transaction request.
+294:     /// Runtime owns package manifests and update application details; this is the
+295:     /// immutable input boundary.
+296:     pub manifest: UpdateManifest,
+297:     pub target: CompatibilityTarget,
+298:     pub fetched_packages_by_id: BTreeMap<String, StoredPackage>,
+299: }
+300: 
+301: #[derive(Clone, Debug, PartialEq, Eq)]
+302: pub struct MountPackageCommand {
+303:     /// Opaque package identity request from shells to mark installed data as mounted.
+304:     pub package_id: String,
+305: }
+306: 
+307: #[derive(Clone, Debug, PartialEq, Eq)]
+308: pub struct ApplyUpdateManifestResult {
+309:     /// Result is intentionally explicit to keep shell-facing diagnostics stable.
+310:     pub plan: UpdatePlan,
+311:     pub provenance: ApplyProvenance,
+312:     pub mounted_manifest: Option<MountedManifestState>,
+845:                     return Err(RuntimeError::AdvanceWorkLimit);
+846:                 }
+847:             }
+848:             WorldCommand::SetPlaybackRate {
+849:                 sim_seconds_per_real_second,
+850:             } if !sim_seconds_per_real_second.is_finite()
+851:                 || *sim_seconds_per_real_second <= 0.0 =>
+852:             {
+853:                 return Err(RuntimeError::InvalidPlaybackRate(
+854:                     *sim_seconds_per_real_second,
+855:                 ));
+856:             }
+857:             _ => {}
+858:         }
+859: 
+860:         let mut events = Vec::new();
+861:         let mut header = self.new_command_header(&command, recorded_at_unix_ms);
+862:         let summary = self.command_summary(&command);
+863:         let is_branch_creation =
+864:             matches!(&command, WorldCommand::CreateBranchFromCheckpoint { .. });
+865:         let refresh_solver_execution_after_command =
+866:             !matches!(&command, WorldCommand::AdvanceEpoch { .. });
+867:         self.next_command_ordinal += 1;
+868: 
+869:         match &command {
+870:             WorldCommand::SeedCanonicalSolarSystem => {
+871:                 if self.active_branch().world.bodies.is_empty() {
+872:                     let seed = scenario_pack_seed(&self.scenario_id.0)
+873:                         .ok_or_else(|| RuntimeError::UnknownScenario(self.scenario_id.clone()))?;
+874:                     let initial_conditions_provenance = (self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID).then(|| InitialConditionsProvenance {
+875:                         dataset_id: solarlab_data::EARTH_MOON_LAB_DATASET_ID.into(),
+876:                         version: "1.0.0".into(),
+877:                         digest: solarlab_data::EARTH_MOON_LAB_DIGEST.into(),
+878:                         epoch_jd_tdb: solarlab_data::EARTH_MOON_LAB_EPOCH_JD_TDB,
+879:                         frame: "ICRF".into(),
+880:                         center: "solar-system-barycentre".into(),
+881:                         time_scale: "TDB".into(),
+882:                     });
+883:                     let branch = self.active_branch_mut();
+884:                     branch.world.initial_conditions_provenance = initial_conditions_provenance;
+885:                     branch.world.bodies = seed
+886:                         .bodies
+887:                         .into_iter()
+888:                         .map(|body| {
+943:                     return Err(RuntimeError::UnknownBody(body_id.clone()));
+944:                 }
+945:                 if branch.world.observer.focus_body_id.as_ref() == Some(body_id) {
+946:                     branch.world.observer.focus_body_id = None;
+947:                 }
+948:                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+949:                 branch.world.trail_history_by_body.remove(body_id);
+950:             }
+951:             WorldCommand::SetBodyKinematics {
+952:                 body_id,
+953:                 position_m,
+954:                 velocity_mps,
+955:             } => {
+956:                 let branch = self.active_branch_mut();
+957:                 let Some(body) = branch
+958:                     .world
+959:                     .bodies
+960:                     .iter_mut()
+961:                     .find(|b| b.body_id == *body_id)
+962:                 else {
+963:                     return Err(RuntimeError::UnknownBody(body_id.clone()));
+964:                 };
+965:                 body.position_m = *position_m;
+966:                 body.velocity_mps = *velocity_mps;
+967:                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+968:                 push_trail_sample(
+969:                     &mut branch.world.trail_history_by_body,
+970:                     body_id,
+971:                     branch.world.epoch_seconds,
+972:                     *position_m,
+973:                 );
+974:             }
+975:             WorldCommand::AdvanceEpoch { delta_seconds } => {
+976:                 let physics_policy = self.effective_physics_policy();
+977:                 let active_cpu_features = self.hardware_profile.cpu_features.clone();
+978:                 let branch = self.active_branch_mut();
+979:                 let (solver_bodies, invariants, solver_execution) =
+980:                     if let Some((solver_bodies, report)) = staged {
+981:                         let invariants = compute_invariants(&solver_bodies);
+982:                         (solver_bodies, invariants, report)
+983:                     } else {
+984:                         let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
+985:                         let (invariants, report) = advance_authoritative_with_features(
+986:                             &physics_policy,
+1286:         }
+1287:     }
+1288: 
+1289:     fn command_kind(&self, command: &WorldCommand) -> String {
+1290:         match command {
+1291:             WorldCommand::SeedCanonicalSolarSystem => "catalog.seed_canonical_solar_system",
+1292:             WorldCommand::SpawnBody { .. } => "body.spawn",
+1293:             WorldCommand::RemoveBody { .. } => "body.remove",
+1294:             WorldCommand::SetBodyKinematics { .. } => "body.set_kinematics",
+1295:             WorldCommand::AdvanceEpoch { .. } => "timeline.advance_epoch",
+1296:             WorldCommand::PausePlayback => "playback.pause",
+1297:             WorldCommand::ResumePlayback => "playback.resume",
+1298:             WorldCommand::SetPlaybackRate { .. } => "playback.set_rate",
+1299:             WorldCommand::SetObserverMode { .. } => "observer.set_mode",
+1300:             WorldCommand::FocusBody { .. } => "observer.focus_body",
+1301:             WorldCommand::CreateCheckpoint { .. } => "history.create_checkpoint",
+1302:             WorldCommand::CreateBranchFromCheckpoint { .. } => {
+1303:                 "history.create_branch_from_checkpoint"
+1304:             }
+1305:         }
+1306:         .to_owned()
+1307:     }
+1308: 
+1309:     fn command_summary(&self, command: &WorldCommand) -> String {
+1310:         match command {
+1311:             WorldCommand::SeedCanonicalSolarSystem => "seed canonical startup solar system".into(),
+1312:             WorldCommand::SpawnBody { body } => format!("spawn {}", body.body_id.0),
+1313:             WorldCommand::RemoveBody { body_id } => format!("remove {}", body_id.0),
+1314:             WorldCommand::SetBodyKinematics { body_id, .. } => {
+1315:                 format!("set kinematics {}", body_id.0)
+1316:             }
+1317:             WorldCommand::AdvanceEpoch { delta_seconds } => {
+1318:                 format!("advance epoch by {:.3}s", delta_seconds)
+1319:             }
+1320:             WorldCommand::PausePlayback => "pause playback".into(),
+1321:             WorldCommand::ResumePlayback => "resume playback".into(),
+1322:             WorldCommand::SetPlaybackRate {
+1323:                 sim_seconds_per_real_second,
+1324:             } => format!("set playback rate {:.3}", sim_seconds_per_real_second),
+1325:             WorldCommand::SetObserverMode { mode } => format!("set observer mode {mode:?}"),
+1326:             WorldCommand::FocusBody { body_id } => {
+1327:                 let target = body_id.as_ref().map_or("none", |id| id.0.as_str());
+1328:                 format!("focus {target}")
+1329:             }
+1330:             WorldCommand::CreateCheckpoint {
+1331:                 checkpoint_id,
+1332:                 label,
+1333:             } => {
+1334:                 let id = checkpoint_id.as_ref().map_or("auto", |v| v.0.as_str());
+1335:                 let note = label.as_deref().unwrap_or("unlabeled");
+1336:                 format!("checkpoint {id} ({note})")
+1337:             }
+1338:             WorldCommand::CreateBranchFromCheckpoint {
+1339:                 checkpoint_id,
+1340:                 new_branch_id,
+1341:             } => {
+1342:                 let id = new_branch_id.as_ref().map_or("auto", |v| v.0.as_str());
+1343:                 format!("branch {id} from {}", checkpoint_id.0)
+1344:             }
+1345:         }
+1346:     }
+1347: 
+1348:     fn generate_checkpoint_id(&mut self) -> CheckpointId {
+1349:         let id = CheckpointId(format!("cp-{:06}", self.next_checkpoint_ordinal));
+2523:             events[0],
+2524:             RuntimeEvent::HistoryAppended(HistoryEvent::CommandAppended(_))
+2525:         ));
+2526:         assert!(matches!(events[1], RuntimeEvent::SnapshotPublished(_)));
+2527:         assert_eq!(runtime.snapshot().bodies, vec![body.clone()]);
+2528: 
+2529:         runtime
+2530:             .apply_command(
+2531:                 WorldCommand::SetBodyKinematics {
+2532:                     body_id: BodyId("earth".into()),
+2533:                     position_m: Vector3d {
+2534:                         x: 10.0,
+2535:                         y: 0.0,
+2536:                         z: 0.0,
+2537:                     },
+2538:                     velocity_mps: Vector3d {
+2539:                         x: 0.0,
+2540:                         y: 30_000.0,
+2541:                         z: 0.0,
+2542:                     },
+2543:                 },
+2544:                 11,
+2545:             )
+2546:             .expect("kinematic update should succeed");
+2547: 
+2548:         assert_eq!(runtime.snapshot().bodies[0].position_m.x, 10.0);
+2549: 
+2550:         runtime
+2551:             .apply_command(
+2552:                 WorldCommand::SetObserverMode {
+2553:                     mode: ObserverMode::FollowSelected,
+2554:                 },
+2555:                 12,
+2556:             )
+2557:             .expect("observer mode update should succeed");
+2558: 
+2559:         runtime
+2560:             .apply_command(
+2561:                 WorldCommand::FocusBody {
+2562:                     body_id: Some(BodyId("earth".into())),
+2563:                 },
+2564:                 13,
+2565:             )
+2566:             .expect("observer focus should succeed");
+3287:                     Some(descriptor.checkpoint_id.clone())
+3288:                 }
+3289:                 _ => None,
+3290:             })
+3291:             .expect("checkpoint event should be emitted");
+3292: 
+3293:         runtime
+3294:             .apply_command(
+3295:                 WorldCommand::SetBodyKinematics {
+3296:                     body_id: body_id.clone(),
+3297:                     position_m: Vector3d {
+3298:                         x: 200.0,
+3299:                         y: 300.0,
+3300:                         z: 400.0,
+3301:                     },
+3302:                     velocity_mps: Vector3d {
+3303:                         x: 1.0,
+3304:                         y: 2.0,
+3305:                         z: 3.0,
+3306:                     },
+3307:                 },
+3308:                 4,
+3309:             )
+3310:             .expect("state mutation should succeed");
+3311: 
+3312:         runtime
+3313:             .apply_command(
+3314:                 WorldCommand::CreateBranchFromCheckpoint {
+3315:                     checkpoint_id,
+3316:                     new_branch_id: Some(BranchId("mission-alt".into())),
+3317:                 },
+3318:                 5,
+3319:             )
+3320:             .expect("branch creation should succeed");
+3321: 
+3322:         assert_eq!(runtime.active_branch_id(), &BranchId("mission-alt".into()));
+3323:         assert_eq!(runtime.snapshot().epoch_seconds, 120.0);
+3324:         assert_eq!(runtime.snapshot().bodies[0].position_m, Vector3d::default());
+3325:     }
+3326: 
+3327:     #[test]
+3328:     fn branch_snapshot_reports_origin_checkpoint() {
+3329:         let mut runtime = new_runtime();
+3330:         let checkpoint_events = runtime
+3432:                 .apply_command(
+3433:                     WorldCommand::SetPlaybackRate {
+3434:                         sim_seconds_per_real_second: value,
+3435:                     },
+3436:                     3,
+3437:                 )
+3438:                 .expect_err("invalid playback rate must fail");
+3439:             assert!(
+3440:                 matches!(err, RuntimeError::InvalidPlaybackRate(v) if v.to_bits() == value.to_bits())
+3441:             );
+3442:             assert_eq!(runtime.snapshot(), before);
+3443:             assert_eq!(runtime.next_command_ordinal, ordinal);
+3444:         }
+3445: 
+3446:         runtime
+3447:             .apply_command(
+3448:                 WorldCommand::SetPlaybackRate {
+3449:                     sim_seconds_per_real_second: 2.0,
+3450:                 },
+3451:                 4,
+3452:             )
+3453:             .unwrap();
+3454:         runtime
+3455:             .apply_command(
+3456:                 WorldCommand::AdvanceEpoch {
+3457:                     delta_seconds: 30.0,
+3458:                 },
+3459:                 5,
+3460:             )
+3461:             .unwrap();
+3462:         assert_eq!(runtime.snapshot().playback.sim_seconds_per_real_second, 2.0);
+3463:         assert_eq!(runtime.snapshot().epoch_seconds, 30.0);
+3464:     }
+3465: 
+3466:     #[test]
+3467:     fn rejects_unrepresentable_advance_before_mutation_but_allows_empty_world_jumps() {
+3468:         let mut runtime = new_runtime();
+3469:         runtime
+3470:             .apply_command(
+3471:                 WorldCommand::AdvanceEpoch {
+3472:                     delta_seconds: f64::MAX,
+3473:                 },
+3474:                 1,
+3475:             )
+4327:             .apply_command(
+4328:                 WorldCommand::SetPlaybackRate {
+4329:                     sim_seconds_per_real_second: 0.0,
+4330:                 },
+4331:                 2,
+4332:             )
+4333:             .expect_err("zero playback rate must fail");
+4334: 
+4335:         assert_eq!(err, RuntimeError::InvalidPlaybackRate(0.0));
+4336:     }
+4337: 
+4338:     #[test]
+4339:     fn rejects_duplicate_checkpoint_ids_across_branches() {
+4340:         let mut runtime = new_runtime();
+4341:         let checkpoint_id = CheckpointId("manual-dup".into());
+4342: 
+4343:         runtime
+4344:             .apply_command(
+4345:                 WorldCommand::CreateCheckpoint {
+4346:                     checkpoint_id: Some(checkpoint_id.clone()),
+4347:                     label: None,
+4348:                 },
+4349:                 1,
+4350:             )
+4351:             .expect("initial checkpoint should succeed");
+4352: 
+4353:         let err = runtime
+4354:             .apply_command(
+4355:                 WorldCommand::CreateCheckpoint {
+4356:                     checkpoint_id: Some(checkpoint_id.clone()),
+4357:                     label: None,
+4358:                 },
+4359:                 2,
+4360:             )
+4361:             .expect_err("duplicate checkpoint id must fail");
+4362: 
+4363:         assert_eq!(err, RuntimeError::DuplicateCheckpoint(checkpoint_id));
+4364:     }
+4365: 
+4366:     #[test]
+4367:     fn branch_creation_command_headers_use_new_branch() {
+4368:         let mut runtime = new_runtime();
+4369:         let checkpoint_id = CheckpointId("branch-source".into());
+4370:         let new_branch_id = BranchId("split-path".into());
+4961:                 },
+4962:                 1,
+4963:             )
+4964:             .expect("spawn tracer should succeed");
+4965: 
+4966:         for i in 0..(super::TRAIL_HISTORY_MAX_SAMPLES + 20) {
+4967:             runtime
+4968:                 .apply_command(
+4969:                     WorldCommand::SetBodyKinematics {
+4970:                         body_id: tracer.clone(),
+4971:                         position_m: Vector3d {
+4972:                             x: i as f64,
+4973:                             y: 0.0,
+4974:                             z: 0.0,
+4975:                         },
+4976:                         velocity_mps: Vector3d::default(),
+4977:                     },
+4978:                     (i + 2) as i64,
+4979:                 )
+4980:                 .expect("kinematics update should succeed");
+4981:         }
+4982: 
+4983:         let checkpoint_events = runtime
+4984:             .apply_command(
+4985:                 WorldCommand::CreateCheckpoint {
+4986:                     checkpoint_id: Some(CheckpointId("trail-cp".into())),
+4987:                     label: Some("trail checkpoint".into()),
+4988:                 },
+4989:                 500,
+4990:             )
+4991:             .expect("checkpoint creation should succeed");
+4992:         let checkpoint_id = checkpoint_id_from_events(&checkpoint_events);
+4993: 
+4994:         for i in 0..5 {
+4995:             runtime
+4996:                 .apply_command(
+4997:                     WorldCommand::SetBodyKinematics {
+4998:                         body_id: tracer.clone(),
+4999:                         position_m: Vector3d {
+5000:                             x: 1_000.0 + i as f64,
+5001:                             y: 0.0,
+5002:                             z: 0.0,
+5003:                         },
+5004:                         velocity_mps: Vector3d::default(),
+5005:                     },
+5006:                     600 + i as i64,
+5007:                 )
+5008:                 .expect("post-checkpoint update should succeed");
+5009:         }
+5010: 
+5011:         let scene_after_extra_updates = runtime.render_scene();
+5012:         let trail_after_extra_updates = scene_after_extra_updates
+5013:             .trails
+5014:             .iter()
+5015:             .find(|trail| trail.source_body_id == tracer)
+5016:             .expect("trail should exist after updates");
+5017:         assert_eq!(
+5018:             trail_after_extra_updates.samples_m.len(),
+5019:             super::TRAIL_HISTORY_MAX_SAMPLES
+5020:         );
+5021: 
+5022:         runtime
+5023:             .apply_command(
+5024:                 WorldCommand::CreateBranchFromCheckpoint {
+5025:                     checkpoint_id,
+5026:                     new_branch_id: Some(BranchId("trail-restored".into())),
+5027:                 },
+5028:                 700,
+5029:             )
+5030:             .expect("branch restore should succeed");
+5031: 
+5032:         let restored_scene = runtime.render_scene();

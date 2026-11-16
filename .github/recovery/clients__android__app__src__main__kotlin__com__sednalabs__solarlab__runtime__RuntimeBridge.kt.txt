@@ -1,0 +1,88 @@
+1155:     ) : RuntimeCommand {
+1156:         override val label: String = "body.spawn"
+1157:     }
+1158: 
+1159:     data class RemoveBody(val bodyId: String) : RuntimeCommand {
+1160:         override val label: String = "body.remove"
+1161:     }
+1162: 
+1163:     data class SetBodyKinematics(
+1164:         val bodyId: String,
+1165:         val positionX: Double,
+1166:         val positionY: Double,
+1167:         val positionZ: Double,
+1168:         val velocityX: Double,
+1169:         val velocityY: Double,
+1170:         val velocityZ: Double,
+1171:     ) : RuntimeCommand {
+1172:         override val label: String = "body.set_kinematics"
+1173:     }
+1174: 
+1175:     data class CreateCheckpoint(
+1176:         val checkpointId: String? = null,
+1177:         val checkpointLabel: String? = null,
+1178:     ) : RuntimeCommand {
+1179:         override val label: String = "branching.create_checkpoint"
+1180:     }
+1181: 
+1182:     data class CreateBranchFromCheckpoint(
+1183:         val checkpointId: String,
+1184:         val newBranchId: String? = null,
+1185:     ) : RuntimeCommand {
+1186:         override val label: String = "branching.create_branch_from_checkpoint"
+1187:     }
+1188: }
+1189: 
+1190: enum class RuntimeBodyClass(val nativeCode: Int) {
+1191:     Star(0),
+1192:     Planet(1),
+1193:     DwarfPlanet(2),
+1194:     Moon(3),
+1195:     SmallBody(4),
+1196:     Tracer(5),
+1197:     Spacecraft(6),
+1198:     Custom(7),
+1288:         bodyRadiusM = radiusM,
+1289:     )
+1290: 
+1291:     is RuntimeCommand.RemoveBody -> NativeRuntimeCommandPayload(
+1292:         kind = NATIVE_COMMAND_REMOVE_BODY,
+1293:         bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+1294:     )
+1295: 
+1296:     is RuntimeCommand.SetBodyKinematics -> NativeRuntimeCommandPayload(
+1297:         kind = NATIVE_COMMAND_SET_BODY_KINEMATICS,
+1298:         bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+1299:         bodyPositionX = positionX,
+1300:         bodyPositionY = positionY,
+1301:         bodyPositionZ = positionZ,
+1302:         bodyVelocityX = velocityX,
+1303:         bodyVelocityY = velocityY,
+1304:         bodyVelocityZ = velocityZ,
+1305:     )
+1306: 
+1307:     is RuntimeCommand.CreateCheckpoint -> NativeRuntimeCommandPayload(
+1308:         kind = NATIVE_COMMAND_CREATE_CHECKPOINT,
+1309:         checkpointIdUtf8 = checkpointId?.toByteArray(StandardCharsets.UTF_8),
+1310:         checkpointLabelUtf8 = checkpointLabel?.toByteArray(StandardCharsets.UTF_8),
+1311:     )
+1312: 
+1313:     is RuntimeCommand.CreateBranchFromCheckpoint -> NativeRuntimeCommandPayload(
+1314:         kind = NATIVE_COMMAND_CREATE_BRANCH_FROM_CHECKPOINT,
+1315:         checkpointIdUtf8 = checkpointId.toByteArray(StandardCharsets.UTF_8),
+1316:         newBranchIdUtf8 = newBranchId?.toByteArray(StandardCharsets.UTF_8),
+1317:     )
+1318: }
+1319: 
+1320: private fun RuntimeObserverMode.startupDisplayLabel(): String = when (this) {
+1321:     RuntimeObserverMode.Free -> "Free"
+1322:     RuntimeObserverMode.FollowSelected -> "Follow selected"
+1323:     RuntimeObserverMode.FollowHost -> "Follow host"
+1324:     RuntimeObserverMode.SystemFrame -> "System frame"
+1325: }
+1326: 
+1327: internal interface NativeRuntimeTransport {
+1328:     fun ensureLibraryLoaded(): NativeLibraryLoadOutcome
+1329: 
+1330:     fun createSession(
+1331:         scenarioId: String,

@@ -1,0 +1,207 @@
+275:             return Err(ProbeAuthoringError::Busy);
+276:         }
+277:         if !self.active_branch().world.playback.paused {
+278:             return Err(ProbeAuthoringError::NotPaused);
+279:         }
+280:         Ok(())
+281:     }
+282: 
+283:     fn validate_probe_candidate(&self, candidate: &BodyState) -> Result<(), ProbeAuthoringError> {
+284:         use ProbeAuthoringError::InvalidCandidate as invalid;
+285:         let id = &candidate.body_id.0;
+286:         if id.trim().is_empty() || id.len() > 96 || id.chars().any(char::is_control) {
+287:             return Err(invalid("The probe name is invalid"));
+288:         }
+289:         if self
+290:             .active_branch()
+291:             .world
+292:             .bodies
+293:             .iter()
+294:             .any(|body| body.body_id.0.eq_ignore_ascii_case(id))
+295:         {
+296:             return Err(invalid("A body already has this probe name"));
+297:         }
+298:         if !candidate.mass_kg.is_finite()
+299:             || candidate.mass_kg <= 0.0
+300:             || !candidate.source_mass_kg.is_finite()
+301:             || candidate.source_mass_kg < 0.0
+302:             || !candidate.radius_m.is_finite()
+303:             || candidate.radius_m <= 0.0
+304:             || !finite_vector(candidate.position_m)
+305:             || !finite_vector(candidate.velocity_mps)
+306:         {
+307:             return Err(invalid(
+308:                 "Probe position, velocity, mass and radius must be finite and physically valid",
+309:             ));
+310:         }
+311:         let mut bodies = self.active_branch().world.bodies.clone();
+312:         bodies.push(candidate.clone());
+313:         if !finite_invariants(compute_world_invariants(&bodies)) {
+314:             return Err(ProbeAuthoringError::NumericalRange);
+315:         }
+316:         Ok(())
+317:     }
+318: }
+319: 
+320: impl ProbePreviewPlan {
+321:     pub fn run(mut self) -> Result<ProbePreview, ProbeAuthoringError> {
+322:         let mut solver_bodies = world_bodies_to_solver_state(&self.bodies);
+323:         let candidate_index = self.bodies.len() - 1;
+324:         let mut previous = relative_position(&self.bodies, candidate_index, self.reference_index);
+325:         let mut samples = vec![ProbePreviewSample {
+326:             elapsed_seconds: 0.0,
+327:             position_m: previous,
+328:         }];
+329:         let radius = self.reference_body.radius_m + self.candidate_radius_m;
+330:         let mut intersects = false;
+331:         let mut steps = 0;
+332:         let mut epoch = self.epoch_seconds;
+333:         for _ in 0..PREVIEW_INTERVALS {
+334:             let policy = preview_policy(&self.configured_policy, self.lab_policy, &self.bodies);
+335:             let count = checked_substep_count(&policy, self.interval_seconds)
+336:                 .ok_or(ProbeAuthoringError::NumericalRange)?;
+455:             .iter()
+456:             .find(|body| body.body_id.0 == "earth")
+457:             .unwrap();
+458:         let distance = earth.radius_m + 800_000.0;
+459:         BodyState {
+460:             body_id: BodyId("probe-1".into()),
+461:             body_class: BodyClass::Spacecraft,
+462:             mass_kg: 1_000.0,
+463:             source_mass_kg: 0.0,
+464:             radius_m: 2.0,
+465:             position_m: Vector3d {
+466:                 x: earth.position_m.x + distance,
+467:                 ..earth.position_m
+468:             },
+469:             velocity_mps: Vector3d {
+470:                 y: earth.velocity_mps.y + (6.67430e-11 * earth.source_mass_kg / distance).sqrt(),
+471:                 ..earth.velocity_mps
+472:             },
+473:         }
+474:     }
+475: 
+476:     fn preview(runtime: &WorldRuntime, body: BodyState) -> ProbePreview {
+477:         runtime
+478:             .prepare_probe_preview(body, &BodyId("earth".into()), 43_200.0)
+479:             .unwrap()
+480:             .run()
+481:             .unwrap()
+482:     }
+483: 
+484:     #[test]
+485:     fn preview_retains_the_saved_world_step_model() {
+486:         for policy in [lab_step::LabStepPolicy::LegacyDistanceV1, lab_step::LabStepPolicy::PeriapsisV2] {
+487:             let mut world = lab();
+488:             world.lab_step_policy = policy;
+489:             let restored = WorldRuntime::import_saved_session(&world.export_saved_session().unwrap(), world.hardware_profile.clone()).unwrap();
+490:             let draft = candidate(&restored);
+491:             let plan = restored.prepare_probe_preview(draft, &BodyId("earth".into()), 3_600.0).unwrap();
+492:             assert_eq!(plan.lab_policy, Some(policy));
+493:             assert_eq!(preview_policy(&plan.configured_policy, plan.lab_policy, &plan.bodies),
+494:                 policy.for_world(&restored.config.physics, &plan.bodies));
+495:         }
+496:     }
+497: 
+498:     #[test]
+499:     fn preview_is_bounded_and_leaves_all_world_history_and_counters_unchanged() {
+500:         let runtime = lab();
+501:         let before = runtime.export_saved_session().unwrap();
+502:         let body = candidate(&runtime);
+503:         let expected_start = difference(
+504:             body.position_m,
+505:             runtime.active_branch().world.bodies[1].position_m,
+524:         assert!(!result.intersects_reference_body);
+525:     }
+526: 
+527:     #[test]
+528:     fn preview_samples_match_committed_propagation_including_explicit_source_mass() {
+529:         for source_mass in [0.0, 1.0e20] {
+530:             let mut runtime = lab();
+531:             let mut body = candidate(&runtime);
+532:             body.source_mass_kg = source_mass;
+533:             let result = preview(&runtime, body.clone());
+534:             runtime
+535:                 .commit_probe(body, result.baseline_revision, result.epoch_seconds, 2)
+536:                 .unwrap();
+537:             let dt = result.samples[1].elapsed_seconds;
+538:             for sample in result.samples.iter().skip(1) {
+539:                 runtime
+540:                     .apply_command(WorldCommand::AdvanceEpoch { delta_seconds: dt }, 3)
+541:                     .unwrap();
+542:                 let bodies = &runtime.active_branch().world.bodies;
+543:                 assert_eq!(
+544:                     relative_position(bodies, bodies.len() - 1, 1),
+545:                     sample.position_m
+546:                 );
+547:                 assert_eq!(
+548:                     runtime.active_branch().world.epoch_seconds,
+549:                     result.epoch_seconds + sample.elapsed_seconds
+550:                 );
+551:             }
+552:         }
+553:     }
+554: 
+555:     #[test]
+556:     fn copied_plan_survives_world_change_but_its_commit_is_stale_and_atomic() {
+557:         let mut runtime = lab();
+558:         let body = candidate(&runtime);
+559:         let plan = runtime
+560:             .prepare_probe_preview(body.clone(), &BodyId("earth".into()), 3600.0)
+561:             .unwrap();
+562:         runtime
+563:             .apply_command(
+564:                 WorldCommand::AdvanceEpoch {
+565:                     delta_seconds: 60.0,
+566:                 },
+567:                 3,
+581:     fn malformed_and_overflowing_candidates_cannot_preview_or_commit() {
+582:         let mut runtime = lab();
+583:         let before = runtime.export_saved_session().unwrap();
+584:         let original = candidate(&runtime);
+585:         for mode in 0..8 {
+586:             let mut body = original.clone();
+587:             match mode {
+588:                 0 => body.mass_kg = f64::INFINITY,
+589:                 1 => body.source_mass_kg = -1.0,
+590:                 2 => body.position_m.x = f64::NAN,
+591:                 3 => body.velocity_mps.z = f64::INFINITY,
+592:                 4 => body.radius_m = 0.0,
+593:                 5 => body.body_id = BodyId("EARTH".into()),
+594:                 6 => body.body_id = BodyId("bad\nname".into()),
+595:                 _ => body.source_mass_kg = 1e300,
+596:             }
+597:             assert!(runtime
+598:                 .prepare_probe_preview(body.clone(), &BodyId("earth".into()), 3600.0)
+599:                 .is_err());
+600:             assert!(runtime
+601:                 .commit_probe(body, runtime.snapshot_revision(), 0.0, 2)
+602:                 .is_err());
+603:             assert_eq!(before, runtime.export_saved_session().unwrap());
+604:         }
+605:     }
+606: 
+607:     #[test]
+608:     fn missing_reference_surface_overlap_running_time_and_bad_horizons_are_rejected() {
+609:         let mut runtime = lab();
+610:         let original = candidate(&runtime);
+611:         assert!(matches!(
+612:             runtime.prepare_probe_preview(original.clone(), &BodyId("missing".into()), 60.0),
+613:             Err(ProbeAuthoringError::InvalidReference)
+614:         ));
+615:         for horizon in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+616:             assert!(matches!(
+617:                 runtime.prepare_probe_preview(original.clone(), &BodyId("earth".into()), horizon),
+618:                 Err(ProbeAuthoringError::InvalidHorizon)
+619:             ));
+620:         }
+621:         let mut overlapping = original.clone();
+622:         overlapping.position_m = runtime.active_branch().world.bodies[1].position_m;
+623:         assert!(matches!(
+624:             runtime.prepare_probe_preview(overlapping, &BodyId("earth".into()), 60.0),
+625:             Err(ProbeAuthoringError::InvalidCandidate(_))
+626:         ));
+627:         runtime
+628:             .apply_command(WorldCommand::ResumePlayback, 2)
+629:             .unwrap();
+630:         assert!(matches!(

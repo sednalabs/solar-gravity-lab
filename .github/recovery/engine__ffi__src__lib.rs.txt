@@ -1,0 +1,276 @@
+157:     AdvanceEpoch = 0,
+158:     PausePlayback = 1,
+159:     ResumePlayback = 2,
+160:     SetPlaybackRate = 3,
+161:     SetObserverMode = 4,
+162:     FocusBody = 5,
+163:     SpawnBody = 6,
+164:     RemoveBody = 7,
+165:     SetBodyKinematics = 8,
+166:     CreateCheckpoint = 9,
+167:     CreateBranchFromCheckpoint = 10,
+168:     SeedCanonicalSolarSystem = 11,
+169: }
+170: 
+171: #[repr(C)]
+172: #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+173: pub enum SlBodyClass {
+174:     Star = 0,
+175:     Planet = 1,
+176:     DwarfPlanet = 2,
+177:     Moon = 3,
+178:     SmallBody = 4,
+179:     Tracer = 5,
+180:     Spacecraft = 6,
+181:     Custom = 7,
+182:     Comet = 8,
+183: }
+184: 
+185: #[repr(C)]
+186: #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+187: pub enum SlSceneBodyKind {
+188:     Star = 0,
+189:     Planet = 1,
+190:     DwarfPlanet = 2,
+191:     Moon = 3,
+192:     Asteroid = 4,
+193:     Comet = 5,
+194:     Tracer = 6,
+195:     Spacecraft = 7,
+196:     Custom = 8,
+197: }
+198: 
+199: #[repr(C)]
+200: #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+1895:                     position_m: decode_vector3d(command.body_position),
+1896:                     velocity_mps: decode_vector3d(command.body_velocity),
+1897:                 },
+1898:             })
+1899:         }
+1900:         SlCommandKind::RemoveBody => Ok(WorldCommand::RemoveBody {
+1901:             body_id: BodyId(decode_identifier(&command.body_id, command.body_id_len)?),
+1902:         }),
+1903:         SlCommandKind::SetBodyKinematics => {
+1904:             let body_id = decode_identifier(&command.body_id, command.body_id_len)?;
+1905:             Ok(WorldCommand::SetBodyKinematics {
+1906:                 body_id: BodyId(body_id),
+1907:                 position_m: decode_vector3d(command.body_position),
+1908:                 velocity_mps: decode_vector3d(command.body_velocity),
+1909:             })
+1910:         }
+1911:         SlCommandKind::CreateCheckpoint => {
+1912:             let checkpoint_id =
+1913:                 decode_optional_identifier(&command.checkpoint_id, command.checkpoint_id_len)?
+1914:                     .map(CheckpointId);
+1915:             let label = decode_optional_identifier(
+1916:                 &command.checkpoint_label,
+1917:                 command.checkpoint_label_len,
+1918:             )?;
+1919:             Ok(WorldCommand::CreateCheckpoint {
+1920:                 checkpoint_id,
+1921:                 label,
+1922:             })
+1923:         }
+1924:         SlCommandKind::CreateBranchFromCheckpoint => {
+1925:             let checkpoint_id = CheckpointId(decode_identifier(
+1926:                 &command.checkpoint_id,
+1927:                 command.checkpoint_id_len,
+1928:             )?);
+1929:             let new_branch_id =
+1930:                 decode_optional_identifier(&command.new_branch_id, command.new_branch_id_len)?
+1931:                     .map(BranchId);
+1932:             Ok(WorldCommand::CreateBranchFromCheckpoint {
+1933:                 checkpoint_id,
+1934:                 new_branch_id,
+1935:             })
+1936:         }
+1937:     }
+1938: }
+1943: ) -> Result<Option<String>, SlResult> {
+1944:     if length == 0 {
+1945:         return Ok(None);
+1946:     }
+1947: 
+1948:     decode_identifier(bytes, length).map(Some)
+1949: }
+1950: 
+1951: fn decode_source_mass(value: f64, body_class: &BodyClass, mass_kg: f64) -> Result<f64, SlResult> {
+1952:     if value.is_nan() || value < 0.0 {
+1953:         return Ok(BodyState::default_source_mass_kg(body_class, mass_kg));
+1954:     }
+1955:     if !value.is_finite() {
+1956:         return Err(status(SlStatusCode::InvalidArgument));
+1957:     }
+1958:     Ok(value)
+1959: }
+1960: 
+1961: fn decode_body_class(value: SlBodyClass) -> Result<BodyClass, SlResult> {
+1962:     match value {
+1963:         SlBodyClass::Star => Ok(BodyClass::Star),
+1964:         SlBodyClass::Planet => Ok(BodyClass::Planet),
+1965:         SlBodyClass::DwarfPlanet => Ok(BodyClass::DwarfPlanet),
+1966:         SlBodyClass::Moon => Ok(BodyClass::Moon),
+1967:         SlBodyClass::SmallBody => Ok(BodyClass::SmallBody),
+1968:         SlBodyClass::Tracer => Ok(BodyClass::Tracer),
+1969:         SlBodyClass::Spacecraft => Ok(BodyClass::Spacecraft),
+1970:         SlBodyClass::Custom => Ok(BodyClass::Custom),
+1971:         SlBodyClass::Comet => Ok(BodyClass::Comet),
+1972:     }
+1973: }
+1974: 
+1975: fn decode_vector3d(value: SlVector3d) -> Vector3d {
+1976:     Vector3d {
+1977:         x: value.x,
+1978:         y: value.y,
+1979:         z: value.z,
+1980:     }
+1981: }
+1982: 
+1983: fn runtime_error_to_status(error: RuntimeError) -> SlResult {
+1984:     match error {
+1985:         RuntimeError::DuplicateBody(_)
+1986:         | RuntimeError::UnknownBody(_)
+1987:         | RuntimeError::UnknownScenario(_)
+1988:         | RuntimeError::InvalidEpochDelta(_)
+1989:         | RuntimeError::InvalidPlaybackRate(_)
+1990:         | RuntimeError::UnknownCheckpoint(_)
+1991:         | RuntimeError::DuplicateCheckpoint(_)
+1992:         | RuntimeError::DuplicateBranch(_)
+1993:         | RuntimeError::PackagePlanFailed(_)
+1994:         | RuntimeError::NoInstalledManifestAvailable
+1995:         | RuntimeError::PackageNotInstalled(_)
+1996:         | RuntimeError::MountedPackageMissingFromStore(_) => status(SlStatusCode::InvalidArgument),
+1997:         RuntimeError::PackageApplyFailed(_) => status(SlStatusCode::InternalError),
+1998:         RuntimeError::AdvanceBusy => status(SlStatusCode::Busy),
+1999:         RuntimeError::AdvanceStale => status(SlStatusCode::Stale),
+2000:         RuntimeError::AdvanceWorkLimit => status(SlStatusCode::WorkLimit),
+2001:     }
+2002: }
+2003: 
+2004: fn solver_for_cpu_backend(cpu_backend: &CpuBackend) -> SolverBackend {
+2005:     match cpu_backend {
+2006:         CpuBackend::ReferenceScalar => SolverBackend::ReferenceScalar,
+2007:         CpuBackend::SimdArm64 => SolverBackend::SimdArm64,
+2008:         CpuBackend::SimdX64 => SolverBackend::SimdX64,
+2009:     }
+2010: }
+2011: 
+2012: fn cpu_backend_for_solver_backend(solver_backend: &SolverBackend) -> CpuBackend {
+2013:     match solver_backend {
+2014:         SolverBackend::ReferenceScalar => CpuBackend::ReferenceScalar,
+2015:         SolverBackend::SimdArm64 => CpuBackend::SimdArm64,
+2016:         SolverBackend::SimdX64 => CpuBackend::SimdX64,
+2017:     }
+2018: }
+2019: 
+2020: fn cpu_solver_path_code(path_id: &str) -> u32 {
+2021:     match path_id {
+2022:         "scalar.reference" => 0,
+2023:         "simd.arm64.neon-f64-pairwise" => 1,
+2024:         "simd.x64.scalar-fallback" => 2,
+2793:             0 => Ok(SlCommandKind::AdvanceEpoch),
+2794:             1 => Ok(SlCommandKind::PausePlayback),
+2795:             2 => Ok(SlCommandKind::ResumePlayback),
+2796:             3 => Ok(SlCommandKind::SetPlaybackRate),
+2797:             4 => Ok(SlCommandKind::SetObserverMode),
+2798:             5 => Ok(SlCommandKind::FocusBody),
+2799:             6 => Ok(SlCommandKind::SpawnBody),
+2800:             7 => Ok(SlCommandKind::RemoveBody),
+2801:             8 => Ok(SlCommandKind::SetBodyKinematics),
+2802:             9 => Ok(SlCommandKind::CreateCheckpoint),
+2803:             10 => Ok(SlCommandKind::CreateBranchFromCheckpoint),
+2804:             11 => Ok(SlCommandKind::SeedCanonicalSolarSystem),
+2805:             _ => Err(status(SlStatusCode::InvalidArgument)),
+2806:         }
+2807:     }
+2808: 
+2809:     fn decode_body_class_value(value: jint) -> Result<SlBodyClass, SlResult> {
+2810:         match value {
+2811:             0 => Ok(SlBodyClass::Star),
+2812:             1 => Ok(SlBodyClass::Planet),
+2813:             2 => Ok(SlBodyClass::DwarfPlanet),
+2814:             3 => Ok(SlBodyClass::Moon),
+2815:             4 => Ok(SlBodyClass::SmallBody),
+2816:             5 => Ok(SlBodyClass::Tracer),
+2817:             6 => Ok(SlBodyClass::Spacecraft),
+2818:             7 => Ok(SlBodyClass::Custom),
+2819:             8 => Ok(SlBodyClass::Comet),
+2820:             _ => Err(status(SlStatusCode::InvalidArgument)),
+2821:         }
+2822:     }
+2823: 
+2824:     fn decode_observer_mode(value: jint) -> Result<super::SlObserverMode, SlResult> {
+2825:         match value {
+2826:             0 => Ok(super::SlObserverMode::Free),
+2827:             1 => Ok(super::SlObserverMode::FollowSelected),
+2828:             2 => Ok(super::SlObserverMode::FollowHost),
+2829:             3 => Ok(super::SlObserverMode::SystemFrame),
+2830:             _ => Err(status(SlStatusCode::InvalidArgument)),
+2831:         }
+2832:     }
+2833: 
+2834:     fn create_error_session(result: SlResult) -> SlSessionCreateResult {
+2835:         SlSessionCreateResult {
+2836:             result,
+2837:             handle: SlRuntimeHandle::default(),
+2838:             runtime_info: super::empty_runtime_info(),
+2839:             snapshot_summary: super::empty_snapshot_summary(),
+2840:         }
+2841:     }
+2842: 
+2843:     fn create_error_snapshot_summary(result: SlResult) -> SlSessionSnapshotSummaryResult {
+2844:         SlSessionSnapshotSummaryResult {
+2845:             result,
+2846:             summary: super::empty_snapshot_summary(),
+2847:         }
+2848:     }
+2849: 
+2850:     fn create_native_result<'local>(
+2851:         env: &mut JNIEnv<'local>,
+2852:         result: SlResult,
+2853:     ) -> jni::errors::Result<JObject<'local>> {
+2854:         let context = env.new_string(status_label(result.code))?;
+4210:     #[test]
+4211:     fn apply_command_set_body_kinematics_mutates_body_state() {
+4212:         let create = sl_v2_session_create(new_params("sol-system", "main"));
+4213:         assert_eq!(create.result.code, SlStatusCode::Ok);
+4214:         seed_runtime_with_body(create.handle, "ship", 1.0);
+4215: 
+4216:         let command_result = sl_v2_session_apply_command(
+4217:             create.handle,
+4218:             test_session_command(SlCommandKind::SetBodyKinematics, |command| {
+4219:                 let mut body_id = [0_u8; SL_V2_ID_CAPACITY];
+4220:                 body_id[..4].copy_from_slice(b"ship");
+4221:                 command.body_id = body_id;
+4222:                 command.body_id_len = 4;
+4223:                 command.body_position = SlVector3d {
+4224:                     x: 10.0,
+4225:                     y: 20.0,
+4226:                     z: 30.0,
+4227:                 };
+4228:                 command.body_velocity = SlVector3d {
+4229:                     x: 0.5,
+4230:                     y: 1.0,
+4231:                     z: -1.0,
+4232:                 };
+4233:             }),
+4234:         );
+4235:         assert_eq!(command_result.result.code, SlStatusCode::Ok);
+4236: 
+4237:         let runtime = {
+4238:             let registry = registry().lock().expect("session registry lock");
+4239:             let session = registry.get(create.handle).expect("session exists");
+4240:             session.runtime.snapshot()
+4241:         };
+4242:         let body = runtime
+4243:             .bodies
+4244:             .iter()
+4245:             .find(|value| value.body_id == BodyId("ship".to_owned()))
+4246:             .expect("body should exist");
+4247:         assert_eq!(body.position_m.x, 10.0);
+4248:         assert_eq!(body.position_m.y, 20.0);
+4249:         assert_eq!(body.position_m.z, 30.0);
+4250:         assert_eq!(body.velocity_mps.x, 0.5);
+4251:         assert_eq!(body.velocity_mps.y, 1.0);
+4252:         assert_eq!(body.velocity_mps.z, -1.0);
+4253: 

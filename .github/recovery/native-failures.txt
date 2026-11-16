@@ -1,0 +1,2 @@
+Historical log unavailable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway
+

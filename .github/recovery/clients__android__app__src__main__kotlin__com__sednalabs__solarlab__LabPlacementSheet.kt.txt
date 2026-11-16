@@ -1,0 +1,353 @@
+24: import androidx.compose.foundation.text.KeyboardActions
+25: import androidx.compose.foundation.verticalScroll
+26: import androidx.compose.material3.Button
+27: import androidx.compose.material3.ButtonDefaults
+28: import androidx.compose.material3.Checkbox
+29: import androidx.compose.material3.CheckboxDefaults
+30: import androidx.compose.material3.HorizontalDivider
+31: import androidx.compose.material3.MaterialTheme
+32: import androidx.compose.material3.OutlinedTextField
+33: import androidx.compose.material3.Slider
+34: import androidx.compose.material3.SliderDefaults
+35: import androidx.compose.material3.Surface
+36: import androidx.compose.material3.Text
+37: import androidx.compose.material3.TextButton
+38: import androidx.compose.runtime.Composable
+39: import androidx.compose.runtime.LaunchedEffect
+40: import androidx.compose.runtime.getValue
+41: import androidx.compose.runtime.mutableStateOf
+42: import androidx.compose.runtime.saveable.rememberSaveable
+43: import androidx.compose.runtime.setValue
+44: import androidx.compose.ui.Alignment
+45: import androidx.compose.ui.Modifier
+46: import androidx.compose.ui.platform.testTag
+47: import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+48: import androidx.compose.ui.platform.LocalFocusManager
+49: import androidx.compose.ui.semantics.contentDescription
+50: import androidx.compose.ui.semantics.selected
+51: import androidx.compose.ui.semantics.semantics
+52: import androidx.compose.ui.text.font.FontWeight
+53: import androidx.compose.ui.text.input.ImeAction
+54: import androidx.compose.ui.text.input.KeyboardType
+55: import androidx.compose.ui.text.style.TextOverflow
+56: import androidx.compose.ui.unit.dp
+57: import androidx.compose.ui.unit.sp
+58: import java.util.Locale
+59: import kotlin.math.exp
+60: import kotlin.math.ln
+61: 
+62: internal enum class LabPlacementMotion { CIRCULAR, RELEASE, CUSTOM }
+63: internal enum class LabPlacementDirection { PROGRADE, RETROGRADE }
+64: 
+65: internal data class LabPlacementHost(val id: String, val name: String)
+66: 
+67: /** All values and preview messages come from the live placement model. */
+68: internal data class LabPlacementUiState(
+69:     val hostBodyId: String,
+70:     val hosts: List<LabPlacementHost>,
+71:     val planeLabel: String,
+72:     val altitudeKmText: String,
+73:     val altitudeRangeKm: ClosedFloatingPointRange<Float>,
+74:     val motion: LabPlacementMotion,
+75:     val speedKmPerSecondText: String,
+76:     val direction: LabPlacementDirection,
+77:     val previewStatus: String,
+78:     val previewHorizonText: String? = null,
+79:     val error: String? = null,
+80:     val canCreate: Boolean = true,
+81:     val committing: Boolean = false,
+82:     val altitudeLocked: Boolean = false,
+83:     val headingDegreesText: String = "90",
+84: )
+85: 
+86: internal data class LabPlacementActions(
+87:     val onHostChange: (String) -> Unit,
+88:     val onAltitudeChange: (String) -> Unit,
+89:     val onMotionChange: (LabPlacementMotion) -> Unit,
+90:     val onSpeedChange: (String) -> Unit,
+91:     val onDirectionChange: (LabPlacementDirection) -> Unit,
+92:     val onCreate: () -> Unit,
+93:     val onCancel: () -> Unit,
+94:     val onAltitudeLockChange: (Boolean) -> Unit = {},
+95:     val onHeadingChange: (String) -> Unit = {},
+96: )
+97: 
+98: internal object LabPlacementTags {
+99:     const val ROOT = "lab.placement"
+100:     const val CONTENT = "lab.placement.content"
+101:     const val ALTITUDE = "lab.placement.altitude"
+102:     const val ALTITUDE_SLIDER = "lab.placement.altitude.slider"
+103:     const val ALTITUDE_LOCK = "lab.placement.altitude.lock"
+104:     const val SPEED = "lab.placement.speed"
+105:     const val HEADING = "lab.placement.heading"
+106:     const val PREVIEW = "lab.placement.preview"
+107:     const val CREATE = LabTags.PROBE_COMMIT
+108:     const val CANCEL = "lab.placement.cancel"
+109:     const val SECTION_POSITION = "lab.placement.section.position"
+110:     const val SECTION_MOTION = "lab.placement.section.motion"
+111:     fun host(id: String) = "lab.placement.host.$id"
+112:     fun motion(value: LabPlacementMotion) = "lab.placement.motion.${value.name.lowercase(Locale.US)}"
+113:     fun direction(value: LabPlacementDirection) = "lab.placement.direction.${value.name.lowercase(Locale.US)}"
+114: }
+115: 
+116: internal object LabPlacementMetrics {
+117:     val SceneHeaderHeight = 56.dp
+118:     val PortraitHeight = 312.dp
+119:     val LandscapeWidth = 344.dp
+120: }
+121: 
+122: private enum class PlacementSection { POSITION, MOTION }
+123: 
+124: /** The scene has one title; the panel below it describes position and motion. */
+125: @Composable
+126: internal fun LabPlacementSceneBar(
+127:     planeLabel: String,
+128:     onFitPath: () -> Unit,
+129:     onZoomIn: () -> Unit,
+130:     onZoomOut: () -> Unit,
+131:     modifier: Modifier = Modifier,
+132: ) {
+133:     Surface(modifier, color = androidx.compose.ui.graphics.Color(0xF207111D)) {
+134:         Row(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 4.dp),
+135:             verticalAlignment = Alignment.CenterVertically) {
+136:             Spacer(Modifier.size(6.dp).background(LabGold, CircleShape))
+137:             Spacer(Modifier.width(10.dp))
+138:             Column(Modifier.weight(1f)) {
+139:                 Text("New probe", color = LabInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+140:                 Text(planeLabel, color = LabMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+141:             }
+142:             LabTextAction("Fit path", onFitPath, description = "Fit the probe and its predicted path in view")
+143:             LabTextAction("−", onZoomOut, tag = SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON,
+144:                 description = "Zoom out")
+145:             LabTextAction("+", onZoomIn, tag = SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON,
+146:                 description = "Zoom in")
+147:         }
+155: @OptIn(ExperimentalLayoutApi::class)
+156: @Composable
+157: internal fun LabPlacementSheet(
+158:     state: LabPlacementUiState,
+159:     actions: LabPlacementActions,
+160:     modifier: Modifier = Modifier,
+161: ) {
+162:     var sectionName by rememberSaveable {
+163:         mutableStateOf(if (state.motion == LabPlacementMotion.CUSTOM) PlacementSection.MOTION.name else PlacementSection.POSITION.name)
+164:     }
+165:     var previousMotion by rememberSaveable { mutableStateOf(state.motion.name) }
+166:     val section = PlacementSection.valueOf(sectionName)
+167:     val positionScroll = rememberScrollState()
+168:     val motionScroll = rememberScrollState()
+169:     val keyboard = LocalSoftwareKeyboardController.current
+170:     val focus = LocalFocusManager.current
+171:     fun showSection(value: PlacementSection) {
+172:         focus.clearFocus()
+173:         keyboard?.hide()
+174:         sectionName = value.name
+175:     }
+176:     // Dragging the scene's velocity handle is a motion edit, so expose its exact values.
+177:     LaunchedEffect(state.motion) {
+178:         if (state.motion == LabPlacementMotion.CUSTOM && previousMotion != state.motion.name) {
+179:             sectionName = PlacementSection.MOTION.name
+180:         }
+181:         previousMotion = state.motion.name
+182:     }
+183:     Surface(modifier.testTag(LabPlacementTags.ROOT), color = LabPanel,
+184:         shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, ColorGoldOutline.copy(alpha = 0.65f))) {
+185:         BoxWithConstraints(Modifier.fillMaxSize()) {
+186:             val compactHeight = maxHeight < 256.dp
+187:             Column(Modifier.fillMaxWidth().heightIn(max = 540.dp)) {
+188:                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = if (compactHeight) 0.dp else 4.dp),
+189:                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+190:                     PlacementSectionTab("Position", "${state.hosts.firstOrNull { it.id == state.hostBodyId }?.name ?: state.hostBodyId} · ${state.altitudeKmText} km",
+191:                         section == PlacementSection.POSITION, !state.committing, LabPlacementTags.SECTION_POSITION,
+192:                         Modifier.weight(1f)) { showSection(PlacementSection.POSITION) }
+193:                     PlacementSectionTab("Motion", when (state.motion) {
+194:                         LabPlacementMotion.CIRCULAR -> "Circular orbit"
+195:                         LabPlacementMotion.RELEASE -> "Released at rest"
+196:                         LabPlacementMotion.CUSTOM -> "${state.speedKmPerSecondText} km/s · ${state.headingDegreesText}°"
+197:                     }, section == PlacementSection.MOTION, !state.committing, LabPlacementTags.SECTION_MOTION,
+198:                         Modifier.weight(1f)) { showSection(PlacementSection.MOTION) }
+199:                 }
+200:                 HorizontalDivider(color = LabLine.copy(alpha = 0.6f))
+201:                 Column(Modifier.weight(1f).fillMaxWidth()
+202:                     .verticalScroll(if (section == PlacementSection.POSITION) positionScroll else motionScroll)
+203:                     .testTag(LabPlacementTags.CONTENT)
+204:                     .padding(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+205:                     if (section == PlacementSection.POSITION) {
+206:                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+207:                             Text("Around", color = LabMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
+208:                             FlowRow(Modifier.weight(1f)) {
+209:                                 state.hosts.forEach { host ->
+210:                                     PlacementChoice(host.name, state.hostBodyId == host.id, !state.committing,
+211:                                         LabPlacementTags.host(host.id)) { actions.onHostChange(host.id) }
+212:                                 }
+213:                             }
+214:                         }
+215:                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+216:                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+217:                             PlacementNumberField(state.altitudeKmText, "Altitude · km", LabPlacementTags.ALTITUDE,
+218:                                 !state.committing, Modifier.weight(1f), actions.onAltitudeChange)
+219:                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+220:                                 Checkbox(checked = state.altitudeLocked, onCheckedChange = actions.onAltitudeLockChange,
+221:                                     enabled = !state.committing,
+222:                                     modifier = Modifier.size(48.dp).testTag(LabPlacementTags.ALTITUDE_LOCK)
+223:                                         .semantics { contentDescription = "Lock altitude while placing" },
+224:                                     colors = CheckboxDefaults.colors(checkedColor = LabGold))
+225:                                 Text("Lock altitude", color = LabMuted, fontSize = 10.sp)
+226:                             }
+227:                         }
+228:                         PlacementAltitudeSlider(state, actions.onAltitudeChange)
+229:                         Text(if (state.altitudeLocked) "Drag the gold marker along the altitude ring."
+230:                             else "Tap the map or drag the gold marker to place it.",
+231:                             color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
+232:                     } else {
+233:                         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+234:                             LabPlacementMotion.entries.forEach { motion ->
+235:                                 PlacementChoice(when (motion) {
+236:                                     LabPlacementMotion.CIRCULAR -> "Circular"
+237:                                     LabPlacementMotion.RELEASE -> "Release"
+238:                                     LabPlacementMotion.CUSTOM -> "Custom"
+239:                                 }, state.motion == motion, !state.committing, LabPlacementTags.motion(motion)) {
+240:                                     actions.onMotionChange(motion)
+241:                                 }
+242:                             }
+243:                         }
+244:                         when (state.motion) {
+245:                             LabPlacementMotion.CIRCULAR -> {
+246:                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+247:                                     Column(Modifier.weight(1f)) {
+248:                                         Text("Starting speed", color = LabMuted, fontSize = 11.sp)
+249:                                         Text("${state.speedKmPerSecondText} km/s", color = LabInk, fontSize = 16.sp,
+250:                                             modifier = Modifier.testTag(LabPlacementTags.SPEED))
+251:                                     }
+252:                                     PlacementDirections(state, actions)
+253:                                 }
+254:                                 Text("A circular starting speed around this body. Other bodies can change the orbit.",
+255:                                     color = LabMuted, fontSize = 11.sp, lineHeight = 16.sp)
+256:                             }
+257:                             LabPlacementMotion.RELEASE -> Text(
+258:                                 "Starts at rest relative to this body, then falls under gravity.",
+259:                                 color = LabMuted, fontSize = 12.sp, lineHeight = 18.sp)
+260:                             LabPlacementMotion.CUSTOM -> {
+261:                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+262:                                     PlacementNumberField(state.speedKmPerSecondText, "Speed · km/s", LabPlacementTags.SPEED,
+263:                                         !state.committing, Modifier.weight(1f), actions.onSpeedChange)
+264:                                     PlacementNumberField(state.headingDegreesText, "Heading · °", LabPlacementTags.HEADING,
+265:                                         !state.committing, Modifier.weight(1f), actions.onHeadingChange)
+266:                                 }
+267:                                 Text("Drag the arrow to set direction and speed, or enter exact values here.",
+268:                                     color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
+269:                             }
+270:                         }
+271:                     }
+272:                 }
+273:                 HorizontalDivider(color = LabLine.copy(alpha = 0.6f))
+274:                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (compactHeight) 4.dp else 8.dp),
+275:                     horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+276:                     TextButton(onClick = actions.onCancel, enabled = !state.committing,
+277:                         modifier = Modifier.heightIn(min = 48.dp).testTag(LabPlacementTags.CANCEL)) {
+278:                         Text("Cancel", color = LabMuted)
+279:                     }
+280:                     Column(Modifier.weight(1f).testTag(LabPlacementTags.PREVIEW), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+281:                         Text(state.error ?: state.previewStatus,
+282:                             color = if (state.error != null) MaterialTheme.colorScheme.error else LabGold,
+283:                             fontSize = 11.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+284:                         state.previewHorizonText?.let {
+285:                             Text(it, color = LabMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+286:                         }
+287:                     }
+288:                     Button(onClick = actions.onCreate, enabled = state.canCreate && !state.committing,
+289:                         modifier = Modifier.heightIn(min = 48.dp).testTag(LabPlacementTags.CREATE),
+290:                         shape = RoundedCornerShape(14.dp),
+291:                         colors = ButtonDefaults.buttonColors(containerColor = LabGold, contentColor = ColorGoldInk)) {
+292:                         Text(if (state.committing) "Creating…" else "Create probe", fontWeight = FontWeight.SemiBold)
+293:                     }
+294:                 }
+295:             }
+296:         }
+297:     }
+298: }
+299: 
+300: @Composable
+301: private fun PlacementSectionTab(
+302:     title: String,
+303:     summary: String,
+304:     isSelected: Boolean,
+305:     enabled: Boolean,
+306:     tag: String,
+307:     modifier: Modifier,
+308:     onClick: () -> Unit,
+309: ) {
+310:     TextButton(onClick = onClick, enabled = enabled,
+311:         modifier = modifier.height(48.dp).testTag(tag).semantics { selected = isSelected },
+312:         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp), shape = RoundedCornerShape(12.dp),
+313:         colors = ButtonDefaults.textButtonColors(containerColor = if (isSelected) ColorGoldWash else androidx.compose.ui.graphics.Color.Transparent)) {
+314:         Column(Modifier.fillMaxWidth()) {
+315:             Text(title, color = if (isSelected) LabGold else LabInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+316:             Text(summary, color = LabMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+317:         }
+318:     }
+319: }
+320: 
+321: private val ColorGoldOutline = androidx.compose.ui.graphics.Color(0xFF5C4D36)
+322: private val ColorGoldWash = androidx.compose.ui.graphics.Color(0xFF242324)
+323: private val ColorGoldInk = androidx.compose.ui.graphics.Color(0xFF312716)
+324: 
+328:     label: String,
+329:     tag: String,
+330:     enabled: Boolean,
+331:     modifier: Modifier,
+332:     onChange: (String) -> Unit,
+333: ) {
+334:     val keyboard = LocalSoftwareKeyboardController.current
+335:     val focus = LocalFocusManager.current
+336:     OutlinedTextField(value = value, onValueChange = onChange,
+337:         label = { Text(label, fontSize = 12.sp) }, modifier = modifier.testTag(tag),
+338:         singleLine = true, enabled = enabled, shape = RoundedCornerShape(12.dp),
+339:         textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+340:         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+341:         keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); keyboard?.hide() }))
+342: }
+343: 
+344: @Composable
+345: private fun PlacementChoice(label: String, isSelected: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
+346:     TextButton(onClick = onClick, enabled = enabled,
+347:         modifier = Modifier.heightIn(min = 48.dp).testTag(tag).semantics { selected = isSelected },
+348:         contentPadding = PaddingValues(horizontal = 12.dp), shape = RoundedCornerShape(13.dp),
+349:         colors = ButtonDefaults.textButtonColors(contentColor = if (isSelected) LabGold else LabMuted,
+350:             containerColor = if (isSelected) ColorGoldWash else androidx.compose.ui.graphics.Color.Transparent)) {
+351:         Text(label, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+352:             maxLines = 1, overflow = TextOverflow.Ellipsis)
+353:     }
+354: }
+355: 
+356: @Composable
+357: private fun PlacementDirections(state: LabPlacementUiState, actions: LabPlacementActions) {
+358:     Row {
+359:         PlacementChoice("Prograde", state.direction == LabPlacementDirection.PROGRADE,
+360:             !state.committing, LabPlacementTags.direction(LabPlacementDirection.PROGRADE)) {
+361:             actions.onDirectionChange(LabPlacementDirection.PROGRADE)
+362:         }
+363:         PlacementChoice("Retrograde", state.direction == LabPlacementDirection.RETROGRADE,
+364:             !state.committing, LabPlacementTags.direction(LabPlacementDirection.RETROGRADE)) {
+365:             actions.onDirectionChange(LabPlacementDirection.RETROGRADE)
+366:         }
+367:     }
+368: }
+369: 
+370: @Composable
+371: private fun PlacementAltitudeSlider(state: LabPlacementUiState, onChange: (String) -> Unit) {
+372:     val lower = state.altitudeRangeKm.start.toDouble().coerceAtLeast(0.0)
+373:     val upper = state.altitudeRangeKm.endInclusive.toDouble()
+374:     val validRange = lower.isFinite() && upper.isFinite() && upper > lower
+375:     val logMin = if (validRange) ln(lower + 1.0) else 0.0
+376:     val logSpan = if (validRange) ln(upper + 1.0) - logMin else 1.0
+377:     val altitude = state.altitudeKmText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: lower
+378:     val progress = if (validRange) ((ln(altitude.coerceIn(lower, upper) + 1.0) - logMin) / logSpan).toFloat() else 0f
+379:     Slider(value = progress.coerceIn(0f, 1f), onValueChange = {
+380:         val km = (exp(logMin + it * logSpan) - 1.0).coerceIn(lower, upper)
+381:         onChange(String.format(Locale.US, "%.0f", km))
+382:     }, enabled = validRange && !state.committing,
+383:         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(LabPlacementTags.ALTITUDE_SLIDER)
+384:             .semantics { contentDescription = "Probe altitude" },
+385:         colors = SliderDefaults.colors(thumbColor = LabGold, activeTrackColor = LabGold))
+386: }
