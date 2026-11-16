@@ -639,12 +639,38 @@ void SolarLabStageController::SetCamera(
     double centerZ,
     double viewRadiusM,
     double yawRadians,
-    double pitchRadians) {
+    double pitchRadians,
+    const std::string& referenceBodyId) {
     std::lock_guard<std::mutex> lock(stateMutex_);
+    const RuntimeBodyProxy* reference = nullptr;
+    if (!referenceBodyId.empty()) {
+        const auto match = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+            [&](const RuntimeBodyProxy& body) { return body.bodyId == referenceBodyId; });
+        // A removed subject must never turn a local offset into a barycentric camera.
+        if (match == runtimeScene_.pickBodies.end()) return;
+        reference = &*match;
+    }
     cameraCenterX_ = centerX;
     cameraCenterY_ = centerY;
     cameraCenterZ_ = centerZ;
     ClearCameraPresentationLocked();
+    if (reference != nullptr) {
+        const auto x = solarlab::presentation::CameraInReference(centerX,
+            runtimeScene_.sceneOriginX + reference->previousRelativeX,
+            runtimeScene_.sceneOriginX + reference->positionRelativeX);
+        const auto y = solarlab::presentation::CameraInReference(centerY,
+            runtimeScene_.sceneOriginY + reference->previousRelativeY,
+            runtimeScene_.sceneOriginY + reference->positionRelativeY);
+        const auto z = solarlab::presentation::CameraInReference(centerZ,
+            runtimeScene_.sceneOriginZ + reference->previousRelativeZ,
+            runtimeScene_.sceneOriginZ + reference->positionRelativeZ);
+        cameraCenterX_ = x.current;
+        cameraCenterY_ = y.current;
+        cameraCenterZ_ = z.current;
+        runtimeScene_.cameraPreviousOffsetX = x.previousOffset;
+        runtimeScene_.cameraPreviousOffsetY = y.previousOffset;
+        runtimeScene_.cameraPreviousOffsetZ = z.previousOffset;
+    }
     runtimeHomePending_ = false;
     cameraViewRadiusM_ = Clamp(viewRadiusM, MinimumViewRadiusLocked(), kMaxViewRadiusM);
     cameraYawRadians_ = yawRadians;
@@ -901,17 +927,29 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         suggestedRadiusM = std::max(kMinViewRadiusM, SafeBodyRadiusM(body->frameRadiusM) * 2.0);
     }
     if (runtimeScene_.scenarioId == "lab.earth-moon" && body->kind == kKindProbe) {
-        const auto earth = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
-            [](const RuntimeBodyProxy& candidate) { return LowercaseAscii(candidate.bodyId) == "earth"; });
-        if (earth != runtimeScene_.pickBodies.end()) {
-            // A probe's physical radius is too small to make its orbit legible. Keep Earth
-            // in the frame while centring/following the probe; its marker remains scale-aware.
-            const double earthDistanceM = Magnitude(MakeFloat3(
-                body->positionRelativeX - earth->positionRelativeX,
-                body->positionRelativeY - earth->positionRelativeY,
-                body->positionRelativeZ - earth->positionRelativeZ));
+        const RuntimeBodyProxy* context = nullptr;
+        double contextDistanceM = 0.0;
+        double nearestSurfaceM = std::numeric_limits<double>::max();
+        for (const auto& candidate : runtimeScene_.pickBodies) {
+            const auto candidateId = LowercaseAscii(candidate.bodyId);
+            if (candidateId != "earth" && candidateId != "moon") continue;
+            const double distanceM = Magnitude(MakeFloat3(
+                body->positionRelativeX - candidate.positionRelativeX,
+                body->positionRelativeY - candidate.positionRelativeY,
+                body->positionRelativeZ - candidate.positionRelativeZ));
+            const double surfaceDistanceM = solarlab::presentation::ContextSurfaceDistance(
+                distanceM, SafeBodyRadiusM(candidate.radiusM));
+            if (surfaceDistanceM < nearestSurfaceM) {
+                context = &candidate;
+                contextDistanceM = distanceM;
+                nearestSurfaceM = surfaceDistanceM;
+            }
+        }
+        if (context != nullptr) {
+            // Context is a presentation choice, not an inferred physical primary. A lunar
+            // probe needs its nearby Moon in view, rather than the entire Earth-Moon distance.
             suggestedRadiusM = solarlab::presentation::ContextFrameRadius(
-                suggestedRadiusM, earthDistanceM, SafeBodyRadiusM(earth->radiusM));
+                suggestedRadiusM, contextDistanceM, SafeBodyRadiusM(context->radiusM));
         }
     }
     const double viewRadiusM = Clamp(suggestedRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
@@ -923,6 +961,34 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         .yawRadians = labMapMode_ ? labMapYawRadians_ : cameraYawRadians_,
         .pitchRadians = labMapMode_ ? labMapPitchRadians_ : OrbitControlPolicyForViewRadius(viewRadiusM).preferredPitchRadians,
     };
+}
+
+std::optional<SolarLabStageController::CameraTransitionFrame>
+SolarLabStageController::ResolveRuntimeCameraTransition(const std::string& bodyId) const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    const auto target = bodyId.empty() ? ResolveRuntimeHomeCameraLocked() : ResolveRuntimeBodyFrameLocked(bodyId);
+    if (!target) return std::nullopt;
+    const double fraction = PresentationFractionLocked();
+    CameraTransitionFrame frame{PresentedCameraLocked(fraction), *target, {}};
+    const std::string referenceId = bodyId.empty()
+        ? (runtimeScene_.scenarioId == "lab.earth-moon" ? "earth" : "")
+        : LowercaseAscii(bodyId);
+    const auto reference = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+        [&](const RuntimeBodyProxy& body) { return LowercaseAscii(body.bodyId) == referenceId; });
+    if (referenceId.empty() || reference == runtimeScene_.pickBodies.end()) return frame;
+    frame.referenceBodyId = reference->bodyId;
+    // The start belongs to the submitted display fraction; the target was resolved from
+    // the latest packet. Convert each against its own matching epoch, under one lock.
+    frame.start.centerX -= runtimeScene_.sceneOriginX + solarlab::presentation::Mix(
+        reference->previousRelativeX, reference->positionRelativeX, fraction);
+    frame.start.centerY -= runtimeScene_.sceneOriginY + solarlab::presentation::Mix(
+        reference->previousRelativeY, reference->positionRelativeY, fraction);
+    frame.start.centerZ -= runtimeScene_.sceneOriginZ + solarlab::presentation::Mix(
+        reference->previousRelativeZ, reference->positionRelativeZ, fraction);
+    frame.target.centerX -= runtimeScene_.sceneOriginX + reference->positionRelativeX;
+    frame.target.centerY -= runtimeScene_.sceneOriginY + reference->positionRelativeY;
+    frame.target.centerZ -= runtimeScene_.sceneOriginZ + reference->positionRelativeZ;
+    return frame;
 }
 
 void SolarLabStageController::BindRuntimeSession(uint64_t runtimeSessionHandle) {

@@ -270,6 +270,16 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetCamera(
     }
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetCameraInReference(
+    JNIEnv* env, jclass, jlong handle, jdouble centerX, jdouble centerY, jdouble centerZ,
+    jdouble viewRadiusM, jdouble yawRadians, jdouble pitchRadians, jstring referenceBodyId) {
+    if (auto* controller = FromHandle(handle)) {
+        controller->SetCamera(centerX, centerY, centerZ, viewRadiusM, yawRadians, pitchRadians,
+            CopyUtf8String(env, referenceBodyId));
+    }
+}
+
 extern "C" JNIEXPORT jdoubleArray JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetCameraState(
     JNIEnv* env,
@@ -369,6 +379,30 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeResolveRunt
     return snapshot.has_value()
         ? solar_lab_jni::CameraSnapshotArray(env, snapshot.value())
         : nullptr;
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeResolveRuntimeCameraTransition(
+    JNIEnv* env, jclass, jlong handle, jstring bodyId) {
+    auto* controller = FromHandle(handle);
+    if (controller == nullptr) return nullptr;
+    const auto frame = controller->ResolveRuntimeCameraTransition(CopyUtf8String(env, bodyId));
+    if (!frame) return nullptr;
+    jclass objectClass = env->FindClass("java/lang/Object");
+    if (objectClass == nullptr) return nullptr;
+    jobjectArray result = env->NewObjectArray(3, objectClass, nullptr);
+    jdoubleArray start = solar_lab_jni::CameraSnapshotArray(env, frame->start);
+    jdoubleArray target = solar_lab_jni::CameraSnapshotArray(env, frame->target);
+    jstring reference = env->NewStringUTF(frame->referenceBodyId.c_str());
+    if (result == nullptr || start == nullptr || target == nullptr || reference == nullptr) return nullptr;
+    env->SetObjectArrayElement(result, 0, start);
+    env->SetObjectArrayElement(result, 1, target);
+    env->SetObjectArrayElement(result, 2, reference);
+    env->DeleteLocalRef(start);
+    env->DeleteLocalRef(target);
+    env->DeleteLocalRef(reference);
+    env->DeleteLocalRef(objectClass);
+    return result;
 }
 
 extern "C" JNIEXPORT void JNICALL

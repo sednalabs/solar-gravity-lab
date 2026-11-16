@@ -116,16 +116,20 @@ class LabInteractionChromeTest {
                         onCreate = { commits += 1 }, onCancel = {},
                         onAltitudeLockChange = { state = state.copy(altitudeLocked = it) },
                         onHeadingChange = { state = state.copy(headingDegreesText = it) },
-                    ), Modifier.fillMaxWidth().padding(12.dp).height(340.dp))
+                    ), Modifier.fillMaxWidth().padding(12.dp).height(LabPlacementMetrics.PortraitHeight))
                 }
             }
         }
         composeRule.onNodeWithTag(LabPlacementTags.CREATE).assertIsDisplayed().assertIsNotEnabled()
         composeRule.onNodeWithTag(LabPlacementTags.CANCEL).assertIsDisplayed().assertIsEnabled()
+        assertReachable(LabPlacementTags.SECTION_POSITION)
+        assertReachable(LabPlacementTags.SECTION_MOTION)
+        composeRule.onNodeWithTag(LabPlacementTags.SECTION_POSITION).assertIsSelected()
         composeRule.onNodeWithTag(LabPlacementTags.host("moon"))
             .performScrollTo().assertIsDisplayed().performClick().assertIsSelected()
         composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE)
             .performScrollTo().assertIsDisplayed().performTextReplacement("1500")
+        composeRule.onNodeWithTag(LabPlacementTags.SECTION_MOTION).performClick().assertIsSelected()
         for (motion in listOf(LabPlacementMotion.RELEASE, LabPlacementMotion.CIRCULAR, LabPlacementMotion.CUSTOM)) {
             composeRule.onNodeWithTag(LabPlacementTags.motion(motion))
                 .performScrollTo().assertIsDisplayed().assertIsEnabled()
@@ -149,6 +153,8 @@ class LabInteractionChromeTest {
         val panel = composeRule.onNodeWithTag(LabPlacementTags.ROOT).fetchSemanticsNode().boundsInRoot
         val create = composeRule.onNodeWithTag(LabPlacementTags.CREATE).fetchSemanticsNode().boundsInRoot
         assertTrue("Placement commit stays inside its reserved panel", create.top >= panel.top && create.bottom <= panel.bottom)
+        val tabs = composeRule.onNodeWithTag(LabPlacementTags.SECTION_MOTION).fetchSemanticsNode().boundsInRoot
+        assertTrue("Section navigation stays visible above the scrolled numeric fields", tabs.top >= panel.top && tabs.bottom < create.top)
     }
 
     private fun orient(requested: Int, configuration: Int) {
@@ -164,8 +170,12 @@ class LabInteractionChromeTest {
         val header = composeRule.onNodeWithTag(LabTags.COMPACT_HEADER).fetchSemanticsNode().boundsInRoot
         val zoom = composeRule.onNodeWithTag(LabTags.ZOOM_RAIL).fetchSemanticsNode().boundsInRoot
         val dock = composeRule.onNodeWithTag(LabTags.COMPACT_PLAYBACK).fetchSemanticsNode().boundsInRoot
+        val root = composeRule.onNodeWithTag(LabTags.ROOT).fetchSemanticsNode().boundsInRoot
         assertTrue("Header leaves a usable scene above the dock", header.bottom < dock.top)
         assertTrue("Zoom belongs to the scene, clear of playback", zoom.top >= header.bottom && zoom.bottom <= dock.top)
+        val minimumSceneFraction = if (root.width > root.height) 0.52f else 0.64f
+        assertTrue("The scene, rather than the controls, occupies most of the display",
+            dock.top - header.bottom >= root.height * minimumSceneFraction)
     }
 
     private fun showChrome(received: MutableList<String>, canUndo: Boolean = false) {

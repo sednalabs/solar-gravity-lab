@@ -33,6 +33,13 @@ public:
         double worldZ = 0.0;
     };
 
+    struct CameraTransitionFrame {
+        CameraSnapshot start;
+        CameraSnapshot target;
+        // Nonempty centres are offsets from this live body, not absolute coordinates.
+        std::string referenceBodyId;
+    };
+
     struct LabViewportSnapshot {
         int width = 1;
         int height = 1;
@@ -88,7 +95,8 @@ public:
         double centerZ,
         double viewRadiusM,
         double yawRadians,
-        double pitchRadians);
+        double pitchRadians,
+        const std::string& referenceBodyId = {});
 
     void BindRuntimeSession(uint64_t runtimeSessionHandle);
     void UnbindRuntimeSession();
@@ -107,6 +115,7 @@ public:
     void SetTouchDensity(double density);
     std::optional<CameraSnapshot> ResolveRuntimeHomeCamera() const;
     std::optional<CameraSnapshot> ResolveRuntimeBodyFrame(const std::string& bodyId) const;
+    std::optional<CameraTransitionFrame> ResolveRuntimeCameraTransition(const std::string& bodyId) const;
     std::string PickRuntimeBodyId(float screenXPx, float screenYPx, int viewportWidthPx, int viewportHeightPx);
 
     bool Render(bool refreshRuntimeScene = true);

@@ -57,7 +57,10 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -104,6 +107,8 @@ internal object LabTags {
     const val MODE_3D = "lab.mode.3d"
     const val FOLLOW = "lab.follow"
     const val UNDO = "lab.undo"
+    const val GESTURE_HINT = "lab.gesture_hint"
+    const val DISMISS_GESTURE_HINT = "lab.gesture_hint.dismiss"
     fun focus(bodyId: String) = "lab.focus.$bodyId"
     fun load(id: String) = "lab.saved.load.$id"
     fun component(kind: String, axis: String) = "lab.edit.$kind.$axis"
@@ -111,10 +116,10 @@ internal object LabTags {
 
 /** Reserved content heights; the host adds the corresponding system-bar insets. */
 internal object LabChromeMetrics {
-    val PortraitDockHeight = 176.dp
-    val LandscapeDockHeight = 112.dp
-    val PortraitHeaderHeight = 112.dp
-    val LandscapeHeaderHeight = 64.dp
+    val PortraitDockHeight = 116.dp
+    val LandscapeDockHeight = 64.dp
+    val PortraitHeaderHeight = 96.dp
+    val LandscapeHeaderHeight = 56.dp
 }
 
 internal enum class LabViewMode { ORBIT_MAP, THREE_DIMENSIONAL }
@@ -192,8 +197,8 @@ internal fun EarthMoonLabChrome(
         val landscape = maxWidth > maxHeight && maxHeight < 600.dp
         val headerHeight = if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
         val dockHeight = if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
-        Box(Modifier.fillMaxWidth().height(headerHeight + 32.dp)
-            .background(Brush.verticalGradient(listOf(Color(0xE6050C16), Color.Transparent))))
+        Box(Modifier.fillMaxWidth().height(headerHeight + 24.dp)
+            .background(Brush.verticalGradient(listOf(Color(0xF2050C16), Color.Transparent))))
 
         if (mode != StageChromeMode.MINIMAL) {
             LabSceneHeader(scenarioName, availableBodyIds, navigation, actions, landscape, canEdit,
@@ -212,8 +217,13 @@ internal fun EarthMoonLabChrome(
 
         // This layer has no full-screen gesture handler: the uncovered scene stays interactive.
         Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
-            .padding(top = headerHeight, bottom = dockHeight, start = 16.dp, end = 12.dp)) {
+            .padding(top = if (mode == StageChromeMode.MINIMAL) 0.dp else headerHeight,
+                bottom = if (mode == StageChromeMode.MINIMAL) 60.dp else dockHeight,
+                start = 16.dp, end = 12.dp)) {
             LabZoomRail(actions, Modifier.align(Alignment.CenterEnd))
+            if (mode == StageChromeMode.COLLAPSED && ready && pendingFrameName == null) {
+                LabGestureHint(navigation.viewMode, Modifier.align(Alignment.TopStart).padding(top = 4.dp, end = 64.dp))
+            }
             navigation.metresPerPixel?.takeIf { it.isFinite() && it > 0.0 }?.let {
                 LabScaleRuler(it, Modifier.align(Alignment.BottomStart).padding(bottom = 12.dp))
             }
@@ -249,21 +259,28 @@ private fun LabSceneHeader(
     canEdit: Boolean,
     modifier: Modifier,
 ) {
-    Column(modifier.fillMaxWidth().testTag(LabTags.COMPACT_HEADER).padding(horizontal = 12.dp, vertical = 8.dp),
+    Column(modifier.fillMaxWidth().testTag(LabTags.COMPACT_HEADER)
+        .semantics { isTraversalGroup = true; traversalIndex = 0f }
+        .padding(horizontal = 12.dp, vertical = if (landscape) 4.dp else 0.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp)) {
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(start = 4.dp)) {
-                Text("SOLAR GRAVITY LAB", color = LabMuted, fontSize = 9.sp, letterSpacing = 1.3.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.weight(1f).padding(start = 4.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Canvas(Modifier.size(22.dp)) {
+                    drawCircle(LabBlue.copy(alpha = 0.35f), size.minDimension * 0.39f,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
+                    drawCircle(LabBlue, size.minDimension * 0.12f, Offset(size.width * 0.78f, size.height * 0.25f))
+                    drawCircle(LabInk, size.minDimension * 0.17f)
+                }
+                Spacer(Modifier.width(9.dp))
                 Text(scenarioName, Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BADGE),
-                    color = LabInk, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                    color = LabInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (landscape) {
                 LabViewModePill(navigation.viewMode, actions.setViewMode)
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(8.dp))
                 LabDestinations(availableBodyIds, actions)
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(8.dp))
             }
             if (landscape && navigation.canUndo) {
                 LabTextAction("Undo", actions.undo, tag = LabTags.UNDO, enabled = canEdit)
@@ -293,11 +310,13 @@ private fun LabSceneHeader(
 
 @Composable
 private fun LabViewModePill(mode: LabViewMode, onChange: (LabViewMode) -> Unit) {
-    Surface(color = LabPanel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, LabLine)) {
+    Surface(color = Color(0xA6112333), shape = RoundedCornerShape(16.dp)) {
         Row {
-            LabTextAction("Orbit map", { onChange(LabViewMode.ORBIT_MAP) }, tag = LabTags.MODE_MAP,
+            LabTextAction("Orbit map", { onChange(LabViewMode.ORBIT_MAP) },
+                Modifier.semantics { selected = mode == LabViewMode.ORBIT_MAP }, tag = LabTags.MODE_MAP,
                 active = mode == LabViewMode.ORBIT_MAP, description = "Orbit map view")
-            LabTextAction("3D", { onChange(LabViewMode.THREE_DIMENSIONAL) }, tag = LabTags.MODE_3D,
+            LabTextAction("3D", { onChange(LabViewMode.THREE_DIMENSIONAL) },
+                Modifier.semantics { selected = mode == LabViewMode.THREE_DIMENSIONAL }, tag = LabTags.MODE_3D,
                 active = mode == LabViewMode.THREE_DIMENSIONAL, description = "Three-dimensional view")
         }
     }
@@ -328,21 +347,28 @@ private fun LabBottomDock(
     onSpeed: () -> Unit,
     modifier: Modifier,
 ) {
-    if (landscape) {
-        Row(modifier.testTag(LabTags.COMPACT_PLAYBACK).padding(horizontal = 12.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            LabSelectionCard(selectedBody, selectedName, selectionDescription, navigation, actions, canEdit,
-                Modifier.weight(0.46f).height(88.dp))
-            LabPlaybackDock(uiState, playbackPreset, actions, canEdit, canAddProbe, onSpeed,
-                Modifier.weight(0.54f).height(88.dp))
-        }
-    } else {
-        Column(modifier.testTag(LabTags.COMPACT_PLAYBACK).padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            LabSelectionCard(selectedBody, selectedName, selectionDescription, navigation, actions, canEdit,
-                Modifier.fillMaxWidth().height(64.dp))
-            LabPlaybackDock(uiState, playbackPreset, actions, canEdit, canAddProbe, onSpeed,
-                Modifier.fillMaxWidth().height(88.dp))
+    Surface(modifier.testTag(LabTags.COMPACT_PLAYBACK)
+        .semantics { isTraversalGroup = true; traversalIndex = 2f }
+        .padding(horizontal = 12.dp, vertical = 4.dp),
+        color = Color(0xF20B1926), shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, LabLine.copy(alpha = 0.6f))) {
+        if (landscape) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                LabSelectionCard(selectedBody, selectedName, selectionDescription, navigation, actions, canEdit,
+                    Modifier.weight(0.46f).height(48.dp))
+                Box(Modifier.width(1.dp).height(28.dp).background(LabLine))
+                LabPlaybackDock(uiState, playbackPreset, actions, canEdit, canAddProbe, onSpeed,
+                    Modifier.weight(0.54f).height(56.dp))
+            }
+        } else {
+            Column(Modifier.fillMaxSize().padding(horizontal = 6.dp)) {
+                LabSelectionCard(selectedBody, selectedName, selectionDescription, navigation, actions, canEdit,
+                    Modifier.fillMaxWidth().height(48.dp))
+                HorizontalDivider(Modifier.padding(horizontal = 8.dp), color = LabLine.copy(alpha = 0.6f))
+                LabPlaybackDock(uiState, playbackPreset, actions, canEdit, canAddProbe, onSpeed,
+                    Modifier.fillMaxWidth().weight(1f))
+            }
         }
     }
 }
@@ -357,30 +383,28 @@ private fun LabSelectionCard(
     canEdit: Boolean,
     modifier: Modifier,
 ) {
-    Surface(modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-        color = LabPanel, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, LabLine)) {
-        Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(6.dp).background(
-                selectedBody?.let { Color(it.colorArgb) } ?: LabMuted, CircleShape))
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f).padding(end = 4.dp)) {
-                Text(if (selectedBody != null) selectedName else "Choose an object",
-                    Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                        .semantics { contentDescription = selectionDescription ?: selectedName },
-                    color = LabInk, fontSize = 17.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (navigation.followingSelection) "Following · ${navigation.selectionSubtitle ?: "camera locked"}"
-                    else navigation.selectionSubtitle ?: selectedBody?.let { "Radius ${formatLabDistance(it.radiusM)}" }
-                    ?: "Tap a name in the scene", color = LabMuted, fontSize = 11.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            LabTextAction("Focus", actions.frame, tag = SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON,
-                enabled = selectedBody != null, description = "Focus on selected object")
-            LabTextAction("Follow", actions.toggleFollow,
-                tag = LabTags.FOLLOW, active = navigation.followingSelection, enabled = selectedBody != null,
-                description = if (navigation.followingSelection) "Stop following selected object" else "Follow selected object")
-            LabTextAction("Inspect", actions.inspect, tag = LabTags.INSPECT, enabled = canEdit && selectedBody != null)
+    Row(modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).background(
+            selectedBody?.let { Color(it.colorArgb) } ?: LabMuted, CircleShape))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f).padding(end = 4.dp)) {
+            Text(if (selectedBody != null) selectedName else "Choose an object",
+                Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                    .semantics { contentDescription = selectionDescription ?: selectedName },
+                color = LabInk, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (navigation.followingSelection) "Following"
+                else navigation.selectionSubtitle ?: selectedBody?.let { "Radius ${formatLabDistance(it.radiusM)}" }
+                ?: "Tap a name in the scene", color = LabMuted, fontSize = 11.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        LabTextAction("Focus", actions.frame, tag = SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON,
+            enabled = selectedBody != null, description = "Focus on selected object")
+        LabTextAction("Follow", actions.toggleFollow,
+            tag = LabTags.FOLLOW, active = navigation.followingSelection, enabled = selectedBody != null,
+            description = if (navigation.followingSelection) "Stop following selected object" else "Follow selected object")
+        LabTextAction("Inspect", actions.inspect, tag = LabTags.INSPECT, enabled = canEdit && selectedBody != null)
     }
 }
 
@@ -395,44 +419,61 @@ private fun LabPlaybackDock(
     modifier: Modifier,
 ) {
     val running = uiState.snapshot?.paused == false
-    Surface(modifier, color = LabPanel, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, LabLine)) {
-        Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Button(onClick = actions.togglePlayback,
-                modifier = Modifier.size(52.dp).testTag(LabTags.PLAY_PAUSE)
-                    .semantics { contentDescription = if (running) "Pause simulation" else "Run simulation" },
-                enabled = canEdit, shape = CircleShape, contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = LabBlue, contentColor = Color(0xFF102433))) {
-                LabPlaybackGlyph(running, Color(0xFF102433))
-            }
-            Column(Modifier.weight(1f)) {
-                Text(uiState.pendingActionLabel ?: if (running) "Running" else "Paused",
-                    color = if (running) LabBlue else LabMuted, fontSize = 11.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(formatLabEpoch(uiState.snapshot?.epochSeconds ?: 0.0), color = LabInk,
-                    fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (uiState.manualAdvance != null) {
-                LabTextAction("Cancel", actions.cancelAdvance,
-                    enabled = !uiState.manualAdvance.cancelRequested, description = "Cancel time advance")
-            } else {
-                TextButton(onClick = onSpeed, enabled = canEdit,
-                    modifier = Modifier.height(56.dp).widthIn(min = 60.dp).testTag(LabTags.SPEED_PICKER)
-                        .semantics { contentDescription = "Time speed ${playbackPreset.label}" },
-                    contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(playbackPreset.label, color = LabBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        Text(if (uiState.playbackMeasurement?.limited == true) "Limited" else "Time speed",
-                            color = LabMuted, fontSize = 9.sp)
-                    }
+    Row(modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Button(onClick = actions.togglePlayback,
+            modifier = Modifier.size(48.dp).testTag(LabTags.PLAY_PAUSE)
+                .semantics { contentDescription = if (running) "Pause simulation" else "Run simulation" },
+            enabled = canEdit, shape = CircleShape, contentPadding = PaddingValues(0.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = LabBlue, contentColor = Color(0xFF102433))) {
+            LabPlaybackGlyph(running, Color(0xFF102433))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(uiState.pendingActionLabel ?: if (running) "Running" else "Paused",
+                color = if (running) LabBlue else LabMuted, fontSize = 11.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(formatLabEpoch(uiState.snapshot?.epochSeconds ?: 0.0), color = LabInk,
+                fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (uiState.manualAdvance != null) {
+            LabTextAction("Cancel", actions.cancelAdvance,
+                enabled = !uiState.manualAdvance.cancelRequested, description = "Cancel time advance")
+        } else {
+            TextButton(onClick = onSpeed, enabled = canEdit,
+                modifier = Modifier.height(48.dp).widthIn(min = 60.dp).testTag(LabTags.SPEED_PICKER)
+                    .semantics { contentDescription = "Time speed ${playbackPreset.label}" },
+                contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(playbackPreset.label, color = LabBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text(if (uiState.playbackMeasurement?.limited == true) "Limited" else "Time speed",
+                        color = LabMuted, fontSize = 10.sp)
                 }
             }
-            Button(onClick = actions.addProbe,
-                modifier = Modifier.height(48.dp).testTag(LabTags.ADD_PROBE),
-                enabled = canEdit && canAddProbe, shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A50), contentColor = LabBlue)) {
-                Text("Add probe", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+        Button(onClick = actions.addProbe,
+            modifier = Modifier.height(48.dp).testTag(LabTags.ADD_PROBE),
+            enabled = canEdit && canAddProbe, shape = RoundedCornerShape(14.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF17354A), contentColor = LabBlue)) {
+            Text("Add probe", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun LabGestureHint(mode: LabViewMode, modifier: Modifier) {
+    var dismissed by rememberSaveable { mutableStateOf(false) }
+    var expired by remember(mode) { mutableStateOf(false) }
+    LaunchedEffect(mode) { delay(7_000); expired = true }
+    if (!dismissed && !expired) {
+        Surface(modifier.testTag(LabTags.GESTURE_HINT), color = Color(0xC9081723),
+            shape = RoundedCornerShape(16.dp)) {
+            Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (mode == LabViewMode.ORBIT_MAP) "Drag to pan · pinch to zoom" else "Drag to orbit · pinch to zoom",
+                    Modifier.weight(1f, fill = false), color = LabMuted, fontSize = 12.sp,
+                    maxLines = 2, lineHeight = 16.sp)
+                LabTextAction("×", { dismissed = true }, Modifier.size(48.dp),
+                    tag = LabTags.DISMISS_GESTURE_HINT, description = "Dismiss gesture hint")
             }
         }
     }

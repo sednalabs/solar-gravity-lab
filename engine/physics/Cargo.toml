@@ -9,5 +9,8 @@ repository.workspace = true
 [dependencies]
 solarlab-domain = { path = "../domain" }
 
+[dev-dependencies]
+solarlab-data = { path = "../data" }
+
 [lints]
 workspace = true

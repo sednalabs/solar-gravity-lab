@@ -131,6 +131,21 @@ internal object SolarLabVulkanBridge {
         return nativeGetCameraState(handle)?.toCameraState()
     }
 
+    internal fun setCameraInReference(handle: Long, camera: CameraState, referenceBodyId: String) {
+        if (!isLibraryLoaded || handle == 0L) return
+        nativeSetCameraInReference(handle, camera.centerM.x, camera.centerM.y, camera.centerM.z,
+            camera.viewRadiusM, camera.yawRadians, camera.pitchRadians, referenceBodyId)
+    }
+
+    internal fun resolveRuntimeCameraTransition(handle: Long, bodyId: String?): RuntimeCameraTransition? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        val packet = nativeResolveRuntimeCameraTransition(handle, bodyId) ?: return null
+        val start = (packet.getOrNull(0) as? DoubleArray)?.toCameraState() ?: return null
+        val target = (packet.getOrNull(1) as? DoubleArray)?.toCameraState() ?: return null
+        val reference = packet.getOrNull(2) as? String ?: return null
+        return RuntimeCameraTransition(start, target, reference.takeIf { it.isNotEmpty() })
+    }
+
     fun labViewportState(handle: Long): LabViewportState? {
         if (!isLibraryLoaded || handle == 0L) return null
         val packet = nativeGetLabViewportState(handle) ?: return null
@@ -437,6 +452,17 @@ internal object SolarLabVulkanBridge {
         pitchRadians: Double,
     )
     private external fun nativeGetCameraState(handle: Long): DoubleArray?
+    private external fun nativeSetCameraInReference(
+        handle: Long,
+        centerX: Double,
+        centerY: Double,
+        centerZ: Double,
+        viewRadiusM: Double,
+        yawRadians: Double,
+        pitchRadians: Double,
+        referenceBodyId: String,
+    )
+    private external fun nativeResolveRuntimeCameraTransition(handle: Long, bodyId: String?): Array<Any>?
     private external fun nativeGetLabViewportState(handle: Long): Array<Any>?
     private external fun nativeSetLabMapView(handle: Long, enabled: Boolean, normalX: Double, normalY: Double, normalZ: Double)
     private external fun nativeSetTouchDensity(handle: Long, density: Double)

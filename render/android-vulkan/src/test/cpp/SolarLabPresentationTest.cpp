@@ -118,10 +118,46 @@ void TestProbeTrailFollowsDisplayedEarth() {
     }
 }
 
+void TestFramingWhileTheReferenceMoves() {
+    constexpr double earthRadiusM = 6'371'010.0;
+    constexpr double initialReference = 132'000'000'000.0;
+    constexpr double tickTranslation = 30'000.0 * 3'600.0 * 0.1;
+    constexpr double startOffset = 80'000'000.0;
+    const auto projection = MakeProjection(earthRadiusM * 2.0, 1080, 1800);
+    // Frame a moving body during multiple 100 ms snapshots. The last step centres it
+    // exactly even though its absolute motion has exceeded the whole close-up viewport.
+    for (int tick = 0; tick < 4; ++tick) {
+        const double previous = initialReference + tick * tickTranslation;
+        const double current = previous + tickTranslation;
+        for (double displayFraction : {0.0, 0.3, 0.7, 1.0}) {
+            for (double transitionFraction : {0.0, 0.25, 0.75, 1.0}) {
+                const double localOffset = Mix(startOffset, 0.0, transitionFraction);
+                const auto camera = CameraInReference(localOffset, previous, current);
+                const double displayedCamera = camera.current +
+                    PresentationReferenceOffset(camera.previousOffset, displayFraction);
+                const double displayedBody = Mix(previous, current, displayFraction);
+                assert(std::abs(displayedCamera - displayedBody - localOffset) < 1e-4);
+                if (transitionFraction == 1.0) {
+                    assert(std::abs((displayedBody - displayedCamera) / projection.metersPerPixel) < 1e-6);
+                }
+            }
+        }
+    }
+    assert(4.0 * tickTranslation > 2.0 * projection.halfSpanY);
+    // A lunar probe should retain nearby lunar context, not widen to an Earth-centred view.
+    constexpr double lunarRadius = 1'737'400.0;
+    constexpr double lunarProbeDistance = lunarRadius + 800'000.0;
+    constexpr double earthProbeDistance = 384'400'000.0 - lunarProbeDistance;
+    assert(ContextSurfaceDistance(lunarProbeDistance, lunarRadius) <
+        ContextSurfaceDistance(earthProbeDistance, earthRadiusM));
+    assert(ContextFrameRadius(1'000.0, lunarProbeDistance, lunarRadius) < 6'000'000.0);
+}
+
 int main() {
     TestMapPlaneAndOverlayProjection();
     TestOneDayInEarthReferenceFrame();
     TestProbeTrailFollowsDisplayedEarth();
+    TestFramingWhileTheReferenceMoves();
     const auto portrait = MakeProjection(400.0, 600, 1200);
     const auto landscape = MakeProjection(400.0, 1200, 600);
     assert(portrait.halfSpanX == 400.0);

@@ -80,6 +80,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         drawRequestedFrame()
     }
     private var cameraTransition: ValueAnimator? = null
+    private var cameraTransitionGeneration = 0L
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
     private var lastReportedCameraScaleBand: CameraScaleBand? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -267,22 +268,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun resetCamera() {
+        cancelCameraTransition()
+        val request = cameraTransitionGeneration
         switchToFreeCameraForManualNavigation()
         if (isRuntimeBound()) {
-            serializedRenderer.query(
-                action = SolarLabVulkanBridge::resolveRuntimeHomeCamera,
-                onResult = cameraResult@{ target ->
-                    if (released || !isRuntimeBound()) return@cameraResult
-                    if (target != null) {
-                        animateCameraTo(target)
-                    } else {
-                        serializedRenderer.execute { handle ->
-                            SolarLabVulkanBridge.resetRuntimeCamera(handle)
-                        }
-                        renderLatestScene()
-                    }
-                },
-            )
+            requestRuntimeCameraTransition(null, request) {
+                serializedRenderer.execute { handle -> SolarLabVulkanBridge.resetRuntimeCamera(handle) }
+                renderLatestScene()
+            }
             return
         }
         val target = CameraNavigation.scenarioFit(
@@ -370,6 +363,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {
+        cancelCameraTransition()
+        val request = cameraTransitionGeneration
         selectedBodyId = bodyId
         this.observerMode = observerMode
         if (isRuntimeBound()) {
@@ -381,14 +376,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 renderLatestScene()
                 return
             }
-            resolveBodyFrame(bodyId) frameResult@{ target ->
-                if (released) return@frameResult
-                if (target != null && selectedBodyId == bodyId) {
-                    animateCameraTo(target)
-                } else {
-                    renderLatestScene()
-                }
-            }
+            requestRuntimeCameraTransition(bodyId, request) { renderLatestScene() }
             return
         }
         val target = bodyId?.let {
@@ -409,12 +397,16 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun frameBody(bodyId: String) {
+        cancelCameraTransition()
+        val request = cameraTransitionGeneration
         switchToFreeCameraForManualNavigation()
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
             serializedRenderer.execute { handle ->
                 SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, bodyId)
             }
+            requestRuntimeCameraTransition(bodyId, request) { renderLatestScene() }
+            return
         }
         resolveBodyFrame(bodyId) frameResult@{ target ->
             if (released) return@frameResult
@@ -457,7 +449,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (!plane.isValid || plane == labMapPlane) return
         val orientationChanged = plane.normal != labMapPlane.normal
         labMapPlane = plane
-        if (orientationChanged) pushLabMapState()
+        if (orientationChanged) {
+            cancelCameraTransition()
+            pushLabMapState()
+        }
     }
 
     private fun pushLabMapState() {
@@ -474,6 +469,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     private fun invalidateLabViewport() {
+        cancelCameraTransition()
         labViewportEpoch += 1
         labViewportState = null
         labViewportChangedListener?.invoke(null)
@@ -489,6 +485,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun setSelectedBodyId(bodyId: String?) {
         if (selectedBodyId == bodyId) return
+        cancelCameraTransition()
         if (selectedBodyId != null) switchToFreeCameraForManualNavigation()
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
@@ -505,6 +502,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun setObserverMode(mode: ObserverMode) {
         if (observerMode == mode) return
+        cancelCameraTransition()
         observerMode = mode
         if (isRuntimeBound()) {
             serializedRenderer.execute { handle ->
@@ -939,44 +937,72 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private fun currentCameraState(): CameraState = cameraState
 
+    private fun requestRuntimeCameraTransition(bodyId: String?, request: Long, onUnavailable: () -> Unit) {
+        val session = runtimeSessionHandle
+        serializedRenderer.query(
+            action = { handle -> SolarLabVulkanBridge.resolveRuntimeCameraTransition(handle, bodyId) },
+            onResult = frameResult@{ frame ->
+                // Cancellation includes queries that have not yet returned, not just a running animator.
+                if (released || request != cameraTransitionGeneration || session != runtimeSessionHandle) {
+                    return@frameResult
+                }
+                if (frame == null) onUnavailable() else animateCameraTransition(frame, request)
+            },
+        )
+    }
+
     private fun animateCameraTo(target: CameraState) {
         cancelCameraTransition()
-        val startCamera = currentCameraState()
+        animateCameraTransition(RuntimeCameraTransition(currentCameraState(), target, null), cameraTransitionGeneration)
+    }
+
+    private fun animateCameraTransition(frame: RuntimeCameraTransition, request: Long) {
         cameraTransition = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = CAMERA_TRANSITION_DURATION_MS
             interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
             addUpdateListener { animator ->
+                if (request != cameraTransitionGeneration) return@addUpdateListener
                 applyCameraState(
                     CameraNavigation.interpolate(
-                        start = startCamera,
-                        target = target,
+                        start = frame.start,
+                        target = frame.target,
                         fraction = animator.animatedValue as Float,
                     ),
+                    frame.referenceBodyId,
                 )
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    renderLatestScene()
+                    if (request == cameraTransitionGeneration) {
+                        cameraTransition = null
+                        renderLatestScene()
+                    }
                 }
             })
             start()
         }
     }
 
-    private fun applyCameraState(nextCameraState: CameraState) {
-        cameraState = nextCameraState.sanitized()
+    private fun applyCameraState(nextCameraState: CameraState, referenceBodyId: String? = null) {
+        val nextCamera = nextCameraState.sanitized()
+        // Relative centres are private animation coordinates. Publish only a submitted
+        // native absolute camera to the app's labels, projection and placement geometry.
+        if (referenceBodyId == null) cameraState = nextCamera
         if (isRuntimeBound()) {
-            val nextCamera = cameraState
             serializedRenderer.execute { handle ->
-                SolarLabVulkanBridge.setCamera(
-                    handle = handle,
-                    centerX = nextCamera.centerM.x,
-                    centerY = nextCamera.centerM.y,
-                    centerZ = nextCamera.centerM.z,
-                    viewRadiusM = nextCamera.viewRadiusM,
-                    yawRadians = nextCamera.yawRadians,
-                    pitchRadians = nextCamera.pitchRadians,
-                )
+                if (referenceBodyId == null) {
+                    SolarLabVulkanBridge.setCamera(
+                        handle = handle,
+                        centerX = nextCamera.centerM.x,
+                        centerY = nextCamera.centerM.y,
+                        centerZ = nextCamera.centerM.z,
+                        viewRadiusM = nextCamera.viewRadiusM,
+                        yawRadians = nextCamera.yawRadians,
+                        pitchRadians = nextCamera.pitchRadians,
+                    )
+                } else {
+                    SolarLabVulkanBridge.setCameraInReference(handle, nextCamera, referenceBodyId)
+                }
             }
             renderLatestScene(refreshRuntimeScene = false)
         } else {
@@ -985,8 +1011,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     private fun cancelCameraTransition() {
-        cameraTransition?.cancel()
+        cameraTransitionGeneration += 1
+        val previous = cameraTransition
         cameraTransition = null
+        previous?.cancel()
     }
 
     private fun reportCameraScaleBand() {

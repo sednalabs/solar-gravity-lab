@@ -4,6 +4,9 @@ use std::sync::OnceLock;
 
 use solarlab_domain::Vector3d;
 
+#[cfg(test)]
+mod throughput_tests;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SolverBackend {
     ReferenceScalar,
@@ -1162,41 +1165,103 @@ pub fn compute_invariants(bodies: &[MassiveBodyState]) -> PhysicsInvariants {
         return PhysicsInvariants::default();
     }
 
-    let mut total_mass = 0.0_f64;
-    let mut barycenter_numerator = Vector3d::default();
-    let mut linear_momentum = Vector3d::default();
-    let mut angular_momentum = Vector3d::default();
-    let mut kinetic_energy_j = 0.0_f64;
+    let mut total_mass = CompensatedSum::default();
+    let mut barycenter_numerator = CompensatedVector::default();
+    let mut linear_momentum = CompensatedVector::default();
+    let mut angular_momentum = CompensatedVector::default();
+    let mut energy_j = CompensatedSum::default();
 
     for body in bodies {
-        total_mass += body.mass_kg;
-        barycenter_numerator = add(barycenter_numerator, scale(body.position_m, body.mass_kg));
+        if body.mass_kg == 0.0 {
+            continue;
+        }
+        total_mass.add(body.mass_kg);
+        barycenter_numerator.add(scale(body.position_m, body.mass_kg));
 
         let momentum = scale(body.velocity_mps, body.mass_kg);
-        linear_momentum = add(linear_momentum, momentum);
-        angular_momentum = add(angular_momentum, cross(body.position_m, momentum));
-        kinetic_energy_j += 0.5 * body.mass_kg * norm_squared(body.velocity_mps);
+        linear_momentum.add(momentum);
+        angular_momentum.add(cross(body.position_m, momentum));
+        energy_j.add(0.5 * body.mass_kg * norm_squared(body.velocity_mps));
     }
 
-    let mut potential_energy_j = 0.0_f64;
-    for i in 0..bodies.len() {
-        for j in (i + 1)..bodies.len() {
+    let sources = source_indices(bodies);
+    for (source_index, &i) in sources.iter().enumerate() {
+        for &j in &sources[source_index + 1..] {
             let delta = subtract(bodies[j].position_m, bodies[i].position_m);
-            let distance_m = norm(delta).max(MIN_DISTANCE_M2.sqrt());
-            potential_energy_j -=
-                G_M3_PER_KG_S2 * bodies[i].mass_kg * bodies[j].mass_kg / distance_m;
+            let distance_sq = norm_squared(delta);
+            let pair_strength = G_M3_PER_KG_S2 * bodies[i].mass_kg * bodies[j].mass_kg;
+            let potential = if distance_sq >= MIN_DISTANCE_M2 {
+                -pair_strength / distance_sq.sqrt()
+            } else {
+                // The unchanged force uses r / max(r, epsilon)^3. Its inner
+                // potential is quadratic, joined continuously (including its
+                // derivative) to -G*m_i*m_j/r at epsilon. A constant clipped
+                // potential would report spurious energy loss inside the core.
+                -pair_strength / MIN_DISTANCE_M2.sqrt()
+                    * (1.5 - 0.5 * distance_sq / MIN_DISTANCE_M2)
+            };
+            energy_j.add(potential);
         }
     }
 
+    let total_mass = total_mass.total();
     PhysicsInvariants {
-        total_energy_j: kinetic_energy_j + potential_energy_j,
-        linear_momentum_kg_mps: linear_momentum,
-        angular_momentum_kg_m2ps: angular_momentum,
+        total_energy_j: energy_j.total(),
+        linear_momentum_kg_mps: linear_momentum.total(),
+        angular_momentum_kg_m2ps: angular_momentum.total(),
         barycenter_m: if total_mass > 0.0 {
-            scale(barycenter_numerator, 1.0 / total_mass)
+            scale(barycenter_numerator.total(), 1.0 / total_mass)
         } else {
             Vector3d::default()
         },
+    }
+}
+
+/// Neumaier summation retains small terms when large positive and negative
+/// contributions cancel. It improves diagnostics without changing the forces
+/// or authoritative integration schedule.
+#[derive(Default)]
+struct CompensatedSum {
+    sum: f64,
+    correction: f64,
+}
+
+impl CompensatedSum {
+    fn add(&mut self, value: f64) {
+        let next = self.sum + value;
+        self.correction += if self.sum.abs() >= value.abs() {
+            (self.sum - next) + value
+        } else {
+            (value - next) + self.sum
+        };
+        self.sum = next;
+    }
+
+    fn total(&self) -> f64 {
+        self.sum + self.correction
+    }
+}
+
+#[derive(Default)]
+struct CompensatedVector {
+    x: CompensatedSum,
+    y: CompensatedSum,
+    z: CompensatedSum,
+}
+
+impl CompensatedVector {
+    fn add(&mut self, value: Vector3d) {
+        self.x.add(value.x);
+        self.y.add(value.y);
+        self.z.add(value.z);
+    }
+
+    fn total(&self) -> Vector3d {
+        Vector3d {
+            x: self.x.total(),
+            y: self.y.total(),
+            z: self.z.total(),
+        }
     }
 }
 
@@ -1206,11 +1271,41 @@ fn integrate_fixed_steps(
     count: usize,
     kernel: Option<Arm64GravityKernel>,
 ) {
+    if count == 0 || bodies.is_empty() {
+        return;
+    }
+    // Masses and the selected force law stay fixed throughout this segment.
+    // Acceleration at the previous drift endpoint is exactly the acceleration
+    // needed for the next kick. Keep the two half-kicks separate: combining
+    // them would change rounding and the staged/bulk schedule contract.
+    let sources = source_indices(bodies);
+    let mut accelerations = vec![Vector3d::default(); bodies.len()];
+    let mut partials = Vec::new();
+    gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut partials);
+    let half_dt = 0.5 * dt_seconds;
     for _ in 0..count {
-        if let Some(kernel) = kernel {
-            integrate_substep_arm64(bodies, dt_seconds, kernel);
-        } else {
-            integrate_substep(bodies, dt_seconds);
+        for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
+            if kernel.is_some() {
+                body.velocity_mps.x = acceleration.x.mul_add(half_dt, body.velocity_mps.x);
+                body.velocity_mps.y = acceleration.y.mul_add(half_dt, body.velocity_mps.y);
+                body.velocity_mps.z = acceleration.z.mul_add(half_dt, body.velocity_mps.z);
+                body.position_m.x = body.velocity_mps.x.mul_add(dt_seconds, body.position_m.x);
+                body.position_m.y = body.velocity_mps.y.mul_add(dt_seconds, body.position_m.y);
+                body.position_m.z = body.velocity_mps.z.mul_add(dt_seconds, body.position_m.z);
+            } else {
+                body.velocity_mps = add(body.velocity_mps, scale(*acceleration, half_dt));
+                body.position_m = add(body.position_m, scale(body.velocity_mps, dt_seconds));
+            }
+        }
+        gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut partials);
+        for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
+            if kernel.is_some() {
+                body.velocity_mps.x = acceleration.x.mul_add(half_dt, body.velocity_mps.x);
+                body.velocity_mps.y = acceleration.y.mul_add(half_dt, body.velocity_mps.y);
+                body.velocity_mps.z = acceleration.z.mul_add(half_dt, body.velocity_mps.z);
+            } else {
+                body.velocity_mps = add(body.velocity_mps, scale(*acceleration, half_dt));
+            }
         }
     }
 }
@@ -1226,6 +1321,7 @@ fn integrate_fixed_steps(
 ///
 /// This method is second-order accurate and symplectic, ensuring that the
 /// orbital energy of the system remains stable (non-drifting) over many steps.
+#[cfg(test)]
 fn integrate_substep(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
     let a0 = pairwise_gravity_accelerations(bodies);
 
@@ -1243,6 +1339,7 @@ fn integrate_substep(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
     }
 }
 
+#[cfg(test)]
 fn integrate_substep_arm64(
     bodies: &mut [MassiveBodyState],
     dt_seconds: f64,
@@ -1277,10 +1374,70 @@ fn integrate_substep_arm64(
     }
 }
 
+#[cfg(test)]
 fn pairwise_gravity_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
     let mut accelerations = vec![Vector3d::default(); bodies.len()];
+    pairwise_gravity_accelerations_into(bodies, &source_indices(bodies), &mut accelerations);
+    accelerations
+}
+
+fn source_indices(bodies: &[MassiveBodyState]) -> Vec<usize> {
+    bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(index, body)| (body.mass_kg != 0.0).then_some(index))
+        .collect()
+}
+
+/// Enumerate the same lexicographic pairs as the scalar oracle, omitting only
+/// pairs whose two source masses are zero. Sparse tracer worlds take O(S*N)
+/// visits instead of scanning their O(N*N) physically empty tracer pairs.
+#[inline]
+fn interaction_partners(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    i: usize,
+    start: usize,
+    end: usize,
+    mut visit: impl FnMut(usize),
+) {
+    if bodies[i].mass_kg != 0.0 {
+        for j in start..end {
+            visit(j);
+        }
+    } else {
+        let first = sources.partition_point(|&index| index < start);
+        for &j in &sources[first..] {
+            if j >= end {
+                break;
+            }
+            visit(j);
+        }
+    }
+}
+
+fn gravity_accelerations_into(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+    kernel: Option<Arm64GravityKernel>,
+    partials: &mut Vec<Vec<Vector3d>>,
+) {
+    accelerations.fill(Vector3d::default());
+    if let Some(kernel) = kernel {
+        pairwise_gravity_accelerations_arm64_into(bodies, sources, accelerations, kernel, partials);
+    } else {
+        pairwise_gravity_accelerations_into(bodies, sources, accelerations);
+    }
+}
+
+fn pairwise_gravity_accelerations_into(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     for i in 0..bodies.len() {
-        for j in (i + 1)..bodies.len() {
+        interaction_partners(bodies, sources, i, i + 1, bodies.len(), |j| {
             let delta = subtract(bodies[j].position_m, bodies[i].position_m);
             let distance_sq = norm_squared(delta).max(MIN_DISTANCE_M2);
             let inv_distance = distance_sq.sqrt().recip();
@@ -1297,61 +1454,102 @@ fn pairwise_gravity_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> 
 
             accelerations[i] = add(accelerations[i], accel_i);
             accelerations[j] = add(accelerations[j], accel_j);
-        }
+        });
     }
-    accelerations
 }
 
-#[allow(unsafe_code)]
+#[cfg(test)]
 fn pairwise_gravity_accelerations_arm64(
     bodies: &[MassiveBodyState],
     gravity_kernel: Arm64GravityKernel,
 ) -> Vec<Vector3d> {
+    let mut accelerations = vec![Vector3d::default(); bodies.len()];
+    pairwise_gravity_accelerations_arm64_into(
+        bodies,
+        &source_indices(bodies),
+        &mut accelerations,
+        gravity_kernel,
+        &mut Vec::new(),
+    );
+    accelerations
+}
+
+fn pairwise_gravity_accelerations_arm64_into(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+    gravity_kernel: Arm64GravityKernel,
+    partials: &mut Vec<Vec<Vector3d>>,
+) {
     match gravity_kernel {
-        Arm64GravityKernel::NeonF64Pairwise => pairwise_gravity_accelerations_arm64_neon(bodies),
+        Arm64GravityKernel::NeonF64Pairwise => {
+            pairwise_gravity_accelerations_arm64_neon(bodies, sources, accelerations)
+        }
         Arm64GravityKernel::NeonF64TiledPairwise => {
-            pairwise_gravity_accelerations_arm64_neon_tiled(bodies)
+            pairwise_gravity_accelerations_arm64_neon_tiled(bodies, sources, accelerations)
         }
         Arm64GravityKernel::NeonF64ParallelTiledPairwise => {
-            pairwise_gravity_accelerations_arm64_neon_parallel_tiled(bodies)
+            pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
+                bodies,
+                sources,
+                accelerations,
+                partials,
+            )
         }
         Arm64GravityKernel::PortableScalarOracle => {
-            pairwise_gravity_accelerations_arm64_portable(bodies)
+            pairwise_gravity_accelerations_arm64_portable(bodies, sources, accelerations)
         }
     }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_code)]
-fn pairwise_gravity_accelerations_arm64_neon(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     assert!(
         arm64_neon_runtime_available(),
         "Arm64 NEON solver selected without runtime NEON support"
     );
-    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
-    // and the function does not expose raw pointers or outlive the input slice.
-    unsafe { arm64_neon::pairwise_gravity_accelerations_neon_f64(bodies) }
+    // SAFETY: real runtime detection gates this target-feature function. All
+    // input/output slices remain borrowed for the entire call.
+    unsafe { arm64_neon::pairwise_gravity_accelerations_neon_f64(bodies, sources, accelerations) }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
-fn pairwise_gravity_accelerations_arm64_neon(_bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon(
+    _bodies: &[MassiveBodyState],
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+) {
     panic!("Arm64 NEON solver selected on a non-aarch64 host")
 }
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_code)]
-fn pairwise_gravity_accelerations_arm64_neon_tiled(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon_tiled(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     assert!(
         arm64_neon_runtime_available(),
         "Arm64 tiled NEON solver selected without runtime NEON support"
     );
-    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
-    // and the function does not expose raw pointers or outlive the input slice.
-    unsafe { arm64_neon::pairwise_gravity_accelerations_neon_f64_tiled(bodies) }
+    // SAFETY: real runtime detection gates this target-feature function.
+    unsafe {
+        arm64_neon::pairwise_gravity_accelerations_neon_f64_tiled(bodies, sources, accelerations)
+    }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
-fn pairwise_gravity_accelerations_arm64_neon_tiled(_bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon_tiled(
+    _bodies: &[MassiveBodyState],
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+) {
     panic!("Arm64 tiled NEON solver selected on a non-aarch64 host")
 }
 
@@ -1359,47 +1557,58 @@ fn pairwise_gravity_accelerations_arm64_neon_tiled(_bodies: &[MassiveBodyState])
 #[allow(unsafe_code)]
 fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
     bodies: &[MassiveBodyState],
-) -> Vec<Vector3d> {
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+    partials: &mut Vec<Vec<Vector3d>>,
+) {
     assert!(
         arm64_neon_runtime_available(),
         "Arm64 parallel tiled NEON solver selected without runtime NEON support"
     );
-    let worker_budget = runtime_worker_budget();
-    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
-    // and scoped workers borrow `bodies` without extending its lifetime.
+    // SAFETY: real runtime detection gates this target-feature function; scoped
+    // workers borrow disjoint mutable scratch slices and shared immutable bodies.
     unsafe {
-        arm64_neon::pairwise_gravity_accelerations_neon_f64_parallel_tiled(bodies, worker_budget)
+        arm64_neon::pairwise_gravity_accelerations_neon_f64_parallel_tiled(
+            bodies,
+            sources,
+            accelerations,
+            partials,
+            runtime_worker_budget(),
+        )
     }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
 fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
     _bodies: &[MassiveBodyState],
-) -> Vec<Vector3d> {
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+    _partials: &mut Vec<Vec<Vector3d>>,
+) {
     panic!("Arm64 parallel tiled NEON solver selected on a non-aarch64 host")
 }
 
-fn pairwise_gravity_accelerations_arm64_portable(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
-    let mut accelerations = vec![Vector3d::default(); bodies.len()];
+fn pairwise_gravity_accelerations_arm64_portable(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     for i in 0..bodies.len() {
-        for j in (i + 1)..bodies.len() {
+        interaction_partners(bodies, sources, i, i + 1, bodies.len(), |j| {
             let delta = subtract(bodies[j].position_m, bodies[i].position_m);
             let distance_sq = norm_squared(delta).max(MIN_DISTANCE_M2);
             let inv_distance = distance_sq.sqrt().recip();
             let inv_distance_cubed = inv_distance * inv_distance * inv_distance;
             let scale_i = G_M3_PER_KG_S2 * bodies[j].mass_kg * inv_distance_cubed;
             let scale_j = -G_M3_PER_KG_S2 * bodies[i].mass_kg * inv_distance_cubed;
-
             accelerations[i].x = delta.x.mul_add(scale_i, accelerations[i].x);
             accelerations[i].y = delta.y.mul_add(scale_i, accelerations[i].y);
             accelerations[i].z = delta.z.mul_add(scale_i, accelerations[i].z);
-
             accelerations[j].x = delta.x.mul_add(scale_j, accelerations[j].x);
             accelerations[j].y = delta.y.mul_add(scale_j, accelerations[j].y);
             accelerations[j].z = delta.z.mul_add(scale_j, accelerations[j].z);
-        }
+        });
     }
-    accelerations
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -1412,27 +1621,29 @@ mod arm64_neon {
     use solarlab_domain::Vector3d;
 
     use super::{
-        MassiveBodyState, ARM64_GRAVITY_TILE_SIZE_BODIES, G_M3_PER_KG_S2, MIN_DISTANCE_M2,
+        interaction_partners, MassiveBodyState, ARM64_GRAVITY_TILE_SIZE_BODIES, G_M3_PER_KG_S2,
+        MIN_DISTANCE_M2,
     };
 
     #[target_feature(enable = "neon")]
     pub unsafe fn pairwise_gravity_accelerations_neon_f64(
         bodies: &[MassiveBodyState],
-    ) -> Vec<Vector3d> {
-        let mut accelerations = vec![Vector3d::default(); bodies.len()];
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+    ) {
         for i in 0..bodies.len() {
-            for j in (i + 1)..bodies.len() {
-                accumulate_pair(bodies, &mut accelerations, i, j);
-            }
+            interaction_partners(bodies, sources, i, i + 1, bodies.len(), |j| {
+                accumulate_pair(bodies, accelerations, i, j);
+            });
         }
-        accelerations
     }
 
     #[target_feature(enable = "neon")]
     pub unsafe fn pairwise_gravity_accelerations_neon_f64_tiled(
         bodies: &[MassiveBodyState],
-    ) -> Vec<Vector3d> {
-        let mut accelerations = vec![Vector3d::default(); bodies.len()];
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+    ) {
         for tile_i_start in (0..bodies.len()).step_by(ARM64_GRAVITY_TILE_SIZE_BODIES) {
             let tile_i_end = (tile_i_start + ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
             for tile_j_start in (tile_i_start..bodies.len()).step_by(ARM64_GRAVITY_TILE_SIZE_BODIES)
@@ -1444,60 +1655,54 @@ mod arm64_neon {
                     } else {
                         tile_j_start
                     };
-                    for j in j_start..tile_j_end {
-                        accumulate_pair(bodies, &mut accelerations, i, j);
-                    }
+                    interaction_partners(bodies, sources, i, j_start, tile_j_end, |j| {
+                        accumulate_pair(bodies, accelerations, i, j);
+                    });
                 }
             }
         }
-        accelerations
     }
 
     #[target_feature(enable = "neon")]
     pub unsafe fn pairwise_gravity_accelerations_neon_f64_parallel_tiled(
         bodies: &[MassiveBodyState],
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+        partials: &mut Vec<Vec<Vector3d>>,
         worker_budget: usize,
-    ) -> Vec<Vector3d> {
+    ) {
         if bodies.len() < 2 || worker_budget <= 1 {
-            return pairwise_gravity_accelerations_neon_f64_tiled(bodies);
+            return pairwise_gravity_accelerations_neon_f64_tiled(bodies, sources, accelerations);
         }
-
         let tile_count = bodies.len().div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES);
         let worker_count = worker_budget.min(tile_count).max(1);
-
-        let partials = std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for worker_index in 0..worker_count {
-                handles.push(scope.spawn(move || {
-                    let mut local_accelerations = vec![Vector3d::default(); bodies.len()];
-                    // Cyclic tiles balance the triangular pair workload: early
-                    // rows have many more interactions than late rows.
+        // Workers keep their scratch across force evaluations. The reduction
+        // always follows worker index, independent of completion order.
+        partials.resize_with(worker_count, || vec![Vector3d::default(); bodies.len()]);
+        std::thread::scope(|scope| {
+            for (worker_index, local) in partials.iter_mut().enumerate() {
+                local.fill(Vector3d::default());
+                scope.spawn(move || {
                     for tile_index in (worker_index..tile_count).step_by(worker_count) {
-                        let i_start = tile_index * ARM64_GRAVITY_TILE_SIZE_BODIES;
-                        let i_end =
+                        let start = tile_index * ARM64_GRAVITY_TILE_SIZE_BODIES;
+                        let end =
                             ((tile_index + 1) * ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
-                        for i in i_start..i_end {
-                            for j in (i + 1)..bodies.len() {
-                                unsafe {
-                                    accumulate_pair(bodies, &mut local_accelerations, i, j);
-                                }
-                            }
+                        for i in start..end {
+                            interaction_partners(
+                                bodies,
+                                sources,
+                                i,
+                                i + 1,
+                                bodies.len(),
+                                |j| unsafe {
+                                    accumulate_pair(bodies, local, i, j);
+                                },
+                            );
                         }
                     }
-                    local_accelerations
-                }));
+                });
             }
-            handles
-                .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .expect("Arm64 gravity worker should not panic")
-                })
-                .collect::<Vec<_>>()
         });
-
-        let mut accelerations = vec![Vector3d::default(); bodies.len()];
         for partial in partials {
             for (target, contribution) in accelerations.iter_mut().zip(partial) {
                 target.x += contribution.x;
@@ -1505,7 +1710,6 @@ mod arm64_neon {
                 target.z += contribution.z;
             }
         }
-        accelerations
     }
 
     #[target_feature(enable = "neon")]

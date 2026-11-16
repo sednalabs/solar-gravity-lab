@@ -123,6 +123,20 @@ inline double ContextFrameRadius(double preferredRadiusM, double contextDistance
     return std::max(preferredRadiusM, (contextDistanceM + contextRadiusM) * 1.18);
 }
 
+inline double ContextSurfaceDistance(double centerDistanceM, double radiusM) {
+    return std::max(0.0, centerDistanceM - radiusM);
+}
+
+struct ReferenceCameraCoordinate {
+    double current;
+    double previousOffset;
+};
+
+inline ReferenceCameraCoordinate CameraInReference(double localOffset, double previous, double current) {
+    // The same display fraction must translate the reference, camera and picking geometry.
+    return {current + localOffset, previous - current};
+}
+
 inline double TranslateWithReference(double coordinate, double previousReference, double currentReference) {
     return coordinate + (currentReference - previousReference);
 }

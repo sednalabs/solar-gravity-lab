@@ -1051,10 +1051,10 @@ internal fun StageFirstRuntimeExperience(
             val statusInset = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
             val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
             val placing = labInteraction.draft != null
-            val headerHeight = if (placing) 64.dp else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
+            val headerHeight = if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
             val dockHeight = if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
-            val placementHeight = minOf(350.dp, maxHeight * 0.44f)
-            val placementWidth = minOf(350.dp, maxWidth * 0.46f)
+            val placementHeight = minOf(LabPlacementMetrics.PortraitHeight, maxHeight * 0.44f)
+            val placementWidth = minOf(LabPlacementMetrics.LandscapeWidth, maxWidth * 0.46f)
             val bottomInset = navigationInset + if (placing) { if (landscape) 8.dp else placementHeight + 8.dp }
                 else if (chromeMode == StageChromeMode.MINIMAL) 0.dp else dockHeight
             val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing) 0.dp else headerHeight
@@ -1275,20 +1275,14 @@ internal fun StageFirstRuntimeExperience(
                 ),
             )
             labInteraction.draft?.let { draft ->
-                Surface(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().height(64.dp),
-                    color = Color(0xFF07111D)) {
-                    Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Place your probe", color = Color(0xFFF0F6FA), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Drag to position · pinch to zoom", color = Color(0xFF9CB3C3), fontSize = 11.sp)
-                        }
-                        LabTextAction("Fit path", ::fitProbePlacement, description = "Fit the probe and its predicted path in view")
-                        LabTextAction("−", { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
-                            tag = SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON, description = "Zoom out")
-                        LabTextAction("+", { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
-                            tag = SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON, description = "Zoom in")
-                    }
-                }
+                LabPlacementSceneBar(
+                    planeLabel = draft.plane.label,
+                    onFitPath = ::fitProbePlacement,
+                    onZoomIn = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
+                    onZoomOut = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()
+                        .height(LabPlacementMetrics.SceneHeaderHeight),
+                )
                 val preview = labInteraction.preview
                 val previewStatus = when {
                     draft.validationError != null -> "Choose a valid starting position"
