@@ -45,6 +45,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +78,7 @@ import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.sednalabs.solarlab.render.vulkan.RenderInteractionListener
+import com.sednalabs.solarlab.render.vulkan.LabViewportState
 import com.sednalabs.solarlab.render.vulkan.PlacementGesturePhase
 import com.sednalabs.solarlab.render.vulkan.PlacementGestureUpdate
 import com.sednalabs.solarlab.render.vulkan.RenderProcessingMode
@@ -108,6 +110,7 @@ import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
@@ -463,6 +466,7 @@ internal fun StageFirstRuntimeExperience(
             bodyId: String,
             acknowledgement: RuntimeSemanticFocusAcknowledgement? = null,
         ) {
+            labInteraction.undoCameraRecovery = null
             selectedBodyId = bodyId
             observerMode = ObserverMode.FOLLOW_SELECTED
             renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
@@ -471,6 +475,7 @@ internal fun StageFirstRuntimeExperience(
         }
 
         fun resetRuntimeCamera() {
+            labInteraction.undoCameraRecovery = null
             semanticFocusAcknowledgement = null
             observerMode = ObserverMode.FREE
             syncObserver(selectedBodyId, ObserverMode.FREE)
@@ -480,6 +485,7 @@ internal fun StageFirstRuntimeExperience(
 
         fun selectRuntimeBody(bodyId: String) {
             if (labInteraction.draft != null) return
+            labInteraction.undoCameraRecovery = null
             labInteraction.feedback = null
             selectedBodyId = bodyId
             observerMode = ObserverMode.FREE
@@ -491,6 +497,7 @@ internal fun StageFirstRuntimeExperience(
         }
 
         fun frameSelectedBody() {
+            labInteraction.undoCameraRecovery = null
             selectedBodyId?.let { bodyId ->
                 renderHostView?.frameBody(bodyId)
                 showFrameRequest(bodyId)
@@ -587,10 +594,21 @@ internal fun StageFirstRuntimeExperience(
                 try {
                     runtimeFacade.undoProbe(commit)
                     labInteraction.lastCommit = null
-                    selectedBodyId = runtimeFacade.uiState.value.focusedBodyId ?: "earth"
+                    val restoredBodyId = runtimeFacade.uiState.value.focusedBodyId ?: "earth"
+                    val restoredBody = runtimeFacade.inspectBody(restoredBodyId)
+                    if (runtimeFacade.uiState.value.sessionHandle != commit.sessionHandle) return@launch
+                    selectedBodyId = restoredBodyId
                     observerMode = ObserverMode.FREE
-                    syncObserver(selectedBodyId, ObserverMode.FREE)
-                    selectedBodyId?.let { renderHostView?.frameBody(it) }
+                    runtimeFacade.applyCommand(RuntimeCommand.FocusBody(restoredBodyId))
+                    runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.Free))
+                    if (runtimeFacade.uiState.value.sessionHandle != commit.sessionHandle) return@launch
+                    val restoredSnapshot = runtimeFacade.uiState.value.snapshot
+                    // Rust has rewound, but the native renderer may still hold the
+                    // later packet. Framing it here can animate towards the old Earth.
+                    labInteraction.undoCameraRecovery = if (restoredBody != null && restoredSnapshot != null) {
+                        LabUndoCameraRecovery(commit.sessionHandle, restoredBodyId, restoredBody.labPosition(),
+                            commit.bodyId, restoredSnapshot.epochSeconds, restoredSnapshot.activeBranchId)
+                    } else null
                     labInteraction.feedback = "Placement undone · paused"
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
@@ -628,6 +646,7 @@ internal fun StageFirstRuntimeExperience(
 
         fun addProbe() {
             if (labInteraction.draft != null || labInteraction.opening) return
+            labInteraction.undoCameraRecovery = null
             val startingSession = runtimeFacade.uiState.value.sessionHandle
             val openingGeneration = ++labInteraction.openingGeneration
             labInteraction.opening = true
@@ -739,6 +758,44 @@ internal fun StageFirstRuntimeExperience(
             labInteraction.savedCameraReferenceId = null
             labInteraction.savedCameraReferencePosition = null
             labInteraction.appliedCommitUiId = null
+            labInteraction.undoCameraRecovery = null
+        }
+
+        LaunchedEffect(labInteraction.undoCameraRecovery, renderHostView, runtimeSessionHandle,
+            uiState.snapshot?.epochSeconds, uiState.snapshot?.activeBranchId, uiState.snapshot?.paused) {
+            val recovery = labInteraction.undoCameraRecovery ?: return@LaunchedEffect
+            val view = renderHostView ?: return@LaunchedEffect
+            if (recovery.sessionHandle != runtimeSessionHandle) return@LaunchedEffect
+            val snapshot = runtimeFacade.uiState.value.snapshot
+            if (snapshot == null || !snapshot.paused || snapshot.epochSeconds != recovery.epochSeconds ||
+                snapshot.activeBranchId != recovery.branchId) {
+                // A subsequent user playback or timeline action supersedes this view.
+                labInteraction.undoCameraRecovery = null
+                return@LaunchedEffect
+            }
+            fun isRestoredViewport(viewport: LabViewportState?): Boolean =
+                viewport != null && viewport.bodies.none { it.bodyId == recovery.removedBodyId } &&
+                    viewport.bodies.any { it.bodyId == recovery.bodyId &&
+                        labLength(it.worldPositionM - recovery.bodyPositionM) < 1.0 }
+            // A submitted viewport, rather than the facade snapshot, establishes
+            // that native camera queries will resolve against the restored world.
+            snapshotFlow { labInteraction.viewport }.first { isRestoredViewport(it) }
+            selectedBodyId = recovery.bodyId
+            observerMode = ObserverMode.FREE
+            view.setObserverMode(ObserverMode.FREE)
+            view.frameBody(recovery.bodyId)
+            // Retain the request through recreation until the framed view is
+            // actually presented, so a rotation cannot strand the recovery.
+            snapshotFlow { labInteraction.viewport }.first { viewport ->
+                viewport != null && isRestoredViewport(viewport) && viewport.bodies.any { anchor ->
+                    anchor.bodyId == recovery.bodyId && !anchor.occluded &&
+                        abs(anchor.xPx - viewport.widthPx * 0.5f) < viewport.widthPx * 0.02f &&
+                        abs(anchor.yPx - viewport.heightPx * 0.5f) < viewport.heightPx * 0.02f &&
+                        anchor.radiusPx > min(viewport.widthPx, viewport.heightPx) * 0.15f &&
+                        anchor.radiusPx * 2f < min(viewport.widthPx, viewport.heightPx)
+                }
+            }
+            if (labInteraction.undoCameraRecovery == recovery) labInteraction.undoCameraRecovery = null
         }
 
         LaunchedEffect(runtimeSessionHandle, canSendCommands) {

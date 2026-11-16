@@ -17,6 +17,15 @@ import com.sednalabs.solarlab.runtime.RuntimeBodyState
 /** Short-lived authoring state. A draft cannot outlive its authoritative session. */
 internal data class LabObjectFacts(val bodyId: String, val summary: String)
 
+internal data class LabUndoCameraRecovery(
+    val sessionHandle: Long,
+    val bodyId: String,
+    val bodyPositionM: Vector3d,
+    val removedBodyId: String,
+    val epochSeconds: Double,
+    val branchId: String,
+)
+
 internal class LabInteractionState(val operationScope: CoroutineScope? = null) {
     var boundSessionHandle = 0L
     var appliedCommitUiId: String? = null
@@ -36,6 +45,7 @@ internal class LabInteractionState(val operationScope: CoroutineScope? = null) {
     var error by mutableStateOf<String?>(null)
     var lastCommit by mutableStateOf<ProbeCommitResult?>(null)
     var undoing by mutableStateOf(false)
+    var undoCameraRecovery by mutableStateOf<LabUndoCameraRecovery?>(null)
     var beforeGesture: LabProbeDraft? = null
     var beforePlacementCamera: CameraState? = null
     var beforePlacementView = LabViewMode.THREE_DIMENSIONAL

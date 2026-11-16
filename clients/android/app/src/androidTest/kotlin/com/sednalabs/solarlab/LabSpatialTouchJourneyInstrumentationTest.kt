@@ -173,6 +173,18 @@ class LabSpatialTouchJourneyInstrumentationTest {
             assertNull(runBlocking { facade.inspectBody("probe-1") })
             assertTrue(facade.uiState.value.snapshot!!.paused)
             assertEquals(epochBeforeZoom, facade.uiState.value.snapshot!!.epochSeconds, 0.0)
+            composeRule.waitUntil(15_000) {
+                val viewport = currentViewport() ?: return@waitUntil false
+                val restoredEarth = viewport.bodies.firstOrNull { it.bodyId == "earth" } ?: return@waitUntil false
+                viewport.bodies.none { it.bodyId == "probe-1" } && !restoredEarth.occluded &&
+                    labLength(restoredEarth.worldPositionM - earth.labPosition()) < 1.0 &&
+                    restoredEarth.radiusPx > 30f &&
+                    restoredEarth.xPx - restoredEarth.radiusPx > 0f &&
+                    restoredEarth.xPx + restoredEarth.radiusPx < viewport.widthPx &&
+                    restoredEarth.yPx - restoredEarth.radiusPx > 0f &&
+                    restoredEarth.yPx + restoredEarth.radiusPx < viewport.heightPx
+            }
+            composeRule.onNodeWithTag(LabSpatialTags.label("earth")).assertIsDisplayed()
             capture("08-undo-restored-experiment.png")
         } finally {
             shell("kill -2 $recordingPid")
