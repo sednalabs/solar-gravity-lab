@@ -80,7 +80,8 @@ class LabSpatialTouchJourneyInstrumentationTest {
             capture("02-native-pinch.png")
 
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON).performClick()
-            settle()
+            waitForSystemView()
+            capture("03-system-overview.png")
             composeRule.onNodeWithTag(LabSpatialTags.label("earth")).assertIsDisplayed()
             composeRule.onNodeWithTag(LabSpatialTags.label("moon")).assertIsDisplayed().performTouchInput { click() }
             composeRule.waitUntil(10_000) { facade.uiState.value.focusedBodyId == "moon" }
@@ -157,7 +158,7 @@ class LabSpatialTouchJourneyInstrumentationTest {
             composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).performClick()
             composeRule.waitUntil(10_000) { facade.uiState.value.snapshot?.paused == true }
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON).performClick()
-            settle()
+            waitForSystemView()
             composeRule.onNodeWithTag(LabSpatialTags.label("probe-1")).assertIsDisplayed().performTouchInput { click() }
             capture("06-probe-recovered-at-system-scale.png")
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON).performClick()
@@ -197,9 +198,27 @@ class LabSpatialTouchJourneyInstrumentationTest {
 
     private fun settle() {
         composeRule.waitForIdle()
-        SystemClock.sleep(500)
+        SystemClock.sleep(800)
         composeRule.waitUntil(15_000) { currentViewport() != null }
         composeRule.waitForIdle()
+    }
+
+    private fun waitForSystemView() {
+        try {
+            composeRule.waitUntil(20_000) {
+                val viewport = currentViewport() ?: return@waitUntil false
+                val earth = viewport.bodies.firstOrNull { it.bodyId == "earth" } ?: return@waitUntil false
+                val moon = viewport.bodies.firstOrNull { it.bodyId == "moon" } ?: return@waitUntil false
+                val separation = labLength(earth.worldPositionM - moon.worldPositionM)
+                viewport.camera.viewRadiusM in (separation * 0.5)..(separation * 2.0) &&
+                    listOf(earth, moon).all { !it.occluded && it.xPx in 0f..viewport.widthPx.toFloat() &&
+                        it.yPx in 0f..viewport.heightPx.toFloat() }
+            }
+        } catch (error: Throwable) {
+            capture("system-camera-timeout.png")
+            throw AssertionError("System must present both Earth and Moon; last native viewport=${currentViewport()}", error)
+        }
+        settle()
     }
 
     private fun findHost(view: View): SolarSystemRenderHostView? {

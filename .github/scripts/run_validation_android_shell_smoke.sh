@@ -506,7 +506,9 @@ run_test_classes_individually() {
       echo "Instrumentation class ${class_name} failed with exit code ${command_status}" >&2
       emit_failure_summary "${class_dir}"
       overall_status=${command_status}
-      break
+      # Each class receives a fresh connected-test installation. Preserve this
+      # failure while collecting the remaining independent user journeys too.
+      continue
     elif [[ "${report_capture_failed}" -ne 0 ]]; then
       echo "Connected test report custody failed for ${class_name}" >&2
       overall_status=1
