@@ -197,10 +197,6 @@ uint32_t RenderKindForSceneBodyKind(SlSceneBodyKind kind) {
     }
 }
 
-bool ShouldIncludeAuthoritativeBody(float radiusM, float emissiveLuminance, bool selected) {
-    return selected || emissiveLuminance > 1000.0f || radiusM >= 100'000.0f;
-}
-
 double SafeBodyRadiusM(float radiusM) {
     return std::isfinite(radiusM) && radiusM > 0.0f
         ? static_cast<double>(radiusM)
@@ -1783,8 +1779,16 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 .frameRadiusM = frameRadiusM,
                 .kind = kind,
             });
-            if (body->kind != SL_SCENE_BODY_KIND_SPACECRAFT &&
-                !ShouldIncludeAuthoritativeBody(body->radius_m, body->emissive_luminance, selected)) {
+            // The body packet also contains test particles and spacecraft. They
+            // already have a dedicated tracer draw path, so the ordinary
+            // authoritative billboard would cover their GPU-compacted pixels.
+            // Keep every body's picking proxy, and promote only the selected
+            // tracer/spacecraft to a close-inspection billboard.
+            const bool isTracerOrSpacecraft =
+                body->kind == SL_SCENE_BODY_KIND_TRACER ||
+                body->kind == SL_SCENE_BODY_KIND_SPACECRAFT;
+            if (!solarlab::presentation::DrawAsAuthoritativeBody(
+                    isTracerOrSpacecraft, selected, body->radius_m, body->emissive_luminance)) {
                 continue;
             }
             authoritativePositionsM.push_back(body->position_from_origin_m.x);
@@ -1844,6 +1848,13 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const auto* tracer = reinterpret_cast<const SlVulkanTracerInstance*>(raw + (stride * index));
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(tracer->source_body_id, tracer->source_body_id_len));
+            // Selected tracers/spacecraft are already rendered in the
+            // authoritative billboard stream. Never draw the same object
+            // again through the compute/direct tracer streams.
+            if (!normalizedSelectedBodyId.empty() &&
+                sourceBodyId == normalizedSelectedBodyId) {
+                continue;
+            }
             if (focusTraceLayer) {
                 const bool includeFocusedTrace = !normalizedSelectedBodyId.empty()
                     ? sourceBodyId == normalizedSelectedBodyId

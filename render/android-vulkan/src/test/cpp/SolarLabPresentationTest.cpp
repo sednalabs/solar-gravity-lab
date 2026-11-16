@@ -219,7 +219,22 @@ void TestGpuBufferAndCommandReuse() {
     assert(changed != recorded);
 }
 
+void TestExclusiveTracerPresentation() {
+    // Ordinary sources stay in the authoritative surface layer.
+    assert(DrawAsAuthoritativeBody(false, false, 6'371'000.0f, 0.0f));
+    assert(DrawAsAuthoritativeBody(false, false, 1.0f, 1'500.0f));
+    assert(!DrawAsAuthoritativeBody(false, false, 1.0f, 0.0f));
+    // A test particle/spacecraft has exactly one ordinary visual owner.
+    assert(!DrawAsAuthoritativeBody(true, false, 5'000'000.0f, 2'000.0f));
+    assert(!DrawAsAuthoritativeBody(true, false, 10.0f, 0.0f));
+    // Selecting it promotes it to the billboard layer; tracer streaming must
+    // then exclude the same stable source ID.
+    assert(DrawAsAuthoritativeBody(true, true, 10.0f, 0.0f));
+    assert(DrawAsAuthoritativeBody(false, true, 10.0f, 0.0f));
+}
+
 int main() {
+    TestExclusiveTracerPresentation();
     TestMapPlaneAndOverlayProjection();
     TestOneDayInEarthReferenceFrame();
     TestProbeTrailFollowsDisplayedEarth();

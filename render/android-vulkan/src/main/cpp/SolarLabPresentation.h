@@ -127,6 +127,15 @@ inline double ContextSurfaceDistance(double centerDistanceM, double radiusM) {
     return std::max(0.0, centerDistanceM - radiusM);
 }
 
+// Tracers and spacecraft have one visual owner: their near/medium/far stream.
+// The selected probe moves to the authoritative billboard for close inspection,
+// but must then be omitted from its tracer stream. Picking proxies are unaffected.
+inline bool DrawAsAuthoritativeBody(
+    bool isTracerOrSpacecraft, bool selected, float radiusM, float emissiveLuminance) {
+    if (isTracerOrSpacecraft) return selected;
+    return selected || emissiveLuminance > 1000.0f || radiusM >= 100'000.0f;
+}
+
 struct ReferenceCameraCoordinate {
     double current;
     double previousOffset;
