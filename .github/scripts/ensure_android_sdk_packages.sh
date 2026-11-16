@@ -61,8 +61,10 @@ def stop_process_group(process, grace):
 def main():
     requested = list(dict.fromkeys(sys.argv[1:]))
     list_timeout = duration("SOLARLAB_SDK_LIST_TIMEOUT_SECONDS", 30, 120)
-    license_timeout = duration("SOLARLAB_SDK_LICENSE_TIMEOUT_SECONDS", 60, 180)
-    install_timeout = duration("SOLARLAB_SDK_INSTALL_TIMEOUT_SECONDS", 300, 600)
+    license_timeout = duration("SOLARLAB_SDK_LICENSE_TIMEOUT_SECONDS", 180, 300)
+    # A successful hosted emulator archive download took almost 16 minutes.
+    # Bound stalled commands without rejecting that observed slow-network case.
+    install_timeout = duration("SOLARLAB_SDK_INSTALL_TIMEOUT_SECONDS", 1200, 1800)
     retry_delay = duration("SOLARLAB_SDK_RETRY_DELAY_SECONDS", 2, 10, allow_zero=True)
     kill_grace = duration("SOLARLAB_SDK_KILL_GRACE_SECONDS", 2, 5)
 
