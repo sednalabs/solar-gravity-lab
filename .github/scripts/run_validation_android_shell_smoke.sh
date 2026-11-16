@@ -35,6 +35,7 @@ SHELL_FULL_TEST_CLASSES=(
 
 STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest"
+  "com.sednalabs.solarlab.LabProbeMassInstrumentationTest"
   "com.sednalabs.solarlab.LabSpatialTouchJourneyInstrumentationTest"
   "com.sednalabs.solarlab.LabInteractionChromeTest"
   "com.sednalabs.solarlab.LabDocumentTransferInstrumentationTest"

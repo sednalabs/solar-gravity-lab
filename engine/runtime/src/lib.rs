@@ -869,14 +869,14 @@ impl WorldRuntime {
         }
 
         // Validate before consuming an ordinal or changing history/world state.
-        if let WorldCommand::SetBodyProperties {
+        let edited_invariants = if let WorldCommand::SetBodyProperties {
             body_id, mass_kg, source_mass_kg, radius_m, position_m, velocity_mps,
         } = &command {
-            body_properties::validate(
+            Some(body_properties::validate(
                 &self.active_branch().world.bodies, body_id, *mass_kg,
                 *source_mass_kg, *radius_m, *position_m, *velocity_mps,
-            )?;
-        }
+            )?)
+        } else { None };
         let mut events = Vec::new();
         let mut header = self.new_command_header(&command, recorded_at_unix_ms);
         let summary = self.command_summary(&command);
@@ -1004,7 +1004,7 @@ impl WorldRuntime {
                 body.radius_m = *radius_m;
                 body.position_m = *position_m;
                 body.velocity_mps = *velocity_mps;
-                branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+                branch.world.invariants = edited_invariants.expect("validated property invariants");
                 push_trail_sample(&mut branch.world.trail_history_by_body,
                     body_id, branch.world.epoch_seconds, *position_m);
             }

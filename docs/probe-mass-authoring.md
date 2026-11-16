@@ -30,3 +30,11 @@ these source-level changes; no phone-performance claim or new release is implied
 
 Delivery: Ops w18967 under w18944; feature PR237. Use remote commits and Ops
 checkpoints, not conversation state, as the recovery record.
+
+
+Additional refinement: accepted body edits reuse their already-validated invariant
+result, avoiding a second all-pairs reduction. No approximate result is cached.
+Native qualification adds an actual Mass-panel/create/edit/save/reopen journey,
+invalid UI input and draft recreation. Distant density points get a readable
+minimum screen footprint and an explicit 1px hardware fallback, instead of fading
+away their only raster sample. Native projected-pixel assertions remain unchanged.

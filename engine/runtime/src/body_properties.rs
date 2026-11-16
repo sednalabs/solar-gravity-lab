@@ -8,7 +8,7 @@ fn finite_vector(v: Vector3d) -> bool {
 pub(super) fn validate(
     bodies: &[BodyState], id: &BodyId, mass: f64, source: f64, radius: f64,
     position: Vector3d, velocity: Vector3d,
-) -> Result<(), RuntimeError> {
+) -> Result<PhysicsInvariants, RuntimeError> {
     if !mass.is_finite() || mass < 0.0 || !source.is_finite() || source < 0.0
         || !radius.is_finite() || radius <= 0.0
         || !finite_vector(position) || !finite_vector(velocity) {
@@ -30,7 +30,7 @@ pub(super) fn validate(
         || !finite_vector(inv.angular_momentum_kg_m2ps) || !finite_vector(inv.barycenter_m) {
         return Err(RuntimeError::InvalidBodyProperties);
     }
-    Ok(())
+    Ok(inv)
 }
 
 #[cfg(test)]

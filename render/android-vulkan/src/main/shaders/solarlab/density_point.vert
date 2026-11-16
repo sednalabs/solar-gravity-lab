@@ -13,6 +13,7 @@ layout(location = 1) in uint inColorArgb;
 layout(location = 2) in uint inDensityWeight;
 
 layout(location = 0) out vec4 vColor;
+layout(location = 1) flat out float vPointSizePx;
 
 vec4 unpackArgb(uint argb) {
     float a = float((argb >> 24) & 0xFFu) / 255.0;
@@ -44,6 +45,7 @@ void main() {
     if (inDensityWeight == 0u) {
         gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
         gl_PointSize = 1.0;
+        vPointSizePx = 1.0;
         vColor = vec4(0.0);
         return;
     }
@@ -51,7 +53,11 @@ void main() {
     vec3 relative = cameraRelative(inPositionM);
     gl_Position = vec4(clipXY(relative), clipDepth01(relative), 1.0);
     float weight = float(max(inDensityWeight, 1u));
-    gl_PointSize = clamp(weight, 1.0, max(uScene.viewport.z, 1.0));
+    // A one-pixel radial haze can fade its only sample away as its centre
+    // crosses the pixel grid. Keep a small readable screen-space footprint;
+    // devices without largePoints retain a real one-pixel fallback.
+    gl_PointSize = clamp(max(weight, 3.0), 1.0, max(uScene.viewport.z, 1.0));
+    vPointSizePx = gl_PointSize;
 
     vec4 color = unpackArgb(inColorArgb);
     color.a *= clamp(0.55 + 0.15 * weight, 0.0, 1.0);

@@ -7,8 +7,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LabProbeMassTest {
-    private val earth = RuntimeBodyState("earth", RuntimeBodyClass.Planet,
-        5.972e24, 6_371_000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, sourceMassKg = 5.972e24)
+    private val earth = RuntimeBodyState(
+        bodyId="earth", bodyClass=RuntimeBodyClass.Planet,
+        massKg=5.972e24, sourceMassKg=5.972e24, radiusM=6_371_000.0,
+        positionX=0.0, positionY=0.0, positionZ=0.0,
+        velocityX=0.0, velocityY=0.0, velocityZ=0.0,
+    )
     private fun draft() = LabProbeDraft(earth, earthMoonAuthoringPlane(earth, null), "mass-probe", 0.0)
     @Test fun physicalMassAndSourceGravityAreIndependent() {
         val small = requireNotNull(draft().candidate())
