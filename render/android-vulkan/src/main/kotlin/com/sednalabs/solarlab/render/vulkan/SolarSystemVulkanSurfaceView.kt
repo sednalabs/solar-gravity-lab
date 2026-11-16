@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
+import android.util.Log
 import android.view.Choreographer
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -84,6 +85,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
     private var lastReportedCameraScaleBand: CameraScaleBand? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val performanceHints = RenderPerformanceHints(
+        factory = AndroidRenderHintFactory(context),
+        onStateChanged = { Log.i("SolarLabPerformance", it) },
+    )
+    private val performanceHintIdleClose = Runnable { closePerformanceHintSession() }
 
     private val serializedRenderer = SerializedVulkanRenderer(
         backend = object : SerializedVulkanRenderer.LifecycleBackend {
@@ -470,6 +476,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private fun invalidateLabViewport() {
         cancelCameraTransition()
+        closePerformanceHintSession()
         labViewportEpoch += 1
         labViewportState = null
         labViewportChangedListener?.invoke(null)
@@ -550,6 +557,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         packetDirty = true
         val wasRuntimeBound = runtimeSessionHandle != 0L
         serializedRenderer.release { handle ->
+            performanceHints.close()
             if (wasRuntimeBound) {
                 SolarLabVulkanBridge.unbindRuntimeSession(handle)
             }
@@ -1135,12 +1143,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private fun drawRequestedFrame() {
         val request = frameGate.begin(canPresent()) ?: return
+        mainHandler.removeCallbacks(performanceHintIdleClose)
         val generation = activeSurfaceGeneration
         val viewportEpoch = labViewportEpoch
+        val targetDurationNanos = displayFrameTargetNanos(display?.refreshRate ?: 60f)
         if (isRuntimeBound()) {
             serializedRenderer.query(
                 requireSurface = true,
-                action = { handle -> renderNativeFrame(handle, request.refreshRuntimeScene) },
+                action = { handle -> renderNativeFrame(handle, request.refreshRuntimeScene, targetDurationNanos) },
                 onResult = { result -> onNativeFrameRendered(generation, viewportEpoch, result, cameraLabel = null) },
             )
             return
@@ -1167,24 +1177,38 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             requireSurface = true,
             action = { handle ->
                 SolarLabVulkanBridge.submitScene(handle, packet)
-                renderNativeFrame(handle, refreshRuntimeScene = true)
+                renderNativeFrame(handle, refreshRuntimeScene = true, targetDurationNanos = targetDurationNanos)
             },
             onResult = { result -> onNativeFrameRendered(generation, viewportEpoch, result, cameraLabel) },
         )
     }
 
-    private fun renderNativeFrame(handle: Long, refreshRuntimeScene: Boolean): NativeRenderResult {
-        val rendered = SolarLabVulkanBridge.render(handle, refreshRuntimeScene)
-        val viewport = if (rendered && isRuntimeBound()) SolarLabVulkanBridge.labViewportState(handle) else null
-        return NativeRenderResult(
-            rendered = rendered,
-            error = if (rendered) null else SolarLabVulkanBridge.lastError(handle),
-            backendLabel = if (refreshRuntimeScene) SolarLabVulkanBridge.backendLabel(handle) else null,
-            sceneSummary = if (refreshRuntimeScene) SolarLabVulkanBridge.sceneSummary(handle) else null,
-            cameraState = viewport?.camera ?: SolarLabVulkanBridge.cameraState(handle),
-            viewportState = viewport,
-            hasPendingPresentation = rendered && SolarLabVulkanBridge.hasPendingPresentation(handle),
+    private fun renderNativeFrame(handle: Long, refreshRuntimeScene: Boolean, targetDurationNanos: Long): NativeRenderResult {
+        val startedAt = performanceHints.begin(targetDurationNanos)
+        var completed = false
+        val result = try {
+            val rendered = SolarLabVulkanBridge.render(handle, refreshRuntimeScene)
+            val viewport = if (rendered && isRuntimeBound()) SolarLabVulkanBridge.labViewportState(handle) else null
+            NativeRenderResult(
+                rendered = rendered,
+                error = if (rendered) null else SolarLabVulkanBridge.lastError(handle),
+                backendLabel = if (refreshRuntimeScene) SolarLabVulkanBridge.backendLabel(handle) else null,
+                sceneSummary = if (refreshRuntimeScene) SolarLabVulkanBridge.sceneSummary(handle) else null,
+                cameraState = viewport?.camera ?: SolarLabVulkanBridge.cameraState(handle),
+                viewportState = viewport,
+                hasPendingPresentation = rendered && SolarLabVulkanBridge.hasPendingPresentation(handle),
+            ).also { completed = rendered }
+        } finally {
+            performanceHints.end(startedAt, completed)
+        }
+        return if (result.sceneSummary == null) result else result.copy(
+            sceneSummary = "${result.sceneSummary} ${performanceHints.summary()}",
         )
+    }
+
+    private fun closePerformanceHintSession() {
+        mainHandler.removeCallbacks(performanceHintIdleClose)
+        serializedRenderer.execute { performanceHints.close() }
     }
 
     private fun onNativeFrameRendered(
@@ -1208,6 +1232,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             fatalInitCallback(result.error ?: "Native Vulkan rendering failed.")
             return
         }
+        // Do not leave a hint session open for a static paused scene. Keep the
+        // timeout outside the worker so it adds no extra display frames or polling.
+        mainHandler.removeCallbacks(performanceHintIdleClose)
+        mainHandler.postDelayed(performanceHintIdleClose, PERFORMANCE_HINT_IDLE_MS)
         result.cameraState?.let { cameraState = it }
         result.viewportState?.let { viewport ->
             if (viewport != labViewportState) {
@@ -1342,6 +1370,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private companion object {
         private const val CAMERA_TRANSITION_DURATION_MS = 240L
+        private const val PERFORMANCE_HINT_IDLE_MS = 1_000L
     }
 
     private data class NativeRenderResult(

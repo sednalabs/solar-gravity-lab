@@ -534,6 +534,32 @@ class JniRuntimeBridgeTest {
         assertTrue(transport.probeUndoRequests.isEmpty())
     }
 
+    @Test
+    fun documentValidationOwnsOnlyTemporarySessionAndNeverRebindsRenderer() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))))
+        val renderer = FakeRenderHostAdapter()
+        val bridge = JniRuntimeBridge(transport, renderer)
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val binds = renderer.boundSessionHandles.toList()
+        val releases = renderer.releaseCount
+        val commands = transport.appliedCommands.toList()
+        assertEquals("lab.earth-moon", bridge.validateSavedSession(byteArrayOf(1)))
+        assertEquals(listOf(84L), transport.destroyedHandles)
+        assertEquals(binds, renderer.boundSessionHandles)
+        assertEquals(releases, renderer.releaseCount)
+        assertEquals(commands, transport.appliedCommands.toList())
+        assertTrue(bridge.isCurrentSession(42L))
+        transport.validationSummaryError = IllegalStateException("Malformed native state")
+        assertTrue(runCatching { bridge.validateSavedSession(byteArrayOf(2)) }.isFailure)
+        assertEquals(listOf(84L, 84L), transport.destroyedHandles)
+        transport.validationSummaryError = null
+        transport.validationHandle = 42L
+        assertTrue(runCatching { bridge.validateSavedSession(byteArrayOf(3)) }.isFailure)
+        assertEquals(listOf(84L, 84L), transport.destroyedHandles)
+        assertTrue(bridge.isCurrentSession(42L))
+        assertEquals(binds, renderer.boundSessionHandles)
+    }
+
     private class FakeRenderHostAdapter : RenderHostAdapter {
         val boundSessionHandles = mutableListOf<Long>()
         var refreshCount: Int = 0
@@ -575,6 +601,8 @@ class JniRuntimeBridgeTest {
         private var failRefresh = false
         var commandError: Throwable? = null
         var exportError: Throwable? = null
+        var validationHandle = 84L
+        var validationSummaryError: Throwable? = null
         var probePreviewError: Throwable? = null
         var probeCommitError: Throwable? = null
         val committedProbeCandidates = mutableListOf<RuntimeBodyState>()
@@ -610,8 +638,15 @@ class JniRuntimeBridgeTest {
             )
         }
 
-        override fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult =
-            error("snapshotSummary is unused in this test")
+        override fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult {
+            validationSummaryError?.let { throw it }
+            return snapshotSummary(bodyCount = 3)
+        }
+
+        override fun importSavedSession(templateHandle: Long, bytes: ByteArray) = NativeCreateSessionResult(
+            result = NativeResult(code = 0), handle = validationHandle, abiVersion = 12,
+            cpuBackend = runtimeInfoCpuBackend, gpuBackend = runtimeInfoGpuBackend,
+        )
 
         override fun refreshSession(handle: Long): NativeSnapshotSummaryResult {
             refreshError?.let { throw it }

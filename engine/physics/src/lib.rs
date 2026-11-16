@@ -6,6 +6,9 @@ use solarlab_domain::Vector3d;
 
 #[cfg(test)]
 mod throughput_tests;
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
+mod x64_avx2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SolverBackend {
@@ -79,6 +82,7 @@ pub enum SolverFallbackCode {
     SimdArm64OnNonAarch64Host,
     SimdArm64MissingNeon,
     SimdX64Unavailable,
+    WorkloadBelowVectorWidth,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,6 +148,13 @@ enum Arm64GravityKernel {
     NeonF64TiledPairwise,
     NeonF64ParallelTiledPairwise,
     PortableScalarOracle,
+}
+
+#[derive(Clone, Copy)]
+enum GravityKernel {
+    Scalar,
+    Arm64(Arm64GravityKernel),
+    X64Avx2,
 }
 
 impl Arm64GravityKernel {
@@ -604,11 +615,9 @@ fn checked_substep_count_float(
     if !delta_seconds.is_finite() || delta_seconds <= 0.0 {
         return None;
     }
-    let max_substep_seconds = if max_substep_seconds.is_finite() && max_substep_seconds > 0.0 {
-        max_substep_seconds
-    } else {
-        delta_seconds
-    };
+    if !max_substep_seconds.is_finite() || max_substep_seconds <= 0.0 {
+        return None;
+    }
     let count = (delta_seconds / max_substep_seconds).ceil().max(1.0);
     (count.is_finite() && count < exclusive_limit).then_some(count)
 }
@@ -640,14 +649,31 @@ pub fn fixed_step_plan(
     body_count: usize,
     features: &[String],
 ) -> Option<FixedStepPlan> {
+    fixed_step_plan_with_source_count(policy, delta_seconds, body_count, body_count, features)
+}
+
+/// Source-aware variant used when nonperturbing targets are present. The
+/// selected schedule is fixed for the operation, just like its timestep.
+pub fn fixed_step_plan_with_source_count(
+    policy: &PhysicsPolicy,
+    delta_seconds: f64,
+    body_count: usize,
+    source_count: usize,
+    features: &[String],
+) -> Option<FixedStepPlan> {
     let total_steps = checked_substep_count(policy, delta_seconds)?;
     let normalized = normalize_cpu_features(features);
-    let decision =
-        dispatch_solver_backend_with_body_count(&policy.solver_backend, &normalized, body_count);
-    let report = solver_execution_report_for_backend_with_body_count(
+    let decision = dispatch_solver_backend_with_source_count(
         &policy.solver_backend,
         &normalized,
         body_count,
+        source_count,
+    );
+    let report = solver_execution_report_for_backend_with_source_count(
+        &policy.solver_backend,
+        &normalized,
+        body_count,
+        source_count,
     );
     Some(FixedStepPlan {
         total_steps,
@@ -668,15 +694,17 @@ pub fn advance_fixed_steps(
         return Err(());
     }
     let kernel = if plan.decision.effective_backend == SolverBackend::SimdArm64 {
-        Some(
+        GravityKernel::Arm64(
             plan.decision
                 .arm64_gravity_kernel
                 .unwrap_or(Arm64GravityKernel::PortableScalarOracle),
         )
+    } else if plan.decision.effective_backend == SolverBackend::SimdX64 {
+        GravityKernel::X64Avx2
     } else {
-        None
+        GravityKernel::Scalar
     };
-    integrate_fixed_steps(bodies, plan.dt_seconds, count, kernel);
+    integrate_fixed_steps_with_kernel(bodies, plan.dt_seconds, count, kernel);
     Ok(())
 }
 
@@ -721,13 +749,16 @@ pub fn advance_authoritative_with_features(
     active_cpu_features: &[String],
 ) -> (PhysicsInvariants, SolverExecutionReport) {
     let normalized_features = normalize_cpu_features(active_cpu_features);
-    let decision = dispatch_solver_backend_with_body_count(
+    let source_count = bodies.iter().filter(|body| body.mass_kg != 0.0).count();
+    let decision = dispatch_solver_backend_with_source_count(
         &policy.solver_backend,
         &normalized_features,
         bodies.len(),
+        source_count,
     );
-    let schedule = solver_schedule_report_for_arm64_kernel(
+    let schedule = solver_schedule_report_for_arm64_kernel_with_source_count(
         bodies.len(),
+        source_count,
         decision.effective_backend == SolverBackend::SimdArm64,
         decision.arm64_gravity_kernel,
     );
@@ -774,11 +805,27 @@ pub fn solver_execution_report_for_backend_with_body_count(
     active_cpu_features: &[String],
     body_count: usize,
 ) -> SolverExecutionReport {
+    solver_execution_report_for_backend_with_source_count(
+        requested_backend,
+        active_cpu_features,
+        body_count,
+        body_count,
+    )
+}
+
+#[must_use]
+pub fn solver_execution_report_for_backend_with_source_count(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    body_count: usize,
+    source_count: usize,
+) -> SolverExecutionReport {
     let normalized_features = normalize_cpu_features(active_cpu_features);
-    let decision = dispatch_solver_backend_with_body_count(
+    let decision = dispatch_solver_backend_with_source_count(
         requested_backend,
         &normalized_features,
         body_count,
+        source_count,
     );
     let arm64_solver_active = decision.effective_backend == SolverBackend::SimdArm64;
     SolverExecutionReport {
@@ -788,8 +835,9 @@ pub fn solver_execution_report_for_backend_with_body_count(
         fallback_code: decision.fallback_code,
         fallback_reason: decision.fallback_reason,
         active_cpu_features: normalized_features,
-        schedule: solver_schedule_report_for_arm64_kernel(
+        schedule: solver_schedule_report_for_arm64_kernel_with_source_count(
             body_count,
+            source_count,
             arm64_solver_active,
             decision.arm64_gravity_kernel,
         ),
@@ -809,19 +857,54 @@ fn solver_schedule_report_for_arm64_kernel(
     arm64_solver_active: bool,
     arm64_gravity_kernel: Option<Arm64GravityKernel>,
 ) -> SolverScheduleReport {
+    solver_schedule_report_for_arm64_kernel_with_source_count(
+        body_count,
+        body_count,
+        arm64_solver_active,
+        arm64_gravity_kernel,
+    )
+}
+
+fn physical_pair_count(body_count: usize, source_count: usize) -> u64 {
+    let n = body_count as u64;
+    let s = source_count.min(body_count) as u64;
+    s.saturating_mul(n)
+        .saturating_sub(s.saturating_mul(s.saturating_add(1)) / 2)
+}
+
+fn enough_parallel_pair_work(body_count: usize, source_count: usize) -> bool {
+    body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
+        && physical_pair_count(body_count, source_count)
+            >= physical_pair_count(
+                ADAPTIVE_TILED_SCHEDULER_MIN_BODIES,
+                ADAPTIVE_TILED_SCHEDULER_MIN_BODIES,
+            )
+}
+
+fn solver_schedule_report_for_arm64_kernel_with_source_count(
+    body_count: usize,
+    source_count: usize,
+    arm64_solver_active: bool,
+    arm64_gravity_kernel: Option<Arm64GravityKernel>,
+) -> SolverScheduleReport {
     let worker_budget = runtime_worker_budget();
     let parallel_tiled_active = arm64_solver_active
         && arm64_gravity_kernel == Some(Arm64GravityKernel::NeonF64ParallelTiledPairwise);
     let candidate_parallel = arm64_solver_active
-        && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
+        && enough_parallel_pair_work(body_count, source_count)
         && worker_budget > 1;
+    let tile_count = if arm64_solver_active && enough_parallel_pair_work(body_count, source_count) {
+        body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES)
+    } else {
+        0
+    };
     let active_workers = if parallel_tiled_active {
-        worker_budget
+        worker_budget.min(tile_count).max(1)
     } else {
         1
     };
     let candidate_workers = if candidate_parallel {
-        worker_budget
+        worker_budget.min(tile_count).max(1)
     } else {
         active_workers
     };
@@ -830,13 +913,7 @@ fn solver_schedule_report_for_arm64_kernel(
         (false, true) => SolverScheduleMode::AdaptiveTiledCandidate,
         (false, false) => SolverScheduleMode::SingleWorker,
     };
-    let body_count_u64 = body_count as u64;
-    let estimated_pair_count = body_count_u64.saturating_mul(body_count_u64.saturating_sub(1)) / 2;
-    let tile_count = if arm64_solver_active && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES {
-        body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES)
-    } else {
-        0
-    };
+    let estimated_pair_count = physical_pair_count(body_count, source_count);
     let parallel_tile_workers = if tile_count > 0 && (parallel_tiled_active || candidate_parallel) {
         candidate_workers.max(active_workers).min(tile_count)
     } else {
@@ -1157,7 +1234,16 @@ fn advance_authoritative_x64(
     bodies: &mut [MassiveBodyState],
     delta_seconds: f64,
 ) -> PhysicsInvariants {
-    advance_authoritative_scalar(policy, bodies, delta_seconds)
+    let Some(count) = checked_substep_count(policy, delta_seconds) else {
+        return compute_invariants(bodies);
+    };
+    integrate_fixed_steps_with_kernel(
+        bodies,
+        delta_seconds / count as f64,
+        count,
+        GravityKernel::X64Avx2,
+    );
+    compute_invariants(bodies)
 }
 
 pub fn compute_invariants(bodies: &[MassiveBodyState]) -> PhysicsInvariants {
@@ -1271,6 +1357,20 @@ fn integrate_fixed_steps(
     count: usize,
     kernel: Option<Arm64GravityKernel>,
 ) {
+    integrate_fixed_steps_with_kernel(
+        bodies,
+        dt_seconds,
+        count,
+        kernel.map_or(GravityKernel::Scalar, GravityKernel::Arm64),
+    );
+}
+
+fn integrate_fixed_steps_with_kernel(
+    bodies: &mut [MassiveBodyState],
+    dt_seconds: f64,
+    count: usize,
+    kernel: GravityKernel,
+) {
     if count == 0 || bodies.is_empty() {
         return;
     }
@@ -1285,7 +1385,7 @@ fn integrate_fixed_steps(
     let half_dt = 0.5 * dt_seconds;
     for _ in 0..count {
         for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
-            if kernel.is_some() {
+            if matches!(kernel, GravityKernel::Arm64(_)) {
                 body.velocity_mps.x = acceleration.x.mul_add(half_dt, body.velocity_mps.x);
                 body.velocity_mps.y = acceleration.y.mul_add(half_dt, body.velocity_mps.y);
                 body.velocity_mps.z = acceleration.z.mul_add(half_dt, body.velocity_mps.z);
@@ -1299,7 +1399,7 @@ fn integrate_fixed_steps(
         }
         gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut partials);
         for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
-            if kernel.is_some() {
+            if matches!(kernel, GravityKernel::Arm64(_)) {
                 body.velocity_mps.x = acceleration.x.mul_add(half_dt, body.velocity_mps.x);
                 body.velocity_mps.y = acceleration.y.mul_add(half_dt, body.velocity_mps.y);
                 body.velocity_mps.z = acceleration.z.mul_add(half_dt, body.velocity_mps.z);
@@ -1420,15 +1520,62 @@ fn gravity_accelerations_into(
     bodies: &[MassiveBodyState],
     sources: &[usize],
     accelerations: &mut [Vector3d],
-    kernel: Option<Arm64GravityKernel>,
+    kernel: GravityKernel,
     partials: &mut Vec<Vec<Vector3d>>,
 ) {
     accelerations.fill(Vector3d::default());
-    if let Some(kernel) = kernel {
-        pairwise_gravity_accelerations_arm64_into(bodies, sources, accelerations, kernel, partials);
-    } else {
-        pairwise_gravity_accelerations_into(bodies, sources, accelerations);
+    match kernel {
+        GravityKernel::Arm64(kernel) => pairwise_gravity_accelerations_arm64_into(
+            bodies,
+            sources,
+            accelerations,
+            kernel,
+            partials,
+        ),
+        GravityKernel::Scalar => {
+            pairwise_gravity_accelerations_into(bodies, sources, accelerations)
+        }
+        GravityKernel::X64Avx2 => {
+            pairwise_gravity_accelerations_x64_avx2(bodies, sources, accelerations)
+        }
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn x64_avx2_runtime_available() -> bool {
+    std::is_x86_feature_detected!("avx2")
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn x64_avx2_runtime_available() -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
+fn pairwise_gravity_accelerations_x64_avx2(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
+    assert!(
+        x64_avx2_runtime_available(),
+        "AVX2 solver selected without real runtime support"
+    );
+    // SAFETY: actual CPU/OS feature detection is required independently of the
+    // caller-supplied feature list. All packed loads/stores use local arrays.
+    unsafe {
+        x64_avx2::pairwise_into(bodies, sources, accelerations);
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn pairwise_gravity_accelerations_x64_avx2(
+    _bodies: &[MassiveBodyState],
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+) {
+    panic!("AVX2 solver selected on a non-x86_64 host")
 }
 
 fn pairwise_gravity_accelerations_into(
@@ -1774,6 +1921,23 @@ fn dispatch_solver_backend_with_body_count(
     )
 }
 
+fn dispatch_solver_backend_with_source_count(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    body_count: usize,
+    source_count: usize,
+) -> DispatchDecision {
+    let mut decision =
+        dispatch_solver_backend_with_body_count(requested_backend, active_cpu_features, body_count);
+    if decision.effective_backend == SolverBackend::SimdArm64
+        && !enough_parallel_pair_work(body_count, source_count)
+    {
+        decision.path_id = "simd.arm64.neon-f64-pairwise".to_owned();
+        decision.arm64_gravity_kernel = Some(Arm64GravityKernel::NeonF64Pairwise);
+    }
+    decision
+}
+
 #[cfg(test)]
 fn dispatch_solver_backend_for_host(
     requested_backend: &SolverBackend,
@@ -1798,6 +1962,26 @@ fn dispatch_solver_backend_for_host_with_body_count(
     is_aarch64_host: bool,
     is_x64_host: bool,
     arm64_neon_runtime_available: bool,
+    body_count: usize,
+) -> DispatchDecision {
+    dispatch_solver_backend_for_host_with_capabilities(
+        requested_backend,
+        active_cpu_features,
+        is_aarch64_host,
+        is_x64_host,
+        arm64_neon_runtime_available,
+        x64_avx2_runtime_available(),
+        body_count,
+    )
+}
+
+fn dispatch_solver_backend_for_host_with_capabilities(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    is_aarch64_host: bool,
+    is_x64_host: bool,
+    arm64_neon_runtime_available: bool,
+    x64_avx2_runtime_available: bool,
     body_count: usize,
 ) -> DispatchDecision {
     let has_feature = |feature: &str| active_cpu_features.iter().any(|value| value == feature);
@@ -1851,7 +2035,7 @@ fn dispatch_solver_backend_for_host_with_body_count(
                 path_id: "scalar.reference".to_owned(),
                 fallback_code: SolverFallbackCode::SimdX64Unavailable,
                 fallback_reason: Some(
-                    "simd-x64 requested but dedicated x64 kernel is not implemented; using scalar oracle".to_owned(),
+                    "simd-x64 requires an x86_64 host, an enabled AVX2 feature, and real CPU/OS AVX2 support; using scalar oracle".to_owned(),
                 ),
                 arm64_gravity_kernel: None,
             }
@@ -1860,10 +2044,25 @@ fn dispatch_solver_backend_for_host_with_body_count(
             if !is_x64_host {
                 return x64_fallback();
             }
-            if !has_feature("sse2") && !has_feature("avx2") {
+            if !has_feature("avx2") || !x64_avx2_runtime_available {
                 return x64_fallback();
             }
-            x64_fallback()
+            if body_count < 4 {
+                return DispatchDecision {
+                    effective_backend: SolverBackend::ReferenceScalar,
+                    path_id: "scalar.reference".to_owned(),
+                    fallback_code: SolverFallbackCode::WorkloadBelowVectorWidth,
+                    fallback_reason: Some("fewer than four targets; measured scalar path avoids AVX2 vector-tail overhead".to_owned()),
+                    arm64_gravity_kernel: None,
+                };
+            }
+            DispatchDecision {
+                effective_backend: SolverBackend::SimdX64,
+                path_id: "simd.x64.avx2-f64-pairwise".to_owned(),
+                fallback_code: SolverFallbackCode::None,
+                fallback_reason: None,
+                arm64_gravity_kernel: None,
+            }
         }
     }
 }
@@ -2047,6 +2246,7 @@ fn cross(a: Vector3d, b: Vector3d) -> Vector3d {
     }
 }
 
+#[cfg(test)]
 fn norm(v: Vector3d) -> f64 {
     norm_squared(v).sqrt()
 }
@@ -2548,10 +2748,10 @@ mod tests {
     }
 
     #[test]
-    fn simd_x64_dispatch_reports_unavailable_until_dedicated_kernel_exists() {
+    fn simd_x64_dispatch_falls_back_when_feature_is_not_enabled() {
         let decision = dispatch_solver_backend_for_host(
             &SolverBackend::SimdX64,
-            &["sse2".to_owned(), "avx2".to_owned()],
+            &["sse2".to_owned()],
             false,
             true,
             false,

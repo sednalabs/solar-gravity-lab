@@ -394,8 +394,8 @@ private fun LabSelectionCard(
                     .semantics { contentDescription = selectionDescription ?: selectedName },
                 color = LabInk, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(if (navigation.followingSelection) "Following"
-                else navigation.selectionSubtitle ?: selectedBody?.let { "Radius ${formatLabDistance(it.radiusM)}" }
+            Text(navigation.selectionSubtitle ?: if (navigation.followingSelection) "Following"
+                else selectedBody?.let { "Radius ${formatLabDistance(it.radiusM)}" }
                 ?: "Tap a name in the scene", color = LabMuted, fontSize = 11.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

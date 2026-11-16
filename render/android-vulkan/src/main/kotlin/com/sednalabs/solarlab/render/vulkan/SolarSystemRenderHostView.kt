@@ -216,6 +216,9 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         listener?.invoke(currentStatus)
     }
 
+    /** Last submitted renderer status, without replacing the app's status listener. */
+    fun currentBackendStatus(): RenderBackendStatus = currentStatus
+
     fun onHostResume() {
         hostResumed = true
         activeSurface?.onHostResume()

@@ -184,7 +184,8 @@ vec3 surfaceColor(vec3 normal, float sphereZ) {
 }
 
 vec3 litSurface(vec3 normal, vec3 color, float sphereZ) {
-    float diffuse = max(dot(normal, normalize(vLightDirection)), 0.0);
+    float sunFacing = dot(normal, normalize(vLightDirection));
+    float diffuse = max(sunFacing, 0.0);
     float rim = pow(1.0 - sphereZ, 2.2);
     vec3 shaded = color * (0.16 + 0.84 * diffuse);
     if ((vAppearanceFlags & HAS_EARTH_MAP) != 0u) {
@@ -192,14 +193,22 @@ vec3 litSurface(vec3 normal, vec3 color, float sphereZ) {
         // The Sun's diffuse term and terminator remain unchanged; zero and full
         // white remain fixed, and the existing limb contribution is added below.
         shaded = pow(clamp(shaded, vec3(0.0), vec3(1.0)), vec3(0.72));
+        // An illustrative thin blue limb follows the actual Sun. It must not turn
+        // the night-side edge into an equally illuminated ring.
+        shaded += vec3(0.08, 0.24, 0.42) * rim * smoothstep(-0.08, 0.18, sunFacing) * 0.35;
+    } else {
+        shaded += min(color + vec3(0.18), vec3(1.0)) * rim * 0.15;
     }
-    shaded += min(color + vec3(0.18), vec3(1.0)) * rim * 0.15;
     return min(shaded, vec3(1.0));
 }
 
 void main() {
     vec2 cameraUv = vec2(vBillboardUv.x, -vBillboardUv.y);
     float distanceFromCenter = length(cameraUv);
+    // Derivatives are evaluated before divergent surface/effect branches. A close
+    // Earth gets a pixel-wide silhouette, not a 6%-of-radius translucent fringe.
+    float silhouettePixelWidth = max(fwidth(distanceFromCenter), 1e-6);
+    bool mappedEarth = (vAppearanceFlags & HAS_EARTH_MAP) != 0u;
     vec4 accumulated = vec4(0.0);
 
     bool hasComet = (vAppearanceFlags & HAS_COMET) != 0u;
@@ -248,7 +257,15 @@ void main() {
         vec3 atmosphereColor = vMaterial == MATERIAL_TERRESTRIAL && density > 1.25
             ? vec3(1.0, 0.58, 0.20)
             : vec3(0.24, 0.62, 1.0);
-        composite(accumulated, atmosphereColor, shell * outerFade * density * 0.28);
+        float atmosphereAlpha = shell * outerFade * density * 0.28;
+        if (mappedEarth && atmosphereRadius > vBodyRadiusUv) {
+            vec3 limbNormal = vec3(cameraUv / max(distanceFromCenter, 1e-6), 0.0);
+            float sunlight = smoothstep(-0.12, 0.25, dot(limbNormal, normalize(vLightDirection)));
+            float surfaceEdge = smoothstep(vBodyRadiusUv - silhouettePixelWidth, vBodyRadiusUv, distanceFromCenter);
+            float altitudeFade = 1.0 - smoothstep(vBodyRadiusUv, atmosphereRadius, distanceFromCenter);
+            atmosphereAlpha = surfaceEdge * altitudeFade * density * sunlight * 0.35;
+        }
+        composite(accumulated, atmosphereColor, atmosphereAlpha);
     }
 
     bool insideBody = distanceFromCenter <= vBodyRadiusUv;
@@ -293,7 +310,9 @@ void main() {
         vec2 sphereUv = cameraUv / max(vBodyRadiusUv, 1e-6);
         float sphereZ = sqrt(max(0.0, 1.0 - dot(sphereUv, sphereUv)));
         vec3 normal = normalize(vec3(sphereUv, sphereZ));
-        float edgeFade = 1.0 - smoothstep(0.94, 1.0, length(sphereUv));
+        float edgeFade = mappedEarth
+            ? 1.0 - smoothstep(vBodyRadiusUv - silhouettePixelWidth, vBodyRadiusUv, distanceFromCenter)
+            : 1.0 - smoothstep(0.94, 1.0, length(sphereUv));
         if (vKind == KIND_STAR || vMaterial == MATERIAL_STELLAR) {
             float core = 1.0 - smoothstep(0.0, 0.34, length(sphereUv));
             float halo = 1.0 - smoothstep(0.58, 1.0, length(sphereUv));

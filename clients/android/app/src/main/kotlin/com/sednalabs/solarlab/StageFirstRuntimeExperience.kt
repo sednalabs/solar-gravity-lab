@@ -1,6 +1,8 @@
 package com.sednalabs.solarlab
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -111,6 +114,7 @@ import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
@@ -295,6 +299,7 @@ internal fun StageFirstRuntimeExperience(
 
         val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
         val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
+        val experimentStatus by runtimeFacade.experimentStatus.collectAsStateWithLifecycle()
         val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -316,6 +321,19 @@ internal fun StageFirstRuntimeExperience(
         var editorCommitting by remember { mutableStateOf(false) }
         var editorError by remember { mutableStateOf<String?>(null) }
         var labNotice by remember { mutableStateOf<String?>(null) }
+        var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
+        val importDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                runtimeFacade.importExperiment { context.contentResolver.openInputStream(uri) }
+            }
+        }
+        val exportDocument = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            val id = pendingExportId
+            pendingExportId = null
+            if (uri != null && id != null) coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                runtimeFacade.exportExperiment(id) { context.contentResolver.openOutputStream(uri, "wt") }
+            }
+        }
         var framedLabSession by rememberSaveable { mutableStateOf(0L) }
         var openingSavedExperiment by remember { mutableStateOf(false) }
         val stateContext = LocalContext.current
@@ -1051,7 +1069,8 @@ internal fun StageFirstRuntimeExperience(
             val statusInset = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
             val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
             val placing = labInteraction.draft != null
-            val headerHeight = if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
+            val typingPlacement = placing && landscape && WindowInsets.ime.getBottom(density) > 0
+            val headerHeight = if (typingPlacement) 0.dp else if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
             val dockHeight = if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
             val placementHeight = minOf(LabPlacementMetrics.PortraitHeight, maxHeight * 0.44f)
             val placementWidth = minOf(LabPlacementMetrics.LandscapeWidth, maxWidth * 0.46f)
@@ -1275,7 +1294,7 @@ internal fun StageFirstRuntimeExperience(
                 ),
             )
             labInteraction.draft?.let { draft ->
-                LabPlacementSceneBar(
+                if (!typingPlacement) LabPlacementSceneBar(
                     planeLabel = draft.plane.label,
                     onFitPath = ::fitProbePlacement,
                     onZoomIn = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
@@ -1380,11 +1399,28 @@ internal fun StageFirstRuntimeExperience(
                 },
             )
         }
+        LaunchedEffect(savedVisible) {
+            if (savedVisible) runtimeFacade.refreshExperimentCatalogue()
+        }
         if (savedVisible) {
             LabSavedExperimentsDialog(
                 experiments = savedExperiments,
                 uiState = uiState,
+                experimentStatus = experimentStatus,
                 onDismiss = { savedVisible = false },
+                onImport = {
+                    runCatching { importDocument.launch(arrayOf("*/*")) }
+                        .onFailure { labNotice = "The document picker could not be opened: ${it.message}" }
+                },
+                onExport = { saved ->
+                    pendingExportId = saved.id
+                    val filename = saved.name.replace(Regex("[^\\p{L}\\p{N} ._-]"), "_").take(80) + ".sglexp"
+                    runCatching { exportDocument.launch(filename) }.onFailure {
+                        pendingExportId = null
+                        labNotice = "The export destination could not be opened: ${it.message}"
+                    }
+                },
+                onDelete = { id -> coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) { runtimeFacade.deleteExperiment(id) } },
                 onSave = { name ->
                     coroutineScope.launch {
                         runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
@@ -1398,7 +1434,8 @@ internal fun StageFirstRuntimeExperience(
                         try {
                             runtimeFacade.loadExperiment(id)
                             val state = runtimeFacade.uiState.value
-                            if (state.connectionState == SessionConnectionState.Active && state.noticeTone == ShellNoticeTone.Positive) {
+                            if (state.connectionState == SessionConnectionState.Active &&
+                                runtimeFacade.experimentStatus.value.openedId == id) {
                                 framedLabSession = state.sessionHandle ?: framedLabSession
                                 savedVisible = false
                                 selectedBodyId = state.focusedBodyId

@@ -206,3 +206,168 @@ fn nonperturbing_particles_do_not_change_source_invariants() {
     with_tracers.extend(tracers);
     assert_eq!(compute_invariants(&with_tracers), expected);
 }
+
+#[test]
+fn avx2_dispatch_requires_host_feature_mask_and_actual_runtime_capability() {
+    for (host, feature_enabled, real_capability) in [
+        (true, true, true),
+        (false, true, true),
+        (true, false, true),
+        (true, true, false),
+    ] {
+        let features = if feature_enabled {
+            vec!["avx2".to_owned()]
+        } else {
+            vec!["sse2".to_owned()]
+        };
+        let actual = dispatch_solver_backend_for_host_with_capabilities(
+            &SolverBackend::SimdX64,
+            &features,
+            false,
+            host,
+            false,
+            real_capability,
+            128,
+        );
+        if host && feature_enabled && real_capability {
+            assert_eq!(actual.effective_backend, SolverBackend::SimdX64);
+            assert_eq!(actual.path_id, "simd.x64.avx2-f64-pairwise");
+            assert_eq!(actual.fallback_code, SolverFallbackCode::None);
+        } else {
+            assert_eq!(actual.effective_backend, SolverBackend::ReferenceScalar);
+            assert_eq!(actual.fallback_code, SolverFallbackCode::SimdX64Unavailable);
+        }
+    }
+}
+
+#[test]
+fn actual_avx2_matches_scalar_for_vector_tails_sparse_sources_and_fixed_chunks() {
+    if !x64_avx2_runtime_available() {
+        return;
+    }
+    let features = vec!["avx2".to_owned()];
+    let policy = PhysicsPolicy {
+        solver_backend: SolverBackend::SimdX64,
+        integrator: IntegratorKind::LeapfrogKickDriftKick,
+        collision_model: CollisionModel::None,
+        max_substep_seconds: 0.375,
+    };
+    for count in [0, 1, 2, 3, 4, 5, 7, 8, 9, 17, 128, 365] {
+        for sparse in [false, true] {
+            let initial = fixture(count, sparse);
+            let mut expected = initial.clone();
+            let mut actual = initial.clone();
+            advance_authoritative_scalar(&policy, &mut expected, 9.375);
+            let (_, report) =
+                advance_authoritative_with_features(&policy, &mut actual, 9.375, &features);
+            assert_eq!(
+                report.effective_backend,
+                if count >= 4 {
+                    SolverBackend::SimdX64
+                } else {
+                    SolverBackend::ReferenceScalar
+                }
+            );
+            if count < 4 {
+                assert_eq!(
+                    report.fallback_code,
+                    SolverFallbackCode::WorkloadBelowVectorWidth
+                );
+            }
+            assert_eq!(actual, expected, "count={count}, sparse={sparse}");
+            let plan = fixed_step_plan(&policy, 9.375, count, &features).unwrap();
+            let mut chunked = initial;
+            advance_fixed_steps(&plan, &mut chunked, 7).unwrap();
+            advance_fixed_steps(&plan, &mut chunked, 18).unwrap();
+            assert_eq!(chunked, actual, "chunked count={count}, sparse={sparse}");
+        }
+    }
+}
+
+#[test]
+fn sparse_workload_report_does_not_schedule_workers_for_empty_pairs() {
+    let schedule = solver_schedule_report_for_arm64_kernel_with_source_count(
+        1024,
+        3,
+        true,
+        Some(Arm64GravityKernel::NeonF64Pairwise),
+    );
+    assert_eq!(schedule.estimated_pair_count, 3066);
+    assert_eq!(schedule.active_workers, 1);
+    assert_eq!(schedule.candidate_workers, 1);
+    assert_eq!(schedule.tile_count, 0);
+    assert_eq!(schedule.mode, SolverScheduleMode::SingleWorker);
+    assert_eq!(physical_pair_count(1024, 0), 0);
+    assert_eq!(physical_pair_count(96, 96), 4560);
+    let dense = solver_schedule_report_for_arm64_kernel_with_source_count(
+        192,
+        192,
+        true,
+        Some(Arm64GravityKernel::NeonF64ParallelTiledPairwise),
+    );
+    assert_eq!(
+        dense.active_workers as usize,
+        runtime_worker_budget().min(6)
+    );
+}
+
+#[test]
+fn source_aware_fixed_plan_matches_direct_execution_and_reports_actual_pairs() {
+    let mut initial = fixture(1024, true);
+    for (index, body) in initial.iter_mut().enumerate() {
+        if ![1, 413, 1023].contains(&index) {
+            body.mass_kg = 0.0;
+        } else {
+            body.mass_kg = 1.0e20;
+        }
+    }
+    let features = detect_cpu_features();
+    let backend = if cfg!(target_arch = "aarch64") {
+        SolverBackend::SimdArm64
+    } else {
+        SolverBackend::SimdX64
+    };
+    let policy = PhysicsPolicy {
+        solver_backend: backend,
+        integrator: IntegratorKind::LeapfrogKickDriftKick,
+        collision_model: CollisionModel::None,
+        max_substep_seconds: 0.25,
+    };
+    let mut direct = initial.clone();
+    let (_, report) = advance_authoritative_with_features(&policy, &mut direct, 2.0, &features);
+    let plan =
+        fixed_step_plan_with_source_count(&policy, 2.0, initial.len(), 3, &features).unwrap();
+    let mut chunked = initial;
+    advance_fixed_steps(&plan, &mut chunked, 3).unwrap();
+    advance_fixed_steps(&plan, &mut chunked, 5).unwrap();
+    assert_eq!(chunked, direct);
+    assert_eq!(plan.report(), report);
+    assert_eq!(report.schedule.active_workers, 1);
+    assert_eq!(report.schedule.estimated_pair_count, 3066);
+}
+
+#[test]
+fn invalid_step_ceiling_never_falls_back_to_an_unbounded_single_step() {
+    for ceiling in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+        for backend in [
+            SolverBackend::ReferenceScalar,
+            SolverBackend::SimdArm64,
+            SolverBackend::SimdX64,
+        ] {
+            let policy = PhysicsPolicy {
+                solver_backend: backend,
+                integrator: IntegratorKind::LeapfrogKickDriftKick,
+                collision_model: CollisionModel::None,
+                max_substep_seconds: ceiling,
+            };
+            let initial = fixture(8, false);
+            let mut actual = initial.clone();
+            assert_eq!(checked_substep_count(&policy, 100.0), None);
+            assert!(
+                fixed_step_plan(&policy, 100.0, actual.len(), &detect_cpu_features()).is_none()
+            );
+            advance_authoritative(&policy, &mut actual, 100.0);
+            assert_eq!(actual, initial);
+        }
+    }
+}

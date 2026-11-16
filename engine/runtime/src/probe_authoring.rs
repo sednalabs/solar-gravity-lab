@@ -77,7 +77,7 @@ pub struct ProbePreviewPlan {
     candidate_radius_m: f64,
     bodies: Vec<BodyState>,
     configured_policy: PhysicsPolicy,
-    lab_policy: bool,
+    lab_policy: Option<lab_step::LabStepPolicy>,
     cpu_features: Vec<String>,
     requested_horizon_seconds: f64,
     interval_seconds: f64,
@@ -123,7 +123,8 @@ impl WorldRuntime {
         let mut bodies = world.bodies.clone();
         let candidate_radius_m = candidate.radius_m;
         bodies.push(candidate);
-        let lab_policy = self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID;
+        let lab_policy = (self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID)
+            .then_some(self.lab_step_policy);
         let policy = preview_policy(&self.config.physics, lab_policy, &bodies);
         let horizon = horizon_seconds.min(MAX_PREVIEW_HORIZON_SECONDS).min(
             lab_prediction::shortest_added_body_local_period(&bodies)
@@ -388,9 +389,13 @@ impl ProbePreviewPlan {
     }
 }
 
-fn preview_policy(configured: &PhysicsPolicy, lab: bool, bodies: &[BodyState]) -> PhysicsPolicy {
-    if lab {
-        lab_step::for_world(configured, bodies)
+fn preview_policy(
+    configured: &PhysicsPolicy,
+    lab: Option<lab_step::LabStepPolicy>,
+    bodies: &[BodyState],
+) -> PhysicsPolicy {
+    if let Some(policy) = lab {
+        policy.for_world(configured, bodies)
     } else {
         configured.clone()
     }
@@ -474,6 +479,20 @@ mod tests {
             .unwrap()
             .run()
             .unwrap()
+    }
+
+    #[test]
+    fn preview_retains_the_saved_world_step_model() {
+        for policy in [lab_step::LabStepPolicy::LegacyDistanceV1, lab_step::LabStepPolicy::PeriapsisV2] {
+            let mut world = lab();
+            world.lab_step_policy = policy;
+            let restored = WorldRuntime::import_saved_session(&world.export_saved_session().unwrap(), world.hardware_profile.clone()).unwrap();
+            let draft = candidate(&restored);
+            let plan = restored.prepare_probe_preview(draft, &BodyId("earth".into()), 3_600.0).unwrap();
+            assert_eq!(plan.lab_policy, Some(policy));
+            assert_eq!(preview_policy(&plan.configured_policy, plan.lab_policy, &plan.bodies),
+                policy.for_world(&restored.config.physics, &plan.bodies));
+        }
     }
 
     #[test]

@@ -9,7 +9,6 @@ use solarlab_physics::{CollisionModel, IntegratorKind, SolverBackend};
 pub const MAX_SAVED_SESSION_BYTES: usize = 16 * 1024 * 1024;
 const FORMAT: &str = "solarlab.experiment";
 const VERSION: u32 = 1;
-const MODEL: &str = "newtonian-kdk-f64-lab-step-v1";
 const MAX_BRANCHES: usize = 64;
 const MAX_BODIES: usize = 4096;
 const MAX_CHECKPOINTS: usize = 256;
@@ -83,7 +82,7 @@ impl WorldRuntime {
         let mut saved = SavedSession {
             format: FORMAT.into(),
             version: VERSION,
-            model: MODEL.into(),
+            model: self.lab_step_policy.model_id().into(),
             runtime_version: env!("CARGO_PKG_VERSION").into(),
             source_revision: option_env!("SOLARLAB_BUILD_COMMIT")
                 .unwrap_or("unknown")
@@ -120,11 +119,14 @@ impl WorldRuntime {
         let mut saved: SavedSession =
             serde_json::from_slice(bytes).map_err(|_| SessionPersistenceError::InvalidDocument)?;
         saved.validate()?;
+        let lab_step_policy = lab_step::LabStepPolicy::from_model_id(&saved.model)
+            .ok_or(SessionPersistenceError::UnsupportedVersion)?;
         let config = saved.config.to_runtime()?;
         saved.restore_computed_states(&config, &hardware_profile)?;
         let mut runtime = Self {
             scenario_id: ScenarioId(saved.scenario_id),
             config,
+            lab_step_policy,
             hardware_profile,
             branches: saved
                 .branches
@@ -218,7 +220,8 @@ impl SavedSession {
 
     fn validate(&self) -> Result<(), SessionPersistenceError> {
         use SessionPersistenceError::InvalidState as invalid;
-        if self.format != FORMAT || self.version != VERSION || self.model != MODEL {
+        if self.format != FORMAT || self.version != VERSION
+            || lab_step::LabStepPolicy::from_model_id(&self.model).is_none() {
             return Err(SessionPersistenceError::UnsupportedVersion);
         }
         self.config.to_runtime()?;
@@ -450,10 +453,11 @@ fn restore_computed_state(
             "physical values overflow invariant calculation",
         ));
     }
-    world.solver_execution = solver_execution_report_for_backend_with_body_count(
+    world.solver_execution = solver_execution_report_for_backend_with_source_count(
         &config.physics.solver_backend,
         &hardware.cpu_features,
         world.bodies.len(),
+        world.bodies.iter().filter(|body| body.source_mass_kg != 0.0).count(),
     );
     Ok(())
 }
@@ -463,6 +467,64 @@ mod tests {
     use super::*;
     fn runtime() -> WorldRuntime {
         super::super::tests::new_runtime()
+    }
+
+    fn eccentric_lab(policy: lab_step::LabStepPolicy) -> WorldRuntime {
+        let mut world = super::super::tests::new_runtime_with_scenario(solarlab_data::EARTH_MOON_LAB_ID);
+        world.lab_step_policy = policy;
+        world.config.physics.max_substep_seconds = 60.0;
+        let earth_mass = 5.9722e24;
+        let apogee = 40_000_000.0 * (1.0 + 0.82);
+        let speed = (6.67430e-11_f64 * earth_mass * (2.0 / apogee - 1.0 / 40_000_000.0)).sqrt();
+        for body in [
+            BodyState {
+                body_id: BodyId("earth".into()), body_class: BodyClass::Planet,
+                mass_kg: earth_mass, source_mass_kg: earth_mass, radius_m: 6_371_000.0,
+                position_m: Vector3d::default(), velocity_mps: Vector3d::default(),
+            },
+            BodyState {
+                body_id: BodyId("eccentric-probe".into()), body_class: BodyClass::Spacecraft,
+                mass_kg: 1_000.0, source_mass_kg: 0.0, radius_m: 1.0,
+                position_m: Vector3d { x: apogee, y: 0.0, z: 0.0 },
+                velocity_mps: Vector3d { x: 0.0, y: speed, z: 0.0 },
+            },
+        ] {
+            world.apply_command(WorldCommand::SpawnBody { body }, 1).unwrap();
+        }
+        world
+    }
+
+    #[test]
+    fn legacy_saved_model_keeps_its_step_policy_and_future_after_reopen() {
+        let mut original = eccentric_lab(lab_step::LabStepPolicy::LegacyDistanceV1);
+        let document = original.export_saved_session().unwrap();
+        let encoded: serde_json::Value = serde_json::from_slice(&document).unwrap();
+        assert_eq!(encoded["model"], "newtonian-kdk-f64-lab-step-v1");
+        let mut reopened = WorldRuntime::import_saved_session(&document, original.hardware_profile.clone()).unwrap();
+        assert_eq!(reopened.lab_step_policy, lab_step::LabStepPolicy::LegacyDistanceV1);
+        assert_eq!(original.effective_physics_policy(), reopened.effective_physics_policy());
+        original.apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 3_600.0 }, 2).unwrap();
+        reopened.apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 3_600.0 }, 2).unwrap();
+        assert_eq!(original.snapshot().bodies, reopened.snapshot().bodies);
+        let resaved: serde_json::Value = serde_json::from_slice(&reopened.export_saved_session().unwrap()).unwrap();
+        assert_eq!(resaved["model"], encoded["model"]);
+    }
+
+    #[test]
+    fn new_saved_model_preserves_the_refined_policy_and_rejects_unknown_models() {
+        let original = eccentric_lab(lab_step::LabStepPolicy::PeriapsisV2);
+        let legacy = eccentric_lab(lab_step::LabStepPolicy::LegacyDistanceV1);
+        assert!(original.effective_physics_policy().max_substep_seconds < legacy.effective_physics_policy().max_substep_seconds / 5.0);
+        let document = original.export_saved_session().unwrap();
+        let mut encoded: serde_json::Value = serde_json::from_slice(&document).unwrap();
+        assert_eq!(encoded["model"], "newtonian-kdk-f64-lab-step-v2");
+        let reopened = WorldRuntime::import_saved_session(&document, original.hardware_profile.clone()).unwrap();
+        assert_eq!(reopened.lab_step_policy, lab_step::LabStepPolicy::PeriapsisV2);
+        assert_eq!(reopened.effective_physics_policy(), original.effective_physics_policy());
+        assert_eq!(reopened.snapshot().bodies, original.snapshot().bodies);
+        encoded["model"] = "newtonian-kdk-f64-lab-step-v999".into();
+        assert_eq!(WorldRuntime::import_saved_session(&serde_json::to_vec(&encoded).unwrap(), original.hardware_profile.clone()).unwrap_err(),
+            SessionPersistenceError::UnsupportedVersion);
     }
 
     fn spawn_finite_body_with_overflowing_invariants(world: &mut WorldRuntime) {

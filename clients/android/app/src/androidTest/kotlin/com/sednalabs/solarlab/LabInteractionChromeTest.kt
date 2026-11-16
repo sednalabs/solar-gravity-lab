@@ -1,20 +1,36 @@
 package com.sednalabs.solarlab
 
+import android.content.ContentValues
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.os.Environment
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.provider.MediaStore
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -28,7 +44,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
 import com.graciousgazelles.solarlab.render.core.RenderBodyKind
@@ -44,6 +62,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicInteger
 
 /** UI intent and hit-region checks; native gesture/placement proof lives in the journey suite. */
 @RunWith(AndroidJUnit4::class)
@@ -155,6 +174,105 @@ class LabInteractionChromeTest {
         assertTrue("Placement commit stays inside its reserved panel", create.top >= panel.top && create.bottom <= panel.bottom)
         val tabs = composeRule.onNodeWithTag(LabPlacementTags.SECTION_MOTION).fetchSemanticsNode().boundsInRoot
         assertTrue("Section navigation stays visible above the scrolled numeric fields", tabs.top >= panel.top && tabs.bottom < create.top)
+    }
+
+    @Test
+    fun landscapeKeyboardKeepsExactInputAndCommitReachable() {
+        val previousKeyboardSetting = shell("settings get secure show_ime_with_hard_keyboard").trim()
+        shell("settings put secure show_ime_with_hard_keyboard 1")
+        try {
+            orient(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, Configuration.ORIENTATION_LANDSCAPE)
+            composeRule.activityRule.scenario.onActivity {
+                WindowCompat.setDecorFitsSystemWindows(it.window, false)
+                it.window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            }
+            val keyboardBottom = AtomicInteger(0)
+            var state by mutableStateOf(LabPlacementUiState(
+                hostBodyId = "earth", hosts = listOf(LabPlacementHost("earth", "Earth"), LabPlacementHost("moon", "Moon")),
+                planeLabel = "Earth–Moon orbital plane", altitudeKmText = "800", altitudeRangeKm = 1f..384_400f,
+                motion = LabPlacementMotion.CIRCULAR, speedKmPerSecondText = "7.45",
+                direction = LabPlacementDirection.PROGRADE, previewStatus = "Calculating the proposed path…", canCreate = false,
+            ))
+            composeRule.setContent {
+                SolarLabTheme {
+                    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+                    SideEffect { keyboardBottom.set(imeBottom) }
+                    // While typing, the host gives the bounded panel all height above the IME.
+                    Box(Modifier.fillMaxSize().background(Color(0xFF02050B)).imePadding()
+                        .statusBarsPadding().navigationBarsPadding().padding(8.dp), contentAlignment = Alignment.CenterEnd) {
+                        LabPlacementSheet(state, LabPlacementActions(
+                            onHostChange = { state = state.copy(hostBodyId = it) },
+                            onAltitudeChange = { state = state.copy(altitudeKmText = it) },
+                            onMotionChange = { state = state.copy(motion = it) },
+                            onSpeedChange = { state = state.copy(speedKmPerSecondText = it) },
+                            onDirectionChange = { state = state.copy(direction = it) },
+                            onCreate = {}, onCancel = {},
+                        ), Modifier.width(LabPlacementMetrics.LandscapeWidth).fillMaxHeight())
+                    }
+                }
+            }
+            composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE).performScrollTo().performClick()
+            waitForKeyboard(keyboardBottom, shown = true)
+            composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE).performTextReplacement("1250")
+                .performScrollTo().assertIsDisplayed()
+            assertReachable(LabPlacementTags.CREATE)
+            assertReachable(LabPlacementTags.CANCEL)
+            assertReachable(LabPlacementTags.SECTION_MOTION)
+            captureChrome("placement-landscape-ime.png")
+            val input = composeRule.onNodeWithTag(LabPlacementTags.ALTITUDE).fetchSemanticsNode().boundsInRoot
+            val content = composeRule.onNodeWithTag(LabPlacementTags.CONTENT).fetchSemanticsNode().boundsInRoot
+            val panel = composeRule.onNodeWithTag(LabPlacementTags.ROOT).fetchSemanticsNode().boundsInRoot
+            val create = composeRule.onNodeWithTag(LabPlacementTags.CREATE).fetchSemanticsNode().boundsInRoot
+            assertTrue("The exact input stays wholly visible above the keyboard", input.top >= content.top && input.bottom <= content.bottom)
+            assertTrue("The commit action stays inside the keyboard-resized panel", create.bottom <= panel.bottom)
+            composeRule.onNodeWithTag(LabPlacementTags.SECTION_MOTION).performClick().assertIsSelected()
+            waitForKeyboard(keyboardBottom, shown = false)
+            composeRule.onNodeWithTag(LabPlacementTags.motion(LabPlacementMotion.CUSTOM)).assertIsDisplayed()
+            composeRule.runOnIdle { assertEquals("1250", state.altitudeKmText) }
+            captureChrome("placement-landscape-motion.png")
+        } finally {
+            if (previousKeyboardSetting == "0" || previousKeyboardSetting == "1") {
+                shell("settings put secure show_ime_with_hard_keyboard $previousKeyboardSetting")
+            } else {
+                shell("settings delete secure show_ime_with_hard_keyboard")
+            }
+        }
+    }
+
+    private fun waitForKeyboard(bottom: AtomicInteger, shown: Boolean) {
+        var previous = -1
+        var changedAt = SystemClock.elapsedRealtime()
+        composeRule.waitUntil(10_000) {
+            val current = bottom.get()
+            if (current != previous) {
+                previous = current
+                changedAt = SystemClock.elapsedRealtime()
+            }
+            (current > 0) == shown && SystemClock.elapsedRealtime() - changedAt >= 250
+        }
+        composeRule.waitForIdle()
+    }
+
+    private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+    ).bufferedReader().use { it.readText() }
+
+    private fun captureChrome(name: String) {
+        composeRule.waitForIdle()
+        val bitmap = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        val resolver = composeRule.activity.contentResolver
+        val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, "image/png")
+            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/solarlab-validation/lab-evidence/chrome-${System.currentTimeMillis()}/")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }))
+        try {
+            resolver.openOutputStream(uri).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, requireNotNull(it)) }
+            resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     private fun orient(requested: Int, configuration: Int) {

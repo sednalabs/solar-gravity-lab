@@ -2024,6 +2024,7 @@ fn cpu_solver_path_code(path_id: &str) -> u32 {
         "simd.x64.scalar-fallback" => 2,
         "simd.arm64.neon-f64-tiled-pairwise" => 3,
         "simd.arm64.neon-f64-parallel-tiled-pairwise" => 4,
+        "simd.x64.avx2-f64-pairwise" => 5,
         _ => u32::MAX,
     }
 }
@@ -2048,6 +2049,7 @@ fn cpu_fallback_code(fallback_code: &SolverFallbackCode) -> u32 {
         SolverFallbackCode::SimdArm64OnNonAarch64Host => 1,
         SolverFallbackCode::SimdArm64MissingNeon => 2,
         SolverFallbackCode::SimdX64Unavailable => 3,
+        SolverFallbackCode::WorkloadBelowVectorWidth => 4,
     }
 }
 
@@ -3251,6 +3253,16 @@ mod tests {
     };
 
     #[test]
+    fn avx2_execution_and_small_workload_fallback_have_stable_boundary_codes() {
+        assert_eq!(super::cpu_solver_path_code("simd.x64.avx2-f64-pairwise"), 5);
+        assert_eq!(
+            super::cpu_fallback_code(&solarlab_physics::SolverFallbackCode::WorkloadBelowVectorWidth),
+            4
+        );
+        assert_eq!(super::cpu_solver_path_code("scalar.reference"), 0);
+    }
+
+    #[test]
     fn abi_version_matches_constant() {
         assert_eq!(sl_v2_abi_version(), SOLARLAB_V2_ABI_VERSION);
     }
@@ -4361,7 +4373,8 @@ mod tests {
             runtime_info.info.cpu_schedule_body_count,
             seed_result.summary.body_count
         );
-        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+        // Fifteen sources interact with 350 nonperturbing targets, plus 105 source pairs.
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 5_355);
 
         let second_seed_result = sl_v2_session_apply_command(
             create.handle,
@@ -4393,7 +4406,8 @@ mod tests {
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info.cpu_schedule_body_count, 365);
-        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+        // Fifteen sources interact with 350 nonperturbing targets, plus 105 source pairs.
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 5_355);
         assert_eq!(runtime_info.info.cpu_schedule_tile_size_bodies, 32);
 
         let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;

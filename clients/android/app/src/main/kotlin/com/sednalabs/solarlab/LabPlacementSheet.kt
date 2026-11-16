@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -181,112 +182,115 @@ internal fun LabPlacementSheet(
     }
     Surface(modifier.testTag(LabPlacementTags.ROOT), color = LabPanel,
         shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, ColorGoldOutline.copy(alpha = 0.65f))) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 540.dp)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                PlacementSectionTab("Position", "${state.hosts.firstOrNull { it.id == state.hostBodyId }?.name ?: state.hostBodyId} · ${state.altitudeKmText} km",
-                    section == PlacementSection.POSITION, !state.committing, LabPlacementTags.SECTION_POSITION,
-                    Modifier.weight(1f)) { showSection(PlacementSection.POSITION) }
-                PlacementSectionTab("Motion", when (state.motion) {
-                    LabPlacementMotion.CIRCULAR -> "Circular orbit"
-                    LabPlacementMotion.RELEASE -> "Released at rest"
-                    LabPlacementMotion.CUSTOM -> "${state.speedKmPerSecondText} km/s · ${state.headingDegreesText}°"
-                }, section == PlacementSection.MOTION, !state.committing, LabPlacementTags.SECTION_MOTION,
-                    Modifier.weight(1f)) { showSection(PlacementSection.MOTION) }
-            }
-            HorizontalDivider(color = LabLine.copy(alpha = 0.6f))
-            Column(Modifier.weight(1f).fillMaxWidth()
-                .verticalScroll(if (section == PlacementSection.POSITION) positionScroll else motionScroll)
-                .testTag(LabPlacementTags.CONTENT)
-                .padding(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (section == PlacementSection.POSITION) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Around", color = LabMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
-                        FlowRow(Modifier.weight(1f)) {
-                            state.hosts.forEach { host ->
-                                PlacementChoice(host.name, state.hostBodyId == host.id, !state.committing,
-                                    LabPlacementTags.host(host.id)) { actions.onHostChange(host.id) }
-                            }
-                        }
-                    }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PlacementNumberField(state.altitudeKmText, "Altitude · km", LabPlacementTags.ALTITUDE,
-                            !state.committing, Modifier.weight(1f), actions.onAltitudeChange)
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Checkbox(checked = state.altitudeLocked, onCheckedChange = actions.onAltitudeLockChange,
-                                enabled = !state.committing,
-                                modifier = Modifier.size(48.dp).testTag(LabPlacementTags.ALTITUDE_LOCK)
-                                    .semantics { contentDescription = "Lock altitude while placing" },
-                                colors = CheckboxDefaults.colors(checkedColor = LabGold))
-                            Text("Lock altitude", color = LabMuted, fontSize = 10.sp)
-                        }
-                    }
-                    PlacementAltitudeSlider(state, actions.onAltitudeChange)
-                    Text(if (state.altitudeLocked) "Drag the gold marker along the altitude ring."
-                        else "Tap the map or drag the gold marker to place it.",
-                        color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
-                } else {
-                    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        LabPlacementMotion.entries.forEach { motion ->
-                            PlacementChoice(when (motion) {
-                                LabPlacementMotion.CIRCULAR -> "Circular"
-                                LabPlacementMotion.RELEASE -> "Release"
-                                LabPlacementMotion.CUSTOM -> "Custom"
-                            }, state.motion == motion, !state.committing, LabPlacementTags.motion(motion)) {
-                                actions.onMotionChange(motion)
-                            }
-                        }
-                    }
-                    when (state.motion) {
-                        LabPlacementMotion.CIRCULAR -> {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Starting speed", color = LabMuted, fontSize = 11.sp)
-                                    Text("${state.speedKmPerSecondText} km/s", color = LabInk, fontSize = 16.sp,
-                                        modifier = Modifier.testTag(LabPlacementTags.SPEED))
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val compactHeight = maxHeight < 256.dp
+            Column(Modifier.fillMaxWidth().heightIn(max = 540.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = if (compactHeight) 0.dp else 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    PlacementSectionTab("Position", "${state.hosts.firstOrNull { it.id == state.hostBodyId }?.name ?: state.hostBodyId} · ${state.altitudeKmText} km",
+                        section == PlacementSection.POSITION, !state.committing, LabPlacementTags.SECTION_POSITION,
+                        Modifier.weight(1f)) { showSection(PlacementSection.POSITION) }
+                    PlacementSectionTab("Motion", when (state.motion) {
+                        LabPlacementMotion.CIRCULAR -> "Circular orbit"
+                        LabPlacementMotion.RELEASE -> "Released at rest"
+                        LabPlacementMotion.CUSTOM -> "${state.speedKmPerSecondText} km/s · ${state.headingDegreesText}°"
+                    }, section == PlacementSection.MOTION, !state.committing, LabPlacementTags.SECTION_MOTION,
+                        Modifier.weight(1f)) { showSection(PlacementSection.MOTION) }
+                }
+                HorizontalDivider(color = LabLine.copy(alpha = 0.6f))
+                Column(Modifier.weight(1f).fillMaxWidth()
+                    .verticalScroll(if (section == PlacementSection.POSITION) positionScroll else motionScroll)
+                    .testTag(LabPlacementTags.CONTENT)
+                    .padding(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (section == PlacementSection.POSITION) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Around", color = LabMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
+                            FlowRow(Modifier.weight(1f)) {
+                                state.hosts.forEach { host ->
+                                    PlacementChoice(host.name, state.hostBodyId == host.id, !state.committing,
+                                        LabPlacementTags.host(host.id)) { actions.onHostChange(host.id) }
                                 }
-                                PlacementDirections(state, actions)
                             }
-                            Text("A circular starting speed around this body. Other bodies can change the orbit.",
-                                color = LabMuted, fontSize = 11.sp, lineHeight = 16.sp)
                         }
-                        LabPlacementMotion.RELEASE -> Text(
-                            "Starts at rest relative to this body, then falls under gravity.",
-                            color = LabMuted, fontSize = 12.sp, lineHeight = 18.sp)
-                        LabPlacementMotion.CUSTOM -> {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                PlacementNumberField(state.speedKmPerSecondText, "Speed · km/s", LabPlacementTags.SPEED,
-                                    !state.committing, Modifier.weight(1f), actions.onSpeedChange)
-                                PlacementNumberField(state.headingDegreesText, "Heading · °", LabPlacementTags.HEADING,
-                                    !state.committing, Modifier.weight(1f), actions.onHeadingChange)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PlacementNumberField(state.altitudeKmText, "Altitude · km", LabPlacementTags.ALTITUDE,
+                                !state.committing, Modifier.weight(1f), actions.onAltitudeChange)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Checkbox(checked = state.altitudeLocked, onCheckedChange = actions.onAltitudeLockChange,
+                                    enabled = !state.committing,
+                                    modifier = Modifier.size(48.dp).testTag(LabPlacementTags.ALTITUDE_LOCK)
+                                        .semantics { contentDescription = "Lock altitude while placing" },
+                                    colors = CheckboxDefaults.colors(checkedColor = LabGold))
+                                Text("Lock altitude", color = LabMuted, fontSize = 10.sp)
                             }
-                            Text("Drag the arrow to set direction and speed, or enter exact values here.",
-                                color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                        }
+                        PlacementAltitudeSlider(state, actions.onAltitudeChange)
+                        Text(if (state.altitudeLocked) "Drag the gold marker along the altitude ring."
+                            else "Tap the map or drag the gold marker to place it.",
+                            color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                    } else {
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            LabPlacementMotion.entries.forEach { motion ->
+                                PlacementChoice(when (motion) {
+                                    LabPlacementMotion.CIRCULAR -> "Circular"
+                                    LabPlacementMotion.RELEASE -> "Release"
+                                    LabPlacementMotion.CUSTOM -> "Custom"
+                                }, state.motion == motion, !state.committing, LabPlacementTags.motion(motion)) {
+                                    actions.onMotionChange(motion)
+                                }
+                            }
+                        }
+                        when (state.motion) {
+                            LabPlacementMotion.CIRCULAR -> {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Starting speed", color = LabMuted, fontSize = 11.sp)
+                                        Text("${state.speedKmPerSecondText} km/s", color = LabInk, fontSize = 16.sp,
+                                            modifier = Modifier.testTag(LabPlacementTags.SPEED))
+                                    }
+                                    PlacementDirections(state, actions)
+                                }
+                                Text("A circular starting speed around this body. Other bodies can change the orbit.",
+                                    color = LabMuted, fontSize = 11.sp, lineHeight = 16.sp)
+                            }
+                            LabPlacementMotion.RELEASE -> Text(
+                                "Starts at rest relative to this body, then falls under gravity.",
+                                color = LabMuted, fontSize = 12.sp, lineHeight = 18.sp)
+                            LabPlacementMotion.CUSTOM -> {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    PlacementNumberField(state.speedKmPerSecondText, "Speed · km/s", LabPlacementTags.SPEED,
+                                        !state.committing, Modifier.weight(1f), actions.onSpeedChange)
+                                    PlacementNumberField(state.headingDegreesText, "Heading · °", LabPlacementTags.HEADING,
+                                        !state.committing, Modifier.weight(1f), actions.onHeadingChange)
+                                }
+                                Text("Drag the arrow to set direction and speed, or enter exact values here.",
+                                    color = LabMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                            }
                         }
                     }
                 }
-            }
-            HorizontalDivider(color = LabLine.copy(alpha = 0.6f))
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = actions.onCancel, enabled = !state.committing,
-                    modifier = Modifier.heightIn(min = 48.dp).testTag(LabPlacementTags.CANCEL)) {
-                    Text("Cancel", color = LabMuted)
-                }
-                Column(Modifier.weight(1f).testTag(LabPlacementTags.PREVIEW), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(state.error ?: state.previewStatus,
-                        color = if (state.error != null) MaterialTheme.colorScheme.error else LabGold,
-                        fontSize = 11.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    state.previewHorizonText?.let {
-                        Text(it, color = LabMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                HorizontalDivider(color = LabLine.copy(alpha = 0.6f))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (compactHeight) 4.dp else 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = actions.onCancel, enabled = !state.committing,
+                        modifier = Modifier.heightIn(min = 48.dp).testTag(LabPlacementTags.CANCEL)) {
+                        Text("Cancel", color = LabMuted)
                     }
-                }
-                Button(onClick = actions.onCreate, enabled = state.canCreate && !state.committing,
-                    modifier = Modifier.heightIn(min = 48.dp).testTag(LabPlacementTags.CREATE),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LabGold, contentColor = ColorGoldInk)) {
-                    Text(if (state.committing) "Creating…" else "Create probe", fontWeight = FontWeight.SemiBold)
+                    Column(Modifier.weight(1f).testTag(LabPlacementTags.PREVIEW), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(state.error ?: state.previewStatus,
+                            color = if (state.error != null) MaterialTheme.colorScheme.error else LabGold,
+                            fontSize = 11.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        state.previewHorizonText?.let {
+                            Text(it, color = LabMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    Button(onClick = actions.onCreate, enabled = state.canCreate && !state.committing,
+                        modifier = Modifier.heightIn(min = 48.dp).testTag(LabPlacementTags.CREATE),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LabGold, contentColor = ColorGoldInk)) {
+                        Text(if (state.committing) "Creating…" else "Create probe", fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }

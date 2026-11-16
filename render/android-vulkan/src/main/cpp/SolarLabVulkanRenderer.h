@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SolarLabGpuReuse.h"
+
 #include <android/asset_manager.h>
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
@@ -256,6 +258,8 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkDeviceSize sizeBytes = 0;
         VkBufferUsageFlags usage = 0;
+        VkMemoryPropertyFlags memoryProperties = 0;
+        uint64_t allocationGeneration = 0;
         const char* debugLabel = nullptr;
     };
 
@@ -307,6 +311,7 @@ private:
         bool tileStatsValid = false;
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;
+        std::array<uint64_t, 5> descriptorBufferGenerations{};
         const char* label = nullptr;
     };
 
@@ -369,6 +374,7 @@ private:
     bool UploadSceneGpuStreamsLocked();
     bool UpdateSceneUniformBufferLocked();
     bool UpdateComputeDescriptorSetsLocked();
+    solarlab::rendering::SceneCommandState SceneCommandStateLocked() const;
     bool RecordComputePassLocked(VkCommandBuffer commandBuffer);
     bool RecordSceneBindingsLocked(VkCommandBuffer commandBuffer);
     void RefreshCompactionVisibleCountsFromReadbackLocked();
@@ -486,7 +492,12 @@ private:
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
-    int64_t commandBuffersRevision_ = -1;
+    bool commandBuffersDirty_ = true;
+    uint64_t bufferAllocationCount_ = 0;
+    uint64_t commandRecordingCount_ = 0;
+    uint64_t sceneUploadCount_ = 0;
+    uint64_t commandReuseCount_ = 0;
+    uint64_t cpuUploadBytes_ = 0;
 
     static constexpr size_t kStagingUploadRingSize = 8U;
     std::array<StagingUploadSlot, kStagingUploadRingSize> stagingUploadRing_{};

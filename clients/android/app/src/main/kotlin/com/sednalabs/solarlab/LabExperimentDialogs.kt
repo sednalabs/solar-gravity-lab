@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sednalabs.solarlab.runtime.RuntimeBodyClass
+import com.sednalabs.solarlab.runtime.ExperimentStatus
 import com.sednalabs.solarlab.runtime.RuntimeBodyState
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPack
@@ -298,6 +301,19 @@ private fun LabVectorFields(
     }
 }
 
+internal object LabExperimentTags {
+    const val IMPORT = "lab.saved.import"
+    const val REMOVE_CONFIRM = "lab.saved.remove.confirm"
+    fun export(id: String) = "lab.saved.export.$id"
+    fun remove(id: String) = "lab.saved.remove.$id"
+}
+
+private fun experimentSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MiB", bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> String.format(Locale.US, "%.0f KiB", bytes / 1024.0)
+    else -> "$bytes bytes"
+}
+
 @Composable
 internal fun LabSavedExperimentsDialog(
     experiments: List<SavedExperimentInfo>,
@@ -305,19 +321,26 @@ internal fun LabSavedExperimentsDialog(
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
     onLoad: (String) -> Unit,
+    onImport: () -> Unit = {},
+    onExport: (SavedExperimentInfo) -> Unit = {},
+    onDelete: (String) -> Unit = {},
+    experimentStatus: ExperimentStatus = ExperimentStatus(
+        busyLabel = uiState.pendingActionLabel, notice = uiState.noticeLine, tone = uiState.noticeTone,
+    ),
 ) {
+    var removingId by rememberSaveable { mutableStateOf<String?>(null) }
     var name by rememberSaveable { mutableStateOf("Earth–Moon experiment") }
-    val busy = uiState.pendingActionLabel != null || uiState.manualAdvance != null
+    val busy = experimentStatus.busyLabel != null || uiState.pendingActionLabel != null || uiState.manualAdvance != null
     val validName = name.trim().let { it.isNotEmpty() && it.length <= 80 && it.none(Char::isISOControl) }
     AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        onDismissRequest = onDismiss,
         modifier = Modifier.testTag(LabTags.SAVED_DIALOG),
         title = { Text("Your experiments") },
-        confirmButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Done") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(if (busy) "Back to lab" else "Done") } },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Save this exact simulation state, then return to it later. Reopened experiments start paused.",
+                Text("Keep a moment, try another idea, come back. Every saved experiment opens paused.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(name, { name = it }, label = { Text("Experiment name") },
                     singleLine = true, enabled = !busy,
@@ -326,38 +349,74 @@ internal fun LabSavedExperimentsDialog(
                     style = MaterialTheme.typography.bodySmall)
                 Button(onClick = { onSave(name.trim()) }, enabled = !busy && validName,
                     modifier = Modifier.fillMaxWidth().testTag(LabTags.SAVE_COMMIT)) {
-                    Text(if (busy) "Working…" else "Save current experiment")
+                    Text("Save current experiment")
                 }
-                uiState.noticeLine?.takeIf {
-                    uiState.noticeTone == ShellNoticeTone.Positive || uiState.noticeTone == ShellNoticeTone.Critical || uiState.noticeTone == ShellNoticeTone.Caution
+                experimentStatus.busyLabel?.let { label ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(label, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                experimentStatus.notice?.takeIf {
+                    experimentStatus.tone == ShellNoticeTone.Positive || experimentStatus.tone == ShellNoticeTone.Critical || experimentStatus.tone == ShellNoticeTone.Caution
                 }?.let { notice ->
                     Text(notice, style = MaterialTheme.typography.bodySmall,
-                        color = if (uiState.noticeTone == ShellNoticeTone.Critical) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
+                        color = if (experimentStatus.tone == ShellNoticeTone.Critical) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
                 }
                 HorizontalDivider()
-                Text("SAVED ON THIS DEVICE", style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("ON THIS DEVICE", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${experiments.size} of 256 copies · ${experimentSize(experiments.sumOf { it.sizeBytes })}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    LabTextAction("Import", onImport, tag = LabExperimentTags.IMPORT, enabled = !busy,
+                        description = "Import an experiment document")
+                }
+                Text("Export a saved copy to keep it outside the app or open it on another device.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (experiments.isEmpty()) {
                     Text("Your first experiment starts here.", style = MaterialTheme.typography.bodyMedium)
                 }
                 experiments.forEach { experiment ->
                     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(experiment.name, style = MaterialTheme.typography.titleSmall)
-                                Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                                    .format(Date(experiment.updatedAtEpochMillis)), style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(experiment.name, style = MaterialTheme.typography.titleSmall)
+                            Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                                .format(Date(experiment.updatedAtEpochMillis)) + " · " + experimentSize(experiment.sizeBytes),
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            experiment.problem?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                             }
-                            LabTextAction("Open", { onLoad(experiment.id) }, tag = LabTags.load(experiment.id), enabled = !busy)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                LabTextAction("Open", { onLoad(experiment.id) }, tag = LabTags.load(experiment.id),
+                                    enabled = !busy && experiment.problem == null)
+                                LabTextAction("Export", { onExport(experiment) }, tag = LabExperimentTags.export(experiment.id),
+                                    enabled = !busy && experiment.problem == null)
+                                LabTextAction("Remove", { removingId = experiment.id }, tag = LabExperimentTags.remove(experiment.id),
+                                    enabled = !busy, description = "Remove saved copy of ${experiment.name}")
+                            }
                         }
                     }
                 }
             }
         },
     )
+    experiments.firstOrNull { it.id == removingId }?.let { removing ->
+        AlertDialog(
+            onDismissRequest = { removingId = null },
+            title = { Text("Remove this saved copy?") },
+            text = { Text("“${removing.name}” will be removed from this device. Your live experiment and exported documents remain available.") },
+            dismissButton = { TextButton(onClick = { removingId = null }) { Text("Keep it") } },
+            confirmButton = {
+                TextButton(onClick = { removingId = null; onDelete(removing.id) }, enabled = !busy,
+                    modifier = Modifier.testTag(LabExperimentTags.REMOVE_CONFIRM)) { Text("Remove copy") }
+            },
+        )
+    }
 }
 
 @Composable

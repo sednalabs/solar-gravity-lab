@@ -5,10 +5,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
@@ -31,7 +32,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -61,7 +65,7 @@ internal object LabSpatialTags {
 private val SpatialCyan = Color(0xFF8BE5EA)
 private val SpatialGold = Color(0xFFFFD18A)
 
-private data class LabLabelPosition(
+internal data class LabLabelPosition(
     val anchor: LabBodyAnchor,
     val title: String,
     val bounds: Rect,
@@ -85,7 +89,11 @@ internal fun LabSceneOverlay(
 ) {
     val state = viewport ?: return
     val density = LocalDensity.current.density
-    val labels = if (draft == null) labLabels(state, names, selectedBodyId, density) else emptyList()
+    val textMeasurer = rememberTextMeasurer(cacheSize = 32)
+    val labelStyle = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    val labels = if (draft == null) labLabels(state, names, selectedBodyId, density) { title ->
+        textMeasurer.measure(AnnotatedString(title), labelStyle, maxLines = 1).size.width.toFloat()
+    } else emptyList()
     val projectedDraft = draft?.positionM?.let(state::project)
     val velocity = draft?.relativeVelocityMps()
     val arrowScale = if (draft != null) {
@@ -96,6 +104,17 @@ internal fun LabSceneOverlay(
         val displayArrow = if (hasVelocity) velocity * arrowScale
             else draft.tangentUnit * (36.0 * density * state.metresPerPixel)
         state.project(draft.positionM!! + displayArrow)
+    } else null
+    val previewPoints = preview?.samples?.map { sample ->
+        state.project(preview.referenceBody.labPosition() + Vector3d(sample.positionX, sample.positionY, sample.positionZ))
+    }.orEmpty()
+    val draftCaption = draft?.let { "${it.probeId.replace('-', ' ').replaceFirstChar { c -> c.uppercase() }} · ${it.altitudeKmText} km" }
+    val draftCaptionBounds = if (draftCaption != null && projectedDraft != null) {
+        val textSize = textMeasurer.measure(AnnotatedString(draftCaption), labelStyle, maxLines = 1).size
+        val width = (textSize.width + 18f * density)
+            .coerceIn(96f * density, 196f * density)
+        val height = max(28f * density, textSize.height + 10f * density)
+        labDraftCaptionBounds(state, projectedDraft, arrowTip, previewPoints, width, height, density)
     } else null
 
     Box(modifier.fillMaxSize()) {
@@ -115,9 +134,8 @@ internal fun LabSceneOverlay(
                     val delta = target - point
                     val length = sqrt(delta.x * delta.x + delta.y * delta.y).coerceAtLeast(1f)
                     val start = point + delta * (min(radius + 6f * density, length) / length)
-                    val end = Offset(target.x.coerceIn(label.bounds.left, label.bounds.right),
-                        if (target.y > point.y) label.bounds.top else label.bounds.bottom)
-                    drawLine(colour.copy(alpha = 0.35f), start, end, 1f * density)
+                    // The compact visual pill sits inside a larger transparent touch target.
+                    drawLine(colour.copy(alpha = if (label.selected) 0.32f else 0.2f), start, target, 1f * density)
                 }
             }
 
@@ -136,8 +154,7 @@ internal fun LabSceneOverlay(
                 }
                 if (preview != null) {
                     val path = Path()
-                    preview.samples.forEachIndexed { index, sample ->
-                        val point = state.project(preview.referenceBody.labPosition() + Vector3d(sample.positionX, sample.positionY, sample.positionZ))
+                    previewPoints.forEachIndexed { index, point ->
                         if (index == 0) path.moveTo(point.xPx, point.yPx) else path.lineTo(point.xPx, point.yPx)
                     }
                     drawPath(path, if (preview.intersectsReferenceBody) Color(0xFFFFA28F) else SpatialGold.copy(alpha = 0.85f),
@@ -173,36 +190,38 @@ internal fun LabSceneOverlay(
                     .size((label.bounds.width / density).dp, 48.dp)
                     .testTag(LabSpatialTags.label(label.anchor.bodyId))
                     .semantics { contentDescription = if (label.locator) "Locate ${label.title}" else "Select ${label.title}" },
-                color = Color(0xE60B1825), shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, if (label.selected) SpatialCyan.copy(alpha = 0.7f) else Color(0xFF314552)),
+                color = Color.Transparent, shape = RoundedCornerShape(12.dp),
             ) {
-                Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                    Text(if (label.locator) "Locate · ${label.title}" else label.title,
-                        color = if (label.selected) SpatialCyan else Color(0xFFE3EDF3), fontSize = 12.sp,
-                        fontWeight = if (label.selected) FontWeight.SemiBold else FontWeight.Medium,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(contentAlignment = Alignment.Center) {
+                    Surface(Modifier.fillMaxWidth().heightIn(min = 28.dp),
+                        color = if (label.selected) Color(0xD00C2430) else Color(0xB5091520),
+                        shape = RoundedCornerShape(8.dp),
+                        border = if (label.selected) BorderStroke(1.dp, SpatialCyan.copy(alpha = 0.22f)) else null) {
+                        Box(Modifier.padding(horizontal = 9.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
+                            Text(if (label.locator) "Locate · ${label.title}" else label.title,
+                                color = if (label.selected) SpatialCyan else Color(0xFFE3EDF3), fontSize = 12.sp,
+                                fontWeight = if (label.selected) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
         }
 
-        if (draft != null && projectedDraft != null) {
-            val labelWidth = 176f * density
-            val left = (if ((arrowTip?.xPx ?: projectedDraft.xPx) >= projectedDraft.xPx)
-                projectedDraft.xPx - labelWidth - 14f * density else projectedDraft.xPx + 14f * density)
-                .coerceIn(4f * density, max(4f * density, state.widthPx - labelWidth - 4f * density))
-            val top = (if ((arrowTip?.yPx ?: projectedDraft.yPx) < projectedDraft.yPx)
-                projectedDraft.yPx + 16f * density else projectedDraft.yPx - 34f * density)
-                .coerceIn(4f * density, max(4f * density, state.heightPx - 48f * density))
-            Text("${draft.probeId.replace('-', ' ').replaceFirstChar { it.uppercase() }} · ${draft.altitudeKmText} km", color = SpatialGold, fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.offset { IntOffset(left.roundToInt(), top.roundToInt()) }
-                    .widthIn(max = 176.dp)
+        if (draft != null && projectedDraft != null && draftCaptionBounds != null) {
+            Surface(modifier = Modifier.offset { IntOffset(draftCaptionBounds.left.roundToInt(), draftCaptionBounds.top.roundToInt()) }
+                    .size((draftCaptionBounds.width / density).dp, (draftCaptionBounds.height / density).dp)
                     .testTag(LabSpatialTags.DRAFT)
-                    .semantics { contentDescription = "Draft ${draft.probeId}, altitude ${draft.altitudeKmText} kilometres" })
+                    .semantics { contentDescription = "Draft ${draft.probeId}, altitude ${draft.altitudeKmText} kilometres" },
+                color = Color(0xED101A22), shape = RoundedCornerShape(8.dp)) {
+                Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
+                    Text(draftCaption.orEmpty(), color = SpatialGold, fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
             if (!committing && arrowTip != null && arrowTip.xPx in 24f * density..state.widthPx - 24f * density &&
                 arrowTip.yPx in 24f * density..state.heightPx - 24f * density) {
-                LabVelocityHandle(arrowTip, state, draft, arrowScale, hasVelocity, onVelocityDrag)
+                LabVelocityHandle(arrowTip, projectedDraft, state, draft, arrowScale, hasVelocity, onVelocityDrag)
             }
         }
     }
@@ -211,6 +230,7 @@ internal fun LabSceneOverlay(
 @Composable
 private fun LabVelocityHandle(
     tip: LabProjectedPoint,
+    origin: LabProjectedPoint,
     viewport: LabViewportState,
     draft: LabProbeDraft,
     arrowScale: Double,
@@ -242,46 +262,130 @@ private fun LabVelocityHandle(
         color = SpatialGold.copy(alpha = 0.13f), shape = CircleShape,
         border = BorderStroke(1.dp, SpatialGold.copy(alpha = 0.6f)),
     ) {
-        Box(contentAlignment = Alignment.Center) { Text(if (hasVelocity) "↗" else "+", color = SpatialGold, fontSize = 19.sp) }
+        Box(contentAlignment = Alignment.Center) {
+            Canvas(Modifier.size(22.dp)) {
+                val centre = Offset(size.width * 0.5f, size.height * 0.5f)
+                val stroke = 1.7.dp.toPx()
+                if (hasVelocity) {
+                    val direction = Offset(tip.xPx - origin.xPx, tip.yPx - origin.yPx)
+                    val length = sqrt(direction.x * direction.x + direction.y * direction.y).coerceAtLeast(0.001f)
+                    val unit = direction / length
+                    val perpendicular = Offset(-unit.y, unit.x)
+                    val end = centre + unit * (7.dp.toPx())
+                    drawLine(SpatialGold, centre - unit * (7.dp.toPx()), end, stroke, StrokeCap.Round)
+                    drawLine(SpatialGold, end, end - unit * (5.dp.toPx()) + perpendicular * (4.dp.toPx()), stroke, StrokeCap.Round)
+                    drawLine(SpatialGold, end, end - unit * (5.dp.toPx()) - perpendicular * (4.dp.toPx()), stroke, StrokeCap.Round)
+                } else {
+                    drawLine(SpatialGold, centre - Offset(6.dp.toPx(), 0f), centre + Offset(6.dp.toPx(), 0f), stroke, StrokeCap.Round)
+                    drawLine(SpatialGold, centre - Offset(0f, 6.dp.toPx()), centre + Offset(0f, 6.dp.toPx()), stroke, StrokeCap.Round)
+                }
+            }
+        }
     }
 }
 
-private fun labLabels(
+internal fun labLabels(
     state: LabViewportState,
     names: Map<String, String>,
     selectedId: String?,
     density: Float,
+    titleWidthPx: (String) -> Float = { it.length * 7f * density },
 ): List<LabLabelPosition> {
     val result = mutableListOf<LabLabelPosition>()
     val margin = 6f * density
     // The permanent zoom rail occupies the right edge of this same viewport.
     val rightReserve = 72f * density
     val height = 48f * density
+    val visibleBodies = state.bodies.filter { !it.occluded && it.radiusPx.isFinite() && it.radiusPx > 0f }
     state.bodies.sortedWith(compareBy<LabBodyAnchor> {
         when (it.bodyId) { selectedId -> 0; "earth" -> 1; "moon" -> 2; else -> 3 }
-    }.thenBy { it.bodyId }).filter { it.bodyId in names && (it.bodyId != "sun" || it.bodyId == selectedId) }.take(18).forEach { anchor ->
-        if (!anchor.xPx.isFinite() || !anchor.yPx.isFinite()) return@forEach
+    }.thenBy { it.bodyId }).asSequence().filter {
+        it.bodyId in names && (it.bodyId != "sun" || it.bodyId == selectedId) &&
+            it.xPx.isFinite() && it.yPx.isFinite() && (it.bodyId == selectedId ||
+            (!it.occluded && it.xPx in 0f..state.widthPx.toFloat() && it.yPx in 0f..state.heightPx.toFloat()))
+    }.take(18).forEach { anchor ->
         val selected = anchor.bodyId == selectedId
         val offscreen = anchor.xPx < 0 || anchor.yPx < 0 || anchor.xPx > state.widthPx || anchor.yPx > state.heightPx
-        if ((offscreen || anchor.occluded) && !selected) return@forEach
         val title = (names[anchor.bodyId] ?: anchor.bodyId) + if (anchor.occluded) " · hidden" else ""
-        val width = (((title.length + if (offscreen) 9 else 0) * 7f + 26f).coerceIn(70f, 208f) * density)
+        val width = (titleWidthPx(if (offscreen) "Locate · $title" else title) + 20f * density)
+            .coerceIn(56f * density, 208f * density)
             .coerceAtMost((state.widthPx - margin - rightReserve).coerceAtLeast(1f))
         if (state.heightPx < height + 2f * margin) return@forEach
-        val radius = anchor.radiusPx.coerceAtLeast(8f * density)
+        val radius = anchor.radiusPx.takeIf { it.isFinite() }?.coerceAtLeast(8f * density) ?: 8f * density
+        val gap = 10f * density
         val candidates = listOf(
-            Offset(anchor.xPx + radius * 0.65f + 10f * density, anchor.yPx - radius * 0.65f - height),
-            Offset(anchor.xPx - radius * 0.65f - 10f * density - width, anchor.yPx - radius * 0.65f - height),
-            Offset(anchor.xPx + radius * 0.65f + 10f * density, anchor.yPx + radius * 0.65f),
-            Offset(anchor.xPx - width / 2f, anchor.yPx + radius + 12f * density),
+            Offset(anchor.xPx + radius * 0.78f + gap, anchor.yPx - radius * 0.78f - height - gap),
+            Offset(anchor.xPx - radius * 0.78f - gap - width, anchor.yPx - radius * 0.78f - height - gap),
+            Offset(anchor.xPx + radius + gap, anchor.yPx - height / 2f),
+            Offset(anchor.xPx - radius - gap - width, anchor.yPx - height / 2f),
+            Offset(anchor.xPx - width / 2f, anchor.yPx + radius + gap),
+            Offset(anchor.xPx - width / 2f, anchor.yPx - radius - gap - height),
+            Offset(margin, margin),
+            Offset(margin, state.heightPx - height - margin),
         )
-        val bounds = candidates.map { point ->
+        val rectangles = candidates.map { point ->
             val x = point.x.coerceIn(margin, max(margin, state.widthPx - width - rightReserve))
             val y = point.y.coerceIn(margin, max(margin, state.heightPx - height - margin))
             Rect(x, y, x + width, y + height)
-        }.firstOrNull { candidate -> result.none { it.bounds.inflate(4f * density).overlaps(candidate) } }
-            ?: if (selected) Rect(margin, margin, margin + width, margin + height) else return@forEach
+        }.distinct()
+        val bounds = rectangles.firstOrNull { candidate ->
+            result.none { it.bounds.inflate(4f * density).overlaps(candidate) } &&
+                visibleBodies.none { candidate.touchesBody(it, 4f * density) }
+        } ?: if (selected) rectangles.minBy { candidate ->
+            visibleBodies.count { candidate.touchesBody(it, 4f * density) }
+        } else return@forEach
         result += LabLabelPosition(anchor, title, bounds, selected, offscreen)
     }
     return result
+}
+
+/** Keep the draft caption beside its marker, clear of the path and velocity control. */
+internal fun labDraftCaptionBounds(
+    state: LabViewportState,
+    origin: LabProjectedPoint,
+    arrowTip: LabProjectedPoint?,
+    preview: List<LabProjectedPoint>,
+    requestedWidth: Float,
+    requestedHeight: Float,
+    density: Float,
+): Rect {
+    val margin = 6f * density
+    val width = requestedWidth.coerceAtMost(max(1f, state.widthPx - margin * 2f))
+    val height = requestedHeight.coerceAtMost(max(1f, state.heightPx - margin * 2f))
+    val left = origin.xPx - width - 24f * density
+    val right = origin.xPx + 24f * density
+    val above = origin.yPx - height - 24f * density
+    val below = origin.yPx + 24f * density
+    val xs = if ((arrowTip?.xPx ?: origin.xPx) >= origin.xPx) listOf(left, right) else listOf(right, left)
+    val ys = if ((arrowTip?.yPx ?: origin.yPx) <= origin.yPx) listOf(below, above) else listOf(above, below)
+    val candidates = xs.flatMap { x -> ys.map { y -> Offset(x, y) } } + listOf(
+        Offset(origin.xPx - width / 2f, origin.yPx - height - 42f * density),
+        Offset(origin.xPx - width / 2f, origin.yPx + 42f * density),
+    )
+    val segments = preview.zipWithNext { a, b ->
+        Rect(min(a.xPx, b.xPx), min(a.yPx, b.yPx), max(a.xPx, b.xPx), max(a.yPx, b.yPx)).inflate(2f * density)
+    }
+    val handle = arrowTip?.let { Rect(it.xPx - 24f * density, it.yPx - 24f * density,
+        it.xPx + 24f * density, it.yPx + 24f * density) }
+    val marker = Rect(origin.xPx - 19f * density, origin.yPx - 19f * density,
+        origin.xPx + 19f * density, origin.yPx + 19f * density)
+    return candidates.map { point ->
+        val x = point.x.coerceIn(margin, max(margin, state.widthPx - width - margin))
+        val y = point.y.coerceIn(margin, max(margin, state.heightPx - height - margin))
+        Rect(x, y, x + width, y + height)
+    }.distinct().minBy { candidate ->
+        val pathCrossings = segments.count { it.overlaps(candidate.inflate(3f * density)) }
+        val bodyCrossings = state.bodies.count { !it.occluded && candidate.touchesBody(it, 4f * density) }
+        pathCrossings * 5 + bodyCrossings * 100 +
+            (if (handle?.overlaps(candidate) == true) 500 else 0) +
+            (if (marker.overlaps(candidate)) 1_000 else 0)
+    }
+}
+
+private fun Rect.touchesBody(anchor: LabBodyAnchor, clearance: Float): Boolean {
+    if (!anchor.radiusPx.isFinite() || anchor.radiusPx <= 0f) return false
+    val dx = anchor.xPx - anchor.xPx.coerceIn(left, right)
+    val dy = anchor.yPx - anchor.yPx.coerceIn(top, bottom)
+    val radius = anchor.radiusPx + clearance
+    return dx * dx + dy * dy < radius * radius
 }

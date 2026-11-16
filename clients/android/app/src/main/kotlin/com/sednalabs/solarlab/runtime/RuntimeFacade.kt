@@ -3,6 +3,8 @@ package com.sednalabs.solarlab.runtime
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.InputStream
+import java.io.OutputStream
 
 /**
  * Public seam for shell/runtime orchestration.
@@ -14,10 +16,15 @@ interface RuntimeFacade {
     val scenarioPacks: List<RuntimeScenarioPack>
 
     val savedExperiments: StateFlow<List<SavedExperimentInfo>> get() = emptySavedExperiments
+    val experimentStatus: StateFlow<ExperimentStatus> get() = emptyExperimentStatus
     /** Successful placement receipt owned by the retained runtime session, not an Activity. */
     val lastProbeCommit: StateFlow<ProbeCommitResult?> get() = emptyProbeCommit
     suspend fun saveExperiment(name: String) {}
     suspend fun loadExperiment(id: String) {}
+    suspend fun importExperiment(openInput: () -> InputStream?) {}
+    suspend fun exportExperiment(id: String, openOutput: () -> OutputStream?) {}
+    suspend fun deleteExperiment(id: String) {}
+    suspend fun refreshExperimentCatalogue() {}
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
 
     /** Draft work is bounded and read-only; failures are thrown to the placement UI. */
@@ -147,4 +154,5 @@ data class ShellUiState(
 )
 
 private val emptySavedExperiments: StateFlow<List<SavedExperimentInfo>> = MutableStateFlow<List<SavedExperimentInfo>>(emptyList()).asStateFlow()
+private val emptyExperimentStatus: StateFlow<ExperimentStatus> = MutableStateFlow(ExperimentStatus()).asStateFlow()
 private val emptyProbeCommit: StateFlow<ProbeCommitResult?> = MutableStateFlow<ProbeCommitResult?>(null).asStateFlow()

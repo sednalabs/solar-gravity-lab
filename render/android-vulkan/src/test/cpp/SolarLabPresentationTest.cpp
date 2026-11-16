@@ -1,4 +1,5 @@
 #include "../../main/cpp/SolarLabPresentation.h"
+#include "../../main/cpp/SolarLabGpuReuse.h"
 
 #include <cassert>
 #include <array>
@@ -153,11 +154,77 @@ void TestFramingWhileTheReferenceMoves() {
     assert(ContextFrameRadius(1'000.0, lunarProbeDistance, lunarRadius) < 6'000'000.0);
 }
 
+void TestGpuBufferAndCommandReuse() {
+    using namespace solarlab::rendering;
+    // A buffer is reusable only for the required capacity, binding usage and actual
+    // memory capabilities. Host-visible fallback cannot masquerade as device-local.
+    assert(CanReuseBuffer(1024, 768, 3, 3, 7, 6));
+    assert(!CanReuseBuffer(1024, 1025, 3, 3, 7, 6));
+    assert(!CanReuseBuffer(1024, 768, 3, 5, 7, 6));
+    assert(!CanReuseBuffer(1024, 768, 3, 3, 6, 1));
+    assert(BufferCapacity(256) == 256);
+    assert(BufferCapacity(257) == 512);
+    assert(BufferCapacity(std::numeric_limits<uint64_t>::max()) == std::numeric_limits<uint64_t>::max());
+    uint64_t capacity = 0;
+    int allocations = 0;
+    for (uint64_t vertices = 1; vertices <= 512; ++vertices) {
+        const uint64_t required = vertices * 20;
+        if (!CanReuseBuffer(capacity, required, 1, 1, 6, 6)) {
+            capacity = BufferCapacity(required);
+            ++allocations;
+        }
+        assert(capacity >= required);
+        assert(capacity <= std::max<uint64_t>(256, 2 * required));
+    }
+    // The former full destruction path allocated 512 times for this growing stream.
+    assert(allocations == 7);
+
+    SceneCommandState recorded;
+    recorded.draws[0] = {1, 3};
+    recorded.draws[4] = {2, 256};
+    recorded.trailStrips = {128, 128};
+    recorded.medium = {true, {3, 4, 5, 6, 0, 0}, 1024, 16, 0, 0};
+    recorded.far = {true, {7, 8, 9, 10, 11, 12}, 4096, 64, 800, 100};
+    assert(recorded == SceneCommandState(recorded));
+    // New payload bytes and camera uniforms use these same bindings; every recorded
+    // count, indirect dependency, fallback or strip boundary must invalidate reuse.
+    auto changed = recorded;
+    ++changed.draws[0].vertexCount;
+    assert(changed != recorded);
+    changed = recorded;
+    ++changed.draws[0].bufferGeneration;
+    assert(changed != recorded);
+    for (size_t index = 0; index < recorded.far.bufferGenerations.size(); ++index) {
+        changed = recorded;
+        ++changed.far.bufferGenerations[index];
+        assert(changed != recorded);
+    }
+    changed = recorded;
+    changed.medium.enabled = false;
+    assert(changed != recorded);
+    changed = recorded;
+    ++changed.medium.sourceCount;
+    assert(changed != recorded);
+    changed = recorded;
+    ++changed.far.dispatchCount;
+    assert(changed != recorded);
+    changed = recorded;
+    ++changed.far.outputCapacity;
+    assert(changed != recorded);
+    changed = recorded;
+    ++changed.far.tileCounterCount;
+    assert(changed != recorded);
+    changed = recorded;
+    changed.trailStrips = {127, 129};
+    assert(changed != recorded);
+}
+
 int main() {
     TestMapPlaneAndOverlayProjection();
     TestOneDayInEarthReferenceFrame();
     TestProbeTrailFollowsDisplayedEarth();
     TestFramingWhileTheReferenceMoves();
+    TestGpuBufferAndCommandReuse();
     const auto portrait = MakeProjection(400.0, 600, 1200);
     const auto landscape = MakeProjection(400.0, 1200, 600);
     assert(portrait.halfSpanX == 400.0);

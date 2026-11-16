@@ -178,6 +178,10 @@ The long-term loop is:
 - use native computer-use calls to operate the app like a user; and
 - feed the observations back into solver, renderer, and scenario-pack work.
 
-Two renderer optimizations remain measured follow-ups rather than activation
-claims: replacing synchronous upload queue idling with a fenced staging ring,
-and adding thermal/battery-aware worker governance from real-device traces.
+The renderer uses a fenced staging ring and now retains compatible GPU buffers,
+descriptor bindings and command recordings across frames. Resource counters expose
+allocations, uploads, command recordings and reuse; these are implementation evidence,
+not a frame-rate claim. Optional Android Performance Hint sessions report the stable
+render worker's measured frame work and degrade safely when unavailable. Sustained
+thermal/battery-aware governance and device speedup claims still require real-device
+traces. See `android-acceleration-truth.md` for the current activation and proof ledger.

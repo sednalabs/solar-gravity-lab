@@ -36,7 +36,7 @@ use solarlab_history::{
 };
 use solarlab_physics::{
     advance_authoritative_with_features, advance_fixed_steps, checked_substep_count,
-    compute_invariants, fixed_step_plan, solver_execution_report_for_backend_with_body_count,
+    compute_invariants, fixed_step_plan_with_source_count, solver_execution_report_for_backend_with_source_count,
     FixedStepPlan, MassiveBodyState, PhysicsInvariants, PhysicsPolicy, SolverExecutionReport,
     MAX_INCREMENTAL_STEPS,
 };
@@ -391,6 +391,7 @@ pub struct WorldRuntime {
     /// ensures that any state can be deterministically replayed or verified.
     scenario_id: ScenarioId,
     config: RuntimeConfig,
+    lab_step_policy: lab_step::LabStepPolicy,
     hardware_profile: HardwareProfile,
     branches: HashMap<BranchId, BranchState>,
     active_branch_id: BranchId,
@@ -412,9 +413,10 @@ impl WorldRuntime {
         hardware_profile: HardwareProfile,
         created_at_unix_ms: i64,
     ) -> Self {
-        let initial_solver_execution = solver_execution_report_for_backend_with_body_count(
+        let initial_solver_execution = solver_execution_report_for_backend_with_source_count(
             &config.physics.solver_backend,
             &hardware_profile.cpu_features,
+            0,
             0,
         );
         let root_descriptor = BranchDescriptor {
@@ -455,6 +457,7 @@ impl WorldRuntime {
         let mut runtime = Self {
             scenario_id,
             config,
+            lab_step_policy: lab_step::LabStepPolicy::PeriapsisV2,
             hardware_profile,
             branches,
             active_branch_id: root_branch_id,
@@ -591,7 +594,7 @@ impl WorldRuntime {
 
     fn effective_physics_policy(&self) -> PhysicsPolicy {
         if self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID {
-            lab_step::for_world(&self.config.physics, &self.active_branch().world.bodies)
+            self.lab_step_policy.for_world(&self.config.physics, &self.active_branch().world.bodies)
         } else {
             self.config.physics.clone()
         }
@@ -645,10 +648,11 @@ impl WorldRuntime {
             None
         } else {
             Some(
-                fixed_step_plan(
+                fixed_step_plan_with_source_count(
                     &self.effective_physics_policy(),
                     delta,
                     bodies.len(),
+                    bodies.iter().filter(|body| body.mass_kg != 0.0).count(),
                     &self.hardware_profile.cpu_features,
                 )
                 .ok_or(RuntimeError::InvalidEpochDelta(delta))?,
@@ -1130,10 +1134,11 @@ impl WorldRuntime {
         let requested_backend = self.config.physics.solver_backend.clone();
         let active_cpu_features = self.hardware_profile.cpu_features.clone();
         let branch = self.active_branch_mut();
-        branch.world.solver_execution = solver_execution_report_for_backend_with_body_count(
+        branch.world.solver_execution = solver_execution_report_for_backend_with_source_count(
             &requested_backend,
             &active_cpu_features,
             branch.world.bodies.len(),
+            branch.world.bodies.iter().filter(|body| body.source_mass_kg != 0.0).count(),
         );
     }
 
