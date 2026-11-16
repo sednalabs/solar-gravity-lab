@@ -1779,16 +1779,14 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 .frameRadiusM = frameRadiusM,
                 .kind = kind,
             });
-            // The body packet also contains test particles and spacecraft. They
-            // already have a dedicated tracer draw path, so the ordinary
-            // authoritative billboard would cover their GPU-compacted pixels.
-            // Keep every body's picking proxy, and promote only the selected
-            // tracer/spacecraft to a close-inspection billboard.
-            const bool isTracerOrSpacecraft =
-                body->kind == SL_SCENE_BODY_KIND_TRACER ||
-                body->kind == SL_SCENE_BODY_KIND_SPACECRAFT;
+            // Tracer bodies also arrive through the GPU compaction stream;
+            // prevent an authoritative billboard from covering their pixels.
+            // Spacecraft are NOT emitted as SceneTracer by the Rust runtime,
+            // so they must retain an authoritative billboard even unselected.
             if (!solarlab::presentation::DrawAsAuthoritativeBody(
-                    isTracerOrSpacecraft, selected, body->radius_m, body->emissive_luminance)) {
+                    body->kind == SL_SCENE_BODY_KIND_TRACER,
+                    body->kind == SL_SCENE_BODY_KIND_SPACECRAFT,
+                    selected, body->radius_m, body->emissive_luminance)) {
                 continue;
             }
             authoritativePositionsM.push_back(body->position_from_origin_m.x);
@@ -1848,9 +1846,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const auto* tracer = reinterpret_cast<const SlVulkanTracerInstance*>(raw + (stride * index));
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(tracer->source_body_id, tracer->source_body_id_len));
-            // Selected tracers/spacecraft are already rendered in the
-            // authoritative billboard stream. Never draw the same object
-            // again through the compute/direct tracer streams.
+            // Selected BodyClass::Tracer items are already rendered in the
+            // authoritative billboard stream. Avoid their duplicate pixels.
             if (!normalizedSelectedBodyId.empty() &&
                 sourceBodyId == normalizedSelectedBodyId) {
                 continue;

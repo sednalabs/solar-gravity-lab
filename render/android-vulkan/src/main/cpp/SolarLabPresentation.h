@@ -127,12 +127,15 @@ inline double ContextSurfaceDistance(double centerDistanceM, double radiusM) {
     return std::max(0.0, centerDistanceM - radiusM);
 }
 
-// Tracers and spacecraft have one visual owner: their near/medium/far stream.
-// The selected probe moves to the authoritative billboard for close inspection,
-// but must then be omitted from its tracer stream. Picking proxies are unaffected.
+// Only BodyClass::Tracer is exported into the scene's tracer stream.
+// Spacecraft do NOT have a matching SceneTracer and therefore must remain
+// authoritative billboards even when unselected. A tracer's selected state
+// promotes it to an inspectable billboard, with its tracer sample suppressed.
+// Picking proxies remain available regardless of the draw owner.
 inline bool DrawAsAuthoritativeBody(
-    bool isTracerOrSpacecraft, bool selected, float radiusM, float emissiveLuminance) {
-    if (isTracerOrSpacecraft) return selected;
+    bool isTracer, bool isSpacecraft, bool selected, float radiusM, float emissiveLuminance) {
+    if (isTracer) return selected;
+    if (isSpacecraft) return true;
     return selected || emissiveLuminance > 1000.0f || radiusM >= 100'000.0f;
 }
 

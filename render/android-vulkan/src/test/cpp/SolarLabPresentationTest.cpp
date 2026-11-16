@@ -221,16 +221,20 @@ void TestGpuBufferAndCommandReuse() {
 
 void TestExclusiveTracerPresentation() {
     // Ordinary sources stay in the authoritative surface layer.
-    assert(DrawAsAuthoritativeBody(false, false, 6'371'000.0f, 0.0f));
-    assert(DrawAsAuthoritativeBody(false, false, 1.0f, 1'500.0f));
-    assert(!DrawAsAuthoritativeBody(false, false, 1.0f, 0.0f));
-    // A test particle/spacecraft has exactly one ordinary visual owner.
-    assert(!DrawAsAuthoritativeBody(true, false, 5'000'000.0f, 2'000.0f));
-    assert(!DrawAsAuthoritativeBody(true, false, 10.0f, 0.0f));
-    // Selecting it promotes it to the billboard layer; tracer streaming must
-    // then exclude the same stable source ID.
-    assert(DrawAsAuthoritativeBody(true, true, 10.0f, 0.0f));
-    assert(DrawAsAuthoritativeBody(false, true, 10.0f, 0.0f));
+    assert(DrawAsAuthoritativeBody(false, false, false, 6'371'000.0f, 0.0f));
+    assert(DrawAsAuthoritativeBody(false, false, false, 1.0f, 1'500.0f));
+    assert(!DrawAsAuthoritativeBody(false, false, false, 1.0f, 0.0f));
+    // BodyClass::Tracer has one ordinary GPU stream regardless of radius.
+    assert(!DrawAsAuthoritativeBody(true, false, false, 5'000'000.0f, 2'000.0f));
+    assert(!DrawAsAuthoritativeBody(true, false, false, 10.0f, 0.0f));
+    // Selected tracer moves to the billboard layer and is filtered by ID
+    // from the ordinary GPU tracer stream.
+    assert(DrawAsAuthoritativeBody(true, false, true, 10.0f, 0.0f));
+    // Unlike tracers, spacecraft are never emitted by extract_scene_tracers:
+    // they must stay visible as billboards even without selection.
+    assert(DrawAsAuthoritativeBody(false, true, false, 10.0f, 0.0f));
+    assert(DrawAsAuthoritativeBody(false, true, true, 10.0f, 0.0f));
+    assert(DrawAsAuthoritativeBody(false, false, true, 10.0f, 0.0f));
 }
 
 int main() {
