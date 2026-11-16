@@ -27,6 +27,7 @@ endif()
 
 find_library(log-lib log)
 find_library(android-lib android)
+find_library(jnigraphics-lib jnigraphics)
 find_library(vulkan-lib vulkan)
 find_library(dl-lib dl)
 
@@ -48,6 +49,7 @@ target_link_libraries(
     PRIVATE
     ${log-lib}
     ${android-lib}
+    ${jnigraphics-lib}
     ${vulkan-lib}
     ${dl-lib}
 )

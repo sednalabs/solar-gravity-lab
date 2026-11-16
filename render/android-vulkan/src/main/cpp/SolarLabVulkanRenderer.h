@@ -84,7 +84,8 @@ public:
         std::vector<int32_t> trailVertexCounts,
         std::vector<double> authoritativePreviousPositionsM = {},
         double presentationStartedAtSeconds = 0.0,
-        double presentationDurationSeconds = 0.0);
+        double presentationDurationSeconds = 0.0,
+        std::array<double, 3> trailPreviousOffsetM = {});
 
     void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
         double previousOffsetX = 0.0, double previousOffsetY = 0.0, double previousOffsetZ = 0.0);
@@ -106,6 +107,7 @@ private:
         std::vector<double> authoritativePreviousPositionsM;
         double presentationStartedAtSeconds = 0.0;
         double presentationDurationSeconds = 0.0;
+        std::array<double, 3> trailPreviousOffsetM{};
         std::vector<double> authoritativeSourceMassesKg;
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
@@ -239,6 +241,7 @@ private:
         std::array<float, 4> viewport{};
         std::array<float, 4> primaryLightPositionRelativeAndFlags{};
         std::array<float, 4> presentation{};
+        std::array<float, 4> trailPresentationTranslation{};
     };
 
     struct ComputePushConstants {
@@ -348,6 +351,7 @@ private:
     bool CreateFramebuffers();
     bool CreateCommandPool();
     bool CreateDescriptorResources();
+    bool CreateSurfaceColorBuffer();
     bool CreateGraphicsPipelines();
     bool CreateComputePipelines();
     bool AllocateAndRecordCommandBuffers();
@@ -462,6 +466,7 @@ private:
     std::vector<VkFramebuffer> framebuffers_;
 
     GpuBuffer sceneUniformBuffer_;
+    GpuBuffer surfaceColorBuffer_;
     VkDescriptorSetLayout sceneDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet sceneDescriptorSet_ = VK_NULL_HANDLE;

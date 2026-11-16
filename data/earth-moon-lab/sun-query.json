@@ -16,5 +16,5 @@
     "CSV_FORMAT": "'YES'"
   },
   "retrieved_at_utc": "2026-11-15T23:03:20.137093+00:00",
-  "response_sha256": "9129c65ecb438c5dc04a7e28c83be3736bbe3d6cf409c7de07d7454fb3e3feb5"
+  "response_sha256": "sha256:9129c65ecb438c5dc04a7e28c83be3736bbe3d6cf409c7de07d7454fb3e3feb5"
 }

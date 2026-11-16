@@ -33,7 +33,7 @@ layout(location = 2) flat out vec3 vLightDirection;
 layout(location = 3) out vec2 vBillboardUv;
 layout(location = 4) flat out uint vMaterial;
 layout(location = 5) flat out uint vAppearanceFlags;
-layout(location = 6) flat out float vReferenceMeridianRadians;
+layout(location = 6) flat out vec4 vSurfaceFrame;
 layout(location = 7) flat out float vBodyRadiusUv;
 layout(location = 8) flat out vec3 vNorthPoleCamera;
 layout(location = 9) flat out vec3 vRingRatiosAndOpticalDepth;
@@ -102,9 +102,12 @@ float clipDepth01(vec3 cameraRelativeM) {
 }
 
 vec3 directionToCamera(vec3 worldDirection) {
+    // The fragment sphere flips clip Y back to screen-up. Use that same
+    // right/up/toward-viewer frame for its pole, meridian and light; reflecting
+    // only the world directions makes fixed geography move as the camera orbits.
     vec3 transformed = vec3(
         dot(worldDirection, uScene.rightAndSpan.xyz),
-        -dot(worldDirection, uScene.upAndSpan.xyz),
+        dot(worldDirection, uScene.upAndSpan.xyz),
         -dot(worldDirection, uScene.forwardAndDepth.xyz)
     );
     float magnitude = length(transformed);
@@ -140,7 +143,10 @@ void main() {
     vBillboardUv = corner;
     vMaterial = inMaterial;
     vAppearanceFlags = inAppearanceFlags;
-    vReferenceMeridianRadians = inAtmosphereRadiusDensityAndMeridian.z;
+    vec3 poleWs = length(inNorthPoleWs) > 0.0001 ? normalize(inNorthPoleWs) : vec3(0.0, 1.0, 0.0);
+    vec3 surfaceReferenceWs = abs(poleWs.z) < 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 surfaceEastCamera = directionToCamera(normalize(cross(surfaceReferenceWs, poleWs)));
+    vSurfaceFrame = vec4(surfaceEastCamera, inAtmosphereRadiusDensityAndMeridian.z);
     float physicalRatio = clamp(inPhysicalRadiusM / visualRadiusM, 0.0, 1.0);
     float minimumCoreRatio = (minimumDiameterForKind(inKind) * 0.5) / max(diameterPx, 1.0);
     vBodyRadiusUv = clamp(max(physicalRatio, minimumCoreRatio), 1e-6, 1.0);
@@ -167,11 +173,7 @@ void main() {
 
     if (uScene.primaryLightPositionRelativeAndFlags.w > 0.5) {
         vec3 toLightWorld = normalize(uScene.primaryLightPositionRelativeAndFlags.xyz - positionM);
-        vLightDirection = normalize(vec3(
-            dot(toLightWorld, uScene.rightAndSpan.xyz),
-            -dot(toLightWorld, uScene.upAndSpan.xyz),
-            -dot(toLightWorld, uScene.forwardAndDepth.xyz)
-        ));
+        vLightDirection = directionToCamera(toLightWorld);
     } else {
         vLightDirection = normalize(vec3(-0.42, -0.30, 0.86));
     }

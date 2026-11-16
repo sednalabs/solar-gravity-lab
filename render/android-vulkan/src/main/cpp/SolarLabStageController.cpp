@@ -781,6 +781,12 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
     }
 
     double suggestedRadiusM = BodyFrameViewRadiusM(body->frameRadiusM);
+    if (runtimeScene_.scenarioId == "lab.earth-moon" &&
+        (normalizedBodyId == "earth" || normalizedBodyId == "moon")) {
+        // A close laboratory view fills half the short viewport dimension while
+        // leaving room for the orbit and edge controls. Physical radius is unchanged.
+        suggestedRadiusM = std::max(kMinViewRadiusM, SafeBodyRadiusM(body->frameRadiusM) * 2.0);
+    }
     if (runtimeScene_.scenarioId == "lab.earth-moon" && body->kind == kKindProbe) {
         const auto earth = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
             [](const RuntimeBodyProxy& candidate) { return LowercaseAscii(candidate.bodyId) == "earth"; });
@@ -1424,6 +1430,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
 
     std::vector<double> authoritativePositionsM;
     std::vector<double> authoritativePreviousPositionsM;
+    std::array<double, 3> trailPreviousOffsetM{};
     std::vector<double> authoritativeSourceMassesKg;
     std::vector<float> authoritativeRadiiM;
     std::vector<int32_t> authoritativeColorsArgb;
@@ -1501,6 +1508,16 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                     solarlab::presentation::Mix(previous.previousRelativeY, previous.positionRelativeY, fraction),
                     solarlab::presentation::Mix(previous.previousRelativeZ, previous.positionRelativeZ, fraction)) + oldOrigin - nextOrigin;
             }
+            if (scenarioId == "lab.earth-moon" && bodyId == "earth") {
+                // Lab trails are exported around current Earth. Apply the body's same common
+                // presentation translation so a 100 ms solar-motion tick cannot slide an
+                // entire probe orbit away from its interpolated Earth/camera.
+                trailPreviousOffsetM = {
+                    previousPosition.x - body->position_from_origin_m.x,
+                    previousPosition.y - body->position_from_origin_m.y,
+                    previousPosition.z - body->position_from_origin_m.z,
+                };
+            }
             pickBodies.push_back(RuntimeBodyProxy{
                 .bodyId = bodyId,
                 .positionRelativeX = body->position_from_origin_m.x,
@@ -1532,7 +1549,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             authoritativeKinds.push_back(static_cast<int32_t>(kind));
             authoritativeAppearances.push_back(SolarLabVulkanRenderer::CelestialAppearanceInput{
                 .material = static_cast<uint32_t>(body->appearance.material),
-                .flags = body->appearance.flags,
+                // Renderer-only bits identify the two bundled maps without changing the scene ABI.
+                .flags = body->appearance.flags |
+                    (bodyId == "earth" ? (1U << 16U) : bodyId == "moon" ? (1U << 17U) : 0U),
                 .northPoleX = body->appearance.north_pole_ws.x,
                 .northPoleY = body->appearance.north_pole_ws.y,
                 .northPoleZ = body->appearance.north_pole_ws.z,
@@ -1724,7 +1743,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         std::move(trailVertexCounts),
         std::move(authoritativePreviousPositionsM),
         runtimeScene_.presentationStartedAtSeconds,
-        runtimeScene_.presentationDurationSeconds);
+        runtimeScene_.presentationDurationSeconds,
+        trailPreviousOffsetM);
 
     // The Java-facing snapshot keeps lightweight diagnostics after the raw packet is released.
     runtimeScene_.packetRevision = packetRevision;

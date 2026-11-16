@@ -56,11 +56,13 @@ class EarthMoonLabJourneyInstrumentationTest {
         composeRule.waitUntil(30_000) { facade.uiState.value.snapshot?.scenarioId == "lab.earth-moon" }
         dismissCoach()
         composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
-        capture("earth-moon-initial-overview.png")
+        capture("earth-moon-initial-hero.png", requireRoundBody = true)
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON).performClick()
+        capture("earth-moon-overview.png")
         composeRule.onNodeWithTag(LabTags.focus("earth")).performClick()
         composeRule.waitUntil(20_000) { facade.uiState.value.focusedBodyId == "earth" }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
-        capture("earth-close-view.png")
+        capture("earth-close-view.png", requireRoundBody = true)
         composeRule.onNodeWithTag(LabTags.focus("moon")).performClick()
         composeRule.waitUntil(20_000) { facade.uiState.value.focusedBodyId == "moon" }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Moon")
@@ -150,6 +152,11 @@ class EarthMoonLabJourneyInstrumentationTest {
                 assertTrue("Landscape playback must leave a separate stage region below the header", header.bottom < playback.top)
             }
             capture("earth-moon-landscape.png")
+            composeRule.onNodeWithTag(LabTags.focus("earth")).performClick()
+            composeRule.waitUntil(20_000) {
+                composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "earth"
+            }
+            capture("earth-landscape-close-view.png", requireRoundBody = true)
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
             if (shortWindow) {
                 val header = composeRule.onNodeWithTag(LabTags.COMPACT_HEADER).fetchSemanticsNode().boundsInRoot
@@ -171,7 +178,7 @@ class EarthMoonLabJourneyInstrumentationTest {
         }
     }
 
-    private fun capture(name: String) {
+    private fun capture(name: String, requireRoundBody: Boolean = false) {
         composeRule.waitForIdle()
         // Compose idle does not wait for the native camera's 240 ms ValueAnimator
         // or for Vulkan presentation. Allow a bounded camera settle, then require
@@ -190,9 +197,39 @@ class EarthMoonLabJourneyInstrumentationTest {
         }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val stage = captureNativeSurface(requireNotNull(surface))
+        val bodyAxes = if (requireRoundBody) measureCentralBodyAxes(stage) else null
         writeImage("${name.removeSuffix(".png")}-stage.png", stage)
         val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
         writeImage(name, image)
+        bodyAxes?.let { (horizontal, vertical) ->
+            assertTrue("A close-view body should occupy the native stage centre: $horizontal × $vertical px", horizontal >= 32 && vertical >= 32)
+            val ratio = horizontal.toDouble() / vertical
+            assertTrue("Native planet should remain round after surface resize: $horizontal × $vertical px", ratio in 0.67..1.5)
+        }
+    }
+
+    private fun measureCentralBodyAxes(image: Bitmap): Pair<Int, Int> {
+        // The paused Earth close view is centred. Measure the longest visible
+        // diameter on each centre line; a five-pixel thickness excludes thin
+        // trajectory lines. Tolerance allows lighting while catching stretched
+        // landscape buffers (the observed failure was more than 4:1).
+        fun visible(x: Int, y: Int): Boolean {
+            val pixel = image.getPixel(x, y)
+            return android.graphics.Color.red(pixel) + android.graphics.Color.green(pixel) +
+                android.graphics.Color.blue(pixel) > 18
+        }
+        fun longestRun(size: Int, occupied: (Int) -> Boolean): Int {
+            var current = 0
+            var longest = 0
+            for (coordinate in size / 10 until size * 9 / 10) {
+                current = if (occupied(coordinate)) current + 1 else 0
+                longest = maxOf(longest, current)
+            }
+            return longest
+        }
+        val horizontal = longestRun(image.width) { x -> (-2..2).all { visible(x, image.height / 2 + it) } }
+        val vertical = longestRun(image.height) { y -> (-2..2).all { visible(image.width / 2 + it, y) } }
+        return horizontal to vertical
     }
 
     private fun findNativeSurface(view: View): SurfaceView? {

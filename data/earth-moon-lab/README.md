@@ -6,7 +6,11 @@ ephemeris player, for `lab.earth-moon`.
 The three targets are the Sun (10), Earth (399) and Moon (301). Each checked-in
 response was obtained from the NASA/JPL Horizons API on 15 November 2026 UTC.
 The matching query file records the full URL, parameters, retrieval time and
-SHA-256 of the response. The returned ephemeris source is **DE441**.
+SHA-256 of the response. The `response_sha256` field uses a `sha256:<digest>`
+identifier: its algorithm label distinguishes this public data checksum from
+a secret token. The generator requires that exact prefix and verifies the
+digest against the original response bytes. The returned ephemeris source is
+**DE441**.
 
 All states are **geometric**, with no light-time or aberration correction, in
 the **ICRF equatorial frame**, relative to the **solar-system barycentre**.

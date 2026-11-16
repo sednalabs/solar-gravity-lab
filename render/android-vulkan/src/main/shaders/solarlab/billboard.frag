@@ -1,12 +1,16 @@
 #version 450
 
+layout(set = 0, binding = 1, std430) readonly buffer SurfaceColors {
+    uint rgba[];
+} uSurface;
+
 layout(location = 0) in vec4 vColor;
 layout(location = 1) flat in uint vKind;
 layout(location = 2) flat in vec3 vLightDirection;
 layout(location = 3) in vec2 vBillboardUv;
 layout(location = 4) flat in uint vMaterial;
 layout(location = 5) flat in uint vAppearanceFlags;
-layout(location = 6) flat in float vReferenceMeridianRadians;
+layout(location = 6) flat in vec4 vSurfaceFrame;
 layout(location = 7) flat in float vBodyRadiusUv;
 layout(location = 8) flat in vec3 vNorthPoleCamera;
 layout(location = 9) flat in vec3 vRingRatiosAndOpticalDepth;
@@ -31,8 +35,11 @@ const uint MATERIAL_COMET = 8u;
 const uint HAS_RING_SYSTEM = 1u << 0u;
 const uint HAS_ATMOSPHERE = 1u << 1u;
 const uint HAS_COMET = 1u << 2u;
+const uint HAS_EARTH_MAP = 1u << 16u;
+const uint HAS_MOON_MAP = 1u << 17u;
 
 #define vSurfaceDetail vSurfaceMetrics.x
+#define vReferenceMeridianRadians vSurfaceFrame.w
 
 float hash21(vec2 point) {
     vec3 p3 = fract(vec3(point.xyx) * 0.1031);
@@ -43,7 +50,10 @@ float hash21(vec2 point) {
 vec3 bodyLocalNormal(vec3 cameraNormal) {
     vec3 pole = normalize(vNorthPoleCamera);
     vec3 reference = abs(pole.z) < 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    vec3 east = normalize(cross(reference, pole));
+    // The map's meridian belongs to the body, so orbiting the camera reveals
+    // different geography rather than turning the map to face the viewer.
+    bool mapped = (vAppearanceFlags & (HAS_EARTH_MAP | HAS_MOON_MAP)) != 0u;
+    vec3 east = mapped ? normalize(vSurfaceFrame.xyz) : normalize(cross(reference, pole));
     vec3 meridian = normalize(cross(pole, east));
     vec3 local = vec3(
         dot(cameraNormal, east),
@@ -76,8 +86,29 @@ void composite(inout vec4 accumulated, vec3 color, float alpha) {
     accumulated.a = combinedAlpha;
 }
 
+vec3 surfaceTexel(int map, ivec2 pixel) {
+    int x = (pixel.x % 1024 + 1024) % 1024;
+    int y = clamp(pixel.y, 0, 511);
+    return unpackUnorm4x8(uSurface.rgba[map * 524288 + y * 1024 + x]).rgb;
+}
+
+vec3 mappedSurface(int map, vec3 local) {
+    // Equirectangular maps: Greenwich at the centre, north at the top. Wrapping
+    // longitude and clamping latitude keep bilinear samples continuous at seams/poles.
+    vec2 uv = vec2(atan(local.z, local.x) / 6.28318530718 + 0.5,
+        0.5 - asin(clamp(local.y, -1.0, 1.0)) / 3.14159265359);
+    vec2 pixel = uv * vec2(1024.0, 512.0) - 0.5;
+    ivec2 base = ivec2(floor(pixel));
+    vec2 fraction = fract(pixel);
+    return mix(mix(surfaceTexel(map, base), surfaceTexel(map, base + ivec2(1, 0)), fraction.x),
+        mix(surfaceTexel(map, base + ivec2(0, 1)), surfaceTexel(map, base + ivec2(1, 1)), fraction.x),
+        fraction.y);
+}
+
 vec3 surfaceColor(vec3 normal, float sphereZ) {
     vec3 local = bodyLocalNormal(normal);
+    if ((vAppearanceFlags & HAS_EARTH_MAP) != 0u) return mappedSurface(0, local);
+    if ((vAppearanceFlags & HAS_MOON_MAP) != 0u) return mappedSurface(1, local);
     float latitude = local.y;
     float longitude = atan(local.z, local.x);
     float broadNoise = layeredSurfaceNoise(local);

@@ -6,6 +6,9 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 upAndSpan;
     vec4 forwardAndDepth;
     vec4 viewport;
+    vec4 primaryLightPositionRelativeAndFlags;
+    vec4 presentation;
+    vec4 trailPresentationTranslation;
 } uScene;
 
 layout(location = 0) in vec3 inPositionM;
@@ -41,7 +44,9 @@ float clipDepth01(vec3 cameraRelativeM) {
 }
 
 void main() {
-    vec3 relative = cameraRelative(inPositionM);
+    // Zero outside the Earth–Moon lab. This follows the same submitted fraction
+    // as bodies while preserving the snapshot's relative trajectory geometry.
+    vec3 relative = cameraRelative(inPositionM + uScene.trailPresentationTranslation.xyz);
     gl_Position = vec4(clipXY(relative), clipDepth01(relative), 1.0);
     vec4 color = unpackArgb(inColorArgb);
     color.a *= inAlpha;

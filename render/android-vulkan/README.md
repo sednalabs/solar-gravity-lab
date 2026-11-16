@@ -16,7 +16,7 @@ only authoritative world. C++ and GLSL operate only after the exported scene
 boundary.
 
 Authoritative bodies also carry a Rust-owned, render-only appearance contract.
-The Vulkan stage turns those immutable facts into procedural surfaces,
+The Vulkan stage turns those immutable facts into mapped or procedural surfaces,
 atmosphere limbs, analytically occluded ring planes, and comet coma/dust/ion
 tails. Visual scale can expand a billboard to contain those effects, but it
 never feeds positions, masses, velocities, radii, forces, or integration state
@@ -30,10 +30,21 @@ asset paths, and CMake inputs synchronized when moving bridge entry points.
 
 ## Earth–Moon presentation
 
+Earth and Moon use bundled NASA colour maps; their original files, credits,
+checksums and limits are recorded in [surface sources](src/main/assets/solarlab/surfaces/README.md).
+The native decoder runs once per Vulkan device and uploads a 4 MiB read-only map
+buffer. Other bodies retain their procedural materials. Surface orientation and
+atmospheric effects are illustrative; none of these assets changes the simulation.
+
 The native stage shares its orthographic viewport scale with touch projection. Body picking
 tests the front surface of the displayed sphere before considering padded touch targets;
 the billboard fragment shader writes the same analytic sphere depth. The Earth–Moon
 laboratory's Home frame includes Earth and Moon while keeping the Sun available for lighting.
+Swapchain images stay in window coordinates and advertise an identity pre-transform;
+Android performs display rotation. This matches the shader viewport and touch coordinates
+without rotating and stretching a landscape buffer. Swapchain creation logs the requested,
+surface and buffer extents plus both transforms so native rotation evidence can verify the
+actual presentation contract, in addition to the pure projection formulas.
 Free navigation in this laboratory travels with Earth's translation in non-rotating axes,
 preserving the user's local pan, orientation and zoom during accelerated solar motion. The
 Moon and probes retain their movement relative to Earth. Other scenarios keep their existing
@@ -43,7 +54,9 @@ Runtime snapshots remain authoritative. Forward playback interpolates only prese
 positions between matching snapshots, rebased to the current scene origin. Follow cameras
 and the primary light use the same interpolation fraction. Pausing, changing history or
 changing the set of bodies snaps to the current snapshot. Trails and tracer streams continue
-to represent the current exported snapshot rather than interpolated physics.
+to represent the current exported snapshot rather than interpolated physics. Laboratory
+trails also receive Earth's common presentation translation, using the same submitted
+fraction as the bodies, so a probe's orbit stays centred during each display interval.
 
 Android requests display callbacks while an update or interpolation is pending. A frame gate
 coalesces invalidations and permits one native render in flight; pause and surface teardown
@@ -55,8 +68,11 @@ The pure native geometry test can run without an Android SDK:
 ```sh
 g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/solarlab-presentation-test
 /tmp/solarlab-presentation-test
+python render/android-vulkan/src/test/python/test_surface_frame.py
 ```
 
+The surface-frame regression reads the billboard shaders' axis signs and checks known
+world-space surface points and lighting through camera rotations, including tilted poles.
 `PresentationFrameGateTest` covers coalescing, pending interpolation, and inactive surfaces.
 The Android build must also compile the shaders and JNI changes. Native screenshots and a
 device walkthrough remain necessary to accept appearance, touch, rotation, and playback.

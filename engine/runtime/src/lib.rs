@@ -4,6 +4,7 @@
 //! runtime architecture. All external integrations (FFI, JNI, adapters,
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
+mod lab_prediction;
 mod lab_step;
 mod persistence;
 mod trail_frame;
@@ -1248,7 +1249,7 @@ impl WorldRuntime {
     fn render_scene_orbit_query(&self) -> OrbitArchiveQuery {
         let active = self.active_branch();
         let full_history = active.world.bodies.len() <= RENDER_SCENE_ORBIT_BODY_LIMIT;
-        OrbitArchiveQuery {
+        let mut query = OrbitArchiveQuery {
             body_ids: render_scene_orbit_body_ids(
                 &active.world.bodies,
                 active.world.observer.focus_body_id.as_ref(),
@@ -1257,7 +1258,9 @@ impl WorldRuntime {
             include_historical_orbits: full_history,
             include_prediction: full_history,
             ..OrbitArchiveQuery::default()
-        }
+        };
+        lab_prediction::configure_display_query(&mut query, &self.scenario_id.0, &active.world.bodies);
+        query
     }
 
     fn new_command_header(

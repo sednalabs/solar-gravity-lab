@@ -404,7 +404,7 @@ private fun LabToolsPanel(
 ) {
     Surface(modifier = modifier.testTag(LabTags.TOOLS_PANEL), color = LabPanel,
         shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, LabLine)) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 186.dp).verticalScroll(rememberScrollState())
+        Column(Modifier.fillMaxWidth().heightIn(max = 216.dp).verticalScroll(rememberScrollState())
             .padding(horizontal = 10.dp, vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.horizontalScroll(rememberScrollState())) {
                 LabTextAction("Scenes", actions.scenarios, tag = SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON)

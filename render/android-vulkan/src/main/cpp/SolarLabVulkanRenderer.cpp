@@ -2,6 +2,8 @@
 #include "SolarLabPresentation.h"
 
 #include <android/asset_manager.h>
+#include <android/bitmap.h>
+#include <android/imagedecoder.h>
 #include <android/log.h>
 #include <vulkan/vulkan_android.h>
 
@@ -373,7 +375,8 @@ void SolarLabVulkanRenderer::SubmitScene(
     std::vector<int32_t> trailVertexCounts,
     std::vector<double> authoritativePreviousPositionsM,
     double presentationStartedAtSeconds,
-    double presentationDurationSeconds) {
+    double presentationDurationSeconds,
+    std::array<double, 3> trailPreviousOffsetM) {
     std::scoped_lock lock(stateMutex_);
     sceneBuffers_.sourceRevision = sourceRevision;
     sceneBuffers_.sceneOriginX = sceneOriginX;
@@ -383,6 +386,7 @@ void SolarLabVulkanRenderer::SubmitScene(
     sceneBuffers_.authoritativePreviousPositionsM = std::move(authoritativePreviousPositionsM);
     sceneBuffers_.presentationStartedAtSeconds = presentationStartedAtSeconds;
     sceneBuffers_.presentationDurationSeconds = presentationDurationSeconds;
+    sceneBuffers_.trailPreviousOffsetM = trailPreviousOffsetM;
     sceneBuffers_.authoritativeSourceMassesKg = std::move(authoritativeSourceMassesKg);
     sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
     sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
@@ -784,6 +788,19 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
     const auto presentMode = ChoosePresentMode(presentModes);
     const auto extent = ChooseExtent(capabilities, width, height);
 
+    // Every stage shader and the CPU touch projection use the SurfaceView's window
+    // coordinates. We have not pre-rotated those coordinates into the display's
+    // natural orientation, so Android must handle that rotation. Advertising
+    // currentTransform here asks Android to undo a rotation we never applied; at
+    // 90/270 degrees the rotated buffer is then stretched into the window, turning
+    // round bodies into ellipses. Keep the swapchain in the same window coordinate
+    // system as the viewport, and only advertise the identity transform.
+    constexpr VkSurfaceTransformFlagBitsKHR preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    if ((capabilities.supportedTransforms & preTransform) == 0U) {
+        SetError("Android surface does not support the window-coordinate identity transform.");
+        return false;
+    }
+
     uint32_t imageCount = capabilities.minImageCount + 1;
     if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount) {
         imageCount = capabilities.maxImageCount;
@@ -803,7 +820,7 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
-        .preTransform = capabilities.currentTransform,
+        .preTransform = preTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = presentMode,
         .clipped = VK_TRUE,
@@ -817,6 +834,12 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
 
     swapchainImageFormat_ = chosenFormat.format;
     swapchainExtent_ = extent;
+    LogInfo("Swapchain window=" + std::to_string(width) + "x" + std::to_string(height) +
+        " surface=" + std::to_string(capabilities.currentExtent.width) + "x" +
+        std::to_string(capabilities.currentExtent.height) + " buffer=" +
+        std::to_string(extent.width) + "x" + std::to_string(extent.height) +
+        " currentTransform=" + std::to_string(capabilities.currentTransform) +
+        " preTransform=" + std::to_string(preTransform));
 
     vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount, nullptr);
     swapchainImages_.resize(imageCount);
@@ -1159,6 +1182,50 @@ bool SolarLabVulkanRenderer::CreateCommandPool() {
     return true;
 }
 
+// Decode the two bundled, unmodified NASA maps once per Vulkan device. A small read-only
+// RGBA buffer reuses the existing upload path; no image decoder runs on the display clock.
+bool SolarLabVulkanRenderer::CreateSurfaceColorBuffer() {
+    if (surfaceColorBuffer_.buffer != VK_NULL_HANDLE) return true;
+    constexpr size_t width = 1024;
+    constexpr size_t height = 512;
+    constexpr size_t pixelsPerMap = width * height;
+    const std::array<const char*, 2> paths = {
+        "solarlab/surfaces/earth-nasa.png", "solarlab/surfaces/moon-nasa.jpg",
+    };
+    std::vector<uint32_t> pixels(pixelsPerMap * paths.size());
+    for (size_t index = 0; index < paths.size(); ++index) {
+        AAsset* asset = AAssetManager_open(assetManager_, paths[index], AASSET_MODE_BUFFER);
+        if (asset == nullptr) {
+            SetError(std::string("Missing bundled surface map: ") + paths[index]);
+            return false;
+        }
+        AImageDecoder* decoder = nullptr;
+        const int created = AImageDecoder_createFromAAsset(asset, &decoder);
+        bool decoded = false;
+        if (created == ANDROID_IMAGE_DECODER_SUCCESS && decoder != nullptr) {
+            const AImageDecoderHeaderInfo* info = AImageDecoder_getHeaderInfo(decoder);
+            if (AImageDecoderHeaderInfo_getWidth(info) == static_cast<int32_t>(width) &&
+                AImageDecoderHeaderInfo_getHeight(info) == static_cast<int32_t>(height) &&
+                AImageDecoder_setAndroidBitmapFormat(decoder, ANDROID_BITMAP_FORMAT_RGBA_8888) ==
+                    ANDROID_IMAGE_DECODER_SUCCESS) {
+                decoded = AImageDecoder_decodeImage(decoder, pixels.data() + index * pixelsPerMap,
+                    width * sizeof(uint32_t), pixelsPerMap * sizeof(uint32_t)) ==
+                    ANDROID_IMAGE_DECODER_SUCCESS;
+            }
+        }
+        if (decoder != nullptr) AImageDecoder_delete(decoder);
+        AAsset_close(asset);
+        if (!decoded) {
+            SetError(std::string("Cannot decode bundled 1024 x 512 surface map: ") + paths[index]);
+            return false;
+        }
+    }
+    // Both supported Android ABIs are little-endian: RGBA bytes are unpackUnorm4x8 words.
+    return EnsureHostVisibleBuffer(ByteSize(pixels), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        "celestial-surface-colors", surfaceColorBuffer_) &&
+        UploadBytes(pixels.data(), ByteSize(pixels), surfaceColorBuffer_);
+}
+
 // Allocates the descriptor layouts, pool, and uniform/scene buffers shared by graphics and compute
 // passes so later pipeline setup can bind a stable descriptor surface.
 bool SolarLabVulkanRenderer::CreateDescriptorResources() {
@@ -1170,22 +1237,20 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     if (!EnsureHostVisibleBuffer(sizeof(SceneUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, "scene-uniform", sceneUniformBuffer_)) {
         return false;
     }
+    if (!CreateSurfaceColorBuffer()) return false;
 
-    // The graphics descriptor exposes one uniform buffer and is reused across swapchain rebuilds.
+    // Scene uniforms and immutable surface colours survive ordinary swapchain rebuilds.
     if (sceneDescriptorSetLayout_ == VK_NULL_HANDLE) {
-        const VkDescriptorSetLayoutBinding binding{
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-            .pImmutableSamplers = nullptr,
-        };
+        const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {{
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        }};
         const VkDescriptorSetLayoutCreateInfo layoutCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
-            .bindingCount = 1,
-            .pBindings = &binding,
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
+            .pBindings = bindings.data(),
         };
         if (vkCreateDescriptorSetLayout(device_, &layoutCreateInfo, nullptr, &sceneDescriptorSetLayout_) != VK_SUCCESS) {
             SetError("vkCreateDescriptorSetLayout failed.");
@@ -1196,17 +1261,17 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     // A single descriptor set is enough for the scene uniform path; compute storage is configured
     // separately below when the queue family supports it.
     if (descriptorPool_ == VK_NULL_HANDLE) {
-        const VkDescriptorPoolSize poolSize{
-            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-        };
+        const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+        }};
         const VkDescriptorPoolCreateInfo poolCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
             .maxSets = 1,
-            .poolSizeCount = 1,
-            .pPoolSizes = &poolSize,
+            .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+            .pPoolSizes = poolSizes.data(),
         };
         if (vkCreateDescriptorPool(device_, &poolCreateInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
             SetError("vkCreateDescriptorPool failed.");
@@ -1246,6 +1311,16 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
         .pTexelBufferView = nullptr,
     };
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    const VkDescriptorBufferInfo surfaceInfo{
+        .buffer = surfaceColorBuffer_.buffer,
+        .offset = 0,
+        .range = surfaceColorBuffer_.sizeBytes,
+    };
+    VkWriteDescriptorSet surfaceWrite = write;
+    surfaceWrite.dstBinding = 1;
+    surfaceWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    surfaceWrite.pBufferInfo = &surfaceInfo;
+    vkUpdateDescriptorSets(device_, 1, &surfaceWrite, 0, nullptr);
 
     // The pipeline layout depends on descriptor shape, not descriptor contents, so it can survive
     // uniform-buffer updates.
@@ -2319,9 +2394,9 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
     const float halfSpanY = static_cast<float>(projection.halfSpanY);
     const float halfDepth = static_cast<float>(projection.halfDepth);
     const float metersPerPixel = static_cast<float>(projection.metersPerPixel);
-    const double presentationFraction = solarlab::presentation::InterpolationFraction(
+    const float presentationFraction = static_cast<float>(solarlab::presentation::InterpolationFraction(
         solarlab::presentation::MonotonicSeconds(), sceneBuffers_.presentationStartedAtSeconds,
-        sceneBuffers_.presentationDurationSeconds);
+        sceneBuffers_.presentationDurationSeconds));
     const float maxPointSizePx = enabledFeatures_.largePoints
         ? std::max(1.0f, std::min(physicalDeviceProperties_.limits.pointSizeRange[1], kDefaultMaxPointSizePx))
         : 1.0f;
@@ -2405,6 +2480,12 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
         },
         .primaryLightPositionRelativeAndFlags = primaryLightPositionRelativeAndFlags,
         .presentation = {static_cast<float>(presentationFraction), 0.0f, 0.0f, 0.0f},
+        .trailPresentationTranslation = {
+            static_cast<float>(solarlab::presentation::PresentationReferenceOffset(sceneBuffers_.trailPreviousOffsetM[0], presentationFraction)),
+            static_cast<float>(solarlab::presentation::PresentationReferenceOffset(sceneBuffers_.trailPreviousOffsetM[1], presentationFraction)),
+            static_cast<float>(solarlab::presentation::PresentationReferenceOffset(sceneBuffers_.trailPreviousOffsetM[2], presentationFraction)),
+            0.0f,
+        },
     };
 
     if (!UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_)) return false;
@@ -3137,6 +3218,7 @@ void SolarLabVulkanRenderer::DestroyDescriptorResources() {
     DestroyGraphicsPipelines();
     DestroyComputePipelines();
     DestroyGpuBuffer(sceneUniformBuffer_);
+    DestroyGpuBuffer(surfaceColorBuffer_);
 
     if (device_ == VK_NULL_HANDLE) {
         sceneDescriptorSet_ = VK_NULL_HANDLE;

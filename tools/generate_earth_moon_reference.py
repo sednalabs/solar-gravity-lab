@@ -31,7 +31,10 @@ def load_reference():
         raw = (DATA / f"{name}-horizons.json").read_bytes()
         query = json.loads((DATA / f"{name}-query.json").read_text())
         digest = hashlib.sha256(raw).hexdigest()
-        if query["response_sha256"] != digest:
+        recorded_digest = query["response_sha256"]
+        if not isinstance(recorded_digest, str) or not recorded_digest.startswith("sha256:"):
+            raise ValueError(f"{name}: response digest must use the sha256: identifier prefix")
+        if recorded_digest.removeprefix("sha256:") != digest:
             raise ValueError(f"{name}: response digest does not match recorded query")
         params = query["parameters"]
         expected = {

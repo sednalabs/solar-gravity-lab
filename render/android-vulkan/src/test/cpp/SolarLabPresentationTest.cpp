@@ -57,8 +57,39 @@ void TestOneDayInEarthReferenceFrame() {
     assert(std::abs((laterCamera - laterEarth) - (pannedCamera - presentedEarth)) < 1e-4);
 }
 
+void TestProbeTrailFollowsDisplayedEarth() {
+    constexpr double orbitRadiusM = 6'371'010.0 + 800'000.0;
+    // Positions are rebased to the latest Earth. At 1 h/s and 30 km/s, a 100 ms
+    // tick translates Earth by 10,800 km, farther than this probe's orbit radius.
+    const std::array<double, 3> previousEarth{-800'000.0, -10'800'000.0, 400'000.0};
+    const std::array<double, 3> currentEarth{0.0, 0.0, 0.0};
+    const std::array<double, 3> pan{1'000'000.0, -500'000.0, 250'000.0};
+    assert(std::abs(previousEarth[1]) > orbitRadiusM);
+    for (float fraction : {0.0f, 0.1f, 0.5f, 0.9f, 1.0f}) {
+        for (double angle : {0.0, 1.0, 2.0, 3.0, 4.0, 5.0}) {
+            const std::array<double, 3> orbitPoint{
+                orbitRadiusM * std::cos(angle), orbitRadiusM * std::sin(angle), 0.0,
+            };
+            for (size_t axis = 0; axis < orbitPoint.size(); ++axis) {
+                const double displayedEarth = Mix(previousEarth[axis], currentEarth[axis], fraction);
+                const float translation = static_cast<float>(PresentationReferenceOffset(
+                    previousEarth[axis] - currentEarth[axis], fraction));
+                // Mirror the actual packed vertex/uniform arithmetic, including f32 rounding.
+                const float presentedTrail = static_cast<float>(orbitPoint[axis]) + translation;
+                const float presentedCamera = static_cast<float>(displayedEarth + pan[axis]);
+                const double localTrail = static_cast<double>(presentedTrail) - presentedCamera;
+                assert(std::abs(localTrail - (orbitPoint[axis] - pan[axis])) < 2.0);
+                if (fraction == 1.0f) assert(translation == 0.0f);
+            }
+        }
+        // The default for other scenarios and legacy submissions is an exact zero shift.
+        assert(PresentationReferenceOffset(0.0, fraction) == 0.0);
+    }
+}
+
 int main() {
     TestOneDayInEarthReferenceFrame();
+    TestProbeTrailFollowsDisplayedEarth();
     const auto portrait = MakeProjection(400.0, 600, 1200);
     const auto landscape = MakeProjection(400.0, 1200, 600);
     assert(portrait.halfSpanX == 400.0);

@@ -166,7 +166,8 @@ internal fun LabBodyInspectorDialog(
             modifier = Modifier.testTag(LabTags.EDIT)) { Text("Edit position & velocity") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("The simulation is paused while you inspect this body.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (body == null) {
@@ -375,10 +376,11 @@ internal fun LabScienceDialog(uiState: ShellUiState, scenarioPack: RuntimeScenar
                 } ?: "This built-in scene uses approximate initial conditions. It is an experiment, not a live astronomical ephemeris.")
                 LabScienceSection("What you see", buildString {
                     if (scenarioPack.scenarioId == "lab.earth-moon") {
-                        append("The overview travels with Earth. Trails show motion relative to Earth using matching recorded or predicted Earth positions. ")
+                        append("The overview travels with Earth. Trails show motion relative to Earth using matching recorded or predicted Earth positions. With a close probe, the prediction focuses on its next orbit rather than a long, sparsely sampled path. ")
                     }
-                    append("Planet surfaces and atmospheric light are illustrative. Small objects have a minimum screen size so you can find them. The time display is elapsed simulation time from the scenario epoch.")
+                    append("Surface orientation and atmospheric light are illustrative. Small objects have a minimum screen size so you can find them. The time display is elapsed simulation time from the scenario epoch.")
                 })
+                LabScienceSection("Surface imagery", "Earth uses NASA's Blue Marble map, credited to NASA/GSFC, Reto Stöckli and NASA's Earth Observatory. The Moon uses NASA's CGI Moon Kit from the LRO Camera and Laser Altimeter teams. These offline colour maps show surface features, not live weather or a terrain simulation. Other bodies use procedural surfaces. NASA has not reviewed or endorsed this app.")
                 LabScienceSection("Your experiment", "Editing a body changes its initial position or velocity. A probe feels gravity by default without attracting the other bodies; enable Exert gravity to give it gravitational source mass.")
                 LabScienceSection("Limits", "This model does not include relativistic corrections, tides, atmospheric drag or a resolved collision/debris simulation. Large time speeds can be limited to protect numerical accuracy. A reference seed does not make the subsequent simplified propagation a DE441 solution.")
                 uiState.renderStatus.provenanceSource?.takeIf(String::isNotBlank)?.let {

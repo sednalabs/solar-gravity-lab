@@ -302,6 +302,7 @@ internal fun StageFirstRuntimeExperience(
         var editorError by remember { mutableStateOf<String?>(null) }
         var labNotice by remember { mutableStateOf<String?>(null) }
         var framedLabSession by rememberSaveable { mutableStateOf(0L) }
+        var openingSavedExperiment by remember { mutableStateOf(false) }
         var pendingScenarioFrame by remember { mutableStateOf<RuntimeScenarioPack?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var cameraScaleBand by remember { mutableStateOf(CameraScaleBand.SYSTEM) }
@@ -564,20 +565,21 @@ internal fun StageFirstRuntimeExperience(
             selectedBodyId = focusBodyId
             observerMode = scenarioObserverMode
             pendingScenarioFrame = null
+            hostView.focusAndFrameBody(focusBodyId, scenarioObserverMode)
             if (scenarioPack.scenarioId == "lab.earth-moon") {
-                resetRuntimeCamera()
                 framedLabSession = runtimeSessionHandle
-            } else {
-                hostView.focusAndFrameBody(focusBodyId, scenarioObserverMode)
             }
         }
 
-        LaunchedEffect(runtimeSessionHandle, uiState.snapshot?.scenarioId, renderHostView, searchableBodies) {
-            if (runtimeSessionHandle != 0L && framedLabSession != runtimeSessionHandle &&
+        LaunchedEffect(runtimeSessionHandle, uiState.snapshot?.scenarioId, renderHostView, searchableBodies,
+            pendingScenarioFrame, openingSavedExperiment) {
+            if (!openingSavedExperiment && pendingScenarioFrame == null &&
+                runtimeSessionHandle != 0L && framedLabSession != runtimeSessionHandle &&
                 uiState.snapshot?.scenarioId == "lab.earth-moon" && renderHostView != null &&
                 searchableBodies.any { it.id == "earth" } && searchableBodies.any { it.id == "moon" }) {
-                // Native Home frames the Earth–Moon pair while retaining the Sun in the model.
-                resetRuntimeCamera()
+                // A fresh lab opens on Earth. The saved session marker prevents
+                // recomposition or activity recreation from overriding user navigation.
+                focusAndFrameRuntimeBody("earth")
                 framedLabSession = runtimeSessionHandle
             }
         }
@@ -874,13 +876,19 @@ internal fun StageFirstRuntimeExperience(
                     }
                 },
                 onLoad = { id ->
+                    openingSavedExperiment = true
                     coroutineScope.launch {
-                        runtimeFacade.loadExperiment(id)
-                        val state = runtimeFacade.uiState.value
-                        if (state.connectionState == SessionConnectionState.Active && state.noticeTone == ShellNoticeTone.Positive) {
-                            savedVisible = false
-                            selectedBodyId = state.focusedBodyId
-                            resetRuntimeCamera()
+                        try {
+                            runtimeFacade.loadExperiment(id)
+                            val state = runtimeFacade.uiState.value
+                            if (state.connectionState == SessionConnectionState.Active && state.noticeTone == ShellNoticeTone.Positive) {
+                                framedLabSession = state.sessionHandle ?: framedLabSession
+                                savedVisible = false
+                                selectedBodyId = state.focusedBodyId
+                                resetRuntimeCamera()
+                            }
+                        } finally {
+                            openingSavedExperiment = false
                         }
                     }
                 },

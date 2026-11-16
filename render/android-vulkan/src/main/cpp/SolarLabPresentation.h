@@ -106,4 +106,8 @@ inline double TranslateWithReference(double coordinate, double previousReference
     return coordinate + (currentReference - previousReference);
 }
 
+inline double PresentationReferenceOffset(double previousMinusCurrent, double fraction) {
+    return previousMinusCurrent * (1.0 - fraction);
+}
+
 }  // namespace solarlab::presentation
