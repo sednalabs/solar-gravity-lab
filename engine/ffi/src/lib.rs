@@ -40,6 +40,8 @@ use solarlab_vulkan_adapter::{
 };
 
 mod persistence;
+#[cfg(any(target_os = "android", test))]
+mod probe_authoring;
 pub use persistence::{sl_v2_session_export_save, sl_v2_session_import_save, SlSaveWriteResult};
 
 pub const SOLARLAB_V2_ABI_VERSION: u32 = 12;
@@ -2210,6 +2212,7 @@ fn jni_next_ordinal(ordinal: u64) -> i64 {
 // release call.
 mod android_jni {
     mod persistence;
+    mod probe_authoring;
     use super::{
         sl_v2_session_apply_command, sl_v2_session_create, sl_v2_session_destroy,
         sl_v2_session_export_vulkan_scene, sl_v2_session_refresh, sl_v2_session_runtime_info,
@@ -2224,6 +2227,8 @@ mod android_jni {
     use jni::JNIEnv;
 
     const CLASS_NATIVE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeResult";
+    const CLASS_NATIVE_PROBE_PREVIEW_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeProbePreviewResult";
+    const CLASS_NATIVE_PROBE_COMMIT_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeProbeCommitResult";
     const CLASS_NATIVE_ADVANCE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeAdvanceResult";
     const CLASS_NATIVE_PLAYBACK_TICK_RESULT: &str = "com/sednalabs/solarlab/runtime/NativePlaybackTickResult";
     const CLASS_NATIVE_CREATE_SESSION_RESULT: &str =

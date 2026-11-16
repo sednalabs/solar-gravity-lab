@@ -7,6 +7,37 @@
 
 using namespace solarlab::presentation;
 
+void TestMapPlaneAndOverlayProjection() {
+    const double pi = std::acos(-1.0);
+    for (const auto normal : {std::array<double, 3>{0.0, 0.0, 1.0},
+             std::array<double, 3>{1.0, 2.0, 3.0}, std::array<double, 3>{1.0, 2.0, -3.0},
+             std::array<double, 3>{1.0, 0.0, 0.0}}) {
+        const double magnitude = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+        const auto angles = MapCameraAngles(normal[0], normal[1], normal[2]);
+        const auto basis = MakeCameraBasis(angles[0], angles[1]);
+        for (size_t axis = 0; axis < 3; ++axis) {
+            assert(std::abs(basis.forward[axis] + normal[axis] / magnitude) < 1e-12);
+        }
+    }
+
+    // Known fixtures shared with the Kotlin viewport project/unproject tests.
+    const std::array<double, 3> point{200.0, -100.0, 400.0};
+    const auto dot = [&](const std::array<double, 3>& axis) {
+        return point[0] * axis[0] + point[1] * axis[1] + point[2] * axis[2];
+    };
+    for (const auto dimensions : {std::array<int, 2>{600, 1200}, std::array<int, 2>{1200, 600}}) {
+        const auto projection = MakeProjection(400.0, dimensions[0], dimensions[1]);
+        const auto overhead = MakeCameraBasis(0.0, pi * 0.5);
+        assert(std::abs(dot(overhead.right) / projection.metersPerPixel - 150.0) < 1e-8);
+        assert(std::abs(-dot(overhead.up) / projection.metersPerPixel - 75.0) < 1e-8);
+        assert(std::abs(dot(overhead.forward) + 400.0) < 1e-8);
+        const auto inclined = MakeCameraBasis(pi * 0.5, pi / 6.0);
+        assert(std::abs(dot(inclined.right) / projection.metersPerPixel + 75.0) < 1e-8);
+        assert(std::abs(-dot(inclined.up) / projection.metersPerPixel + 184.8076211353316) < 1e-8);
+        assert(std::abs(dot(inclined.forward) + 373.2050807568877) < 1e-8);
+    }
+}
+
 void TestOneDayInEarthReferenceFrame() {
     constexpr double lunarDistanceM = 384'400'000.0;
     const std::array<double, 3> earth{-26'000'000'000.0, 132'000'000'000.0, 57'000'000'000.0};
@@ -88,6 +119,7 @@ void TestProbeTrailFollowsDisplayedEarth() {
 }
 
 int main() {
+    TestMapPlaneAndOverlayProjection();
     TestOneDayInEarthReferenceFrame();
     TestProbeTrailFollowsDisplayedEarth();
     const auto portrait = MakeProjection(400.0, 600, 1200);
@@ -110,6 +142,9 @@ int main() {
     assert(padding && !padding->insideVisibleDisc);
     assert(PreferHit(*far, *padding));
     assert(!HitSphere(19.0, 0.0, 2.0, 0.0, portrait));
+    // A 48 dp target retains its physical touch area on high-density displays.
+    assert(!HitSphere(40.0, 0.0, 2.0, 0.0, portrait, 24.0));
+    assert(HitSphere(40.0, 0.0, 2.0, 0.0, portrait, 24.0 * 2.0));
     assert(!HitSphere(0.0, 0.0, 2.0, portrait.halfDepth + 10.0, portrait));
     assert(!HitSphere(std::numeric_limits<double>::quiet_NaN(), 0.0, 2.0, 0.0, portrait));
     const auto largeRear = HitSphere(0.0, 0.0, 200.0, 0.0, portrait);

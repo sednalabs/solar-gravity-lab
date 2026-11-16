@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -8,6 +9,25 @@
 // Pure presentation geometry shared by native interaction and Vulkan uniforms.
 // Distances here never feed the authoritative simulation.
 namespace solarlab::presentation {
+
+struct CameraBasis {
+    std::array<double, 3> right;
+    std::array<double, 3> up;
+    std::array<double, 3> forward;
+};
+
+inline CameraBasis MakeCameraBasis(double yaw, double pitch) {
+    const double sy = std::sin(yaw), cy = std::cos(yaw);
+    const double sp = std::sin(pitch), cp = std::cos(pitch);
+    return {{cy, sy, 0.0}, {-sy * sp, cy * sp, cp}, {-sy * cp, cy * cp, -sp}};
+}
+
+inline std::array<double, 2> MapCameraAngles(double normalX, double normalY, double normalZ) {
+    const double magnitude = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
+    if (!std::isfinite(magnitude) || magnitude < 1e-10) return {0.0, std::acos(-1.0) * 0.5};
+    const double yaw = std::hypot(normalX, normalY) < 1e-10 ? 0.0 : std::atan2(normalX, -normalY);
+    return {yaw, std::asin(std::clamp(normalZ / magnitude, -1.0, 1.0))};
+}
 
 struct Projection {
     double halfSpanX;
@@ -40,7 +60,8 @@ inline std::optional<SphereHit> HitSphere(
     double offsetYPx,
     double visibleRadiusPx,
     double centerDepthM,
-    const Projection& projection) {
+    const Projection& projection,
+    double minimumTouchRadiusPx = 18.0) {
     if (!std::isfinite(offsetXPx) || !std::isfinite(offsetYPx) ||
         !std::isfinite(visibleRadiusPx) || !std::isfinite(centerDepthM)) {
         return std::nullopt;
@@ -52,7 +73,7 @@ inline std::optional<SphereHit> HitSphere(
         return std::nullopt;
     }
     const double distanceSquared = offsetXPx * offsetXPx + offsetYPx * offsetYPx;
-    const double touchRadius = std::max(radiusPx * 1.45, 18.0);
+    const double touchRadius = std::max(radiusPx * 1.45, minimumTouchRadiusPx);
     if (distanceSquared > touchRadius * touchRadius) {
         return std::nullopt;
     }

@@ -14,9 +14,17 @@ interface RuntimeFacade {
     val scenarioPacks: List<RuntimeScenarioPack>
 
     val savedExperiments: StateFlow<List<SavedExperimentInfo>> get() = emptySavedExperiments
+    /** Successful placement receipt owned by the retained runtime session, not an Activity. */
+    val lastProbeCommit: StateFlow<ProbeCommitResult?> get() = emptyProbeCommit
     suspend fun saveExperiment(name: String) {}
     suspend fun loadExperiment(id: String) {}
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
+
+    /** Draft work is bounded and read-only; failures are thrown to the placement UI. */
+    suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double = 43_200.0): ProbePreviewResult =
+        error("Probe preview is unavailable")
+    suspend fun commitProbe(preview: ProbePreviewResult): ProbeCommitResult = error("Probe placement is unavailable")
+    suspend fun undoProbe(commit: ProbeCommitResult) { error("Probe undo is unavailable") }
 
     // One-time bind/handshake into native runtime.
     suspend fun startSession()
@@ -139,3 +147,4 @@ data class ShellUiState(
 )
 
 private val emptySavedExperiments: StateFlow<List<SavedExperimentInfo>> = MutableStateFlow<List<SavedExperimentInfo>>(emptyList()).asStateFlow()
+private val emptyProbeCommit: StateFlow<ProbeCommitResult?> = MutableStateFlow<ProbeCommitResult?>(null).asStateFlow()

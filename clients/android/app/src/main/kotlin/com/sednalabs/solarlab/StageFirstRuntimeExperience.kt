@@ -9,6 +9,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -53,21 +56,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.sednalabs.solarlab.render.vulkan.RenderInteractionListener
+import com.sednalabs.solarlab.render.vulkan.PlacementGesturePhase
+import com.sednalabs.solarlab.render.vulkan.PlacementGestureUpdate
 import com.sednalabs.solarlab.render.vulkan.RenderProcessingMode
 import com.sednalabs.solarlab.render.vulkan.SceneInteractionMode
 import com.sednalabs.solarlab.render.vulkan.SolarSystemRenderHostView
@@ -262,7 +273,7 @@ private const val RUNTIME_STAGE_SIGNAL_L5_BODY_COEFF = 0.20f
 private const val RUNTIME_STAGE_SIGNAL_L5_TRAIL_COEFF = 0.22f
 private const val RUNTIME_STAGE_SIGNAL_L6_BASE = 0.28f
 private const val RUNTIME_STAGE_SIGNAL_L6_FOCUS_COEFF = 0.48f
-private const val RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR: Float = 1.6f
 private const val RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR
 private val RuntimeStageTilePlanRegex = Regex("""(\d+)x(\d+)-body tiles""")
 private val RuntimeStageTileWorkersRegex = Regex("""(\d+) tile workers""")
@@ -281,6 +292,7 @@ internal fun StageFirstRuntimeExperience(
 
         val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
         val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
+        val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
@@ -303,11 +315,24 @@ internal fun StageFirstRuntimeExperience(
         var labNotice by remember { mutableStateOf<String?>(null) }
         var framedLabSession by rememberSaveable { mutableStateOf(0L) }
         var openingSavedExperiment by remember { mutableStateOf(false) }
+        val stateContext = LocalContext.current
+        val labInteraction = remember(stateContext) {
+            var ownerContext: android.content.Context = stateContext
+            while (ownerContext is android.content.ContextWrapper && ownerContext !is ViewModelStoreOwner) {
+                ownerContext = ownerContext.baseContext
+            }
+            (ownerContext as? ViewModelStoreOwner)?.let { ViewModelProvider(it)[LabInteractionViewModel::class.java].state }
+                ?: LabInteractionState()
+        }
+        val authoringScope = labInteraction.operationScope ?: coroutineScope
+        var labViewModeName by rememberSaveable { mutableStateOf(LabViewMode.THREE_DIMENSIONAL.name) }
+        val labViewMode = LabViewMode.valueOf(labViewModeName)
+        var restoreBodyAfterLoad by remember { mutableStateOf<String?>(null) }
         var pendingScenarioFrame by remember { mutableStateOf<RuntimeScenarioPack?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var cameraScaleBand by remember { mutableStateOf(CameraScaleBand.SYSTEM) }
         var cameraCoachVisible by rememberSaveable {
-            mutableStateOf(shouldShowStageCameraCoach(context))
+            mutableStateOf(false)
         }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive Rust stage.") }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
@@ -453,6 +478,129 @@ internal fun StageFirstRuntimeExperience(
             renderHostView?.resetCamera()
         }
 
+        fun selectRuntimeBody(bodyId: String) {
+            if (labInteraction.draft != null) return
+            selectedBodyId = bodyId
+            observerMode = ObserverMode.FREE
+            semanticFocusAcknowledgement = null
+            renderHostView?.setObserverMode(ObserverMode.FREE)
+            renderHostView?.setSelectedBodyId(bodyId)
+            renderHostView?.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            syncObserver(bodyId, ObserverMode.FREE)
+        }
+
+        fun frameSelectedBody() {
+            selectedBodyId?.let { bodyId ->
+                renderHostView?.frameBody(bodyId)
+                showFrameRequest(bodyId)
+            }
+        }
+
+        fun changeLabView(mode: LabViewMode) {
+            labViewModeName = mode.name
+            renderHostView?.setLabMapMode(mode == LabViewMode.ORBIT_MAP)
+        }
+
+        fun cancelProbePlacement() {
+            if (labInteraction.committing) return
+            if (labInteraction.draft == null) { labInteraction.clearDraft(); return }
+            val previousSelection = labInteraction.beforePlacementSelection
+            val previousObserver = labInteraction.beforePlacementObserver
+            val previousCamera = labInteraction.beforePlacementCamera
+            val previousView = labInteraction.beforePlacementView
+            labInteraction.clearDraft()
+            selectedBodyId = previousSelection
+            renderHostView?.setObserverMode(ObserverMode.FREE)
+            renderHostView?.setSelectedBodyId(selectedBodyId)
+            changeLabView(previousView)
+            previousCamera?.let { renderHostView?.restoreLabCamera(it) }
+            observerMode = previousObserver
+            renderHostView?.setObserverMode(previousObserver)
+            syncObserver(previousSelection, previousObserver)
+        }
+
+        fun fitProbePlacement() {
+            val draft = labInteraction.draft ?: return
+            val viewport = labInteraction.viewport ?: return
+            val position = draft.positionM ?: return
+            val reference = viewport.project(draft.reference.labPosition())
+            val bodyRadiusPx = (draft.reference.radiusM / viewport.metresPerPixel).toFloat()
+            val points = listOf(position) + labInteraction.preview?.samples.orEmpty().map {
+                draft.reference.labPosition() + Vector3d(it.positionX, it.positionY, it.positionZ)
+            }
+            val projected = points.map(viewport::project)
+            val left = min(reference.xPx - bodyRadiusPx, projected.minOf { it.xPx })
+            val right = max(reference.xPx + bodyRadiusPx, projected.maxOf { it.xPx })
+            val top = min(reference.yPx - bodyRadiusPx, projected.minOf { it.yPx })
+            val bottom = max(reference.yPx + bodyRadiusPx, projected.maxOf { it.yPx })
+            val paddingPx = min(72f * context.resources.displayMetrics.density, min(viewport.widthPx, viewport.heightPx) * 0.24f)
+            val factor = max((right - left) / (viewport.widthPx - 2f * paddingPx).coerceAtLeast(1f),
+                (bottom - top) / (viewport.heightPx - 2f * paddingPx).coerceAtLeast(1f)).coerceAtLeast(0.01f)
+            val centre = viewport.unprojectToPlane((left + right) / 2f, (top + bottom) / 2f,
+                draft.plane.through(draft.reference)) ?: return
+            changeLabView(LabViewMode.ORBIT_MAP)
+            renderHostView?.restoreLabCamera(viewport.camera.copy(centerM = centre,
+                viewRadiusM = viewport.camera.viewRadiusM * factor))
+        }
+
+        fun changePlacementHost(bodyId: String) {
+            val current = labInteraction.draft ?: return
+            val reference = labInteraction.referenceBodies[bodyId] ?: return
+            val next = current.copy(reference = reference,
+                altitudeKmText = if (bodyId == "moon") "100" else "800")
+            labInteraction.changeDraft(next)
+            selectedBodyId = bodyId
+            renderHostView?.setSelectedBodyId(bodyId)
+            renderHostView?.setLabMapPlane(next.plane.through(reference))
+            renderHostView?.frameBody(bodyId)
+        }
+
+        fun commitProbePlacement() {
+            val draft = labInteraction.draft ?: return
+            val preview = labInteraction.preview ?: return
+            if (labInteraction.committing || draft.candidate() != preview.candidate) return
+            labInteraction.committing = true
+            labInteraction.error = null
+            authoringScope.launch {
+                try {
+                    val result = runtimeFacade.commitProbe(preview)
+                    if (runtimeFacade.uiState.value.sessionHandle != result.sessionHandle) return@launch
+                    // The retained receipt drives the current composition, including
+                    // one recreated while this atomic operation was in flight.
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    labInteraction.error = error.message ?: "The probe could not be placed. Try the preview again."
+                    labInteraction.committing = false
+                    labInteraction.preview = null
+                    labInteraction.draftVersion += 1
+                }
+            }
+        }
+
+        fun undoProbePlacement() {
+            val commit = lastProbeCommit ?: return
+            if (labInteraction.undoing) return
+            labInteraction.undoing = true
+            authoringScope.launch {
+                try {
+                    runtimeFacade.undoProbe(commit)
+                    labInteraction.lastCommit = null
+                    selectedBodyId = runtimeFacade.uiState.value.focusedBodyId ?: "earth"
+                    observerMode = ObserverMode.FREE
+                    syncObserver(selectedBodyId, ObserverMode.FREE)
+                    selectedBodyId?.let { renderHostView?.frameBody(it) }
+                    labInteraction.feedback = "Placement undone · returned to the time before the edit"
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    labNotice = error.message ?: "This edit can no longer be undone."
+                } finally {
+                    labInteraction.undoing = false
+                }
+            }
+        }
+
         fun inspectSelectedBody() {
             val bodyId = selectedBodyId ?: return
             coroutineScope.launch {
@@ -464,6 +612,7 @@ internal fun StageFirstRuntimeExperience(
         }
 
         fun editInspectedBody() {
+            labInteraction.lastCommit = null
             val bodyId = inspectedBody?.bodyId ?: return
             coroutineScope.launch {
                 runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
@@ -477,21 +626,74 @@ internal fun StageFirstRuntimeExperience(
         }
 
         fun addProbe() {
+            if (labInteraction.draft != null || labInteraction.opening) return
+            val startingSession = runtimeFacade.uiState.value.sessionHandle
+            val openingGeneration = ++labInteraction.openingGeneration
+            labInteraction.opening = true
             coroutineScope.launch {
+              try {
+                val displayedViewport = renderHostView?.currentLabViewportState()
+                val cameraReferenceId = if (observerMode == ObserverMode.FOLLOW_SELECTED) selectedBodyId ?: "earth" else "earth"
+                val displayedReference = displayedViewport?.bodies?.firstOrNull { it.bodyId == cameraReferenceId }?.worldPositionM
+                labInteraction.beforePlacementCamera = displayedViewport?.camera
+                labInteraction.beforePlacementView = labViewMode
+                labInteraction.beforePlacementSelection = selectedBodyId
+                labInteraction.beforePlacementObserver = observerMode
                 runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
                 val earth = runtimeFacade.inspectBody("earth")
                 if (earth == null) {
                     labNotice = "Load an Earth scene before creating this probe."
                     return@launch
                 }
+                val moon = runtimeFacade.inspectBody("moon")
+                if (startingSession == null || startingSession != runtimeFacade.uiState.value.sessionHandle ||
+                    openingGeneration != labInteraction.openingGeneration) return@launch
+                val pausedReference = when (cameraReferenceId) {
+                    "earth" -> earth
+                    "moon" -> moon
+                    else -> runtimeFacade.inspectBody(cameraReferenceId)
+                }
+                if (displayedReference != null && pausedReference != null) {
+                    labInteraction.beforePlacementCamera = labInteraction.beforePlacementCamera?.let {
+                        it.copy(centerM = it.centerM + pausedReference.labPosition() - displayedReference)
+                    }
+                }
+                val reference = if (labInteraction.beforePlacementSelection == "moon" && moon != null) moon else earth
+                runtimeFacade.applyCommand(RuntimeCommand.FocusBody(reference.bodyId))
+                runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.Free))
+                if (startingSession != runtimeFacade.uiState.value.sessionHandle || openingGeneration != labInteraction.openingGeneration) return@launch
                 val ids = searchableBodies.map { it.id }.toSet()
-                editorSession = LabBodyEditorSession(labProbeSeed(earth, ids), earth, true, ids,
-                    referenceAxes = if (uiState.snapshot?.scenarioId == "lab.earth-moon") "ICRF axes" else "scenario axes")
-                editorError = null
+                val name = generateSequence(1) { it + 1 }.map { "probe-$it" }.first { it !in ids }
+                val plane = earthMoonAuthoringPlane(earth, moon)
+                labInteraction.plane = plane
+                labInteraction.referenceBodies = listOfNotNull(earth, moon).associateBy { it.bodyId }
+                val draft = LabProbeDraft(reference, plane, name,
+                    runtimeFacade.uiState.value.snapshot?.epochSeconds ?: 0.0,
+                    altitudeKmText = if (reference.bodyId == "moon") "100" else "800")
+                labInteraction.changeDraft(draft)
+                selectedBodyId = reference.bodyId
+                observerMode = ObserverMode.FREE
+                cameraCoachVisible = false
+                chromeModeName = StageChromeMode.COLLAPSED.name
+                renderHostView?.setObserverMode(ObserverMode.FREE)
+                renderHostView?.setLabMapPlane(plane.through(reference))
+                changeLabView(LabViewMode.ORBIT_MAP)
+                renderHostView?.frameBody(reference.bodyId)
+              } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+              } catch (error: Exception) {
+                if (openingGeneration == labInteraction.openingGeneration) {
+                    labNotice = error.message ?: "The placement view could not open. Try again."
+                }
+              } finally {
+                if (labInteraction.openingGeneration == openingGeneration) labInteraction.opening = false
+              }
             }
         }
 
         fun loadScenarioPack(scenarioId: String) {
+            labInteraction.clearDraft()
+            labInteraction.lastCommit = null
             val scenarioPack = scenarioPacks.firstOrNull { it.scenarioId == scenarioId }
             if (scenarioPack != null) {
                 pendingScenarioFrame = scenarioPack
@@ -508,8 +710,9 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        BackHandler(enabled = searchVisible || scenarioPickerVisible || debugVisible || scienceVisible || savedVisible || inspectorVisible || editorSession != null) {
+        BackHandler(enabled = labInteraction.opening || labInteraction.draft != null || searchVisible || scenarioPickerVisible || debugVisible || scienceVisible || savedVisible || inspectorVisible || editorSession != null) {
             when {
+                labInteraction.opening || labInteraction.draft != null -> cancelProbePlacement()
                 editorSession != null -> if (!editorCommitting) editorSession = null
                 inspectorVisible -> inspectorVisible = false
                 savedVisible -> savedVisible = false
@@ -522,6 +725,111 @@ internal fun StageFirstRuntimeExperience(
 
         LaunchedEffect(runtimeFacade) {
             ensureRuntimeStarted()
+        }
+
+        LaunchedEffect(runtimeSessionHandle) {
+            if (labInteraction.boundSessionHandle == runtimeSessionHandle) return@LaunchedEffect
+            labInteraction.boundSessionHandle = runtimeSessionHandle
+            labInteraction.clearDraft()
+            labInteraction.lastCommit = null
+            labInteraction.plane = null
+            labInteraction.referenceBodies = emptyMap()
+            labInteraction.savedCamera = null
+            labInteraction.savedCameraReferenceId = null
+            labInteraction.savedCameraReferencePosition = null
+            labInteraction.appliedCommitUiId = null
+        }
+
+        LaunchedEffect(runtimeSessionHandle, canSendCommands) {
+            if (runtimeSessionHandle == 0L || !canSendCommands || labInteraction.plane != null) return@LaunchedEffect
+            val earth = runtimeFacade.inspectBody("earth") ?: return@LaunchedEffect
+            val moon = runtimeFacade.inspectBody("moon")
+            labInteraction.referenceBodies = listOfNotNull(earth, moon).associateBy { it.bodyId }
+            labInteraction.plane = earthMoonAuthoringPlane(earth, moon)
+        }
+
+        LaunchedEffect(lastProbeCommit?.checkpointId, runtimeSessionHandle) {
+            val commit = lastProbeCommit ?: return@LaunchedEffect
+            if (commit.sessionHandle == runtimeSessionHandle && labInteraction.appliedCommitUiId != commit.checkpointId) {
+                labInteraction.clearDraft()
+                runtimeFacade.applyCommand(RuntimeCommand.FocusBody(commit.bodyId))
+                runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.Free))
+                if (runtimeFacade.uiState.value.sessionHandle != commit.sessionHandle ||
+                    runtimeFacade.lastProbeCommit.value?.checkpointId != commit.checkpointId) return@LaunchedEffect
+                labInteraction.appliedCommitUiId = commit.checkpointId
+                selectedBodyId = commit.bodyId
+                observerMode = ObserverMode.FREE
+                renderHostView?.setSelectedBodyId(commit.bodyId)
+                renderHostView?.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                labInteraction.feedback = "Probe placed · your experiment is paused"
+            }
+        }
+
+        LaunchedEffect(labInteraction.draftVersion) {
+            val version = labInteraction.draftVersion
+            val draft = labInteraction.draft ?: return@LaunchedEffect
+            val candidate = draft.candidate() ?: return@LaunchedEffect
+            if (labInteraction.preview?.candidate == candidate && labInteraction.preview?.sessionHandle == runtimeSessionHandle) return@LaunchedEffect
+            labInteraction.previewing = true
+            delay(90)
+            try {
+                val result = runtimeFacade.previewProbe(candidate, draft.reference.bodyId, draft.previewHorizonSeconds())
+                if (labInteraction.draftVersion == version && result.sessionHandle == runtimeFacade.uiState.value.sessionHandle) {
+                    labInteraction.preview = result
+                    labInteraction.error = null
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (labInteraction.draftVersion == version) labInteraction.error = error.message ?: "Preview is unavailable. Adjust the probe and try again."
+            } finally {
+                if (labInteraction.draftVersion == version) labInteraction.previewing = false
+            }
+        }
+
+        LaunchedEffect(labInteraction.feedback) {
+            if (labInteraction.feedback != null) {
+                delay(3_500)
+                labInteraction.feedback = null
+            }
+        }
+
+        LaunchedEffect(selectedBodyId, runtimeSessionHandle) {
+            labInteraction.selectedFacts = null
+            val id = selectedBodyId ?: return@LaunchedEffect
+            if (runtimeSessionHandle == 0L) return@LaunchedEffect
+            while (true) {
+                val captured = runtimeFacade.uiState.value.snapshot
+                if (captured?.paused != true) {
+                    labInteraction.selectedFacts = "Simulation running · pause for exact details"
+                    delay(700)
+                    continue
+                }
+                val body = runtimeFacade.inspectBody(id)
+                if (body != null) {
+                    val earth = runtimeFacade.inspectBody("earth")
+                    val moon = runtimeFacade.inspectBody("moon")
+                    if (runtimeFacade.uiState.value.snapshot?.revision != captured.revision ||
+                        runtimeFacade.uiState.value.snapshot?.paused != true) continue
+                    val hosts = listOfNotNull(earth, moon).filter { it.bodyId != id }
+                    val reference = hosts.minByOrNull { labLength(body.labPosition() - it.labPosition()) / it.radiusM.coerceAtLeast(1.0) }
+                    labInteraction.selectedFacts = when {
+                        id == "earth" -> "Our home world · radius ${formatLabDistance(body.radiusM)}"
+                        id == "moon" && earth != null -> "${formatLabDistance(labLength(body.labPosition() - earth.labPosition()))} from Earth"
+                        reference != null -> "${formatLabDistance(labLength(body.labPosition() - reference.labPosition()) - reference.radiusM)} above ${displayNameForBodyId(reference.bodyId)} · ${labDecimal(labLength(body.labVelocity() - reference.labVelocity()) / 1_000.0)} km/s"
+                        else -> "Radius ${formatLabDistance(body.radiusM)}"
+                    }
+                }
+                delay(700)
+            }
+        }
+
+        LaunchedEffect(restoreBodyAfterLoad, searchableBodies, renderHostView) {
+            val id = restoreBodyAfterLoad ?: return@LaunchedEffect
+            if (searchableBodies.any { it.id == id } && renderHostView != null) {
+                restoreBodyAfterLoad = null
+                focusAndFrameRuntimeBody(id)
+            }
         }
 
         LaunchedEffect(uiState.snapshot?.simSecondsPerRealSecond) {
@@ -678,7 +986,22 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        Box(Modifier.fillMaxSize().background(Color(0xFF02050B))) {
+        BoxWithConstraints(Modifier.fillMaxSize().imePadding().background(Color(0xFF030A12))) {
+            val density = LocalDensity.current
+            val landscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && maxHeight < 600.dp
+            val statusInset = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+            val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
+            val placing = labInteraction.draft != null
+            val headerHeight = if (placing) 64.dp else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
+            val dockHeight = if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
+            val placementHeight = minOf(350.dp, maxHeight * 0.44f)
+            val placementWidth = minOf(350.dp, maxWidth * 0.46f)
+            val bottomInset = navigationInset + if (placing) { if (landscape) 8.dp else placementHeight + 8.dp }
+                else if (chromeMode == StageChromeMode.MINIMAL) 0.dp else dockHeight
+            val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing) 0.dp else headerHeight
+            Box(Modifier.fillMaxSize()
+                .padding(top = topInset, bottom = bottomInset, end = if (placing && landscape) placementWidth + 12.dp else 0.dp)
+                .testTag(LabSpatialTags.VIEWPORT)) {
             if (attachRenderHost) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -690,10 +1013,37 @@ internal fun StageFirstRuntimeExperience(
                             view.setOnCameraScaleChangedListener { scaleBand ->
                                 cameraScaleBand = scaleBand
                             }
+                            val cameraToRestore = labInteraction.savedCamera.takeIf { labInteraction.boundSessionHandle == runtimeSessionHandle }
+                            val referenceToRestore = labInteraction.savedCameraReferenceId
+                            val referencePositionToRestore = labInteraction.savedCameraReferencePosition
+                            var restoredCamera = cameraToRestore == null
+                            view.setOnLabViewportChangedListener { viewport ->
+                                labInteraction.viewport = viewport
+                                if (viewport != null && !restoredCamera) {
+                                    restoredCamera = true
+                                    val modeToRestore = observerMode
+                                    val currentReference = viewport.bodies.firstOrNull { it.bodyId == referenceToRestore }?.worldPositionM
+                                    val camera = requireNotNull(cameraToRestore)
+                                    view.restoreLabCamera(if (currentReference != null && referencePositionToRestore != null)
+                                        camera.copy(centerM = camera.centerM + currentReference - referencePositionToRestore) else camera)
+                                    observerMode = modeToRestore
+                                    view.setObserverMode(modeToRestore)
+                                    syncObserver(selectedBodyId, modeToRestore)
+                                } else {
+                                    if (viewport != null) {
+                                        labInteraction.savedCamera = viewport.camera
+                                        val referenceId = if (observerMode == ObserverMode.FOLLOW_SELECTED) selectedBodyId else "earth"
+                                        val followed = viewport.bodies.firstOrNull { it.bodyId == referenceId }
+                                        labInteraction.savedCameraReferenceId = followed?.bodyId
+                                        labInteraction.savedCameraReferencePosition = followed?.worldPositionM
+                                    }
+                                }
+                            }
                             view.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
                             view.setInteractionListener(
                                 object : RenderInteractionListener {
                                     override fun onBodySelectionChanged(bodyId: String?) {
+                                        if (labInteraction.draft != null) return
                                         selectedBodyId = bodyId
                                         if (semanticFocusAcknowledgement?.resolvedBodyId != bodyId) {
                                             semanticFocusAcknowledgement = null
@@ -706,7 +1056,7 @@ internal fun StageFirstRuntimeExperience(
 
                                     override fun onCameraNavigationModeChanged(mode: ObserverMode) {
                                         observerMode = mode
-                                        syncObserver(selectedBodyId, mode)
+                                        if (labInteraction.draft == null) syncObserver(selectedBodyId, mode)
                                     }
 
                                     override fun onPlacementGesture(
@@ -714,19 +1064,41 @@ internal fun StageFirstRuntimeExperience(
                                         endWorldPositionM: Vector3d,
                                         gestureDistancePx: Float,
                                     ) = Unit
+
+                                    override fun onPlacementGestureUpdate(update: PlacementGestureUpdate) {
+                                        val draft = labInteraction.draft ?: return
+                                        if (labInteraction.committing) return
+                                        when (update.phase) {
+                                            PlacementGesturePhase.Started -> labInteraction.beforeGesture = draft
+                                            PlacementGesturePhase.Changed -> labInteraction.changeDraft(draft.atWorldPoint(update.endWorldPositionM))
+                                            PlacementGesturePhase.Ended -> {
+                                                labInteraction.changeDraft(draft.atWorldPoint(update.endWorldPositionM))
+                                                labInteraction.beforeGesture = null
+                                            }
+                                            PlacementGesturePhase.Cancelled -> {
+                                                labInteraction.beforeGesture?.let(labInteraction::changeDraft)
+                                                labInteraction.beforeGesture = null
+                                            }
+                                        }
+                                    }
                                 }
                             )
                             renderHostView = view
                         }
                     },
                     update = { view ->
+                        val draft = labInteraction.draft
+                        val reference = draft?.reference ?: labInteraction.referenceBodies["earth"]
+                        val plane = draft?.plane ?: labInteraction.plane
+                        if (plane != null && reference != null) view.setLabMapPlane(plane.through(reference))
+                        view.setLabMapMode(labViewMode == LabViewMode.ORBIT_MAP)
                         view.updateRuntimeStageState(
                             sessionHandle = runtimeSessionHandle,
                             processingMode = renderProcessingMode,
                             renderLayerOptions = renderLayerOptions,
                             observerMode = observerMode,
                             selectedBodyId = selectedBodyId,
-                            interactionMode = SceneInteractionMode.NAVIGATE_AND_SELECT,
+                            interactionMode = if (draft != null) SceneInteractionMode.PLACE_BODY else SceneInteractionMode.NAVIGATE_AND_SELECT,
                             sceneFrame = stageScene?.scene,
                         )
                     },
@@ -761,7 +1133,29 @@ internal fun StageFirstRuntimeExperience(
                 }
             }
 
-            EarthMoonLabChrome(
+            LabSceneOverlay(
+                viewport = labInteraction.viewport,
+                names = searchableBodies.associate { it.id to it.displayName },
+                selectedBodyId = selectedBodyId,
+                draft = labInteraction.draft,
+                preview = labInteraction.preview,
+                committing = labInteraction.committing,
+                onSelect = ::selectRuntimeBody,
+                onLocate = { bodyId -> focusAndFrameRuntimeBody(bodyId) },
+                onVelocityDrag = { point, scale ->
+                    if (!labInteraction.committing) labInteraction.draft?.let { labInteraction.changeDraft(it.withVelocityPoint(point, scale)) }
+                },
+            )
+            labInteraction.feedback?.let { message ->
+                Surface(Modifier.align(Alignment.BottomCenter).padding(12.dp),
+                    color = Color(0xF0182B36), shape = RoundedCornerShape(16.dp)) {
+                    Text(message, Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        color = Color(0xFFB9F0E6), fontSize = 12.sp)
+                }
+            }
+            }
+
+            if (!placing) EarthMoonLabChrome(
                 uiState = uiState,
                 selectedBody = selectedBody,
                 selectedName = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: activeScenarioPack.title,
@@ -774,10 +1168,17 @@ internal fun StageFirstRuntimeExperience(
                 stepPreset = stepQuantumPreset,
                 playbackPreset = playbackSpeedPreset,
                 pendingFrameName = searchFrameRequest?.second,
+                navigation = LabNavigationUiState(
+                    viewMode = labViewMode,
+                    followingSelection = observerMode == ObserverMode.FOLLOW_SELECTED,
+                    metresPerPixel = labInteraction.viewport?.metresPerPixel,
+                    canUndo = lastProbeCommit != null && !labInteraction.undoing,
+                    selectionSubtitle = labInteraction.selectedFacts,
+                ),
                 actions = LabStageActions(
                     focus = { focusAndFrameRuntimeBody(it) },
                     home = ::resetRuntimeCamera,
-                    frame = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
+                    frame = ::frameSelectedBody,
                     togglePlayback = { sendRuntimeCommand(if (isRunning) RuntimeCommand.PausePlayback else RuntimeCommand.ResumePlayback) },
                     speedDown = {
                         playbackSpeedPreset = playbackSpeedPreset.shifted(-1)
@@ -798,7 +1199,7 @@ internal fun StageFirstRuntimeExperience(
                     addProbe = ::addProbe,
                     saved = { savedVisible = true },
                     science = { scienceVisible = true },
-                    search = { requestSearchFocus = true; searchVisible = true },
+                    search = { requestSearchFocus = false; searchVisible = true },
                     scenarios = { scenarioPickerVisible = true },
                     toggleTools = { chromeModeName = chromeMode.toggle().name },
                     hideChrome = { chromeModeName = StageChromeMode.MINIMAL.name },
@@ -810,9 +1211,77 @@ internal fun StageFirstRuntimeExperience(
                     moreTraces = { traceLayerModeName = traceLayerMode.more().name },
                     debug = { debugVisible = true },
                     cancelAdvance = runtimeFacade::cancelManualAdvance,
+                    setViewMode = ::changeLabView,
+                    toggleFollow = {
+                        val next = if (observerMode == ObserverMode.FOLLOW_SELECTED) ObserverMode.FREE else ObserverMode.FOLLOW_SELECTED
+                        observerMode = next
+                        renderHostView?.setObserverMode(next)
+                        syncObserver(selectedBodyId, next)
+                    },
+                    undo = ::undoProbePlacement,
                 ),
             )
-            if (cameraCoachVisible) {
+            labInteraction.draft?.let { draft ->
+                Surface(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().height(64.dp),
+                    color = Color(0xFF07111D)) {
+                    Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Place your probe", color = Color(0xFFF0F6FA), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Drag to position · pinch to zoom", color = Color(0xFF9CB3C3), fontSize = 11.sp)
+                        }
+                        LabTextAction("Fit path", ::fitProbePlacement, description = "Fit the probe and its predicted path in view")
+                        LabTextAction("−", { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
+                            tag = SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON, description = "Zoom out")
+                        LabTextAction("+", { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
+                            tag = SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON, description = "Zoom in")
+                    }
+                }
+                val preview = labInteraction.preview
+                val previewStatus = when {
+                    draft.validationError != null -> "Choose a valid starting position"
+                    labInteraction.previewing -> "Calculating with the laboratory physics…"
+                    preview?.intersectsReferenceBody == true -> "Path meets the surface · no collision model"
+                    preview != null -> "Predicted path · ready to place"
+                    else -> "Move the probe to see its path"
+                }
+                val panelModifier = if (landscape) Modifier.align(Alignment.CenterEnd)
+                    .padding(top = topInset + 4.dp, end = 8.dp, bottom = navigationInset + 8.dp)
+                    .width(placementWidth).fillMaxSize()
+                else Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp)
+                    .fillMaxWidth().height(placementHeight)
+                LabPlacementSheet(
+                    state = LabPlacementUiState(
+                        hostBodyId = draft.reference.bodyId,
+                        hosts = labInteraction.referenceBodies.values.map { LabPlacementHost(it.bodyId, displayNameForBodyId(it.bodyId)) },
+                        planeLabel = draft.plane.label,
+                        altitudeKmText = draft.altitudeKmText,
+                        altitudeRangeKm = 1f..384_400f,
+                        motion = draft.motion,
+                        speedKmPerSecondText = if (draft.motion == LabPlacementMotion.CIRCULAR) labDecimal((draft.circularSpeedMps ?: 0.0) / 1_000.0) else draft.speedKmPerSecondText,
+                        direction = draft.direction,
+                        previewStatus = previewStatus,
+                        previewHorizonText = preview?.let { "Next ${labDecimal(it.horizonSeconds / 60.0)} minutes${if (it.limited) " · bounded preview" else ""}" },
+                        error = draft.validationError ?: labInteraction.error,
+                        canCreate = preview != null && preview.candidate == draft.candidate() && !labInteraction.previewing,
+                        committing = labInteraction.committing,
+                        altitudeLocked = draft.altitudeLocked,
+                        headingDegreesText = draft.headingDegreesText,
+                    ),
+                    actions = LabPlacementActions(
+                        onHostChange = ::changePlacementHost,
+                        onAltitudeChange = { labInteraction.changeDraft(draft.copy(altitudeKmText = it)) },
+                        onMotionChange = { labInteraction.changeDraft(draft.withMotion(it)) },
+                        onSpeedChange = { labInteraction.changeDraft(draft.copy(speedKmPerSecondText = it)) },
+                        onDirectionChange = { labInteraction.changeDraft(draft.copy(direction = it)) },
+                        onCreate = ::commitProbePlacement,
+                        onCancel = ::cancelProbePlacement,
+                        onAltitudeLockChange = { labInteraction.changeDraft(draft.copy(altitudeLocked = it)) },
+                        onHeadingChange = { labInteraction.changeDraft(draft.copy(headingDegreesText = it)) },
+                    ),
+                    modifier = panelModifier,
+                )
+            }
+            if (cameraCoachVisible && !placing) {
                 StageCameraCoach(onDismiss = {
                     markStageCameraCoachSeen(context)
                     cameraCoachVisible = false
@@ -876,6 +1345,7 @@ internal fun StageFirstRuntimeExperience(
                     }
                 },
                 onLoad = { id ->
+                    labInteraction.lastCommit = null
                     openingSavedExperiment = true
                     coroutineScope.launch {
                         try {
@@ -885,7 +1355,7 @@ internal fun StageFirstRuntimeExperience(
                                 framedLabSession = state.sessionHandle ?: framedLabSession
                                 savedVisible = false
                                 selectedBodyId = state.focusedBodyId
-                                resetRuntimeCamera()
+                                restoreBodyAfterLoad = state.focusedBodyId ?: "earth"
                             }
                         } finally {
                             openingSavedExperiment = false
@@ -1810,7 +2280,7 @@ private fun RuntimeStageSearchDialog(
                 Text("Close")
             }
         },
-        title = { Text("Find a body") },
+        title = { Text("Objects in your experiment") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(

@@ -465,6 +465,75 @@ class JniRuntimeBridgeTest {
         return collected.toList()
     }
 
+    @Test
+    fun probePreviewAndCommitForwardExactCandidateAndNativeBaseline() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3).copy(revision = 17))))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val candidate = probeCandidate()
+        val preview = bridge.previewProbe(candidate, "earth", 10.0)
+        assertEquals(candidate, preview.candidate)
+        assertEquals(17L, preview.baselineRevision)
+        assertEquals(2, preview.samples.size)
+        assertEquals("earth", preview.referenceBody.bodyId)
+        assertTrue(transport.committedProbeCandidates.isEmpty())
+        val (receipt, signals) = bridge.commitProbe(preview)
+        assertEquals(listOf(candidate), transport.committedProbeCandidates)
+        assertEquals(19L, receipt.committedRevision)
+        assertEquals(42L, receipt.sessionHandle)
+        assertEquals(4, signals.filterIsInstance<RuntimeSignal.SnapshotUpdated>().single().summary.bodyCount)
+        bridge.undoProbe(receipt)
+        assertEquals(listOf("probe-checkpoint" to 19L), transport.probeUndoRequests)
+    }
+
+    @Test
+    fun probeCommitRejectsSupersededCopiedAndReplacedSessionDrafts() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 43L)),
+        )
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val first = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        val second = bridge.previewProbe(probeCandidate().copy(positionX = 3.0e11), "earth", 10.0)
+        assertTrue(runCatching { bridge.commitProbe(first) }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching { bridge.commitProbe(second.copy()) }.exceptionOrNull() is IllegalStateException)
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        assertTrue(runCatching { bridge.commitProbe(second) }.exceptionOrNull() is IllegalStateException)
+        assertTrue(transport.committedProbeCandidates.isEmpty())
+    }
+
+    @Test
+    fun failedNewPreviewInvalidatesAnEarlierDraftAndNativeCommitFailurePropagates() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val old = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        transport.probePreviewError = IllegalStateException("outside the reference surface")
+        assertTrue(runCatching { bridge.previewProbe(probeCandidate(), "earth", 10.0) }.exceptionOrNull()?.message!!.contains("surface"))
+        assertTrue(runCatching { bridge.commitProbe(old) }.exceptionOrNull() is IllegalStateException)
+        transport.probePreviewError = null
+        val current = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        transport.probeCommitError = IllegalStateException("The experiment changed")
+        val commandsBefore = transport.appliedCommands.toList()
+        assertEquals("The experiment changed", runCatching { bridge.commitProbe(current) }.exceptionOrNull()?.message)
+        assertEquals(commandsBefore, transport.appliedCommands.toList())
+        assertTrue(transport.committedProbeCandidates.isEmpty())
+    }
+
+    @Test
+    fun probeUndoReceiptCannotActOnAReplacementExperiment() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 43L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val preview = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        val receipt = bridge.commitProbe(preview).first
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        assertTrue(runCatching { bridge.undoProbe(receipt) }.exceptionOrNull() is IllegalStateException)
+        assertTrue(transport.probeUndoRequests.isEmpty())
+    }
+
     private class FakeRenderHostAdapter : RenderHostAdapter {
         val boundSessionHandles = mutableListOf<Long>()
         var refreshCount: Int = 0
@@ -506,6 +575,10 @@ class JniRuntimeBridgeTest {
         private var failRefresh = false
         var commandError: Throwable? = null
         var exportError: Throwable? = null
+        var probePreviewError: Throwable? = null
+        var probeCommitError: Throwable? = null
+        val committedProbeCandidates = mutableListOf<RuntimeBodyState>()
+        val probeUndoRequests = mutableListOf<Pair<String, Long>>()
 
         override fun ensureLibraryLoaded(): NativeLibraryLoadOutcome = NativeLibraryLoadOutcome.Success
 
@@ -595,6 +668,29 @@ class JniRuntimeBridgeTest {
             error("exportVulkanScene is unused in this test")
         }
 
+        override fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult {
+            probePreviewError?.let { throw it }
+            val summary = requireNotNull(latestSummary)
+            val reference = candidate.copy(bodyId = referenceBodyId, bodyClass = RuntimeBodyClass.Planet,
+                massKg = 5.972e24, sourceMassKg = 5.972e24, radiusM = 6_371_000.0)
+            return NativeProbePreviewResult(summary.revision, summary.epochSeconds, 10.0, false, false,
+                reference.toNativeBodyValues(), doubleArrayOf(0.0, 7.0e6, 0.0, 0.0, 10.0, 7.0e6, 1.0e4, 0.0))
+        }
+
+        override fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult {
+            probeCommitError?.let { throw it }
+            val current = requireNotNull(latestSummary)
+            check(current.revision == expectedRevision && current.epochSeconds == expectedEpochSeconds && current.paused)
+            committedProbeCandidates += candidate
+            latestSummary = current.copy(bodyCount = current.bodyCount + 1, revision = current.revision + 2)
+            return NativeProbeCommitResult("probe-checkpoint", current.revision + 2, current.epochSeconds)
+        }
+
+        override fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) {
+            probeUndoRequests += checkpointId to committedRevision
+            latestSummary = requireNotNull(latestSummary).let { it.copy(bodyCount = it.bodyCount - 1, paused = true, revision = it.revision + 1) }
+        }
+
         override fun releaseVulkanScene(packetHandle: Long) = Unit
 
         override fun destroySession(handle: Long) {
@@ -618,6 +714,9 @@ class JniRuntimeBridgeTest {
             command.kind == COMMAND_KIND_ADVANCE_EPOCH && command.deltaSeconds > 0.0
 
         const val STARTUP_EXPECTED_BODY_COUNT = 3
+
+        fun probeCandidate() = RuntimeBodyState("probe", RuntimeBodyClass.Spacecraft, 1000.0, 17.0, 2.0,
+            1.23456789012345e11, 2.34567890123456e10, 3.45678901234567e8, 12.3456789, 23.4567891, 34.5678912)
 
         fun snapshotSummary(
             scenarioId: String = "lab.earth-moon",

@@ -54,6 +54,11 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
     private var cameraState: CameraState = CameraState()
+    private var labMapMode = false
+    private var labMapPlane = LabPlane.XY
+    private var labViewportState: LabViewportState? = null
+    private var labViewportChangedListener: ((LabViewportState?) -> Unit)? = null
+    private var labViewportEpoch = 0L
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
@@ -142,6 +147,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     if (!released) {
                         val retainedSelection = retainSelectionOnEmptyPick(selectedBodyId, bodyId)
                         if (retainedSelection != selectedBodyId) {
+                            switchToFreeCameraForManualNavigation()
                             selectedBodyId = retainedSelection
                             interactionListener?.onBodySelectionChanged(retainedSelection)
                         }
@@ -192,6 +198,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val generation = ++surfaceGenerationCounter
         activeSurfaceGeneration = generation
         surfaceReady = false
+        invalidateLabViewport()
         serializedRenderer.surfaceCreated(
             generation = generation,
             nativeWindowHandle = nativeWindowHandle,
@@ -210,6 +217,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             return
         }
         surfaceReady = false
+        invalidateLabViewport()
         serializedRenderer.surfaceChanged(
             generation = generation,
             nativeWindowHandle = nativeWindowHandle,
@@ -223,6 +231,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val generation = activeSurfaceGeneration
         surfaceReady = false
         activeSurfaceGeneration = 0L
+        invalidateLabViewport()
         cancelScheduledFrame()
         frameGate.stopPresentation()
         if (generation != 0L) {
@@ -235,6 +244,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun submitScene(frame: RenderSceneFrame) {
+        if (latestScene === frame || latestScene == frame) return
         latestScene = frame
         if (!isRuntimeBound()) {
             applyObserverTargetIfNeeded(frame)
@@ -289,6 +299,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun zoomBy(scaleFactor: Float) {
+        cancelCameraTransition()
         if (isRuntimeBound()) {
             val viewportWidth = width.coerceAtLeast(1)
             val viewportHeight = height.coerceAtLeast(1)
@@ -323,6 +334,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         if (runtimeSessionHandle == sessionHandle) return
         runtimeSessionHandle = sessionHandle
         latestPacket = null
+        invalidateLabViewport()
         packetDirty = true
         syncRuntimeBinding()
         renderLatestScene()
@@ -348,6 +360,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun setInteractionMode(mode: SceneInteractionMode) {
+        // Compose republishes stage state during playback and presentation. Reapplying
+        // the current mode must not cancel a finger stream or a draft being dragged.
+        if (interactionMode == mode) return
         interactionMode = mode
         placementStartScreen = null
         placementGestureCancelledByTransform = false
@@ -394,6 +409,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun frameBody(bodyId: String) {
+        switchToFreeCameraForManualNavigation()
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
             serializedRenderer.execute { handle ->
@@ -424,8 +440,56 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         reportCameraScaleBand()
     }
 
+    override fun setLabMapMode(enabled: Boolean) {
+        if (labMapMode == enabled) return
+        cancelCameraTransition()
+        placementStartScreen?.let { start ->
+            dispatchPlacementUpdate(PlacementGesturePhase.Cancelled, start, start)
+        }
+        placementStartScreen = null
+        placementGestureCancelledByTransform = true
+        cameraGestures.onCancel()
+        labMapMode = enabled
+        pushLabMapState()
+    }
+
+    override fun setLabMapPlane(plane: LabPlane) {
+        if (!plane.isValid || plane == labMapPlane) return
+        val orientationChanged = plane.normal != labMapPlane.normal
+        labMapPlane = plane
+        if (orientationChanged) pushLabMapState()
+    }
+
+    private fun pushLabMapState() {
+        val enabled = labMapMode
+        val plane = labMapPlane
+        serializedRenderer.execute { handle -> SolarLabVulkanBridge.setLabMapView(handle, enabled, plane) }
+        renderLatestScene(refreshRuntimeScene = false)
+    }
+
+    override fun setOnLabViewportChangedListener(listener: ((LabViewportState?) -> Unit)?) {
+        val firstListener = labViewportChangedListener == null
+        labViewportChangedListener = listener
+        if (firstListener) listener?.invoke(labViewportState)
+    }
+
+    private fun invalidateLabViewport() {
+        labViewportEpoch += 1
+        labViewportState = null
+        labViewportChangedListener?.invoke(null)
+    }
+
+    override fun currentLabViewportState(): LabViewportState? = labViewportState
+
+    override fun restoreLabCamera(camera: CameraState) {
+        cancelCameraTransition()
+        switchToFreeCameraForManualNavigation()
+        applyCameraState(camera)
+    }
+
     override fun setSelectedBodyId(bodyId: String?) {
         if (selectedBodyId == bodyId) return
+        if (selectedBodyId != null) switchToFreeCameraForManualNavigation()
         selectedBodyId = bodyId
         if (isRuntimeBound()) {
             serializedRenderer.execute { handle ->
@@ -455,7 +519,9 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun setPlacementPlaneZ(worldZ: Double) {
+        if (placementPlaneZ == worldZ) return
         placementPlaneZ = worldZ
+        setLabMapPlane(LabPlane(Vector3d(0.0, 0.0, worldZ), Vector3d(0.0, 0.0, 1.0)))
     }
 
     override fun setRenderLayerOptions(options: RenderLayerOptions) {
@@ -481,6 +547,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         surfaceReady = false
         activeSurfaceGeneration = 0L
         latestPacket = null
+        invalidateLabViewport()
+        labViewportChangedListener = null
         packetDirty = true
         val wasRuntimeBound = runtimeSessionHandle != 0L
         serializedRenderer.release { handle ->
@@ -507,6 +575,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun onHostPause() {
         hostResumed = false
+        invalidateLabViewport()
         cancelCameraTransition()
         cancelScheduledFrame()
         frameGate.stopPresentation()
@@ -559,7 +628,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 }
                 cameraGestures.onMove(
                     pointers = event.pointers(),
-                    followActive = observerMode != ObserverMode.FREE,
+                    // Native follow preserves a local offset; navigation never silently
+                    // switches the reference frame during the same pinch.
+                    followActive = !isRuntimeBound() && observerMode != ObserverMode.FREE,
+                    onePointerPans = labMapMode,
                 )?.let(::applyCameraGesture)
                 return true
             }
@@ -685,8 +757,13 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         startScreen: Pair<Float, Float>,
         endScreen: Pair<Float, Float>,
     ) {
-        val startWorld = screenToWorld(startScreen)
-        val endWorld = screenToWorld(endScreen)
+        val viewport = labViewportState
+        val startWorld = if (isRuntimeBound()) {
+            viewport?.unprojectToPlane(startScreen.first, startScreen.second, labMapPlane) ?: return
+        } else screenToWorld(startScreen)
+        val endWorld = if (isRuntimeBound()) {
+            viewport?.unprojectToPlane(endScreen.first, endScreen.second, labMapPlane) ?: return
+        } else screenToWorld(endScreen)
         val dx = endScreen.first - startScreen.first
         val dy = endScreen.second - startScreen.second
         interactionListener?.onPlacementGestureUpdate(
@@ -702,13 +779,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private fun applyCameraGesture(update: CameraGestureUpdate) {
         when (update) {
             is CameraGestureUpdate.Orbit -> {
-                val focus = ObserverCameraResolver.resolveGestureFocus(
-                    requestedXPx = update.focusXPx,
-                    requestedYPx = update.focusYPx,
-                    viewportWidthPx = width,
-                    viewportHeightPx = height,
-                    observerMode = observerMode,
-                )
+                // 3D rotation has one stable pivot: the current view centre.
+                // Pinch uses the fingers' midpoint independently of follow state.
+                val focusXPx = width.coerceAtLeast(1) * 0.5f
+                val focusYPx = height.coerceAtLeast(1) * 0.5f
                 if (isRuntimeBound()) {
                     val viewportWidth = width.coerceAtLeast(1)
                     val viewportHeight = height.coerceAtLeast(1)
@@ -717,8 +791,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                             handle = handle,
                             deltaXPx = update.deltaXPx,
                             deltaYPx = update.deltaYPx,
-                            focusXPx = focus.xPx,
-                            focusYPx = focus.yPx,
+                            focusXPx = focusXPx,
+                            focusYPx = focusYPx,
                             viewportWidthPx = viewportWidth,
                             viewportHeightPx = viewportHeight,
                         )
@@ -729,8 +803,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                         cameraState = cameraState,
                         deltaXPx = update.deltaXPx,
                         deltaYPx = update.deltaYPx,
-                        focusXPx = focus.xPx,
-                        focusYPx = focus.yPx,
+                        focusXPx = focusXPx,
+                        focusYPx = focusYPx,
                         viewportWidthPx = width.coerceAtLeast(1),
                         viewportHeightPx = height.coerceAtLeast(1),
                     )
@@ -739,7 +813,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             }
 
             is CameraGestureUpdate.PanAndZoom -> {
-                if (update.detachFollow) {
+                if (update.detachFollow && !isRuntimeBound()) {
                     switchToFreeCameraForManualNavigation()
                 }
                 val focus = ObserverCameraResolver.resolveGestureFocus(
@@ -747,7 +821,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                     requestedYPx = update.focusYPx,
                     viewportWidthPx = width,
                     viewportHeightPx = height,
-                    observerMode = observerMode,
+                    observerMode = if (isRuntimeBound()) ObserverMode.FREE else observerMode,
                 )
                 if (isRuntimeBound()) {
                     val viewportWidth = width.coerceAtLeast(1)
@@ -949,7 +1023,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val nextSelectedBodyId = selectedBodyId
         val nextTraceLayerMode = renderLayerOptions.traceLayerMode
         val nextCamera = cameraState
+        val nextMapMode = labMapMode
+        val nextMapPlane = labMapPlane
+        val density = resources.displayMetrics.density.toDouble()
         serializedRenderer.execute { handle ->
+            SolarLabVulkanBridge.setTouchDensity(handle, density)
+            SolarLabVulkanBridge.setLabMapView(handle, nextMapMode, nextMapPlane)
             if (sessionHandle != 0L) {
                 SolarLabVulkanBridge.bindRuntimeSession(handle, sessionHandle)
                 SolarLabVulkanBridge.setRuntimeProcessingMode(handle, nextProcessingMode)
@@ -1029,11 +1108,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private fun drawRequestedFrame() {
         val request = frameGate.begin(canPresent()) ?: return
         val generation = activeSurfaceGeneration
+        val viewportEpoch = labViewportEpoch
         if (isRuntimeBound()) {
             serializedRenderer.query(
                 requireSurface = true,
                 action = { handle -> renderNativeFrame(handle, request.refreshRuntimeScene) },
-                onResult = { result -> onNativeFrameRendered(generation, result, cameraLabel = null) },
+                onResult = { result -> onNativeFrameRendered(generation, viewportEpoch, result, cameraLabel = null) },
             )
             return
         }
@@ -1061,28 +1141,34 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 SolarLabVulkanBridge.submitScene(handle, packet)
                 renderNativeFrame(handle, refreshRuntimeScene = true)
             },
-            onResult = { result -> onNativeFrameRendered(generation, result, cameraLabel) },
+            onResult = { result -> onNativeFrameRendered(generation, viewportEpoch, result, cameraLabel) },
         )
     }
 
     private fun renderNativeFrame(handle: Long, refreshRuntimeScene: Boolean): NativeRenderResult {
         val rendered = SolarLabVulkanBridge.render(handle, refreshRuntimeScene)
+        val viewport = if (rendered && isRuntimeBound()) SolarLabVulkanBridge.labViewportState(handle) else null
         return NativeRenderResult(
             rendered = rendered,
             error = if (rendered) null else SolarLabVulkanBridge.lastError(handle),
             backendLabel = if (refreshRuntimeScene) SolarLabVulkanBridge.backendLabel(handle) else null,
             sceneSummary = if (refreshRuntimeScene) SolarLabVulkanBridge.sceneSummary(handle) else null,
-            cameraState = SolarLabVulkanBridge.cameraState(handle),
+            cameraState = viewport?.camera ?: SolarLabVulkanBridge.cameraState(handle),
+            viewportState = viewport,
             hasPendingPresentation = rendered && SolarLabVulkanBridge.hasPendingPresentation(handle),
         )
     }
 
     private fun onNativeFrameRendered(
         generation: Long,
+        viewportEpoch: Long,
         result: NativeRenderResult?,
         cameraLabel: String?,
     ) {
-        val currentSurface = !released && generation != 0L && generation == activeSurfaceGeneration
+        // A resize reuses the native surface generation. Its old queued result must
+        // still be rejected, as must a pre-pause or pre-session-change viewport.
+        val currentSurface = !released && generation != 0L && generation == activeSurfaceGeneration &&
+            viewportEpoch == labViewportEpoch
         frameGate.complete(currentSurface && hostResumed && result?.hasPendingPresentation == true)
         if (!currentSurface || result == null) {
             scheduleFrame()
@@ -1095,6 +1181,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
             return
         }
         result.cameraState?.let { cameraState = it }
+        result.viewportState?.let { viewport ->
+            if (viewport != labViewportState) {
+                labViewportState = viewport
+                labViewportChangedListener?.invoke(viewport)
+            }
+        }
         // Display-only frames must not trigger Compose/runtime publication loops.
         if (result.sceneSummary != null && result.backendLabel != null) {
             val detail = cameraLabel?.let { "$it · ${result.sceneSummary}" } ?: result.sceneSummary
@@ -1230,6 +1322,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val backendLabel: String?,
         val sceneSummary: String?,
         val cameraState: CameraState?,
+        val viewportState: LabViewportState?,
         val hasPendingPresentation: Boolean,
     )
 }

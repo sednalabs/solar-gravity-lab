@@ -15,6 +15,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -25,6 +26,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso.pressBack
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.SessionConnectionState
@@ -88,7 +90,15 @@ class EarthMoonLabJourneyInstrumentationTest {
         val countBefore = requireNotNull(facade.uiState.value.snapshot).bodyCount
         composeRule.onNodeWithTag(LabTags.ADD_PROBE).performClick()
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(LabTags.PROBE_COMMIT).fetchSemanticsNodes().isNotEmpty() }
-        composeRule.onNodeWithTag(LabTags.PROBE_COMMIT).performClick()
+        // Creation now starts around the selected body. Choose Earth explicitly
+        // after inspecting the Moon, and wait for the same-draft physical preview.
+        composeRule.onNodeWithTag(LabPlacementTags.host("earth")).performScrollToIfPossible().performClick()
+        composeRule.waitUntil(20_000) {
+            runCatching { composeRule.onNodeWithTag(LabTags.PROBE_COMMIT).assertIsEnabled() }.isSuccess
+        }
+        composeRule.onNodeWithTag(LabPlacementTags.PREVIEW).assertIsDisplayed()
+        capture("earth-moon-probe-placement.png")
+        composeRule.onNodeWithTag(LabTags.PROBE_COMMIT).assertIsEnabled().performClick()
         composeRule.waitUntil(20_000) { facade.uiState.value.snapshot?.bodyCount == countBefore + 1 }
         val probe = runBlocking { requireNotNull(facade.inspectBody("probe-1")) }
         assertEquals(0.0, probe.sourceMassKg, 0.0)
@@ -105,7 +115,7 @@ class EarthMoonLabJourneyInstrumentationTest {
         val savedMoon = runBlocking { requireNotNull(facade.inspectBody("moon")) }
         val savedEpoch = requireNotNull(facade.uiState.value.snapshot).epochSeconds
         val name = "Journey ${System.currentTimeMillis()}"
-        composeRule.onNodeWithTag(LabTags.SAVED).performClick()
+        openSavedExperiments()
         composeRule.onNodeWithTag(LabTags.SAVE_NAME).performTextReplacement(name)
         composeRule.onNodeWithTag(LabTags.SAVE_COMMIT).performClick()
         composeRule.waitUntil(20_000) { facade.savedExperiments.value.any { it.name == name } }
@@ -115,7 +125,7 @@ class EarthMoonLabJourneyInstrumentationTest {
         // Replace all current bodies, then reconstruct through the saved file, not a live checkpoint.
         runBlocking { facade.loadScenario("showcase.inner-system") }
         composeRule.waitUntil(20_000) { facade.uiState.value.snapshot?.scenarioId == "showcase.inner-system" }
-        composeRule.onNodeWithTag(LabTags.SAVED).performClick()
+        openSavedExperiments()
         composeRule.onNodeWithTag(LabTags.load(saved.id)).performScrollToIfPossible().performClick()
         composeRule.waitUntil(20_000) {
             facade.uiState.value.snapshot?.scenarioId == "lab.earth-moon" &&
@@ -147,7 +157,7 @@ class EarthMoonLabJourneyInstrumentationTest {
                     composeRule.onAllNodesWithTag(LabTags.PLAY_PAUSE).fetchSemanticsNodes().isNotEmpty()
             }
             composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
-            val shortWindow = composeRule.activity.resources.configuration.screenHeightDp < 520
+            val shortWindow = composeRule.activity.resources.configuration.screenHeightDp < 600
             if (shortWindow) {
                 val header = composeRule.onNodeWithTag(LabTags.COMPACT_HEADER).fetchSemanticsNode().boundsInRoot
                 val playback = composeRule.onNodeWithTag(LabTags.COMPACT_PLAYBACK).fetchSemanticsNode().boundsInRoot
@@ -160,18 +170,28 @@ class EarthMoonLabJourneyInstrumentationTest {
             }
             capture("earth-landscape-close-view.png", requireRoundBody = true)
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
-            if (shortWindow) {
-                val header = composeRule.onNodeWithTag(LabTags.COMPACT_HEADER).fetchSemanticsNode().boundsInRoot
-                val playback = composeRule.onNodeWithTag(LabTags.COMPACT_PLAYBACK).fetchSemanticsNode().boundsInRoot
-                val tools = composeRule.onNodeWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNode().boundsInRoot
-                assertTrue("Expanded tools must stay below the landscape header", tools.top >= header.bottom)
-                assertTrue("Expanded tools must not cover landscape playback", tools.bottom <= playback.top)
-            }
-            composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
+            composeRule.onNodeWithTag(LabTags.TOOLS_PANEL).assertIsDisplayed()
+            composeRule.onNodeWithTag(LabTags.SAVED).performScrollToIfPossible().assertIsDisplayed()
+            composeRule.onNodeWithTag(LabTags.SCIENCE).performScrollToIfPossible().assertIsDisplayed()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON)
+                .performScrollToIfPossible().assertIsDisplayed()
             capture("earth-moon-landscape-tools.png")
+            // The menu is a modal sheet. Closing it must restore the controls and
+            // the same correctly projected native scene underneath.
+            pressBack()
+            composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty() }
+            composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
+            capture("earth-landscape-after-menu.png", requireRoundBody = true)
         } finally {
             composeRule.activityRule.scenario.onActivity { it.requestedOrientation = originalOrientation }
         }
+    }
+
+    private fun openSavedExperiments() {
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
+        composeRule.onNodeWithTag(LabTags.SAVED).performScrollToIfPossible().assertIsDisplayed().performClick()
+        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(LabTags.SAVED_DIALOG).fetchSemanticsNodes().isNotEmpty() }
     }
 
     private fun dismissCoach() {

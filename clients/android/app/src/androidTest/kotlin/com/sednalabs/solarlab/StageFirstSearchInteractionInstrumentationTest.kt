@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -26,25 +27,26 @@ class StageFirstSearchInteractionInstrumentationTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun searchAutofocusAndRepeatedFrameRequestsRefreshFeedback() {
+    fun objectsSearchCanBeFocusedAndRepeatedFrameRequestsRefreshFeedback() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.activity.isStageFirstRuntimeMountedForTesting() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
                     .fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-            .performScrollToIfPossible()
-            .performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-
         fun searchAndFrameEarth(beforeSelect: () -> Unit = {}) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
                 .performScrollToIfPossible()
                 .performClick()
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            // Objects opens as a chooser. The keyboard appears only when the user
+            // explicitly starts searching, leaving the scene catalogue readable.
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                .assertIsNotFocused().performClick()
             composeRule.waitUntil(timeoutMillis = 20_000) {
                 composeRule.mainClock.advanceTimeByFrame()
                 runCatching {
@@ -93,17 +95,13 @@ class StageFirstSearchInteractionInstrumentationTest {
     fun focusedSearchKeepsCloseAndResultsAvailable() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-            .performScrollToIfPossible().performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
                 .fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
             .performScrollToIfPossible().performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+            .assertIsNotFocused().performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             runCatching {
                 composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).assertIsFocused()
@@ -121,12 +119,6 @@ class StageFirstSearchInteractionInstrumentationTest {
     fun openSearchAndQuerySurviveActivityRecreation() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-            .performScrollToIfPossible().performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
                 .fetchSemanticsNodes().isNotEmpty()
         }
@@ -136,7 +128,7 @@ class StageFirstSearchInteractionInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("earth")
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("earth")
         composeRule.activityRule.scenario.recreate()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             runCatching {

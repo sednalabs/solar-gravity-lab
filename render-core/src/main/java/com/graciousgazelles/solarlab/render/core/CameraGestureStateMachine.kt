@@ -30,7 +30,7 @@ sealed interface CameraGestureUpdate {
 /**
  * Owns stage gesture arbitration independently of Android recognizer timing.
  *
- * A one-pointer stream can only orbit. Once a second pointer arrives, the
+ * A one-pointer stream orbits, or pans in the explicitly selected map mode. Once a second pointer arrives, the
  * stream can only pan and zoom until every pointer is lifted. That suppression
  * prevents a lifted pinch finger from turning into an accidental orbit.
  */
@@ -107,12 +107,13 @@ class CameraGestureStateMachine(
     fun onMove(
         pointers: List<CameraGesturePointer>,
         followActive: Boolean,
+        onePointerPans: Boolean = false,
     ): CameraGestureUpdate? = when (val current = state) {
         State.Idle,
         State.SuppressedUntilAllPointersUp,
         -> null
 
-        is State.OnePointer -> moveOnePointer(current, pointers)
+        is State.OnePointer -> moveOnePointer(current, pointers, onePointerPans)
         is State.TwoPointers -> moveTwoPointers(current, pointers, followActive)
     }
 
@@ -131,6 +132,7 @@ class CameraGestureStateMachine(
     private fun moveOnePointer(
         current: State.OnePointer,
         pointers: List<CameraGesturePointer>,
+        onePointerPans: Boolean,
     ): CameraGestureUpdate? {
         val pointer = pointers.firstOrNull { it.id == current.pointerId } ?: return null
         val deltaX = pointer.xPx - current.lastXPx
@@ -146,6 +148,16 @@ class CameraGestureStateMachine(
         )
         if (!orbitActive || (abs(deltaX) < MOTION_EPSILON_PX && abs(deltaY) < MOTION_EPSILON_PX)) {
             return null
+        }
+        if (onePointerPans) {
+            return CameraGestureUpdate.PanAndZoom(
+                distanceXPx = -deltaX,
+                distanceYPx = -deltaY,
+                scaleFactor = 1f,
+                focusXPx = pointer.xPx,
+                focusYPx = pointer.yPx,
+                detachFollow = false,
+            )
         }
         return CameraGestureUpdate.Orbit(
             deltaXPx = deltaX,

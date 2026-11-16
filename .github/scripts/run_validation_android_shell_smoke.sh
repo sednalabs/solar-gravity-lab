@@ -35,6 +35,8 @@ SHELL_FULL_TEST_CLASSES=(
 
 STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest"
+  "com.sednalabs.solarlab.LabSpatialTouchJourneyInstrumentationTest"
+  "com.sednalabs.solarlab.LabInteractionChromeTest"
   "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
@@ -473,7 +475,7 @@ run_test_classes_individually() {
     if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
       capture_device_state "${class_dir}" "post"
     fi
-    if [[ "${class_name}" == "com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest" ]]; then
+    if [[ "${class_name}" == "com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest" || "${class_name}" == "com.sednalabs.solarlab.LabSpatialTouchJourneyInstrumentationTest" ]]; then
       capture_lab_journey_evidence "${class_dir}"
     fi
 

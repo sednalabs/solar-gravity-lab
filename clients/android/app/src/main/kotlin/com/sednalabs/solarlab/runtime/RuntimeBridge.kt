@@ -38,6 +38,9 @@ internal interface RuntimeBridge {
     suspend fun exportSavedSession(): SavedRuntimeSession = error("Experiment saving is unavailable")
     suspend fun importSavedSession(bytes: ByteArray): List<RuntimeSignal> = error("Experiment loading is unavailable")
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
+    suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult = error("Probe preview is unavailable")
+    suspend fun commitProbe(preview: ProbePreviewResult): Pair<ProbeCommitResult, List<RuntimeSignal>> = error("Probe placement is unavailable")
+    suspend fun undoProbe(commit: ProbeCommitResult): List<RuntimeSignal> = error("Probe undo is unavailable")
 
     // Synchronous refresh/query path for already-bound handles.
     suspend fun refresh(): List<RuntimeSignal>
@@ -64,6 +67,9 @@ internal class JniRuntimeBridge(
     private data class PlaybackSample(val handle: Long, val revision: Long, val epoch: Double, val atNanos: Long)
     private var playbackSample: PlaybackSample? = null
     private var lastObservation: Pair<Long, Long>? = null
+    // Only the most recent completed draft from this bridge may be committed.
+    // The native boundary independently checks the world revision and paused state.
+    private var latestProbePreview: ProbePreviewResult? = null
 
     private fun rememberRevision(handle: Long, revision: Long) {
         val previous = lastObservation
@@ -467,10 +473,38 @@ internal class JniRuntimeBridge(
 
     override suspend fun inspectBody(bodyId: String): RuntimeBodyState? = withActiveSession { handle ->
         val values = transport.inspectBody(handle, bodyId) ?: return@withActiveSession null
-        require(values.size == 10 && values.all(Double::isFinite)) { "Invalid body state from runtime" }
-        val bodyClass = RuntimeBodyClass.values().firstOrNull { it.nativeCode.toDouble() == values[0] }
-            ?: error("Unknown native body class")
-        RuntimeBodyState(bodyId, bodyClass, values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8], values[9])
+        bodyStateFromNative(bodyId, values)
+    }
+
+    override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =
+        withActiveSession { handle ->
+            latestProbePreview = null
+            transport.previewProbe(handle, candidate, referenceBodyId, horizonSeconds)
+                .toPreview(handle, candidate, referenceBodyId)
+                .also { latestProbePreview = it }
+        }
+
+    override suspend fun commitProbe(preview: ProbePreviewResult): Pair<ProbeCommitResult, List<RuntimeSignal>> =
+        withActiveSession { handle ->
+            check(handle == preview.sessionHandle && latestProbePreview === preview) {
+                "This draft is no longer current. Preview the probe again before placing it"
+            }
+            latestProbePreview = null
+            val native = transport.commitProbe(handle, preview.candidate, preview.baselineRevision, preview.epochSeconds, System.currentTimeMillis())
+            check(native.checkpointId.isNotBlank() && native.committedRevision > preview.baselineRevision &&
+                native.epochSeconds.toBits() == preview.epochSeconds.toBits()) { "Invalid placement receipt from runtime" }
+            val receipt = ProbeCommitResult(handle, native.checkpointId, preview.candidate.bodyId, native.epochSeconds, native.committedRevision)
+            playbackSample = null
+            rememberRevision(handle, native.committedRevision)
+            receipt to refreshSignalsForHandle(handle, includeSummary = true)
+        }
+
+    override suspend fun undoProbe(commit: ProbeCommitResult): List<RuntimeSignal> = withActiveSession { handle ->
+        check(handle == commit.sessionHandle) { "This placement belongs to an experiment that is no longer open" }
+        transport.undoProbe(handle, commit.checkpointId, commit.committedRevision, System.currentTimeMillis())
+        latestProbePreview = null
+        playbackSample = null
+        refreshSignalsForHandle(handle, includeSummary = true)
     }
 
     private inline fun <T> withActiveSession(action: (Long) -> T): T = synchronized(operationLock) {
@@ -1297,6 +1331,9 @@ internal interface NativeRuntimeTransport {
     fun exportSavedSession(handle: Long): ByteArray = error("Experiment saving is unavailable")
     fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = error("Experiment loading is unavailable")
     fun inspectBody(handle: Long, bodyId: String): DoubleArray? = null
+    fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult = error("Probe preview is unavailable")
+    fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult = error("Probe placement is unavailable")
+    fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) { error("Probe undo is unavailable") }
 
     fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult?
 
@@ -1490,6 +1527,17 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private external fun nativeExportSavedSession(handle: Long): ByteArray
     private external fun nativeImportSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult
     private external fun nativeInspectBody(handle: Long, bodyId: ByteArray): DoubleArray?
+
+    override fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult =
+        nativePreviewProbe(handle, candidate.bodyId.toByteArray(StandardCharsets.UTF_8), candidate.toNativeBodyValues(), referenceBodyId.toByteArray(StandardCharsets.UTF_8), horizonSeconds)
+    override fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult =
+        nativeCommitProbe(handle, candidate.bodyId.toByteArray(StandardCharsets.UTF_8), candidate.toNativeBodyValues(), expectedRevision, expectedEpochSeconds, recordedAtUnixMs)
+    override fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) =
+        nativeUndoProbe(handle, checkpointId.toByteArray(StandardCharsets.UTF_8), committedRevision, recordedAtUnixMs)
+
+    private external fun nativePreviewProbe(handle: Long, bodyId: ByteArray, bodyValues: DoubleArray, referenceBodyId: ByteArray, horizonSeconds: Double): NativeProbePreviewResult
+    private external fun nativeCommitProbe(handle: Long, bodyId: ByteArray, bodyValues: DoubleArray, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult
+    private external fun nativeUndoProbe(handle: Long, checkpointId: ByteArray, committedRevision: Long, recordedAtUnixMs: Long)
 
     override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
         nativeExportVulkanScene(handle)

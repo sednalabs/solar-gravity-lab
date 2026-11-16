@@ -37,7 +37,7 @@ pub(super) fn configure_display_query(
     query.prediction_sample_count = DISPLAY_PREDICTION_SAMPLES;
 }
 
-fn shortest_added_body_local_period(bodies: &[BodyState]) -> Option<f64> {
+pub(super) fn shortest_added_body_local_period(bodies: &[BodyState]) -> Option<f64> {
     let mut shortest = f64::INFINITY;
     for body in bodies
         .iter()

@@ -7,8 +7,12 @@
 mod lab_prediction;
 mod lab_step;
 mod persistence;
+mod probe_authoring;
 mod trail_frame;
 pub use persistence::{SessionPersistenceError, MAX_SAVED_SESSION_BYTES};
+pub use probe_authoring::{
+    ProbeAuthoringError, ProbeCommitReceipt, ProbePreview, ProbePreviewPlan, ProbePreviewSample,
+};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem::size_of;

@@ -281,6 +281,65 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetCameraSt
         : solar_lab_jni::CameraSnapshotArray(env, controller->GetCameraSnapshot());
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetLabMapView(
+    JNIEnv*, jclass, jlong handle, jboolean enabled, jdouble normalX, jdouble normalY, jdouble normalZ) {
+    if (auto* controller = FromHandle(handle)) {
+        controller->SetLabMapView(enabled == JNI_TRUE, normalX, normalY, normalZ);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetTouchDensity(
+    JNIEnv*, jclass, jlong handle, jdouble density) {
+    if (auto* controller = FromHandle(handle)) controller->SetTouchDensity(density);
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetLabViewportState(
+    JNIEnv* env, jclass, jlong handle) {
+    auto* controller = FromHandle(handle);
+    if (controller == nullptr) return nullptr;
+    // One controller lock captures the submitted camera and body interpolation together.
+    const auto snapshot = controller->GetLabViewportSnapshot();
+    const auto& camera = snapshot.camera;
+    const jdouble header[] = {
+        static_cast<double>(snapshot.width), static_cast<double>(snapshot.height),
+        camera.centerX, camera.centerY, camera.centerZ,
+        camera.viewRadiusM, camera.yawRadians, camera.pitchRadians, snapshot.metersPerPixel,
+    };
+    jclass objectClass = env->FindClass("java/lang/Object");
+    jclass stringClass = env->FindClass("java/lang/String");
+    if (objectClass == nullptr || stringClass == nullptr) return nullptr;
+    jobjectArray result = env->NewObjectArray(3, objectClass, nullptr);
+    jobjectArray ids = env->NewObjectArray(static_cast<jsize>(snapshot.bodies.size()), stringClass, nullptr);
+    jdoubleArray headerArray = env->NewDoubleArray(9);
+    jdoubleArray bodyArray = env->NewDoubleArray(static_cast<jsize>(snapshot.bodies.size() * 8));
+    if (result == nullptr || ids == nullptr || headerArray == nullptr || bodyArray == nullptr) return nullptr;
+    env->SetDoubleArrayRegion(headerArray, 0, 9, header);
+    std::vector<jdouble> values;
+    values.reserve(snapshot.bodies.size() * 8);
+    for (size_t index = 0; index < snapshot.bodies.size(); ++index) {
+        const auto& body = snapshot.bodies[index];
+        jstring id = env->NewStringUTF(body.bodyId.c_str());
+        if (id == nullptr) return nullptr;
+        env->SetObjectArrayElement(ids, static_cast<jsize>(index), id);
+        env->DeleteLocalRef(id);
+        values.insert(values.end(), {body.screenX, body.screenY, body.radiusPx, body.depthM,
+            body.occluded ? 1.0 : 0.0, body.worldX, body.worldY, body.worldZ});
+    }
+    if (!values.empty()) env->SetDoubleArrayRegion(bodyArray, 0, static_cast<jsize>(values.size()), values.data());
+    env->SetObjectArrayElement(result, 0, headerArray);
+    env->SetObjectArrayElement(result, 1, ids);
+    env->SetObjectArrayElement(result, 2, bodyArray);
+    env->DeleteLocalRef(headerArray);
+    env->DeleteLocalRef(ids);
+    env->DeleteLocalRef(bodyArray);
+    env->DeleteLocalRef(objectClass);
+    env->DeleteLocalRef(stringClass);
+    return result;
+}
+
 extern "C" JNIEXPORT jdoubleArray JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeResolveRuntimeHomeCamera(
     JNIEnv* env,

@@ -72,6 +72,8 @@ class BridgeBackedRuntimeFacade internal constructor(
     private val experimentMutex = Mutex()
     private val _savedExperiments = MutableStateFlow<List<SavedExperimentInfo>>(emptyList())
     override val savedExperiments: StateFlow<List<SavedExperimentInfo>> = _savedExperiments.asStateFlow()
+    private val _lastProbeCommit = MutableStateFlow<ProbeCommitResult?>(null)
+    override val lastProbeCommit: StateFlow<ProbeCommitResult?> = _lastProbeCommit.asStateFlow()
 
     override val scenarioPacks: List<RuntimeScenarioPack> = RuntimeScenarioPacks.all
 
@@ -146,6 +148,32 @@ class BridgeBackedRuntimeFacade internal constructor(
     } catch (error: Throwable) {
         _uiState.update { it.copy(noticeLine = "Could not inspect body: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
         null
+    }
+
+    override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =
+        withContext(boundaryDispatcher) {
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current time advance first" }
+            bridge.previewProbe(candidate, referenceBodyId, horizonSeconds)
+        }
+
+    override suspend fun commitProbe(preview: ProbePreviewResult): ProbeCommitResult =
+        withContext(NonCancellable + boundaryDispatcher) {
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current time advance first" }
+            val (receipt, signals) = bridge.commitProbe(preview)
+            // Returning to a disposed Activity may be cancelled after native success.
+            // Retain the receipt before that boundary, even if UI projection later fails.
+            _lastProbeCommit.value = receipt
+            signals.forEach(::applySignal)
+            _uiState.update { it.copy(noticeLine = "Placed ${receipt.bodyId}", noticeTone = ShellNoticeTone.Positive) }
+            receipt
+        }
+
+    override suspend fun undoProbe(commit: ProbeCommitResult) = withContext(NonCancellable + boundaryDispatcher) {
+        check(_uiState.value.manualAdvance == null) { "Finish or cancel the current time advance first" }
+        val signals = bridge.undoProbe(commit)
+        _lastProbeCommit.value = null
+        signals.forEach(::applySignal)
+        _uiState.update { it.copy(noticeLine = "Returned to before placing ${commit.bodyId}", noticeTone = ShellNoticeTone.Positive) }
     }
 
     override suspend fun saveExperiment(name: String) = experimentMutex.withLock {
@@ -538,6 +566,19 @@ class BridgeBackedRuntimeFacade internal constructor(
         ) {
             if (signal is RuntimeSignal.RenderPacketReady) signal.lease.close()
             return
+        }
+        // Scenario loading and save import both publish an accepted new handle.
+        // Failed replacement and stale signals cannot erase a still-valid receipt.
+        if (signal is RuntimeSignal.Connected && _lastProbeCommit.value?.sessionHandle != signal.handle) {
+            _lastProbeCommit.value = null
+        }
+        if (signal is RuntimeSignal.CommandApplied && when (signal.command) {
+                is RuntimeCommand.SpawnBody, is RuntimeCommand.RemoveBody,
+                is RuntimeCommand.SetBodyKinematics, RuntimeCommand.SeedCanonicalSolarSystem,
+                is RuntimeCommand.CreateCheckpoint, is RuntimeCommand.CreateBranchFromCheckpoint -> true
+                else -> false
+            }) {
+            _lastProbeCommit.value = null
         }
         when (signal) {
             is RuntimeSignal.PlaybackMeasurementCleared -> _uiState.update { it.copy(playbackMeasurement = null) }

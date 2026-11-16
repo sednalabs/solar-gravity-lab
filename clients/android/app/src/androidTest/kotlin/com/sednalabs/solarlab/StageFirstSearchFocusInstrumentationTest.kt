@@ -30,13 +30,6 @@ class StageFirstSearchFocusInstrumentationTest {
         loadCanonicalCatalogue()
 
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
-            .performScrollToIfPossible()
-            .performClick()
-
-        composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
 
@@ -49,7 +42,7 @@ class StageFirstSearchFocusInstrumentationTest {
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("comet")
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("comet")
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
@@ -74,9 +67,11 @@ class StageFirstSearchFocusInstrumentationTest {
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL)
-            .performScrollToIfPossible()
-            .assertIsDisplayed()
+        composeRule.onNodeWithTag(LabTags.FOLLOW).assertIsDisplayed()
+        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "earth"
+        }
 
         if (composeRule.activity.isStageFirstRuntimeMountedForTesting()) {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON)

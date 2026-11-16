@@ -167,8 +167,6 @@ Float3 Normalize(Float3 value, Float3 fallback) {
     return Scale(value, 1.0f / magnitude);
 }
 
-constexpr float kOrbitMinPitchRadians = 12.0f * 0.017453292519943295769f;
-constexpr float kOrbitMaxPitchRadians = 88.0f * 0.017453292519943295769f;
 
 }  // namespace
 
@@ -2405,19 +2403,12 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
         ? std::max(1.0f, std::min(physicalDeviceProperties_.limits.pointSizeRange[1], kDefaultMaxPointSizePx))
         : 1.0f;
 
-    const float yawRadians = static_cast<float>(cameraYawRadians_);
-    const float pitchRadians = std::clamp(static_cast<float>(cameraPitchRadians_), kOrbitMinPitchRadians, kOrbitMaxPitchRadians);
-    const float cosYaw = std::cos(yawRadians);
-    const float sinYaw = std::sin(yawRadians);
-    const float cosPitch = std::cos(pitchRadians);
-    const float sinPitch = std::sin(pitchRadians);
-
-    const Float3 right = Normalize(MakeFloat3(cosYaw, sinYaw, 0.0f), MakeFloat3(1.0f, 0.0f, 0.0f));
-    const Float3 screenUpHorizontal = Normalize(MakeFloat3(-sinYaw, cosYaw, 0.0f), MakeFloat3(0.0f, 1.0f, 0.0f));
-    const Float3 forward = Normalize(
-        Add(Scale(screenUpHorizontal, cosPitch), MakeFloat3(0.0f, 0.0f, -sinPitch)),
-        MakeFloat3(0.0f, 0.0f, -1.0f));
-    const Float3 up = Normalize(Cross(right, forward), MakeFloat3(0.0f, 0.0f, 1.0f));
+    // The controller applies orbit limits. A declared map plane must retain its
+    // exact normal, including a true overhead view, in rendering and picking.
+    const auto basis = solarlab::presentation::MakeCameraBasis(cameraYawRadians_, cameraPitchRadians_);
+    const Float3 right = MakeFloat3(basis.right[0], basis.right[1], basis.right[2]);
+    const Float3 forward = MakeFloat3(basis.forward[0], basis.forward[1], basis.forward[2]);
+    const Float3 up = MakeFloat3(basis.up[0], basis.up[1], basis.up[2]);
 
     const Float3 centerRelative = MakeFloat3(
         static_cast<float>(cameraCenterX_ + cameraPreviousOffsetX_ * (1.0 - presentationFraction) - sceneBuffers_.sceneOriginX),
