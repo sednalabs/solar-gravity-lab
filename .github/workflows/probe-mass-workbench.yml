@@ -1,0 +1,68 @@
+name: Probe mass repair workbench
+on:
+  push:
+    branches: [work/probe-mass-20261117]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: probe-mass-workbench
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Preserve exact product context and failed-test evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .github/recovery
+          python3 - <<'PY'
+          import pathlib, subprocess, re
+          root=pathlib.Path('.')
+          queries={
+            'engine/runtime/src/lib.rs': ['WorldCommand::SetBodyKinematics','fn command_payload','fn recompute','InvalidPlaybackRate'],
+            'engine/ffi/src/lib.rs': ['SetBodyKinematics =','SlCommandKind::SetBodyKinematics','RuntimeError::InvalidPlaybackRate','fn decode_source_mass','8 =>','body_mass_kg: body_mass'],
+            'clients/android/app/src/main/kotlin/com/sednalabs/solarlab/runtime/RuntimeBridge.kt': ['data class SetBodyKinematics','is RuntimeCommand.SetBodyKinematics','SetBodyKinematics ->'],
+            'clients/android/app/src/main/kotlin/com/sednalabs/solarlab/LabPlacementSheet.kt': ['OutlinedTextField','LabPlacementTags','Position','Motion'],
+            'engine/runtime/src/probe_authoring.rs': ['fn validate','fn probe(','source_mass_kg'],
+          }
+          for path, terms in queries.items():
+            lines=(root/path).read_text().splitlines(); selected=set()
+            for i,line in enumerate(lines):
+              if any(term in line for term in terms): selected.update(range(max(0,i-8),min(len(lines),i+36)))
+            out='\n'.join(f'{i+1}: {lines[i]}' for i in sorted(selected))
+            (root/'.github/recovery'/ (path.replace('/','__')+'.txt')).write_text(out+'\n')
+          command=['gh','api','repos/sednalabs/solar-gravity-lab/actions/jobs/133670504545/logs']
+          log=subprocess.run(command,text=True,capture_output=True,check=True).stdout.splitlines()
+          selected=set()
+          for i,line in enumerate(log):
+            if re.search(r'E TestRunner: failed:|E TestRunner: (java.lang|androidx)|TestRunner: run finished:',line):
+              selected.update(range(max(0,i-2),min(len(log),i+8)))
+          (root/'.github/recovery/native-failures.txt').write_text('\n'.join(log[i] for i in sorted(selected))+'\n')
+          PY
+          git config user.name 'Solar Gravity Lab repair workbench'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/recovery
+          if ! git diff --cached --quiet; then
+            git commit -m 'docs: preserve exact probe-mass authoring context and native failures'
+            git push origin HEAD:refs/heads/work/probe-mass-20261117
+          fi
+      - name: Apply reviewed product patch when present
+        if: ${{ hashFiles('.github/probe-mass-patch.py') != '' }}
+        run: |
+          cp .github/probe-mass-patch.py "$RUNNER_TEMP/probe-mass-patch.py"
+          git checkout --detach b23c32a8a8a13511c68110dfa045a2c956be2070
+          python3 "$RUNNER_TEMP/probe-mass-patch.py"
+          git diff --check
+          git add -A
+          git commit -m 'lab: author probe mass, preserve gravitational intent and refine native interaction'
+          git push origin HEAD:refs/heads/candidate/probe-mass-20261117
+          echo "Product candidate: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check Rust changes
+        if: ${{ hashFiles('engine/runtime/src/body_properties.rs') != '' }}
+        run: cargo test -p solarlab-runtime -p solarlab-ffi -p solarlab-physics
