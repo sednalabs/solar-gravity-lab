@@ -9,6 +9,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+# GitHub rejects release bodies over 125,000 characters. A UTF-8 byte budget is
+# stricter for Unicode and leaves room for a maintainer's release introduction.
+MAX_RELEASE_BODY_BYTES = 100_000
+MAX_SUBJECT_BYTES = 600
+FULL_INVENTORY_LINES = (
+    "## Full inventory",
+    "The release assets include the authoritative `changelog-*.json` and `changelog-*.md` "
+    "inventory files for the raw commit and path-level detail.",
+    "",
+)
+
 PRODUCT_PREFIXES = (
     "clients/android",
     "feature-lab",
@@ -107,6 +118,42 @@ def normalize_subject(subject: str) -> str:
     return text
 
 
+def shorten_subject(subject: str) -> str:
+    text = subject
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MAX_SUBJECT_BYTES:
+        return text
+    suffix = "…"
+    prefix = encoded[: MAX_SUBJECT_BYTES - len(suffix.encode("utf-8"))]
+    return prefix.decode("utf-8", errors="ignore").rstrip() + suffix
+
+
+def bound_release_body(body: str, footer: str) -> str:
+    markdown = body + footer
+    if len(markdown.encode("utf-8")) <= MAX_RELEASE_BODY_BYTES:
+        return markdown
+
+    notice = (
+        "\n\n_Additional release-note detail was omitted to fit the release body. "
+        "The attached full inventory remains unchanged._\n\n"
+    )
+    if len(footer.encode("utf-8")) > MAX_RELEASE_BODY_BYTES // 2:
+        # Canonical git refs are short, but malformed/oversized inventory metadata
+        # must not defeat the body limit or be silently presented as another range.
+        footer = "\n".join([
+            "## Release range",
+            "Range metadata exceeds the release-body budget; consult the attached inventory "
+            "for the exact baseline, head, and commit count.",
+            "",
+            *FULL_INVENTORY_LINES,
+        ])
+    budget = MAX_RELEASE_BODY_BYTES - len((notice + footer).encode("utf-8"))
+    prefix = body.encode("utf-8")[:budget].decode("utf-8", errors="ignore")
+    # Preserve complete Markdown lines rather than cutting a link or code span.
+    prefix = prefix.rsplit("\n", 1)[0].rstrip() if "\n" in prefix else ""
+    return prefix + notice + footer
+
+
 def path_matches(path: str, prefixes: Iterable[str]) -> bool:
     return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in prefixes)
 
@@ -198,7 +245,7 @@ def render_commit_bullets(commits: list[CommitRow], repo: str, limit: int) -> li
             continue
         seen_subjects.add(subject)
         bullets.append(
-            f"- {subject} ([`{commit.short_sha}`](https://github.com/{repo}/commit/{commit.sha}))"
+            f"- {shorten_subject(subject)} ([`{commit.short_sha}`](https://github.com/{repo}/commit/{commit.sha}))"
         )
         if len(bullets) >= limit:
             break
@@ -270,7 +317,7 @@ def build_markdown(payload: dict, repo: str) -> str:
     if breaking_changes:
         lines.append("## Breaking or migration-sensitive changes")
         for row in breaking_changes[:5]:
-            lines.append(f"- {row}")
+            lines.append(f"- {shorten_subject(row)}")
         lines.append("")
 
     lines.append("## Product and runtime changes")
@@ -294,19 +341,15 @@ def build_markdown(payload: dict, repo: str) -> str:
         lines.extend(render_commit_bullets(docs_commits, repo=repo, limit=4))
         lines.append("")
 
-    lines.append("## Release range")
-    lines.append(f"- Baseline: `{payload['baseline_tag']}`")
-    lines.append(f"- Head: [`{payload['head'][:12]}`](https://github.com/{repo}/commit/{payload['head']})")
-    lines.append(f"- Commits in range: `{payload['commit_count']}`")
-    lines.append("")
-    lines.append("## Full inventory")
-    lines.append(
-        "The release assets include the authoritative `changelog-*.json` and `changelog-*.md` "
-        "inventory files for the raw commit and path-level detail."
-    )
-    lines.append("")
-
-    return "\n".join(lines)
+    footer = [
+        "## Release range",
+        f"- Baseline: `{payload['baseline_tag']}`",
+        f"- Head: [`{payload['head'][:12]}`](https://github.com/{repo}/commit/{payload['head']})",
+        f"- Commits in range: `{payload['commit_count']}`",
+        "",
+        *FULL_INVENTORY_LINES,
+    ]
+    return bound_release_body("\n".join(lines) + "\n", "\n".join(footer))
 
 
 def main() -> int:
