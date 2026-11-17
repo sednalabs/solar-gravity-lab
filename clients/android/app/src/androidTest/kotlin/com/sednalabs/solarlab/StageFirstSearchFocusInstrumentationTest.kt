@@ -64,39 +64,51 @@ class StageFirstSearchFocusInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
-
-        var lastSelectionFailure: Throwable? = null
+        // The 365-body native scene keeps rendering while focus transitions
+        // settle. Compose must not require the entire renderer to become idle to
+        // inspect a stable selection. Control only the test frame clock here,
+        // just as the repeated-search interaction test does for feedback timers.
+        composeRule.mainClock.autoAdvance = false
         try {
-            composeRule.waitUntil(timeoutMillis = 20_000) {
-                runCatching {
-                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                        .assertTextContains("Earth")
-                }.onFailure { lastSelectionFailure = it }.isSuccess
-            }
-        } catch (failure: ComposeTimeoutException) {
-            throw AssertionError("Selection title did not update to Earth", lastSelectionFailure ?: failure)
-        }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
-        composeRule.onNodeWithTag(LabTags.FOLLOW).assertIsDisplayed()
-        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "earth"
-        }
+            composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
 
-        if (composeRule.activity.isStageFirstRuntimeMountedForTesting()) {
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON)
-                .performScrollToIfPossible()
-                .assertIsDisplayed()
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON)
-                .performScrollToIfPossible()
-                .assertIsDisplayed()
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
-                .performScrollToIfPossible()
-                .assertIsDisplayed()
-                .performClick()
+            var lastSelectionFailure: Throwable? = null
+            try {
+                composeRule.waitUntil(timeoutMillis = 20_000) {
+                    composeRule.mainClock.advanceTimeByFrame()
+                    runCatching {
+                        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                            .assertTextContains("Earth")
+                    }.onFailure { lastSelectionFailure = it }.isSuccess
+                }
+            } catch (failure: ComposeTimeoutException) {
+                throw AssertionError("Selection title did not update to Earth", lastSelectionFailure ?: failure)
+            }
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL).assertIsDisplayed()
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
+            composeRule.onNodeWithTag(LabTags.FOLLOW).assertIsDisplayed()
+            composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "earth"
+            }
+
+            if (composeRule.activity.isStageFirstRuntimeMountedForTesting()) {
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON)
+                    .performScrollToIfPossible()
+                    .assertIsDisplayed()
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON)
+                    .performScrollToIfPossible()
+                    .assertIsDisplayed()
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
+                    .performScrollToIfPossible()
+                    .assertIsDisplayed()
+                    .performClick()
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
+            }
+        } finally {
+            composeRule.mainClock.autoAdvance = true
         }
     }
 
