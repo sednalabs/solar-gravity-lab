@@ -5,9 +5,9 @@
 # exploit, or patched pin-utils release). The dependency is transitive:
 # aws-smithy-http 0.63.6 -> pin-utils 0.1.0.
 # We keep the full fail-on-vulnerability OSV scan enabled for every other ID.
-# Follow-up: https://github.com/sednalabs/solar-gravity-lab/issues/undefined
+# Follow-up: https://github.com/sednalabs/solar-gravity-lab/issues/238
 # Once a compatible AWS SDK/Smithy update removes pin-utils, delete this entry.
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0441"
 effectiveUntil = 2027-02-17
-reason = "Informational only: archived transitive pin-utils via aws-smithy-http; no fix for pin-utils; remove with compatible AWS Smithy upgrade (issue #undefined)."
+reason = "Informational only: archived transitive pin-utils via aws-smithy-http; no fix for pin-utils; remove with compatible AWS Smithy upgrade (issue #238)."
