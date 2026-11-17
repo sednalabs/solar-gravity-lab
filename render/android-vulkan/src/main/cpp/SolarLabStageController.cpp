@@ -1550,8 +1550,10 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     bool matchingBodies = bodiesView && bodiesView->data &&
         bodiesView->element_count == runtimeScene_.pickBodies.size();
     std::unordered_map<std::string, const RuntimeBodyProxy*> previousBodies;
-    previousBodies.reserve(runtimeScene_.pickBodies.size());
-    for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);
+    if (matchingBodies) {
+        previousBodies.reserve(runtimeScene_.pickBodies.size());
+        for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);
+    }
     std::optional<Float3> nextEarthPosition;
     std::optional<Float3> nextFollowPosition;
     const std::string followBodyId = LowercaseAscii(runtimeSelectedBodyId_);
@@ -1569,9 +1571,11 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 nextFollowPosition = nextOrigin + MakeFloat3(body->position_from_origin_m.x,
                     body->position_from_origin_m.y, body->position_from_origin_m.z);
             }
-            const auto previous = previousBodies.find(bodyId);
-            if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
-                matchingBodies = false;
+            if (matchingBodies) {
+                const auto previous = previousBodies.find(bodyId);
+                if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
+                    matchingBodies = false;
+                }
             }
         }
     }

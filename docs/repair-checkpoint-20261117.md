@@ -37,3 +37,14 @@ Laboratory tools now have an explicit accessible Done action. Native compute
 qualification uses that ordinary control instead of an injected Android Back
 event that failed on the hosted system. GPU pixel, readback, resize and resource
 reuse assertions are unchanged.
+
+
+Review follow-through removes the whole-world snapshot clone from Android
+single-body inspection. The runtime now lends one active body while JNI
+keeps the registry lock; only ten numerical values cross the boundary.
+Tests check reference identity, unknown IDs and visibility of atomic edits.
+This removes unnecessary allocation, not a measured phone-speedup claim.
+
+Native transitions avoid building a previous-body lookup when body counts
+already make interpolation impossible. Earth/follow target discovery still
+scans the new packet, preserving navigation during scene replacement.

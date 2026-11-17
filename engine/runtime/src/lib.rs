@@ -1197,6 +1197,14 @@ impl WorldRuntime {
         self.next_command_ordinal
     }
 
+    /// Borrow one body's current authoritative state without cloning the world,
+    /// history, manifests or hardware metadata. The borrow cannot outlive
+    /// this runtime; FFI callers retain their registry lock while reading it.
+    #[must_use]
+    pub fn body_by_id(&self, body_id: &str) -> Option<&BodyState> {
+        self.active_branch().world.bodies.iter().find(|body| body.body_id.0 == body_id)
+    }
+
     /// Return an ownership-safe world snapshot for host-visible status and
     /// checkpoint provenance capture.
     /// This method is a pure projection: it does not mutate runtime state.
