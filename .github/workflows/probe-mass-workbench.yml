@@ -15,150 +15,119 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply reviewed corrections to the exact retained product source
+      - name: Repair retained preview identity and native menu interaction
         run: |
-          git checkout --detach b3520d4e415a09d9051983c3dffea92b075a6300
+          git checkout --detach 342b75ac05cf446b18673fbe1df48be1cb216160
           python3 - <<'PY'
           from pathlib import Path
-          def replace(path, before, after):
-              p = Path(path)
-              source = p.read_text()
-              assert source.count(before) == 1, (path, source.count(before), before[:90])
-              p.write_text(source.replace(before, after))
-          search = 'clients/android/app/src/androidTest/kotlin/com/sednalabs/solarlab/StageFirstSearchFocusInstrumentationTest.kt'
-          replace(search, 'import com.sednalabs.solarlab.runtime.SessionConnectionState',
-                  'import com.sednalabs.solarlab.runtime.SessionConnectionState\nimport com.sednalabs.solarlab.runtime.RuntimeCommand')
-          replace(search, '        runBlocking { facade.loadScenario("sol-system") }', '''        // This fixture qualifies search/catalogue semantics, not moving playback.
-                  // Continuous clock recomposition prevents Compose's idle barrier;
-                  // real moving focus and pinch remain covered by LabCameraMotion.
-                  runBlocking {
-                      facade.loadScenario("sol-system")
-                      facade.applyCommand(RuntimeCommand.PausePlayback)
-                  }''')
-          replace(search, '            facade.uiState.value.renderFrame?.bodies?.any { it.bodyId == "halley" } == true',
-                  '            facade.uiState.value.snapshot?.paused == true &&\n                facade.uiState.value.renderFrame?.bodies?.any { it.bodyId == "halley" } == true')
-          runtime = 'engine/runtime/src/lib.rs'
-          replace(runtime, '    InvalidBodyProperties,\n    AdvanceBusy,',
-                  '    InvalidBodyProperties,\n    BodyEditRequiresPause,\n    AdvanceBusy,')
-          replace(runtime, '''        } = &command {
-                      Some(body_properties::validate(''', '''        } = &command {
-                      // Numeric body edits must not overwrite a position captured before
-                      // an active playback tick. Reject before history/ordinal mutation.
-                      if !self.active_branch().world.playback.paused {
-                          return Err(RuntimeError::BodyEditRequiresPause);
-                      }
-                      Some(body_properties::validate(''')
-          ffi = 'engine/ffi/src/lib.rs'
-          replace(ffi, 'RuntimeError::InvalidBodyProperties',
-                  'RuntimeError::InvalidBodyProperties | RuntimeError::BodyEditRequiresPause')
-          replace(ffi, '''            // This world has 5,355 useful pairs, below the per-worker grain
-                      // required for parallel work. Affinity-limited execution retains
-                      // the existing one-worker tiled path; multicore dispatch stays
-                      // untiled instead of paying thread overhead for this sparse scene.''', '''            // 5,355 useful pairs are below the 8,128-pair work grain even
-                      // on one allowed CPU. The canonical scene stays on the ordinary
-                      // one-worker NEON path under both affinity configurations.''')
-          replace(ffi, '''            let available_workers = std::thread::available_parallelism()
-                          .map(|workers| workers.get())
-                          .unwrap_or(1);
-                      if available_workers > 1 {
-                          assert_eq!(runtime_info.info.cpu_solver_path, 1);
-                          assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
-                      } else {
-                          assert_eq!(runtime_info.info.cpu_solver_path, 3);
-                          assert_eq!(runtime_info.info.cpu_schedule_tile_count, 12);
-                      }''', '''            assert_eq!(runtime_info.info.cpu_solver_path, 1);
-                      assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);''')
-          tests = 'engine/runtime/src/body_properties.rs'
-          replace(tests, '    #[test]\n    fn passive_mass_does_not_perturb_but_source_mass_changes_earth_motion() {', '''    #[test]
-              fn running_world_rejects_property_edit_without_consuming_history() {
-                  let mut r = lab();
-                  r.apply_command(WorldCommand::ResumePlayback, 3).unwrap();
-                  let before = r.snapshot();
-                  let ordinal = r.next_command_ordinal;
-                  let log_len = r.active_branch().command_log.len();
-                  let checkpoint_len = r.active_branch().checkpoints.len();
-                  let command = edit(&r, 2.0e22, 2.0e22);
-                  assert_eq!(r.apply_command(command, 4), Err(RuntimeError::BodyEditRequiresPause));
-                  assert_eq!(r.snapshot(), before);
-                  assert_eq!(r.next_command_ordinal, ordinal);
-                  assert_eq!(r.active_branch().command_log.len(), log_len);
-                  assert_eq!(r.active_branch().checkpoints.len(), checkpoint_len);
-                  r.apply_command(WorldCommand::PausePlayback, 5).unwrap();
-                  r.apply_command(edit(&r, 2.0e22, 2.0e22), 6).unwrap();
+          def replace(path, old, new):
+              p=Path(path); source=p.read_text()
+              assert source.count(old)==1, (path, source.count(old), old[:90])
+              p.write_text(source.replace(old,new))
+          root='clients/android/app/src/'
+          authoring=root+'main/kotlin/com/sednalabs/solarlab/runtime/ProbeAuthoring.kt'
+          replace(authoring, '/** Undo returns to this epoch on a new branch, preserving the abandoned future. */', '''/** A retained forecast is usable only for the exact paused world it predicted. */
+          internal fun ProbePreviewResult.isCurrentFor(
+              currentCandidate: RuntimeBodyState?,
+              currentSessionHandle: Long?,
+              snapshot: SnapshotPresentation?,
+          ): Boolean = currentCandidate != null && candidate == currentCandidate &&
+              sessionHandle == currentSessionHandle && snapshot != null && snapshot.paused &&
+              baselineRevision == snapshot.revision &&
+              epochSeconds.toBits() == snapshot.epochSeconds.toBits()
+          
+          /** Undo returns to this epoch on a new branch, preserving the abandoned future. */''')
+          stage=root+'main/kotlin/com/sednalabs/solarlab/StageFirstRuntimeExperience.kt'
+          replace(stage,'import com.sednalabs.solarlab.runtime.RuntimeFacade','import com.sednalabs.solarlab.runtime.RuntimeFacade\nimport com.sednalabs.solarlab.runtime.isCurrentFor')
+          replace(stage,'            if (labInteraction.committing || draft.candidate() != preview.candidate) return', '''            if (labInteraction.committing || !preview.isCurrentFor(
+                          draft.candidate(), runtimeFacade.uiState.value.sessionHandle,
+                          runtimeFacade.uiState.value.snapshot)) return''')
+          replace(stage,'''        LaunchedEffect(labInteraction.draftVersion) {
+                      val version = labInteraction.draftVersion
+                      val draft = labInteraction.draft ?: return@LaunchedEffect
+                      val candidate = draft.candidate() ?: return@LaunchedEffect
+                      if (labInteraction.preview?.candidate == candidate && labInteraction.preview?.sessionHandle == runtimeSessionHandle) return@LaunchedEffect
+                      labInteraction.previewing = true''', '''        LaunchedEffect(labInteraction.draftVersion, runtimeSessionHandle, uiState.snapshot?.revision) {
+                      val version = labInteraction.draftVersion
+                      val draft = labInteraction.draft ?: return@LaunchedEffect
+                      val candidate = draft.candidate() ?: return@LaunchedEffect
+                      if (labInteraction.committing || uiState.snapshot?.paused != true) return@LaunchedEffect
+                      if (labInteraction.preview?.isCurrentFor(candidate, runtimeSessionHandle, uiState.snapshot) == true) return@LaunchedEffect
+                      // Camera commands during recreation also change native revision.
+                      // Never offer Create against an obsolete retained preview.
+                      labInteraction.preview = null
+                      labInteraction.previewing = true''')
+          replace(stage,'''                if (labInteraction.draftVersion == version && result.sessionHandle == runtimeFacade.uiState.value.sessionHandle) {
+                              labInteraction.preview = result''', '''                if (labInteraction.draftVersion == version && result.isCurrentFor(candidate,
+                                  runtimeFacade.uiState.value.sessionHandle, runtimeFacade.uiState.value.snapshot)) {
+                              labInteraction.preview = result''')
+          replace(stage,'''                                    syncObserver(selectedBodyId, modeToRestore)''', '''                                    // Restoring a draft's camera is presentation-only. Reissuing
+                                              // native observer commands invalidates the retained forecast.
+                                              if (labInteraction.draft == null) syncObserver(selectedBodyId, modeToRestore)''')
+          replace(stage,'                        canCreate = preview != null && preview.candidate == draft.candidate() && !labInteraction.previewing,',
+                  '                        canCreate = preview?.isCurrentFor(draft.candidate(), runtimeSessionHandle, uiState.snapshot) == true && !labInteraction.previewing,')
+          test=root+'test/kotlin/com/sednalabs/solarlab/runtime/ProbeAuthoringTest.kt'
+          replace(test,'    @Test\n    fun bodyAndPreviewDtoRetainF64ValuesAndRejectMalformedNativePayloads() {', '''    @Test
+              fun previewIdentityRejectsChangedWorldAndPreservesOnlyTheExactPausedDraft() {
+                  val preview = native().toPreview(42, candidate, "earth")
+                  val snapshot = SnapshotPresentation("lab.earth-moon", "main", 3, 0.0, true, 1.0,
+                      observerModeLabel = "Free", revision = 7)
+                  assertTrue(preview.isCurrentFor(candidate, 42, snapshot))
+                  assertTrue(!preview.isCurrentFor(candidate, 43, snapshot))
+                  assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(revision = 8)))
+                  assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(epochSeconds = 1.0)))
+                  assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(paused = false)))
+                  assertTrue(!preview.isCurrentFor(candidate.copy(massKg = 2000.0), 42, snapshot))
+                  assertTrue(!preview.isCurrentFor(candidate, 42, null))
+                  assertTrue(!preview.isCurrentFor(null, 42, snapshot))
               }
-              #[test]
-              fn passive_mass_does_not_perturb_but_source_mass_changes_earth_motion() {''')
-          header = 'render/android-vulkan/src/main/cpp/SolarLabPresentation.h'
-          replace(header, '#include <optional>', '#include <optional>\n#include <string>\n#include <unordered_set>')
-          replace(header, 'struct ReferenceCameraCoordinate {', '''// Ownership records what was actually submitted, not a possibly newer UI
-          // selection. Packet and UI selection may differ during a command handoff.
-          class TracerDrawOwnership {
-          public:
-              void Record(const std::string& id) { ids_.insert(id); }
-              bool Contains(const std::string& id) const { return ids_.contains(id); }
-          private:
-              std::unordered_set<std::string> ids_;
-          };
           
-          struct ReferenceCameraCoordinate {''')
-          controller = 'render/android-vulkan/src/main/cpp/SolarLabStageController.cpp'
-          replace(controller, '    std::vector<RuntimeBodyProxy> pickBodies;',
-                  '    std::vector<RuntimeBodyProxy> pickBodies;\n    solarlab::presentation::TracerDrawOwnership authoritativeTracers;')
-          replace(controller, '''            authoritativePositionsM.push_back(body->position_from_origin_m.x);''', '''            if (body->kind == SL_SCENE_BODY_KIND_TRACER) {
-                          authoritativeTracers.Record(LowercaseAscii(bodyId));
-                      }
-                      authoritativePositionsM.push_back(body->position_from_origin_m.x);''')
-          replace(controller, '''            // Selected BodyClass::Tracer items are already rendered in the
-                      // authoritative billboard stream. Avoid their duplicate pixels.
-                      if (!normalizedSelectedBodyId.empty() &&
-                          sourceBodyId == normalizedSelectedBodyId) {''', '''            // Suppress exactly the tracer IDs submitted above. A packet's
-                      // selected ID may differ from the newer UI-selected ID.
-                      if (authoritativeTracers.Contains(sourceBodyId)) {''')
-          cpp_test = 'render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp'
-          replace(cpp_test, 'void TestExclusiveTracerPresentation() {', '''void TestExclusiveTracerPresentation() {
-              TracerDrawOwnership owners;
-              assert(!owners.Contains("packet-selected"));
-              owners.Record("packet-selected");
-              owners.Record("ui-selected");
-              owners.Record("packet-selected");
-              assert(owners.Contains("packet-selected"));
-              assert(owners.Contains("ui-selected"));
-              assert(!owners.Contains("ordinary-tracer"));''')
-          Path('docs/repair-checkpoint-20261117.md').write_text('''# Native validation and mass-edit repair checkpoint
+              @Test
+              fun bodyAndPreviewDtoRetainF64ValuesAndRejectMalformedNativePayloads() {''')
+          chrome=root+'main/kotlin/com/sednalabs/solarlab/EarthMoonLabChrome.kt'
+          replace(chrome,'    const val TOOLS_PANEL = "lab.tools"','    const val TOOLS_PANEL = "lab.tools"\n    const val TOOLS_CLOSE = "lab.tools.close"')
+          replace(chrome,'            Text("Your laboratory", style = MaterialTheme.typography.titleLarge)', '''            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                          Text("Your laboratory", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                          LabTextAction("Done", actions.toggleTools, tag = LabTags.TOOLS_CLOSE,
+                              description = "Close laboratory tools")
+                      }''')
+          camera=root+'androidTest/kotlin/com/sednalabs/solarlab/LabCameraMotionInstrumentationTest.kt'
+          replace(camera,'import androidx.test.espresso.Espresso.pressBack\n','')
+          replace(camera,'        pressBack()','        composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible().performClick()')
+          mass=root+'androidTest/kotlin/com/sednalabs/solarlab/LabProbeMassInstrumentationTest.kt'
+          replace(mass,'import kotlinx.coroutines.runBlocking','import kotlinx.coroutines.runBlocking\nimport androidx.lifecycle.ViewModelProvider')
+          replace(mass,'        composeRule.waitUntil(20_000) { facade.uiState.value.snapshot?.bodyCount == count + 1 && facade.lastProbeCommit.value != null }', '''        fun placementError() = ViewModelProvider(composeRule.activity)[LabInteractionViewModel::class.java].state.error
+                  composeRule.waitUntil(20_000) {
+                      (facade.uiState.value.snapshot?.bodyCount == count + 1 && facade.lastProbeCommit.value != null) || placementError() != null
+                  }
+                  if (placementError() != null) capture("placement-rejected.png")
+                  assertNull("Native placement must accept the recreated mass preview", placementError())
+                  assertEquals(count + 1, facade.uiState.value.snapshot!!.bodyCount)''')
+          doc=Path('docs/repair-checkpoint-20261117.md')
+          doc.write_text(doc.read_text()+'''
           
-          Product parent: b3520d4e415a09d9051983c3dffea92b075a6300. This checkpoint
-          preserves the already committed probe-mass implementation rather than
-          reapplying the older bundle. Authoritative body-property edits now require
-          a paused native world and reject before consuming history or an ordinal.
-          A regression proves rejection leaves state/history intact and the paused
-          retry succeeds.
+          A second native-diagnostics pass found draft creation after Activity recreation
+          could offer a forecast from an older command revision. Forecast reuse and
+          Create now require matching candidate, native session, revision, paused state
+          and exact epoch. Restoration of a draft camera no longer reissues unrelated
+          observer commands. Native commit's stale-preview rejection is unchanged.
+          Unit cases cover every identity component and the native recreation journey
+          still requires successful actual creation. Rejection now captures its error.
           
-          Search catalogue qualification explicitly pauses its canonical fixture.
-          Continuous playback is still exercised by the separate native moving-focus,
-          gesture cancellation and saved-world journeys; those checks are not removed.
-          This addresses Compose idle synchronisation, not a claimed frame-rate gain.
-          
-          Tracer draw suppression records the actual IDs included in the authoritative
-          billboard pass. Packet-selected and UI-selected IDs can differ transiently;
-          both must remain single-owner. Spacecraft remain billboards because the
-          runtime does not export them as SceneTracer.
-          
-          The canonical ARM64 FFI expectation now matches the existing 8,128 useful
-          pairs-per-worker gate for both multicore and single-CPU affinity. The 5,355
-          useful-pair scene uses the ordinary single-worker NEON path in either case.
-          
-          Do not promote this checkpoint until its exact-source hosted native run and
-          real captures pass. Current delivery: w18944, w18954, w18955, w18967; PR237.
+          Laboratory tools now have an explicit accessible Done action. Native compute
+          qualification uses that ordinary control instead of an injected Android Back
+          event that failed on the hosted system. GPU pixel, readback, resize and resource
+          reuse assertions are unchanged.
           ''')
           PY
           git diff --check
           git config user.name 'Solar Gravity Lab repair workbench'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'lab: guard paused mass edits and repair native validation contracts'
+          git commit -m 'lab: retain only current probe previews and expose tools dismissal'
           git push origin "HEAD:refs/heads/candidate/native-repair-${GITHUB_RUN_ID}"
           echo "Product candidate: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-      - name: Test authoritative physics and native presentation contracts
+      - name: Test authoritative physics and presentation contracts
         run: |
           cargo test -p solarlab-runtime -p solarlab-ffi -p solarlab-physics
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/presentation-test
