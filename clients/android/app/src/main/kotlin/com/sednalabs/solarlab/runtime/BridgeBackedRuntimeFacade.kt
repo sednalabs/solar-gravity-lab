@@ -1179,6 +1179,7 @@ private fun RuntimeCommand.userFacingAction(): String = when (this) {
     is RuntimeCommand.SpawnBody -> "Spawn ${bodyId}"
     is RuntimeCommand.RemoveBody -> "Remove ${bodyId}"
     is RuntimeCommand.SetBodyKinematics -> "Update kinematics for ${bodyId}"
+    is RuntimeCommand.SetBodyProperties -> "Update mass and motion for ${bodyId}"
     is RuntimeCommand.CreateCheckpoint -> "Create checkpoint ${checkpointId ?: "(auto)"}"
     is RuntimeCommand.CreateBranchFromCheckpoint -> "Create branch from ${checkpointId}"
 }
