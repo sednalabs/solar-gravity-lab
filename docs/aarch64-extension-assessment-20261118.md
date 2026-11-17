@@ -2,7 +2,8 @@
 
 This is a source-based implementation review of Solar Gravity Lab's
 authoritative **FP64** physics path, not a claim about the precise Galaxy S25
-Ultra feature bits or achieved speed. Starting point: `main` at
+Ultra feature bits or **on-device** speed. Hosted performance is measured
+separately below. Starting point: `main` at
 `64c8fe8ee180959c7940f0838e09e52ed2e076ea`.
 Tracking: Ops **w18979**; implementation PR on
 `perf/aarch64-passive-neon-batch-20261118`.
