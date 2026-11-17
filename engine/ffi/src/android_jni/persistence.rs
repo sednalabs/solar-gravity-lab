@@ -81,8 +81,10 @@ pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTrans
         let id = std::str::from_utf8(&bytes).ok()?;
         let registry = super::super::registry().lock().ok()?;
         let session = registry.get(SlRuntimeHandle { raw: handle as u64 })?;
-        let snapshot = session.runtime.snapshot();
-        let body = snapshot.bodies.iter().find(|b| b.body_id.0 == id)?;
+        // A ten-scalar inspector must not clone every body, trail and archive.
+        // The runtime guard keeps the authoritative borrowed body alive for
+        // exactly this read, without changing the ABI or the world revision.
+        let body = session.runtime.body_by_id(id)?;
         use solarlab_domain::BodyClass;
         let class = match body.body_class {
             BodyClass::Star => 0.0,
