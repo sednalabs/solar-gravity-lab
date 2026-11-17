@@ -29,7 +29,7 @@ object RuntimeScenarioPacks {
             simSecondsPerRealSecond = 3_600.0,
             provenance = "JPL Horizons · DE441",
             referenceEpoch = "1 January 2000, 12:00 TDB · ICRF",
-            modelSummary = "Real starting states. Newtonian Sun, Earth and Moon gravity. Other planets, tides, relativity and collisions are not modelled. Added probes feel gravity without changing the planets.",
+            modelSummary = "Real starting states. Newtonian Sun, Earth and Moon gravity. Other planets, tides, relativity and collisions are not modelled. Probes feel gravity; by default they do not attract other bodies. Enable Attracts other bodies to give a probe gravitational source mass.",
         ),
         RuntimeScenarioPack(
             scenarioId = "sol-system",
@@ -94,7 +94,7 @@ object RuntimeScenarioPacks {
         RuntimeScenarioPack(
             scenarioId = "stress.s25-tile-swarm",
             title = "S25 tile swarm",
-            description = "A Galaxy S25 Ultra stress pack shaped to exercise Arm64 parallel tiled scheduler telemetry.",
+            description = "A Galaxy S25 Ultra tracer/render tile stress pack. The active gravity worker count depends on useful source pairs, not the number of tracer tiles.",
             tags = listOf("stress", "s25", "arm64", "tiles"),
             defaultFocusBodyId = "sun",
             defaultObserverMode = RuntimeObserverMode.SystemFrame,

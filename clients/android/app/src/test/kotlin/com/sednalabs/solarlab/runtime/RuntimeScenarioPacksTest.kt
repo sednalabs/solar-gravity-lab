@@ -15,6 +15,8 @@ class RuntimeScenarioPacksTest {
         assertTrue(pack.provenance.orEmpty().contains("DE441"))
         assertTrue(pack.referenceEpoch.orEmpty().contains("TDB"))
         assertTrue(pack.modelSummary.orEmpty().contains("not modelled"))
+        assertTrue(pack.modelSummary.orEmpty().contains("by default"))
+        assertTrue(pack.modelSummary.orEmpty().contains("Attracts other bodies"))
         assertNotNull(RuntimeScenarioPacks.byId("sol-system"))
     }
 
@@ -45,6 +47,7 @@ class RuntimeScenarioPacksTest {
         assertEquals(RuntimeObserverMode.SystemFrame, pack.defaultObserverMode)
         assertTrue(pack.tags.contains("arm64"))
         assertTrue(pack.tags.contains("tiles"))
+        assertTrue(pack.description.contains("useful source pairs"))
         assertEquals(172_800.0, pack.simSecondsPerRealSecond, 0.0)
     }
 }

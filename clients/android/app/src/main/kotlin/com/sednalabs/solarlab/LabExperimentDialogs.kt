@@ -446,7 +446,7 @@ internal fun LabScienceDialog(uiState: ShellUiState, scenarioPack: RuntimeScenar
                     append("Surface orientation and atmospheric light are illustrative. Small objects have a minimum screen size so you can find them. The time display is elapsed simulation time from the scenario epoch.")
                 })
                 LabScienceSection("Surface imagery", "Earth uses NASA's Blue Marble map, credited to NASA/GSFC, Reto Stöckli and NASA's Earth Observatory. The Moon uses NASA's CGI Moon Kit from the LRO Camera and Laser Altimeter teams. These offline colour maps show surface features, not live weather or a terrain simulation. Other bodies use procedural surfaces. NASA has not reviewed or endorsed this app.")
-                LabScienceSection("Your experiment", "Editing a body changes its initial position or velocity. A probe feels gravity by default without attracting the other bodies; enable Exert gravity to give it gravitational source mass.")
+                LabScienceSection("Your experiment", "Editing a body can change its position, velocity, radius and mass. A probe feels gravity by default without attracting the other bodies; enable Attracts other bodies to give it gravitational source mass.")
                 LabScienceSection("Limits", "This model does not include relativistic corrections, tides, atmospheric drag or a resolved collision/debris simulation. Large time speeds can be limited to protect numerical accuracy. A reference seed does not make the subsequent simplified propagation a DE441 solution.")
                 uiState.renderStatus.provenanceSource?.takeIf(String::isNotBlank)?.let {
                     LabScienceSection("Source recorded by this scene", it)

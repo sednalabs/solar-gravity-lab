@@ -156,7 +156,7 @@ fn s25_tile_swarm_descriptor() -> ScenarioPackDescriptor {
     descriptor(
         "stress.s25-tile-swarm",
         "S25 tile swarm",
-        "A Galaxy S25 Ultra stress pack with enough deterministic tracers to exercise the Arm64 parallel tiled scheduler.",
+        "A Galaxy S25 Ultra tracer/render tile stress pack; parallel gravity dispatch depends on useful source pairs, not tracer tile count.",
         ["stress", "s25", "arm64", "tiles"],
         Some("sun"),
         ObserverMode::SystemFrame,
@@ -556,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn s25_tile_swarm_pack_exercises_parallel_tile_scheduler_shape() {
+    fn s25_tile_swarm_pack_exercises_tile_telemetry_without_implying_parallel_gravity() {
         const ACTIVE_ARM64_TILE_SIZE: usize = 32;
 
         let seed =
@@ -564,6 +564,19 @@ mod tests {
 
         assert_eq!(seed.bodies.len(), 749);
         assert_eq!(seed.bodies.len().div_ceil(ACTIVE_ARM64_TILE_SIZE), 24);
+        // The additional 384 tracer/marker bodies have no gravitational source
+        // mass. Render tile count is not proof that four gravity workers qualify.
+        let gravitating_sources = seed
+            .bodies
+            .iter()
+            .filter(|body| !matches!(
+                body.body_class,
+                BodyClass::Tracer | BodyClass::Spacecraft | BodyClass::SmallBody | BodyClass::Comet
+            ))
+            .count();
+        let useful_pairs = gravitating_sources * seed.bodies.len()
+            - gravitating_sources * (gravitating_sources + 1) / 2;
+        assert!(useful_pairs < 4 * 8_128);
         assert_eq!(seed.default_observer_mode, ObserverMode::SystemFrame);
         assert_eq!(seed.default_focus_body_id.as_deref(), Some("sun"));
         assert!(seed
