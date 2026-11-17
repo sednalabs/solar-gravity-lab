@@ -2,6 +2,7 @@ package com.sednalabs.solarlab
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
@@ -122,8 +123,10 @@ class StageFirstSearchInteractionInstrumentationTest {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
                 .fetchSemanticsNodes().isNotEmpty()
         }
+        // Objects must respond even if the asynchronous Rust catalogue has not
+        // arrived yet; previously the visible button was disabled during startup.
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-            .performScrollToIfPossible().performClick()
+            .assertIsEnabled().performScrollToIfPossible().performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
                 .fetchSemanticsNodes().isNotEmpty()
