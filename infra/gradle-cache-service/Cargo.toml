@@ -10,7 +10,7 @@ aws-config = { version = "1.8.8", default-features = false, features = ["behavio
 aws-credential-types = "1.2.8"
 aws-sdk-s3 = { version = "1.102.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 axum = { version = "0.8.6", default-features = false, features = ["http1", "tokio", "tracing"] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 bytes = "1.10.1"
 http = "1.3.1"
 tokio = { version = "1.48.0", features = ["fs", "macros", "rt-multi-thread", "signal", "sync"] }
