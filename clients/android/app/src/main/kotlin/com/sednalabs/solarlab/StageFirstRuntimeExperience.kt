@@ -2405,10 +2405,10 @@ private fun RuntimeStageSearchDialog(
                     }
                 }
                 Text(
-                    text = if (filteredBodies.size == 32) {
-                        "32 shown · type to filter"
-                    } else {
-                        "${filteredBodies.size} matches"
+                    text = when {
+                        bodies.isEmpty() -> "Loading objects…"
+                        filteredBodies.size == 32 -> "32 shown · type to filter"
+                        else -> "${filteredBodies.size} matches"
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2422,7 +2422,7 @@ private fun RuntimeStageSearchDialog(
                 ) {
                     if (filteredBodies.isEmpty()) {
                         Text(
-                            text = "No runtime bodies matched that query.",
+                            text = if (bodies.isEmpty()) "The object catalogue is loading…" else "No runtime bodies matched that query.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
