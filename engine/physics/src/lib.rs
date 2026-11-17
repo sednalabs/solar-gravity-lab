@@ -152,6 +152,9 @@ struct DispatchDecision {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Arm64GravityKernel {
     NeonF64Pairwise,
+    /// Two independent passive targets per FP64 NEON vector; source/source
+    /// forces still use the symmetric ordered-pair kernel.
+    NeonF64PassiveBatch,
     NeonF64TiledPairwise,
     NeonF64ParallelTiledPairwise,
     PortableScalarOracle,
@@ -340,6 +343,13 @@ pub const ARM64_KERNEL_CATALOG: &[Arm64KernelCatalogEntry] = &[
         readiness: Arm64KernelReadiness::Candidate,
         workload: "complex/vector math assist",
     },
+    // Append rather than reorder: FFI/Kotlin publish ordinal-indexed masks.
+    Arm64KernelCatalogEntry {
+        path_id: "simd.arm64.neon-f64-passive-batch",
+        required_features: &["neon"],
+        readiness: Arm64KernelReadiness::Active,
+        workload: "FP64 two-target batches for passive tracers; symmetric source gravity retained",
+    },
 ];
 
 pub const ARM64_CPU_FEATURE_CATALOG: &[CpuFeatureCatalogEntry] = &[
@@ -347,7 +357,7 @@ pub const ARM64_CPU_FEATURE_CATALOG: &[CpuFeatureCatalogEntry] = &[
         canonical_name: "neon",
         flag: CPU_FEATURE_NEON,
         status: CpuFeatureUseStatus::ActiveSolverCapability,
-        current_workload: "simd.arm64.neon-f64-pairwise, simd.arm64.neon-f64-tiled-pairwise, and simd.arm64.neon-f64-parallel-tiled-pairwise",
+        current_workload: "simd.arm64.neon-f64-pairwise, simd.arm64.neon-f64-passive-batch, simd.arm64.neon-f64-tiled-pairwise, and simd.arm64.neon-f64-parallel-tiled-pairwise",
     },
     CpuFeatureCatalogEntry {
         canonical_name: "fp",
@@ -881,6 +891,18 @@ fn physical_pair_count(body_count: usize, source_count: usize) -> u64 {
 
 fn enough_parallel_pair_work(body_count: usize, source_count: usize) -> bool {
     enough_parallel_pair_work_with_budget(body_count, source_count, runtime_worker_budget())
+}
+
+/// FP64 SIMD over two **different passive bodies**, unlike the existing
+/// pairwise NEON path which packs X/Y of one symmetric pair. Source/source
+/// forces remain unchanged. Dispatch only when enough zero-source targets
+/// amortize the two-lane setup; this gate is to be checked against actual
+/// hosted Arm64 benchmark crossover data, not assumed S25 speedup.
+fn enough_passive_neon_batch_work(body_count: usize, source_count: usize) -> bool {
+    body_count >= 64
+        && source_count > 0
+        && body_count.saturating_sub(source_count) >= 32
+        && source_count.saturating_mul(8) <= body_count
 }
 
 // Provisional ARM64 crossover from hosted Neoverse-N2 measurements:
@@ -1671,6 +1693,9 @@ fn pairwise_gravity_accelerations_arm64_into(
         Arm64GravityKernel::NeonF64Pairwise => {
             pairwise_gravity_accelerations_arm64_neon(bodies, sources, accelerations)
         }
+        Arm64GravityKernel::NeonF64PassiveBatch => {
+            pairwise_gravity_accelerations_arm64_neon_passive_batch(bodies, sources, accelerations)
+        }
         Arm64GravityKernel::NeonF64TiledPairwise => {
             pairwise_gravity_accelerations_arm64_neon_tiled(bodies, sources, accelerations)
         }
@@ -1711,6 +1736,28 @@ fn pairwise_gravity_accelerations_arm64_neon(
     _accelerations: &mut [Vector3d],
 ) {
     panic!("Arm64 NEON solver selected on a non-aarch64 host")
+}
+
+#[cfg(target_arch = "aarch64")]
+#[allow(unsafe_code)]
+fn pairwise_gravity_accelerations_arm64_neon_passive_batch(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
+    assert!(arm64_neon_runtime_available(), "passive NEON path without CPU support");
+    // SAFETY: the checked NEON runtime feature is the sole ISA precondition.
+    // All slices are owned by the caller for the full acceleration sweep.
+    unsafe { arm64_neon::pairwise_gravity_accelerations_passive_batch(bodies, sources, accelerations) }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn pairwise_gravity_accelerations_arm64_neon_passive_batch(
+    _bodies: &[MassiveBodyState],
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+) {
+    panic!("Arm64 passive NEON batch selected on a non-aarch64 host")
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -1801,7 +1848,8 @@ fn pairwise_gravity_accelerations_arm64_portable(
 #[allow(unsafe_code)]
 mod arm64_neon {
     use std::arch::aarch64::{
-        float64x2_t, vdupq_n_f64, vfmaq_n_f64, vgetq_lane_f64, vsetq_lane_f64, vsubq_f64,
+        float64x2_t, vdivq_f64, vdupq_n_f64, vfmaq_f64, vfmaq_n_f64, vgetq_lane_f64,
+        vmaxq_f64, vmulq_f64, vsetq_lane_f64, vsqrtq_f64, vsubq_f64,
     };
 
     use solarlab_domain::Vector3d;
@@ -1821,6 +1869,82 @@ mod arm64_neon {
             interaction_partners(bodies, sources, i, i + 1, bodies.len(), |j| {
                 accumulate_pair(bodies, accelerations, i, j);
             });
+        }
+    }
+
+    /// Source-source pairs retain the exact symmetric pairwise NEON kernel.
+    /// Passive bodies are independent *targets*: pack two FP64 targets per
+    /// vector and iterate the original ascending source order. This keeps
+    /// backreaction identically zero, uses full-precision sqrt/div/FMA and
+    /// avoids the scatter of the ordinary source/passive pair path.
+    /// No reciprocal estimate, FP32, FP16 or reordered source reduction.
+    #[target_feature(enable = "neon")]
+    pub unsafe fn pairwise_gravity_accelerations_passive_batch(
+        bodies: &[MassiveBodyState],
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+    ) {
+        // Unchanged source/source pairs: preserves symmetric force bookkeeping.
+        for (cursor, &i) in sources.iter().enumerate() {
+            for &j in &sources[cursor + 1..] {
+                accumulate_pair(bodies, accelerations, i, j);
+            }
+        }
+
+        // No auxiliary index allocations per KDK force sweep; bodies with
+        // nonzero source mass are not processed again through this path.
+        let mut passive = bodies.iter().enumerate()
+            .filter(|(_, body)| body.mass_kg == 0.0)
+            .map(|(index, _)| index);
+        while let Some(first) = passive.next() {
+            let Some(second) = passive.next() else {
+                // Odd tail keeps ascending source order and exact pair law.
+                for &source in sources {
+                    if first < source {
+                        accumulate_pair(bodies, accelerations, first, source);
+                    } else {
+                        accumulate_pair(bodies, accelerations, source, first);
+                    }
+                }
+                break;
+            };
+            let left = bodies[first].position_m;
+            let right = bodies[second].position_m;
+            let x = xy_vector(left.x, right.x);
+            let y = xy_vector(left.y, right.y);
+            let z = xy_vector(left.z, right.z);
+            let mut ax = vdupq_n_f64(0.0);
+            let mut ay = vdupq_n_f64(0.0);
+            let mut az = vdupq_n_f64(0.0);
+            let min_distance = vdupq_n_f64(MIN_DISTANCE_M2);
+            let one = vdupq_n_f64(1.0);
+            for &source in sources {
+                let body = bodies[source];
+                let dx = vsubq_f64(vdupq_n_f64(body.position_m.x), x);
+                let dy = vsubq_f64(vdupq_n_f64(body.position_m.y), y);
+                let dz = vsubq_f64(vdupq_n_f64(body.position_m.z), z);
+                // Same nested FP64 fused expression as accumulate_pair.
+                let yz_sq = vfmaq_f64(vmulq_f64(dz, dz), dy, dy);
+                let squared = vmaxq_f64(vfmaq_f64(yz_sq, dx, dx), min_distance);
+                let inverse = vdivq_f64(one, vsqrtq_f64(squared));
+                let inverse_cubed = vmulq_f64(vmulq_f64(inverse, inverse), inverse);
+                let factor = vmulq_f64(
+                    vdupq_n_f64(G_M3_PER_KG_S2 * body.mass_kg), inverse_cubed,
+                );
+                ax = vfmaq_f64(ax, dx, factor);
+                ay = vfmaq_f64(ay, dy, factor);
+                az = vfmaq_f64(az, dz, factor);
+            }
+            accelerations[first] = Vector3d {
+                x: vgetq_lane_f64::<0>(ax),
+                y: vgetq_lane_f64::<0>(ay),
+                z: vgetq_lane_f64::<0>(az),
+            };
+            accelerations[second] = Vector3d {
+                x: vgetq_lane_f64::<1>(ax),
+                y: vgetq_lane_f64::<1>(ay),
+                z: vgetq_lane_f64::<1>(az),
+            };
         }
     }
 
@@ -1971,8 +2095,15 @@ fn dispatch_solver_backend_with_source_count(
     if decision.effective_backend == SolverBackend::SimdArm64
         && !enough_parallel_pair_work(body_count, source_count)
     {
-        decision.path_id = "simd.arm64.neon-f64-pairwise".to_owned();
-        decision.arm64_gravity_kernel = Some(Arm64GravityKernel::NeonF64Pairwise);
+        // Select a 2-target vector kernel only for numerous passive targets.
+        // We never use it for dense mutual-gravity bodies or tiny laboratories.
+        if enough_passive_neon_batch_work(body_count, source_count) {
+            decision.path_id = "simd.arm64.neon-f64-passive-batch".to_owned();
+            decision.arm64_gravity_kernel = Some(Arm64GravityKernel::NeonF64PassiveBatch);
+        } else {
+            decision.path_id = "simd.arm64.neon-f64-pairwise".to_owned();
+            decision.arm64_gravity_kernel = Some(Arm64GravityKernel::NeonF64Pairwise);
+        }
     }
     decision
 }
@@ -2877,6 +3008,10 @@ mod tests {
             .iter()
             .find(|entry| entry.path_id == "simd.arm64.neon-f64-parallel-tiled-pairwise")
             .expect("active parallel tiled neon kernel entry");
+        let passive_neon = catalog
+            .iter()
+            .find(|entry| entry.path_id == "simd.arm64.neon-f64-passive-batch")
+            .expect("active two-passive-target FP64 kernel");
         let candidate_paths = catalog
             .iter()
             .filter(|entry| entry.readiness == Arm64KernelReadiness::Candidate)
@@ -2889,6 +3024,8 @@ mod tests {
         assert_eq!(tiled_neon.required_features, &["neon"]);
         assert_eq!(parallel_tiled_neon.readiness, Arm64KernelReadiness::Active);
         assert_eq!(parallel_tiled_neon.required_features, &["neon"]);
+        assert_eq!(passive_neon.readiness, Arm64KernelReadiness::Active);
+        assert_eq!(passive_neon.required_features, &["neon"]);
         assert!(candidate_paths.contains(&"simd.arm64.sve-f64-batch-candidate"));
         assert!(candidate_paths.contains(&"simd.arm64.sve2-f64-batch-candidate"));
         assert!(candidate_paths.contains(&"simd.arm64.sme-tiled-f64-candidate"));

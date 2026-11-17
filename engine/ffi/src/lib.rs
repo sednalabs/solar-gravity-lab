@@ -2035,6 +2035,7 @@ fn cpu_solver_path_code(path_id: &str) -> u32 {
         "simd.arm64.neon-f64-tiled-pairwise" => 3,
         "simd.arm64.neon-f64-parallel-tiled-pairwise" => 4,
         "simd.x64.avx2-f64-pairwise" => 5,
+        "simd.arm64.neon-f64-passive-batch" => 6,
         _ => u32::MAX,
     }
 }
