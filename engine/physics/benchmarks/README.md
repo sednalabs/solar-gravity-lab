@@ -107,15 +107,21 @@ only about 2%/5% on this host. These are same-source comparisons within one host
 the separate x64 table must not be combined into a cross-machine before/after
 claim.
 
-The next candidate requires the existing 4,560-useful-pair grain for each
-selected worker, rather than for the entire workload. The selected budget is
-the minimum of available workers, 32-body budget tiles and nonempty pair work.
-With four workers, at least 18,240 useful pairs are required. This prevents the
-observed canonical multicore regression, chooses untiled one-worker NEON there,
-and leaves the large dense workload parallel. It is a provisional conservative
-guard, not a measured optimum or a claim about phone scheduling. New dense
-128/192/256/512 fixtures are measured under both affinities to qualify the
-crossover and to compare the balanced candidate against this baseline.
+The **implemented** Arm64 scheduler requires **8,128 useful gravitational
+pairs per selected worker** rather than the earlier 4,560-pair work-grain
+candidate. This is separate from the 32-body tile size and counts only
+physical interactions involving a gravitational source. With four workers
+the minimum is 32,512 useful pairs: dense 192 has 18,336 and stays
+single-worker, while dense 256 has 32,640 and is eligible. The canonical
+365-body/15-source scene has only 5,355 pairs and avoids multithreaded
+startup. Dense 128/192/256/512 fixtures and scalar-parity tests preserve
+the crossover policy. This is a *provisional hosted Neoverse-N2 decision*,
+not a universal optimum or measured S25 Ultra speedup.
+
+The earlier `hosted-43868064550` archived data reports a previous
+scheduler; it remains unchanged as dated evidence and must not be read as
+an exact-head benchmark of the newer 8,128-pair gate. Qualify actual
+selected worker paths and current-source timings independently.
 
 A longer-lived worker scope could remove repeated thread creation. A safe Rust
 implementation is practical with standard synchronization and owned buffers,

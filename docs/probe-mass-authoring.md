@@ -24,12 +24,17 @@ accepted command updates mass/source/radius/position/velocity atomically and
 refreshes source-aware solver selection. Saves retain both masses unchanged.
 
 Regression coverage includes invalid-edit atomicity, saved-state round trips,
-passive-mass invariance, real Earth backreaction, placement values and bit-exact
-unchanged editor fields. Native acceptance and exact-source CI are separate from
-these source-level changes; no phone-performance claim or new release is implied.
+passive-mass invariance, Earth backreaction, placement values and bit-exact
+unchanged editor fields. **Exact-source native hosted acceptance passed** in
+[validation 44008781943](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943),
+including the real Mass-panel/create/edit/save/reopen journey, and
+[PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237)
+merged to `main` at `bd79d5de`. That is source delivery, **not**
+an assertion that alpha.2 includes this UI or that a new APK/physical
+S25 performance test has been published.
 
-Delivery: Ops w18967 under w18944; feature PR237. Use remote commits and Ops
-checkpoints, not conversation state, as the recovery record.
+Delivery tracking: Ops w18967 under w18944, with native integration w18954.
+Use the remote merged commit, validation run and Ops checkpoints as truth.
 
 
 Additional refinement: accepted body edits reuse their already-validated invariant

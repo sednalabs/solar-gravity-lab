@@ -51,3 +51,21 @@ Build the release binary before (re)starting the app service:
 cargo build --release --manifest-path infra/gradle-cache-service/Cargo.toml
 systemctl --user restart solarlab-gradle-cache.service
 ```
+
+## Dependency security and OSV Scanner
+
+`Cargo.lock` currently resolves `aws-smithy-http 0.63.6`, which depends
+transitively on `pin-utils 0.1.0`. OSV/RustSec
+[`RUSTSEC-2026-0441`](https://osv.dev/RUSTSEC-2026-0441)
+reports that `pin-utils` is **unmaintained** (informational/unknown severity,
+not a documented exploit or a patched crate release).
+
+The directory-scoped [`osv-scanner.toml`](osv-scanner.toml) contains an
+exception for **that single advisory only**, with v2.3.8-supported
+`ignoreUntil = 2027-02-17`. The security workflow retains
+`fail-on-vuln: true` for all other advisories. The
+[full main-branch OSV scan](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44014438874)
+passes with this scope. The exception must be removed after a compatible
+AWS Smithy dependency migration under
+[issue #238](https://github.com/sednalabs/solar-gravity-lab/issues/238);
+do not silently extend it or mistake its presence for a fixed dependency.

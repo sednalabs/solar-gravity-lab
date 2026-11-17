@@ -1,6 +1,12 @@
 # Laboratory recovery and qualification, 17 November 2026
 
-Continues PR237 and Ops w18944/w18954 on the existing feature branch.
+> **Historical recovery note.** The intermediate failures described
+> below were real at the named commits, but are no longer outstanding.
+> [PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237)
+> passed [final exact-source validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
+> and merged into `main` as `bd79d5de`. No later APK has been released.
+
+This records PR237 and Ops w18944/w18954 during feature-branch recovery.
 
 The 649bf213 native artifact (validation43988855306, artifact14288640096,
 SHA-256 f53144dfd906c9297aa547da977e49c0f66f2476346725af33a48fdcce36c52b)
@@ -24,8 +30,12 @@ assertions remain mandatory. Framework idle timeouts are bounded to produce a
 useful failure rather than hanging the entire class. The temporary source-repair
 workflow has been removed; its patch and source archive remain in run43995419049.
 
-This document records implementation and recovered evidence, not final acceptance.
-Promotion requires a complete successful run at the final source, native evidence
-review, and an APK tied to that exact commit. Do not infer physical Galaxy S25
-throughput, power, or thermal behaviour from hosted tests. Preview signing and old
-private saves remain governed by the release-channel warnings.
+This intermediate snapshot was not final acceptance. A later 365-body
+Search-focus test also hit Compose-Espresso idling while Vulkan remained
+active. The qualified head controlled only the **test frame clock** for
+that focus assertion while retaining selection and runtime checks;
+the full native suite and other CI lanes passed on `88700324`.
+Source was merged as `bd79d5de`. A future APK still needs exact-source
+packaging, signature, checksum and installed launch proof. Physical Galaxy S25
+throughput, power and thermal behaviour are not established by hosted tests.
+Preview signing and old private saves remain governed by the release guide.

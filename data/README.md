@@ -1,7 +1,9 @@
 # Offline-first data architecture
 
-Solar Gravity Lab v2 uses offline-first scientific content with signed live
-updates.
+Solar Gravity Lab uses **bundled offline** scientific data today.
+Versioned, signed *live* updates are an accepted **architecture goal**, not
+an implemented production distribution service. The engine and scenario
+packages must remain useful without network access.
 
 Primary package types:
 

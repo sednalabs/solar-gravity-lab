@@ -1,9 +1,18 @@
 # Earth–Moon laboratory refinement, 16 November 2026
 
-This delivery continues PR #237 and Ops w18944. It keeps the existing Rust world,
-FP64 state, history, JNI boundary, native Vulkan stage and offline NASA assets.
-The published alpha.2 remains the qualified baseline until this work has its own
-exact-source hosted proof, reviewed native images and installable release.
+> **Dated implementation record, with 17 November acceptance addendum below.**
+> This file documents the work as it developed; intermediate gates and
+> benchmarks below must not be mistaken for the final source status.
+>
+> [PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237)
+> **passed** [exact-head hosted CI](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
+> and merged to `main` at `bd79d5de`. The published alpha.2 APK remains
+> the last distributed build, so these later features are **source-delivered
+> but not yet published** as another APK. Physical S25 acceptance and
+> signing continuity remain outstanding.
+
+This delivery kept the existing Rust world, FP64 state, history, JNI
+boundary, native Vulkan stage and offline NASA assets.
 
 ## Complete experiences
 
@@ -126,3 +135,22 @@ cost still require a real-device trace, tied to that APK.
 Ops: w18950 UX, w18951 physics/CPU, w18953 portability, w18954 integration/release,
 w18955 renderer. Related hardware programmes w3454/w3455/w4362 and sustained-device
 measurement w10289 remain open until their own acceptance evidence exists.
+
+## Final qualification addendum (17 November 2026)
+
+The intermediate source and its failing Search test were not the final
+qualification. The subsequent `887003245d4a2f01928ff0036a3d0f2635e2289f`
+head passed [validation 44008781943](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943),
+including Rust x64/Arm64, FFI, scalar and ISA checks, Android JVM/lint,
+and the full connected native camera, probe mass/edit/reopen, system document
+picker, computation/pixel/resize, Search and lifecycle suite. CodeQL,
+Security SARIF, coverage and docs checks passed on the same PR head.
+GitHub merged source-equivalent tree `621aed5b5f6c7e3ad27f7ed4e71927e0353defa0`
+at `bd79d5de`. The post-merge main full OSV scan later
+[passed](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44014438874).
+
+This acceptance is for **hosted source and emulator behaviour**. No
+`v0.2.0-alpha.3` has been released, no persistent preview signer has been
+qualified, and physical S25 performance, energy and real-device gestures
+still need separately tied evidence. The published alpha.2's private
+saved data must not be discarded to test another signing identity.

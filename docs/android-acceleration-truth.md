@@ -58,8 +58,11 @@ these fields separately:
   scalar-oracle parity tests. Runtime dispatch selects tiled paths only for
   sufficient useful source/target pair work, and selects the parallel tiled path
   only when useful work covers the selected worker budget. The conservative
-  scheduling guard requires the former dense 96-body work grain (4,560 useful
-  pairs) per selected worker; source-free pairs do not count. Parallel workers
+  scheduling guard requires **8,128 useful gravitational pairs per selected
+  worker**, based on hosted dense-192/dense-256 crossover tests; source-free
+  pairs do not count. On a four-worker budget, dense 192 has only 18,336
+  useful pairs and stays single-worker, while dense 256 has 32,640 and is
+  eligible. Parallel workers
   receive balanced contiguous ranges of the useful pair stream, including split
   source rows. The 32-body tile fields cap the worker budget; they no longer
   describe which rows each worker receives. This guard is provisional and the
@@ -79,6 +82,10 @@ these fields separately:
   and the number of tile workers that can receive work. This lets hosted logs,
   real-device artifacts, and native Android computer-use sessions verify that a
   scenario is actually exercising the parallel tiled workload shape.
+  Tile counts and worker *budgets* are not activation evidence. For example,
+  `stress.s25-tile-swarm` adds 384 non-source tracers to the 365-body
+  canonical seed: it exercises rendering and tile telemetry, but with the
+  new useful-pair gate it does not guarantee four-worker gravity activation.
 
 ## November 2026 implementation update
 
