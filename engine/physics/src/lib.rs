@@ -898,10 +898,12 @@ fn enough_parallel_pair_work(body_count: usize, source_count: usize) -> bool {
 /// forces remain unchanged. Dispatch only when enough zero-source targets
 /// amortize the two-lane setup; this gate is to be checked against actual
 /// hosted Arm64 benchmark crossover data, not assumed S25 speedup.
+/// Only workloads at least as large as the measured canonical 365-body scene
+/// receive this path; keep tiny/mid-size unbenchmarked scenes on old NEON.
 fn enough_passive_neon_batch_work(body_count: usize, source_count: usize) -> bool {
-    body_count >= 64
+    body_count >= 256
         && source_count > 0
-        && body_count.saturating_sub(source_count) >= 32
+        && body_count.saturating_sub(source_count) >= 64
         && source_count.saturating_mul(8) <= body_count
 }
 

@@ -8,9 +8,14 @@ physics or move simulation authority into the GPU.
 
 - **Physics:** Rust KDK reuses one acceleration endpoint across steps;
   useful-pair enumeration skips zero-source interactions while retaining
-  passive probe forces. Native Arm64 FP64 NEON pairwise/tiled/parallel-tiled
-  and x64 AVX2 kernels remain guarded by detected CPU/OS capabilities and
-  scalar-oracle comparisons.
+  passive probe forces. Native Arm64 FP64 NEON
+  **passive-two-target batching**, symmetric pairwise/tiled/parallel-tiled
+  and x64 AVX2 kernels remain gated by detected CPU/OS capabilities and
+  scalar-oracle comparisons. The passive NEON path retains source backreaction
+  and uses FP64 sqrt/div/FMA; its hosted canonical/sparse median times
+  improved 36.9%/36.7% relative to previous selected NEON, without a
+  measured oracle regression. See
+  [AArch64 evidence](aarch64-extension-assessment-20261118.md).
 - **Arm64 scheduling:** parallel dispatch requires at least
   **8,128 useful gravitational pairs per selected worker** (provisional
   hosted Neoverse-N2 crossover), *not* the earlier 4,560 grain or a

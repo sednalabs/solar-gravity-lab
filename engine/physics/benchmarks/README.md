@@ -127,3 +127,35 @@ A longer-lived worker scope could remove repeated thread creation. A safe Rust
 implementation is practical with standard synchronization and owned buffers,
 but needs separate phase, panic and termination tests. It remains follow-up
 work; this change does not claim to eliminate per-sweep thread startup.
+
+## November 2026 — two-passive-target FP64 NEON batching
+
+A new source-aware Arm64 path,
+`simd.arm64.neon-f64-passive-batch`, packs **two independent zero-source
+targets** per `float64x2_t` while preserving the existing symmetric NEON
+source-source forces. FP64 square root, division and fused arithmetic are
+used throughout; active path telemetry and the Kotlin/FFI catalog agree.
+Selection is limited to numerous sparse worlds, not tiny or dense scenes.
+
+Hosted release-mode 64-step operation (11 samples, comparable four-core
+Neoverse-N2 runner class; selected active workers = 1):
+
+| Scene | Before `fcc5539a` | After `88828572` | Median reduction |
+| --- | ---: | ---: | ---: |
+| Canonical 365 bodies / 15 sources | 2,152.236 µs | 1,357.173 µs | 36.9% |
+| Sparse 1,024 bodies / 3 sources | 1,537.832 µs | 974.181 µs | 36.7% |
+
+Both before/after runs' scalar reference timings were comparable, and
+scalar-oracle discrepancies remained unchanged (canonical 0; sparse
+maximum absolute error 1.4551915228366852e−11 and relative error
+1.2336296197834854e−15). The same workload improvements appeared under
+single-CPU affinity. Small/fully massive scenes kept their previous paths.
+Exact logs: [old run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44092479811)
+ARM job `134071220174` and
+[new run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44152318531)
+ARM job `134284208622`. Detailed source/ISA audit:
+[AArch64 extension assessment](../../../docs/aarch64-extension-assessment-20261118.md).
+
+This is a **hosted CPU microbenchmark**, not a benchmark of the entire
+Android UI, GPU, thermal budget, battery, or actual Galaxy S25 Ultra.
+Physical device capability and activation evidence is separately required.

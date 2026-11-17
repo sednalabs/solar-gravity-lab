@@ -379,7 +379,9 @@ fn passive_neon_batch_has_conservative_source_aware_dispatch() {
     assert!(!super::enough_passive_neon_batch_work(128, 0));
     assert!(!super::enough_passive_neon_batch_work(128, 128));
     assert!(!super::enough_passive_neon_batch_work(128, 32));
-    assert!(super::enough_passive_neon_batch_work(128, 16));
+    assert!(!super::enough_passive_neon_batch_work(128, 16));
+    assert!(!super::enough_passive_neon_batch_work(255, 3));
+    assert!(super::enough_passive_neon_batch_work(256, 32));
     assert!(super::enough_passive_neon_batch_work(365, 15));
     assert!(super::enough_passive_neon_batch_work(1024, 3));
     // Promoting many probes to source mass withdraws vector eligibility.
@@ -394,7 +396,7 @@ fn neon_passive_batch_matches_symmetric_neon_for_sources_and_scalar_for_passives
     assert!(super::arm64_neon_runtime_available());
     // Include sources before, between, and after passive bodies. Even and odd
     // passive tails, plus a promoted probe, must preserve the source law.
-    for size in [130, 131] {
+    for size in [258, 259] {
         let mut initial: Vec<MassiveBodyState> = (0..size)
             .map(|index| MassiveBodyState {
                 mass_kg: if [0, 63, size - 1].contains(&index) {

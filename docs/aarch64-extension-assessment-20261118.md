@@ -33,13 +33,49 @@ interactions, source backreaction and FP64 accumulation order. Passive
 bodies exert no gravity, so target-wise batching is valid. An odd passive
 target is handled with the existing exact pair path.
 
-The source-aware dispatcher uses this path only for at least 64 bodies,
-32 passive targets and at most one source for eight bodies, and only if the
-actual host provides NEON. Dense mutual-gravity worlds, tiny Earth–Moon scenes
+The source-aware dispatcher uses this path only for **at least 256 bodies,
+64 passive targets and no more than one gravitational source per eight total
+bodies**, and only if the actual host provides NEON. This deliberately avoids
+unbenchmarked 64–255-body workloads while preserving the measured 365/1024
+improvements. Dense mutual-gravity worlds, tiny Earth–Moon scenes
 and all non-Arm64 hosts keep their existing routes. An explicit path ID is
 exported through the FFI and Android telemetry; no fabricated SVE or SME
 activation. Promotion depends on ARM64 native tests and comparable release-mode
 throughput; if a workload regresses, narrow or disable the dispatch gate.
+
+## Hosted performance and numerical qualification
+
+The first completed exact-head [ARM64 validation #44152318531](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44152318531)
+compiled and exercised the new native intrinsics and passed the FP64 source
+force, scalar-oracle, odd/even passive tail, source-mass toggle, full/staged
+execution and ARM64 ISA tests. The baseline
+[pre-change run #44092479811](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44092479811)
+used an equivalent hosted four-core Neoverse-N2 ARM64 runner. Both ran 11
+release-mode samples of **64 simulation steps** with the same workload
+definitions and CPU class. These are *comparable hosted jobs*, not
+measurements from the same physical Galaxy handset.
+
+| Workload (source/total) | Old selected NEON median | New selected batch median | Reduction |
+| --- | ---: | ---: | ---: |
+| Canonical 15 / 365 | 2,152.236 µs | 1,357.173 µs | 36.9% |
+| Sparse 3 / 1,024 | 1,537.832 µs | 974.181 µs | 36.7% |
+
+One-CPU-affinity replay gave 2,152.069 → 1,357.205 µs and
+1,533.385 → 970.585 µs respectively; **worker count remains one**. The
+canonical scalar reference itself changed only 2,506.573 → 2,507.801 µs
+across runs; sparse scalar 1,732.769 → 1,732.446 µs. This supports a
+workload-specific SIMD improvement rather than a generally faster hosted
+machine. The new canonical body's maximum scalar-oracle error remained 0;
+sparse maximum absolute error stayed at 1.4551915228366852e−11 and
+maximum relative error at 1.2336296197834854e−15. Tiny three/four-body
+laboratories and dense mutual-gravity scenes keep the previous kernels.
+
+Data source: two native ARM64 job log NDJSON measurements, old job
+`134071220174` and new `134284208622`, plus the exact commit IDs
+`fcc5539a` (baseline) and `88828572` (candidate). This performance
+acceptance covers only measured hosted CPU workloads. Android frame time,
+battery, thermal, memory and actual S25 dispatch must be evaluated on
+device; do not extrapolate these percentages to whole-app speed.
 
 ## Other AArch64 features assessed (not claimed active in physics)
 
@@ -67,9 +103,11 @@ feature set. Native features are read through the runtime and capability census.
   and source positions before/within/after; fixed-plan staged/bulk equality.
 - Host ARM64 selected-path proof and x64 non-activation; JNI/Kotlin path-code
   and kernel-mask mapping aligned with the Rust catalog.
-- Matched x64/ARM64 compilation and hosted release throughput before default
-  performance claims. Any reported speedup must name workload, active worker
-  count, compiler, CPU/host and source SHA, and avoid cross-machine comparisons.
+- Matched x64/ARM64 compilation and source-identified hosted throughput
+  comparisons for default selection. The measured canonical/sparse results
+  above justify the conservative source-aware gate; unmeasured smaller
+  workloads stay on the old kernel. Any speedup must name workload, selected
+  workers, compiler, CPU class and source SHA, never compare unlike hosts.
 - Real Galaxy S25 Ultra sustained frame time, scalar parity, battery/thermal
   tests still outstanding even if hosted performance is positive.
 

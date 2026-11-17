@@ -91,10 +91,13 @@ alone does not establish actual multicore execution. Inspect the selected
 worker count and fallback report in the same proof artifact.
 
 The current active Arm64 solver claims are
-`simd.arm64.neon-f64-pairwise` and
+`simd.arm64.neon-f64-pairwise`,
+`simd.arm64.neon-f64-passive-batch`,
 `simd.arm64.neon-f64-tiled-pairwise` and
-`simd.arm64.neon-f64-parallel-tiled-pairwise`. All are double-precision NEON
-gravity paths; runtime dispatch selects tiled paths only for larger body sets
+`simd.arm64.neon-f64-parallel-tiled-pairwise`. All are full-precision NEON
+gravity paths. The passive batch path requires many zero-source targets;
+it uses no SVE or lower-precision extension. See
+[hosted parity and benchmark evidence](aarch64-extension-assessment-20261118.md). runtime dispatch selects tiled paths only for larger body sets
 and selects the parallel tiled path only when worker budget is available. SVE,
 SVE2, SVE-I8MM, SME, SME2, FP16, FHM, DotProd, I8MM, BF16, RDM, and FCMA remain
 reserved until a concrete workload lands with runtime dispatch, scalar-oracle

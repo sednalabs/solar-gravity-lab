@@ -44,12 +44,17 @@ available capability picture without confusing "visible to the runtime" with
 The current active authoritative Arm64 solver paths are:
 
 - `simd.arm64.neon-f64-pairwise`
+- `simd.arm64.neon-f64-passive-batch`
 - `simd.arm64.neon-f64-tiled-pairwise`
 - `simd.arm64.neon-f64-parallel-tiled-pairwise`
 
-All active paths use NEON double-precision gravity math. The tiled path is
-selected only for larger body sets, and the parallel tiled path is selected
-only when the runtime also has more than one worker available. This uses the
+All active paths use NEON double-precision gravity math. The new passive
+path uses 2-lane FP64 across **independent non-source bodies**, retaining
+ordered symmetric source-source force calculations. It is eligible only
+in numerous sparse-source worlds, not tiny labs or dense mutual gravity.
+The tiled path is selected only for larger body sets, and the parallel tiled
+path is selected only when enough useful pair work covers selected workers.
+See [AArch64 implementation and hosted measurements](aarch64-extension-assessment-20261118.md). This uses the
 large-scene kernel shape and available CPU parallelism without overclaiming SVE,
 SME, or packed-integer extensions.
 
