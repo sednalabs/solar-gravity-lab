@@ -1197,6 +1197,19 @@ impl WorldRuntime {
         self.next_command_ordinal
     }
 
+    /// Read one body from the active branch without allocating a WorldSnapshot.
+    /// Body inspection can be called frequently while the UI is active; cloning
+    /// trail histories and all bodies just to read ten scalar fields is wasteful.
+    /// The reference lives only as long as this immutable runtime borrow.
+    #[must_use]
+    pub fn body_by_id(&self, id: &str) -> Option<&BodyState> {
+        self.active_branch()
+            .world
+            .bodies
+            .iter()
+            .find(|body| body.body_id.0 == id)
+    }
+
     /// Return an ownership-safe world snapshot for host-visible status and
     /// checkpoint provenance capture.
     /// This method is a pure projection: it does not mutate runtime state.
@@ -2570,6 +2583,10 @@ mod tests {
         ));
         assert!(matches!(events[1], RuntimeEvent::SnapshotPublished(_)));
         assert_eq!(runtime.snapshot().bodies, vec![body.clone()]);
+        // Inspection must expose authoritative state without reconstructing
+        // a full snapshot; it also must not accidentally find stale branches.
+        assert_eq!(runtime.body_by_id("earth"), Some(&body));
+        assert!(runtime.body_by_id("missing").is_none());
 
         runtime
             .apply_command(
@@ -2591,6 +2608,7 @@ mod tests {
             .expect("kinematic update should succeed");
 
         assert_eq!(runtime.snapshot().bodies[0].position_m.x, 10.0);
+        assert_eq!(runtime.body_by_id("earth").map(|body| body.position_m.x), Some(10.0));
 
         runtime
             .apply_command(
@@ -2620,6 +2638,7 @@ mod tests {
             .expect("remove body should succeed");
 
         assert!(runtime.snapshot().bodies.is_empty());
+        assert!(runtime.body_by_id("earth").is_none());
         assert_eq!(runtime.snapshot().observer.focus_body_id, None);
     }
 
