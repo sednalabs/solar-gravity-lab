@@ -1,5 +1,15 @@
-//! Transactional edits: no partial body mutation, new identity or history reset.
+//! Transactional edits and read-only body inspection without cloning the world.
 use super::*;
+
+impl WorldRuntime {
+    /// Borrow one body's authoritative state from the active branch.
+    /// The borrow cannot outlive the runtime or overlap a mutation. Hosts must
+    /// copy their small response while holding their ordinary session lock.
+    #[must_use]
+    pub fn inspect_body(&self, id: &str) -> Option<&BodyState> {
+        self.active_branch().world.bodies.iter().find(|body| body.body_id.0 == id)
+    }
+}
 
 fn finite_vector(v: Vector3d) -> bool {
     v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
@@ -56,6 +66,25 @@ mod tests {
             body_id: b.body_id, mass_kg: mass, source_mass_kg: source, radius_m: b.radius_m,
             position_m: b.position_m, velocity_mps: b.velocity_mps,
         }
+    }
+    #[test]
+    fn body_inspection_borrows_live_state_without_mutation_or_world_copy() {
+        let mut r = lab();
+        let before = r.snapshot();
+        let ordinal = r.next_command_ordinal;
+        let log_len = r.active_branch().command_log.len();
+        let actual = r.active_branch().world.bodies.iter().find(|body| body.body_id.0 == "mass-probe").unwrap();
+        for _ in 0..100 {
+            let inspected = r.inspect_body("mass-probe").unwrap();
+            assert!(std::ptr::eq(inspected, actual));
+            assert_eq!(inspected.mass_kg, 1_000.0);
+        }
+        assert!(r.inspect_body("missing").is_none());
+        assert_eq!(r.snapshot(), before);
+        assert_eq!(r.next_command_ordinal, ordinal);
+        assert_eq!(r.active_branch().command_log.len(), log_len);
+        r.apply_command(edit(&r, 2.0e22, 2.0e22), 3).unwrap();
+        assert_eq!(r.inspect_body("mass-probe").unwrap().source_mass_kg, 2.0e22);
     }
     #[test]
     fn properties_edit_preserves_identity_and_roundtrips_mass_and_source() {
