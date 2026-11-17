@@ -117,15 +117,13 @@ internal fun labDraftCommand(draft: LabBodyDraft, session: LabBodyEditorSession)
     if (labDraftValidation(draft, session) != null) return null
     val reference = session.earth?.takeUnless { it.bodyId == session.body.bodyId }
     val initial = session.initialDraft()
-    val p = draft.positionKm.map { it.toDouble() * 1_000.0 }
-    val v = draft.velocityKmPerSecond.map { it.toDouble() * 1_000.0 }
-    // Untouched fields retain their exact f64 bits instead of taking a display-unit round trip.
-    val x = if (draft.positionKm[0] == initial.positionKm[0]) session.body.positionX else p[0] + (reference?.positionX ?: 0.0)
-    val y = if (draft.positionKm[1] == initial.positionKm[1]) session.body.positionY else p[1] + (reference?.positionY ?: 0.0)
-    val z = if (draft.positionKm[2] == initial.positionKm[2]) session.body.positionZ else p[2] + (reference?.positionZ ?: 0.0)
-    val vx = if (draft.velocityKmPerSecond[0] == initial.velocityKmPerSecond[0]) session.body.velocityX else v[0] + (reference?.velocityX ?: 0.0)
-    val vy = if (draft.velocityKmPerSecond[1] == initial.velocityKmPerSecond[1]) session.body.velocityY else v[1] + (reference?.velocityY ?: 0.0)
-    val vz = if (draft.velocityKmPerSecond[2] == initial.velocityKmPerSecond[2]) session.body.velocityZ else v[2] + (reference?.velocityZ ?: 0.0)
+    // Equivalent spellings keep native bits; only real numeric edits convert display units.
+    val x = labEditedScalar(draft.positionKm[0], initial.positionKm[0], session.body.positionX, 1_000.0, reference?.positionX ?: 0.0)
+    val y = labEditedScalar(draft.positionKm[1], initial.positionKm[1], session.body.positionY, 1_000.0, reference?.positionY ?: 0.0)
+    val z = labEditedScalar(draft.positionKm[2], initial.positionKm[2], session.body.positionZ, 1_000.0, reference?.positionZ ?: 0.0)
+    val vx = labEditedScalar(draft.velocityKmPerSecond[0], initial.velocityKmPerSecond[0], session.body.velocityX, 1_000.0, reference?.velocityX ?: 0.0)
+    val vy = labEditedScalar(draft.velocityKmPerSecond[1], initial.velocityKmPerSecond[1], session.body.velocityY, 1_000.0, reference?.velocityY ?: 0.0)
+    val vz = labEditedScalar(draft.velocityKmPerSecond[2], initial.velocityKmPerSecond[2], session.body.velocityZ, 1_000.0, reference?.velocityZ ?: 0.0)
     if (listOf(x, y, z, vx, vy, vz).any { !it.isFinite() }) return null
     return if (session.creating) {
         val mass = draft.massKg.toDouble()
@@ -140,8 +138,8 @@ internal fun labDraftCommand(draft: LabBodyDraft, session: LabBodyEditorSession)
         // Kinematics-only edits preserve an explicitly authored source/physical
         // mass ratio, rather than silently normalising existing saved worlds.
         val mass = draft.massKg.toDouble()
-        val source = if (draft.massKg == initial.massKg && draft.sourceGravity == initial.sourceGravity)
-            session.body.sourceMassKg else if (draft.sourceGravity) mass else 0.0
+        val source = labEditedSourceMass(draft.massKg, initial.massKg,
+            draft.sourceGravity, initial.sourceGravity, session.body.sourceMassKg)
         RuntimeCommand.SetBodyProperties(session.body.bodyId, mass, source,
             draft.radiusM.toDouble(), x, y, z, vx, vy, vz)
     }

@@ -11,6 +11,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.IdlingPolicies
+import java.util.concurrent.TimeUnit
+import android.util.Log
+import org.junit.Before
 import kotlinx.coroutines.runBlocking
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.RuntimeCommand
@@ -24,6 +28,11 @@ import org.junit.runner.RunWith
 class StageFirstSearchFocusInstrumentationTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
+
+    @Before fun boundIdleDiagnostics() {
+        IdlingPolicies.setMasterPolicyTimeout(45, TimeUnit.SECONDS)
+        IdlingPolicies.setIdlingResourceTimeout(30, TimeUnit.SECONDS)
+    }
 
     @Test
     fun searchFocus_updatesVisibleSelectionCard() {
@@ -40,10 +49,12 @@ class StageFirstSearchFocusInstrumentationTest {
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty()
-        }
+        // Filter before asking for Halley: an unfiltered, scroll-clipped
+        // catalogue need not expose an offscreen result in its semantics tree.
+        // The filtered inclusion/exclusion assertions below remain mandatory.
+        Log.i("SolarLabSearchProof", "Search field ready; entering comet filter")
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("comet")
+        Log.i("SolarLabSearchProof", "Comet filter entered")
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
