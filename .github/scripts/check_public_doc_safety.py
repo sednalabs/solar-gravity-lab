@@ -8,7 +8,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DOC_PATHS = ("README.md", "docs/**/*.md")
+# Scan the same repository-wide Markdown corpus as check_markdown_links.py.
+DOC_PATHS = ("README.md", "AGENTS.md", "**/*.md")
 SUSPICIOUS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"/home/[A-Za-z0-9_.-]+(?:/|\b)"),
@@ -93,9 +94,7 @@ def is_checked_markdown(path: Path) -> bool:
     if not path.is_file():
         return False
     rel = path.relative_to(ROOT)
-    if rel == Path("README.md"):
-        return True
-    return rel.parts and rel.parts[0] == "docs" and rel.suffix == ".md"
+    return rel.suffix == ".md"
 
 
 def main() -> int:
