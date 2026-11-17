@@ -1,7 +1,9 @@
 # Scenario Packs
 
 Scenario packs are deterministic startup scenes for fast Android Rust-stage
-iteration.
+iteration. The **Android app starts in `lab.earth-moon` paused**; the Rust
+data crate's legacy/canonical fallback `DEFAULT_SCENARIO_PACK_ID` is
+`sol-system`. These are distinct defaults, not two simultaneous worlds.
 
 They exist so manual testers and automation clients can jump directly to useful
 visual situations without rebuilding the app or hand-creating bodies through the
@@ -12,7 +14,10 @@ export.
 
 ## Current built-in packs
 
-- `sol-system`: full canonical startup catalog and the default app scenario.
+- `lab.earth-moon`: the Android launch default, a paused JPL DE441
+  Sun/Earth/Moon model with Earth focus and offline NASA maps.
+- `sol-system`: the full 365-body canonical startup catalog and the Rust
+  data crate's fallback default, used for broader search, renderer and physics tests.
 - `showcase.inner-system`: Sun through Mars plus near-Earth small bodies for
   close-scale navigation and selection polish.
 - `showcase.earth-moon`: Earth/Moon framing with marker tracers for trail,
@@ -25,11 +30,12 @@ export.
   pressure checks. It also crosses the large-scene threshold used by the Arm64
   NEON tiled gravity kernel, making it useful for checking whether large-scene
   solver-path telemetry becomes visible after load.
-- `stress.s25-tile-swarm`: a Galaxy S25 Ultra oriented tracer swarm that keeps
-  the full canonical startup catalog and adds deterministic tracer rings around
-  the Sun, Earth, and Jupiter. It is the preferred pack for checking the active
-  Arm64 parallel tiled scheduler and tile-plan telemetry introduced for
-  device-native optimization work.
+- `stress.s25-tile-swarm`: 749 total bodies (the canonical catalog plus
+  384 non-source tracers), arranged in deterministic Sun/Earth/Jupiter rings.
+  Useful for tracer rendering, 24 32-body tiles and scheduler **candidate**
+  telemetry, but **not** proof that four-worker parallel gravity activates.
+  Source-free tracers do not add gravitational source pairs; the current gate
+  requires at least 8,128 *useful pairs per selected worker*.
 
 ## Runtime contract
 
@@ -64,12 +70,13 @@ Recommended visual iteration loop:
 4. Patch the UI/renderer/runtime seam.
 5. Rerun the same pack so before/after evidence is comparable.
 
-For S25 Ultra acceleration work, load `stress.s25-tile-swarm` in the
-stage-first runtime and inspect the backend summary. A healthy Arm64
-device should make the large-scene scheduler fields obvious: body count,
-estimated pair count, tile count, tile size, and tile-worker slots should all
-be visible in the runtime-info summary before making any device-specific
-performance claim.
+For S25 Ultra acceleration work, load `stress.s25-tile-swarm` and
+inspect the actual source count, useful pairs, chosen kernel and worker
+budget. Its 749 bodies and 24 potential tiles exercise large-scene
+**telemetry and rendering**; do not infer multicore activation from tile count
+alone. To prove the parallel gravity kernel, use a suitably dense
+gravitational-source fixture and read its selected path. Hosted Arm64
+results are not physical S25 performance evidence.
 
 ## Future forecast packs
 

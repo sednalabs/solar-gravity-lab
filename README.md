@@ -1,20 +1,37 @@
 # Solar Gravity Lab
 
-Solar Gravity Lab now runs on the canonical Rust runtime mainline.
+Solar Gravity Lab's canonical `main` branch runs the Rust-owned simulation with
+the native Vulkan Android stage. **Source on `main` is newer than the currently
+published installable APK**: the latest published preview is
+[`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2).
+The later interaction, probe-mass and portable-experiment changes merged in
+[PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237) passed hosted
+validation but have **not** yet been published as another APK. Hosted emulator
+validation is not physical Galaxy S25 acceptance.
+
+Start with the [documentation guide](docs/README.md) for the current/historical
+split, test evidence and known delivery limitations.
 
 ## Earth–Moon laboratory
 
-The Android preview opens a paused Earth–Moon laboratory with a close view of
-Earth, offline NASA surface maps, and controls that remain usable in portrait
-and landscape. This is the first complete experience built on the existing
-Rust simulation and native Vulkan renderer.
+The published Android preview opens a paused Earth–Moon laboratory with a
+close view of Earth, offline NASA surface maps and portrait/landscape controls.
+The implementation on `main` builds on that qualified preview without replacing
+the Rust simulation or native Vulkan renderer.
 
 - Explore Earth, the Moon, or the whole system, with persistent playback controls.
-- Inspect and edit authoritative position and velocity, or add an orbiting probe
-  that does not perturb the canonical bodies.
+- Inspect position and velocity; add probes that **by default** feel gravity
+  without exerting it.
+- On the newer `main` source, set/edit probe mass in kilograms and independently
+  enable **Attracts other bodies** to give a probe gravitational source mass.
+  The application does not silently turn display mass into backreaction.
 - Run an experiment, save it locally, replace the scene, and reopen the saved
   world paused with its branch history and source metadata intact.
-- Read the model, epoch, source credits and limitations in the app's Model panel.
+- Read the model, epoch, source credits and limitations through the app's
+  science/model information.
+- The newer `main` source also supports portable `.sglexp` document
+  export/import, saved-copy removal and retained mass/kinematic edits; do not
+  assume these are present in the older published alpha.2 APK.
 
 Installable Android previews are published on the
 [Releases page](https://github.com/sednalabs/solar-gravity-lab/releases).
@@ -72,31 +89,38 @@ What is intentionally still transitional:
 - the canonical Android renderer still consumes selected `render-core` and
   core model/math policy types while those contracts migrate toward Rust
   ownership
-- the runtime and scene export surface are still earlier in product maturity
-  than the old line; this branch is structurally ahead of feature parity, but
-  now owns the authoritative physics semantics for the canonical path
-- the render backend adapter stack is only implemented far enough for the
-  current Vulkan packet host seam and still needs broader scene-history and
-  capability work
+- the native 3D camera, depth-aware picking, map/3D navigation, placement
+  previews, label recovery and near/medium/far tracer streams now run through
+  the canonical renderer; they still need installed-device usability and
+  sustained-performance acceptance
+- broader renderer adapter portability, deeper scene-history use and hardware
+  assist paths beyond the tested CPU/Vulkan subset remain future work
 - the offline update services are designed but not implemented yet
 
-## Current renderer migration / architectural gaps
+## Rendering and scientific maturity
 
-The physics/data spine is already 3D. The main open migration problem is not a
-physics rewrite; it is the render-side migration from older flat assumptions to
-an honest 3D camera/render/interaction/compute stack.
+The Rust physics and data state are three-dimensional, and the Android camera,
+native ray/sphere picking, depth-tested Vulkan scene, camera-space near/medium/far
+tracer streams and compute-compaction path are **implemented**, not a proposed
+migration. The live boundary is:
 
-The highest-value live gaps are:
+```text
+world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan
+```
 
-- camera, projection, and picking are still split across older packet-host and
-  newer immersive-render directions
-- the authoritative rendering boundary needs to be read explicitly as
-  `world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan`
-- medium/far compute-compaction is active only in the restored 3D
-  camera-space renderer path; the older XY-native compaction notes are
-  historical and must not be treated as current design guidance
-- the repo now has a richer architecture corpus describing current rendering,
-  camera, scene-contract, scaling, and frame-lifecycle seams under `docs/`
+[PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237) passed
+[exact-source hosted validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
+and merged into `main` at `bd79d5de`. That includes native Android journeys
+for probe placement, mass editing, saved documents, camera movement, selection
+and computed tracer pixels. It does **not** demonstrate physical S25 frame
+times, battery use, thermals, or all close-encounter numerical regimes.
+
+The remaining important gaps are stable preview signing and data-preserving
+upgrades, physical-device UX/performance measurement, long-running saved-world
+capacity, and unimplemented advanced physical effects (e.g. relativistic,
+tidal and resolved collision models). Experimental OpenCL/NPU paths are not
+active authoritative physics backends. Older XY-native compaction handoffs are
+historical, not current operating instructions.
 
 ## Repository layout
 
@@ -118,6 +142,9 @@ The highest-value live gaps are:
   present at the repository root.
 
 ## Architecture reading order
+
+Use [the documentation guide](docs/README.md) for the current contract,
+operational proof and historical handoffs before following the ADR sequence.
 
 1. [`docs/adr/0001-rust-owned-core.md`](docs/adr/0001-rust-owned-core.md)
 2. [`docs/adr/0002-versioned-protobuf-contracts.md`](docs/adr/0002-versioned-protobuf-contracts.md)
@@ -181,7 +208,9 @@ Canonical `main` should be read operationally as:
 
 ## Validation
 
-The foundational validation target is the Rust workspace:
+The foundational local validation target is the Rust workspace. For an
+installable or device-facing claim, require exact-source remote validation,
+actual Android UI evidence and a separately verified packaged APK:
 
 ```bash
 cargo test --workspace

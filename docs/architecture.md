@@ -1,6 +1,12 @@
 # Architecture
 
-Solar Gravity Lab `main` is the Rust-owned platform line.
+Solar Gravity Lab `main` is the Rust-owned platform line. The canonical
+Android Earth–Moon laboratory, native camera/picking, preview/mass authoring,
+portable experiment documents and 3D Vulkan compute streams are implemented
+and passed exact-source hosted validation in
+[PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237).
+Their merged code is newer than the published alpha.2 APK; physical S25
+acceptance and signing continuity are separate.
 
 The canonical product path on this branch is:
 
@@ -64,7 +70,9 @@ without perturbing planets unless their source mass is explicitly nonzero.
 
 ### Dual-GPU policy ownership
 
-When `OpenCL` is selected on canonical main, the intended split is explicit:
+OpenCL is a **reserved architecture/reporting seam**, not an implemented
+long-horizon integration backend. If a future provider is implemented, the
+intended split is:
 
 - `Vulkan` owns realtime rendering and in-frame packet compaction work.
 - `OpenCL` owns long-horizon tracer integration and forecast/path sampling assists.
@@ -89,53 +97,53 @@ The shell depends directly on `:android-vulkan-renderer`, sourced from
 `render/android-vulkan/`. The renderer owns lifecycle-bound Vulkan/NDK concerns
 after scene export; it does not own world integration or history.
 
-## Current rendering boundary
+## Implemented rendering boundary
 
-The most important live rendering seam to understand is:
+The production stage implements the 3D camera-space path:
 
 ```text
 world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan
 ```
 
-This is the boundary where the project stops being “world truth” and starts
-being “renderer truth”. It is also the seam where the current migration work is
-concentrated: camera, picking, packet shaping, native upload, and GPU-side
-optimization all need to preserve a 3D worldview without quietly collapsing back
-into the older flat XY assumptions.
+Rust owns the authoritative bodies, source-mass semantics, integration and
+history. Scene extraction produces renderer-neutral appearance, traces and
+lighting facts; packets use a native camera basis, origin-relative coordinates
+and distinct authoritative/near/medium/far/trail streams. The C++/GLSL path
+renders those streams with depth and camera-space medium/far compute
+compaction. It does not make the GPU authoritative for physics.
 
-That means the main open migration problem on `main` is not a physics rewrite.
-It is the camera/render/interaction/compute migration that sits around this
-boundary.
+The native surface now owns orbit navigation, explicit map-plane navigation,
+ray/sphere-aware picking and presentation-aligned viewport anchors. Compose
+owns labels, 48dp interaction targets, accessible controls, staged probe editing
+and the document UI. Exact-source [hosted Android validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
+exercised mass changes, search, placement, 3D computed tracer pixels,
+resizing, saving and reopening.
 
-## Current maturity
+## Current maturity and remaining work
 
-The architecture is ahead of the product surface today.
+Already implemented and hosted-tested on `main`:
 
-What is already real:
+- Rust world state, source-mass-aware solver and explicit atomic body-property commands;
+- checkpoint/history and V1/V2 model-aware saved-world import/export;
+- Android-native 3D camera, map interaction, picking and placement previews;
+- Vulkan graphics and 3D medium/far compute-compaction, with native pixel checks;
+- Arm64 NEON and x64 AVX2 paths with scalar-oracle and scheduling tests.
 
-- the Rust workspace structure and ADR chain
-- the versioned protobuf and FFI seams
-- session creation, refresh, command application, and render-packet export
-- a working Android shell that can bind a runtime session and render exported packets
+Not yet a claim of shipped or device-proven behaviour:
 
-What is intentionally still early:
+- the published APK remains `v0.2.0-alpha.2`, predating later merged work;
+- changing Android signing identities can prevent in-place upgrades and access
+  to private saved data; stable signing is still outstanding;
+- no installed physical S25 throughput, frame-pacing, thermal or battery proof
+  establishes a device performance improvement;
+- OpenCL/NPU long-horizon assists, signed update services, other graphics
+  backends, relativistic effects, resolved collisions, atmospheric drag and
+  general close-encounter accuracy remain unimplemented or unqualified.
 
-- the Rust runtime is the single product world; the removed Kotlin stage world
-  remains only in repository history, not in product wiring
-- the physics surface is now authoritative for the canonical Rust path, but its
-  UI-facing product coverage and fixture depth are still growing
-- scene extraction is still bodies-first; richer tracer, trail, and light history
-  surfaces remain thin
-- the shell still has bounded packet decoding for labels and debug presentation,
-  while the stage-first Rust runtime is the canonical visual surface and hosts
-  the native Vulkan stage directly
-- medium/far compute-compaction is restored only as 3D camera-space,
-  non-authoritative renderer work; older XY-native compaction notes are
-  historical and must not guide new work without translation into the current
-  scene/packet contract
-
-That means this branch is strategically correct, but still in the phase where one
-real end-to-end vertical slice matters more than adding more abstract surface area.
+The code and proof status is tracked in [the documentation guide](README.md),
+[lab delivery record](earth-moon-refinement-20261116.md) and
+[release-channel guide](release-channels.md). Older XY-native and early
+stage-first handoffs are historical implementation snapshots.
 
 ## Detailed architecture reading order
 

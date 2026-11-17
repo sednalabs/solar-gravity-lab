@@ -19,8 +19,9 @@ The Android shell owns:
 - lifecycle and process integration
 - session creation / refresh / command application
 - presentation of runtime summaries and diagnostics
-- orchestration of the current packet-render host surface
-- user controls, forms, navigation, and shell state
+- orchestration of the native Rust-bound Vulkan stage and camera
+- direct selection, map/3D navigation, staged orbit and velocity placement,
+  probe mass/gravity editing, saved experiment export/import, and shell state
 
 The Android shell must not become a second runtime or a shadow physics layer.
 
@@ -55,23 +56,28 @@ The current architecture should be read as:
 - **render/android-vulkan** = Android host, JNI, native Vulkan, and shaders
 - **Rust** = authoritative runtime truth
 
-## Known renderer gap / forward direction
+## Implemented laboratory and current limits
 
-The renderer is now in its canonical module, but the older render-core policy
-types remain a deliberate transitional dependency while scene and appearance
-contracts move toward Rust ownership.
+The installed client uses the native Vulkan stage with a 3D camera, an
+Earth-relative orbit map, reliable zoom/pan and visible selected-object
+markers. Placement is staged against an explicit plane, with validated
+preview and separate Create/Cancel; the UI supports initial velocity and
+probe mass. **Attracts other bodies** switches gravitational source mass
+on intentionally; display mass alone does not change planetary motion.
 
-The forward direction is:
+Saved experiments retain native world identity and history. On the current
+`main` source, `.sglexp` documents can be exported through Android's
+Storage Access Framework or imported as a validated independent copy.
+The live experiment is not replaced by an import. The user may remove a
+saved copy with confirmation.
 
-- Rust-first authoritative runtime truth
-- C++-thin Vulkan/NDK seam
-- Kotlin shell over that runtime
-- renderer logic that preserves a 3D camera / packet / picking worldview
-  instead of reintroducing older flat assumptions
-
-The most important current gap is not “make the physics 3D” — the physics/data
-spine is already 3D. The real open work is camera/render/interaction/compute
-migration around the world -> scene -> packet -> native -> Vulkan boundary.
+Evidence: [PR #237 native validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943).
+That is hosted Android acceptance of source, **not** the public alpha.2 APK
+and not real Galaxy S25 thermal, power or gesture acceptance. Signed
+live-data distribution, preview signing continuity and unimplemented
+physics effects are still separate work. See
+[documentation index](../../docs/README.md) and
+[release channels](../../docs/release-channels.md).
 
 ## Native ownership direction
 
