@@ -15,119 +15,88 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Repair retained preview identity and native menu interaction
+      - name: Apply focused review corrections to retained source
         run: |
-          git checkout --detach 342b75ac05cf446b18673fbe1df48be1cb216160
+          git checkout --detach 649bf213aaa0ac2f44071219781c19f246cc4f08
           python3 - <<'PY'
           from pathlib import Path
           def replace(path, old, new):
-              p=Path(path); source=p.read_text()
-              assert source.count(old)==1, (path, source.count(old), old[:90])
-              p.write_text(source.replace(old,new))
-          root='clients/android/app/src/'
-          authoring=root+'main/kotlin/com/sednalabs/solarlab/runtime/ProbeAuthoring.kt'
-          replace(authoring, '/** Undo returns to this epoch on a new branch, preserving the abandoned future. */', '''/** A retained forecast is usable only for the exact paused world it predicted. */
-          internal fun ProbePreviewResult.isCurrentFor(
-              currentCandidate: RuntimeBodyState?,
-              currentSessionHandle: Long?,
-              snapshot: SnapshotPresentation?,
-          ): Boolean = currentCandidate != null && candidate == currentCandidate &&
-              sessionHandle == currentSessionHandle && snapshot != null && snapshot.paused &&
-              baselineRevision == snapshot.revision &&
-              epochSeconds.toBits() == snapshot.epochSeconds.toBits()
-          
-          /** Undo returns to this epoch on a new branch, preserving the abandoned future. */''')
-          stage=root+'main/kotlin/com/sednalabs/solarlab/StageFirstRuntimeExperience.kt'
-          replace(stage,'import com.sednalabs.solarlab.runtime.RuntimeFacade','import com.sednalabs.solarlab.runtime.RuntimeFacade\nimport com.sednalabs.solarlab.runtime.isCurrentFor')
-          replace(stage,'            if (labInteraction.committing || draft.candidate() != preview.candidate) return', '''            if (labInteraction.committing || !preview.isCurrentFor(
-                          draft.candidate(), runtimeFacade.uiState.value.sessionHandle,
-                          runtimeFacade.uiState.value.snapshot)) return''')
-          replace(stage,'''        LaunchedEffect(labInteraction.draftVersion) {
-                      val version = labInteraction.draftVersion
-                      val draft = labInteraction.draft ?: return@LaunchedEffect
-                      val candidate = draft.candidate() ?: return@LaunchedEffect
-                      if (labInteraction.preview?.candidate == candidate && labInteraction.preview?.sessionHandle == runtimeSessionHandle) return@LaunchedEffect
-                      labInteraction.previewing = true''', '''        LaunchedEffect(labInteraction.draftVersion, runtimeSessionHandle, uiState.snapshot?.revision) {
-                      val version = labInteraction.draftVersion
-                      val draft = labInteraction.draft ?: return@LaunchedEffect
-                      val candidate = draft.candidate() ?: return@LaunchedEffect
-                      if (labInteraction.committing || uiState.snapshot?.paused != true) return@LaunchedEffect
-                      if (labInteraction.preview?.isCurrentFor(candidate, runtimeSessionHandle, uiState.snapshot) == true) return@LaunchedEffect
-                      // Camera commands during recreation also change native revision.
-                      // Never offer Create against an obsolete retained preview.
-                      labInteraction.preview = null
-                      labInteraction.previewing = true''')
-          replace(stage,'''                if (labInteraction.draftVersion == version && result.sessionHandle == runtimeFacade.uiState.value.sessionHandle) {
-                              labInteraction.preview = result''', '''                if (labInteraction.draftVersion == version && result.isCurrentFor(candidate,
-                                  runtimeFacade.uiState.value.sessionHandle, runtimeFacade.uiState.value.snapshot)) {
-                              labInteraction.preview = result''')
-          replace(stage,'''                                    syncObserver(selectedBodyId, modeToRestore)''', '''                                    // Restoring a draft's camera is presentation-only. Reissuing
-                                              // native observer commands invalidates the retained forecast.
-                                              if (labInteraction.draft == null) syncObserver(selectedBodyId, modeToRestore)''')
-          replace(stage,'                        canCreate = preview != null && preview.candidate == draft.candidate() && !labInteraction.previewing,',
-                  '                        canCreate = preview?.isCurrentFor(draft.candidate(), runtimeSessionHandle, uiState.snapshot) == true && !labInteraction.previewing,')
-          test=root+'test/kotlin/com/sednalabs/solarlab/runtime/ProbeAuthoringTest.kt'
-          replace(test,'    @Test\n    fun bodyAndPreviewDtoRetainF64ValuesAndRejectMalformedNativePayloads() {', '''    @Test
-              fun previewIdentityRejectsChangedWorldAndPreservesOnlyTheExactPausedDraft() {
-                  val preview = native().toPreview(42, candidate, "earth")
-                  val snapshot = SnapshotPresentation("lab.earth-moon", "main", 3, 0.0, true, 1.0,
-                      observerModeLabel = "Free", revision = 7)
-                  assertTrue(preview.isCurrentFor(candidate, 42, snapshot))
-                  assertTrue(!preview.isCurrentFor(candidate, 43, snapshot))
-                  assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(revision = 8)))
-                  assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(epochSeconds = 1.0)))
-                  assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(paused = false)))
-                  assertTrue(!preview.isCurrentFor(candidate.copy(massKg = 2000.0), 42, snapshot))
-                  assertTrue(!preview.isCurrentFor(candidate, 42, null))
-                  assertTrue(!preview.isCurrentFor(null, 42, snapshot))
+              p=Path(path); s=p.read_text()
+              assert s.count(old)==1,(path,s.count(old),old[:90])
+              p.write_text(s.replace(old,new))
+          replace('engine/runtime/src/lib.rs', '''    /// Return an ownership-safe world snapshot for host-visible status and
+              /// checkpoint provenance capture.''', '''    /// Borrow one body's current authoritative state without cloning the world,
+              /// history, manifests or hardware metadata. The borrow cannot outlive
+              /// this runtime; FFI callers retain their registry lock while reading it.
+              #[must_use]
+              pub fn body_by_id(&self, body_id: &str) -> Option<&BodyState> {
+                  self.active_branch().world.bodies.iter().find(|body| body.body_id.0 == body_id)
               }
           
-              @Test
-              fun bodyAndPreviewDtoRetainF64ValuesAndRejectMalformedNativePayloads() {''')
-          chrome=root+'main/kotlin/com/sednalabs/solarlab/EarthMoonLabChrome.kt'
-          replace(chrome,'    const val TOOLS_PANEL = "lab.tools"','    const val TOOLS_PANEL = "lab.tools"\n    const val TOOLS_CLOSE = "lab.tools.close"')
-          replace(chrome,'            Text("Your laboratory", style = MaterialTheme.typography.titleLarge)', '''            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                          Text("Your laboratory", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                          LabTextAction("Done", actions.toggleTools, tag = LabTags.TOOLS_CLOSE,
-                              description = "Close laboratory tools")
+              /// Return an ownership-safe world snapshot for host-visible status and
+              /// checkpoint provenance capture.''')
+          replace('engine/ffi/src/android_jni/persistence.rs', '''        let snapshot = session.runtime.snapshot();
+                  let body = snapshot.bodies.iter().find(|b| b.body_id.0 == id)?;''',
+                  '''        let body = session.runtime.body_by_id(id)?;''')
+          replace('engine/runtime/src/body_properties.rs', '''    #[test]
+              fn running_world_rejects_property_edit_without_consuming_history() {''', '''    #[test]
+              fn inspection_borrows_the_active_body_and_observes_atomic_property_edits() {
+                  let mut r = lab();
+                  assert!(r.body_by_id("missing").is_none());
+                  let first = r.body_by_id("probe").unwrap();
+                  let second = r.body_by_id("probe").unwrap();
+                  assert!(std::ptr::eq(first, second));
+                  assert_eq!(Some(first), r.snapshot().bodies.iter().find(|body| body.body_id.0 == "probe"));
+                  let old_revision = r.snapshot_revision();
+                  let command = edit(&r, 2.0e22, 2.0e22);
+                  r.apply_command(command, 3).unwrap();
+                  let actual = r.body_by_id("probe").unwrap();
+                  assert_eq!(actual.mass_kg, 2.0e22);
+                  assert_eq!(actual.source_mass_kg, 2.0e22);
+                  assert!(r.snapshot_revision() > old_revision);
+              }
+          
+              #[test]
+              fn running_world_rejects_property_edit_without_consuming_history() {''')
+          cpp='render/android-vulkan/src/main/cpp/SolarLabStageController.cpp'
+          replace(cpp, '''    std::unordered_map<std::string, const RuntimeBodyProxy*> previousBodies;
+              previousBodies.reserve(runtimeScene_.pickBodies.size());
+              for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);''', '''    std::unordered_map<std::string, const RuntimeBodyProxy*> previousBodies;
+              if (matchingBodies) {
+                  previousBodies.reserve(runtimeScene_.pickBodies.size());
+                  for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);
+              }''')
+          replace(cpp, '''            const auto previous = previousBodies.find(bodyId);
+                      if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
+                          matchingBodies = false;
+                      }''', '''            if (matchingBodies) {
+                          const auto previous = previousBodies.find(bodyId);
+                          if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
+                              matchingBodies = false;
+                          }
                       }''')
-          camera=root+'androidTest/kotlin/com/sednalabs/solarlab/LabCameraMotionInstrumentationTest.kt'
-          replace(camera,'import androidx.test.espresso.Espresso.pressBack\n','')
-          replace(camera,'        pressBack()','        composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible().performClick()')
-          mass=root+'androidTest/kotlin/com/sednalabs/solarlab/LabProbeMassInstrumentationTest.kt'
-          replace(mass,'import kotlinx.coroutines.runBlocking','import kotlinx.coroutines.runBlocking\nimport androidx.lifecycle.ViewModelProvider')
-          replace(mass,'        composeRule.waitUntil(20_000) { facade.uiState.value.snapshot?.bodyCount == count + 1 && facade.lastProbeCommit.value != null }', '''        fun placementError() = ViewModelProvider(composeRule.activity)[LabInteractionViewModel::class.java].state.error
-                  composeRule.waitUntil(20_000) {
-                      (facade.uiState.value.snapshot?.bodyCount == count + 1 && facade.lastProbeCommit.value != null) || placementError() != null
-                  }
-                  if (placementError() != null) capture("placement-rejected.png")
-                  assertNull("Native placement must accept the recreated mass preview", placementError())
-                  assertEquals(count + 1, facade.uiState.value.snapshot!!.bodyCount)''')
           doc=Path('docs/repair-checkpoint-20261117.md')
           doc.write_text(doc.read_text()+'''
           
-          A second native-diagnostics pass found draft creation after Activity recreation
-          could offer a forecast from an older command revision. Forecast reuse and
-          Create now require matching candidate, native session, revision, paused state
-          and exact epoch. Restoration of a draft camera no longer reissues unrelated
-          observer commands. Native commit's stale-preview rejection is unchanged.
-          Unit cases cover every identity component and the native recreation journey
-          still requires successful actual creation. Rejection now captures its error.
+          Review follow-through removes the whole-world snapshot clone from Android
+          single-body inspection. The runtime now lends one active body while JNI
+          keeps the registry lock; only ten numerical values cross the boundary.
+          Tests check reference identity, unknown IDs and visibility of atomic edits.
+          This removes unnecessary allocation, not a measured phone-speedup claim.
           
-          Laboratory tools now have an explicit accessible Done action. Native compute
-          qualification uses that ordinary control instead of an injected Android Back
-          event that failed on the hosted system. GPU pixel, readback, resize and resource
-          reuse assertions are unchanged.
+          Native transitions avoid building a previous-body lookup when body counts
+          already make interpolation impossible. Earth/follow target discovery still
+          scans the new packet, preserving navigation during scene replacement.
           ''')
           PY
           git diff --check
           git config user.name 'Solar Gravity Lab repair workbench'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'lab: retain only current probe previews and expose tools dismissal'
+          git commit -m 'runtime: borrow inspected bodies and avoid unused transition maps'
           git push origin "HEAD:refs/heads/candidate/native-repair-${GITHUB_RUN_ID}"
           echo "Product candidate: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-      - name: Test authoritative physics and presentation contracts
+      - name: Test actual runtime and presentation contracts
         run: |
           cargo test -p solarlab-runtime -p solarlab-ffi -p solarlab-physics
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/presentation-test
