@@ -1,0 +1,51 @@
+name: Apply checked laboratory repairs
+on:
+  push:
+    branches: ['feat/earth-moon-laboratory-20261116']
+    paths: ['.github/workflows/finish-lab-repairs.yml']
+permissions:
+  contents: write
+concurrency:
+  group: checked-laboratory-repair
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'sednalabs/solar-gravity-lab'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Apply checked patches and commit on the same feature branch
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=feat/earth-moon-laboratory-20261116
+          test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = "$TARGET_SHA"
+          python .github/scripts/finish_lab_repairs.py
+          git diff --stat
+          git diff --check
+          git config user.name 'Solar Gravity Lab repair workbench'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add clients/android/app/src/main/kotlin/com/sednalabs/solarlab/LabExperimentDialogs.kt clients/android/app/src/androidTest/kotlin/com/sednalabs/solarlab/StageFirstSearchFocusInstrumentationTest.kt
+          git commit -m 'fix: preserve physical inputs and filter before searching offscreen results'
+          git push origin "HEAD:refs/heads/$branch"
+          echo "Repair commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source tree: $(git rev-parse HEAD^{tree})" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve inspectable source and patch
+        if: always()
+        run: |
+          mkdir -p dist/repair
+          git show --format=fuller --stat > dist/repair/commit.txt
+          git diff HEAD^ HEAD > dist/repair/source.patch
+          git archive --format=zip HEAD -o dist/repair/source.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: checked-laboratory-source-${{ github.run_id }}
+          path: dist/repair
+          retention-days: 30
