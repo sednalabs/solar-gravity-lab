@@ -88,6 +88,23 @@ mod tests {
         assert_eq!(r.snapshot(),before); assert_eq!(r.next_command_ordinal,ordinal);
     }
     #[test]
+    fn running_world_rejects_property_edit_without_consuming_history() {
+        let mut r = lab();
+        r.apply_command(WorldCommand::ResumePlayback, 3).unwrap();
+        let before = r.snapshot();
+        let ordinal = r.next_command_ordinal;
+        let log_len = r.active_branch().command_log.len();
+        let checkpoint_len = r.active_branch().checkpoints.len();
+        let command = edit(&r, 2.0e22, 2.0e22);
+        assert_eq!(r.apply_command(command, 4), Err(RuntimeError::BodyEditRequiresPause));
+        assert_eq!(r.snapshot(), before);
+        assert_eq!(r.next_command_ordinal, ordinal);
+        assert_eq!(r.active_branch().command_log.len(), log_len);
+        assert_eq!(r.active_branch().checkpoints.len(), checkpoint_len);
+        r.apply_command(WorldCommand::PausePlayback, 5).unwrap();
+        r.apply_command(edit(&r, 2.0e22, 2.0e22), 6).unwrap();
+    }
+    #[test]
     fn passive_mass_does_not_perturb_but_source_mass_changes_earth_motion() {
         let mut baseline=lab(); let mut passive=lab(); let mut active=lab();
         passive.apply_command(edit(&passive,1.0e22,0.0),3).unwrap();

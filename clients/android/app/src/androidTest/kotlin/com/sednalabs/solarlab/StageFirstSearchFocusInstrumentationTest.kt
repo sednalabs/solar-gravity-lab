@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
 import com.sednalabs.solarlab.runtime.SessionConnectionState
+import com.sednalabs.solarlab.runtime.RuntimeCommand
 import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -132,9 +133,16 @@ class StageFirstSearchFocusInstrumentationTest {
         composeRule.waitUntil(timeoutMillis = 20_000) {
             facade.uiState.value.connectionState == SessionConnectionState.Active
         }
-        runBlocking { facade.loadScenario("sol-system") }
+        // This fixture qualifies search/catalogue semantics, not moving playback.
+        // Continuous clock recomposition prevents Compose's idle barrier;
+        // real moving focus and pinch remain covered by LabCameraMotion.
+        runBlocking {
+            facade.loadScenario("sol-system")
+            facade.applyCommand(RuntimeCommand.PausePlayback)
+        }
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            facade.uiState.value.renderFrame?.bodies?.any { it.bodyId == "halley" } == true
+            facade.uiState.value.snapshot?.paused == true &&
+                facade.uiState.value.renderFrame?.bodies?.any { it.bodyId == "halley" } == true
         }
     }
 

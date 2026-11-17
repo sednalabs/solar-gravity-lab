@@ -220,6 +220,14 @@ void TestGpuBufferAndCommandReuse() {
 }
 
 void TestExclusiveTracerPresentation() {
+    TracerDrawOwnership owners;
+    assert(!owners.Contains("packet-selected"));
+    owners.Record("packet-selected");
+    owners.Record("ui-selected");
+    owners.Record("packet-selected");
+    assert(owners.Contains("packet-selected"));
+    assert(owners.Contains("ui-selected"));
+    assert(!owners.Contains("ordinary-tracer"));
     // Ordinary sources stay in the authoritative surface layer.
     assert(DrawAsAuthoritativeBody(false, false, false, 6'371'000.0f, 0.0f));
     assert(DrawAsAuthoritativeBody(false, false, false, 1.0f, 1'500.0f));

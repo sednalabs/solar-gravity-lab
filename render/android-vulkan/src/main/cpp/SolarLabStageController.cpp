@@ -1704,6 +1704,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::vector<int32_t> trailColorsArgb;
     std::vector<int32_t> trailVertexCounts;
     std::vector<RuntimeBodyProxy> pickBodies;
+    solarlab::presentation::TracerDrawOwnership authoritativeTracers;
 
     // Scene origin is stored separately so Java/Kotlin callers can interpret relative packet
     // coordinates without keeping the raw runtime packet alive.
@@ -1789,6 +1790,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                     selected, body->radius_m, body->emissive_luminance)) {
                 continue;
             }
+            if (body->kind == SL_SCENE_BODY_KIND_TRACER) {
+                authoritativeTracers.Record(LowercaseAscii(bodyId));
+            }
             authoritativePositionsM.push_back(body->position_from_origin_m.x);
             authoritativePositionsM.push_back(body->position_from_origin_m.y);
             authoritativePositionsM.push_back(body->position_from_origin_m.z);
@@ -1846,10 +1850,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const auto* tracer = reinterpret_cast<const SlVulkanTracerInstance*>(raw + (stride * index));
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(tracer->source_body_id, tracer->source_body_id_len));
-            // Selected BodyClass::Tracer items are already rendered in the
-            // authoritative billboard stream. Avoid their duplicate pixels.
-            if (!normalizedSelectedBodyId.empty() &&
-                sourceBodyId == normalizedSelectedBodyId) {
+            // Suppress exactly the tracer IDs submitted above. A packet's
+            // selected ID may differ from the newer UI-selected ID.
+            if (authoritativeTracers.Contains(sourceBodyId)) {
                 continue;
             }
             if (focusTraceLayer) {

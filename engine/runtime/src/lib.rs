@@ -286,6 +286,7 @@ pub enum RuntimeError {
     InvalidEpochDelta(f64),
     InvalidPlaybackRate(f64),
     InvalidBodyProperties,
+    BodyEditRequiresPause,
     AdvanceBusy,
     AdvanceStale,
     AdvanceWorkLimit,
@@ -872,6 +873,11 @@ impl WorldRuntime {
         let edited_invariants = if let WorldCommand::SetBodyProperties {
             body_id, mass_kg, source_mass_kg, radius_m, position_m, velocity_mps,
         } = &command {
+            // Numeric body edits must not overwrite a position captured before
+            // an active playback tick. Reject before history/ordinal mutation.
+            if !self.active_branch().world.playback.paused {
+                return Err(RuntimeError::BodyEditRequiresPause);
+            }
             Some(body_properties::validate(
                 &self.active_branch().world.bodies, body_id, *mass_kg,
                 *source_mass_kg, *radius_m, *position_m, *velocity_mps,

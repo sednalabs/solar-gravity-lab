@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <string>
+#include <unordered_set>
 
 // Pure presentation geometry shared by native interaction and Vulkan uniforms.
 // Distances here never feed the authoritative simulation.
@@ -138,6 +140,16 @@ inline bool DrawAsAuthoritativeBody(
     if (isSpacecraft) return true;
     return selected || emissiveLuminance > 1000.0f || radiusM >= 100'000.0f;
 }
+
+// Ownership records what was actually submitted, not a possibly newer UI
+// selection. Packet and UI selection may differ during a command handoff.
+class TracerDrawOwnership {
+public:
+    void Record(const std::string& id) { ids_.insert(id); }
+    bool Contains(const std::string& id) const { return ids_.contains(id); }
+private:
+    std::unordered_set<std::string> ids_;
+};
 
 struct ReferenceCameraCoordinate {
     double current;

@@ -1996,7 +1996,7 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
         | RuntimeError::UnknownScenario(_)
         | RuntimeError::InvalidEpochDelta(_)
         | RuntimeError::InvalidPlaybackRate(_)
-        | RuntimeError::InvalidBodyProperties
+        | RuntimeError::InvalidBodyProperties | RuntimeError::BodyEditRequiresPause
         | RuntimeError::UnknownCheckpoint(_)
         | RuntimeError::DuplicateCheckpoint(_)
         | RuntimeError::DuplicateBranch(_)
@@ -4424,22 +4424,13 @@ mod tests {
         let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;
         if cfg!(target_arch = "aarch64") && has_neon {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::SimdArm64);
-            // This world has 5,355 useful pairs, below the per-worker grain
-            // required for parallel work. Affinity-limited execution retains
-            // the existing one-worker tiled path; multicore dispatch stays
-            // untiled instead of paying thread overhead for this sparse scene.
+            // 5,355 useful pairs are below the 8,128-pair work grain even
+            // on one allowed CPU. The canonical scene stays on the ordinary
+            // one-worker NEON path under both affinity configurations.
             assert_eq!(runtime_info.info.cpu_schedule_active_workers, 1);
             assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
-            let available_workers = std::thread::available_parallelism()
-                .map(|workers| workers.get())
-                .unwrap_or(1);
-            if available_workers > 1 {
-                assert_eq!(runtime_info.info.cpu_solver_path, 1);
-                assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
-            } else {
-                assert_eq!(runtime_info.info.cpu_solver_path, 3);
-                assert_eq!(runtime_info.info.cpu_schedule_tile_count, 12);
-            }
+            assert_eq!(runtime_info.info.cpu_solver_path, 1);
+            assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
             assert_ne!(runtime_info.info.cpu_kernel_active_mask, 0);
         } else {
