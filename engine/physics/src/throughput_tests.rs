@@ -373,6 +373,106 @@ fn actual_avx2_matches_scalar_for_vector_tails_sparse_sources_and_fixed_chunks()
 }
 
 #[test]
+fn passive_neon_batch_has_conservative_source_aware_dispatch() {
+    assert!(!super::enough_passive_neon_batch_work(3, 3));
+    assert!(!super::enough_passive_neon_batch_work(4, 3));
+    assert!(!super::enough_passive_neon_batch_work(128, 0));
+    assert!(!super::enough_passive_neon_batch_work(128, 128));
+    assert!(!super::enough_passive_neon_batch_work(128, 32));
+    assert!(!super::enough_passive_neon_batch_work(128, 16));
+    assert!(!super::enough_passive_neon_batch_work(255, 3));
+    assert!(super::enough_passive_neon_batch_work(256, 32));
+    assert!(super::enough_passive_neon_batch_work(365, 15));
+    assert!(super::enough_passive_neon_batch_work(1024, 3));
+    // Promoting many probes to source mass withdraws vector eligibility.
+    assert!(!super::enough_passive_neon_batch_work(128, 17));
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn neon_passive_batch_matches_symmetric_neon_for_sources_and_scalar_for_passives() {
+    use super::{advance_fixed_steps, fixed_step_plan_with_source_count, solver_equivalence_metrics};
+    let features = super::detect_cpu_features();
+    assert!(super::arm64_neon_runtime_available());
+    // Include sources before, between, and after passive bodies. Even and odd
+    // passive tails, plus a promoted probe, must preserve the source law.
+    for size in [258, 259] {
+        let mut initial: Vec<MassiveBodyState> = (0..size)
+            .map(|index| MassiveBodyState {
+                mass_kg: if [0, 63, size - 1].contains(&index) {
+                    1.0e23 + (index as f64) * 1.0e20
+                } else { 0.0 },
+                position_m: Vector3d {
+                    x: (index as f64 + 3.0) * 2.4e8,
+                    y: ((index * 17) % 53) as f64 * 3.1e8,
+                    z: ((index * 11) % 41) as f64 * 1.7e8,
+                },
+                velocity_mps: Vector3d {
+                    x: (index as f64) * 0.1,
+                    y: -(index as f64) * 0.2,
+                    z: (index as f64) * 0.05,
+                },
+            })
+            .collect();
+        for promoted in [false, true] {
+            if promoted { initial[size / 2].mass_kg = 1.0e18; }
+            let sources = super::source_indices(&initial);
+            assert!(super::enough_passive_neon_batch_work(size, sources.len()));
+            let new_forces = super::pairwise_gravity_accelerations_arm64(
+                &initial, Arm64GravityKernel::NeonF64PassiveBatch,
+            );
+            let symmetric = super::pairwise_gravity_accelerations_arm64(
+                &initial, Arm64GravityKernel::NeonF64Pairwise,
+            );
+            for (index, (a, b)) in new_forces.iter().zip(&symmetric).enumerate() {
+                if initial[index].mass_kg != 0.0 {
+                    // Source-source forces keep their original symmetric order.
+                    assert_eq!(a, b, "source {index} must retain exact forces");
+                } else {
+                    for (left, right) in [(a.x, b.x), (a.y, b.y), (a.z, b.z)] {
+                        assert!((left - right).abs() <= 1.0e-11 * right.abs().max(1.0),
+                            "passive target {index}: {left} != {right}");
+                    }
+                }
+            }
+            let mut scalar = initial.clone();
+            let mut batched = initial.clone();
+            let mut old_neon = initial.clone();
+            let policy = PhysicsPolicy {
+                solver_backend: SolverBackend::SimdArm64,
+                integrator: IntegratorKind::LeapfrogKickDriftKick,
+                collision_model: CollisionModel::None,
+                max_substep_seconds: 1.0,
+            };
+            let (_, report) = advance_authoritative_with_features(
+                &policy, &mut batched, 25.0, &features,
+            );
+            assert_eq!(report.path_id, "simd.arm64.neon-f64-passive-batch");
+            super::advance_authoritative_arm64(
+                &policy, &mut old_neon, 25.0, Arm64GravityKernel::NeonF64Pairwise,
+            );
+            super::advance_authoritative_scalar(&policy, &mut scalar, 25.0);
+            let metrics = solver_equivalence_metrics(&batched, &scalar);
+            assert!(metrics.max_relative_error <= 1.0e-11, "{metrics:?}");
+            assert!(metrics.max_abs_error <= 0.02, "{metrics:?}");
+            for (index, (a, b)) in batched.iter().zip(&old_neon).enumerate() {
+                if initial[index].mass_kg != 0.0 {
+                    assert_eq!(a, b, "massive {index} motion must match symmetric NEON");
+                }
+            }
+            let mut chunked = initial.clone();
+            let plan = fixed_step_plan_with_source_count(
+                &policy, 25.0, size, sources.len(), &features,
+            ).expect("fixed source-aware plan");
+            assert_eq!(plan.report().path_id, report.path_id);
+            advance_fixed_steps(&plan, &mut chunked, 9).unwrap();
+            advance_fixed_steps(&plan, &mut chunked, 16).unwrap();
+            assert_eq!(chunked, batched, "staged/bulk must agree bitwise");
+        }
+    }
+}
+
+#[test]
 fn sparse_workload_report_does_not_schedule_workers_for_empty_pairs() {
     let schedule = solver_schedule_report_for_arm64_kernel_with_source_count(
         1024,

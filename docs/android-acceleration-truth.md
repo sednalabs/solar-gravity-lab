@@ -51,11 +51,18 @@ these fields separately:
   normalized `/proc/cpuinfo` tokens, so richer device-visible extensions such
   as SVE, SVE2, FP16, DotProd, I8MM, BF16, RDM, FCMA, crypto, hardening, and
   utility features can be reported even when one evidence source is incomplete.
-- The implemented Arm64 solver paths are `simd.arm64.neon-f64-pairwise` and
-  `simd.arm64.neon-f64-tiled-pairwise` and
-  `simd.arm64.neon-f64-parallel-tiled-pairwise`: double-precision NEON pairwise
-  gravity acceleration kernels guarded by runtime feature detection and
-  scalar-oracle parity tests. Runtime dispatch selects tiled paths only for
+- The implemented Arm64 solver paths are
+  `simd.arm64.neon-f64-pairwise`,
+  `simd.arm64.neon-f64-passive-batch`,
+  `simd.arm64.neon-f64-tiled-pairwise`, and
+  `simd.arm64.neon-f64-parallel-tiled-pairwise`. All are FP64 NEON gravity
+  kernels guarded by actual runtime CPU detection and scalar-oracle parity.
+  The new path packs two **passive** bodies into one vector while keeping
+  source-source interactions symmetric; see
+  [AArch64 implementation and measured results](aarch64-extension-assessment-20261118.md).
+  In hosted 64-step benchmarks it reduced selected solver time by 36.9% in
+  the canonical 365-body/15-source fixture and 36.7% in a 1024/3 sparse
+  scene, with no increase in measured scalar-oracle discrepancy. Runtime dispatch selects tiled paths only for
   sufficient useful source/target pair work, and selects the parallel tiled path
   only when useful work covers the selected worker budget. The conservative
   scheduling guard requires **8,128 useful gravitational pairs per selected
