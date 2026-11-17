@@ -15,85 +15,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply focused review corrections to retained source
+      - name: Correct the borrowed-inspection fixture without changing production semantics
         run: |
-          git checkout --detach 649bf213aaa0ac2f44071219781c19f246cc4f08
+          git checkout --detach ab86070c31b3ce1cf635f1a957d6bf9ad027b3b2
           python3 - <<'PY'
           from pathlib import Path
-          def replace(path, old, new):
-              p=Path(path); s=p.read_text()
-              assert s.count(old)==1,(path,s.count(old),old[:90])
-              p.write_text(s.replace(old,new))
-          replace('engine/runtime/src/lib.rs', '''    /// Return an ownership-safe world snapshot for host-visible status and
-              /// checkpoint provenance capture.''', '''    /// Borrow one body's current authoritative state without cloning the world,
-              /// history, manifests or hardware metadata. The borrow cannot outlive
-              /// this runtime; FFI callers retain their registry lock while reading it.
-              #[must_use]
-              pub fn body_by_id(&self, body_id: &str) -> Option<&BodyState> {
-                  self.active_branch().world.bodies.iter().find(|body| body.body_id.0 == body_id)
-              }
-          
-              /// Return an ownership-safe world snapshot for host-visible status and
-              /// checkpoint provenance capture.''')
-          replace('engine/ffi/src/android_jni/persistence.rs', '''        let snapshot = session.runtime.snapshot();
-                  let body = snapshot.bodies.iter().find(|b| b.body_id.0 == id)?;''',
-                  '''        let body = session.runtime.body_by_id(id)?;''')
-          replace('engine/runtime/src/body_properties.rs', '''    #[test]
-              fn running_world_rejects_property_edit_without_consuming_history() {''', '''    #[test]
-              fn inspection_borrows_the_active_body_and_observes_atomic_property_edits() {
-                  let mut r = lab();
-                  assert!(r.body_by_id("missing").is_none());
-                  let first = r.body_by_id("probe").unwrap();
-                  let second = r.body_by_id("probe").unwrap();
-                  assert!(std::ptr::eq(first, second));
-                  assert_eq!(Some(first), r.snapshot().bodies.iter().find(|body| body.body_id.0 == "probe"));
-                  let old_revision = r.snapshot_revision();
-                  let command = edit(&r, 2.0e22, 2.0e22);
-                  r.apply_command(command, 3).unwrap();
-                  let actual = r.body_by_id("probe").unwrap();
-                  assert_eq!(actual.mass_kg, 2.0e22);
-                  assert_eq!(actual.source_mass_kg, 2.0e22);
-                  assert!(r.snapshot_revision() > old_revision);
-              }
-          
-              #[test]
-              fn running_world_rejects_property_edit_without_consuming_history() {''')
-          cpp='render/android-vulkan/src/main/cpp/SolarLabStageController.cpp'
-          replace(cpp, '''    std::unordered_map<std::string, const RuntimeBodyProxy*> previousBodies;
-              previousBodies.reserve(runtimeScene_.pickBodies.size());
-              for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);''', '''    std::unordered_map<std::string, const RuntimeBodyProxy*> previousBodies;
-              if (matchingBodies) {
-                  previousBodies.reserve(runtimeScene_.pickBodies.size());
-                  for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);
-              }''')
-          replace(cpp, '''            const auto previous = previousBodies.find(bodyId);
-                      if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
-                          matchingBodies = false;
-                      }''', '''            if (matchingBodies) {
-                          const auto previous = previousBodies.find(bodyId);
-                          if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
-                              matchingBodies = false;
-                          }
-                      }''')
-          doc=Path('docs/repair-checkpoint-20261117.md')
-          doc.write_text(doc.read_text()+'''
-          
-          Review follow-through removes the whole-world snapshot clone from Android
-          single-body inspection. The runtime now lends one active body while JNI
-          keeps the registry lock; only ten numerical values cross the boundary.
-          Tests check reference identity, unknown IDs and visibility of atomic edits.
-          This removes unnecessary allocation, not a measured phone-speedup claim.
-          
-          Native transitions avoid building a previous-body lookup when body counts
-          already make interpolation impossible. Earth/follow target discovery still
-          scans the new packet, preserving navigation during scene replacement.
-          ''')
+          p=Path('engine/runtime/src/body_properties.rs')
+          s=p.read_text()
+          assert s.count('body_by_id("probe")')==3
+          assert s.count('body.body_id.0 == "probe"')==1
+          s=s.replace('body_by_id("probe")','body_by_id("mass-probe")')
+          s=s.replace('body.body_id.0 == "probe"','body.body_id.0 == "mass-probe"')
+          p.write_text(s)
           PY
           git diff --check
           git config user.name 'Solar Gravity Lab repair workbench'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'runtime: borrow inspected bodies and avoid unused transition maps'
+          git add engine/runtime/src/body_properties.rs
+          git commit -m 'test: inspect the actual mass-probe fixture'
           git push origin "HEAD:refs/heads/candidate/native-repair-${GITHUB_RUN_ID}"
           echo "Product candidate: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
       - name: Test actual runtime and presentation contracts
