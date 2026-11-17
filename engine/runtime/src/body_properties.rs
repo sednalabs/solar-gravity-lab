@@ -91,14 +91,14 @@ mod tests {
     fn inspection_borrows_the_active_body_and_observes_atomic_property_edits() {
         let mut r = lab();
         assert!(r.body_by_id("missing").is_none());
-        let first = r.body_by_id("probe").unwrap();
-        let second = r.body_by_id("probe").unwrap();
+        let first = r.body_by_id("mass-probe").unwrap();
+        let second = r.body_by_id("mass-probe").unwrap();
         assert!(std::ptr::eq(first, second));
-        assert_eq!(Some(first), r.snapshot().bodies.iter().find(|body| body.body_id.0 == "probe"));
+        assert_eq!(Some(first), r.snapshot().bodies.iter().find(|body| body.body_id.0 == "mass-probe"));
         let old_revision = r.snapshot_revision();
         let command = edit(&r, 2.0e22, 2.0e22);
         r.apply_command(command, 3).unwrap();
-        let actual = r.body_by_id("probe").unwrap();
+        let actual = r.body_by_id("mass-probe").unwrap();
         assert_eq!(actual.mass_kg, 2.0e22);
         assert_eq!(actual.source_mass_kg, 2.0e22);
         assert!(r.snapshot_revision() > old_revision);
