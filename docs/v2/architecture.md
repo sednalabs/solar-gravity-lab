@@ -1,5 +1,10 @@
 # Solar Gravity Lab v2 Architecture
 
+> **Foundational reset record.** This describes the Rust-first design that
+> now underpins the implemented Android Earth–Moon laboratory. For current
+> production behaviour, tests and unreleased-versus-published status use
+> [architecture](../architecture.md) and the [documentation guide](../README.md).
+
 ## Core principles
 
 - Authoritative physics by default.
@@ -46,10 +51,10 @@ can tell where the simulation truth came from.
 The engine emits a `RenderScene` or `RenderSceneDelta`. Backends adapt that
 scene to Vulkan, Metal, or future GPU APIs without owning scientific truth.
 
-The live rendering problem on `main` is no longer just “backend adapters over a
-scene contract”. It is specifically the migration of camera/render/interaction/
-compute seams away from older flat assumptions toward a truthful 3D
-camera-relative renderer pipeline.
+The native 3D orbit camera, camera-space packet streams, depth-tested Vulkan
+rendering, picking and medium/far compute-compaction paths are now implemented.
+Further work concerns physical-device performance, accuracy and wider backend
+capability rather than completing the initial 3D migration.
 
 For the current rendering/runtime seam details, start with:
 

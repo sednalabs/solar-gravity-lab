@@ -84,7 +84,11 @@ should include:
 
 ## Activation Rules
 
-Detection does not imply activation.
+Detection does not imply activation. In particular, Arm64 NEON parallel
+gravity requires a workload with at least **8,128 useful source pairs per
+selected worker**; an advertised tile count or a 749-body tracer swarm
+alone does not establish actual multicore execution. Inspect the selected
+worker count and fallback report in the same proof artifact.
 
 The current active Arm64 solver claims are
 `simd.arm64.neon-f64-pairwise` and

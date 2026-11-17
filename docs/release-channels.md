@@ -5,16 +5,37 @@ to stay honest about what is actually being shipped.
 
 ## Semver release identity
 
-Use ordinary SemVer for release identity:
+Use ordinary SemVer for release identity. **As of 17 November 2026**, the
+latest published installable preview is
+[`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2):
 
-- Android `versionName`: `0.2.0-alpha.1`
-- GitHub tag: `v0.2.0-alpha.1`
-- GitHub release channel: prerelease for an alpha/beta/rc version; stable without a suffix
-- Artifact name: `solar-gravity-lab-0.2.0-alpha.1-internal-dev-preview.apk`
+- Android `versionName`: `0.2.0-alpha.2`; version code `2001002`.
+- GitHub tag: `v0.2.0-alpha.2` (prerelease).
+- Artifact: `solar-gravity-lab-0.2.0-alpha.2-internal-dev-preview.apk`.
+- Installed package: `com.sednalabs.solarlab.internal`.
 
-Phone-installable previews use the `prerelease` Android build type. That variant is
-debug-signed for sideloading and keeps the `.internal` package id suffix so
-device-testing builds remain separate from future stable installs.
+**Code on `main` is newer than this APK.** Probe-mass editing,
+portable `.sglexp` documents and the later renderer improvements were
+merged in [PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237)
+and [validated as source](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943),
+but there is **no published alpha.3**. Passing source CI is not the same
+as packaging, signing, installing and validating a later APK.
+
+Phone-installable previews use the `prerelease` Android build type. That
+variant uses debug signing for sideloading and keeps the `.internal` package
+id suffix. **The preview signing key is not stable across releases.**
+The published alpha.1 and alpha.2 have different signing certificates, so
+Android will not update alpha.1 in place with alpha.2. A later build
+must not be assumed to upgrade either one until certificate continuity is
+explicitly proven; a higher version code alone is insufficient.
+
+Private experiments live in the app's local files directory. Uninstalling
+can delete the only copies, and an APK signed with a different certificate
+cannot read another installation's private data. **Do not uninstall an older
+preview if it holds unique saves.** The newer source's document export/import
+does not retroactively give an older installation an export feature.
+Stable signing and save-preserving upgrade acceptance remain tracked in Ops
+`w18941`; see also [saved-world authoring](earth-moon-refinement-20261116.md).
 
 If maintaining an existing published tag, rerun the workflow only when the
 maintainer intends to update that GitHub Release's APK and provenance assets.
@@ -23,7 +44,8 @@ For each new public release, use a new SemVer number rather than reusing a tag.
 ## Cutting a new release
 
 Always cut an installable release from the exact commit that passed the hosted
-proof lane. A branch named `release/0.2.0-alpha.1` requests that version directly:
+proof lane. A future branch named `release/0.2.0-alpha.3` would request that version
+directly **after** proof and signing readiness:
 the gate pins checkout to the push's commit SHA, selects the prerelease channel
 and Android variant, and derives a monotonic Android version code. The branch
 does not require an extra release commit, so it can point at the exact qualified
@@ -40,7 +62,7 @@ gh workflow run prerelease-apk.yml \
   --repo sednalabs/solar-gravity-lab \
   --ref main \
   -f ref=<validated-commit-sha> \
-  -f version_name=0.2.0-alpha.1 \
+  -f version_name=0.2.0-alpha.3 \
   -f release_channel=prerelease \
   -f build_variant=prerelease \
   -f publish_release=true \
@@ -71,8 +93,9 @@ suffixes or larger fields require an explicit `version_code` input or
 `SolarLab-Version-Code` trailer. Explicit codes must stay within Android's
 1–2100000000 range and must exceed any installed build being replaced.
 
-For example, `0.2.0-alpha.1` is code `2001001`, followed by `2001002` for alpha.2
-and `2009000` for stable `0.2.0`. The earlier published `0.1.1-alpha.8`
+For example, the published `0.2.0-alpha.1` is code `2001001` and
+`0.2.0-alpha.2` is `2001002`; a future `alpha.3` would use `2001003`.
+Stable `0.2.0` would use `2009000`. The earlier published `0.1.1-alpha.8`
 [package metadata](https://github.com/sednalabs/solar-gravity-lab/releases/download/v0.1.1-alpha.8/output-metadata.json)
 records code `9`, so the new release line has a higher version code.
 
@@ -90,7 +113,7 @@ commit or squash-merge commit request an automatic APK release, put exactly one
 release trailer in the final commit message:
 
 ```text
-SolarLab-Release: 0.2.0-alpha.1
+SolarLab-Release: 0.2.0-alpha.3
 SolarLab-Build-Variant: prerelease
 ```
 
@@ -120,8 +143,11 @@ the gate job instead of starting the heavy APK lane.
 - Base application id: `com.sednalabs.solarlab`
 - Package id suffix: `.internal`
 - Installed package id: `com.sednalabs.solarlab.internal`
-- Signing: default debug key
+- Signing: runner/debug key, **not** a persistent release identity
+- Latest published build: `v0.2.0-alpha.2`; `main` is newer
 - Intended use: sideloaded device testing and internal review
+- Caveat: different preview certificates cannot upgrade in place; preserve
+  the older APK's private files until a safe transition is proven
 
 The current installable phone build is the Rust-platform Android shell under
 `clients/android`. The legacy root Android app is not the packaged preview line
@@ -148,7 +174,12 @@ proof lane when solver activation or scalar-oracle parity is part of the claim.
 
 Validation runs are evidence, not release artifacts. They answer whether a
 slice is green; they do not imply that the app is ready for external
-distribution.
+distribution. A normal documentation/feature merge to `main` without a
+release trailer does **not** publish an APK. The next preview needs an
+exact-source native check, packaged launch and ARM64 proof, independently
+verified build metadata, signature, checksum and download, and a safe
+saved-data/signing plan. Hosted CI does not establish physical Galaxy S25
+performance or usability.
 
 ### Documentation-only changes
 

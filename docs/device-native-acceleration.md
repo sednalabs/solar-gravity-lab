@@ -89,11 +89,14 @@ telemetry can still show candidate worker budget when a workload is large
 enough but a parallel path is not selected.
 
 Runtime info also exposes the tile plan used by the large-scene scheduler:
-tile size, tile count, and parallel tile-worker slots. This is intentionally
-practical telemetry for the S25 Ultra optimization loop: when a scenario pack
-is meant to stress the device, the Android UI and validation artifacts should
-show not just that the parallel path is selected, but how much tile work the
-runtime planned to distribute.
+tile size, tile count and parallel tile-worker slots. Those are **candidate
+capacity**, not proof that multiple workers ran. The implemented parallel
+NEON scheduler requires 8,128 *useful gravitational pairs per selected
+worker*, measured as a provisional hosted Arm64 crossover. Source-free
+tracer swarms do not create that source work. The S25 app and validation
+artifacts should report requested backend, active kernel, actual worker count,
+useful pair count and fallback reason separately before any phone-performance
+claim.
 
 Release artifacts use Rust Thin LTO with one codegen unit, conditional native
 C++ interprocedural optimization when NDK Clang proves support, optimized GLSL,

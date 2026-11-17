@@ -1,4 +1,12 @@
-Stage-first restoration — slice 4: multiscale orbit camera + 3D immersive pipeline
+# Stage-first restoration — historical slice 4: multiscale orbit camera
+
+> **Historical intermediate snapshot.** This slice temporarily disabled the
+> old XY compute path, but later native Vulkan work restored 3D medium/far
+> compute compaction and qualified it with projected-pixel tests. Its
+> one-finger/two-finger gesture directions also predate the current map/3D
+> interaction split. For current controls and tested source, read
+> [camera and interaction](../camera-and-interaction-model.md) and
+> [LAB_NAVIGATION](../../render/android-vulkan/LAB_NAVIGATION.md).
 
 Historical note: this slice intentionally disabled the older XY-native
 medium/far compute-compaction path. Later renderer work restored compute

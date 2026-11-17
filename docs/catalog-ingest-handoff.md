@@ -36,9 +36,9 @@ body_id	name	category	role	host_body_id	mass_kg	radius_m	color_argb	epoch_jd_tdb
 - all angular fields are in degrees
 - `color_argb`: `RRGGBB` or `AARRGGBB`
 
-## Current limitations
+## Legacy TSV limitations
 
-The app currently propagates imported rows as simple Keplerian two-body orbits around their host.
+The old reference app propagated imported rows as simple Keplerian two-body orbits around their host.
 That is good enough for a strong first implementation and local testing, but it is not a
 replacement for full DE/SPICE/Horizons state packs.
 

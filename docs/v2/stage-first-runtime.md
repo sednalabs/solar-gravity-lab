@@ -25,20 +25,23 @@ renderer taxonomy directly; neither Kotlin nor C++ infers a comet from its ID.
 
 ## Stage visibility contract
 
-The rendered world remains the dominant surface in collapsed and expanded
-states. The default controls provide playback, camera help, explicit fewer/more
-tracer actions, and a route to the expanded command deck without requiring a
-system-edge horizontal gesture.
+The rendered world remains the dominant surface in compact and expanded
+states. Current Android controls provide playback, visible zoom actions,
+Earth/Moon/system destinations, object search, map/3D switching, authoring
+and a route to the full command deck without requiring a system-edge gesture.
 
 Camera interaction is body-aware:
 
 - tap selects;
 - double-tap selects, follows, and frames the body for close orbit;
-- one-finger drag orbits the current focus;
-- pinch zooms down to a radius-derived inspection limit;
-- two-finger translation pans and intentionally detaches follow when the user
-  moves away from the target;
-- Home returns to the scenario view.
+- one-finger drag **orbits in 3D** but **pans in the declared orbit map**;
+- pinch zooms about the fingers' actual midpoint, to the camera's
+  radius-derived inspection limit;
+- two-finger translation pans in both views, and may intentionally detach
+  follow when the user moves away from the target;
+- Home returns to the scenario view;
+- probe placement uses a named plane, staged physical preview and explicit
+  Create/Cancel. Probe mass and independent source gravity are editable.
 
 Tracer presentation has three monotonic levels:
 

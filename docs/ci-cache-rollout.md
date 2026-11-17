@@ -13,6 +13,19 @@ artifacts and bounded live hosted sessions for AI-assisted development, see
 - keep Gradle remote-cache access stable while the backend is hosted on our own infrastructure
 - reuse Rust/native compiler work across trusted CI runs with R2-backed `sccache`
 
+## Dependency-scan maintenance (17 November 2026)
+
+The Rust Gradle cache service currently inherits an informational
+unmaintained-crate advisory (`RUSTSEC-2026-0441`, `pin-utils 0.1.0`)
+from the AWS Smithy dependency chain. The
+[directory-scoped OSV configuration](../infra/gradle-cache-service/osv-scanner.toml)
+temporarily ignores this **one ID only**, with an automatic
+`ignoreUntil = 2027-02-17` expiry supported by the deployed v2.3.8
+scanner. [Main's full Security SARIF run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44014438874)
+passed. All other advisories remain enforced by `fail-on-vuln: true`.
+Replace the transitive dependency and remove the exception via
+[issue #238](https://github.com/sednalabs/solar-gravity-lab/issues/238).
+
 ## Current direction
 
 The GitHub Actions-side contract is stable, but the backend design has pivoted.

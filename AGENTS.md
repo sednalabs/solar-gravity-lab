@@ -2,7 +2,12 @@
 
 ## Project Structure & Module Organization
 
-Canonical product code lives in `engine/`, `proto/`, `clients/android/`, `render/`, `services/`, and `labs/`. The Rust workspace in `engine/` owns simulation, history, scene export, hardware capability reporting, and FFI. `clients/android/` is the forward Android shell and release surface. The root `app`, `core-*`, `feature-lab`, and `render-core` modules are legacy reference code; do not deepen them unless you are deliberately harvesting parity behavior.
+Canonical product code lives in `engine/`, `proto/`, `clients/android/`, `render/`, `services/`, and `labs/`. The Rust workspace in `engine/` owns simulation, history, scene export, hardware capability reporting, and FFI. `clients/android/` is the forward Android shell and release surface. The root `app`, `core-*`, and `feature-lab` modules are retained
+legacy/reference code; do not deepen them unless deliberately harvesting parity
+behaviour. `render-core` still supplies **selected transitional camera/packet
+policy types** to the active `render/android-vulkan` host, so it is not wholly
+dead code. Migrate its contracts intentionally, without adding another
+authoritative Kotlin world.
 
 ## Build, Test, and Development Commands
 
@@ -27,8 +32,24 @@ Put Rust unit tests near the owning crate and prefer deterministic physics, tele
 
 ## Commit & Pull Request Guidelines
 
-Use imperative, scoped commit messages consistent with current history, for example `scene: add backend-neutral packet metadata`. PRs should state the user-visible effect, the authoritative validation run, and any remaining gaps. Include visual evidence for shell/UI changes, preferably from native Android computer-use observation or the hosted interactive Android session; if live visual proof is unavailable, say so explicitly instead of treating CI as visual acceptance.
+Use imperative, scoped commit messages consistent with current history, for example `scene: add backend-neutral packet metadata`. PRs should state the user-visible effect, the authoritative validation run,
+and any remaining gaps. Include visual evidence for shell/UI changes, preferably
+from native Android computer-use observation or the hosted interactive Android
+session; if live visual proof is unavailable, say so explicitly instead of
+treating CI as visual acceptance.
+
+When changing documentation, distinguish **code on `main`**, **exact-source
+hosted tests**, **published APK behaviour** and **real device acceptance**.
+The [documentation index](docs/README.md) lists canonical contracts and
+historical stage-first handoffs. Do not promote a passed CI source to a claimed
+installable release or S25 performance result. Source-level status and
+dated benchmark evidence should remain independently traceable.
 
 ## Remote-First Workflow
 
 Treat GitHub Actions as the primary compute and proof surface for this public repo. Use local runs for fast iteration, but rely on exact-head remote validation before promotion or prerelease cuts. Always cut prereleases from the same commit that passed the remote proof lane.
+Keep remote feature branches, PRs and Ops work items current as changes become
+real, including recoverable handoffs at interruptions. Never merge red code or
+rewrite a dated handoff to hide a failed qualification. Preview signing keys
+currently vary between releases; do not recommend uninstalling a preview that
+holds unique private saved experiments.

@@ -1,5 +1,11 @@
 # SolarLab v6 hybrid packet handoff
 
+> **Historical implementation slice (superseded).** This describes the
+> initial Kotlin-side LOD and packet preparation, not current stage ownership.
+> The canonical Rust-native stage now owns camera/picking and Vulkan stream
+> preparation. Use [rendering current state](rendering-architecture-current-state.md)
+> and [architecture](architecture.md) for live contracts.
+
 This pass does not pretend to finish Vulkan drawing. It pushes the hard CPU-side render-prep work further so unrestricted agents can spend their time on native pipelines instead of scene wrangling.
 
 ## What changed

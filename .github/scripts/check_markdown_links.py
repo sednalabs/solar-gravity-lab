@@ -8,7 +8,9 @@ from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DOC_GLOBS = ("README.md", "docs/**/*.md")
+# All repository Markdown is public documentation, including module READMEs,
+# native renderer handoffs and AGENTS.md outside the docs/ front door.
+DOC_GLOBS = ("README.md", "AGENTS.md", "**/*.md")
 INLINE_LINK_RE = re.compile(r"(?<!\!)\[[^\]]+\]\(([^)]+)\)")
 
 

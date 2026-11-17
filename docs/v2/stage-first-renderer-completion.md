@@ -1,4 +1,9 @@
-# Stage-first renderer completion (baby step 6)
+# Stage-first renderer completion (historical slice 6)
+
+> **Historical milestone.** This records the first native SPIR-V compute
+> restoration. Later work fixed 3D packed strides, window-space far tiles,
+> depth/picking and GPU readback barriers; do not read this as the complete
+> current implementation. See [renderer current state](../rendering-architecture-current-state.md).
 
 This slice finishes the first real native renderer pass on top of the earlier stage-first / orbit-camera / native-runtime slices.
 
