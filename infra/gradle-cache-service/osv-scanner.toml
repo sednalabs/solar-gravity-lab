@@ -9,5 +9,6 @@
 # Once a compatible AWS SDK/Smithy update removes pin-utils, delete this entry.
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0441"
-effectiveUntil = 2027-02-17
+# Review by 2027-02-17. OSV Scanner v2.3.8 rejects effectiveUntil;
+# expiry is tracked in issue #238 until supported by the deployed scanner.
 reason = "Informational only: archived transitive pin-utils via aws-smithy-http; no fix for pin-utils; remove with compatible AWS Smithy upgrade (issue #238)."
