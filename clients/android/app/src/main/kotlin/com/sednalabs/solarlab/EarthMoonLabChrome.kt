@@ -286,8 +286,9 @@ private fun LabSceneHeader(
             if (landscape && navigation.canUndo) {
                 LabTextAction("Undo", actions.undo, tag = LabTags.UNDO, enabled = canEdit)
             }
-            LabTextAction("Objects", actions.search, tag = SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON,
-                enabled = availableBodyIds.isNotEmpty())
+            // Objects is useful during initial loading too: opening it must not
+            // silently ignore a tap while Rust is filling the body catalogue.
+            LabTextAction("Objects", actions.search, tag = SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
             TextButton(onClick = actions.toggleTools,
                 modifier = Modifier.size(48.dp).testTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
                     .semantics { contentDescription = "Laboratory menu" },
