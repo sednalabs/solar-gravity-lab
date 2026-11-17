@@ -1,75 +1,77 @@
-# Rendering architecture (current state)
+# Rendering architecture (current implementation)
 
-This is the current-state front-door document for the rendering stack on
-canonical `main`.
+This is the current-state front door for the native Android rendering stack
+on `main`. The 3D camera/picking, perspective-independent orthographic
+projection, camera-space packets, depth-tested Vulkan streams and 3D
+medium/far compute compaction are **implemented** and passed
+[hosted Android pixel/interaction checks](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943).
+The source is newer than the published alpha.2 APK; those tests are **not**
+physical Galaxy S25 frame-rate, thermal or battery measurements.
 
-## The most important truth
-
-The physics/data spine is already 3D.
-
-The current open migration problem is the render-side stack: camera,
-projection, picking, packet shaping, native upload, and GPU-side optimization
-must stop preserving older flat assumptions and instead preserve a truthful 3D
-camera-relative worldview.
-
-## Current boundary
+## Ownership and boundary
 
 ```text
-world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan
+Rust world -> RenderSceneFrame -> NativeScenePacket -> native streams -> Vulkan
 ```
 
-This is the renderer boundary that matters most now.
+- **World and extraction:** Rust owns double-precision physics, gravity source
+  mass, history, provenance and renderer-neutral appearance, rings, atmosphere,
+  comet and light facts.
+- **Scene frame:** typed bodies, trails, source IDs and render-only facts
+  projected from the runtime without mutating world state.
+- **Packet:** camera-relative coordinates, stable struct strides, 3D camera
+  basis, viewport-dependent LOD, native stream separation and provenance.
+- **Native controller:** `SolarLabStageController` binds the Rust session,
+  manages camera, ray/sphere picking, frame transitions, stream preparation
+  and presentation-aligned viewport anchors.
+- **Vulkan:** C++/GLSL own buffers, analytic sphere depth, physical-light
+  shading, native command/pipeline reuse and GPU-side visibility compaction.
+  They do not modify mass, integration or ephemeris state.
 
-## Layer ownership
+The current scene splits into authoritative bodies, near tracers, medium
+tracers, far tracers and trails. Tracer bodies are not also drawn as
+ordinary authoritative billboards: selected tracers are rendered once
+through the authoritative path, and ordinary tracers through the tiered
+streams. Spacecraft remain authoritative billboards because Rust does not
+export them as `SceneTracer`. Picking proxies preserve independent
+selectability.
 
-### World / runtime truth
+## Camera, depth and interaction
 
-- Rust runtime remains the intended authoritative owner on canonical `main`
-- scene extraction should be read as world-truth publication, not renderer truth
+The native stage uses an orthographic yaw/pitch orbit camera; map mode views
+a declared physical authoring plane. One finger pans in map mode and orbits
+in 3D. Two-finger movement pans and pinches around the gesture midpoint.
+The native viewport's camera basis and submitted presentation epoch are
+also used for picking and accessible overlay labels; no separate shell
+projection may invent a different body location.
 
-### Scene-frame layer
+The [navigation contract](../render/android-vulkan/LAB_NAVIGATION.md) records
+map/3D restoration, drag cancellation, camera-follow behavior and viewport
+invalidations. The shell presents object labels, selection, mass editing
+and staged probe placement without owning a second physical world.
 
-`RenderSceneFrame` is the renderer-facing structured view of world state. It is
-where the project bridges from simulation truth into renderable state without
-yet committing to a backend-specific representation.
+## Native compute and resource lifecycle
 
-### Packet layer
+The medium and far pipelines consume **3D** source coordinates with Z and VZ,
+share a camera-uniform prefix with graphics, and cull/compact in camera space.
+Far tiles use the Vulkan window-coordinate orientation. Counter readback and
+transfer/compute/graphics dependencies are explicit. Native emulator tests
+verify projected medium/far pixels and resource reuse across resizing; a
+nonzero dispatch alone is not accepted as proof of visual correctness.
 
-`NativeScenePacket` is the backend-ready, camera-aware packet seam. It is where
-camera-relative packing, tiering, culling, and stream separation live.
+Vulkan allocations are retained where compatible and grow geometrically.
+Frame invalidations coalesce; display-only interpolation can reuse scene
+buffers instead of re-exporting the Rust world. These are source/hosted
+behaviour claims, not measured physical-device performance gains.
 
-### Native renderer layer
+## Limits and next work
 
-The native Vulkan side consumes stream-specialized packet data and is the place
-where graphics pipelines, depth policy, upload discipline, and future compute
-work belong.
-
-## Canonical scene streams
-
-The native-facing scene split is:
-
-- authoritative bodies
-- near tracers
-- medium tracers
-- far tracers
-- trails
-
-That stream split is structurally valuable and should be kept in mind even when
-specific implementation details (like older XY-native compaction) are retired or
-reworked.
-
-## Current strategic tension
-
-Canonical `main` still presents the Android path as a packet host over the Rust
-runtime, but the richer design truth is:
-
-- Kotlin = shell / control plane
-- Rust = authoritative runtime truth
-- native Vulkan = actual renderer seam
-- packet shaping = camera-aware policy layer
-
-Any future work that treats the packet-host state as the end-state architecture
-will misread the branch.
+The current shader colour, atmosphere and orientation are visual choices,
+not real-time surface/weather data. Scene drawing is non-authoritative.
+Future work is **measured S25 performance, usability and energy costs**,
+possibly stronger far-density aggregation, stable preview updates and
+additional backend capability. Earlier XY-native compaction plans are
+historical and should not replace the current 3D packet contract.
 
 ## Earth–Moon laboratory display predictions
 

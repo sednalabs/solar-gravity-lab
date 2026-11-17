@@ -1,11 +1,16 @@
 # Compute compaction reintroduction plan
 
-This is the current decision document for medium/far compute-compaction.
+This records the completed 3D compute-compaction reintroduction and the
+criteria for **further** aggregation. The implementation is hosted-tested,
+not merely an architectural proposal.
 
 ## Current status
 
-Re-entered in the native renderer as 3D camera-space compute compaction for
-medium/far tracer streams.
+Implemented in the native renderer as 3D camera-space compute compaction for
+medium/far tracer streams. The
+[qualified Android test run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
+checks medium/far **projected pixels**, GPU readbacks and resize reuse.
+This is not evidence of physical Galaxy S25 frame-rate or battery gains.
 
 The older compaction direction should be read as historical and XY-native. It is
 not the current implementation path on canonical `main`.

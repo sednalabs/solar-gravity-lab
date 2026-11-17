@@ -1,6 +1,10 @@
 # End-to-end frame lifecycle
 
-This is the operational debugging map for a single frame.
+This is the operational debugging map for a native Android frame.
+The pipeline is implemented and qualified at source; simulation ticks and
+display-only interpolation can be scheduled separately, and pausing does not
+necessarily stop all scene presentation. Physical S25 frame-time acceptance
+remains separate.
 
 ```text
 Tick (world) -> RenderSceneFrame -> Camera/Projection -> NativeScenePacket -> Native Upload -> Vulkan Draw -> Present
@@ -40,7 +44,10 @@ Output: stream buffers resident for draw.
 
 Owner: native renderer.
 
-Output: rendered frame, depth-tested according to pipeline policy.
+Output: depth-tested authoritative/near/medium/far/trail streams, with
+3D medium/far compute culling and counter/readback dependencies where active.
+The GPU compaction path only filters visual output; it does not integrate bodies.
+Native tests check projected pixels and resource reuse, not just dispatch counts.
 
 ## 7. Present
 
