@@ -1,6 +1,8 @@
 package com.sednalabs.solarlab
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -9,6 +11,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -19,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -42,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,21 +60,30 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.sednalabs.solarlab.render.vulkan.RenderInteractionListener
+import com.sednalabs.solarlab.render.vulkan.LabViewportState
+import com.sednalabs.solarlab.render.vulkan.PlacementGesturePhase
+import com.sednalabs.solarlab.render.vulkan.PlacementGestureUpdate
 import com.sednalabs.solarlab.render.vulkan.RenderProcessingMode
 import com.sednalabs.solarlab.render.vulkan.SceneInteractionMode
 import com.sednalabs.solarlab.render.vulkan.SolarSystemRenderHostView
@@ -85,7 +101,10 @@ import com.sednalabs.solarlab.runtime.ManualAdvanceOutcome
 import com.sednalabs.solarlab.runtime.StepQuantumPreset
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
+import com.sednalabs.solarlab.runtime.RuntimeBodyState
+import com.sednalabs.solarlab.runtime.ShellNoticeTone
 import com.sednalabs.solarlab.runtime.RuntimeFacade
+import com.sednalabs.solarlab.runtime.isCurrentFor
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPack
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPacks
@@ -95,6 +114,8 @@ import com.sednalabs.solarlab.runtime.ShellUiState
 import com.sednalabs.solarlab.runtime.toShareText
 import com.sednalabs.solarlab.ui.theme.SolarLabTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
@@ -260,7 +281,7 @@ private const val RUNTIME_STAGE_SIGNAL_L5_BODY_COEFF = 0.20f
 private const val RUNTIME_STAGE_SIGNAL_L5_TRAIL_COEFF = 0.22f
 private const val RUNTIME_STAGE_SIGNAL_L6_BASE = 0.28f
 private const val RUNTIME_STAGE_SIGNAL_L6_FOCUS_COEFF = 0.48f
-private const val RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR: Float = 1.2f
+private const val RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR: Float = 1.6f
 private const val RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR: Float = 1f / RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR
 private val RuntimeStageTilePlanRegex = Regex("""(\d+)x(\d+)-body tiles""")
 private val RuntimeStageTileWorkersRegex = Regex("""(\d+) tile workers""")
@@ -278,6 +299,9 @@ internal fun StageFirstRuntimeExperience(
         val coroutineScope = rememberCoroutineScope()
 
         val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
+        val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
+        val experimentStatus by runtimeFacade.experimentStatus.collectAsStateWithLifecycle()
+        val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
@@ -287,14 +311,54 @@ internal fun StageFirstRuntimeExperience(
         var chromeModeName by rememberSaveable { mutableStateOf(StageChromeMode.COLLAPSED.name) }
         var traceLayerModeName by rememberSaveable { mutableStateOf(TraceLayerMode.FOCUS.name) }
         var searchVisible by rememberSaveable { mutableStateOf(false) }
+        // Dialog-local rememberSaveable is attached to the transient dialog
+        // composition. Keep the query in the Activity's saveable owner so
+        // rotation/recreation cannot discard an in-progress object search.
+        var searchQuery by rememberSaveable { mutableStateOf("") }
         var requestSearchFocus by remember { mutableStateOf(false) }
         var scenarioPickerVisible by rememberSaveable { mutableStateOf(false) }
         var debugVisible by rememberSaveable { mutableStateOf(false) }
+        var scienceVisible by rememberSaveable { mutableStateOf(false) }
+        var savedVisible by rememberSaveable { mutableStateOf(false) }
+        var inspectorVisible by remember { mutableStateOf(false) }
+        var inspectedBody by remember { mutableStateOf<RuntimeBodyState?>(null) }
+        var editorSession by remember { mutableStateOf<LabBodyEditorSession?>(null) }
+        var editorCommitting by remember { mutableStateOf(false) }
+        var editorError by remember { mutableStateOf<String?>(null) }
+        var labNotice by remember { mutableStateOf<String?>(null) }
+        var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
+        val importDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                runtimeFacade.importExperiment { context.contentResolver.openInputStream(uri) }
+            }
+        }
+        val exportDocument = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            val id = pendingExportId
+            pendingExportId = null
+            if (uri != null && id != null) coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                runtimeFacade.exportExperiment(id) { context.contentResolver.openOutputStream(uri, "wt") }
+            }
+        }
+        var framedLabSession by rememberSaveable { mutableStateOf(0L) }
+        var openingSavedExperiment by remember { mutableStateOf(false) }
+        val stateContext = LocalContext.current
+        val labInteraction = remember(stateContext) {
+            var ownerContext: android.content.Context = stateContext
+            while (ownerContext is android.content.ContextWrapper && ownerContext !is ViewModelStoreOwner) {
+                ownerContext = ownerContext.baseContext
+            }
+            (ownerContext as? ViewModelStoreOwner)?.let { ViewModelProvider(it)[LabInteractionViewModel::class.java].state }
+                ?: LabInteractionState()
+        }
+        val authoringScope = labInteraction.operationScope ?: coroutineScope
+        var labViewModeName by rememberSaveable { mutableStateOf(LabViewMode.THREE_DIMENSIONAL.name) }
+        val labViewMode = LabViewMode.valueOf(labViewModeName)
+        var restoreBodyAfterLoad by remember { mutableStateOf<String?>(null) }
         var pendingScenarioFrame by remember { mutableStateOf<RuntimeScenarioPack?>(null) }
         var renderHostView by remember { mutableStateOf<SolarSystemRenderHostView?>(null) }
         var cameraScaleBand by remember { mutableStateOf(CameraScaleBand.SYSTEM) }
         var cameraCoachVisible by rememberSaveable {
-            mutableStateOf(shouldShowStageCameraCoach(context))
+            mutableStateOf(false)
         }
         var hostRendererStatus by remember { mutableStateOf("Preparing immersive Rust stage.") }
         var appliedSemanticActionToken by remember { mutableStateOf<Long?>(null) }
@@ -425,6 +489,7 @@ internal fun StageFirstRuntimeExperience(
             bodyId: String,
             acknowledgement: RuntimeSemanticFocusAcknowledgement? = null,
         ) {
+            labInteraction.undoCameraRecovery = null
             selectedBodyId = bodyId
             observerMode = ObserverMode.FOLLOW_SELECTED
             renderHostView?.focusAndFrameBody(bodyId, ObserverMode.FOLLOW_SELECTED)
@@ -433,11 +498,247 @@ internal fun StageFirstRuntimeExperience(
         }
 
         fun resetRuntimeCamera() {
+            labInteraction.undoCameraRecovery = null
             semanticFocusAcknowledgement = null
+            observerMode = ObserverMode.FREE
+            syncObserver(selectedBodyId, ObserverMode.FREE)
+            renderHostView?.setObserverMode(ObserverMode.FREE)
             renderHostView?.resetCamera()
         }
 
+        fun selectRuntimeBody(bodyId: String) {
+            if (labInteraction.draft != null) return
+            labInteraction.undoCameraRecovery = null
+            labInteraction.feedback = null
+            selectedBodyId = bodyId
+            observerMode = ObserverMode.FREE
+            semanticFocusAcknowledgement = null
+            renderHostView?.setObserverMode(ObserverMode.FREE)
+            renderHostView?.setSelectedBodyId(bodyId)
+            renderHostView?.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            syncObserver(bodyId, ObserverMode.FREE)
+        }
+
+        fun frameSelectedBody() {
+            labInteraction.undoCameraRecovery = null
+            selectedBodyId?.let { bodyId ->
+                renderHostView?.frameBody(bodyId)
+                showFrameRequest(bodyId)
+            }
+        }
+
+        fun changeLabView(mode: LabViewMode) {
+            labViewModeName = mode.name
+            renderHostView?.setLabMapMode(mode == LabViewMode.ORBIT_MAP)
+        }
+
+        fun cancelProbePlacement() {
+            if (labInteraction.committing) return
+            if (labInteraction.draft == null) { labInteraction.clearDraft(); return }
+            val previousSelection = labInteraction.beforePlacementSelection
+            val previousObserver = labInteraction.beforePlacementObserver
+            val previousCamera = labInteraction.beforePlacementCamera
+            val previousView = labInteraction.beforePlacementView
+            labInteraction.clearDraft()
+            selectedBodyId = previousSelection
+            renderHostView?.setObserverMode(ObserverMode.FREE)
+            renderHostView?.setSelectedBodyId(selectedBodyId)
+            changeLabView(previousView)
+            previousCamera?.let { renderHostView?.restoreLabCamera(it) }
+            observerMode = previousObserver
+            renderHostView?.setObserverMode(previousObserver)
+            syncObserver(previousSelection, previousObserver)
+        }
+
+        fun fitProbePlacement() {
+            val draft = labInteraction.draft ?: return
+            val viewport = labInteraction.viewport ?: return
+            val position = draft.positionM ?: return
+            val reference = viewport.project(draft.reference.labPosition())
+            val bodyRadiusPx = (draft.reference.radiusM / viewport.metresPerPixel).toFloat()
+            val points = listOf(position) + labInteraction.preview?.samples.orEmpty().map {
+                draft.reference.labPosition() + Vector3d(it.positionX, it.positionY, it.positionZ)
+            }
+            val projected = points.map(viewport::project)
+            val left = min(reference.xPx - bodyRadiusPx, projected.minOf { it.xPx })
+            val right = max(reference.xPx + bodyRadiusPx, projected.maxOf { it.xPx })
+            val top = min(reference.yPx - bodyRadiusPx, projected.minOf { it.yPx })
+            val bottom = max(reference.yPx + bodyRadiusPx, projected.maxOf { it.yPx })
+            val paddingPx = min(72f * context.resources.displayMetrics.density, min(viewport.widthPx, viewport.heightPx) * 0.24f)
+            val factor = max((right - left) / (viewport.widthPx - 2f * paddingPx).coerceAtLeast(1f),
+                (bottom - top) / (viewport.heightPx - 2f * paddingPx).coerceAtLeast(1f)).coerceAtLeast(0.01f)
+            val centre = viewport.unprojectToPlane((left + right) / 2f, (top + bottom) / 2f,
+                draft.plane.through(draft.reference)) ?: return
+            changeLabView(LabViewMode.ORBIT_MAP)
+            renderHostView?.restoreLabCamera(viewport.camera.copy(centerM = centre,
+                viewRadiusM = viewport.camera.viewRadiusM * factor))
+        }
+
+        fun changePlacementHost(bodyId: String) {
+            val current = labInteraction.draft ?: return
+            val reference = labInteraction.referenceBodies[bodyId] ?: return
+            val next = current.copy(reference = reference,
+                altitudeKmText = if (bodyId == "moon") "100" else "800")
+            labInteraction.changeDraft(next)
+            selectedBodyId = bodyId
+            renderHostView?.setSelectedBodyId(bodyId)
+            renderHostView?.setLabMapPlane(next.plane.through(reference))
+            renderHostView?.frameBody(bodyId)
+        }
+
+        fun commitProbePlacement() {
+            val draft = labInteraction.draft ?: return
+            val preview = labInteraction.preview ?: return
+            if (labInteraction.committing || !preview.isCurrentFor(
+                draft.candidate(), runtimeFacade.uiState.value.sessionHandle,
+                runtimeFacade.uiState.value.snapshot)) return
+            labInteraction.committing = true
+            labInteraction.error = null
+            authoringScope.launch {
+                try {
+                    val result = runtimeFacade.commitProbe(preview)
+                    if (runtimeFacade.uiState.value.sessionHandle != result.sessionHandle) return@launch
+                    // The retained receipt drives the current composition, including
+                    // one recreated while this atomic operation was in flight.
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    labInteraction.error = error.message ?: "The probe could not be placed. Try the preview again."
+                    labInteraction.committing = false
+                    labInteraction.preview = null
+                    labInteraction.draftVersion += 1
+                }
+            }
+        }
+
+        fun undoProbePlacement() {
+            val commit = lastProbeCommit ?: return
+            if (labInteraction.undoing) return
+            labInteraction.undoing = true
+            authoringScope.launch {
+                try {
+                    runtimeFacade.undoProbe(commit)
+                    labInteraction.lastCommit = null
+                    val restoredBodyId = runtimeFacade.uiState.value.focusedBodyId ?: "earth"
+                    val restoredBody = runtimeFacade.inspectBody(restoredBodyId)
+                    if (runtimeFacade.uiState.value.sessionHandle != commit.sessionHandle) return@launch
+                    selectedBodyId = restoredBodyId
+                    observerMode = ObserverMode.FREE
+                    runtimeFacade.applyCommand(RuntimeCommand.FocusBody(restoredBodyId))
+                    runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.Free))
+                    if (runtimeFacade.uiState.value.sessionHandle != commit.sessionHandle) return@launch
+                    val restoredSnapshot = runtimeFacade.uiState.value.snapshot
+                    // Rust has rewound, but the native renderer may still hold the
+                    // later packet. Framing it here can animate towards the old Earth.
+                    labInteraction.undoCameraRecovery = if (restoredBody != null && restoredSnapshot != null) {
+                        LabUndoCameraRecovery(commit.sessionHandle, restoredBodyId, restoredBody.labPosition(),
+                            commit.bodyId, restoredSnapshot.epochSeconds, restoredSnapshot.activeBranchId)
+                    } else null
+                    labInteraction.feedback = "Placement undone · paused"
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    labNotice = error.message ?: "This edit can no longer be undone."
+                } finally {
+                    labInteraction.undoing = false
+                }
+            }
+        }
+
+        fun inspectSelectedBody() {
+            val bodyId = selectedBodyId ?: return
+            coroutineScope.launch {
+                runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                inspectedBody = runtimeFacade.inspectBody(bodyId)
+                inspectorVisible = inspectedBody != null
+                if (!inspectorVisible) labNotice = "This body is no longer available. Select another body."
+            }
+        }
+
+        fun editInspectedBody() {
+            labInteraction.lastCommit = null
+            val bodyId = inspectedBody?.bodyId ?: return
+            coroutineScope.launch {
+                runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                val body = runtimeFacade.inspectBody(bodyId) ?: return@launch
+                val earth = runtimeFacade.inspectBody("earth")
+                editorSession = LabBodyEditorSession(body, earth, false, searchableBodies.map { it.id }.toSet(),
+                    referenceAxes = if (uiState.snapshot?.scenarioId == "lab.earth-moon") "ICRF axes" else "scenario axes")
+                editorError = null
+                inspectorVisible = false
+            }
+        }
+
+        fun addProbe() {
+            if (labInteraction.draft != null || labInteraction.opening) return
+            labInteraction.undoCameraRecovery = null
+            val startingSession = runtimeFacade.uiState.value.sessionHandle
+            val openingGeneration = ++labInteraction.openingGeneration
+            labInteraction.opening = true
+            coroutineScope.launch {
+              try {
+                val displayedViewport = renderHostView?.currentLabViewportState()
+                val cameraReferenceId = if (observerMode == ObserverMode.FOLLOW_SELECTED) selectedBodyId ?: "earth" else "earth"
+                val displayedReference = displayedViewport?.bodies?.firstOrNull { it.bodyId == cameraReferenceId }?.worldPositionM
+                labInteraction.beforePlacementCamera = displayedViewport?.camera
+                labInteraction.beforePlacementView = labViewMode
+                labInteraction.beforePlacementSelection = selectedBodyId
+                labInteraction.beforePlacementObserver = observerMode
+                runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                val earth = runtimeFacade.inspectBody("earth")
+                if (earth == null) {
+                    labNotice = "Load an Earth scene before creating this probe."
+                    return@launch
+                }
+                val moon = runtimeFacade.inspectBody("moon")
+                if (startingSession == null || startingSession != runtimeFacade.uiState.value.sessionHandle ||
+                    openingGeneration != labInteraction.openingGeneration) return@launch
+                val pausedReference = when (cameraReferenceId) {
+                    "earth" -> earth
+                    "moon" -> moon
+                    else -> runtimeFacade.inspectBody(cameraReferenceId)
+                }
+                if (displayedReference != null && pausedReference != null) {
+                    labInteraction.beforePlacementCamera = labInteraction.beforePlacementCamera?.let {
+                        it.copy(centerM = it.centerM + pausedReference.labPosition() - displayedReference)
+                    }
+                }
+                val reference = if (labInteraction.beforePlacementSelection == "moon" && moon != null) moon else earth
+                runtimeFacade.applyCommand(RuntimeCommand.FocusBody(reference.bodyId))
+                runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.Free))
+                if (startingSession != runtimeFacade.uiState.value.sessionHandle || openingGeneration != labInteraction.openingGeneration) return@launch
+                val ids = searchableBodies.map { it.id }.toSet()
+                val name = generateSequence(1) { it + 1 }.map { "probe-$it" }.first { it !in ids }
+                val plane = earthMoonAuthoringPlane(earth, moon)
+                labInteraction.plane = plane
+                labInteraction.referenceBodies = listOfNotNull(earth, moon).associateBy { it.bodyId }
+                val draft = LabProbeDraft(reference, plane, name,
+                    runtimeFacade.uiState.value.snapshot?.epochSeconds ?: 0.0,
+                    altitudeKmText = if (reference.bodyId == "moon") "100" else "800")
+                labInteraction.changeDraft(draft)
+                selectedBodyId = reference.bodyId
+                observerMode = ObserverMode.FREE
+                cameraCoachVisible = false
+                chromeModeName = StageChromeMode.COLLAPSED.name
+                renderHostView?.setObserverMode(ObserverMode.FREE)
+                renderHostView?.setLabMapPlane(plane.through(reference))
+                changeLabView(LabViewMode.ORBIT_MAP)
+                renderHostView?.frameBody(reference.bodyId)
+              } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+              } catch (error: Exception) {
+                if (openingGeneration == labInteraction.openingGeneration) {
+                    labNotice = error.message ?: "The placement view could not open. Try again."
+                }
+              } finally {
+                if (labInteraction.openingGeneration == openingGeneration) labInteraction.opening = false
+              }
+            }
+        }
+
         fun loadScenarioPack(scenarioId: String) {
+            labInteraction.clearDraft()
+            labInteraction.lastCommit = null
             val scenarioPack = scenarioPacks.firstOrNull { it.scenarioId == scenarioId }
             if (scenarioPack != null) {
                 pendingScenarioFrame = scenarioPack
@@ -454,8 +755,13 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        BackHandler(enabled = searchVisible || scenarioPickerVisible || debugVisible) {
+        BackHandler(enabled = labInteraction.opening || labInteraction.draft != null || searchVisible || scenarioPickerVisible || debugVisible || scienceVisible || savedVisible || inspectorVisible || editorSession != null) {
             when {
+                labInteraction.opening || labInteraction.draft != null -> cancelProbePlacement()
+                editorSession != null -> if (!editorCommitting) editorSession = null
+                inspectorVisible -> inspectorVisible = false
+                savedVisible -> savedVisible = false
+                scienceVisible -> scienceVisible = false
                 searchVisible -> searchVisible = false
                 scenarioPickerVisible -> scenarioPickerVisible = false
                 debugVisible -> debugVisible = false
@@ -464,6 +770,155 @@ internal fun StageFirstRuntimeExperience(
 
         LaunchedEffect(runtimeFacade) {
             ensureRuntimeStarted()
+        }
+
+        LaunchedEffect(runtimeSessionHandle) {
+            if (labInteraction.boundSessionHandle == runtimeSessionHandle) return@LaunchedEffect
+            labInteraction.boundSessionHandle = runtimeSessionHandle
+            labInteraction.clearDraft()
+            labInteraction.lastCommit = null
+            labInteraction.plane = null
+            labInteraction.referenceBodies = emptyMap()
+            labInteraction.savedCamera = null
+            labInteraction.savedCameraReferenceId = null
+            labInteraction.savedCameraReferencePosition = null
+            labInteraction.appliedCommitUiId = null
+            labInteraction.undoCameraRecovery = null
+        }
+
+        LaunchedEffect(labInteraction.undoCameraRecovery, renderHostView, runtimeSessionHandle,
+            uiState.snapshot?.epochSeconds, uiState.snapshot?.activeBranchId, uiState.snapshot?.paused) {
+            val recovery = labInteraction.undoCameraRecovery ?: return@LaunchedEffect
+            val view = renderHostView ?: return@LaunchedEffect
+            if (recovery.sessionHandle != runtimeSessionHandle) return@LaunchedEffect
+            val snapshot = runtimeFacade.uiState.value.snapshot
+            if (snapshot == null || !snapshot.paused || snapshot.epochSeconds != recovery.epochSeconds ||
+                snapshot.activeBranchId != recovery.branchId) {
+                // A subsequent user playback or timeline action supersedes this view.
+                labInteraction.undoCameraRecovery = null
+                return@LaunchedEffect
+            }
+            fun isRestoredViewport(viewport: LabViewportState?): Boolean =
+                viewport != null && viewport.bodies.none { it.bodyId == recovery.removedBodyId } &&
+                    viewport.bodies.any { it.bodyId == recovery.bodyId &&
+                        labLength(it.worldPositionM - recovery.bodyPositionM) < 1.0 }
+            // A submitted viewport, rather than the facade snapshot, establishes
+            // that native camera queries will resolve against the restored world.
+            snapshotFlow { labInteraction.viewport }.first { isRestoredViewport(it) }
+            selectedBodyId = recovery.bodyId
+            observerMode = ObserverMode.FREE
+            view.setObserverMode(ObserverMode.FREE)
+            view.frameBody(recovery.bodyId)
+            // Retain the request through recreation until the framed view is
+            // actually presented, so a rotation cannot strand the recovery.
+            snapshotFlow { labInteraction.viewport }.first { viewport ->
+                viewport != null && isRestoredViewport(viewport) && viewport.bodies.any { anchor ->
+                    anchor.bodyId == recovery.bodyId && !anchor.occluded &&
+                        abs(anchor.xPx - viewport.widthPx * 0.5f) < viewport.widthPx * 0.02f &&
+                        abs(anchor.yPx - viewport.heightPx * 0.5f) < viewport.heightPx * 0.02f &&
+                        anchor.radiusPx > min(viewport.widthPx, viewport.heightPx) * 0.15f &&
+                        anchor.radiusPx * 2f < min(viewport.widthPx, viewport.heightPx)
+                }
+            }
+            if (labInteraction.undoCameraRecovery == recovery) labInteraction.undoCameraRecovery = null
+        }
+
+        LaunchedEffect(runtimeSessionHandle, canSendCommands) {
+            if (runtimeSessionHandle == 0L || !canSendCommands || labInteraction.plane != null) return@LaunchedEffect
+            val earth = runtimeFacade.inspectBody("earth") ?: return@LaunchedEffect
+            val moon = runtimeFacade.inspectBody("moon")
+            labInteraction.referenceBodies = listOfNotNull(earth, moon).associateBy { it.bodyId }
+            labInteraction.plane = earthMoonAuthoringPlane(earth, moon)
+        }
+
+        LaunchedEffect(lastProbeCommit?.checkpointId, runtimeSessionHandle) {
+            val commit = lastProbeCommit ?: return@LaunchedEffect
+            if (commit.sessionHandle == runtimeSessionHandle && labInteraction.appliedCommitUiId != commit.checkpointId) {
+                labInteraction.clearDraft()
+                runtimeFacade.applyCommand(RuntimeCommand.FocusBody(commit.bodyId))
+                runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.Free))
+                if (runtimeFacade.uiState.value.sessionHandle != commit.sessionHandle ||
+                    runtimeFacade.lastProbeCommit.value?.checkpointId != commit.checkpointId) return@LaunchedEffect
+                labInteraction.appliedCommitUiId = commit.checkpointId
+                selectedBodyId = commit.bodyId
+                observerMode = ObserverMode.FREE
+                renderHostView?.setSelectedBodyId(commit.bodyId)
+                renderHostView?.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                labInteraction.feedback = "Probe placed · paused"
+            }
+        }
+
+        LaunchedEffect(labInteraction.draftVersion, runtimeSessionHandle, uiState.snapshot?.revision) {
+            val version = labInteraction.draftVersion
+            val draft = labInteraction.draft ?: return@LaunchedEffect
+            val candidate = draft.candidate() ?: return@LaunchedEffect
+            if (labInteraction.committing || uiState.snapshot?.paused != true) return@LaunchedEffect
+            if (labInteraction.preview?.isCurrentFor(candidate, runtimeSessionHandle, uiState.snapshot) == true) return@LaunchedEffect
+            // Camera commands during recreation also change native revision.
+            // Never offer Create against an obsolete retained preview.
+            labInteraction.preview = null
+            labInteraction.previewing = true
+            delay(90)
+            try {
+                val result = runtimeFacade.previewProbe(candidate, draft.reference.bodyId, draft.previewHorizonSeconds())
+                if (labInteraction.draftVersion == version && result.isCurrentFor(candidate,
+                        runtimeFacade.uiState.value.sessionHandle, runtimeFacade.uiState.value.snapshot)) {
+                    labInteraction.preview = result
+                    labInteraction.error = null
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (labInteraction.draftVersion == version) labInteraction.error = error.message ?: "Preview is unavailable. Adjust the probe and try again."
+            } finally {
+                if (labInteraction.draftVersion == version) labInteraction.previewing = false
+            }
+        }
+
+        LaunchedEffect(labInteraction.feedback) {
+            if (labInteraction.feedback != null) {
+                delay(3_500)
+                labInteraction.feedback = null
+            }
+        }
+
+        LaunchedEffect(selectedBodyId, runtimeSessionHandle) {
+            labInteraction.selectedFacts = null
+            val id = selectedBodyId ?: return@LaunchedEffect
+            if (runtimeSessionHandle == 0L) return@LaunchedEffect
+            while (true) {
+                val captured = runtimeFacade.uiState.value.snapshot
+                if (captured?.paused != true) {
+                    labInteraction.selectedFacts = LabObjectFacts(id, "Simulation running · pause for exact details")
+                    delay(700)
+                    continue
+                }
+                val body = runtimeFacade.inspectBody(id)
+                if (body != null) {
+                    val earth = runtimeFacade.inspectBody("earth")
+                    val moon = runtimeFacade.inspectBody("moon")
+                    if (runtimeFacade.uiState.value.snapshot?.revision != captured.revision ||
+                        runtimeFacade.uiState.value.snapshot?.paused != true) continue
+                    val hosts = listOfNotNull(earth, moon).filter { it.bodyId != id }
+                    val reference = hosts.minByOrNull { labLength(body.labPosition() - it.labPosition()) / it.radiusM.coerceAtLeast(1.0) }
+                    val summary = when {
+                        id == "earth" -> "Our home world · radius ${formatLabDistance(body.radiusM)}"
+                        id == "moon" && earth != null -> "${formatLabDistance(labLength(body.labPosition() - earth.labPosition()))} from Earth"
+                        reference != null -> "${formatLabDistance(labLength(body.labPosition() - reference.labPosition()) - reference.radiusM)} above ${displayNameForBodyId(reference.bodyId)} · ${labDecimal(labLength(body.labVelocity() - reference.labVelocity()) / 1_000.0)} km/s"
+                        else -> "Radius ${formatLabDistance(body.radiusM)}"
+                    }
+                    labInteraction.selectedFacts = LabObjectFacts(id, summary)
+                }
+                delay(700)
+            }
+        }
+
+        LaunchedEffect(restoreBodyAfterLoad, searchableBodies, renderHostView) {
+            val id = restoreBodyAfterLoad ?: return@LaunchedEffect
+            if (searchableBodies.any { it.id == id } && renderHostView != null) {
+                restoreBodyAfterLoad = null
+                focusAndFrameRuntimeBody(id)
+            }
         }
 
         LaunchedEffect(uiState.snapshot?.simSecondsPerRealSecond) {
@@ -508,6 +963,22 @@ internal fun StageFirstRuntimeExperience(
             observerMode = scenarioObserverMode
             pendingScenarioFrame = null
             hostView.focusAndFrameBody(focusBodyId, scenarioObserverMode)
+            if (scenarioPack.scenarioId == "lab.earth-moon") {
+                framedLabSession = runtimeSessionHandle
+            }
+        }
+
+        LaunchedEffect(runtimeSessionHandle, uiState.snapshot?.scenarioId, renderHostView, searchableBodies,
+            pendingScenarioFrame, openingSavedExperiment) {
+            if (!openingSavedExperiment && pendingScenarioFrame == null &&
+                runtimeSessionHandle != 0L && framedLabSession != runtimeSessionHandle &&
+                uiState.snapshot?.scenarioId == "lab.earth-moon" && renderHostView != null &&
+                searchableBodies.any { it.id == "earth" } && searchableBodies.any { it.id == "moon" }) {
+                // A fresh lab opens on Earth. The saved session marker prevents
+                // recomposition or activity recreation from overriding user navigation.
+                focusAndFrameRuntimeBody("earth")
+                framedLabSession = runtimeSessionHandle
+            }
         }
 
         LaunchedEffect(canSendCommands, uiState.snapshot?.paused) {
@@ -604,227 +1075,23 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            RuntimeStageVoid,
-                            Color(0xFF06101C),
-                            Color(0xFF0B1829),
-                        )
-                    )
-                ),
-        ) {
-            val compactLayout = maxWidth < RuntimeStageCompactWidthBreakpoint
-            val expandedCockpitMaxHeight = maxHeight * expandedStageDeckMaxHeightFraction(compactLayout)
-            val expandedCockpitScrollState = rememberScrollState()
-            val cockpitBackendStatus = if (compactLayout) {
-                runtimeStageCompactBackendStatus(backendStatus)
-            } else {
-                backendStatus
-            }
-            val actionButtons: @Composable () -> Unit = {
-                StageControlsButton(
-                    label = "Clean stage",
-                    onClick = { chromeModeName = StageChromeMode.MINIMAL.name },
-                )
-                StageControlsButton(
-                    label = "Less",
-                    onClick = { chromeModeName = chromeMode.toggle().name },
-                )
-                StageActionButton(
-                    label = if (searchVisible) "Searching" else "Search",
-                    onClick = {
-                        requestSearchFocus = true
-                        searchVisible = true
-                    },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON),
-                    emphasized = searchVisible,
-                    enabled = searchableBodies.isNotEmpty(),
-                )
-                StageActionButton(
-                    label = if (scenarioPickerVisible) "Scenarios" else "Scenario",
-                    onClick = { scenarioPickerVisible = true },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON),
-                    emphasized = scenarioPickerVisible,
-                    enabled = scenarioPacks.isNotEmpty(),
-                )
-                StageActionButton(
-                    label = if (debugVisible) "Debugging" else "Debug",
-                    onClick = { debugVisible = true },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON),
-                    emphasized = debugVisible,
-                )
-            }
-            val primaryControls: @Composable () -> Unit = {
-                uiState.manualAdvance?.let { advance ->
-                    StageActionButton(
-                        label = "Cancel advance",
-                        onClick = runtimeFacade::cancelManualAdvance,
-                        enabled = !advance.cancelRequested,
-                        dense = compactLayout,
-                    )
-                }
-                StageActionButton(
-                    label = if (compactLayout) "In" else "Zoom +",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Out" else "Zoom -",
-                    onClick = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = "Home",
-                    onClick = ::resetRuntimeCamera,
-                    enabled = cameraControlsEnabled,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Frame" else "Frame selected",
-                    onClick = { selectedBodyId?.let(::focusAndFrameRuntimeBody) },
-                    enabled = cameraControlsEnabled && selectedBodyId != null,
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
-                    dense = compactLayout,
-                )
-                CameraScaleBand.entries.forEach { scaleBand ->
-                    StageActionButton(
-                        label = scaleBand.label,
-                        onClick = { renderHostView?.setCameraScaleBand(scaleBand) },
-                        enabled = cameraControlsEnabled,
-                        modifier = Modifier.testTag(
-                            SolarLabTestTags.stageFirstCameraScalePresetTag(scaleBand.name),
-                        ),
-                        contentDescription = "Set camera scale to ${scaleBand.label}",
-                        emphasized = cameraScaleBand == scaleBand,
-                        dense = compactLayout,
-                    )
-                }
-                StageActionButton(
-                    label = "Help",
-                    onClick = { cameraCoachVisible = true },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (isRunning) "Pause" else "Start",
-                    onClick = {
-                        if (isRunning) {
-                            sendRuntimeCommand(RuntimeCommand.PausePlayback)
-                        } else {
-                            sendRuntimeCommand(RuntimeCommand.ResumePlayback)
-                        }
-                    },
-                    emphasized = isRunning,
-                    enabled = canSendCommands,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Step" else "Step once",
-                    onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
-                    enabled = canSendCommands && !isRunning,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Next" else "Forward step",
-                    onClick = { sendRuntimeCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds)) },
-                    enabled = canSendCommands && !isRunning,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = observerMode.runtimeDisplayLabel(),
-                    onClick = {
-                        observerMode = when (observerMode) {
-                            ObserverMode.FREE -> ObserverMode.FOLLOW_SELECTED
-                            ObserverMode.FOLLOW_SELECTED -> ObserverMode.FOLLOW_SELECTED_HOST
-                            ObserverMode.FOLLOW_SELECTED_HOST -> ObserverMode.FREE
-                        }
-                        syncObserver(selectedBodyId, observerMode)
-                    },
-                    enabled = selectedBodyId != null || observerMode != ObserverMode.FREE,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = "Refresh",
-                    onClick = {
-                        selectedBodyId = null
-                        observerMode = ObserverMode.FREE
-                        resetRuntimeCamera()
-                        refreshRuntime()
-                    },
-                    enabled = true,
-                    dense = compactLayout,
-                )
-            }
-            val secondaryControls: @Composable () -> Unit = {
-                StageActionButton(
-                    label = if (compactLayout) stepQuantumPreset.label else "Step ${stepQuantumPreset.label}",
-                    onClick = { stepQuantumPreset = stepQuantumPreset.nextCyclic() },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STEP_DURATION),
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Slow" else "Slower",
-                    onClick = {
-                        val nextPreset = playbackSpeedPreset.shifted(-1)
-                        playbackSpeedPreset = nextPreset
-                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
-                    },
-                    enabled = canSendCommands,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) playbackSpeedPreset.label else "Faster · ${playbackSpeedPreset.label}",
-                    onClick = {
-                        val nextPreset = playbackSpeedPreset.shifted(1)
-                        playbackSpeedPreset = nextPreset
-                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(nextPreset.simSecondsPerRealSecond))
-                    },
-                    enabled = canSendCommands,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Tracers -" else "Fewer tracers",
-                    onClick = { traceLayerModeName = traceLayerMode.less().name },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON),
-                    contentDescription = "Show fewer tracers; currently ${traceLayerButtonLabel(traceLayerMode, true)}",
-                    enabled = traceLayerMode != TraceLayerMode.OFF,
-                    secondary = true,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = if (compactLayout) "Tracers +" else "More tracers",
-                    onClick = { traceLayerModeName = traceLayerMode.more().name },
-                    modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON),
-                    contentDescription = "Show more tracers; currently ${traceLayerButtonLabel(traceLayerMode, true)}",
-                    enabled = traceLayerMode != TraceLayerMode.ALL,
-                    secondary = true,
-                    dense = compactLayout,
-                )
-                StageActionButton(
-                    label = when (renderProcessingMode) {
-                        RenderProcessingMode.DEFAULT -> if (compactLayout) "Detail" else "Rendering: Standard"
-                        RenderProcessingMode.LOW -> if (compactLayout) "Lite" else "Rendering: Simplified"
-                    },
-                    onClick = {
-                        renderProcessingMode = when (renderProcessingMode) {
-                            RenderProcessingMode.DEFAULT -> RenderProcessingMode.LOW
-                            RenderProcessingMode.LOW -> RenderProcessingMode.DEFAULT
-                        }
-                    },
-                    secondary = true,
-                    dense = compactLayout,
-                )
-            }
-
+        BoxWithConstraints(Modifier.fillMaxSize().imePadding().background(Color(0xFF030A12))) {
+            val density = LocalDensity.current
+            val landscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && maxHeight < 600.dp
+            val statusInset = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+            val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
+            val placing = labInteraction.draft != null
+            val typingPlacement = placing && landscape && WindowInsets.ime.getBottom(density) > 0
+            val headerHeight = if (typingPlacement) 0.dp else if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
+            val dockHeight = if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
+            val placementHeight = minOf(LabPlacementMetrics.PortraitHeight, maxHeight * 0.44f)
+            val placementWidth = minOf(LabPlacementMetrics.LandscapeWidth, maxWidth * 0.46f)
+            val bottomInset = navigationInset + if (placing) { if (landscape) 8.dp else placementHeight + 8.dp }
+                else if (chromeMode == StageChromeMode.MINIMAL) 0.dp else dockHeight
+            val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing) 0.dp else headerHeight
+            Box(Modifier.fillMaxSize()
+                .padding(top = topInset, bottom = bottomInset, end = if (placing && landscape) placementWidth + 12.dp else 0.dp)
+                .testTag(LabSpatialTags.VIEWPORT)) {
             if (attachRenderHost) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -836,10 +1103,39 @@ internal fun StageFirstRuntimeExperience(
                             view.setOnCameraScaleChangedListener { scaleBand ->
                                 cameraScaleBand = scaleBand
                             }
+                            val cameraToRestore = labInteraction.savedCamera.takeIf { labInteraction.boundSessionHandle == runtimeSessionHandle }
+                            val referenceToRestore = labInteraction.savedCameraReferenceId
+                            val referencePositionToRestore = labInteraction.savedCameraReferencePosition
+                            var restoredCamera = cameraToRestore == null
+                            view.setOnLabViewportChangedListener { viewport ->
+                                labInteraction.viewport = viewport
+                                if (viewport != null && !restoredCamera) {
+                                    restoredCamera = true
+                                    val modeToRestore = observerMode
+                                    val currentReference = viewport.bodies.firstOrNull { it.bodyId == referenceToRestore }?.worldPositionM
+                                    val camera = requireNotNull(cameraToRestore)
+                                    view.restoreLabCamera(if (currentReference != null && referencePositionToRestore != null)
+                                        camera.copy(centerM = camera.centerM + currentReference - referencePositionToRestore) else camera)
+                                    observerMode = modeToRestore
+                                    view.setObserverMode(modeToRestore)
+                                    // Restoring a draft's camera is presentation-only. Reissuing
+                                    // native observer commands invalidates the retained forecast.
+                                    if (labInteraction.draft == null) syncObserver(selectedBodyId, modeToRestore)
+                                } else {
+                                    if (viewport != null) {
+                                        labInteraction.savedCamera = viewport.camera
+                                        val referenceId = if (observerMode == ObserverMode.FOLLOW_SELECTED) selectedBodyId else "earth"
+                                        val followed = viewport.bodies.firstOrNull { it.bodyId == referenceId }
+                                        labInteraction.savedCameraReferenceId = followed?.bodyId
+                                        labInteraction.savedCameraReferencePosition = followed?.worldPositionM
+                                    }
+                                }
+                            }
                             view.setInteractionMode(SceneInteractionMode.NAVIGATE_AND_SELECT)
                             view.setInteractionListener(
                                 object : RenderInteractionListener {
                                     override fun onBodySelectionChanged(bodyId: String?) {
+                                        if (labInteraction.draft != null) return
                                         selectedBodyId = bodyId
                                         if (semanticFocusAcknowledgement?.resolvedBodyId != bodyId) {
                                             semanticFocusAcknowledgement = null
@@ -852,7 +1148,7 @@ internal fun StageFirstRuntimeExperience(
 
                                     override fun onCameraNavigationModeChanged(mode: ObserverMode) {
                                         observerMode = mode
-                                        syncObserver(selectedBodyId, mode)
+                                        if (labInteraction.draft == null) syncObserver(selectedBodyId, mode)
                                     }
 
                                     override fun onPlacementGesture(
@@ -860,19 +1156,41 @@ internal fun StageFirstRuntimeExperience(
                                         endWorldPositionM: Vector3d,
                                         gestureDistancePx: Float,
                                     ) = Unit
+
+                                    override fun onPlacementGestureUpdate(update: PlacementGestureUpdate) {
+                                        val draft = labInteraction.draft ?: return
+                                        if (labInteraction.committing) return
+                                        when (update.phase) {
+                                            PlacementGesturePhase.Started -> labInteraction.beforeGesture = draft
+                                            PlacementGesturePhase.Changed -> labInteraction.changeDraft(draft.atWorldPoint(update.endWorldPositionM))
+                                            PlacementGesturePhase.Ended -> {
+                                                labInteraction.changeDraft(draft.atWorldPoint(update.endWorldPositionM))
+                                                labInteraction.beforeGesture = null
+                                            }
+                                            PlacementGesturePhase.Cancelled -> {
+                                                labInteraction.beforeGesture?.let(labInteraction::changeDraft)
+                                                labInteraction.beforeGesture = null
+                                            }
+                                        }
+                                    }
                                 }
                             )
                             renderHostView = view
                         }
                     },
                     update = { view ->
+                        val draft = labInteraction.draft
+                        val reference = draft?.reference ?: labInteraction.referenceBodies["earth"]
+                        val plane = draft?.plane ?: labInteraction.plane
+                        if (plane != null && reference != null) view.setLabMapPlane(plane.through(reference))
+                        view.setLabMapMode(labViewMode == LabViewMode.ORBIT_MAP)
                         view.updateRuntimeStageState(
                             sessionHandle = runtimeSessionHandle,
                             processingMode = renderProcessingMode,
                             renderLayerOptions = renderLayerOptions,
                             observerMode = observerMode,
                             selectedBodyId = selectedBodyId,
-                            interactionMode = SceneInteractionMode.NAVIGATE_AND_SELECT,
+                            interactionMode = if (draft != null) SceneInteractionMode.PLACE_BODY else SceneInteractionMode.NAVIGATE_AND_SELECT,
                             sceneFrame = stageScene?.scene,
                         )
                     },
@@ -907,209 +1225,258 @@ internal fun StageFirstRuntimeExperience(
                 }
             }
 
-            if (chromeMode == StageChromeMode.COLLAPSED) {
-                RuntimeStageCollapsedStageChip(
-                    selectionCard = selectionCard,
-                    scenarioLabel = timelineText,
-                    semanticFocusAcknowledgement = semanticFocusAcknowledgement,
-                    searchFrameRequest = searchFrameRequest?.second,
-                    advanceStatus = compactPlaybackStatus,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                        .widthIn(max = if (compactLayout) 300.dp else 380.dp)
-                        .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                )
+            LabSceneOverlay(
+                viewport = labInteraction.viewport,
+                names = searchableBodies.associate { it.id to it.displayName },
+                selectedBodyId = selectedBodyId,
+                draft = labInteraction.draft,
+                preview = labInteraction.preview,
+                committing = labInteraction.committing,
+                onSelect = ::selectRuntimeBody,
+                onLocate = { bodyId -> focusAndFrameRuntimeBody(bodyId) },
+                onVelocityDrag = { point, scale ->
+                    if (!labInteraction.committing) labInteraction.draft?.let { labInteraction.changeDraft(it.withVelocityPoint(point, scale)) }
+                },
+            )
             }
 
-            if (chromeMode == StageChromeMode.EXPANDED) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    if (compactLayout) {
-                        RuntimeStageCollapsedStageChip(
-                            selectionCard = selectionCard,
-                            scenarioLabel = timelineText,
-                            semanticFocusAcknowledgement = semanticFocusAcknowledgement,
-                            searchFrameRequest = searchFrameRequest?.second,
-                            advanceStatus = compactPlaybackStatus,
-                            modifier = Modifier
-                                .widthIn(max = 360.dp)
-                                .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                        )
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            RuntimeStageMissionPanel(
-                                uiState = uiState,
-                                selectionCard = selectionCard,
-                                selectedBody = selectedBody,
-                                observerMode = observerMode,
-                                renderProcessingMode = renderProcessingMode,
-                                scenarioLabel = timelineText,
-                                semanticFocusAcknowledgement = semanticFocusAcknowledgement,
-                                searchFrameRequest = searchFrameRequest?.second,
-                                compact = false,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag(SolarLabTestTags.STAGE_FIRST_SELECTION_PANEL),
-                            )
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                actionButtons()
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (chromeMode == StageChromeMode.COLLAPSED) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    uiState.manualAdvance?.let { advance ->
-                        StageControlRail(modifier = Modifier.align(Alignment.CenterHorizontally), compact = true, fillMaxWidth = false) {
-                            StageActionButton(label = "Cancel advance", onClick = runtimeFacade::cancelManualAdvance, enabled = !advance.cancelRequested, dense = true)
-                        }
-                    }
-                    StageControlRail(
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        compact = true,
-                        fillMaxWidth = false,
-                    ) {
-                        StageActionButton(
-                            label = "Home",
-                            onClick = ::resetRuntimeCamera,
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON),
-                            enabled = cameraControlsEnabled,
-                            dense = true,
-                        )
-                        StageActionButton(
-                            label = "Frame",
-                            onClick = {
-                                selectedBodyId?.let(::focusAndFrameRuntimeBody)
-                                    ?: resetRuntimeCamera()
-                            },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON),
-                            enabled = cameraControlsEnabled,
-                            dense = true,
-                        )
-                        Box(modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)) {
-                            StageControlsButton(
-                                label = cameraScaleBand.label,
-                                onClick = { chromeModeName = StageChromeMode.EXPANDED.name },
-                                contentDescription = "Camera scale ${cameraScaleBand.label}; open camera controls",
-                                dense = true,
-                            )
-                        }
-                        StageActionButton(
-                            label = "Help",
-                            onClick = { cameraCoachVisible = true },
-                            modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON),
-                            dense = true,
-                        )
-                    }
-                }
-            } else if (chromeMode == StageChromeMode.EXPANDED) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .heightIn(max = expandedCockpitMaxHeight)
-                        .verticalScroll(expandedCockpitScrollState)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (compactLayout) {
-                        StageControlRail(compact = true) {
-                            actionButtons()
-                        }
-                    }
-                    RuntimeStageTimelineRail(
-                        uiState = uiState,
-                        fallbackSpeedPreset = playbackSpeedPreset,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    RuntimeStageCommandDeck(
-                        compact = compactLayout,
-                        primaryControls = primaryControls,
-                        secondaryControls = secondaryControls,
-                    )
-                    StagePanel(
-                        modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_STATUS_PANEL),
-                    ) {
-                        Text(
-                            text = cockpitBackendStatus,
-                            color = RuntimeStageCyan,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = if (compactLayout) 2 else Int.MAX_VALUE,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        accelerationReadout?.let { readout ->
-                            Spacer(modifier = Modifier.height(8.dp))
-                            RuntimeStageAccelerationPanel(
-                                readout = readout,
-                                compact = compactLayout,
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = interactionHintText,
-                            color = RuntimeStageTextDim,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = if (compactLayout) 1 else Int.MAX_VALUE,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-
-            if (chromeMode == StageChromeMode.MINIMAL) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                ) {
-                    StageControlsButton(
-                        label = "Controls",
-                        onClick = { chromeModeName = StageChromeMode.COLLAPSED.name },
-                        dense = true,
-                    )
-                }
-            }
-
-            if (cameraCoachVisible) {
-                StageCameraCoach(
-                    onDismiss = {
-                        markStageCameraCoachSeen(context)
-                        cameraCoachVisible = false
+            if (!placing) EarthMoonLabChrome(
+                uiState = uiState,
+                selectedBody = selectedBody,
+                selectedName = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: activeScenarioPack.title,
+                selectionDescription = semanticFocusAcknowledgement?.contentDescription,
+                scenarioTitle = activeScenarioPack.title,
+                availableBodyIds = searchableBodies.map { it.id }.toSet(),
+                mode = chromeMode,
+                traceMode = traceLayerMode,
+                cameraBand = cameraScaleBand,
+                stepPreset = stepQuantumPreset,
+                playbackPreset = playbackSpeedPreset,
+                pendingFrameName = searchFrameRequest?.second,
+                navigation = LabNavigationUiState(
+                    viewMode = labViewMode,
+                    followingSelection = observerMode == ObserverMode.FOLLOW_SELECTED,
+                    metresPerPixel = labInteraction.viewport?.metresPerPixel,
+                    canUndo = lastProbeCommit != null && !labInteraction.undoing,
+                    selectionSubtitle = labInteraction.feedback
+                        ?: labInteraction.selectedFacts?.takeIf { it.bodyId == selectedBodyId }?.summary,
+                ),
+                actions = LabStageActions(
+                    focus = { focusAndFrameRuntimeBody(it) },
+                    home = ::resetRuntimeCamera,
+                    frame = ::frameSelectedBody,
+                    togglePlayback = { sendRuntimeCommand(if (isRunning) RuntimeCommand.PausePlayback else RuntimeCommand.ResumePlayback) },
+                    speedDown = {
+                        playbackSpeedPreset = playbackSpeedPreset.shifted(-1)
+                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(playbackSpeedPreset.simSecondsPerRealSecond))
                     },
+                    speedUp = {
+                        playbackSpeedPreset = playbackSpeedPreset.shifted(1)
+                        sendRuntimeCommand(RuntimeCommand.SetPlaybackRate(playbackSpeedPreset.simSecondsPerRealSecond))
+                    },
+                    step = {
+                        coroutineScope.launch {
+                            runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                            runtimeFacade.applyCommand(RuntimeCommand.AdvanceEpoch(stepQuantumPreset.seconds))
+                        }
+                    },
+                    cycleStep = { stepQuantumPreset = stepQuantumPreset.nextCyclic() },
+                    inspect = ::inspectSelectedBody,
+                    addProbe = ::addProbe,
+                    saved = { savedVisible = true },
+                    science = { scienceVisible = true },
+                    search = { searchQuery = ""; requestSearchFocus = false; searchVisible = true },
+                    scenarios = { scenarioPickerVisible = true },
+                    toggleTools = { chromeModeName = chromeMode.toggle().name },
+                    hideChrome = { chromeModeName = StageChromeMode.MINIMAL.name },
+                    help = { cameraCoachVisible = true },
+                    zoomIn = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
+                    zoomOut = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
+                    setScale = { renderHostView?.setCameraScaleBand(it) },
+                    fewerTraces = { traceLayerModeName = traceLayerMode.less().name },
+                    moreTraces = { traceLayerModeName = traceLayerMode.more().name },
+                    debug = { debugVisible = true },
+                    cancelAdvance = runtimeFacade::cancelManualAdvance,
+                    setViewMode = ::changeLabView,
+                    toggleFollow = {
+                        val next = if (observerMode == ObserverMode.FOLLOW_SELECTED) ObserverMode.FREE else ObserverMode.FOLLOW_SELECTED
+                        observerMode = next
+                        renderHostView?.setObserverMode(next)
+                        syncObserver(selectedBodyId, next)
+                    },
+                    undo = ::undoProbePlacement,
+                ),
+            )
+            labInteraction.draft?.let { draft ->
+                if (!typingPlacement) LabPlacementSceneBar(
+                    planeLabel = draft.plane.label,
+                    onFitPath = ::fitProbePlacement,
+                    onZoomIn = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_IN_FACTOR) },
+                    onZoomOut = { renderHostView?.zoomBy(RUNTIME_STAGE_CAMERA_ZOOM_OUT_FACTOR) },
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()
+                        .height(LabPlacementMetrics.SceneHeaderHeight),
+                )
+                val preview = labInteraction.preview
+                val previewStatus = when {
+                    draft.validationError != null -> "Choose a valid starting position"
+                    labInteraction.previewing -> "Calculating with the laboratory physics…"
+                    preview?.intersectsReferenceBody == true -> "Path meets the surface · no collision model"
+                    preview != null -> "Predicted path · ready to place"
+                    else -> "Move the probe to see its path"
+                }
+                val panelModifier = if (landscape) Modifier.align(Alignment.CenterEnd)
+                    .padding(top = topInset + 4.dp, end = 8.dp, bottom = navigationInset + 8.dp)
+                    .width(placementWidth).fillMaxSize()
+                else Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp)
+                    .fillMaxWidth().height(placementHeight)
+                LabPlacementSheet(
+                    state = LabPlacementUiState(
+                        hostBodyId = draft.reference.bodyId,
+                        hosts = labInteraction.referenceBodies.values.map { LabPlacementHost(it.bodyId, displayNameForBodyId(it.bodyId)) },
+                        planeLabel = draft.plane.label,
+                        altitudeKmText = draft.altitudeKmText,
+                        altitudeRangeKm = 1f..384_400f,
+                        motion = draft.motion,
+                        speedKmPerSecondText = if (draft.motion == LabPlacementMotion.CIRCULAR) labDecimal((draft.circularSpeedMps ?: 0.0) / 1_000.0) else draft.speedKmPerSecondText,
+                        direction = draft.direction,
+                        previewStatus = previewStatus,
+                        previewHorizonText = preview?.let { "Next ${labPreviewDuration(it.horizonSeconds)}${if (it.limited) " · bounded preview" else ""}" },
+                        error = draft.validationError ?: labInteraction.error,
+                        canCreate = preview?.isCurrentFor(draft.candidate(), runtimeSessionHandle, uiState.snapshot) == true && !labInteraction.previewing,
+                        committing = labInteraction.committing,
+                        altitudeLocked = draft.altitudeLocked,
+                        headingDegreesText = draft.headingDegreesText,
+                        massKgText = draft.massKgText,
+                        sourceGravity = draft.sourceGravity,
+                    ),
+                    actions = LabPlacementActions(
+                        onHostChange = ::changePlacementHost,
+                        onAltitudeChange = { labInteraction.changeDraft(draft.copy(altitudeKmText = it)) },
+                        onMotionChange = { labInteraction.changeDraft(draft.withMotion(it)) },
+                        onSpeedChange = { labInteraction.changeDraft(draft.copy(speedKmPerSecondText = it)) },
+                        onDirectionChange = { labInteraction.changeDraft(draft.copy(direction = it)) },
+                        onCreate = ::commitProbePlacement,
+                        onCancel = ::cancelProbePlacement,
+                        onAltitudeLockChange = { labInteraction.changeDraft(draft.copy(altitudeLocked = it)) },
+                        onHeadingChange = { labInteraction.changeDraft(draft.copy(headingDegreesText = it)) },
+                        onMassChange = { labInteraction.changeDraft(draft.copy(massKgText = it)) },
+                        onSourceGravityChange = { labInteraction.changeDraft(draft.copy(sourceGravity = it)) },
+                    ),
+                    modifier = panelModifier,
                 )
             }
+            if (cameraCoachVisible && !placing) {
+                StageCameraCoach(onDismiss = {
+                    markStageCameraCoachSeen(context)
+                    cameraCoachVisible = false
+                })
+            }
+        }
+
+        if (scienceVisible) LabScienceDialog(uiState, activeScenarioPack, onDismiss = { scienceVisible = false })
+        if (inspectorVisible) {
+            LabBodyInspectorDialog(
+                body = inspectedBody,
+                bodyName = inspectedBody?.bodyId?.let(::displayNameForBodyId) ?: "Inspect body",
+                onDismiss = { inspectorVisible = false },
+                onEdit = ::editInspectedBody,
+            )
+        }
+        editorSession?.let { session ->
+            LabBodyEditorDialog(
+                session = session,
+                committing = editorCommitting,
+                error = editorError,
+                onDismiss = { editorSession = null },
+                onCommit = { command ->
+                    editorCommitting = true
+                    editorError = null
+                    coroutineScope.launch {
+                        try {
+                            runtimeFacade.applyCommand(command)
+                            val state = runtimeFacade.uiState.value
+                            if (state.noticeTone == ShellNoticeTone.Critical || state.noticeTone == ShellNoticeTone.Caution) {
+                                editorError = state.noticeLine ?: "The change could not be applied."
+                            } else {
+                                editorSession = null
+                                if (command is RuntimeCommand.SpawnBody) {
+                                    selectedBodyId = command.bodyId
+                                    observerMode = ObserverMode.FREE
+                                    // Keep the new probe inspectable while showing its
+                                    // Earth-orbit context instead of framing its metre-scale body.
+                                    renderHostView?.setObserverMode(ObserverMode.FREE)
+                                    renderHostView?.frameBody("earth")
+                                    renderHostView?.setSelectedBodyId(command.bodyId)
+                                    syncObserver(command.bodyId, ObserverMode.FREE)
+                                }
+                            }
+                        } finally {
+                            editorCommitting = false
+                        }
+                    }
+                },
+            )
+        }
+        LaunchedEffect(savedVisible) {
+            if (savedVisible) runtimeFacade.refreshExperimentCatalogue()
+        }
+        if (savedVisible) {
+            LabSavedExperimentsDialog(
+                experiments = savedExperiments,
+                uiState = uiState,
+                experimentStatus = experimentStatus,
+                onDismiss = { savedVisible = false },
+                onImport = {
+                    runCatching { importDocument.launch(arrayOf("*/*")) }
+                        .onFailure { labNotice = "The document picker could not be opened: ${it.message}" }
+                },
+                onExport = { saved ->
+                    pendingExportId = saved.id
+                    val filename = saved.name.replace(Regex("[^\\p{L}\\p{N} ._-]"), "_").take(80) + ".sglexp"
+                    runCatching { exportDocument.launch(filename) }.onFailure {
+                        pendingExportId = null
+                        labNotice = "The export destination could not be opened: ${it.message}"
+                    }
+                },
+                onDelete = { id -> coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) { runtimeFacade.deleteExperiment(id) } },
+                onSave = { name ->
+                    coroutineScope.launch {
+                        runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                        runtimeFacade.saveExperiment(name)
+                    }
+                },
+                onLoad = { id ->
+                    labInteraction.lastCommit = null
+                    openingSavedExperiment = true
+                    coroutineScope.launch {
+                        try {
+                            runtimeFacade.loadExperiment(id)
+                            val state = runtimeFacade.uiState.value
+                            if (state.connectionState == SessionConnectionState.Active &&
+                                runtimeFacade.experimentStatus.value.openedId == id) {
+                                framedLabSession = state.sessionHandle ?: framedLabSession
+                                savedVisible = false
+                                selectedBodyId = state.focusedBodyId
+                                restoreBodyAfterLoad = state.focusedBodyId ?: "earth"
+                            }
+                        } finally {
+                            openingSavedExperiment = false
+                        }
+                    }
+                },
+            )
+        }
+        labNotice?.let { notice ->
+            AlertDialog(onDismissRequest = { labNotice = null }, title = { Text("Experiment") },
+                text = { Text(notice) }, confirmButton = { TextButton(onClick = { labNotice = null }) { Text("OK") } })
         }
 
         if (searchVisible) {
             RuntimeStageSearchDialog(
                 bodies = searchableBodies,
                 selectedBodyId = selectedBodyId,
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
                 requestFocus = requestSearchFocus,
                 onDismiss = {
                     searchVisible = false
@@ -1993,11 +2360,12 @@ private fun RuntimeStageMiniSignalChart(
 private fun RuntimeStageSearchDialog(
     bodies: List<RuntimeStageBody>,
     selectedBodyId: String?,
+    query: String,
+    onQueryChange: (String) -> Unit,
     requestFocus: Boolean,
     onDismiss: () -> Unit,
     onSelectBody: (String) -> Unit,
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val normalizedQuery = query.trim().lowercase(Locale.US)
@@ -2017,12 +2385,12 @@ private fun RuntimeStageSearchDialog(
                 Text("Close")
             }
         },
-        title = { Text("Find a runtime body") },
+        title = { Text("Objects in your experiment") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = onQueryChange,
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focusRequester)
@@ -2037,10 +2405,10 @@ private fun RuntimeStageSearchDialog(
                     }
                 }
                 Text(
-                    text = if (filteredBodies.size == 32) {
-                        "32 shown · type to filter"
-                    } else {
-                        "${filteredBodies.size} matches"
+                    text = when {
+                        bodies.isEmpty() -> "Loading objects…"
+                        filteredBodies.size == 32 -> "32 shown · type to filter"
+                        else -> "${filteredBodies.size} matches"
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2054,7 +2422,7 @@ private fun RuntimeStageSearchDialog(
                 ) {
                     if (filteredBodies.isEmpty()) {
                         Text(
-                            text = "No runtime bodies matched that query.",
+                            text = if (bodies.isEmpty()) "The object catalogue is loading…" else "No runtime bodies matched that query.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -2146,7 +2514,7 @@ private fun RuntimeStageScenarioDialog(
             }
         },
         modifier = Modifier.testTag(SolarLabTestTags.STAGE_FIRST_SCENARIO_DIALOG),
-        title = { Text("Scenario packs") },
+        title = { Text("Explore a scene") },
         text = {
             Column(
                 modifier = Modifier
@@ -2156,7 +2524,7 @@ private fun RuntimeStageScenarioDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "Deterministic scenes for visual polish, camera checks, and fast Android tool iteration.",
+                    text = "Choose a starting point for your next experiment. Save your current state first if you want to keep it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2203,8 +2571,7 @@ private fun RuntimeStageScenarioDialog(
                                 )
                                 Text(
                                     text = listOf(
-                                        pack.scenarioId,
-                                        "focus=${pack.defaultFocusBodyId ?: "none"}",
+                                        if (pack.tags.contains("stress")) "Performance experiment" else "Built-in scene",
                                         if (pack.startPaused) "paused" else "live",
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.labelSmall,

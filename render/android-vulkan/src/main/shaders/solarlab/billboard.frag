@@ -1,12 +1,16 @@
 #version 450
 
+layout(set = 0, binding = 1, std430) readonly buffer SurfaceColors {
+    uint rgba[];
+} uSurface;
+
 layout(location = 0) in vec4 vColor;
 layout(location = 1) flat in uint vKind;
 layout(location = 2) flat in vec3 vLightDirection;
 layout(location = 3) in vec2 vBillboardUv;
 layout(location = 4) flat in uint vMaterial;
 layout(location = 5) flat in uint vAppearanceFlags;
-layout(location = 6) flat in float vReferenceMeridianRadians;
+layout(location = 6) flat in vec4 vSurfaceFrame;
 layout(location = 7) flat in float vBodyRadiusUv;
 layout(location = 8) flat in vec3 vNorthPoleCamera;
 layout(location = 9) flat in vec3 vRingRatiosAndOpticalDepth;
@@ -14,7 +18,7 @@ layout(location = 10) flat in vec2 vAtmosphereRatioAndDensity;
 layout(location = 11) flat in vec4 vCometRatios;
 layout(location = 12) flat in vec3 vCometAntiSolarCamera;
 layout(location = 13) flat in vec3 vCometVelocityCamera;
-layout(location = 14) flat in float vSurfaceDetail;
+layout(location = 14) flat in vec3 vSurfaceMetrics;
 layout(location = 15) flat in vec3 vRingPlaneCamera;
 layout(location = 0) out vec4 outColor;
 
@@ -31,6 +35,11 @@ const uint MATERIAL_COMET = 8u;
 const uint HAS_RING_SYSTEM = 1u << 0u;
 const uint HAS_ATMOSPHERE = 1u << 1u;
 const uint HAS_COMET = 1u << 2u;
+const uint HAS_EARTH_MAP = 1u << 16u;
+const uint HAS_MOON_MAP = 1u << 17u;
+
+#define vSurfaceDetail vSurfaceMetrics.x
+#define vReferenceMeridianRadians vSurfaceFrame.w
 
 float hash21(vec2 point) {
     vec3 p3 = fract(vec3(point.xyx) * 0.1031);
@@ -41,7 +50,10 @@ float hash21(vec2 point) {
 vec3 bodyLocalNormal(vec3 cameraNormal) {
     vec3 pole = normalize(vNorthPoleCamera);
     vec3 reference = abs(pole.z) < 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    vec3 east = normalize(cross(reference, pole));
+    // The map's meridian belongs to the body, so orbiting the camera reveals
+    // different geography rather than turning the map to face the viewer.
+    bool mapped = (vAppearanceFlags & (HAS_EARTH_MAP | HAS_MOON_MAP)) != 0u;
+    vec3 east = mapped ? normalize(vSurfaceFrame.xyz) : normalize(cross(reference, pole));
     vec3 meridian = normalize(cross(pole, east));
     vec3 local = vec3(
         dot(cameraNormal, east),
@@ -74,8 +86,38 @@ void composite(inout vec4 accumulated, vec3 color, float alpha) {
     accumulated.a = combinedAlpha;
 }
 
+vec3 surfaceTexel(int map, ivec2 pixel) {
+    int x = (pixel.x % 1024 + 1024) % 1024;
+    int y = clamp(pixel.y, 0, 511);
+    return unpackUnorm4x8(uSurface.rgba[map * 524288 + y * 1024 + x]).rgb;
+}
+
+vec3 mappedSurface(int map, vec3 local) {
+    // Equirectangular maps: Greenwich at the centre, north at the top. Wrapping
+    // longitude and clamping latitude keep bilinear samples continuous at seams/poles.
+    vec2 uv = vec2(atan(local.z, local.x) / 6.28318530718 + 0.5,
+        0.5 - asin(clamp(local.y, -1.0, 1.0)) / 3.14159265359);
+    vec2 pixel = uv * vec2(1024.0, 512.0) - 0.5;
+    ivec2 base = ivec2(floor(pixel));
+    vec2 fraction = fract(pixel);
+    return mix(mix(surfaceTexel(map, base), surfaceTexel(map, base + ivec2(1, 0)), fraction.x),
+        mix(surfaceTexel(map, base + ivec2(0, 1)), surfaceTexel(map, base + ivec2(1, 1)), fraction.x),
+        fraction.y);
+}
+
 vec3 surfaceColor(vec3 normal, float sphereZ) {
     vec3 local = bodyLocalNormal(normal);
+    if ((vAppearanceFlags & HAS_EARTH_MAP) != 0u) {
+        vec3 mapped = mappedSurface(0, local);
+        float luminance = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+        float blueDominance = mapped.b - max(mapped.r, mapped.g);
+        float darkOcean = smoothstep(0.025, 0.10, blueDominance) *
+            (1.0 - smoothstep(0.12, 0.35, luminance));
+        // Illustrative display colour: reveal the map's dark blue ocean without
+        // tinting neutral terrain or bright ice. Geography and the source asset stay intact.
+        return mix(mapped, max(mapped, vec3(0.035, 0.22, 0.46)), darkOcean * 0.85);
+    }
+    if ((vAppearanceFlags & HAS_MOON_MAP) != 0u) return mappedSurface(1, local);
     float latitude = local.y;
     float longitude = atan(local.z, local.x);
     float broadNoise = layeredSurfaceNoise(local);
@@ -142,16 +184,31 @@ vec3 surfaceColor(vec3 normal, float sphereZ) {
 }
 
 vec3 litSurface(vec3 normal, vec3 color, float sphereZ) {
-    float diffuse = max(dot(normal, normalize(vLightDirection)), 0.0);
+    float sunFacing = dot(normal, normalize(vLightDirection));
+    float diffuse = max(sunFacing, 0.0);
     float rim = pow(1.0 - sphereZ, 2.2);
     vec3 shaded = color * (0.16 + 0.84 * diffuse);
-    shaded += min(color + vec3(0.18), vec3(1.0)) * rim * 0.15;
+    if ((vAppearanceFlags & HAS_EARTH_MAP) != 0u) {
+        // A bounded, monotonic Earth-only tone curve keeps dark regions readable.
+        // The Sun's diffuse term and terminator remain unchanged; zero and full
+        // white remain fixed, and the existing limb contribution is added below.
+        shaded = pow(clamp(shaded, vec3(0.0), vec3(1.0)), vec3(0.72));
+        // An illustrative thin blue limb follows the actual Sun. It must not turn
+        // the night-side edge into an equally illuminated ring.
+        shaded += vec3(0.08, 0.24, 0.42) * rim * smoothstep(-0.08, 0.18, sunFacing) * 0.35;
+    } else {
+        shaded += min(color + vec3(0.18), vec3(1.0)) * rim * 0.15;
+    }
     return min(shaded, vec3(1.0));
 }
 
 void main() {
     vec2 cameraUv = vec2(vBillboardUv.x, -vBillboardUv.y);
     float distanceFromCenter = length(cameraUv);
+    // Derivatives are evaluated before divergent surface/effect branches. A close
+    // Earth gets a pixel-wide silhouette, not a 6%-of-radius translucent fringe.
+    float silhouettePixelWidth = max(fwidth(distanceFromCenter), 1e-6);
+    bool mappedEarth = (vAppearanceFlags & HAS_EARTH_MAP) != 0u;
     vec4 accumulated = vec4(0.0);
 
     bool hasComet = (vAppearanceFlags & HAS_COMET) != 0u;
@@ -200,7 +257,15 @@ void main() {
         vec3 atmosphereColor = vMaterial == MATERIAL_TERRESTRIAL && density > 1.25
             ? vec3(1.0, 0.58, 0.20)
             : vec3(0.24, 0.62, 1.0);
-        composite(accumulated, atmosphereColor, shell * outerFade * density * 0.28);
+        float atmosphereAlpha = shell * outerFade * density * 0.28;
+        if (mappedEarth && atmosphereRadius > vBodyRadiusUv) {
+            vec3 limbNormal = vec3(cameraUv / max(distanceFromCenter, 1e-6), 0.0);
+            float sunlight = smoothstep(-0.12, 0.25, dot(limbNormal, normalize(vLightDirection)));
+            float surfaceEdge = smoothstep(vBodyRadiusUv - silhouettePixelWidth, vBodyRadiusUv, distanceFromCenter);
+            float altitudeFade = 1.0 - smoothstep(vBodyRadiusUv, atmosphereRadius, distanceFromCenter);
+            atmosphereAlpha = surfaceEdge * altitudeFade * density * sunlight * 0.35;
+        }
+        composite(accumulated, atmosphereColor, atmosphereAlpha);
     }
 
     bool insideBody = distanceFromCenter <= vBodyRadiusUv;
@@ -211,6 +276,7 @@ void main() {
     bool hasRing = (vAppearanceFlags & HAS_RING_SYSTEM) != 0u;
     bool insideRing = false;
     bool ringInFront = false;
+    float ringZ = 0.0;
     float ringAlpha = 0.0;
     vec3 ringColor = vec3(0.82, 0.70, 0.50);
     if (hasRing) {
@@ -218,7 +284,7 @@ void main() {
         float normalZ = abs(ringNormal.z) < 0.055
             ? (ringNormal.z < 0.0 ? -0.055 : 0.055)
             : ringNormal.z;
-        float ringZ = -(ringNormal.x * cameraUv.x + ringNormal.y * cameraUv.y) / normalZ;
+        ringZ = -(ringNormal.x * cameraUv.x + ringNormal.y * cameraUv.y) / normalZ;
         float ringRadius = length(vec3(cameraUv, ringZ));
         float innerRadius = max(vRingRatiosAndOpticalDepth.x, vBodyRadiusUv);
         float outerRadius = max(vRingRatiosAndOpticalDepth.y, innerRadius + 1e-5);
@@ -244,7 +310,9 @@ void main() {
         vec2 sphereUv = cameraUv / max(vBodyRadiusUv, 1e-6);
         float sphereZ = sqrt(max(0.0, 1.0 - dot(sphereUv, sphereUv)));
         vec3 normal = normalize(vec3(sphereUv, sphereZ));
-        float edgeFade = 1.0 - smoothstep(0.94, 1.0, length(sphereUv));
+        float edgeFade = mappedEarth
+            ? 1.0 - smoothstep(vBodyRadiusUv - silhouettePixelWidth, vBodyRadiusUv, distanceFromCenter)
+            : 1.0 - smoothstep(0.94, 1.0, length(sphereUv));
         if (vKind == KIND_STAR || vMaterial == MATERIAL_STELLAR) {
             float core = 1.0 - smoothstep(0.0, 0.34, length(sphereUv));
             float halo = 1.0 - smoothstep(0.58, 1.0, length(sphereUv));
@@ -263,5 +331,11 @@ void main() {
     if (accumulated.a <= 0.001) {
         discard;
     }
+    float frontSurfaceZ = insideRing && ringInFront ? ringZ : bodyZ;
+    float surfaceDepth = vSurfaceMetrics.y - frontSurfaceZ * vSurfaceMetrics.z;
+    if (surfaceDepth < 0.0 || surfaceDepth > 1.0) {
+        discard;
+    }
+    gl_FragDepth = surfaceDepth;
     outColor = accumulated;
 }

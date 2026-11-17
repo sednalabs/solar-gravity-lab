@@ -1,4 +1,5 @@
 #include "SolarLabStageController.h"
+#include "SolarLabPresentation.h"
 
 #include <android/log.h>
 
@@ -15,6 +16,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 #include "solarlab_v2.h"
@@ -30,8 +32,6 @@ constexpr double kDefaultPitchRadians = 1.0995574287564276;   // 63 degrees.
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kMinPitchRadians = 0.20943951023931956;      // 12 degrees.
 constexpr double kMaxPitchRadians = 1.53588974175501;         // 88 degrees.
-constexpr double kDefaultDepthExtentFactor = 48.0;
-constexpr double kPickDepthBias = 0.12;
 constexpr uint32_t kKindStar = 0U;
 constexpr uint32_t kKindPlanet = 1U;
 constexpr uint32_t kKindDwarfPlanet = 2U;
@@ -197,10 +197,6 @@ uint32_t RenderKindForSceneBodyKind(SlSceneBodyKind kind) {
     }
 }
 
-bool ShouldIncludeAuthoritativeBody(float radiusM, float emissiveLuminance, bool selected) {
-    return selected || emissiveLuminance > 1000.0f || radiusM >= 100'000.0f;
-}
-
 double SafeBodyRadiusM(float radiusM) {
     return std::isfinite(radiusM) && radiusM > 0.0f
         ? static_cast<double>(radiusM)
@@ -232,17 +228,16 @@ CameraFrame BuildCameraFrame(
     int viewportHeightPx) {
     const int width = std::max(viewportWidthPx, 1);
     const int height = std::max(viewportHeightPx, 1);
-    const int minDimension = std::max(1, std::min(width, height));
-    const double safeRadius = std::max(viewRadiusM, 1.0);
+    const auto projection = solarlab::presentation::MakeProjection(viewRadiusM, width, height);
 
     CameraFrame frame;
-    frame.halfSpanY = safeRadius;
-    frame.halfSpanX = safeRadius * (static_cast<double>(width) / static_cast<double>(minDimension));
-    frame.metersPerPixel = (2.0 * safeRadius) / static_cast<double>(minDimension);
-    frame.right = Normalize(MakeFloat3(std::cos(yawRadians), std::sin(yawRadians), 0.0));
-    const Float3 screenUpHorizontal = Normalize(MakeFloat3(-std::sin(yawRadians), std::cos(yawRadians), 0.0));
-    frame.forward = Normalize(screenUpHorizontal * std::cos(pitchRadians) + MakeFloat3(0.0, 0.0, -std::sin(pitchRadians)));
-    frame.up = Normalize(Cross(frame.right, frame.forward));
+    frame.halfSpanY = projection.halfSpanY;
+    frame.halfSpanX = projection.halfSpanX;
+    frame.metersPerPixel = projection.metersPerPixel;
+    const auto basis = solarlab::presentation::MakeCameraBasis(yawRadians, pitchRadians);
+    frame.right = MakeFloat3(basis.right[0], basis.right[1], basis.right[2]);
+    frame.forward = MakeFloat3(basis.forward[0], basis.forward[1], basis.forward[2]);
+    frame.up = MakeFloat3(basis.up[0], basis.up[1], basis.up[2]);
     return frame;
 }
 
@@ -250,6 +245,7 @@ struct ProjectedBody {
     double screenX = 0.0;
     double screenY = 0.0;
     float radiusPx = 0.0f;
+    double centerDepthM = 0.0;
     bool visible = false;
 };
 
@@ -283,16 +279,19 @@ ProjectedBody ProjectBody(
     const Float3 delta = positionRelative - cameraCenterRelative;
     const double clipX = Dot(delta, frame.right) / std::max(frame.halfSpanX, 1.0);
     const double clipY = Dot(delta, frame.up) / std::max(frame.halfSpanY, 1.0);
-    if (std::abs(clipX) > 1.25 || std::abs(clipY) > 1.25) {
-        return {};
-    }
-
     ProjectedBody result;
     result.screenX = ((clipX * 0.5) + 0.5) * static_cast<double>(width);
     result.screenY = (1.0 - ((clipY * 0.5) + 0.5)) * static_cast<double>(height);
-    result.radiusPx = std::max(
-        static_cast<float>(body.radiusM / std::max(frame.metersPerPixel, 1e-3)),
-        KindMinimumBillboardDiameterPx(body.kind) * 0.5f);
+    // Match the billboard's envelope and core sizing, including minimum visible markers.
+    const double visualRadiusM = std::max({static_cast<double>(body.visualRadiusM), static_cast<double>(body.radiusM), 1.0});
+    const double diameterPx = Clamp(
+        std::max(2.0 * visualRadiusM / frame.metersPerPixel,
+            static_cast<double>(KindMinimumBillboardDiameterPx(body.kind))),
+        1.0, 2.0 * std::max(width, height));
+    const double coreRatio = Clamp(std::max(body.radiusM / visualRadiusM,
+        (KindMinimumBillboardDiameterPx(body.kind) * 0.5) / diameterPx), 1e-6, 1.0);
+    result.radiusPx = static_cast<float>(diameterPx * 0.5 * coreRatio);
+    result.centerDepthM = Dot(delta, frame.forward);
     result.visible = true;
     return result;
 }
@@ -308,6 +307,8 @@ uint64_t MakeSyntheticRevision(
     revision ^= (static_cast<uint64_t>(processingModeCode & 0xFFFF) << 16U);
     revision ^= (static_cast<uint64_t>(observerModeCode & 0xFFFF) << 32U);
     revision ^= (static_cast<uint64_t>(traceLayerModeCode & 0xFFFF) << 48U);
+    // -1 is the upload sentinel; keep hashed revisions in the non-negative range.
+    revision &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
     if (revision == 0) {
         revision = 1;
     }
@@ -497,6 +498,7 @@ struct SolarLabStageController::RuntimeAbi {
     decltype(&sl_v2_session_export_vulkan_scene) session_export_vulkan_scene = nullptr;
     decltype(&sl_v2_vulkan_scene_packet_buffer) packet_buffer = nullptr;
     decltype(&sl_v2_vulkan_scene_packet_release) packet_release = nullptr;
+    decltype(&sl_v2_session_snapshot_summary) snapshot_summary = nullptr;
 
     ~RuntimeAbi() {
         if (libraryHandle != nullptr) {
@@ -519,6 +521,7 @@ struct SolarLabStageController::RuntimeAbi {
         session_export_vulkan_scene = reinterpret_cast<decltype(session_export_vulkan_scene)>(dlsym(libraryHandle, "sl_v2_session_export_vulkan_scene"));
         packet_buffer = reinterpret_cast<decltype(packet_buffer)>(dlsym(libraryHandle, "sl_v2_vulkan_scene_packet_buffer"));
         packet_release = reinterpret_cast<decltype(packet_release)>(dlsym(libraryHandle, "sl_v2_vulkan_scene_packet_release"));
+        snapshot_summary = reinterpret_cast<decltype(snapshot_summary)>(dlsym(libraryHandle, "sl_v2_session_snapshot_summary"));
         if (session_export_vulkan_scene == nullptr || packet_buffer == nullptr || packet_release == nullptr) {
             error = dlerror() != nullptr ? dlerror() : "Failed to resolve solarlab_v2 runtime ABI symbols";
             return false;
@@ -632,16 +635,50 @@ void SolarLabStageController::SetCamera(
     double centerZ,
     double viewRadiusM,
     double yawRadians,
-    double pitchRadians) {
+    double pitchRadians,
+    const std::string& referenceBodyId) {
     std::lock_guard<std::mutex> lock(stateMutex_);
+    const RuntimeBodyProxy* reference = nullptr;
+    if (!referenceBodyId.empty()) {
+        const auto match = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+            [&](const RuntimeBodyProxy& body) { return body.bodyId == referenceBodyId; });
+        // A removed subject must never turn a local offset into a barycentric camera.
+        if (match == runtimeScene_.pickBodies.end()) return;
+        reference = &*match;
+    }
     cameraCenterX_ = centerX;
     cameraCenterY_ = centerY;
     cameraCenterZ_ = centerZ;
+    ClearCameraPresentationLocked();
+    if (reference != nullptr) {
+        const auto x = solarlab::presentation::CameraInReference(centerX,
+            runtimeScene_.sceneOriginX + reference->previousRelativeX,
+            runtimeScene_.sceneOriginX + reference->positionRelativeX);
+        const auto y = solarlab::presentation::CameraInReference(centerY,
+            runtimeScene_.sceneOriginY + reference->previousRelativeY,
+            runtimeScene_.sceneOriginY + reference->positionRelativeY);
+        const auto z = solarlab::presentation::CameraInReference(centerZ,
+            runtimeScene_.sceneOriginZ + reference->previousRelativeZ,
+            runtimeScene_.sceneOriginZ + reference->positionRelativeZ);
+        cameraCenterX_ = x.current;
+        cameraCenterY_ = y.current;
+        cameraCenterZ_ = z.current;
+        runtimeScene_.cameraPreviousOffsetX = x.previousOffset;
+        runtimeScene_.cameraPreviousOffsetY = y.previousOffset;
+        runtimeScene_.cameraPreviousOffsetZ = z.previousOffset;
+    }
+    runtimeHomePending_ = false;
     cameraViewRadiusM_ = Clamp(viewRadiusM, MinimumViewRadiusLocked(), kMaxViewRadiusM);
     cameraYawRadians_ = yawRadians;
     while (cameraYawRadians_ > kPi) cameraYawRadians_ -= 2.0 * kPi;
     while (cameraYawRadians_ < -kPi) cameraYawRadians_ += 2.0 * kPi;
     cameraPitchRadians_ = Clamp(pitchRadians, kMinPitchRadians, kMaxPitchRadians);
+    ApplyLabMapOrientationLocked();
+    if (runtimeObserverModeCode_ != kObserverModeFree && followTargetValid_) {
+        followOffsetX_ = cameraCenterX_ - followTargetX_;
+        followOffsetY_ = cameraCenterY_ - followTargetY_;
+        followOffsetZ_ = cameraCenterZ_ - followTargetZ_;
+    }
     runtimeCameraInitialized_ = true;
     ++cameraRevisionCounter_;
     PushCameraLocked();
@@ -649,18 +686,136 @@ void SolarLabStageController::SetCamera(
 
 SolarLabStageController::CameraSnapshot SolarLabStageController::GetCameraSnapshot() const {
     std::lock_guard<std::mutex> lock(stateMutex_);
+    return PresentedCameraLocked(PresentationFractionLocked());
+}
+
+void SolarLabStageController::ApplyLabMapOrientationLocked() {
+    if (!labMapMode_) return;
+    cameraYawRadians_ = labMapYawRadians_;
+    cameraPitchRadians_ = labMapPitchRadians_;
+}
+
+void SolarLabStageController::SetLabMapView(bool enabled, double normalX, double normalY, double normalZ) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    const double magnitude = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
+    if (!std::isfinite(magnitude) || magnitude < 1e-10) return;
+    const auto angles = solarlab::presentation::MapCameraAngles(normalX, normalY, normalZ);
+    if (enabled && !labMapMode_) {
+        labOrbitYawRadians_ = cameraYawRadians_;
+        labOrbitPitchRadians_ = cameraPitchRadians_;
+    } else if (!enabled && labMapMode_) {
+        cameraYawRadians_ = labOrbitYawRadians_;
+        cameraPitchRadians_ = labOrbitPitchRadians_;
+    }
+    labMapYawRadians_ = angles[0];
+    labMapPitchRadians_ = angles[1];
+    labMapMode_ = enabled;
+    ApplyLabMapOrientationLocked();
+    ++cameraRevisionCounter_;
+    PushCameraLocked();
+}
+
+void SolarLabStageController::SetTouchDensity(double density) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    if (std::isfinite(density) && density > 0.0) touchDensity_ = density;
+}
+
+void SolarLabStageController::PreserveFollowOffsetLocked(double previousX, double previousY, double previousZ) {
+    if (runtimeObserverModeCode_ == kObserverModeFree) return;
+    followOffsetX_ += cameraCenterX_ - previousX;
+    followOffsetY_ += cameraCenterY_ - previousY;
+    followOffsetZ_ += cameraCenterZ_ - previousZ;
+}
+
+SolarLabStageController::LabViewportSnapshot SolarLabStageController::GetLabViewportSnapshot() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    LabViewportSnapshot snapshot;
+    snapshot.width = surfaceWidthPx_;
+    snapshot.height = surfaceHeightPx_;
+    const double fraction = PresentationFractionLocked();
+    snapshot.camera = PresentedCameraLocked(fraction);
+    const auto projection = solarlab::presentation::MakeProjection(cameraViewRadiusM_, snapshot.width, snapshot.height);
+    snapshot.metersPerPixel = projection.metersPerPixel;
+    // Labels are a small presentation layer, not another unbounded scene export.
+    // Keep the laboratory subjects and selection even in a larger imported scene.
+    constexpr size_t maxAnchors = 128;
+    std::vector<const RuntimeBodyProxy*> anchorBodies;
+    anchorBodies.reserve(std::min(maxAnchors, runtimeScene_.pickBodies.size()));
+    const auto isPriority = [&](const RuntimeBodyProxy& body) {
+        const auto id = LowercaseAscii(body.bodyId);
+        return id == "earth" || id == "moon" || id == LowercaseAscii(runtimeSelectedBodyId_);
+    };
+    for (const auto& body : runtimeScene_.pickBodies) {
+        if (isPriority(body) && anchorBodies.size() < maxAnchors) anchorBodies.push_back(&body);
+    }
+    for (const auto& body : runtimeScene_.pickBodies) {
+        if (anchorBodies.size() >= maxAnchors) break;
+        if (!isPriority(body)) anchorBodies.push_back(&body);
+    }
+    snapshot.bodies.reserve(anchorBodies.size());
+    for (const RuntimeBodyProxy* bodyPointer : anchorBodies) {
+        const auto& body = *bodyPointer;
+        RuntimeBodyProxy displayed = body;
+        displayed.positionRelativeX = solarlab::presentation::Mix(body.previousRelativeX, body.positionRelativeX, fraction);
+        displayed.positionRelativeY = solarlab::presentation::Mix(body.previousRelativeY, body.positionRelativeY, fraction);
+        displayed.positionRelativeZ = solarlab::presentation::Mix(body.previousRelativeZ, body.positionRelativeZ, fraction);
+        const auto projected = ProjectBody(displayed,
+            runtimeScene_.sceneOriginX, runtimeScene_.sceneOriginY, runtimeScene_.sceneOriginZ,
+            snapshot.camera.centerX, snapshot.camera.centerY, snapshot.camera.centerZ,
+            snapshot.camera.viewRadiusM, snapshot.camera.yawRadians, snapshot.camera.pitchRadians,
+            snapshot.width, snapshot.height);
+        snapshot.bodies.push_back(LabBodyAnchor{
+            .bodyId = body.bodyId,
+            .screenX = projected.screenX,
+            .screenY = projected.screenY,
+            .radiusPx = projected.radiusPx,
+            .depthM = projected.centerDepthM,
+            .occluded = false,
+            .worldX = runtimeScene_.sceneOriginX + displayed.positionRelativeX,
+            .worldY = runtimeScene_.sceneOriginY + displayed.positionRelativeY,
+            .worldZ = runtimeScene_.sceneOriginZ + displayed.positionRelativeZ,
+        });
+    }
+    for (auto& body : snapshot.bodies) {
+        const double ownSurfaceDepth = body.depthM - body.radiusPx * projection.metersPerPixel;
+        for (const auto& other : snapshot.bodies) {
+            if (&body == &other) continue;
+            const auto hit = solarlab::presentation::HitSphere(body.screenX - other.screenX,
+                body.screenY - other.screenY, other.radiusPx, other.depthM, projection, 0.0);
+            if (hit && hit->insideVisibleDisc && hit->surfaceDepthM < ownSurfaceDepth) {
+                body.occluded = true;
+                break;
+            }
+        }
+    }
+    return snapshot;
+}
+
+SolarLabStageController::CameraSnapshot SolarLabStageController::PresentedCameraLocked(double fraction) const {
     return CameraSnapshot{
-        .centerX = cameraCenterX_,
-        .centerY = cameraCenterY_,
-        .centerZ = cameraCenterZ_,
+        .centerX = cameraCenterX_ + runtimeScene_.cameraPreviousOffsetX * (1.0 - fraction),
+        .centerY = cameraCenterY_ + runtimeScene_.cameraPreviousOffsetY * (1.0 - fraction),
+        .centerZ = cameraCenterZ_ + runtimeScene_.cameraPreviousOffsetZ * (1.0 - fraction),
         .viewRadiusM = cameraViewRadiusM_,
         .yawRadians = cameraYawRadians_,
         .pitchRadians = cameraPitchRadians_,
     };
 }
 
+double SolarLabStageController::PresentationFractionLocked() const {
+    // Input and transition continuity use the frame submitted for display, not a newer
+    // wall-clock position. A slow final present must still schedule a fraction-one frame.
+    return renderer_.PresentedFraction();
+}
+
+void SolarLabStageController::ClearCameraPresentationLocked() {
+    runtimeScene_.cameraPreviousOffsetX = 0.0;
+    runtimeScene_.cameraPreviousOffsetY = 0.0;
+    runtimeScene_.cameraPreviousOffsetZ = 0.0;
+}
+
 double SolarLabStageController::MinimumViewRadiusLocked() const {
-    if (runtimeSelectedBodyId_.empty()) {
+    if (runtimeSelectedBodyId_.empty() || runtimeObserverModeCode_ == kObserverModeFree) {
         return kMinViewRadiusM;
     }
     const std::string normalizedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
@@ -677,9 +832,19 @@ double SolarLabStageController::MinimumViewRadiusLocked() const {
 
 std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeHomeCamera() const {
     std::lock_guard<std::mutex> lock(stateMutex_);
+    return ResolveRuntimeHomeCameraLocked();
+}
+
+std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeHomeCameraLocked() const {
     if (runtimeScene_.pickBodies.empty()) {
         return std::nullopt;
     }
+    // The Sun supplies gravity and light in this laboratory. Home frames its subject pair.
+    const bool earthMoonLab = runtimeScene_.scenarioId == "lab.earth-moon";
+    const auto includeInHome = [earthMoonLab](const RuntimeBodyProxy& body) {
+        const auto id = LowercaseAscii(body.bodyId);
+        return !earthMoonLab || id == "earth" || id == "moon";
+    };
 
     double minX = std::numeric_limits<double>::max();
     double minY = std::numeric_limits<double>::max();
@@ -688,6 +853,7 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
     double maxY = std::numeric_limits<double>::lowest();
     double maxZ = std::numeric_limits<double>::lowest();
     for (const RuntimeBodyProxy& body : runtimeScene_.pickBodies) {
+        if (!includeInHome(body)) continue;
         const double worldX = runtimeScene_.sceneOriginX + body.positionRelativeX;
         const double worldY = runtimeScene_.sceneOriginY + body.positionRelativeY;
         const double worldZ = runtimeScene_.sceneOriginZ + body.positionRelativeZ;
@@ -698,12 +864,14 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         maxY = std::max(maxY, worldY);
         maxZ = std::max(maxZ, worldZ);
     }
+    if (minX > maxX) return std::nullopt;
     const Float3 center = MakeFloat3(
         (minX + maxX) * 0.5,
         (minY + maxY) * 0.5,
         (minZ + maxZ) * 0.5);
     double contentRadiusM = 0.0;
     for (const RuntimeBodyProxy& body : runtimeScene_.pickBodies) {
+        if (!includeInHome(body)) continue;
         const Float3 worldPosition = MakeFloat3(
             runtimeScene_.sceneOriginX + body.positionRelativeX,
             runtimeScene_.sceneOriginY + body.positionRelativeY,
@@ -713,7 +881,8 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
             Magnitude(worldPosition - center) + std::max(0.0, static_cast<double>(body.radiusM)));
     }
     const double viewRadiusM = Clamp(
-        std::max(contentRadiusM * 1.18, 0.010 * kAstronomicalUnitM),
+        std::max(contentRadiusM * (earthMoonLab ? 1.35 : 1.18),
+            earthMoonLab ? kMinViewRadiusM : 0.010 * kAstronomicalUnitM),
         kMinViewRadiusM,
         kMaxViewRadiusM);
     const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(viewRadiusM);
@@ -722,14 +891,19 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         .centerY = center.y,
         .centerZ = center.z,
         .viewRadiusM = viewRadiusM,
-        .yawRadians = kDefaultYawRadians,
-        .pitchRadians = policy.preferredPitchRadians,
+        .yawRadians = labMapMode_ ? labMapYawRadians_ : kDefaultYawRadians,
+        .pitchRadians = labMapMode_ ? labMapPitchRadians_ : policy.preferredPitchRadians,
     };
 }
 
 std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeBodyFrame(
     const std::string& bodyId) const {
     std::lock_guard<std::mutex> lock(stateMutex_);
+    return ResolveRuntimeBodyFrameLocked(bodyId);
+}
+
+std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::ResolveRuntimeBodyFrameLocked(
+    const std::string& bodyId) const {
     const std::string normalizedBodyId = LowercaseAscii(bodyId);
     const auto body = std::find_if(
         runtimeScene_.pickBodies.begin(),
@@ -741,16 +915,76 @@ std::optional<SolarLabStageController::CameraSnapshot> SolarLabStageController::
         return std::nullopt;
     }
 
-    const double suggestedRadiusM = BodyFrameViewRadiusM(body->frameRadiusM);
+    double suggestedRadiusM = BodyFrameViewRadiusM(body->frameRadiusM);
+    if (runtimeScene_.scenarioId == "lab.earth-moon" &&
+        (normalizedBodyId == "earth" || normalizedBodyId == "moon")) {
+        // A close laboratory view fills half the short viewport dimension while
+        // leaving room for the orbit and edge controls. Physical radius is unchanged.
+        suggestedRadiusM = std::max(kMinViewRadiusM, SafeBodyRadiusM(body->frameRadiusM) * 2.0);
+    }
+    if (runtimeScene_.scenarioId == "lab.earth-moon" && body->kind == kKindProbe) {
+        const RuntimeBodyProxy* context = nullptr;
+        double contextDistanceM = 0.0;
+        double nearestSurfaceM = std::numeric_limits<double>::max();
+        for (const auto& candidate : runtimeScene_.pickBodies) {
+            const auto candidateId = LowercaseAscii(candidate.bodyId);
+            if (candidateId != "earth" && candidateId != "moon") continue;
+            const double distanceM = Magnitude(MakeFloat3(
+                body->positionRelativeX - candidate.positionRelativeX,
+                body->positionRelativeY - candidate.positionRelativeY,
+                body->positionRelativeZ - candidate.positionRelativeZ));
+            const double surfaceDistanceM = solarlab::presentation::ContextSurfaceDistance(
+                distanceM, SafeBodyRadiusM(candidate.radiusM));
+            if (surfaceDistanceM < nearestSurfaceM) {
+                context = &candidate;
+                contextDistanceM = distanceM;
+                nearestSurfaceM = surfaceDistanceM;
+            }
+        }
+        if (context != nullptr) {
+            // Context is a presentation choice, not an inferred physical primary. A lunar
+            // probe needs its nearby Moon in view, rather than the entire Earth-Moon distance.
+            suggestedRadiusM = solarlab::presentation::ContextFrameRadius(
+                suggestedRadiusM, contextDistanceM, SafeBodyRadiusM(context->radiusM));
+        }
+    }
     const double viewRadiusM = Clamp(suggestedRadiusM, kMinViewRadiusM, kMaxViewRadiusM);
     return CameraSnapshot{
         .centerX = runtimeScene_.sceneOriginX + body->positionRelativeX,
         .centerY = runtimeScene_.sceneOriginY + body->positionRelativeY,
         .centerZ = runtimeScene_.sceneOriginZ + body->positionRelativeZ,
         .viewRadiusM = viewRadiusM,
-        .yawRadians = cameraYawRadians_,
-        .pitchRadians = OrbitControlPolicyForViewRadius(viewRadiusM).preferredPitchRadians,
+        .yawRadians = labMapMode_ ? labMapYawRadians_ : cameraYawRadians_,
+        .pitchRadians = labMapMode_ ? labMapPitchRadians_ : OrbitControlPolicyForViewRadius(viewRadiusM).preferredPitchRadians,
     };
+}
+
+std::optional<SolarLabStageController::CameraTransitionFrame>
+SolarLabStageController::ResolveRuntimeCameraTransition(const std::string& bodyId) const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    const auto target = bodyId.empty() ? ResolveRuntimeHomeCameraLocked() : ResolveRuntimeBodyFrameLocked(bodyId);
+    if (!target) return std::nullopt;
+    const double fraction = PresentationFractionLocked();
+    CameraTransitionFrame frame{PresentedCameraLocked(fraction), *target, {}};
+    const std::string referenceId = bodyId.empty()
+        ? (runtimeScene_.scenarioId == "lab.earth-moon" ? "earth" : "")
+        : LowercaseAscii(bodyId);
+    const auto reference = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+        [&](const RuntimeBodyProxy& body) { return LowercaseAscii(body.bodyId) == referenceId; });
+    if (referenceId.empty() || reference == runtimeScene_.pickBodies.end()) return frame;
+    frame.referenceBodyId = reference->bodyId;
+    // The start belongs to the submitted display fraction; the target was resolved from
+    // the latest packet. Convert each against its own matching epoch, under one lock.
+    frame.start.centerX -= runtimeScene_.sceneOriginX + solarlab::presentation::Mix(
+        reference->previousRelativeX, reference->positionRelativeX, fraction);
+    frame.start.centerY -= runtimeScene_.sceneOriginY + solarlab::presentation::Mix(
+        reference->previousRelativeY, reference->positionRelativeY, fraction);
+    frame.start.centerZ -= runtimeScene_.sceneOriginZ + solarlab::presentation::Mix(
+        reference->previousRelativeZ, reference->positionRelativeZ, fraction);
+    frame.target.centerX -= runtimeScene_.sceneOriginX + reference->positionRelativeX;
+    frame.target.centerY -= runtimeScene_.sceneOriginY + reference->positionRelativeY;
+    frame.target.centerZ -= runtimeScene_.sceneOriginZ + reference->positionRelativeZ;
+    return frame;
 }
 
 void SolarLabStageController::BindRuntimeSession(uint64_t runtimeSessionHandle) {
@@ -760,7 +994,10 @@ void SolarLabStageController::BindRuntimeSession(uint64_t runtimeSessionHandle) 
     }
     boundRuntimeSessionHandle_ = runtimeSessionHandle;
     runtimeCameraInitialized_ = false;
+    runtimeHomePending_ = false;
     runtimeScene_ = RuntimeSceneState{};
+    followOffsetX_ = followOffsetY_ = followOffsetZ_ = 0.0;
+    followTargetValid_ = false;
     ++cameraRevisionCounter_;
 }
 
@@ -770,6 +1007,7 @@ void SolarLabStageController::UnbindRuntimeSession() {
         return;
     }
     boundRuntimeSessionHandle_ = 0;
+    runtimeHomePending_ = false;
     runtimeScene_ = RuntimeSceneState{};
     ++cameraRevisionCounter_;
 }
@@ -785,12 +1023,56 @@ void SolarLabStageController::SetRuntimeProcessingMode(int processingModeCode) {
 
 void SolarLabStageController::SetRuntimeObserverMode(int observerModeCode) {
     std::lock_guard<std::mutex> lock(stateMutex_);
+    SetRuntimeObserverModeLocked(observerModeCode);
+}
+
+void SolarLabStageController::SetRuntimeObserverModeLocked(int observerModeCode) {
     if (runtimeObserverModeCode_ == observerModeCode) {
         return;
     }
+    const double fraction = PresentationFractionLocked();
+    const auto presented = PresentedCameraLocked(fraction);
+    cameraCenterX_ = presented.centerX;
+    cameraCenterY_ = presented.centerY;
+    cameraCenterZ_ = presented.centerZ;
+    ClearCameraPresentationLocked();
     runtimeObserverModeCode_ = observerModeCode;
+    followOffsetX_ = followOffsetY_ = followOffsetZ_ = 0.0;
+    followTargetValid_ = false;
     if (runtimeObserverModeCode_ != kObserverModeFree) {
-        runtimeCameraInitialized_ = false;
+        runtimeHomePending_ = false;
+    }
+    // Follow changes the travelling reference, not the user's framing. Preserve
+    // the displayed offset and the remainder of this interpolation on both entry
+    // and release. Explicit Frame is the separate command that centres a subject.
+    const std::string referenceId = runtimeObserverModeCode_ == kObserverModeFollowSelected
+        ? LowercaseAscii(runtimeSelectedBodyId_)
+        : (runtimeObserverModeCode_ == kObserverModeFree && runtimeScene_.scenarioId == "lab.earth-moon" ? "earth" : "");
+    const auto reference = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+        [&](const RuntimeBodyProxy& body) { return LowercaseAscii(body.bodyId) == referenceId; });
+    if (!referenceId.empty() && reference != runtimeScene_.pickBodies.end()) {
+        const Float3 current = MakeFloat3(runtimeScene_.sceneOriginX + reference->positionRelativeX,
+            runtimeScene_.sceneOriginY + reference->positionRelativeY,
+            runtimeScene_.sceneOriginZ + reference->positionRelativeZ);
+        const Float3 previous = MakeFloat3(runtimeScene_.sceneOriginX + reference->previousRelativeX,
+            runtimeScene_.sceneOriginY + reference->previousRelativeY,
+            runtimeScene_.sceneOriginZ + reference->previousRelativeZ);
+        const Float3 displayed = previous + (current - previous) * fraction;
+        cameraCenterX_ = presented.centerX + current.x - displayed.x;
+        cameraCenterY_ = presented.centerY + current.y - displayed.y;
+        cameraCenterZ_ = presented.centerZ + current.z - displayed.z;
+        runtimeScene_.cameraPreviousOffsetX = previous.x - current.x;
+        runtimeScene_.cameraPreviousOffsetY = previous.y - current.y;
+        runtimeScene_.cameraPreviousOffsetZ = previous.z - current.z;
+        if (runtimeObserverModeCode_ == kObserverModeFollowSelected) {
+            followTargetX_ = current.x;
+            followTargetY_ = current.y;
+            followTargetZ_ = current.z;
+            followOffsetX_ = presented.centerX - displayed.x;
+            followOffsetY_ = presented.centerY - displayed.y;
+            followOffsetZ_ = presented.centerZ - displayed.z;
+            followTargetValid_ = true;
+        }
     }
     ++cameraRevisionCounter_;
 }
@@ -800,10 +1082,12 @@ void SolarLabStageController::SetRuntimeSelectedBodyId(const std::string& bodyId
     if (runtimeSelectedBodyId_ == bodyId) {
         return;
     }
-    runtimeSelectedBodyId_ = bodyId;
-    if (runtimeObserverModeCode_ != kObserverModeFree) {
-        runtimeCameraInitialized_ = false;
+    if (runtimeObserverModeCode_ != kObserverModeFree && runtimeCameraInitialized_ && !runtimeSelectedBodyId_.empty()) {
+        // Selection alone never retargets the camera. An explicit follow request can
+        // re-enter follow after setting the new subject, as focusAndFrameBody does.
+        SetRuntimeObserverModeLocked(kObserverModeFree);
     }
+    runtimeSelectedBodyId_ = bodyId;
     ++cameraRevisionCounter_;
 }
 
@@ -820,9 +1104,12 @@ void SolarLabStageController::SetRuntimeTraceLayerMode(int traceLayerModeCode) {
 void SolarLabStageController::ResetRuntimeCamera() {
     std::lock_guard<std::mutex> lock(stateMutex_);
     runtimeCameraInitialized_ = false;
+    // Home can be requested before the first asynchronous native scene has arrived.
+    runtimeHomePending_ = true;
     cameraCenterX_ = 0.0;
     cameraCenterY_ = 0.0;
     cameraCenterZ_ = 0.0;
+    ClearCameraPresentationLocked();
     cameraViewRadiusM_ = kDefaultViewRadiusM;
     cameraYawRadians_ = kDefaultYawRadians;
     cameraPitchRadians_ = kDefaultPitchRadians;
@@ -831,16 +1118,18 @@ void SolarLabStageController::ResetRuntimeCamera() {
 
 void SolarLabStageController::PanRuntimeCamera(float distanceXPx, float distanceYPx, int viewportWidthPx, int viewportHeightPx) {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    if (!RuntimeSessionBoundLocked() || runtimeObserverModeCode_ != kObserverModeFree) {
+    if (!RuntimeSessionBoundLocked()) {
         return;
     }
     if (!runtimeCameraInitialized_) {
         return;
     }
+    const Float3 previousCenter = MakeFloat3(cameraCenterX_, cameraCenterY_, cameraCenterZ_);
     const CameraFrame frame = BuildCameraFrame(cameraViewRadiusM_, cameraYawRadians_, cameraPitchRadians_, viewportWidthPx, viewportHeightPx);
     cameraCenterX_ += (distanceXPx * frame.metersPerPixel * frame.right.x) - (distanceYPx * frame.metersPerPixel * frame.up.x);
     cameraCenterY_ += (distanceXPx * frame.metersPerPixel * frame.right.y) - (distanceYPx * frame.metersPerPixel * frame.up.y);
     cameraCenterZ_ += (distanceXPx * frame.metersPerPixel * frame.right.z) - (distanceYPx * frame.metersPerPixel * frame.up.z);
+    PreserveFollowOffsetLocked(previousCenter.x, previousCenter.y, previousCenter.z);
     ++cameraRevisionCounter_;
 }
 
@@ -857,6 +1146,7 @@ void SolarLabStageController::ZoomRuntimeCamera(
     if (!runtimeCameraInitialized_ || scaleFactor <= 0.0f) {
         return;
     }
+    const Float3 previousCenter = MakeFloat3(cameraCenterX_, cameraCenterY_, cameraCenterZ_);
     const CameraFrame currentFrame = BuildCameraFrame(
         cameraViewRadiusM_,
         cameraYawRadians_,
@@ -875,7 +1165,7 @@ void SolarLabStageController::ZoomRuntimeCamera(
     const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(cameraViewRadiusM_);
     const double effectiveScaleFactor = std::pow(
         Clamp(static_cast<double>(scaleFactor), 0.25, 4.0),
-        policy.zoomExponent);
+        runtimeScene_.scenarioId == "lab.earth-moon" ? 1.0 : policy.zoomExponent);
     cameraViewRadiusM_ = Clamp(
         cameraViewRadiusM_ / effectiveScaleFactor,
         MinimumViewRadiusLocked(),
@@ -896,6 +1186,7 @@ void SolarLabStageController::ZoomRuntimeCamera(
     cameraCenterX_ = anchoredCenter.x;
     cameraCenterY_ = anchoredCenter.y;
     cameraCenterZ_ = anchoredCenter.z;
+    PreserveFollowOffsetLocked(previousCenter.x, previousCenter.y, previousCenter.z);
     ++cameraRevisionCounter_;
 }
 
@@ -912,8 +1203,8 @@ void SolarLabStageController::PanAndZoomRuntimeCamera(
         return;
     }
 
-    if (runtimeObserverModeCode_ == kObserverModeFree &&
-        (std::abs(distanceXPx) > 0.0f || std::abs(distanceYPx) > 0.0f)) {
+    const Float3 previousCenter = MakeFloat3(cameraCenterX_, cameraCenterY_, cameraCenterZ_);
+    if (std::abs(distanceXPx) > 0.0f || std::abs(distanceYPx) > 0.0f) {
         const CameraFrame panFrame = BuildCameraFrame(
             cameraViewRadiusM_,
             cameraYawRadians_,
@@ -947,7 +1238,7 @@ void SolarLabStageController::PanAndZoomRuntimeCamera(
         const OrbitControlPolicy policy = OrbitControlPolicyForViewRadius(cameraViewRadiusM_);
         const double effectiveScaleFactor = std::pow(
             Clamp(static_cast<double>(scaleFactor), 0.25, 4.0),
-            policy.zoomExponent);
+            runtimeScene_.scenarioId == "lab.earth-moon" ? 1.0 : policy.zoomExponent);
         cameraViewRadiusM_ = Clamp(
             cameraViewRadiusM_ / effectiveScaleFactor,
             MinimumViewRadiusLocked(),
@@ -969,6 +1260,7 @@ void SolarLabStageController::PanAndZoomRuntimeCamera(
         cameraCenterY_ = anchoredCenter.y;
         cameraCenterZ_ = anchoredCenter.z;
     }
+    PreserveFollowOffsetLocked(previousCenter.x, previousCenter.y, previousCenter.z);
     ++cameraRevisionCounter_;
 }
 
@@ -983,9 +1275,10 @@ void SolarLabStageController::OrbitRuntimeCamera(
     if (!RuntimeSessionBoundLocked()) {
         return;
     }
-    if (!runtimeCameraInitialized_) {
+    if (!runtimeCameraInitialized_ || labMapMode_) {
         return;
     }
+    const Float3 previousCenter = MakeFloat3(cameraCenterX_, cameraCenterY_, cameraCenterZ_);
     const CameraFrame currentFrame = BuildCameraFrame(
         cameraViewRadiusM_,
         cameraYawRadians_,
@@ -1030,6 +1323,7 @@ void SolarLabStageController::OrbitRuntimeCamera(
     cameraCenterX_ = anchoredCenter.x;
     cameraCenterY_ = anchoredCenter.y;
     cameraCenterZ_ = anchoredCenter.z;
+    PreserveFollowOffsetLocked(previousCenter.x, previousCenter.y, previousCenter.z);
     ++cameraRevisionCounter_;
 }
 
@@ -1039,17 +1333,24 @@ std::string SolarLabStageController::PickRuntimeBodyId(float screenXPx, float sc
         return {};
     }
 
-    double bestDistanceSquared = std::numeric_limits<double>::max();
+    const auto projection = solarlab::presentation::MakeProjection(cameraViewRadiusM_, viewportWidthPx, viewportHeightPx);
+    const double fraction = PresentationFractionLocked();
+    const auto camera = PresentedCameraLocked(fraction);
+    std::optional<solarlab::presentation::SphereHit> bestHit;
     std::string bestBodyId;
     for (const RuntimeBodyProxy& body : runtimeScene_.pickBodies) {
+        RuntimeBodyProxy presentedBody = body;
+        presentedBody.positionRelativeX = solarlab::presentation::Mix(body.previousRelativeX, body.positionRelativeX, fraction);
+        presentedBody.positionRelativeY = solarlab::presentation::Mix(body.previousRelativeY, body.positionRelativeY, fraction);
+        presentedBody.positionRelativeZ = solarlab::presentation::Mix(body.previousRelativeZ, body.positionRelativeZ, fraction);
         const ProjectedBody projected = ProjectBody(
-            body,
+            presentedBody,
             runtimeScene_.sceneOriginX,
             runtimeScene_.sceneOriginY,
             runtimeScene_.sceneOriginZ,
-            cameraCenterX_,
-            cameraCenterY_,
-            cameraCenterZ_,
+            camera.centerX,
+            camera.centerY,
+            camera.centerZ,
             cameraViewRadiusM_,
             cameraYawRadians_,
             cameraPitchRadians_,
@@ -1060,28 +1361,33 @@ std::string SolarLabStageController::PickRuntimeBodyId(float screenXPx, float sc
         }
         const double dx = static_cast<double>(screenXPx) - projected.screenX;
         const double dy = static_cast<double>(screenYPx) - projected.screenY;
-        const double selectionRadiusPx = std::max<double>(projected.radiusPx * 1.45f, 18.0f);
-        const double distanceSquared = (dx * dx) + (dy * dy);
-        if (distanceSquared <= selectionRadiusPx * selectionRadiusPx && distanceSquared < bestDistanceSquared) {
-            bestDistanceSquared = distanceSquared;
+        const auto hit = solarlab::presentation::HitSphere(dx, dy, projected.radiusPx, projected.centerDepthM, projection,
+            24.0 * touchDensity_);
+        if (hit && (!bestHit || solarlab::presentation::PreferHit(*hit, *bestHit))) {
+            bestHit = hit;
             bestBodyId = body.bodyId;
         }
     }
     return bestBodyId;
 }
 
-bool SolarLabStageController::Render() {
+bool SolarLabStageController::Render(bool refreshRuntimeScene) {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    if (RuntimeSessionBoundLocked()) {
+    if (RuntimeSessionBoundLocked() && (refreshRuntimeScene || runtimeScene_.uploadedRevision < 0)) {
         if (!RefreshRuntimeSceneLocked()) {
             if (runtimeScene_.uploadedRevision < 0) {
                 return false;
             }
         }
-    } else {
-        PushCameraLocked();
     }
+    PushCameraLocked();
     return renderer_.Render();
+}
+
+bool SolarLabStageController::HasPendingPresentation() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return RuntimeSessionBoundLocked() && runtimeScene_.presentationDurationSeconds > 0.0 &&
+        PresentationFractionLocked() < 1.0;
 }
 
 std::string SolarLabStageController::LastError() const {
@@ -1130,7 +1436,10 @@ void SolarLabStageController::PushCameraLocked() {
         cameraCenterZ_,
         cameraViewRadiusM_,
         cameraYawRadians_,
-        cameraPitchRadians_);
+        cameraPitchRadians_,
+        runtimeScene_.cameraPreviousOffsetX,
+        runtimeScene_.cameraPreviousOffsetY,
+        runtimeScene_.cameraPreviousOffsetZ);
 }
 
 void SolarLabStageController::InitializeFreeCameraFromRuntimePacketLocked(
@@ -1214,14 +1523,83 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     const std::optional<SlBufferView> trailSpansView = requestBuffer(SL_VULKAN_SCENE_TRAIL_SPANS);
     const std::optional<SlBufferView> trailVerticesView = requestBuffer(SL_VULKAN_SCENE_TRAIL_VERTICES);
 
+    // A presentation sample is separate from runtime truth. Only move between matching,
+    // forward-playing snapshots; pause, history changes and topology edits snap immediately.
+    const double observedAt = solarlab::presentation::MonotonicSeconds();
+    const double previousFraction = PresentationFractionLocked();
+    const auto previousCamera = PresentedCameraLocked(previousFraction);
+    const Float3 oldOrigin = MakeFloat3(runtimeScene_.sceneOriginX, runtimeScene_.sceneOriginY, runtimeScene_.sceneOriginZ);
+    const Float3 nextOrigin = MakeFloat3(packetResult.info.camera.frame_origin_m.x,
+        packetResult.info.camera.frame_origin_m.y, packetResult.info.camera.frame_origin_m.z);
+    SlSessionSnapshotSummaryResult snapshot{};
+    const bool snapshotValid = runtimeAbi_->snapshot_summary != nullptr &&
+        ((snapshot = runtimeAbi_->snapshot_summary(SlRuntimeHandle{.raw = boundRuntimeSessionHandle_})).result.code == SL_STATUS_OK);
+    const std::string scenarioId = snapshotValid
+        ? DecodeInlineUtf8(snapshot.summary.scenario_id, snapshot.summary.scenario_id_len) : std::string{};
+    const std::string branchId = snapshotValid
+        ? DecodeInlineUtf8(snapshot.summary.active_branch_id, snapshot.summary.active_branch_id_len) : std::string{};
+    // Packet frame numbers derive from the packet's own epoch, so a concurrent runtime tick
+    // cannot mismatch the two positions used for interpolation.
+    const int64_t packetRevision = static_cast<int64_t>(packetResult.info.diagnostics.frame_number);
+    const bool sameSession = snapshotValid && runtimeScene_.snapshotValid &&
+        scenarioId == runtimeScene_.scenarioId && branchId == runtimeScene_.branchId;
+    const bool initialLabHome = !runtimeScene_.snapshotValid && scenarioId == "lab.earth-moon" &&
+        runtimeObserverModeCode_ == kObserverModeFree;
+    const bool newSnapshot = !sameSession || packetRevision != runtimeScene_.packetRevision;
+    const bool playing = snapshotValid && snapshot.summary.paused == 0;
+    bool matchingBodies = bodiesView && bodiesView->data &&
+        bodiesView->element_count == runtimeScene_.pickBodies.size();
+    std::unordered_map<std::string, const RuntimeBodyProxy*> previousBodies;
+    previousBodies.reserve(runtimeScene_.pickBodies.size());
+    for (const auto& body : runtimeScene_.pickBodies) previousBodies.emplace(body.bodyId, &body);
+    std::optional<Float3> nextEarthPosition;
+    std::optional<Float3> nextFollowPosition;
+    const std::string followBodyId = LowercaseAscii(runtimeSelectedBodyId_);
+    if (bodiesView && bodiesView->data) {
+        const auto* raw = static_cast<const uint8_t*>(bodiesView->data);
+        const uint32_t stride = bodiesView->stride_bytes == 0 ? sizeof(SlVulkanBodyInstance) : bodiesView->stride_bytes;
+        for (uint32_t index = 0; index < bodiesView->element_count; ++index) {
+            const auto* body = reinterpret_cast<const SlVulkanBodyInstance*>(raw + stride * index);
+            const auto bodyId = DecodeInlineUtf8(body->body_id, body->body_id_len);
+            if (bodyId == "earth") {
+                nextEarthPosition = nextOrigin + MakeFloat3(body->position_from_origin_m.x,
+                    body->position_from_origin_m.y, body->position_from_origin_m.z);
+            }
+            if (runtimeObserverModeCode_ == kObserverModeFollowSelected && LowercaseAscii(bodyId) == followBodyId) {
+                nextFollowPosition = nextOrigin + MakeFloat3(body->position_from_origin_m.x,
+                    body->position_from_origin_m.y, body->position_from_origin_m.z);
+            }
+            const auto previous = previousBodies.find(bodyId);
+            if (previous == previousBodies.end() || previous->second->radiusM != body->radius_m) {
+                matchingBodies = false;
+            }
+        }
+    }
+    const double sampleInterval = observedAt - runtimeScene_.observedAtSeconds;
+    const bool interpolate = sameSession && newSnapshot && playing && matchingBodies &&
+        packetRevision > runtimeScene_.packetRevision && sampleInterval > 0.0 && sampleInterval <= 2.0;
+    const bool preservePresentation = sameSession && !newSnapshot && playing && matchingBodies;
+    if (interpolate) {
+        runtimeScene_.presentationStartedAtSeconds = observedAt;
+        runtimeScene_.presentationDurationSeconds = Clamp(sampleInterval, 1.0 / 120.0, 0.5);
+    } else if (!preservePresentation) {
+        runtimeScene_.presentationStartedAtSeconds = observedAt;
+        runtimeScene_.presentationDurationSeconds = 0.0;
+        ClearCameraPresentationLocked();
+    }
+
     const SimplificationPolicy policy = PolicyForCamera(cameraViewRadiusM_, runtimeProcessingModeCode_);
     const bool cameraLocked = runtimeObserverModeCode_ != kObserverModeFree;
     const bool traceLayerEnabled = runtimeTraceLayerModeCode_ != kTraceLayerModeOff;
     const bool focusTraceLayer = runtimeTraceLayerModeCode_ == kTraceLayerModeFocus;
     const std::string normalizedSelectedBodyId = LowercaseAscii(runtimeSelectedBodyId_);
+    const bool initialLabBodyFrame = !runtimeCameraInitialized_ &&
+        runtimeObserverModeCode_ == kObserverModeFollowSelected && scenarioId == "lab.earth-moon" &&
+        (normalizedSelectedBodyId == "earth" || normalizedSelectedBodyId == "moon");
     if (cameraLocked) {
-        // Locked observer modes keep the native camera centered on the selected runtime frame
-        // while preserving user-controlled orbit and scale after the initial lock-on.
+        const bool retainExistingFraming = runtimeCameraInitialized_;
+        // Follow transports the existing offset with its subject. The native selected
+        // body is available even while the shell's observer command is still in flight.
         InitializeFreeCameraFromRuntimePacketLocked(
             packetResult.info.camera.frame_origin_m.x,
             packetResult.info.camera.frame_origin_m.y,
@@ -1234,9 +1612,28 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             packetResult.info.camera.target_from_origin_m.z,
             packetResult.info.camera.vertical_fov_degrees,
             false);
-        cameraCenterX_ = packetResult.info.camera.frame_origin_m.x + packetResult.info.camera.target_from_origin_m.x;
-        cameraCenterY_ = packetResult.info.camera.frame_origin_m.y + packetResult.info.camera.target_from_origin_m.y;
-        cameraCenterZ_ = packetResult.info.camera.frame_origin_m.z + packetResult.info.camera.target_from_origin_m.z;
+        followTargetX_ = packetResult.info.camera.frame_origin_m.x + packetResult.info.camera.target_from_origin_m.x;
+        followTargetY_ = packetResult.info.camera.frame_origin_m.y + packetResult.info.camera.target_from_origin_m.y;
+        followTargetZ_ = packetResult.info.camera.frame_origin_m.z + packetResult.info.camera.target_from_origin_m.z;
+        if (nextFollowPosition) {
+            followTargetX_ = nextFollowPosition->x;
+            followTargetY_ = nextFollowPosition->y;
+            followTargetZ_ = nextFollowPosition->z;
+        }
+        if (!followTargetValid_ && retainExistingFraming) {
+            followOffsetX_ = cameraCenterX_ - followTargetX_;
+            followOffsetY_ = cameraCenterY_ - followTargetY_;
+            followOffsetZ_ = cameraCenterZ_ - followTargetZ_;
+        }
+        followTargetValid_ = true;
+        cameraCenterX_ = followTargetX_ + followOffsetX_;
+        cameraCenterY_ = followTargetY_ + followOffsetY_;
+        cameraCenterZ_ = followTargetZ_ + followOffsetZ_;
+        if (interpolate) {
+            runtimeScene_.cameraPreviousOffsetX = previousCamera.centerX - cameraCenterX_;
+            runtimeScene_.cameraPreviousOffsetY = previousCamera.centerY - cameraCenterY_;
+            runtimeScene_.cameraPreviousOffsetZ = previousCamera.centerZ - cameraCenterZ_;
+        }
     } else {
         InitializeFreeCameraFromRuntimePacketLocked(
             packetResult.info.camera.frame_origin_m.x,
@@ -1252,7 +1649,36 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             false);
     }
 
+    if (!cameraLocked && scenarioId == "lab.earth-moon" && runtimeScene_.scenarioId == scenarioId &&
+        nextEarthPosition && (newSnapshot || !preservePresentation)) {
+        const auto previousEarth = previousBodies.find("earth");
+        if (previousEarth != previousBodies.end()) {
+            const auto& earth = *previousEarth->second;
+            const Float3 displayedEarth = oldOrigin + MakeFloat3(
+                solarlab::presentation::Mix(earth.previousRelativeX, earth.positionRelativeX, previousFraction),
+                solarlab::presentation::Mix(earth.previousRelativeY, earth.positionRelativeY, previousFraction),
+                solarlab::presentation::Mix(earth.previousRelativeZ, earth.positionRelativeZ, previousFraction));
+            // Laboratory free navigation is local to Earth, in non-rotating axes. Carry the
+            // user's existing offset with the reference translation, without changing pan,
+            // orientation, scale, bodies or physics. Use the displayed sample so detaching
+            // follow or panning halfway through an interpolation does not introduce drift.
+            cameraCenterX_ = solarlab::presentation::TranslateWithReference(
+                previousCamera.centerX, displayedEarth.x, nextEarthPosition->x);
+            cameraCenterY_ = solarlab::presentation::TranslateWithReference(
+                previousCamera.centerY, displayedEarth.y, nextEarthPosition->y);
+            cameraCenterZ_ = solarlab::presentation::TranslateWithReference(
+                previousCamera.centerZ, displayedEarth.z, nextEarthPosition->z);
+            if (interpolate) {
+                runtimeScene_.cameraPreviousOffsetX = previousCamera.centerX - cameraCenterX_;
+                runtimeScene_.cameraPreviousOffsetY = previousCamera.centerY - cameraCenterY_;
+                runtimeScene_.cameraPreviousOffsetZ = previousCamera.centerZ - cameraCenterZ_;
+            }
+        }
+    }
+
     std::vector<double> authoritativePositionsM;
+    std::vector<double> authoritativePreviousPositionsM;
+    std::array<double, 3> trailPreviousOffsetM{};
     std::vector<double> authoritativeSourceMassesKg;
     std::vector<float> authoritativeRadiiM;
     std::vector<int32_t> authoritativeColorsArgb;
@@ -1278,6 +1704,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     std::vector<int32_t> trailColorsArgb;
     std::vector<int32_t> trailVertexCounts;
     std::vector<RuntimeBodyProxy> pickBodies;
+    solarlab::presentation::TracerDrawOwnership authoritativeTracers;
 
     // Scene origin is stored separately so Java/Kotlin callers can interpret relative packet
     // coordinates without keeping the raw runtime packet alive.
@@ -1299,11 +1726,14 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 (!normalizedSelectedBodyId.empty() &&
                     LowercaseAscii(bodyId) == normalizedSelectedBodyId);
             float frameRadiusM = body->radius_m;
+            float visualRadiusM = body->radius_m;
             if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_RING_SYSTEM) != 0U) {
                 frameRadiusM = std::max(frameRadiusM, body->appearance.ring_outer_radius_m);
+                visualRadiusM = std::max(visualRadiusM, body->appearance.ring_outer_radius_m);
             }
             if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE) != 0U) {
                 frameRadiusM = std::max(frameRadiusM, body->appearance.atmosphere_outer_radius_m);
+                visualRadiusM = std::max(visualRadiusM, body->appearance.atmosphere_outer_radius_m);
             }
             if ((body->appearance.flags & SL_CELESTIAL_APPEARANCE_HAS_COMET) != 0U) {
                 const float tailFrameRadiusM = std::max(
@@ -1314,22 +1744,61 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                     body->appearance.comet_coma_radius_m,
                     tailFrameRadiusM,
                 });
+                visualRadiusM = std::max({visualRadiusM, body->appearance.comet_coma_radius_m,
+                    body->appearance.comet_dust_tail_length_m, body->appearance.comet_ion_tail_length_m});
+            }
+            Float3 previousPosition = MakeFloat3(body->position_from_origin_m.x,
+                body->position_from_origin_m.y, body->position_from_origin_m.z);
+            if (interpolate || preservePresentation) {
+                const auto& previous = *previousBodies.at(bodyId);
+                const double fraction = interpolate ? previousFraction : 0.0;
+                previousPosition = MakeFloat3(
+                    solarlab::presentation::Mix(previous.previousRelativeX, previous.positionRelativeX, fraction),
+                    solarlab::presentation::Mix(previous.previousRelativeY, previous.positionRelativeY, fraction),
+                    solarlab::presentation::Mix(previous.previousRelativeZ, previous.positionRelativeZ, fraction)) + oldOrigin - nextOrigin;
+            }
+            if (scenarioId == "lab.earth-moon" && bodyId == "earth") {
+                // Lab trails are exported around current Earth. Apply the body's same common
+                // presentation translation so a 100 ms solar-motion tick cannot slide an
+                // entire probe orbit away from its interpolated Earth/camera.
+                trailPreviousOffsetM = {
+                    previousPosition.x - body->position_from_origin_m.x,
+                    previousPosition.y - body->position_from_origin_m.y,
+                    previousPosition.z - body->position_from_origin_m.z,
+                };
             }
             pickBodies.push_back(RuntimeBodyProxy{
                 .bodyId = bodyId,
                 .positionRelativeX = body->position_from_origin_m.x,
                 .positionRelativeY = body->position_from_origin_m.y,
                 .positionRelativeZ = body->position_from_origin_m.z,
+                .previousRelativeX = previousPosition.x,
+                .previousRelativeY = previousPosition.y,
+                .previousRelativeZ = previousPosition.z,
                 .radiusM = body->radius_m,
+                .visualRadiusM = visualRadiusM,
                 .frameRadiusM = frameRadiusM,
                 .kind = kind,
             });
-            if (!ShouldIncludeAuthoritativeBody(body->radius_m, body->emissive_luminance, selected)) {
+            // Tracer bodies also arrive through the GPU compaction stream;
+            // prevent an authoritative billboard from covering their pixels.
+            // Spacecraft are NOT emitted as SceneTracer by the Rust runtime,
+            // so they must retain an authoritative billboard even unselected.
+            if (!solarlab::presentation::DrawAsAuthoritativeBody(
+                    body->kind == SL_SCENE_BODY_KIND_TRACER,
+                    body->kind == SL_SCENE_BODY_KIND_SPACECRAFT,
+                    selected, body->radius_m, body->emissive_luminance)) {
                 continue;
+            }
+            if (body->kind == SL_SCENE_BODY_KIND_TRACER) {
+                authoritativeTracers.Record(LowercaseAscii(bodyId));
             }
             authoritativePositionsM.push_back(body->position_from_origin_m.x);
             authoritativePositionsM.push_back(body->position_from_origin_m.y);
             authoritativePositionsM.push_back(body->position_from_origin_m.z);
+            authoritativePreviousPositionsM.insert(authoritativePreviousPositionsM.end(), {
+                previousPosition.x, previousPosition.y, previousPosition.z,
+            });
             authoritativeSourceMassesKg.push_back(0.0);
             // Selection controls camera focus and stream inclusion, never the
             // physical radius used for visual scale.
@@ -1338,7 +1807,9 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             authoritativeKinds.push_back(static_cast<int32_t>(kind));
             authoritativeAppearances.push_back(SolarLabVulkanRenderer::CelestialAppearanceInput{
                 .material = static_cast<uint32_t>(body->appearance.material),
-                .flags = body->appearance.flags,
+                // Renderer-only bits identify the two bundled maps without changing the scene ABI.
+                .flags = body->appearance.flags |
+                    (bodyId == "earth" ? (1U << 16U) : bodyId == "moon" ? (1U << 17U) : 0U),
                 .northPoleX = body->appearance.north_pole_ws.x,
                 .northPoleY = body->appearance.north_pole_ws.y,
                 .northPoleZ = body->appearance.north_pole_ws.z,
@@ -1379,6 +1850,11 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             const auto* tracer = reinterpret_cast<const SlVulkanTracerInstance*>(raw + (stride * index));
             const std::string sourceBodyId = LowercaseAscii(
                 DecodeInlineUtf8(tracer->source_body_id, tracer->source_body_id_len));
+            // Suppress exactly the tracer IDs submitted above. A packet's
+            // selected ID may differ from the newer UI-selected ID.
+            if (authoritativeTracers.Contains(sourceBodyId)) {
+                continue;
+            }
             if (focusTraceLayer) {
                 const bool includeFocusedTrace = !normalizedSelectedBodyId.empty()
                     ? sourceBodyId == normalizedSelectedBodyId
@@ -1527,16 +2003,55 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         std::move(tracerFarKinds),
         std::move(trailPositionsM),
         std::move(trailColorsArgb),
-        std::move(trailVertexCounts));
+        std::move(trailVertexCounts),
+        std::move(authoritativePreviousPositionsM),
+        runtimeScene_.presentationStartedAtSeconds,
+        runtimeScene_.presentationDurationSeconds,
+        trailPreviousOffsetM);
 
     // The Java-facing snapshot keeps lightweight diagnostics after the raw packet is released.
-    runtimeScene_.packetRevision = static_cast<int64_t>(packetResult.info.diagnostics.frame_number);
+    runtimeScene_.packetRevision = packetRevision;
+    runtimeScene_.scenarioId = scenarioId;
+    runtimeScene_.branchId = branchId;
+    runtimeScene_.snapshotValid = snapshotValid;
+    if (newSnapshot) runtimeScene_.observedAtSeconds = observedAt;
     runtimeScene_.uploadedRevision = static_cast<int64_t>(syntheticRevision);
     runtimeScene_.pickBodies = std::move(pickBodies);
+    if (initialLabBodyFrame) {
+        // A focus request may arrive before the native surface or body proxies exist.
+        // Complete its laboratory framing from the first available packet instead of
+        // retaining the runtime camera's wider bootstrap radius. Reuse explicit Frame's
+        // policy once, so later user zoom and probe/context framing remain untouched.
+        if (const auto frame = ResolveRuntimeBodyFrameLocked(normalizedSelectedBodyId)) {
+            cameraCenterX_ = frame->centerX;
+            cameraCenterY_ = frame->centerY;
+            cameraCenterZ_ = frame->centerZ;
+            cameraViewRadiusM_ = frame->viewRadiusM;
+            cameraYawRadians_ = frame->yawRadians;
+            cameraPitchRadians_ = frame->pitchRadians;
+            ClearCameraPresentationLocked();
+            ++cameraRevisionCounter_;
+        }
+    }
+    if (runtimeHomePending_ || initialLabHome) {
+        if (const auto home = ResolveRuntimeHomeCameraLocked()) {
+            cameraCenterX_ = home->centerX;
+            cameraCenterY_ = home->centerY;
+            cameraCenterZ_ = home->centerZ;
+            cameraViewRadiusM_ = home->viewRadiusM;
+            cameraYawRadians_ = home->yawRadians;
+            cameraPitchRadians_ = home->pitchRadians;
+            ClearCameraPresentationLocked();
+            runtimeCameraInitialized_ = true;
+            runtimeHomePending_ = false;
+            ++cameraRevisionCounter_;
+        }
+    }
     cameraViewRadiusM_ = Clamp(
         cameraViewRadiusM_,
         MinimumViewRadiusLocked(),
         kMaxViewRadiusM);
+    ApplyLabMapOrientationLocked();
     std::ostringstream summary;
     summary << "rev=" << sceneRevision
             << " bodies=" << packetResult.info.body_instance_count

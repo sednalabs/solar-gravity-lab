@@ -1,9 +1,9 @@
 use solarlab_domain::{BodyId, BranchId, CheckpointId, ScenarioId, TimelineSemantics, Vector3d};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CommandId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct CommandRecordHeader {
     pub command_id: CommandId,
     pub branch_id: BranchId,
@@ -12,13 +12,13 @@ pub struct CommandRecordHeader {
     pub command_kind: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct CommandRecord {
     pub header: CommandRecordHeader,
     pub summary: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct BranchDescriptor {
     pub branch_id: BranchId,
     pub scenario_id: ScenarioId,
@@ -27,7 +27,7 @@ pub struct BranchDescriptor {
     pub parent_checkpoint_id: Option<CheckpointId>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct CheckpointDescriptor {
     pub checkpoint_id: CheckpointId,
     pub branch_id: BranchId,
@@ -38,27 +38,27 @@ pub struct CheckpointDescriptor {
     pub label: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum HistoryEvent {
     CommandAppended(CommandRecordHeader),
     CheckpointCreated(CheckpointDescriptor),
     BranchCreated(BranchDescriptor),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrbitArchiveFamily {
     Trajectory,
     HistoricalOrbit,
     Prediction,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct OrbitSample {
     pub epoch_seconds: f64,
     pub position_m: Vector3d,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct OrbitArchive {
     pub archive_id: String,
     pub source_body_id: BodyId,
@@ -67,7 +67,7 @@ pub struct OrbitArchive {
     pub samples: Vec<OrbitSample>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct OrbitArchiveQuery {
     pub body_ids: Vec<BodyId>,
     pub include_trajectory: bool,

@@ -17,6 +17,7 @@ SEMVER_RE = re.compile(
     r"(?P<patch>0|[1-9][0-9]*)"
     r"(?:-(?P<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
+ANDROID_MAX_VERSION_CODE = 2_100_000_000
 
 
 class RequestError(ValueError):
@@ -57,6 +58,12 @@ def validate_semver(version_name: str) -> re.Match[str]:
             "SolarLab-Release must be an ordinary semver version like "
             "0.1.0 or 0.1.1-alpha.1"
         )
+    prerelease = match.group("prerelease")
+    if prerelease and any(
+        part.isdigit() and len(part) > 1 and part.startswith("0")
+        for part in prerelease.split(".")
+    ):
+        raise RequestError("SemVer numeric prerelease identifiers must not have leading zeros")
     return match
 
 
@@ -64,7 +71,37 @@ def validate_version_code(version_code: str) -> str:
     version_code = require_single_line(version_code.strip(), "SolarLab-Version-Code")
     if version_code and not re.fullmatch(r"[1-9][0-9]*", version_code):
         raise RequestError("SolarLab-Version-Code must be a positive integer")
+    if version_code and int(version_code) > ANDROID_MAX_VERSION_CODE:
+        raise RequestError(f"SolarLab-Version-Code must not exceed {ANDROID_MAX_VERSION_CODE}")
     return version_code
+
+
+def resolve_version_code(version_match: re.Match[str], explicit_code: str) -> str:
+    explicit_code = validate_version_code(explicit_code)
+    if explicit_code:
+        return explicit_code
+
+    # Fixed-width fields preserve SemVer ordering for the supported release line:
+    # alpha.0..999 < beta.0..999 < rc.0..999 < stable < the next patch/minor/major.
+    major, minor, patch = (int(version_match.group(name)) for name in ("major", "minor", "patch"))
+    if major > 20 or minor > 99 or patch > 99:
+        raise RequestError("Automatic versionCode requires major <= 20, minor/patch <= 99; supply SolarLab-Version-Code")
+    prerelease = version_match.group("prerelease")
+    stage = 9_000
+    if prerelease:
+        release = re.fullmatch(r"(alpha|beta|rc)\.(0|[1-9][0-9]{0,2})", prerelease)
+        if release is None:
+            raise RequestError("Automatic versionCode requires alpha.N, beta.N or rc.N (N <= 999); supply SolarLab-Version-Code")
+        stage = {"alpha": 1_000, "beta": 2_000, "rc": 3_000}[release.group(1)] + int(release.group(2))
+    return validate_version_code(str(major * 100_000_000 + minor * 1_000_000 + patch * 10_000 + stage))
+
+
+def version_from_release_ref(ref: str) -> str | None:
+    name = branch_name(ref)
+    if not name.startswith("release/"):
+        return None
+    version_name = name.removeprefix("release/")
+    return version_name if SEMVER_RE.fullmatch(version_name) else None
 
 
 def infer_channel(version_match: re.Match[str], explicit_channel: str | None) -> str:
@@ -131,9 +168,13 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
     if event_name == "workflow_dispatch":
         checkout_ref = validate_ref(input_ref) if input_ref else validate_ref(event_sha)
         version_name = require_single_line(args.input_version_name.strip(), "version_name")
-        if version_name:
-            validate_semver(version_name)
-        version_code = validate_version_code(args.input_version_code)
+        version_name = version_name or version_from_release_ref(input_ref or event_ref) or ""
+        if not version_name:
+            raise RequestError("version_name is required unless the selected ref is release/<semver>")
+        version_match = validate_semver(version_name)
+        version_code = resolve_version_code(version_match, args.input_version_code)
+        manual_channel = validate_manual_channel(args.input_release_channel)
+        channel = infer_channel(version_match, None if manual_channel == "auto" else manual_channel)
         return {
             "release_requested": "true",
             "reason": "workflow_dispatch",
@@ -141,7 +182,7 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
             "target_sha": checkout_ref if FULL_SHA_RE.fullmatch(checkout_ref) else validate_ref(event_sha),
             "version_name": version_name,
             "version_code": version_code,
-            "release_channel": validate_manual_channel(args.input_release_channel),
+            "release_channel": channel,
             "build_variant": validate_manual_build_variant(args.input_build_variant),
             "publish_release": validate_publish_release(args.input_publish_release),
         }
@@ -174,15 +215,35 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
 
     ref_name = branch_name(event_ref)
     if ref_name.startswith("release/"):
+        branch_version = version_from_release_ref(ref_name)
+        trailer_version = parse_unique_trailer(args.head_message, RELEASE_TRAILER_RE, "SolarLab-Release")
+        if branch_version and trailer_version and branch_version != trailer_version:
+            raise RequestError("SolarLab-Release trailer does not match the versioned release branch")
+        version_name = branch_version or trailer_version
+        if version_name is None:
+            raise RequestError("Release branches must use release/<semver> or provide a SolarLab-Release trailer")
+        version_match = validate_semver(version_name)
+        version_code = resolve_version_code(
+            version_match,
+            parse_unique_trailer(args.head_message, VERSION_CODE_TRAILER_RE, "SolarLab-Version-Code") or "",
+        )
+        channel = infer_channel(
+            version_match,
+            parse_unique_trailer(args.head_message, CHANNEL_TRAILER_RE, "SolarLab-Release-Channel"),
+        )
+        build_variant = infer_build_variant(
+            channel,
+            parse_unique_trailer(args.head_message, BUILD_VARIANT_TRAILER_RE, "SolarLab-Build-Variant"),
+        )
         return {
             "release_requested": "true",
             "reason": "release_branch_push",
-            "checkout_ref": ref_name,
+            "checkout_ref": event_after,
             "target_sha": event_after,
-            "version_name": "",
-            "version_code": "",
-            "release_channel": "auto",
-            "build_variant": "prerelease",
+            "version_name": version_name,
+            "version_code": version_code,
+            "release_channel": channel,
+            "build_variant": build_variant,
             "publish_release": "true",
         }
 
@@ -219,7 +280,7 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
         VERSION_CODE_TRAILER_RE,
         "SolarLab-Version-Code",
     )
-    version_code = validate_version_code(version_code or "")
+    version_code = resolve_version_code(version_match, version_code or "")
     channel = infer_channel(
         version_match,
         parse_unique_trailer(args.head_message, CHANNEL_TRAILER_RE, "SolarLab-Release-Channel"),

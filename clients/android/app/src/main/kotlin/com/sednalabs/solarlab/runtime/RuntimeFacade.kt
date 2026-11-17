@@ -1,6 +1,10 @@
 package com.sednalabs.solarlab.runtime
 
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.InputStream
+import java.io.OutputStream
 
 /**
  * Public seam for shell/runtime orchestration.
@@ -10,6 +14,24 @@ interface RuntimeFacade {
     val uiState: StateFlow<ShellUiState>
 
     val scenarioPacks: List<RuntimeScenarioPack>
+
+    val savedExperiments: StateFlow<List<SavedExperimentInfo>> get() = emptySavedExperiments
+    val experimentStatus: StateFlow<ExperimentStatus> get() = emptyExperimentStatus
+    /** Successful placement receipt owned by the retained runtime session, not an Activity. */
+    val lastProbeCommit: StateFlow<ProbeCommitResult?> get() = emptyProbeCommit
+    suspend fun saveExperiment(name: String) {}
+    suspend fun loadExperiment(id: String) {}
+    suspend fun importExperiment(openInput: () -> InputStream?) {}
+    suspend fun exportExperiment(id: String, openOutput: () -> OutputStream?) {}
+    suspend fun deleteExperiment(id: String) {}
+    suspend fun refreshExperimentCatalogue() {}
+    suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
+
+    /** Draft work is bounded and read-only; failures are thrown to the placement UI. */
+    suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double = 43_200.0): ProbePreviewResult =
+        error("Probe preview is unavailable")
+    suspend fun commitProbe(preview: ProbePreviewResult): ProbeCommitResult = error("Probe placement is unavailable")
+    suspend fun undoProbe(commit: ProbeCommitResult) { error("Probe undo is unavailable") }
 
     // One-time bind/handshake into native runtime.
     suspend fun startSession()
@@ -130,3 +152,7 @@ data class ShellUiState(
     val renderFrame: RenderFrame? = null,
     val developerTelemetry: DeveloperTelemetryPresentation = DeveloperTelemetryPresentation(),
 )
+
+private val emptySavedExperiments: StateFlow<List<SavedExperimentInfo>> = MutableStateFlow<List<SavedExperimentInfo>>(emptyList()).asStateFlow()
+private val emptyExperimentStatus: StateFlow<ExperimentStatus> = MutableStateFlow(ExperimentStatus()).asStateFlow()
+private val emptyProbeCommit: StateFlow<ProbeCommitResult?> = MutableStateFlow<ProbeCommitResult?>(null).asStateFlow()

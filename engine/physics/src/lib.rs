@@ -4,6 +4,14 @@ use std::sync::OnceLock;
 
 use solarlab_domain::Vector3d;
 
+#[cfg(any(target_arch = "aarch64", test))]
+mod pair_work;
+#[cfg(test)]
+mod throughput_tests;
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
+mod x64_avx2;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SolverBackend {
     ReferenceScalar,
@@ -76,6 +84,7 @@ pub enum SolverFallbackCode {
     SimdArm64OnNonAarch64Host,
     SimdArm64MissingNeon,
     SimdX64Unavailable,
+    WorkloadBelowVectorWidth,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,8 +101,13 @@ pub struct SolverScheduleReport {
     pub candidate_workers: u32,
     pub body_count: u32,
     pub estimated_pair_count: u64,
+    /// Coarse body granularity used to cap the parallel worker budget.
     pub tile_size_bodies: u32,
+    /// Budget tiles, not the worker's actual row assignment. Parallel force
+    /// work uses balanced nonempty pair partitions, including split long rows.
     pub tile_count: u32,
+    /// Nonempty pair partitions in the active or candidate parallel plan,
+    /// according to `mode`.
     pub parallel_tile_workers: u32,
 }
 
@@ -141,6 +155,13 @@ enum Arm64GravityKernel {
     NeonF64TiledPairwise,
     NeonF64ParallelTiledPairwise,
     PortableScalarOracle,
+}
+
+#[derive(Clone, Copy)]
+enum GravityKernel {
+    Scalar,
+    Arm64(Arm64GravityKernel),
+    X64Avx2,
 }
 
 impl Arm64GravityKernel {
@@ -601,11 +622,9 @@ fn checked_substep_count_float(
     if !delta_seconds.is_finite() || delta_seconds <= 0.0 {
         return None;
     }
-    let max_substep_seconds = if max_substep_seconds.is_finite() && max_substep_seconds > 0.0 {
-        max_substep_seconds
-    } else {
-        delta_seconds
-    };
+    if !max_substep_seconds.is_finite() || max_substep_seconds <= 0.0 {
+        return None;
+    }
     let count = (delta_seconds / max_substep_seconds).ceil().max(1.0);
     (count.is_finite() && count < exclusive_limit).then_some(count)
 }
@@ -637,14 +656,31 @@ pub fn fixed_step_plan(
     body_count: usize,
     features: &[String],
 ) -> Option<FixedStepPlan> {
+    fixed_step_plan_with_source_count(policy, delta_seconds, body_count, body_count, features)
+}
+
+/// Source-aware variant used when nonperturbing targets are present. The
+/// selected schedule is fixed for the operation, just like its timestep.
+pub fn fixed_step_plan_with_source_count(
+    policy: &PhysicsPolicy,
+    delta_seconds: f64,
+    body_count: usize,
+    source_count: usize,
+    features: &[String],
+) -> Option<FixedStepPlan> {
     let total_steps = checked_substep_count(policy, delta_seconds)?;
     let normalized = normalize_cpu_features(features);
-    let decision =
-        dispatch_solver_backend_with_body_count(&policy.solver_backend, &normalized, body_count);
-    let report = solver_execution_report_for_backend_with_body_count(
+    let decision = dispatch_solver_backend_with_source_count(
         &policy.solver_backend,
         &normalized,
         body_count,
+        source_count,
+    );
+    let report = solver_execution_report_for_backend_with_source_count(
+        &policy.solver_backend,
+        &normalized,
+        body_count,
+        source_count,
     );
     Some(FixedStepPlan {
         total_steps,
@@ -665,15 +701,17 @@ pub fn advance_fixed_steps(
         return Err(());
     }
     let kernel = if plan.decision.effective_backend == SolverBackend::SimdArm64 {
-        Some(
+        GravityKernel::Arm64(
             plan.decision
                 .arm64_gravity_kernel
                 .unwrap_or(Arm64GravityKernel::PortableScalarOracle),
         )
+    } else if plan.decision.effective_backend == SolverBackend::SimdX64 {
+        GravityKernel::X64Avx2
     } else {
-        None
+        GravityKernel::Scalar
     };
-    integrate_fixed_steps(bodies, plan.dt_seconds, count, kernel);
+    integrate_fixed_steps_with_kernel(bodies, plan.dt_seconds, count, kernel);
     Ok(())
 }
 
@@ -718,13 +756,16 @@ pub fn advance_authoritative_with_features(
     active_cpu_features: &[String],
 ) -> (PhysicsInvariants, SolverExecutionReport) {
     let normalized_features = normalize_cpu_features(active_cpu_features);
-    let decision = dispatch_solver_backend_with_body_count(
+    let source_count = bodies.iter().filter(|body| body.mass_kg != 0.0).count();
+    let decision = dispatch_solver_backend_with_source_count(
         &policy.solver_backend,
         &normalized_features,
         bodies.len(),
+        source_count,
     );
-    let schedule = solver_schedule_report_for_arm64_kernel(
+    let schedule = solver_schedule_report_for_arm64_kernel_with_source_count(
         bodies.len(),
+        source_count,
         decision.effective_backend == SolverBackend::SimdArm64,
         decision.arm64_gravity_kernel,
     );
@@ -771,11 +812,27 @@ pub fn solver_execution_report_for_backend_with_body_count(
     active_cpu_features: &[String],
     body_count: usize,
 ) -> SolverExecutionReport {
+    solver_execution_report_for_backend_with_source_count(
+        requested_backend,
+        active_cpu_features,
+        body_count,
+        body_count,
+    )
+}
+
+#[must_use]
+pub fn solver_execution_report_for_backend_with_source_count(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    body_count: usize,
+    source_count: usize,
+) -> SolverExecutionReport {
     let normalized_features = normalize_cpu_features(active_cpu_features);
-    let decision = dispatch_solver_backend_with_body_count(
+    let decision = dispatch_solver_backend_with_source_count(
         requested_backend,
         &normalized_features,
         body_count,
+        source_count,
     );
     let arm64_solver_active = decision.effective_backend == SolverBackend::SimdArm64;
     SolverExecutionReport {
@@ -785,8 +842,9 @@ pub fn solver_execution_report_for_backend_with_body_count(
         fallback_code: decision.fallback_code,
         fallback_reason: decision.fallback_reason,
         active_cpu_features: normalized_features,
-        schedule: solver_schedule_report_for_arm64_kernel(
+        schedule: solver_schedule_report_for_arm64_kernel_with_source_count(
             body_count,
+            source_count,
             arm64_solver_active,
             decision.arm64_gravity_kernel,
         ),
@@ -806,19 +864,78 @@ fn solver_schedule_report_for_arm64_kernel(
     arm64_solver_active: bool,
     arm64_gravity_kernel: Option<Arm64GravityKernel>,
 ) -> SolverScheduleReport {
+    solver_schedule_report_for_arm64_kernel_with_source_count(
+        body_count,
+        body_count,
+        arm64_solver_active,
+        arm64_gravity_kernel,
+    )
+}
+
+fn physical_pair_count(body_count: usize, source_count: usize) -> u64 {
+    let n = body_count as u64;
+    let s = source_count.min(body_count) as u64;
+    s.saturating_mul(n)
+        .saturating_sub(s.saturating_mul(s.saturating_add(1)) / 2)
+}
+
+fn enough_parallel_pair_work(body_count: usize, source_count: usize) -> bool {
+    enough_parallel_pair_work_with_budget(body_count, source_count, runtime_worker_budget())
+}
+
+// Provisional ARM64 crossover from hosted Neoverse-N2 measurements:
+// 192 dense bodies (18,336 useful pairs) lost to four per-sweep workers, but
+// 256 dense bodies (32,640 pairs) benefited. Keep the scheduling threshold
+// separate from the 32-body tile size and the useful-pair counter.
+const ARM64_MIN_USEFUL_PAIRS_PER_WORKER: u64 = 8_128;
+
+fn enough_parallel_pair_work_with_budget(
+    body_count: usize,
+    source_count: usize,
+    worker_budget: usize,
+) -> bool {
+    let workers = nonempty_parallel_worker_count(body_count, source_count, worker_budget);
+    workers > 0
+        && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
+        && physical_pair_count(body_count, source_count)
+            >= ARM64_MIN_USEFUL_PAIRS_PER_WORKER.saturating_mul(workers as u64)
+}
+
+fn nonempty_parallel_worker_count(
+    body_count: usize,
+    source_count: usize,
+    worker_budget: usize,
+) -> usize {
+    worker_budget
+        .min(body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES))
+        .min(physical_pair_count(body_count, source_count).min(usize::MAX as u64) as usize)
+}
+
+fn solver_schedule_report_for_arm64_kernel_with_source_count(
+    body_count: usize,
+    source_count: usize,
+    arm64_solver_active: bool,
+    arm64_gravity_kernel: Option<Arm64GravityKernel>,
+) -> SolverScheduleReport {
     let worker_budget = runtime_worker_budget();
     let parallel_tiled_active = arm64_solver_active
         && arm64_gravity_kernel == Some(Arm64GravityKernel::NeonF64ParallelTiledPairwise);
     let candidate_parallel = arm64_solver_active
-        && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES
+        && enough_parallel_pair_work(body_count, source_count)
         && worker_budget > 1;
+    let tile_count = if arm64_solver_active
+        && (parallel_tiled_active || enough_parallel_pair_work(body_count, source_count)) {
+        body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES)
+    } else {
+        0
+    };
     let active_workers = if parallel_tiled_active {
-        worker_budget
+        nonempty_parallel_worker_count(body_count, source_count, worker_budget).max(1)
     } else {
         1
     };
     let candidate_workers = if candidate_parallel {
-        worker_budget
+        nonempty_parallel_worker_count(body_count, source_count, worker_budget).max(1)
     } else {
         active_workers
     };
@@ -827,13 +944,7 @@ fn solver_schedule_report_for_arm64_kernel(
         (false, true) => SolverScheduleMode::AdaptiveTiledCandidate,
         (false, false) => SolverScheduleMode::SingleWorker,
     };
-    let body_count_u64 = body_count as u64;
-    let estimated_pair_count = body_count_u64.saturating_mul(body_count_u64.saturating_sub(1)) / 2;
-    let tile_count = if arm64_solver_active && body_count >= ADAPTIVE_TILED_SCHEDULER_MIN_BODIES {
-        body_count.div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES)
-    } else {
-        0
-    };
+    let estimated_pair_count = physical_pair_count(body_count, source_count);
     let parallel_tile_workers = if tile_count > 0 && (parallel_tiled_active || candidate_parallel) {
         candidate_workers.max(active_workers).min(tile_count)
     } else {
@@ -1154,7 +1265,16 @@ fn advance_authoritative_x64(
     bodies: &mut [MassiveBodyState],
     delta_seconds: f64,
 ) -> PhysicsInvariants {
-    advance_authoritative_scalar(policy, bodies, delta_seconds)
+    let Some(count) = checked_substep_count(policy, delta_seconds) else {
+        return compute_invariants(bodies);
+    };
+    integrate_fixed_steps_with_kernel(
+        bodies,
+        delta_seconds / count as f64,
+        count,
+        GravityKernel::X64Avx2,
+    );
+    compute_invariants(bodies)
 }
 
 pub fn compute_invariants(bodies: &[MassiveBodyState]) -> PhysicsInvariants {
@@ -1162,41 +1282,103 @@ pub fn compute_invariants(bodies: &[MassiveBodyState]) -> PhysicsInvariants {
         return PhysicsInvariants::default();
     }
 
-    let mut total_mass = 0.0_f64;
-    let mut barycenter_numerator = Vector3d::default();
-    let mut linear_momentum = Vector3d::default();
-    let mut angular_momentum = Vector3d::default();
-    let mut kinetic_energy_j = 0.0_f64;
+    let mut total_mass = CompensatedSum::default();
+    let mut barycenter_numerator = CompensatedVector::default();
+    let mut linear_momentum = CompensatedVector::default();
+    let mut angular_momentum = CompensatedVector::default();
+    let mut energy_j = CompensatedSum::default();
 
     for body in bodies {
-        total_mass += body.mass_kg;
-        barycenter_numerator = add(barycenter_numerator, scale(body.position_m, body.mass_kg));
+        if body.mass_kg == 0.0 {
+            continue;
+        }
+        total_mass.add(body.mass_kg);
+        barycenter_numerator.add(scale(body.position_m, body.mass_kg));
 
         let momentum = scale(body.velocity_mps, body.mass_kg);
-        linear_momentum = add(linear_momentum, momentum);
-        angular_momentum = add(angular_momentum, cross(body.position_m, momentum));
-        kinetic_energy_j += 0.5 * body.mass_kg * norm_squared(body.velocity_mps);
+        linear_momentum.add(momentum);
+        angular_momentum.add(cross(body.position_m, momentum));
+        energy_j.add(0.5 * body.mass_kg * norm_squared(body.velocity_mps));
     }
 
-    let mut potential_energy_j = 0.0_f64;
-    for i in 0..bodies.len() {
-        for j in (i + 1)..bodies.len() {
+    let sources = source_indices(bodies);
+    for (source_index, &i) in sources.iter().enumerate() {
+        for &j in &sources[source_index + 1..] {
             let delta = subtract(bodies[j].position_m, bodies[i].position_m);
-            let distance_m = norm(delta).max(MIN_DISTANCE_M2.sqrt());
-            potential_energy_j -=
-                G_M3_PER_KG_S2 * bodies[i].mass_kg * bodies[j].mass_kg / distance_m;
+            let distance_sq = norm_squared(delta);
+            let pair_strength = G_M3_PER_KG_S2 * bodies[i].mass_kg * bodies[j].mass_kg;
+            let potential = if distance_sq >= MIN_DISTANCE_M2 {
+                -pair_strength / distance_sq.sqrt()
+            } else {
+                // The unchanged force uses r / max(r, epsilon)^3. Its inner
+                // potential is quadratic, joined continuously (including its
+                // derivative) to -G*m_i*m_j/r at epsilon. A constant clipped
+                // potential would report spurious energy loss inside the core.
+                -pair_strength / MIN_DISTANCE_M2.sqrt()
+                    * (1.5 - 0.5 * distance_sq / MIN_DISTANCE_M2)
+            };
+            energy_j.add(potential);
         }
     }
 
+    let total_mass = total_mass.total();
     PhysicsInvariants {
-        total_energy_j: kinetic_energy_j + potential_energy_j,
-        linear_momentum_kg_mps: linear_momentum,
-        angular_momentum_kg_m2ps: angular_momentum,
+        total_energy_j: energy_j.total(),
+        linear_momentum_kg_mps: linear_momentum.total(),
+        angular_momentum_kg_m2ps: angular_momentum.total(),
         barycenter_m: if total_mass > 0.0 {
-            scale(barycenter_numerator, 1.0 / total_mass)
+            scale(barycenter_numerator.total(), 1.0 / total_mass)
         } else {
             Vector3d::default()
         },
+    }
+}
+
+/// Neumaier summation retains small terms when large positive and negative
+/// contributions cancel. It improves diagnostics without changing the forces
+/// or authoritative integration schedule.
+#[derive(Default)]
+struct CompensatedSum {
+    sum: f64,
+    correction: f64,
+}
+
+impl CompensatedSum {
+    fn add(&mut self, value: f64) {
+        let next = self.sum + value;
+        self.correction += if self.sum.abs() >= value.abs() {
+            (self.sum - next) + value
+        } else {
+            (value - next) + self.sum
+        };
+        self.sum = next;
+    }
+
+    fn total(&self) -> f64 {
+        self.sum + self.correction
+    }
+}
+
+#[derive(Default)]
+struct CompensatedVector {
+    x: CompensatedSum,
+    y: CompensatedSum,
+    z: CompensatedSum,
+}
+
+impl CompensatedVector {
+    fn add(&mut self, value: Vector3d) {
+        self.x.add(value.x);
+        self.y.add(value.y);
+        self.z.add(value.z);
+    }
+
+    fn total(&self) -> Vector3d {
+        Vector3d {
+            x: self.x.total(),
+            y: self.y.total(),
+            z: self.z.total(),
+        }
     }
 }
 
@@ -1206,11 +1388,55 @@ fn integrate_fixed_steps(
     count: usize,
     kernel: Option<Arm64GravityKernel>,
 ) {
+    integrate_fixed_steps_with_kernel(
+        bodies,
+        dt_seconds,
+        count,
+        kernel.map_or(GravityKernel::Scalar, GravityKernel::Arm64),
+    );
+}
+
+fn integrate_fixed_steps_with_kernel(
+    bodies: &mut [MassiveBodyState],
+    dt_seconds: f64,
+    count: usize,
+    kernel: GravityKernel,
+) {
+    if count == 0 || bodies.is_empty() {
+        return;
+    }
+    // Masses and the selected force law stay fixed throughout this segment.
+    // Acceleration at the previous drift endpoint is exactly the acceleration
+    // needed for the next kick. Keep the two half-kicks separate: combining
+    // them would change rounding and the staged/bulk schedule contract.
+    let sources = source_indices(bodies);
+    let mut accelerations = vec![Vector3d::default(); bodies.len()];
+    let mut scratch = GravityScratch::default();
+    gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
+    let half_dt = 0.5 * dt_seconds;
     for _ in 0..count {
-        if let Some(kernel) = kernel {
-            integrate_substep_arm64(bodies, dt_seconds, kernel);
-        } else {
-            integrate_substep(bodies, dt_seconds);
+        for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
+            if matches!(kernel, GravityKernel::Arm64(_)) {
+                body.velocity_mps.x = acceleration.x.mul_add(half_dt, body.velocity_mps.x);
+                body.velocity_mps.y = acceleration.y.mul_add(half_dt, body.velocity_mps.y);
+                body.velocity_mps.z = acceleration.z.mul_add(half_dt, body.velocity_mps.z);
+                body.position_m.x = body.velocity_mps.x.mul_add(dt_seconds, body.position_m.x);
+                body.position_m.y = body.velocity_mps.y.mul_add(dt_seconds, body.position_m.y);
+                body.position_m.z = body.velocity_mps.z.mul_add(dt_seconds, body.position_m.z);
+            } else {
+                body.velocity_mps = add(body.velocity_mps, scale(*acceleration, half_dt));
+                body.position_m = add(body.position_m, scale(body.velocity_mps, dt_seconds));
+            }
+        }
+        gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
+        for (body, acceleration) in bodies.iter_mut().zip(&accelerations) {
+            if matches!(kernel, GravityKernel::Arm64(_)) {
+                body.velocity_mps.x = acceleration.x.mul_add(half_dt, body.velocity_mps.x);
+                body.velocity_mps.y = acceleration.y.mul_add(half_dt, body.velocity_mps.y);
+                body.velocity_mps.z = acceleration.z.mul_add(half_dt, body.velocity_mps.z);
+            } else {
+                body.velocity_mps = add(body.velocity_mps, scale(*acceleration, half_dt));
+            }
         }
     }
 }
@@ -1226,6 +1452,7 @@ fn integrate_fixed_steps(
 ///
 /// This method is second-order accurate and symplectic, ensuring that the
 /// orbital energy of the system remains stable (non-drifting) over many steps.
+#[cfg(test)]
 fn integrate_substep(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
     let a0 = pairwise_gravity_accelerations(bodies);
 
@@ -1243,6 +1470,7 @@ fn integrate_substep(bodies: &mut [MassiveBodyState], dt_seconds: f64) {
     }
 }
 
+#[cfg(test)]
 fn integrate_substep_arm64(
     bodies: &mut [MassiveBodyState],
     dt_seconds: f64,
@@ -1277,10 +1505,125 @@ fn integrate_substep_arm64(
     }
 }
 
+#[cfg(test)]
 fn pairwise_gravity_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
     let mut accelerations = vec![Vector3d::default(); bodies.len()];
+    pairwise_gravity_accelerations_into(bodies, &source_indices(bodies), &mut accelerations);
+    accelerations
+}
+
+fn source_indices(bodies: &[MassiveBodyState]) -> Vec<usize> {
+    bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(index, body)| (body.mass_kg != 0.0).then_some(index))
+        .collect()
+}
+
+/// Enumerate the same lexicographic pairs as the scalar oracle, omitting only
+/// pairs whose two source masses are zero. Sparse tracer worlds take O(S*N)
+/// visits instead of scanning their O(N*N) physically empty tracer pairs.
+#[inline]
+fn interaction_partners(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    i: usize,
+    start: usize,
+    end: usize,
+    mut visit: impl FnMut(usize),
+) {
+    if bodies[i].mass_kg != 0.0 {
+        for j in start..end {
+            visit(j);
+        }
+    } else {
+        let first = sources.partition_point(|&index| index < start);
+        for &j in &sources[first..] {
+            if j >= end {
+                break;
+            }
+            visit(j);
+        }
+    }
+}
+
+#[derive(Default)]
+struct GravityScratch {
+    #[cfg(target_arch = "aarch64")]
+    parallel_partitions: Option<Vec<pair_work::PairPartition>>,
+    #[cfg(target_arch = "aarch64")]
+    partials: Vec<Vec<Vector3d>>,
+}
+
+fn gravity_accelerations_into(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+    kernel: GravityKernel,
+    scratch: &mut GravityScratch,
+) {
+    accelerations.fill(Vector3d::default());
+    match kernel {
+        GravityKernel::Arm64(kernel) => pairwise_gravity_accelerations_arm64_into(
+            bodies,
+            sources,
+            accelerations,
+            kernel,
+            scratch,
+        ),
+        GravityKernel::Scalar => {
+            pairwise_gravity_accelerations_into(bodies, sources, accelerations)
+        }
+        GravityKernel::X64Avx2 => {
+            pairwise_gravity_accelerations_x64_avx2(bodies, sources, accelerations)
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn x64_avx2_runtime_available() -> bool {
+    std::is_x86_feature_detected!("avx2")
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn x64_avx2_runtime_available() -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
+fn pairwise_gravity_accelerations_x64_avx2(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
+    assert!(
+        x64_avx2_runtime_available(),
+        "AVX2 solver selected without real runtime support"
+    );
+    // SAFETY: actual CPU/OS feature detection is required independently of the
+    // caller-supplied feature list. All packed loads/stores use local arrays.
+    unsafe {
+        x64_avx2::pairwise_into(bodies, sources, accelerations);
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn pairwise_gravity_accelerations_x64_avx2(
+    _bodies: &[MassiveBodyState],
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+) {
+    panic!("AVX2 solver selected on a non-x86_64 host")
+}
+
+fn pairwise_gravity_accelerations_into(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     for i in 0..bodies.len() {
-        for j in (i + 1)..bodies.len() {
+        interaction_partners(bodies, sources, i, i + 1, bodies.len(), |j| {
             let delta = subtract(bodies[j].position_m, bodies[i].position_m);
             let distance_sq = norm_squared(delta).max(MIN_DISTANCE_M2);
             let inv_distance = distance_sq.sqrt().recip();
@@ -1297,61 +1640,102 @@ fn pairwise_gravity_accelerations(bodies: &[MassiveBodyState]) -> Vec<Vector3d> 
 
             accelerations[i] = add(accelerations[i], accel_i);
             accelerations[j] = add(accelerations[j], accel_j);
-        }
+        });
     }
-    accelerations
 }
 
-#[allow(unsafe_code)]
+#[cfg(test)]
 fn pairwise_gravity_accelerations_arm64(
     bodies: &[MassiveBodyState],
     gravity_kernel: Arm64GravityKernel,
 ) -> Vec<Vector3d> {
+    let mut accelerations = vec![Vector3d::default(); bodies.len()];
+    pairwise_gravity_accelerations_arm64_into(
+        bodies,
+        &source_indices(bodies),
+        &mut accelerations,
+        gravity_kernel,
+        &mut GravityScratch::default(),
+    );
+    accelerations
+}
+
+fn pairwise_gravity_accelerations_arm64_into(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+    gravity_kernel: Arm64GravityKernel,
+    scratch: &mut GravityScratch,
+) {
     match gravity_kernel {
-        Arm64GravityKernel::NeonF64Pairwise => pairwise_gravity_accelerations_arm64_neon(bodies),
+        Arm64GravityKernel::NeonF64Pairwise => {
+            pairwise_gravity_accelerations_arm64_neon(bodies, sources, accelerations)
+        }
         Arm64GravityKernel::NeonF64TiledPairwise => {
-            pairwise_gravity_accelerations_arm64_neon_tiled(bodies)
+            pairwise_gravity_accelerations_arm64_neon_tiled(bodies, sources, accelerations)
         }
         Arm64GravityKernel::NeonF64ParallelTiledPairwise => {
-            pairwise_gravity_accelerations_arm64_neon_parallel_tiled(bodies)
+            pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
+                bodies,
+                sources,
+                accelerations,
+                scratch,
+            )
         }
         Arm64GravityKernel::PortableScalarOracle => {
-            pairwise_gravity_accelerations_arm64_portable(bodies)
+            pairwise_gravity_accelerations_arm64_portable(bodies, sources, accelerations)
         }
     }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_code)]
-fn pairwise_gravity_accelerations_arm64_neon(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     assert!(
         arm64_neon_runtime_available(),
         "Arm64 NEON solver selected without runtime NEON support"
     );
-    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
-    // and the function does not expose raw pointers or outlive the input slice.
-    unsafe { arm64_neon::pairwise_gravity_accelerations_neon_f64(bodies) }
+    // SAFETY: real runtime detection gates this target-feature function. All
+    // input/output slices remain borrowed for the entire call.
+    unsafe { arm64_neon::pairwise_gravity_accelerations_neon_f64(bodies, sources, accelerations) }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
-fn pairwise_gravity_accelerations_arm64_neon(_bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon(
+    _bodies: &[MassiveBodyState],
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+) {
     panic!("Arm64 NEON solver selected on a non-aarch64 host")
 }
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_code)]
-fn pairwise_gravity_accelerations_arm64_neon_tiled(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon_tiled(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     assert!(
         arm64_neon_runtime_available(),
         "Arm64 tiled NEON solver selected without runtime NEON support"
     );
-    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
-    // and the function does not expose raw pointers or outlive the input slice.
-    unsafe { arm64_neon::pairwise_gravity_accelerations_neon_f64_tiled(bodies) }
+    // SAFETY: real runtime detection gates this target-feature function.
+    unsafe {
+        arm64_neon::pairwise_gravity_accelerations_neon_f64_tiled(bodies, sources, accelerations)
+    }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
-fn pairwise_gravity_accelerations_arm64_neon_tiled(_bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
+fn pairwise_gravity_accelerations_arm64_neon_tiled(
+    _bodies: &[MassiveBodyState],
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+) {
     panic!("Arm64 tiled NEON solver selected on a non-aarch64 host")
 }
 
@@ -1359,47 +1743,58 @@ fn pairwise_gravity_accelerations_arm64_neon_tiled(_bodies: &[MassiveBodyState])
 #[allow(unsafe_code)]
 fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
     bodies: &[MassiveBodyState],
-) -> Vec<Vector3d> {
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+    scratch: &mut GravityScratch,
+) {
     assert!(
         arm64_neon_runtime_available(),
         "Arm64 parallel tiled NEON solver selected without runtime NEON support"
     );
-    let worker_budget = runtime_worker_budget();
-    // SAFETY: dispatch selects this kernel only after runtime NEON detection,
-    // and scoped workers borrow `bodies` without extending its lifetime.
+    // SAFETY: real runtime detection gates this target-feature function; scoped
+    // workers borrow disjoint mutable scratch slices and shared immutable bodies.
     unsafe {
-        arm64_neon::pairwise_gravity_accelerations_neon_f64_parallel_tiled(bodies, worker_budget)
+        arm64_neon::pairwise_gravity_accelerations_neon_f64_parallel_tiled(
+            bodies,
+            sources,
+            accelerations,
+            scratch,
+            runtime_worker_budget(),
+        )
     }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
 fn pairwise_gravity_accelerations_arm64_neon_parallel_tiled(
     _bodies: &[MassiveBodyState],
-) -> Vec<Vector3d> {
+    _sources: &[usize],
+    _accelerations: &mut [Vector3d],
+    _scratch: &mut GravityScratch,
+) {
     panic!("Arm64 parallel tiled NEON solver selected on a non-aarch64 host")
 }
 
-fn pairwise_gravity_accelerations_arm64_portable(bodies: &[MassiveBodyState]) -> Vec<Vector3d> {
-    let mut accelerations = vec![Vector3d::default(); bodies.len()];
+fn pairwise_gravity_accelerations_arm64_portable(
+    bodies: &[MassiveBodyState],
+    sources: &[usize],
+    accelerations: &mut [Vector3d],
+) {
     for i in 0..bodies.len() {
-        for j in (i + 1)..bodies.len() {
+        interaction_partners(bodies, sources, i, i + 1, bodies.len(), |j| {
             let delta = subtract(bodies[j].position_m, bodies[i].position_m);
             let distance_sq = norm_squared(delta).max(MIN_DISTANCE_M2);
             let inv_distance = distance_sq.sqrt().recip();
             let inv_distance_cubed = inv_distance * inv_distance * inv_distance;
             let scale_i = G_M3_PER_KG_S2 * bodies[j].mass_kg * inv_distance_cubed;
             let scale_j = -G_M3_PER_KG_S2 * bodies[i].mass_kg * inv_distance_cubed;
-
             accelerations[i].x = delta.x.mul_add(scale_i, accelerations[i].x);
             accelerations[i].y = delta.y.mul_add(scale_i, accelerations[i].y);
             accelerations[i].z = delta.z.mul_add(scale_i, accelerations[i].z);
-
             accelerations[j].x = delta.x.mul_add(scale_j, accelerations[j].x);
             accelerations[j].y = delta.y.mul_add(scale_j, accelerations[j].y);
             accelerations[j].z = delta.z.mul_add(scale_j, accelerations[j].z);
-        }
+        });
     }
-    accelerations
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -1412,27 +1807,29 @@ mod arm64_neon {
     use solarlab_domain::Vector3d;
 
     use super::{
+        interaction_partners, nonempty_parallel_worker_count, pair_work, GravityScratch,
         MassiveBodyState, ARM64_GRAVITY_TILE_SIZE_BODIES, G_M3_PER_KG_S2, MIN_DISTANCE_M2,
     };
 
     #[target_feature(enable = "neon")]
     pub unsafe fn pairwise_gravity_accelerations_neon_f64(
         bodies: &[MassiveBodyState],
-    ) -> Vec<Vector3d> {
-        let mut accelerations = vec![Vector3d::default(); bodies.len()];
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+    ) {
         for i in 0..bodies.len() {
-            for j in (i + 1)..bodies.len() {
-                accumulate_pair(bodies, &mut accelerations, i, j);
-            }
+            interaction_partners(bodies, sources, i, i + 1, bodies.len(), |j| {
+                accumulate_pair(bodies, accelerations, i, j);
+            });
         }
-        accelerations
     }
 
     #[target_feature(enable = "neon")]
     pub unsafe fn pairwise_gravity_accelerations_neon_f64_tiled(
         bodies: &[MassiveBodyState],
-    ) -> Vec<Vector3d> {
-        let mut accelerations = vec![Vector3d::default(); bodies.len()];
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+    ) {
         for tile_i_start in (0..bodies.len()).step_by(ARM64_GRAVITY_TILE_SIZE_BODIES) {
             let tile_i_end = (tile_i_start + ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
             for tile_j_start in (tile_i_start..bodies.len()).step_by(ARM64_GRAVITY_TILE_SIZE_BODIES)
@@ -1444,68 +1841,61 @@ mod arm64_neon {
                     } else {
                         tile_j_start
                     };
-                    for j in j_start..tile_j_end {
-                        accumulate_pair(bodies, &mut accelerations, i, j);
-                    }
+                    interaction_partners(bodies, sources, i, j_start, tile_j_end, |j| {
+                        accumulate_pair(bodies, accelerations, i, j);
+                    });
                 }
             }
         }
-        accelerations
     }
 
     #[target_feature(enable = "neon")]
     pub unsafe fn pairwise_gravity_accelerations_neon_f64_parallel_tiled(
         bodies: &[MassiveBodyState],
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+        scratch: &mut GravityScratch,
         worker_budget: usize,
-    ) -> Vec<Vector3d> {
+    ) {
         if bodies.len() < 2 || worker_budget <= 1 {
-            return pairwise_gravity_accelerations_neon_f64_tiled(bodies);
+            return pairwise_gravity_accelerations_neon_f64_tiled(bodies, sources, accelerations);
         }
-
-        let tile_count = bodies.len().div_ceil(ARM64_GRAVITY_TILE_SIZE_BODIES);
-        let worker_count = worker_budget.min(tile_count).max(1);
-
-        let partials = std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for worker_index in 0..worker_count {
-                handles.push(scope.spawn(move || {
-                    let mut local_accelerations = vec![Vector3d::default(); bodies.len()];
-                    // Cyclic tiles balance the triangular pair workload: early
-                    // rows have many more interactions than late rows.
-                    for tile_index in (worker_index..tile_count).step_by(worker_count) {
-                        let i_start = tile_index * ARM64_GRAVITY_TILE_SIZE_BODIES;
-                        let i_end =
-                            ((tile_index + 1) * ARM64_GRAVITY_TILE_SIZE_BODIES).min(bodies.len());
-                        for i in i_start..i_end {
-                            for j in (i + 1)..bodies.len() {
-                                unsafe {
-                                    accumulate_pair(bodies, &mut local_accelerations, i, j);
-                                }
-                            }
-                        }
-                    }
-                    local_accelerations
-                }));
-            }
-            handles
-                .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .expect("Arm64 gravity worker should not panic")
-                })
-                .collect::<Vec<_>>()
+        let partitions = scratch.parallel_partitions.get_or_insert_with(|| {
+            pair_work::balanced_pair_partitions(
+                bodies.len(),
+                sources,
+                nonempty_parallel_worker_count(bodies.len(), sources.len(), worker_budget),
+            )
         });
-
-        let mut accelerations = vec![Vector3d::default(); bodies.len()];
-        for partial in partials {
+        if partitions.is_empty() {
+            return;
+        }
+        if partitions.len() == 1 {
+            return pairwise_gravity_accelerations_neon_f64_tiled(bodies, sources, accelerations);
+        }
+        // Source membership is fixed for the segment. Reuse its balanced pair
+        // partitions and worker scratch across sweeps. Contiguous pair order
+        // and worker-index reduction do not depend on thread completion order.
+        scratch.partials.resize_with(partitions.len(), || {
+            vec![Vector3d::default(); bodies.len()]
+        });
+        std::thread::scope(|scope| {
+            for (partition, local) in partitions.iter().zip(&mut scratch.partials) {
+                local.fill(Vector3d::default());
+                scope.spawn(move || {
+                    partition.for_each_pair(sources, |i, j| unsafe {
+                        accumulate_pair(bodies, local, i, j);
+                    });
+                });
+            }
+        });
+        for partial in &scratch.partials {
             for (target, contribution) in accelerations.iter_mut().zip(partial) {
                 target.x += contribution.x;
                 target.y += contribution.y;
                 target.z += contribution.z;
             }
         }
-        accelerations
     }
 
     #[target_feature(enable = "neon")]
@@ -1570,6 +1960,23 @@ fn dispatch_solver_backend_with_body_count(
     )
 }
 
+fn dispatch_solver_backend_with_source_count(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    body_count: usize,
+    source_count: usize,
+) -> DispatchDecision {
+    let mut decision =
+        dispatch_solver_backend_with_body_count(requested_backend, active_cpu_features, body_count);
+    if decision.effective_backend == SolverBackend::SimdArm64
+        && !enough_parallel_pair_work(body_count, source_count)
+    {
+        decision.path_id = "simd.arm64.neon-f64-pairwise".to_owned();
+        decision.arm64_gravity_kernel = Some(Arm64GravityKernel::NeonF64Pairwise);
+    }
+    decision
+}
+
 #[cfg(test)]
 fn dispatch_solver_backend_for_host(
     requested_backend: &SolverBackend,
@@ -1594,6 +2001,26 @@ fn dispatch_solver_backend_for_host_with_body_count(
     is_aarch64_host: bool,
     is_x64_host: bool,
     arm64_neon_runtime_available: bool,
+    body_count: usize,
+) -> DispatchDecision {
+    dispatch_solver_backend_for_host_with_capabilities(
+        requested_backend,
+        active_cpu_features,
+        is_aarch64_host,
+        is_x64_host,
+        arm64_neon_runtime_available,
+        x64_avx2_runtime_available(),
+        body_count,
+    )
+}
+
+fn dispatch_solver_backend_for_host_with_capabilities(
+    requested_backend: &SolverBackend,
+    active_cpu_features: &[String],
+    is_aarch64_host: bool,
+    is_x64_host: bool,
+    arm64_neon_runtime_available: bool,
+    x64_avx2_runtime_available: bool,
     body_count: usize,
 ) -> DispatchDecision {
     let has_feature = |feature: &str| active_cpu_features.iter().any(|value| value == feature);
@@ -1647,7 +2074,7 @@ fn dispatch_solver_backend_for_host_with_body_count(
                 path_id: "scalar.reference".to_owned(),
                 fallback_code: SolverFallbackCode::SimdX64Unavailable,
                 fallback_reason: Some(
-                    "simd-x64 requested but dedicated x64 kernel is not implemented; using scalar oracle".to_owned(),
+                    "simd-x64 requires an x86_64 host, an enabled AVX2 feature, and real CPU/OS AVX2 support; using scalar oracle".to_owned(),
                 ),
                 arm64_gravity_kernel: None,
             }
@@ -1656,10 +2083,25 @@ fn dispatch_solver_backend_for_host_with_body_count(
             if !is_x64_host {
                 return x64_fallback();
             }
-            if !has_feature("sse2") && !has_feature("avx2") {
+            if !has_feature("avx2") || !x64_avx2_runtime_available {
                 return x64_fallback();
             }
-            x64_fallback()
+            if body_count < 4 {
+                return DispatchDecision {
+                    effective_backend: SolverBackend::ReferenceScalar,
+                    path_id: "scalar.reference".to_owned(),
+                    fallback_code: SolverFallbackCode::WorkloadBelowVectorWidth,
+                    fallback_reason: Some("fewer than four targets; measured scalar path avoids AVX2 vector-tail overhead".to_owned()),
+                    arm64_gravity_kernel: None,
+                };
+            }
+            DispatchDecision {
+                effective_backend: SolverBackend::SimdX64,
+                path_id: "simd.x64.avx2-f64-pairwise".to_owned(),
+                fallback_code: SolverFallbackCode::None,
+                fallback_reason: None,
+                arm64_gravity_kernel: None,
+            }
         }
     }
 }
@@ -1843,6 +2285,7 @@ fn cross(a: Vector3d, b: Vector3d) -> Vector3d {
     }
 }
 
+#[cfg(test)]
 fn norm(v: Vector3d) -> f64 {
     norm_squared(v).sqrt()
 }
@@ -2060,7 +2503,7 @@ mod tests {
         let mut policy = test_policy();
         policy.solver_backend = SolverBackend::SimdArm64;
         for delta in [130.0, 130.5] {
-            let initial = dense_kernel_parity_scenario(128);
+            let initial = dense_kernel_parity_scenario(512);
             let mut bulk = initial.clone();
             let mut chunked = initial;
             let (expected_invariants, report) =
@@ -2344,10 +2787,10 @@ mod tests {
     }
 
     #[test]
-    fn simd_x64_dispatch_reports_unavailable_until_dedicated_kernel_exists() {
+    fn simd_x64_dispatch_falls_back_when_feature_is_not_enabled() {
         let decision = dispatch_solver_backend_for_host(
             &SolverBackend::SimdX64,
-            &["sse2".to_owned(), "avx2".to_owned()],
+            &["sse2".to_owned()],
             false,
             true,
             false,
@@ -2529,7 +2972,7 @@ mod tests {
     fn solver_schedule_report_truthfully_marks_adaptive_tiling_as_candidate() {
         let scalar_schedule = solver_schedule_report(192, false);
         let arm64_tiny_schedule = solver_schedule_report(8, true);
-        let arm64_large_schedule = solver_schedule_report(192, true);
+        let arm64_large_schedule = solver_schedule_report(512, true);
 
         assert_eq!(scalar_schedule.mode, SolverScheduleMode::SingleWorker);
         assert_eq!(scalar_schedule.tile_count, 0);
@@ -2538,10 +2981,10 @@ mod tests {
         assert_eq!(arm64_tiny_schedule.tile_count, 0);
         assert_eq!(arm64_tiny_schedule.parallel_tile_workers, 0);
         assert_eq!(arm64_large_schedule.active_workers, 1);
-        assert_eq!(arm64_large_schedule.body_count, 192);
-        assert_eq!(arm64_large_schedule.estimated_pair_count, 18_336);
+        assert_eq!(arm64_large_schedule.body_count, 512);
+        assert_eq!(arm64_large_schedule.estimated_pair_count, 130_816);
         assert_eq!(arm64_large_schedule.tile_size_bodies, 32);
-        assert_eq!(arm64_large_schedule.tile_count, 6);
+        assert_eq!(arm64_large_schedule.tile_count, 16);
 
         if arm64_large_schedule.candidate_workers > 1 {
             assert_eq!(
@@ -2550,7 +2993,7 @@ mod tests {
             );
             assert_eq!(
                 arm64_large_schedule.parallel_tile_workers,
-                arm64_large_schedule.candidate_workers.min(6)
+                arm64_large_schedule.candidate_workers.min(16)
             );
         } else {
             assert_eq!(arm64_large_schedule.mode, SolverScheduleMode::SingleWorker);

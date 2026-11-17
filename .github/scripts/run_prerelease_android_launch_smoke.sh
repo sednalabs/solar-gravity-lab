@@ -11,6 +11,8 @@ fi
 
 mkdir -p dist/startup-smoke
 
+bash .github/scripts/clear_stale_launcher_anr.sh dist/startup-smoke
+
 bash .github/scripts/android_launch_smoke.sh \
   --package "$package_id" \
   --activity "com.sednalabs.solarlab.MainActivity" \

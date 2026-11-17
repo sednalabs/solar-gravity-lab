@@ -6,6 +6,7 @@ import android.view.View
 import android.widget.FrameLayout
 import com.graciousgazelles.solarlab.core.model.SimulationSnapshot
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
+import com.graciousgazelles.solarlab.render.core.CameraState
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderBackend
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
@@ -38,6 +39,9 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var runtimeSessionHandle: Long = 0L
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
+    private var labMapMode = false
+    private var labMapPlane = LabPlane.XY
+    private var labViewportChangedListener: ((LabViewportState?) -> Unit)? = null
     private var currentStatus: RenderBackendStatus = RenderBackendStatus(
         requested = requestedBackend,
         active = requestedBackend,
@@ -63,6 +67,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     }
 
     fun submitSceneFrame(frame: RenderSceneFrame) {
+        if (latestScene === frame || latestScene == frame) return
         latestScene = frame
         activeSurface?.submitScene(frame.withLayerOptions(renderLayerOptions))
     }
@@ -106,6 +111,29 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
 
     fun zoomBy(scaleFactor: Float) {
         activeSurface?.zoomBy(scaleFactor)
+    }
+
+    fun setLabMapMode(enabled: Boolean) {
+        if (labMapMode == enabled) return
+        labMapMode = enabled
+        activeSurface?.setLabMapMode(enabled)
+    }
+
+    fun setLabMapPlane(plane: LabPlane) {
+        if (!plane.isValid || labMapPlane == plane) return
+        labMapPlane = plane
+        activeSurface?.setLabMapPlane(plane)
+    }
+
+    fun setOnLabViewportChangedListener(listener: ((LabViewportState?) -> Unit)?) {
+        labViewportChangedListener = listener
+        activeSurface?.setOnLabViewportChangedListener(listener)
+    }
+
+    fun currentLabViewportState(): LabViewportState? = activeSurface?.currentLabViewportState()
+
+    fun restoreLabCamera(camera: CameraState) {
+        activeSurface?.restoreLabCamera(camera)
     }
 
     fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {
@@ -188,6 +216,9 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         listener?.invoke(currentStatus)
     }
 
+    /** Last submitted renderer status, without replacing the app's status listener. */
+    fun currentBackendStatus(): RenderBackendStatus = currentStatus
+
     fun onHostResume() {
         hostResumed = true
         activeSurface?.onHostResume()
@@ -262,6 +293,9 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setPlacementPlaneZ(placementPlaneZ)
         activeSurface?.setRenderLayerOptions(renderLayerOptions)
         activeSurface?.setOnCameraScaleChangedListener(cameraScaleChangedListener)
+        activeSurface?.setLabMapPlane(labMapPlane)
+        activeSurface?.setLabMapMode(labMapMode)
+        activeSurface?.setOnLabViewportChangedListener(labViewportChangedListener)
         addView(
             view,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),

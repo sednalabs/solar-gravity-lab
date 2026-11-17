@@ -1,14 +1,17 @@
 package com.sednalabs.solarlab
 
+import android.app.Application
+import java.io.File
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import com.sednalabs.solarlab.runtime.BridgeBackedRuntimeFacade
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import kotlinx.coroutines.CoroutineScope
@@ -37,7 +40,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // The observatory is always dark, independently of the system theme.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         runtimeViewModel.ensureStarted()
 
         setContent {
@@ -66,9 +73,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-internal class RuntimeSessionViewModel : ViewModel() {
+internal class RuntimeSessionViewModel(application: Application) : AndroidViewModel(application) {
     private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    val runtimeFacade: RuntimeFacade = BridgeBackedRuntimeFacade(runtimeScope)
+    val runtimeFacade: RuntimeFacade = BridgeBackedRuntimeFacade(runtimeScope, File(application.filesDir, "experiments"))
     private var sessionStarted: Boolean = false
 
     fun ensureStarted() {

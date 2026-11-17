@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SolarLabGpuReuse.h"
+
 #include <android/asset_manager.h>
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
@@ -81,10 +83,16 @@ public:
         std::vector<int32_t> tracerFarKinds,
         std::vector<double> trailPositionsM,
         std::vector<int32_t> trailColorsArgb,
-        std::vector<int32_t> trailVertexCounts);
+        std::vector<int32_t> trailVertexCounts,
+        std::vector<double> authoritativePreviousPositionsM = {},
+        double presentationStartedAtSeconds = 0.0,
+        double presentationDurationSeconds = 0.0,
+        std::array<double, 3> trailPreviousOffsetM = {});
 
-    void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians);
+    void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
+        double previousOffsetX = 0.0, double previousOffsetY = 0.0, double previousOffsetZ = 0.0);
     bool Render();
+    double PresentedFraction() const;
 
     std::string LastError() const;
     std::string BackendLabel() const;
@@ -98,6 +106,10 @@ private:
         double sceneOriginY = 0.0;
         double sceneOriginZ = 0.0;
         std::vector<double> authoritativePositionsM;
+        std::vector<double> authoritativePreviousPositionsM;
+        double presentationStartedAtSeconds = 0.0;
+        double presentationDurationSeconds = 0.0;
+        std::array<double, 3> trailPreviousOffsetM{};
         std::vector<double> authoritativeSourceMassesKg;
         std::vector<float> authoritativeRadiiM;
         std::vector<int32_t> authoritativeColorsArgb;
@@ -165,6 +177,9 @@ private:
         float cometVelocityX = 0.0f;
         float cometVelocityY = 0.0f;
         float cometVelocityZ = 1.0f;
+        float previousX = 0.0f;
+        float previousY = 0.0f;
+        float previousZ = 0.0f;
     };
 
     struct CheapPointVertex {
@@ -178,8 +193,10 @@ private:
     struct MediumTracerState {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
+        float vz = 0.0f;
         uint32_t colorArgb = 0;
         float sizePx = 1.0f;
         uint32_t stableId = 0;
@@ -197,13 +214,22 @@ private:
     struct FarTracerState {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
+        float vz = 0.0f;
         uint32_t colorArgb = 0;
         uint32_t densityWeight = 1;
         uint32_t stableId = 0;
         uint32_t reserved = 0;
     };
+
+    // The compute shaders use scalar std430 members: vec3 would add padding and
+    // break the tightly packed three-dimensional vertex input used by graphics.
+    static_assert(sizeof(CheapPointVertex) == 20 && offsetof(CheapPointVertex, colorArgb) == 12);
+    static_assert(sizeof(DensityPointVertex) == 20 && offsetof(DensityPointVertex, densityWeight) == 16);
+    static_assert(sizeof(MediumTracerState) == 40 && offsetof(MediumTracerState, colorArgb) == 24);
+    static_assert(sizeof(FarTracerState) == 40 && offsetof(FarTracerState, stableId) == 32);
 
     struct TrailVertex {
         float x = 0.0f;
@@ -227,6 +253,8 @@ private:
         std::array<float, 4> forwardAndDepth{};
         std::array<float, 4> viewport{};
         std::array<float, 4> primaryLightPositionRelativeAndFlags{};
+        std::array<float, 4> presentation{};
+        std::array<float, 4> trailPresentationTranslation{};
     };
 
     struct ComputePushConstants {
@@ -241,6 +269,8 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkDeviceSize sizeBytes = 0;
         VkBufferUsageFlags usage = 0;
+        VkMemoryPropertyFlags memoryProperties = 0;
+        uint64_t allocationGeneration = 0;
         const char* debugLabel = nullptr;
     };
 
@@ -292,6 +322,7 @@ private:
         bool tileStatsValid = false;
         uint32_t visibleVertexCount = 0;
         bool visibleVertexCountValid = false;
+        std::array<uint64_t, 5> descriptorBufferGenerations{};
         const char* label = nullptr;
     };
 
@@ -336,6 +367,7 @@ private:
     bool CreateFramebuffers();
     bool CreateCommandPool();
     bool CreateDescriptorResources();
+    bool CreateSurfaceColorBuffer();
     bool CreateGraphicsPipelines();
     bool CreateComputePipelines();
     bool AllocateAndRecordCommandBuffers();
@@ -353,6 +385,7 @@ private:
     bool UploadSceneGpuStreamsLocked();
     bool UpdateSceneUniformBufferLocked();
     bool UpdateComputeDescriptorSetsLocked();
+    solarlab::rendering::SceneCommandState SceneCommandStateLocked() const;
     bool RecordComputePassLocked(VkCommandBuffer commandBuffer);
     bool RecordSceneBindingsLocked(VkCommandBuffer commandBuffer);
     void RefreshCompactionVisibleCountsFromReadbackLocked();
@@ -407,9 +440,14 @@ private:
     double cameraCenterX_ = 0.0;
     double cameraCenterY_ = 0.0;
     double cameraCenterZ_ = 0.0;
+    double cameraPreviousOffsetX_ = 0.0;
+    double cameraPreviousOffsetY_ = 0.0;
+    double cameraPreviousOffsetZ_ = 0.0;
     double cameraViewRadiusM_ = 0.0;
     double cameraYawRadians_ = 0.0;
     double cameraPitchRadians_ = 0.0;
+    double pendingPresentationFraction_ = 1.0;
+    double presentedFraction_ = 1.0;
 
     std::string lastError_;
     std::string backendLabelCache_;
@@ -445,6 +483,7 @@ private:
     std::vector<VkFramebuffer> framebuffers_;
 
     GpuBuffer sceneUniformBuffer_;
+    GpuBuffer surfaceColorBuffer_;
     VkDescriptorSetLayout sceneDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet sceneDescriptorSet_ = VK_NULL_HANDLE;
@@ -464,7 +503,12 @@ private:
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
-    int64_t commandBuffersRevision_ = -1;
+    bool commandBuffersDirty_ = true;
+    uint64_t bufferAllocationCount_ = 0;
+    uint64_t commandRecordingCount_ = 0;
+    uint64_t sceneUploadCount_ = 0;
+    uint64_t commandReuseCount_ = 0;
+    uint64_t cpuUploadBytes_ = 0;
 
     static constexpr size_t kStagingUploadRingSize = 8U;
     std::array<StagingUploadSlot, kStagingUploadRingSize> stagingUploadRing_{};

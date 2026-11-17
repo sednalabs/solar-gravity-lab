@@ -131,6 +131,61 @@ internal object SolarLabVulkanBridge {
         return nativeGetCameraState(handle)?.toCameraState()
     }
 
+    internal fun setCameraInReference(handle: Long, camera: CameraState, referenceBodyId: String) {
+        if (!isLibraryLoaded || handle == 0L) return
+        nativeSetCameraInReference(handle, camera.centerM.x, camera.centerM.y, camera.centerM.z,
+            camera.viewRadiusM, camera.yawRadians, camera.pitchRadians, referenceBodyId)
+    }
+
+    internal fun resolveRuntimeCameraTransition(handle: Long, bodyId: String?): RuntimeCameraTransition? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        val packet = nativeResolveRuntimeCameraTransition(handle, bodyId) ?: return null
+        val start = (packet.getOrNull(0) as? DoubleArray)?.toCameraState() ?: return null
+        val target = (packet.getOrNull(1) as? DoubleArray)?.toCameraState() ?: return null
+        val reference = packet.getOrNull(2) as? String ?: return null
+        return RuntimeCameraTransition(start, target, reference.takeIf { it.isNotEmpty() })
+    }
+
+    fun labViewportState(handle: Long): LabViewportState? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        val packet = nativeGetLabViewportState(handle) ?: return null
+        val header = packet.getOrNull(0) as? DoubleArray ?: return null
+        val ids = packet.getOrNull(1) as? Array<*> ?: return null
+        val values = packet.getOrNull(2) as? DoubleArray ?: return null
+        if (header.size != 9 || values.size != ids.size * 8 || header.any { !it.isFinite() } ||
+            header[0] < 1.0 || header[1] < 1.0 || header[8] <= 0.0) return null
+        return LabViewportState(
+            widthPx = header[0].toInt(),
+            heightPx = header[1].toInt(),
+            camera = CameraState(
+                centerM = Vector3d(header[2], header[3], header[4]),
+                viewRadiusM = header[5], yawRadians = header[6], pitchRadians = header[7],
+            ),
+            metresPerPixel = header[8],
+            bodies = ids.mapIndexed { index, id ->
+                val bodyId = id as? String ?: return null
+                val offset = index * 8
+                LabBodyAnchor(
+                    bodyId = bodyId,
+                    xPx = values[offset].toFloat(), yPx = values[offset + 1].toFloat(),
+                    radiusPx = values[offset + 2].toFloat(), depthM = values[offset + 3],
+                    occluded = values[offset + 4] != 0.0,
+                    worldPositionM = Vector3d(values[offset + 5], values[offset + 6], values[offset + 7]),
+                )
+            },
+        )
+    }
+
+    fun setLabMapView(handle: Long, enabled: Boolean, plane: LabPlane) {
+        if (isLibraryLoaded && handle != 0L && plane.isValid) {
+            nativeSetLabMapView(handle, enabled, plane.normal.x, plane.normal.y, plane.normal.z)
+        }
+    }
+
+    fun setTouchDensity(handle: Long, density: Double) {
+        if (isLibraryLoaded && handle != 0L) nativeSetTouchDensity(handle, density)
+    }
+
     fun resolveRuntimeHomeCamera(handle: Long): CameraState? {
         if (!isLibraryLoaded || handle == 0L) return null
         return nativeResolveRuntimeHomeCamera(handle)?.toCameraState()
@@ -257,16 +312,20 @@ internal object SolarLabVulkanBridge {
         return nativePickRuntimeBodyId(handle, screenXPx, screenYPx, viewportWidthPx, viewportHeightPx)?.takeIf { it.isNotBlank() }
     }
 
-    fun render(handle: Long): Boolean = isLibraryLoaded && handle != 0L && nativeRender(handle)
+    fun render(handle: Long, refreshRuntimeScene: Boolean = true): Boolean =
+        isLibraryLoaded && handle != 0L && nativeRender(handle, refreshRuntimeScene)
+
+    fun hasPendingPresentation(handle: Long): Boolean =
+        isLibraryLoaded && handle != 0L && nativeHasPendingPresentation(handle)
 
     private fun DoubleArray.toCameraState(): CameraState? {
-        if (size < 6) return null
+        if (size < 6 || any { !it.isFinite() }) return null
         return CameraState(
             centerM = Vector3d(this[0], this[1], this[2]),
             viewRadiusM = this[3],
             yawRadians = this[4],
             pitchRadians = this[5],
-        ).sanitized()
+        ) // Native orbit/map policy has already validated this displayed camera.
     }
 
     fun lastError(handle: Long): String =
@@ -393,6 +452,20 @@ internal object SolarLabVulkanBridge {
         pitchRadians: Double,
     )
     private external fun nativeGetCameraState(handle: Long): DoubleArray?
+    private external fun nativeSetCameraInReference(
+        handle: Long,
+        centerX: Double,
+        centerY: Double,
+        centerZ: Double,
+        viewRadiusM: Double,
+        yawRadians: Double,
+        pitchRadians: Double,
+        referenceBodyId: String,
+    )
+    private external fun nativeResolveRuntimeCameraTransition(handle: Long, bodyId: String?): Array<Any>?
+    private external fun nativeGetLabViewportState(handle: Long): Array<Any>?
+    private external fun nativeSetLabMapView(handle: Long, enabled: Boolean, normalX: Double, normalY: Double, normalZ: Double)
+    private external fun nativeSetTouchDensity(handle: Long, density: Double)
     private external fun nativeResolveRuntimeHomeCamera(handle: Long): DoubleArray?
     private external fun nativeResolveRuntimeBodyFrame(handle: Long, bodyId: String): DoubleArray?
     private external fun nativeBindRuntimeSession(handle: Long, runtimeSessionHandle: Long)
@@ -443,7 +516,8 @@ internal object SolarLabVulkanBridge {
         viewportWidthPx: Int,
         viewportHeightPx: Int,
     ): String?
-    private external fun nativeRender(handle: Long): Boolean
+    private external fun nativeRender(handle: Long, refreshRuntimeScene: Boolean): Boolean
+    private external fun nativeHasPendingPresentation(handle: Long): Boolean
     private external fun nativeGetLastError(handle: Long): String
     private external fun nativeGetBackendLabel(handle: Long): String
     private external fun nativeGetSceneSummary(handle: Long): String

@@ -357,7 +357,9 @@ def resolve_android_shell_matrix(enabled: bool, android_validation_mode: str, pr
                 "validation_mode": "stage-first-runtime",
                 "debug_stage_first_client": "true",
                 "preferred_gpu_backend": "vulkan",
-                "hosted_debug_profile": "hosted-debug-lite",
+                # The complete laboratory journey must exercise real automatic
+                # playback. The lite profile intentionally disables that clock.
+                "hosted_debug_profile": "full-fidelity",
             }
         ],
     }

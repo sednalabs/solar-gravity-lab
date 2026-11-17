@@ -24,7 +24,9 @@ Only report a backend as active when the runtime or renderer actually selected
 that path. If a requested path falls back, telemetry and UI must show both the
 requested backend and the effective backend.
 
-The Android bridge also requests the Arm64 SIMD CPU backend for device builds.
+The Android bridge requests the SIMD backend matching the process architecture:
+Arm64 on aarch64/arm64, x64 on x86_64/amd64, and scalar for an unknown architecture.
+Native target and CPU/OS feature checks independently guard activation.
 That request is not itself an activation claim. Runtime info must carry all of
 these fields separately:
 
@@ -54,8 +56,14 @@ these fields separately:
   `simd.arm64.neon-f64-parallel-tiled-pairwise`: double-precision NEON pairwise
   gravity acceleration kernels guarded by runtime feature detection and
   scalar-oracle parity tests. Runtime dispatch selects tiled paths only for
-  larger body sets, and selects the parallel tiled path only when worker budget
-  is available.
+  sufficient useful source/target pair work, and selects the parallel tiled path
+  only when useful work covers the selected worker budget. The conservative
+  scheduling guard requires the former dense 96-body work grain (4,560 useful
+  pairs) per selected worker; source-free pairs do not count. Parallel workers
+  receive balanced contiguous ranges of the useful pair stream, including split
+  source rows. The 32-body tile fields cap the worker budget; they no longer
+  describe which rows each worker receives. This guard is provisional and the
+  hosted intermediate-size measurements document its crossover limits.
 - The Arm64 kernel registry also names candidate lanes for SVE, SVE2, SME,
   SME2, SVE-I8MM, DotProd, I8MM, BF16, FP16, FHM, RDM, and FCMA so future
   acceleration work has stable path IDs before those paths become active.
@@ -71,6 +79,45 @@ these fields separately:
   and the number of tile workers that can receive work. This lets hosted logs,
   real-device artifacts, and native Android computer-use sessions verify that a
   scenario is actually exercising the parallel tiled workload shape.
+
+## November 2026 implementation update
+
+The continued Earth–Moon delivery adds measured and inspectable paths:
+
+- KDK reuses the previous drift endpoint acceleration within a fixed segment,
+  preserving the two half-kicks and their arithmetic order. A 64-step segment
+  needs 65 force sweeps instead of 128, with reusable acceleration scratch.
+- Source-free pairs are omitted without dropping the gravity that probes feel.
+  Sparse scenes visit O(SN) useful pairs for S sources and N total bodies.
+- The x86_64 `simd.x64.avx2-f64-pairwise` path processes four FP64 targets in
+  vector registers over ordered sources. Actual CPU/OS AVX2 support gates it;
+  it requires no FMA and uses no approximate reciprocal. Scenes below four
+  bodies deliberately retain scalar execution. FFI path 5 and fallback 4
+  expose these distinct outcomes.
+- Native Vulkan buffers retain compatible allocations and grow capacity
+  geometrically. Command recordings and unchanged compute descriptors are
+  reused while the existing graphics and staging fences protect ownership.
+  `resources=[alloc:...,upload:...,record:...,reuse:...,cpuBytes:...]` in the
+  native summary reports the observed work. These counters are not frame-rate
+  or energy measurements.
+- Medium/far compute compaction shares the 3D camera-uniform prefix and exact
+  packed vertex strides with graphics. Source records retain Z and VZ, culling
+  projects into the camera plane, and far tile Y matches the window coordinate
+  system. Transfer usage flags and dependencies cover both filled empty slots
+  and shader-written counters. Native dense-scene proof must check projected
+  output and completed readbacks, as well as dispatch counts.
+- Optional Android Performance Hint sessions attach to the stable render
+  executor thread. They report measured elapsed render-cycle duration against
+  the display period and close on lifecycle changes or idle. The `ADPF[...]`
+  summary distinguishes requested, implemented, active and unsupported states.
+  This timing includes native driver waits; it is not a GPU timestamp or the
+  CPU simulation's execution time. It does not force core placement or clocks.
+
+See [the repeatable physics benchmark](../engine/physics/benchmarks/README.md),
+[versioned lab accuracy policy](../engine/physics/benchmarks/lab-step-policy.md),
+and [renderer ownership and performance-hint contracts](../render/android-vulkan/README.md).
+`validation-lab` now records same-source scalar/selected-path release measurements
+on hosted x64 and Arm64 runners, including CPU metadata and source revision.
 
 ## What Must Stay Honest
 
@@ -88,6 +135,10 @@ these fields separately:
 - Lower-precision and matrix/vector extensions are reserved for future
   visualization, tracer-assist, or explicitly bounded compute slices until a
   precision policy and scalar-oracle equivalence gate exists.
+- NPU/DSP capability does not automatically supply an FP64 gravitational solver.
+  There is no active NPU/DSP authoritative-physics path in this delivery. Any
+  future model-based assist requires a defined workload, numerical error budget,
+  real provider execution, measured benefit and an independently verified fallback.
 - Candidate scheduler or kernel registry entries are not active acceleration
   claims. They are engineering handles for future implementation, proof, and
   device measurement.

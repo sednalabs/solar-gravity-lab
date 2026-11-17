@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="solarlab_window_background">#02050B</color>
+
+    <!-- A matching window background also covers the system-bar regions while
+         Compose and the native surface are recreated. It sits behind the stage. -->
+    <style name="Theme.SolarLab" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/solarlab_window_background</item>
+        <item name="android:colorBackground">@color/solarlab_window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

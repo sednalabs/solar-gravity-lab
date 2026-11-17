@@ -11,6 +11,7 @@ name = "solarlab_v2"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+solarlab-data = { path = "../data" }
 solarlab-domain = { path = "../domain" }
 solarlab-hardware = { path = "../hardware" }
 solarlab-physics = { path = "../physics" }

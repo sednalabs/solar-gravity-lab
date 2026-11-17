@@ -10,14 +10,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 private val SolarLabColorScheme = darkColorScheme(
-    primary = Color(0xFFF8C15C),
-    onPrimary = Color(0xFF231600),
-    primaryContainer = Color(0xFF4A3211),
-    onPrimaryContainer = Color(0xFFFFE4B0),
-    secondary = Color(0xFF7FD6FF),
-    onSecondary = Color(0xFF062433),
-    secondaryContainer = Color(0xFF17384A),
-    onSecondaryContainer = Color(0xFFC9EEFF),
+    primary = Color(0xFF91C6EA),
+    onPrimary = Color(0xFF102233),
+    primaryContainer = Color(0xFF193D58),
+    onPrimaryContainer = Color(0xFFD1ECFF),
+    secondary = Color(0xFFD7C9AF),
+    onSecondary = Color(0xFF282319),
+    secondaryContainer = Color(0xFF3D362A),
+    onSecondaryContainer = Color(0xFFF1E4CE),
     tertiary = Color(0xFFB5A5FF),
     onTertiary = Color(0xFF221A4F),
     tertiaryContainer = Color(0xFF34296A),
@@ -38,14 +38,14 @@ private val SolarLabColorScheme = darkColorScheme(
 
 private val SolarLabTypography = androidx.compose.material3.Typography(
     displaySmall = TextStyle(
-        fontFamily = FontFamily.Serif,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
         fontSize = 40.sp,
         lineHeight = 44.sp,
         letterSpacing = (-0.8).sp,
     ),
     headlineMedium = TextStyle(
-        fontFamily = FontFamily.Serif,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 30.sp,
         lineHeight = 34.sp,
@@ -76,18 +76,18 @@ private val SolarLabTypography = androidx.compose.material3.Typography(
         lineHeight = 21.sp,
     ),
     labelLarge = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        letterSpacing = 0.8.sp,
+        letterSpacing = 0.1.sp,
     ),
     labelMedium = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
         lineHeight = 16.sp,
-        letterSpacing = 0.7.sp,
+        letterSpacing = 0.1.sp,
     ),
 )
 

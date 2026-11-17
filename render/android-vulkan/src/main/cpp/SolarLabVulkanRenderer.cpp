@@ -1,6 +1,9 @@
 #include "SolarLabVulkanRenderer.h"
+#include "SolarLabPresentation.h"
 
 #include <android/asset_manager.h>
+#include <android/bitmap.h>
+#include <android/imagedecoder.h>
 #include <android/log.h>
 #include <vulkan/vulkan_android.h>
 
@@ -164,9 +167,6 @@ Float3 Normalize(Float3 value, Float3 fallback) {
     return Scale(value, 1.0f / magnitude);
 }
 
-constexpr float kOrbitMinPitchRadians = 12.0f * 0.017453292519943295769f;
-constexpr float kOrbitMaxPitchRadians = 88.0f * 0.017453292519943295769f;
-constexpr float kDefaultDepthExtentFactor = 48.0f;
 
 }  // namespace
 
@@ -370,13 +370,21 @@ void SolarLabVulkanRenderer::SubmitScene(
     std::vector<int32_t> tracerFarKinds,
     std::vector<double> trailPositionsM,
     std::vector<int32_t> trailColorsArgb,
-    std::vector<int32_t> trailVertexCounts) {
+    std::vector<int32_t> trailVertexCounts,
+    std::vector<double> authoritativePreviousPositionsM,
+    double presentationStartedAtSeconds,
+    double presentationDurationSeconds,
+    std::array<double, 3> trailPreviousOffsetM) {
     std::scoped_lock lock(stateMutex_);
     sceneBuffers_.sourceRevision = sourceRevision;
     sceneBuffers_.sceneOriginX = sceneOriginX;
     sceneBuffers_.sceneOriginY = sceneOriginY;
     sceneBuffers_.sceneOriginZ = sceneOriginZ;
     sceneBuffers_.authoritativePositionsM = std::move(authoritativePositionsM);
+    sceneBuffers_.authoritativePreviousPositionsM = std::move(authoritativePreviousPositionsM);
+    sceneBuffers_.presentationStartedAtSeconds = presentationStartedAtSeconds;
+    sceneBuffers_.presentationDurationSeconds = presentationDurationSeconds;
+    sceneBuffers_.trailPreviousOffsetM = trailPreviousOffsetM;
     sceneBuffers_.authoritativeSourceMassesKg = std::move(authoritativeSourceMassesKg);
     sceneBuffers_.authoritativeRadiiM = std::move(authoritativeRadiiM);
     sceneBuffers_.authoritativeColorsArgb = std::move(authoritativeColorsArgb);
@@ -405,15 +413,18 @@ void SolarLabVulkanRenderer::SubmitScene(
     if (sceneGpuStreams_.uploadedRevision != sourceRevision) {
         backendLabelCache_ = "Vulkan SPIR-V graphics pipelines pending scene upload";
         sceneSummaryCache_ = BuildSceneSummaryLocked();
-        commandBuffersRevision_ = -1;
     }
 }
 
-void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians) {
+void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
+    double previousOffsetX, double previousOffsetY, double previousOffsetZ) {
     std::scoped_lock lock(stateMutex_);
     cameraCenterX_ = centerX;
     cameraCenterY_ = centerY;
     cameraCenterZ_ = centerZ;
+    cameraPreviousOffsetX_ = previousOffsetX;
+    cameraPreviousOffsetY_ = previousOffsetY;
+    cameraPreviousOffsetZ_ = previousOffsetZ;
     cameraViewRadiusM_ = viewRadiusM;
     cameraYawRadians_ = yawRadians;
     cameraPitchRadians_ = pitchRadians;
@@ -443,7 +454,7 @@ bool SolarLabVulkanRenderer::Render() {
     if (!UpdateSceneUniformBufferLocked()) {
         return false;
     }
-    if (commandBuffersRevision_ != sceneGpuStreams_.uploadedRevision) {
+    if (commandBuffersDirty_) {
         if (!AllocateAndRecordCommandBuffers()) {
             return false;
         }
@@ -505,17 +516,27 @@ bool SolarLabVulkanRenderer::Render() {
     };
 
     const auto presentResult = vkQueuePresentKHR(presentQueue_, &presentInfo);
-    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR) {
         SetError("Swapchain present reported it is out of date.");
         return false;
     }
-    if (presentResult != VK_SUCCESS) {
-        SetError("vkQueuePresentKHR failed.");
+    // Android reports SUBOPTIMAL after successfully queuing an image when the
+    // window's rotation differs from our intentional identity pre-transform.
+    // That is expected for compositor-managed rotation, not a lost surface.
+    // Accept it just as acquire does, or Kotlin stops scheduling after one frame.
+    if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR) {
+        SetError("vkQueuePresentKHR failed with result=" + std::to_string(presentResult) + ".");
         return false;
     }
 
+    presentedFraction_ = pendingPresentationFraction_;
     lastError_.clear();
     return true;
+}
+
+double SolarLabVulkanRenderer::PresentedFraction() const {
+    std::scoped_lock lock(stateMutex_);
+    return presentedFraction_;
 }
 
 std::string SolarLabVulkanRenderer::LastError() const {
@@ -768,6 +789,19 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
     const auto presentMode = ChoosePresentMode(presentModes);
     const auto extent = ChooseExtent(capabilities, width, height);
 
+    // Every stage shader and the CPU touch projection use the SurfaceView's window
+    // coordinates. We have not pre-rotated those coordinates into the display's
+    // natural orientation, so Android must handle that rotation. Advertising
+    // currentTransform here asks Android to undo a rotation we never applied; at
+    // 90/270 degrees the rotated buffer is then stretched into the window, turning
+    // round bodies into ellipses. Keep the swapchain in the same window coordinate
+    // system as the viewport, and only advertise the identity transform.
+    constexpr VkSurfaceTransformFlagBitsKHR preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    if ((capabilities.supportedTransforms & preTransform) == 0U) {
+        SetError("Android surface does not support the window-coordinate identity transform.");
+        return false;
+    }
+
     uint32_t imageCount = capabilities.minImageCount + 1;
     if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount) {
         imageCount = capabilities.maxImageCount;
@@ -787,7 +821,7 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
-        .preTransform = capabilities.currentTransform,
+        .preTransform = preTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = presentMode,
         .clipped = VK_TRUE,
@@ -801,6 +835,12 @@ bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
 
     swapchainImageFormat_ = chosenFormat.format;
     swapchainExtent_ = extent;
+    LogInfo("Swapchain window=" + std::to_string(width) + "x" + std::to_string(height) +
+        " surface=" + std::to_string(capabilities.currentExtent.width) + "x" +
+        std::to_string(capabilities.currentExtent.height) + " buffer=" +
+        std::to_string(extent.width) + "x" + std::to_string(extent.height) +
+        " currentTransform=" + std::to_string(capabilities.currentTransform) +
+        " preTransform=" + std::to_string(preTransform));
 
     vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount, nullptr);
     swapchainImages_.resize(imageCount);
@@ -1143,6 +1183,50 @@ bool SolarLabVulkanRenderer::CreateCommandPool() {
     return true;
 }
 
+// Decode the two bundled, unmodified NASA maps once per Vulkan device. A small read-only
+// RGBA buffer reuses the existing upload path; no image decoder runs on the display clock.
+bool SolarLabVulkanRenderer::CreateSurfaceColorBuffer() {
+    if (surfaceColorBuffer_.buffer != VK_NULL_HANDLE) return true;
+    constexpr size_t width = 1024;
+    constexpr size_t height = 512;
+    constexpr size_t pixelsPerMap = width * height;
+    const std::array<const char*, 2> paths = {
+        "solarlab/surfaces/earth-nasa.png", "solarlab/surfaces/moon-nasa.jpg",
+    };
+    std::vector<uint32_t> pixels(pixelsPerMap * paths.size());
+    for (size_t index = 0; index < paths.size(); ++index) {
+        AAsset* asset = AAssetManager_open(assetManager_, paths[index], AASSET_MODE_BUFFER);
+        if (asset == nullptr) {
+            SetError(std::string("Missing bundled surface map: ") + paths[index]);
+            return false;
+        }
+        AImageDecoder* decoder = nullptr;
+        const int created = AImageDecoder_createFromAAsset(asset, &decoder);
+        bool decoded = false;
+        if (created == ANDROID_IMAGE_DECODER_SUCCESS && decoder != nullptr) {
+            const AImageDecoderHeaderInfo* info = AImageDecoder_getHeaderInfo(decoder);
+            if (AImageDecoderHeaderInfo_getWidth(info) == static_cast<int32_t>(width) &&
+                AImageDecoderHeaderInfo_getHeight(info) == static_cast<int32_t>(height) &&
+                AImageDecoder_setAndroidBitmapFormat(decoder, ANDROID_BITMAP_FORMAT_RGBA_8888) ==
+                    ANDROID_IMAGE_DECODER_SUCCESS) {
+                decoded = AImageDecoder_decodeImage(decoder, pixels.data() + index * pixelsPerMap,
+                    width * sizeof(uint32_t), pixelsPerMap * sizeof(uint32_t)) ==
+                    ANDROID_IMAGE_DECODER_SUCCESS;
+            }
+        }
+        if (decoder != nullptr) AImageDecoder_delete(decoder);
+        AAsset_close(asset);
+        if (!decoded) {
+            SetError(std::string("Cannot decode bundled 1024 x 512 surface map: ") + paths[index]);
+            return false;
+        }
+    }
+    // Both supported Android ABIs are little-endian: RGBA bytes are unpackUnorm4x8 words.
+    return EnsureHostVisibleBuffer(ByteSize(pixels), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        "celestial-surface-colors", surfaceColorBuffer_) &&
+        UploadBytes(pixels.data(), ByteSize(pixels), surfaceColorBuffer_);
+}
+
 // Allocates the descriptor layouts, pool, and uniform/scene buffers shared by graphics and compute
 // passes so later pipeline setup can bind a stable descriptor surface.
 bool SolarLabVulkanRenderer::CreateDescriptorResources() {
@@ -1154,22 +1238,20 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     if (!EnsureHostVisibleBuffer(sizeof(SceneUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, "scene-uniform", sceneUniformBuffer_)) {
         return false;
     }
+    if (!CreateSurfaceColorBuffer()) return false;
 
-    // The graphics descriptor exposes one uniform buffer and is reused across swapchain rebuilds.
+    // Scene uniforms and immutable surface colours survive ordinary swapchain rebuilds.
     if (sceneDescriptorSetLayout_ == VK_NULL_HANDLE) {
-        const VkDescriptorSetLayoutBinding binding{
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-            .pImmutableSamplers = nullptr,
-        };
+        const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {{
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        }};
         const VkDescriptorSetLayoutCreateInfo layoutCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
-            .bindingCount = 1,
-            .pBindings = &binding,
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
+            .pBindings = bindings.data(),
         };
         if (vkCreateDescriptorSetLayout(device_, &layoutCreateInfo, nullptr, &sceneDescriptorSetLayout_) != VK_SUCCESS) {
             SetError("vkCreateDescriptorSetLayout failed.");
@@ -1180,17 +1262,17 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     // A single descriptor set is enough for the scene uniform path; compute storage is configured
     // separately below when the queue family supports it.
     if (descriptorPool_ == VK_NULL_HANDLE) {
-        const VkDescriptorPoolSize poolSize{
-            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-        };
+        const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+        }};
         const VkDescriptorPoolCreateInfo poolCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
             .maxSets = 1,
-            .poolSizeCount = 1,
-            .pPoolSizes = &poolSize,
+            .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+            .pPoolSizes = poolSizes.data(),
         };
         if (vkCreateDescriptorPool(device_, &poolCreateInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
             SetError("vkCreateDescriptorPool failed.");
@@ -1230,6 +1312,16 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
         .pTexelBufferView = nullptr,
     };
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    const VkDescriptorBufferInfo surfaceInfo{
+        .buffer = surfaceColorBuffer_.buffer,
+        .offset = 0,
+        .range = surfaceColorBuffer_.sizeBytes,
+    };
+    VkWriteDescriptorSet surfaceWrite = write;
+    surfaceWrite.dstBinding = 1;
+    surfaceWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    surfaceWrite.pBufferInfo = &surfaceInfo;
+    vkUpdateDescriptorSets(device_, 1, &surfaceWrite, 0, nullptr);
 
     // The pipeline layout depends on descriptor shape, not descriptor contents, so it can survive
     // uniform-buffer updates.
@@ -1399,6 +1491,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipelines() {
         MakeAttributeDescription(12, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, cometAntiSolarX)),
         MakeAttributeDescription(13, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, cometVelocityX)),
         MakeAttributeDescription(14, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, ringPlaneX)),
+        MakeAttributeDescription(15, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(BillboardVertex, previousX)),
     };
     if (!CreateGraphicsPipeline(
             "billboard",
@@ -1511,25 +1604,33 @@ bool SolarLabVulkanRenderer::AllocateAndRecordCommandBuffers() {
         return false;
     }
 
-    if (!commandBuffers_.empty()) {
+    if (!commandBuffers_.empty() && commandBuffers_.size() != framebuffers_.size()) {
         vkFreeCommandBuffers(device_, commandPool_, static_cast<uint32_t>(commandBuffers_.size()), commandBuffers_.data());
         commandBuffers_.clear();
     }
 
-    commandBuffers_.resize(framebuffers_.size());
-    const VkCommandBufferAllocateInfo allocateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .pNext = nullptr,
-        .commandPool = commandPool_,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = static_cast<uint32_t>(commandBuffers_.size()),
-    };
-    if (vkAllocateCommandBuffers(device_, &allocateInfo, commandBuffers_.data()) != VK_SUCCESS) {
-        SetError("vkAllocateCommandBuffers failed.");
-        return false;
+    if (commandBuffers_.empty()) {
+        commandBuffers_.resize(framebuffers_.size());
+        const VkCommandBufferAllocateInfo allocateInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .commandPool = commandPool_,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = static_cast<uint32_t>(commandBuffers_.size()),
+        };
+        if (vkAllocateCommandBuffers(device_, &allocateInfo, commandBuffers_.data()) != VK_SUCCESS) {
+            commandBuffers_.clear();
+            SetError("vkAllocateCommandBuffers failed.");
+            return false;
+        }
     }
 
     for (size_t index = 0; index < commandBuffers_.size(); ++index) {
+        // Re-record only after the frame fence; retain the command pool's allocations.
+        if (vkResetCommandBuffer(commandBuffers_[index], 0) != VK_SUCCESS) {
+            SetError("vkResetCommandBuffer failed for scene recording.");
+            return false;
+        }
         const VkCommandBufferBeginInfo beginInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .pNext = nullptr,
@@ -1591,7 +1692,9 @@ bool SolarLabVulkanRenderer::AllocateAndRecordCommandBuffers() {
         }
     }
 
-    commandBuffersRevision_ = sceneGpuStreams_.uploadedRevision;
+    commandBuffersDirty_ = false;
+    ++commandRecordingCount_;
+    sceneSummaryCache_ = BuildSceneSummaryLocked();
     return true;
 }
 
@@ -1629,7 +1732,7 @@ void SolarLabVulkanRenderer::DestroySurfaceResources() {
         vkFreeCommandBuffers(device_, commandPool_, static_cast<uint32_t>(commandBuffers_.size()), commandBuffers_.data());
         commandBuffers_.clear();
     }
-    commandBuffersRevision_ = -1;
+    commandBuffersDirty_ = true;
 
     DestroyGraphicsPipelines();
 
@@ -1762,7 +1865,41 @@ bool SolarLabVulkanRenderer::EnsureSceneGpuStreamsLocked() {
     if (sceneGpuStreams_.uploadedRevision == sceneBuffers_.sourceRevision) {
         return true;
     }
-    return UploadSceneGpuStreamsLocked();
+    if (!UploadSceneGpuStreamsLocked()) {
+        // A partially completed upload may have replaced a binding before it failed.
+        // A subsequent retry must never submit the previous executable commands.
+        commandBuffersDirty_ = true;
+        return false;
+    }
+    return true;
+}
+
+solarlab::rendering::SceneCommandState SolarLabVulkanRenderer::SceneCommandStateLocked() const {
+    using solarlab::rendering::ComputeCommandState;
+    using solarlab::rendering::DrawCommandState;
+    const auto draw = [](const DrawStreamBuffers& stream) {
+        return DrawCommandState{stream.vertexBuffer.allocationGeneration, stream.vertexCount};
+    };
+    const auto compute = [](const ComputeDrawStreamBuffers& stream) {
+        return ComputeCommandState{
+            .enabled = stream.enabled,
+            .bufferGenerations = {stream.sourceStateBuffer.allocationGeneration,
+                stream.outputVertexBuffer.allocationGeneration, stream.indirectCommandBuffer.allocationGeneration,
+                stream.indirectReadbackBuffer.allocationGeneration, stream.tileCounterBuffer.allocationGeneration,
+                stream.tileCounterReadbackBuffer.allocationGeneration},
+            .sourceCount = stream.sourceVertexCount,
+            .dispatchCount = stream.dispatchGroupCountX,
+            .outputCapacity = stream.outputVertexCapacity,
+            .tileCounterCount = stream.tileCounterCount,
+        };
+    };
+    return {
+        .draws = {draw(sceneGpuStreams_.authoritative), draw(sceneGpuStreams_.tracerNear),
+            draw(sceneGpuStreams_.tracerMedium), draw(sceneGpuStreams_.tracerFar), draw(sceneGpuStreams_.trails)},
+        .medium = compute(sceneGpuStreams_.tracerMediumCompute),
+        .far = compute(sceneGpuStreams_.tracerFarCompute),
+        .trailStrips = sceneGpuStreams_.trailStripVertexCounts,
+    };
 }
 
 // Repackages the latest runtime scene into GPU vertex, indirect, and compaction buffers while the
@@ -1773,7 +1910,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         return false;
     }
 
-    DestroySceneGpuStreams();
+    // The previous graphics fence has completed before this method runs. Keep live
+    // allocations and recorded bindings; payload bytes alone do not change commands.
+    const auto previousCommands = SceneCommandStateLocked();
+    const uint64_t uploadBytesBefore = cpuUploadBytes_;
 
     // Authoritative bodies feed both billboard rendering and compute influence buffers, so their
     // parallel arrays are collapsed together before any upload starts.
@@ -1818,6 +1958,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         if (!std::isfinite(visualRadiusM) || visualRadiusM <= 0.0f) {
             visualRadiusM = std::max(physicalRadiusM, 1.0f);
         }
+        const auto& previousPositions = sceneBuffers_.authoritativePreviousPositionsM.size() ==
+            sceneBuffers_.authoritativePositionsM.size()
+                ? sceneBuffers_.authoritativePreviousPositionsM
+                : sceneBuffers_.authoritativePositionsM;
         authoritativeVertices.push_back(BillboardVertex{
             .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
@@ -1851,6 +1995,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .cometVelocityX = appearance.cometVelocityX,
             .cometVelocityY = appearance.cometVelocityY,
             .cometVelocityZ = appearance.cometVelocityZ,
+            .previousX = static_cast<float>(previousPositions[base]),
+            .previousY = static_cast<float>(previousPositions[base + 1U]),
+            .previousZ = static_cast<float>(previousPositions[base + 2U]),
         });
         authoritativeInfluences.push_back(AuthoritativeInfluenceBody{
             .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
@@ -1879,6 +2026,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             .kind = static_cast<uint32_t>(sceneBuffers_.tracerNearKinds[index]),
             .alpha = kNearTracerAlpha,
             .physicalRadiusM = sceneBuffers_.tracerNearRadiiM[index],
+            .previousX = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base]),
+            .previousY = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base + 1U]),
+            .previousZ = static_cast<float>(sceneBuffers_.tracerNearPositionsM[base + 2U]),
         });
     }
 
@@ -1909,8 +2059,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         tracerMediumStates.push_back(MediumTracerState{
             .x = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.tracerMediumPositionsM[base + 2U]),
             .vx = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base]),
             .vy = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base + 1U]),
+            .vz = static_cast<float>(sceneBuffers_.tracerMediumVelocitiesMps[base + 2U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerMediumColorsArgb[index]), kMediumTracerAlpha),
             .sizePx = sizePx,
             .stableId = static_cast<uint32_t>(sceneBuffers_.tracerMediumStableIds[index]),
@@ -1943,8 +2095,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         tracerFarStates.push_back(FarTracerState{
             .x = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 1U]),
+            .z = static_cast<float>(sceneBuffers_.tracerFarPositionsM[base + 2U]),
             .vx = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base]),
             .vy = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base + 1U]),
+            .vz = static_cast<float>(sceneBuffers_.tracerFarVelocitiesMps[base + 2U]),
             .colorArgb = ApplyAlphaToArgb(static_cast<uint32_t>(sceneBuffers_.tracerFarColorsArgb[index]), kFarTracerAlpha),
             .densityWeight = densityWeight,
             .stableId = static_cast<uint32_t>(sceneBuffers_.tracerFarStableIds[index]),
@@ -2038,9 +2192,15 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         stream.tileCounterCount = 0U;
         stream.activeTileCount = 0U;
         stream.peakTileOccupancy = 0U;
+        stream.overflowVertexCount = 0U;
         stream.tileStatsValid = false;
         stream.visibleVertexCount = 0U;
         stream.visibleVertexCountValid = false;
+        // A successful source copy may still be in flight when a later allocation
+        // fails. Keep those owned buffers until a later fenced update or cleanup.
+    };
+    auto releaseInactiveComputeStream = [this, &disableComputeStream](ComputeDrawStreamBuffers& stream, const char* label) {
+        disableComputeStream(stream, label, "stream is inactive");
         DestroyGpuBuffer(stream.sourceStateBuffer);
         DestroyGpuBuffer(stream.outputVertexBuffer);
         DestroyGpuBuffer(stream.indirectCommandBuffer);
@@ -2162,9 +2322,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid = false;
         }
     } else {
-        DestroyGpuBuffer(sceneGpuStreams_.tracerMediumCompute.indirectReadbackBuffer);
-        sceneGpuStreams_.tracerMediumCompute.visibleVertexCount = 0;
-        sceneGpuStreams_.tracerMediumCompute.visibleVertexCountValid = false;
+        releaseInactiveComputeStream(sceneGpuStreams_.tracerMediumCompute, "tracer-medium-compute");
     }
 
     // Far tracers add tile counters so dense regions can be capped before draw submission.
@@ -2180,7 +2338,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter grid was empty");
         } else if (!ensureDeviceLocalComputeBuffer(
                 static_cast<VkDeviceSize>(std::max<uint32_t>(farOutputVertexCapacity, 1U)) * sizeof(DensityPointVertex),
-                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 sceneGpuStreams_.tracerFarCompute.label,
                 sceneGpuStreams_.tracerFarCompute.outputVertexBuffer)) {
             disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "device-local compute output allocation failed");
@@ -2201,7 +2359,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             sceneGpuStreams_.tracerFarCompute.outputVertexCapacity = farOutputVertexCapacity;
             if (!ensureDeviceLocalComputeBuffer(
                     static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                     "tracer-far-tile-counters",
                     sceneGpuStreams_.tracerFarCompute.tileCounterBuffer)) {
                 disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter buffer allocation failed");
@@ -2221,17 +2379,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
             }
         }
     } else {
-        DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer);
-        DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterBuffer);
-        DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer);
-        sceneGpuStreams_.tracerFarCompute.outputVertexCapacity = 0U;
-        sceneGpuStreams_.tracerFarCompute.tileCounterCount = 0U;
-        sceneGpuStreams_.tracerFarCompute.activeTileCount = 0;
-        sceneGpuStreams_.tracerFarCompute.peakTileOccupancy = 0;
-        sceneGpuStreams_.tracerFarCompute.overflowVertexCount = 0;
-        sceneGpuStreams_.tracerFarCompute.tileStatsValid = false;
-        sceneGpuStreams_.tracerFarCompute.visibleVertexCount = 0;
-        sceneGpuStreams_.tracerFarCompute.visibleVertexCountValid = false;
+        releaseInactiveComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute");
     }
 
     if (canCompute && !UpdateComputeDescriptorSetsLocked()) {
@@ -2260,7 +2408,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.sizeBytes;
 
     uploadStats_.sourceRevision = sceneBuffers_.sourceRevision;
-    uploadStats_.bytesUploaded = sceneGpuStreams_.totalBytes;
+    uploadStats_.bytesUploaded = cpuUploadBytes_ - uploadBytesBefore;
     uploadStats_.authoritativeCount = authoritativeCount;
     uploadStats_.ringBodyCount = ringBodyCount;
     uploadStats_.atmosphereBodyCount = atmosphereBodyCount;
@@ -2272,8 +2420,10 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     uploadStats_.trailStripCount = static_cast<uint32_t>(sceneGpuStreams_.trailStripVertexCounts.size());
 
     backendLabelCache_ = std::string("Vulkan SPIR-V graphics pipelines") + (canCompute ? " + compute compaction" : (enabledFeatures_.largePoints ? " + largePoints" : " (point sizes clamped)"));
+    ++sceneUploadCount_;
+    commandBuffersDirty_ = commandBuffersDirty_ || previousCommands != SceneCommandStateLocked();
+    if (!commandBuffersDirty_) ++commandReuseCount_;
     sceneSummaryCache_ = BuildSceneSummaryLocked();
-    commandBuffersRevision_ = -1;
     LogInfo("Uploaded Vulkan draw streams for revision " + std::to_string(sceneBuffers_.sourceRevision) + (canCompute ? " with compute-ready compaction buffers." : " with direct draw buffers."));
     return true;
 }
@@ -2286,34 +2436,30 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
 
     const float widthPx = static_cast<float>(std::max<uint32_t>(swapchainExtent_.width, 1U));
     const float heightPx = static_cast<float>(std::max<uint32_t>(swapchainExtent_.height, 1U));
-    const float minDimensionPx = std::max(1.0f, std::min(widthPx, heightPx));
-    const float viewRadiusM = static_cast<float>(std::max(cameraViewRadiusM_, 1.0));
-    const float halfSpanX = std::max(viewRadiusM * (widthPx / minDimensionPx), 1.0e-6f);
-    const float halfSpanY = std::max(viewRadiusM * (heightPx / minDimensionPx), 1.0e-6f);
-    const float halfDepth = std::max(viewRadiusM * kDefaultDepthExtentFactor, 1.0e-3f);
-    const float metersPerPixel = std::max((2.0f * viewRadiusM) / minDimensionPx, 1.0e-6f);
+    const auto projection = solarlab::presentation::MakeProjection(cameraViewRadiusM_,
+        static_cast<int>(swapchainExtent_.width), static_cast<int>(swapchainExtent_.height));
+    const float halfSpanX = static_cast<float>(projection.halfSpanX);
+    const float halfSpanY = static_cast<float>(projection.halfSpanY);
+    const float halfDepth = static_cast<float>(projection.halfDepth);
+    const float metersPerPixel = static_cast<float>(projection.metersPerPixel);
+    const float presentationFraction = static_cast<float>(solarlab::presentation::InterpolationFraction(
+        solarlab::presentation::MonotonicSeconds(), sceneBuffers_.presentationStartedAtSeconds,
+        sceneBuffers_.presentationDurationSeconds));
     const float maxPointSizePx = enabledFeatures_.largePoints
         ? std::max(1.0f, std::min(physicalDeviceProperties_.limits.pointSizeRange[1], kDefaultMaxPointSizePx))
         : 1.0f;
 
-    const float yawRadians = static_cast<float>(cameraYawRadians_);
-    const float pitchRadians = std::clamp(static_cast<float>(cameraPitchRadians_), kOrbitMinPitchRadians, kOrbitMaxPitchRadians);
-    const float cosYaw = std::cos(yawRadians);
-    const float sinYaw = std::sin(yawRadians);
-    const float cosPitch = std::cos(pitchRadians);
-    const float sinPitch = std::sin(pitchRadians);
-
-    const Float3 right = Normalize(MakeFloat3(cosYaw, sinYaw, 0.0f), MakeFloat3(1.0f, 0.0f, 0.0f));
-    const Float3 screenUpHorizontal = Normalize(MakeFloat3(-sinYaw, cosYaw, 0.0f), MakeFloat3(0.0f, 1.0f, 0.0f));
-    const Float3 forward = Normalize(
-        Add(Scale(screenUpHorizontal, cosPitch), MakeFloat3(0.0f, 0.0f, -sinPitch)),
-        MakeFloat3(0.0f, 0.0f, -1.0f));
-    const Float3 up = Normalize(Cross(right, forward), MakeFloat3(0.0f, 0.0f, 1.0f));
+    // The controller applies orbit limits. A declared map plane must retain its
+    // exact normal, including a true overhead view, in rendering and picking.
+    const auto basis = solarlab::presentation::MakeCameraBasis(cameraYawRadians_, cameraPitchRadians_);
+    const Float3 right = MakeFloat3(basis.right[0], basis.right[1], basis.right[2]);
+    const Float3 forward = MakeFloat3(basis.forward[0], basis.forward[1], basis.forward[2]);
+    const Float3 up = MakeFloat3(basis.up[0], basis.up[1], basis.up[2]);
 
     const Float3 centerRelative = MakeFloat3(
-        static_cast<float>(cameraCenterX_ - sceneBuffers_.sceneOriginX),
-        static_cast<float>(cameraCenterY_ - sceneBuffers_.sceneOriginY),
-        static_cast<float>(cameraCenterZ_ - sceneBuffers_.sceneOriginZ));
+        static_cast<float>(cameraCenterX_ + cameraPreviousOffsetX_ * (1.0 - presentationFraction) - sceneBuffers_.sceneOriginX),
+        static_cast<float>(cameraCenterY_ + cameraPreviousOffsetY_ * (1.0 - presentationFraction) - sceneBuffers_.sceneOriginY),
+        static_cast<float>(cameraCenterZ_ + cameraPreviousOffsetZ_ * (1.0 - presentationFraction) - sceneBuffers_.sceneOriginZ));
 
     std::array<float, 4> primaryLightPositionRelativeAndFlags{
         0.0f,
@@ -2329,10 +2475,14 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
             continue;
         }
         const size_t base = index * 3U;
+        const auto& previous = sceneBuffers_.authoritativePreviousPositionsM.size() ==
+            sceneBuffers_.authoritativePositionsM.size()
+                ? sceneBuffers_.authoritativePreviousPositionsM
+                : sceneBuffers_.authoritativePositionsM;
         primaryLightPositionRelativeAndFlags = {
-            static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
-            static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
-            static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 2U]),
+            static_cast<float>(solarlab::presentation::Mix(previous[base], sceneBuffers_.authoritativePositionsM[base], presentationFraction)),
+            static_cast<float>(solarlab::presentation::Mix(previous[base + 1U], sceneBuffers_.authoritativePositionsM[base + 1U], presentationFraction)),
+            static_cast<float>(solarlab::presentation::Mix(previous[base + 2U], sceneBuffers_.authoritativePositionsM[base + 2U], presentationFraction)),
             1.0f,
         };
         break;
@@ -2370,9 +2520,18 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
             enabledFeatures_.largePoints ? 1.0f : 0.0f,
         },
         .primaryLightPositionRelativeAndFlags = primaryLightPositionRelativeAndFlags,
+        .presentation = {static_cast<float>(presentationFraction), 0.0f, 0.0f, 0.0f},
+        .trailPresentationTranslation = {
+            static_cast<float>(solarlab::presentation::PresentationReferenceOffset(sceneBuffers_.trailPreviousOffsetM[0], presentationFraction)),
+            static_cast<float>(solarlab::presentation::PresentationReferenceOffset(sceneBuffers_.trailPreviousOffsetM[1], presentationFraction)),
+            static_cast<float>(solarlab::presentation::PresentationReferenceOffset(sceneBuffers_.trailPreviousOffsetM[2], presentationFraction)),
+            0.0f,
+        },
     };
 
-    return UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_);
+    if (!UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_)) return false;
+    pendingPresentationFraction_ = static_cast<double>(uniformData.presentation[0]);
+    return true;
 }
 
 // Refreshes compute descriptor sets after scene-buffer replacement so compaction kernels read the
@@ -2384,7 +2543,11 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
 
     // Each compute variant binds the same five-buffer layout: uniforms, source state, compacted
     // output, indirect draw command, and auxiliary counters.
-    auto updateSet = [this](VkDescriptorSet set, const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect, const GpuBuffer& aux) {
+    auto updateSet = [this](VkDescriptorSet set, ComputeDrawStreamBuffers& stream,
+        const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect, const GpuBuffer& aux) {
+        const std::array<uint64_t, 5> generations = {sceneUniformBuffer_.allocationGeneration,
+            source.allocationGeneration, output.allocationGeneration, indirect.allocationGeneration, aux.allocationGeneration};
+        if (stream.descriptorBufferGenerations == generations) return;
         const VkDescriptorBufferInfo uniformInfo{
             .buffer = sceneUniformBuffer_.buffer,
             .offset = 0,
@@ -2473,6 +2636,10 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
             },
         }};
         vkUpdateDescriptorSets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        stream.descriptorBufferGenerations = generations;
+        // Ordinary descriptor updates invalidate commands that bind the set, even if
+        // buffer handles happen to be recycled. Do not update stable bindings per packet.
+        commandBuffersDirty_ = true;
     };
 
     // Medium and far tracer compaction can be enabled independently based on scene scale and
@@ -2487,6 +2654,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         }
         updateSet(
             tracerMediumComputeDescriptorSet_,
+            sceneGpuStreams_.tracerMediumCompute,
             sceneGpuStreams_.tracerMediumCompute.sourceStateBuffer,
             sceneGpuStreams_.tracerMediumCompute.outputVertexBuffer,
             sceneGpuStreams_.tracerMediumCompute.indirectCommandBuffer,
@@ -2506,6 +2674,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
         }
         updateSet(
             tracerFarComputeDescriptorSet_,
+            sceneGpuStreams_.tracerFarCompute,
             sceneGpuStreams_.tracerFarCompute.sourceStateBuffer,
             sceneGpuStreams_.tracerFarCompute.outputVertexBuffer,
             sceneGpuStreams_.tracerFarCompute.indirectCommandBuffer,
@@ -2678,20 +2847,22 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
      * graphics pipeline attempts to read them as vertex data or indirect parameters.
      * 
      * Pipeline Barrier:
-     * - srcStage: COMPUTE_SHADER
+     * - srcStage: COMPUTE_SHADER and TRANSFER (empty-slot clears)
      * - dstStage: DRAW_INDIRECT (for the command buffer) and VERTEX_INPUT (for the vertex data)
-     * - srcAccess: SHADER_WRITE
+     * - srcAccess: SHADER_WRITE and TRANSFER_WRITE
      * - dstAccess: INDIRECT_COMMAND_READ and VERTEX_ATTRIBUTE_READ
      */
     const VkMemoryBarrier computeToGraphicsBarrier{
         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = nullptr,
-        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        // Unoccupied far slots are zeroed by transfer and read by the fixed-count
+        // draw too. Publish those clears as well as the slots compute populated.
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
     };
     vkCmdPipelineBarrier(
         commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
         0,
         1,
@@ -2706,7 +2877,7 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
             .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
             .pNext = nullptr,
-            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2719,7 +2890,7 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
             .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
             .pNext = nullptr,
-            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2728,10 +2899,23 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
             .size = sizeof(VkDrawIndirectCommand),
         });
     }
+    if (runFar && sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.buffer != VK_NULL_HANDLE) {
+        computeToTransferBarriers.push_back(VkBufferMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.buffer,
+            .offset = 0,
+            .size = static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
+        });
+    }
     if (!computeToTransferBarriers.empty()) {
         vkCmdPipelineBarrier(
             commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
             0,
             0,
@@ -2797,7 +2981,7 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
         const VkBufferCopy copyRegion{
             .srcOffset = 0,
             .dstOffset = 0,
-            .size = sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.sizeBytes,
+            .size = static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
         };
         vkCmdCopyBuffer(
             commandBuffer,
@@ -2988,7 +3172,7 @@ void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer);
     sceneGpuStreams_ = SceneGpuStreams{};
-    commandBuffersRevision_ = -1;
+    commandBuffersDirty_ = true;
 }
 
 void SolarLabVulkanRenderer::RefreshCompactionVisibleCountsFromReadbackLocked() {
@@ -3097,9 +3281,13 @@ void SolarLabVulkanRenderer::DestroyComputePipelines() {
 }
 
 void SolarLabVulkanRenderer::DestroyDescriptorResources() {
+    sceneGpuStreams_.tracerMediumCompute.descriptorBufferGenerations = {};
+    sceneGpuStreams_.tracerFarCompute.descriptorBufferGenerations = {};
+    commandBuffersDirty_ = true;
     DestroyGraphicsPipelines();
     DestroyComputePipelines();
     DestroyGpuBuffer(sceneUniformBuffer_);
+    DestroyGpuBuffer(surfaceColorBuffer_);
 
     if (device_ == VK_NULL_HANDLE) {
         sceneDescriptorSet_ = VK_NULL_HANDLE;
@@ -3151,17 +3339,19 @@ bool SolarLabVulkanRenderer::EnsureBufferWithMemoryProperties(
     const char* label,
     bool reportErrors,
     GpuBuffer& buffer) {
-    if (buffer.buffer != VK_NULL_HANDLE && buffer.sizeBytes >= sizeBytes && buffer.usage == usage) {
+    if (buffer.buffer != VK_NULL_HANDLE && solarlab::rendering::CanReuseBuffer(
+            buffer.sizeBytes, sizeBytes, buffer.usage, usage, buffer.memoryProperties, memoryProperties)) {
         return true;
     }
 
     DestroyGpuBuffer(buffer);
+    const VkDeviceSize capacity = solarlab::rendering::BufferCapacity(sizeBytes);
 
     const VkBufferCreateInfo bufferCreateInfo{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .size = sizeBytes,
+        .size = capacity,
         .usage = usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
@@ -3208,8 +3398,12 @@ bool SolarLabVulkanRenderer::EnsureBufferWithMemoryProperties(
         return false;
     }
 
-    buffer.sizeBytes = sizeBytes;
+    buffer.sizeBytes = capacity;
     buffer.usage = usage;
+    VkPhysicalDeviceMemoryProperties availableMemory{};
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &availableMemory);
+    buffer.memoryProperties = availableMemory.memoryTypes[memoryTypeIndex].propertyFlags;
+    buffer.allocationGeneration = ++bufferAllocationCount_;
     buffer.debugLabel = label;
     return true;
 }
@@ -3498,6 +3692,7 @@ bool SolarLabVulkanRenderer::UploadBytesInternal(const void* data, size_t sizeBy
         return false;
     }
     std::memcpy(mapped, data, sizeBytes);
+    cpuUploadBytes_ += sizeBytes;
     vkUnmapMemory(device_, buffer.memory);
     return true;
 }
@@ -3533,6 +3728,12 @@ std::string SolarLabVulkanRenderer::BuildSceneSummaryLocked() const {
         << " TL=" << uploadStats_.trailVertexCount
         << '/' << uploadStats_.trailStripCount
         << " bytes=" << uploadStats_.bytesUploaded
+        << " resident=" << sceneGpuStreams_.totalBytes
+        << " resources=[alloc:" << bufferAllocationCount_
+        << ",upload:" << sceneUploadCount_
+        << ",record:" << commandRecordingCount_
+        << ",reuse:" << commandReuseCount_
+        << ",cpuBytes:" << cpuUploadBytes_ << ']'
         << " paths=["
         << DrawPathName(sceneGpuStreams_.authoritative.path) << ','
         << DrawPathName(sceneGpuStreams_.tracerNear.path) << ','

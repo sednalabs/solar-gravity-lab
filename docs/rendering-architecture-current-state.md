@@ -70,3 +70,28 @@ runtime, but the richer design truth is:
 
 Any future work that treats the packet-host state as the end-state architecture
 will misread the branch.
+
+## Earth–Moon laboratory display predictions
+
+The unedited `lab.earth-moon` scene retains the normal 12-hour prediction window
+with one sample per hour. Added bodies can require much closer display samples:
+the default probe 800 km above Earth has an orbital period of about 6,043 seconds,
+so one-hour samples would connect points more than half an orbit apart with
+straight chords through the globe.
+
+The laboratory's [display sampling policy](../engine/runtime/src/lab_prediction.rs)
+estimates the shortest local timescale between an added body and a gravity source
+using the circular gravitational period and relative motion. If the usual sample
+gap would give fewer than 64 samples per local period, the scene instead requests
+96 samples over the shorter of 12 hours or 1.5 local periods. For the default low
+probe this gives approximately 94.43 seconds between points and a 9,065-second
+window. The integrator still computes every point using its existing physics
+policy; this changes only when predicted positions are retained for display.
+
+All bodies share the shortened window while a close probe is present. This trades
+away some displayed lunar prediction horizon to keep one bounded prediction pass
+and exact Earth reference epochs for every probe point. The [trail frame helper](../engine/runtime/src/trail_frame.rs)
+uses those simultaneous positions for the Earth-centred view. Output is bounded
+to 96 prediction points per selected body and never extends the original time
+window. Public archive queries, stored trajectory/checkpoint history, manual
+advances, the physics model and other scenarios keep their existing behavior.

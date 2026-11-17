@@ -204,7 +204,9 @@ jobs:
         id: checkout_ref
         shell: bash
         env:
-          EVENT_SHA: ${{ github.sha }}
+          # Qualify the same immutable commit that can later be installed.
+          # PR merge refs have a different commit identity even when the tree matches.
+          EVENT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
 
@@ -265,6 +267,12 @@ jobs:
 
       - name: Verify Android Rust cache key isolation
         run: python3 .github/scripts/test_rust_android_toolchain_cache_key.py
+
+      - name: Verify bounded Android SDK setup
+        run: python3 .github/scripts/test_ensure_android_sdk_packages.py
+
+      - name: Verify release version routing
+        run: python3 .github/scripts/test_prerelease_apk_request.py
 
       - name: Verify Rust JNI R8 keep-rule coverage
         run: python3 .github/scripts/test_prerelease_jni_r8_contract.py
@@ -534,7 +542,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 tools/generate_earth_moon_reference.py --check
+          python3 render/android-vulkan/src/test/python/test_surface_frame.py
+          python3 render/android-vulkan/src/test/python/test_compute_contract.py
+          g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/solarlab-presentation-test
+          /tmp/solarlab-presentation-test
           cargo test --workspace
+
+      - name: Measure release physics throughput (x64)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/physics-throughput-x64
+          git rev-parse HEAD > dist/physics-throughput-x64/source.txt
+          lscpu --json > dist/physics-throughput-x64/cpu.json
+          cargo run --release -p solarlab-physics --example throughput -- --samples 11 \
+            | tee dist/physics-throughput-x64/measurements.ndjson
+
+      - name: Upload physics throughput evidence (x64)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: physics-throughput-x64-${{ github.run_id }}
+          path: dist/physics-throughput-x64
 
       - name: Emit rust workspace sccache stats
         if: always() && steps.rust_workspace_sccache.outputs.enabled == 'true'
@@ -583,6 +614,62 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --workspace
+
+      - name: Measure release physics throughput (arm64, full affinity)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/physics-throughput-arm64
+          git rev-parse HEAD > dist/physics-throughput-arm64/source.txt
+          lscpu --json > dist/physics-throughput-arm64/cpu.json
+          python3 - <<'PY' > dist/physics-throughput-arm64/affinity-full.json
+          import json, os
+          from pathlib import Path
+          print(json.dumps({"affinity": "full", "cpus": sorted(os.sched_getaffinity(0)),
+                            "source": Path("dist/physics-throughput-arm64/source.txt").read_text().strip()}))
+          PY
+          cargo run --release -p solarlab-physics --example throughput -- --samples 11 \
+            | tee dist/physics-throughput-arm64/measurements.ndjson
+
+      - name: Measure same release binary on one allowed CPU (arm64)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          single_cpu="$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"
+          benchmark_binary="$(cargo metadata --no-deps --format-version=1 | python3 -c 'import json, sys; from pathlib import Path; print(Path(json.load(sys.stdin)["target_directory"]) / "release/examples/throughput")')"
+          test -x "$benchmark_binary"
+          sha256sum "$benchmark_binary" > dist/physics-throughput-arm64/shared-binary.sha256
+          taskset -c "$single_cpu" python3 - <<'PY' > dist/physics-throughput-arm64/affinity-one-cpu.json
+          import json, os
+          from pathlib import Path
+          print(json.dumps({"affinity": "one-cpu", "cpus": sorted(os.sched_getaffinity(0)),
+                            "source": Path("dist/physics-throughput-arm64/source.txt").read_text().strip()}))
+          PY
+          taskset -c "$single_cpu" "$benchmark_binary" --samples 11 \
+            --workloads canonical-mixed-365,sparse-1024,dense-128,dense-192,dense-256,dense-512,dense-1024 \
+            | tee dist/physics-throughput-arm64/measurements-one-cpu.ndjson
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows = [json.loads(line) for line in Path("dist/physics-throughput-arm64/measurements-one-cpu.ndjson").read_text().splitlines()]
+          assert rows[0]["arch"] == "aarch64", "Expected the native ARM release binary"
+          assert rows[0]["available_workers"] == 1, "Benchmark did not observe single-CPU affinity"
+          measurements = [row for row in rows if row["kind"] == "measurement"]
+          assert len(measurements) == 14, "Expected seven workloads and two backends"
+          assert all(row["active_workers"] == 1 for row in measurements), "Single-CPU run selected multiple workers"
+          arm_measurements = [row for row in measurements if row["requested"] == "SimdArm64"]
+          assert len(arm_measurements) == 7, "Expected seven native ARM measurements"
+          assert all(row["path"].startswith("simd.arm64.neon-") for row in arm_measurements), "ARM benchmark fell back from NEON"
+          PY
+
+      - name: Upload physics throughput evidence (arm64)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: physics-throughput-arm64-${{ github.run_id }}
+          path: dist/physics-throughput-arm64
 
       - name: Emit rust workspace arm64 sccache stats
         if: always() && steps.rust_workspace_arm64_sccache.outputs.enabled == 'true'

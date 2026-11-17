@@ -34,6 +34,12 @@ SHELL_FULL_TEST_CLASSES=(
 )
 
 STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
+  "com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest"
+  "com.sednalabs.solarlab.LabProbeMassInstrumentationTest"
+  "com.sednalabs.solarlab.LabSpatialTouchJourneyInstrumentationTest"
+  "com.sednalabs.solarlab.LabInteractionChromeTest"
+  "com.sednalabs.solarlab.LabDocumentTransferInstrumentationTest"
+  "com.sednalabs.solarlab.LabCameraMotionInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
@@ -134,6 +140,17 @@ run_binary_capture() {
   fi
 }
 
+capture_lab_journey_evidence() {
+  local evidence_dir="$1/lab-evidence"
+  mkdir -p "${evidence_dir}"
+  # The complete user journey records its own native screenshots. Keep them on
+  # successful runs too, even when expensive general diagnostics are failure-only.
+  # MediaStore Downloads survive the connected-test package uninstall.
+  timeout --foreground "${ADB_CAPTURE_TIMEOUT_SECONDS}s" \
+    adb pull "/sdcard/Download/solarlab-validation/lab-evidence/." \
+    "${evidence_dir}" >"${evidence_dir}/adb-pull.txt" 2>&1 || true
+}
+
 capture_device_state() {
   local class_dir="$1"
   local phase_label="${2:-post}"
@@ -217,7 +234,7 @@ resolve_test_classes() {
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
-        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
+        "-Psolarlab.hostedDebugProfile=full-fidelity"
       )
       ;;
     *)
@@ -253,7 +270,7 @@ resolve_test_classes() {
       GRADLE_VALIDATION_PROPS=(
         "-Psolarlab.debugStageFirstClient=true"
         "-Psolarlab.preferredGpuBackend=vulkan"
-        "-Psolarlab.hostedDebugProfile=hosted-debug-lite"
+        "-Psolarlab.hostedDebugProfile=full-fidelity"
       )
       case "${TEST_SCOPE}" in
         core)
@@ -289,6 +306,7 @@ run_test_batch() {
   class_arg="$(IFS=,; echo "${TEST_CLASSES[*]}")"
   run_timeout_seconds="${ANDROID_TEST_RUN_TIMEOUT_SECONDS:-$((CLASS_TIMEOUT_SECONDS * ${#TEST_CLASSES[@]}))}"
 
+  bash .github/scripts/clear_stale_launcher_anr.sh "${run_dir}" || return 1
   capture_device_state "${run_dir}" "pre"
 
   echo "::group::InstrumentationBatch"
@@ -317,6 +335,9 @@ run_test_batch() {
 
   if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
     capture_device_state "${run_dir}" "post"
+  fi
+  if [[ "${VALIDATION_MODE}" == "stage-first-runtime" ]]; then
+    capture_lab_journey_evidence "${run_dir}"
   fi
 
   {
@@ -393,6 +414,7 @@ run_test_classes_individually() {
     mkdir -p "${class_dir}"
     adb logcat -c || true
 
+    bash .github/scripts/clear_stale_launcher_anr.sh "${class_dir}" || return 1
     capture_device_state "${class_dir}" "pre"
 
     echo "Running ${class_name}"
@@ -456,6 +478,11 @@ run_test_classes_individually() {
     if [[ "${ARTIFACT_MODE}" == "always" || "${command_status}" -ne 0 ]]; then
       capture_device_state "${class_dir}" "post"
     fi
+    case "${class_name}" in
+      com.sednalabs.solarlab.EarthMoonLabJourneyInstrumentationTest|com.sednalabs.solarlab.LabSpatialTouchJourneyInstrumentationTest|com.sednalabs.solarlab.LabInteractionChromeTest|com.sednalabs.solarlab.LabDocumentTransferInstrumentationTest|com.sednalabs.solarlab.LabCameraMotionInstrumentationTest)
+        capture_lab_journey_evidence "${class_dir}"
+        ;;
+    esac
 
     {
       printf 'test_classes=%s\n' "${class_arg}"
@@ -484,7 +511,9 @@ run_test_classes_individually() {
       echo "Instrumentation class ${class_name} failed with exit code ${command_status}" >&2
       emit_failure_summary "${class_dir}"
       overall_status=${command_status}
-      break
+      # Each class receives a fresh connected-test installation. Preserve this
+      # failure while collecting the remaining independent user journeys too.
+      continue
     elif [[ "${report_capture_failed}" -ne 0 ]]; then
       echo "Connected test report custody failed for ${class_name}" >&2
       overall_status=1

@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso.pressBack
 import com.sednalabs.solarlab.render.vulkan.SolarSystemRenderHostView
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -36,14 +37,18 @@ class StageFirstRuntimeStartupInstrumentationTest {
             .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_FRAME_SELECTED_BUTTON)
             .assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_SCALE_CHIP)
+        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE)
             .assertIsDisplayed()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON)
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
             .assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_IN_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_ZOOM_OUT_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON)
             .performScrollToIfPossible()
             .assertIsDisplayed()
             .performClick()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HELP_BUTTON)
+            .performScrollToIfPossible().assertIsDisplayed()
 
         val duration = composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_STEP_DURATION)
         duration.performScrollToIfPossible().assertTextContains("6 h").performClick()
@@ -66,16 +71,15 @@ class StageFirstRuntimeStartupInstrumentationTest {
             .performClick()
             .assertIsNotEnabled()
 
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
-        }
-
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-            .performScrollToIfPossible()
-            .assertIsDisplayed()
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_DEBUG_BUTTON)
             .performScrollToIfPossible()
             .assertIsDisplayed()
+        pressBack()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).assertIsDisplayed()
+        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             val hostView = findRenderHostView(composeRule.activity.window.decorView)
             hostView != null && hostView.width > 0 && hostView.height > 0
@@ -85,7 +89,7 @@ class StageFirstRuntimeStartupInstrumentationTest {
         assertNotNull("Stage-first render host should be present", hostView)
         assertTrue(
             "Stage-first render host should have a measured size",
-            requireNotNull(hostView).width > 0 && hostView.height > 0,
+            requireNotNull(hostView).width > 0 && hostView.height > 0 && hostView.isShown && hostView.isAttachedToWindow,
         )
     }
 

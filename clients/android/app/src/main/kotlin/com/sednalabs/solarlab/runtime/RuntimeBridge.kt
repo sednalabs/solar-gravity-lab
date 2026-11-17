@@ -35,6 +35,15 @@ internal interface RuntimeBridge {
     // Fresh-session scenario replacement for visual iteration.
     suspend fun loadScenario(scenarioId: String): List<RuntimeSignal>
 
+    suspend fun exportSavedSession(): SavedRuntimeSession = error("Experiment saving is unavailable")
+    suspend fun importSavedSession(bytes: ByteArray): List<RuntimeSignal> = error("Experiment loading is unavailable")
+    /** Parse and validate in a temporary native session without binding it to the live renderer. */
+    suspend fun validateSavedSession(bytes: ByteArray): String = error("Experiment validation is unavailable")
+    suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
+    suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult = error("Probe preview is unavailable")
+    suspend fun commitProbe(preview: ProbePreviewResult): Pair<ProbeCommitResult, List<RuntimeSignal>> = error("Probe placement is unavailable")
+    suspend fun undoProbe(commit: ProbeCommitResult): List<RuntimeSignal> = error("Probe undo is unavailable")
+
     // Synchronous refresh/query path for already-bound handles.
     suspend fun refresh(): List<RuntimeSignal>
 
@@ -60,6 +69,9 @@ internal class JniRuntimeBridge(
     private data class PlaybackSample(val handle: Long, val revision: Long, val epoch: Double, val atNanos: Long)
     private var playbackSample: PlaybackSample? = null
     private var lastObservation: Pair<Long, Long>? = null
+    // Only the most recent completed draft from this bridge may be committed.
+    // The native boundary independently checks the world revision and paused state.
+    private var latestProbePreview: ProbePreviewResult? = null
 
     private fun rememberRevision(handle: Long, revision: Long) {
         val previous = lastObservation
@@ -430,6 +442,87 @@ internal class JniRuntimeBridge(
 
             signals
         }
+    }
+
+    override suspend fun exportSavedSession(): SavedRuntimeSession = withActiveSession { handle ->
+        val summary = transport.snapshotSummary(handle)
+        check(summary.result.isOk()) { "The current experiment is unavailable" }
+        SavedRuntimeSession(summary.scenarioId, transport.exportSavedSession(handle))
+    }
+
+    override suspend fun importSavedSession(bytes: ByteArray): List<RuntimeSignal> = withActiveSession { oldHandle ->
+        val created = transport.importSavedSession(oldHandle, bytes)
+        if (!created.result.isOk() || created.handle == 0L || created.abiVersion != ABI_VERSION) {
+            if (created.handle != 0L && created.handle != oldHandle) transport.destroySession(created.handle)
+            error("Experiment could not be opened: ${created.result.describe()}")
+        }
+        check(created.handle != oldHandle) { "Import did not create a new session" }
+        // Validate and create first; a malformed save never destroys the live experiment.
+        synchronized(stateLock) {
+            renderHostAdapter.releasePacket()
+            renderHostAdapter.bindSession(created.handle)
+            activeSessionHandle = created.handle
+        }
+        playbackSample = null
+        lastObservation = null
+        advanceMayBeActive = false
+        advanceIntent = null
+        transport.destroySession(oldHandle)
+        listOf(RuntimeSignal.Connected(created.handle)) +
+            runtimeInfoSignalsForHandle(created.handle, "savedExperiment.runtime-info") +
+            refreshSignalsForHandle(created.handle, includeSummary = true)
+    }
+
+    override suspend fun validateSavedSession(bytes: ByteArray): String = withActiveSession { liveHandle ->
+        val created = transport.importSavedSession(liveHandle, bytes)
+        try {
+            check(created.result.isOk() && created.handle != 0L && created.abiVersion == ABI_VERSION) {
+                "Experiment is not supported: ${created.result.describe()}"
+            }
+            check(created.handle != liveHandle) { "Validation did not create a separate session" }
+            val summary = transport.snapshotSummary(created.handle)
+            check(summary.result.isOk() && summary.scenarioId.isNotBlank()) { "Experiment could not be validated" }
+            summary.scenarioId
+        } finally {
+            // Never release the live handle, including on a malformed native response.
+            if (created.handle != 0L && created.handle != liveHandle) transport.destroySession(created.handle)
+        }
+    }
+
+    override suspend fun inspectBody(bodyId: String): RuntimeBodyState? = withActiveSession { handle ->
+        val values = transport.inspectBody(handle, bodyId) ?: return@withActiveSession null
+        bodyStateFromNative(bodyId, values)
+    }
+
+    override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =
+        withActiveSession { handle ->
+            latestProbePreview = null
+            transport.previewProbe(handle, candidate, referenceBodyId, horizonSeconds)
+                .toPreview(handle, candidate, referenceBodyId)
+                .also { latestProbePreview = it }
+        }
+
+    override suspend fun commitProbe(preview: ProbePreviewResult): Pair<ProbeCommitResult, List<RuntimeSignal>> =
+        withActiveSession { handle ->
+            check(handle == preview.sessionHandle && latestProbePreview === preview) {
+                "This draft is no longer current. Preview the probe again before placing it"
+            }
+            latestProbePreview = null
+            val native = transport.commitProbe(handle, preview.candidate, preview.baselineRevision, preview.epochSeconds, System.currentTimeMillis())
+            check(native.checkpointId.isNotBlank() && native.committedRevision > preview.baselineRevision &&
+                native.epochSeconds.toBits() == preview.epochSeconds.toBits()) { "Invalid placement receipt from runtime" }
+            val receipt = ProbeCommitResult(handle, native.checkpointId, preview.candidate.bodyId, native.epochSeconds, native.committedRevision)
+            playbackSample = null
+            rememberRevision(handle, native.committedRevision)
+            receipt to refreshSignalsForHandle(handle, includeSummary = true)
+        }
+
+    override suspend fun undoProbe(commit: ProbeCommitResult): List<RuntimeSignal> = withActiveSession { handle ->
+        check(handle == commit.sessionHandle) { "This placement belongs to an experiment that is no longer open" }
+        transport.undoProbe(handle, commit.checkpointId, commit.committedRevision, System.currentTimeMillis())
+        latestProbePreview = null
+        playbackSample = null
+        refreshSignalsForHandle(handle, includeSummary = true)
     }
 
     private inline fun <T> withActiveSession(action: (Long) -> T): T = synchronized(operationLock) {
@@ -949,7 +1042,9 @@ internal class JniRuntimeBridge(
         private const val LOG_TAG = "SolarLabRuntimeBridge"
         private const val ABI_VERSION = 12
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
-        private const val REFRESH_INTERVAL_MS = 500L
+        // Physics observations run independently of display refresh. The native renderer
+        // interpolates committed snapshots while each authority tick remains work-bounded.
+        private const val REFRESH_INTERVAL_MS = 100L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
 
         private fun refreshIntervalMillis(): Long =
@@ -1064,6 +1159,15 @@ sealed interface RuntimeCommand {
     data class RemoveBody(val bodyId: String) : RuntimeCommand {
         override val label: String = "body.remove"
     }
+
+    data class SetBodyProperties(
+        val bodyId: String,
+        val massKg: Double,
+        val sourceMassKg: Double,
+        val radiusM: Double,
+        val positionX: Double, val positionY: Double, val positionZ: Double,
+        val velocityX: Double, val velocityY: Double, val velocityZ: Double,
+    ) : RuntimeCommand { override val label: String = "body.set_properties" }
 
     data class SetBodyKinematics(
         val bodyId: String,
@@ -1198,6 +1302,14 @@ private fun RuntimeCommand.toNativePayload(): NativeRuntimeCommandPayload = when
         bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
     )
 
+    is RuntimeCommand.SetBodyProperties -> NativeRuntimeCommandPayload(
+        kind = 12, // Additive SlCommandKind::SetBodyProperties; existing ABI fields.
+        bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
+        bodyMassKg = massKg, bodySourceMassKg = sourceMassKg, bodyRadiusM = radiusM,
+        bodyPositionX = positionX, bodyPositionY = positionY, bodyPositionZ = positionZ,
+        bodyVelocityX = velocityX, bodyVelocityY = velocityY, bodyVelocityZ = velocityZ,
+    )
+
     is RuntimeCommand.SetBodyKinematics -> NativeRuntimeCommandPayload(
         kind = NATIVE_COMMAND_SET_BODY_KINEMATICS,
         bodyIdUtf8 = bodyId.toByteArray(StandardCharsets.UTF_8),
@@ -1251,6 +1363,13 @@ internal interface NativeRuntimeTransport {
     fun queryAdvance(handle: Long): NativeAdvanceResult = error("Incremental advance is unavailable")
     fun playbackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult = error("Bounded playback is unavailable")
 
+    fun exportSavedSession(handle: Long): ByteArray = error("Experiment saving is unavailable")
+    fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = error("Experiment loading is unavailable")
+    fun inspectBody(handle: Long, bodyId: String): DoubleArray? = null
+    fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult = error("Probe preview is unavailable")
+    fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult = error("Probe placement is unavailable")
+    fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) { error("Probe undo is unavailable") }
+
     fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult?
 
     fun releaseVulkanScene(packetHandle: Long)
@@ -1265,6 +1384,7 @@ internal sealed interface NativeLibraryLoadOutcome {
 
 internal const val NATIVE_TIMELINE_SEMANTICS_BRANCHED_SANDBOX = 1
 internal const val NATIVE_CPU_BACKEND_SIMD_ARM64 = 1
+internal const val NATIVE_CPU_BACKEND_SIMD_X64 = 2
 internal const val NATIVE_GPU_BACKEND_NONE = 0
 internal const val NATIVE_GPU_BACKEND_VULKAN = 1
 internal const val NATIVE_GPU_BACKEND_METAL = 2
@@ -1275,10 +1395,12 @@ private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PAIRWISE = 1
 private const val NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK = 2
 private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_TILED_PAIRWISE = 3
 private const val NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PARALLEL_TILED_PAIRWISE = 4
+private const val NATIVE_CPU_SOLVER_PATH_X64_AVX2_F64_PAIRWISE = 5
 private const val NATIVE_CPU_FALLBACK_NONE = 0
 private const val NATIVE_CPU_FALLBACK_ARM64_NON_AARCH64_HOST = 1
 private const val NATIVE_CPU_FALLBACK_ARM64_MISSING_NEON = 2
 private const val NATIVE_CPU_FALLBACK_X64_UNAVAILABLE = 3
+private const val NATIVE_CPU_FALLBACK_WORKLOAD_BELOW_VECTOR_WIDTH = 4
 private const val NATIVE_CPU_SCHEDULE_SINGLE_WORKER = 0
 private const val NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_CANDIDATE = 1
 private const val NATIVE_CPU_SCHEDULE_ADAPTIVE_TILED_ACTIVE = 2
@@ -1317,6 +1439,13 @@ private const val CPU_FEATURE_DIT = 1L shl 31
 private const val CPU_FEATURE_SB = 1L shl 32
 private const val CPU_FEATURE_SSBS = 1L shl 33
 private const val CPU_FEATURE_SVE_I8MM = 1L shl 34
+
+/** Select an architecture request; native feature checks still decide actual execution. */
+internal fun preferredCpuBackendCode(processArchitecture: String): Int = when (processArchitecture.lowercase(Locale.US)) {
+    "aarch64", "arm64", "arm64-v8a" -> NATIVE_CPU_BACKEND_SIMD_ARM64
+    "x86_64", "amd64" -> NATIVE_CPU_BACKEND_SIMD_X64
+    else -> 0
+}
 
 internal fun preferredGpuBackendCode(preferredBackendRaw: String): Int {
     val normalized = preferredBackendRaw.trim()
@@ -1386,7 +1515,7 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
             createdAtUnixMs = System.currentTimeMillis(),
             timelineSemantics = NATIVE_TIMELINE_SEMANTICS_BRANCHED_SANDBOX,
             liveUpdatesEnabled = true,
-            cpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
+            cpuBackend = preferredCpuBackendCode(System.getProperty("os.arch").orEmpty()),
             gpuBackend = preferredGpuBackendCode(BuildConfig.PREFERRED_GPU_BACKEND),
         )
     }
@@ -1435,6 +1564,25 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private external fun nativeCancelAdvance(handle: Long, generation: Long): NativeAdvanceResult
     private external fun nativeQueryAdvance(handle: Long): NativeAdvanceResult
     private external fun nativePlaybackTick(handle: Long, realSeconds: Double, recordedAtUnixMs: Long): NativePlaybackTickResult
+
+    override fun exportSavedSession(handle: Long): ByteArray = nativeExportSavedSession(handle)
+    override fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = nativeImportSavedSession(templateHandle, bytes)
+    override fun inspectBody(handle: Long, bodyId: String): DoubleArray? = nativeInspectBody(handle, bodyId.toByteArray(StandardCharsets.UTF_8))
+
+    private external fun nativeExportSavedSession(handle: Long): ByteArray
+    private external fun nativeImportSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult
+    private external fun nativeInspectBody(handle: Long, bodyId: ByteArray): DoubleArray?
+
+    override fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult =
+        nativePreviewProbe(handle, candidate.bodyId.toByteArray(StandardCharsets.UTF_8), candidate.toNativeBodyValues(), referenceBodyId.toByteArray(StandardCharsets.UTF_8), horizonSeconds)
+    override fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult =
+        nativeCommitProbe(handle, candidate.bodyId.toByteArray(StandardCharsets.UTF_8), candidate.toNativeBodyValues(), expectedRevision, expectedEpochSeconds, recordedAtUnixMs)
+    override fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) =
+        nativeUndoProbe(handle, checkpointId.toByteArray(StandardCharsets.UTF_8), committedRevision, recordedAtUnixMs)
+
+    private external fun nativePreviewProbe(handle: Long, bodyId: ByteArray, bodyValues: DoubleArray, referenceBodyId: ByteArray, horizonSeconds: Double): NativeProbePreviewResult
+    private external fun nativeCommitProbe(handle: Long, bodyId: ByteArray, bodyValues: DoubleArray, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult
+    private external fun nativeUndoProbe(handle: Long, checkpointId: ByteArray, committedRevision: Long, recordedAtUnixMs: Long)
 
     override fun exportVulkanScene(handle: Long): NativeVulkanScenePacketResult? =
         nativeExportVulkanScene(handle)
@@ -1573,6 +1721,7 @@ internal data class NativeRuntimeInfoResult(
         NATIVE_CPU_SOLVER_PATH_ARM64_NEON_F64_PARALLEL_TILED_PAIRWISE ->
             "simd.arm64.neon-f64-parallel-tiled-pairwise"
         NATIVE_CPU_SOLVER_PATH_X64_SCALAR_FALLBACK -> "simd.x64.scalar-fallback"
+        NATIVE_CPU_SOLVER_PATH_X64_AVX2_F64_PAIRWISE -> "simd.x64.avx2-f64-pairwise"
         else -> "unknown($cpuSolverPath)"
     }
 
@@ -1580,7 +1729,8 @@ internal data class NativeRuntimeInfoResult(
         NATIVE_CPU_FALLBACK_NONE -> null
         NATIVE_CPU_FALLBACK_ARM64_NON_AARCH64_HOST -> "simd-arm64 requested on non-aarch64 host"
         NATIVE_CPU_FALLBACK_ARM64_MISSING_NEON -> "simd-arm64 requested but neon was not detected"
-        NATIVE_CPU_FALLBACK_X64_UNAVAILABLE -> "simd-x64 requested but no dedicated x64 kernel is active"
+        NATIVE_CPU_FALLBACK_X64_UNAVAILABLE -> "simd-x64 requested but AVX2 is unavailable"
+        NATIVE_CPU_FALLBACK_WORKLOAD_BELOW_VECTOR_WIDTH -> "scalar is faster for fewer than four bodies"
         else -> "unknown fallback($cpuFallbackCode)"
     }
 

@@ -7,6 +7,31 @@ import org.junit.Test
 
 class RuntimeBridgeGpuBackendSelectionTest {
     @Test
+    fun processArchitectureRequestsMatchingNativeBackendWithPortableFallback() {
+        for (architecture in listOf("aarch64", "arm64", "arm64-v8a")) {
+            assertEquals(1, preferredCpuBackendCode(architecture))
+        }
+        for (architecture in listOf("x86_64", "amd64", "AMD64")) {
+            assertEquals(2, preferredCpuBackendCode(architecture))
+        }
+        assertEquals(0, preferredCpuBackendCode("unknown"))
+        assertEquals(0, preferredCpuBackendCode(""))
+    }
+
+    @Test
+    fun nativeRuntimeInfoDistinguishesActiveAvx2FromUsefulScalarFallback() {
+        val active = NativeRuntimeInfoResult(result = NativeResult(code = 0), abiVersion = 12,
+            requestedCpuBackend = 2, cpuBackend = 2, gpuBackend = 0, cpuFeatureFlags = 0,
+            cpuSolverPath = 5, cpuFallbackCode = 0)
+        assertEquals("simd.x64.avx2-f64-pairwise", active.cpuSolverPathLabel())
+        assertNull(active.cpuFallbackSummary())
+        val small = active.copy(cpuBackend = 0, cpuSolverPath = 0, cpuFallbackCode = 4)
+        assertEquals("reference-scalar", small.cpuBackendLabel())
+        assertEquals("scalar.reference", small.cpuSolverPathLabel())
+        assertTrue(small.cpuFallbackSummary().orEmpty().contains("fewer than four"))
+    }
+
+    @Test
     fun preferredGpuBackendCode_mapsKnownBackendNames() {
         assertEquals(NATIVE_GPU_BACKEND_NONE, preferredGpuBackendCode("none"))
         assertEquals(NATIVE_GPU_BACKEND_VULKAN, preferredGpuBackendCode("vulkan"))

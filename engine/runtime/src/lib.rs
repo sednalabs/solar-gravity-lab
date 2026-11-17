@@ -4,6 +4,17 @@
 //! runtime architecture. All external integrations (FFI, JNI, adapters,
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
+mod lab_prediction;
+mod body_properties;
+mod lab_step;
+mod persistence;
+mod probe_authoring;
+mod trail_frame;
+pub use persistence::{SessionPersistenceError, MAX_SAVED_SESSION_BYTES};
+pub use probe_authoring::{
+    ProbeAuthoringError, ProbeCommitReceipt, ProbePreview, ProbePreviewPlan, ProbePreviewSample,
+};
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem::size_of;
 use std::time::Instant;
@@ -26,7 +37,7 @@ use solarlab_history::{
 };
 use solarlab_physics::{
     advance_authoritative_with_features, advance_fixed_steps, checked_substep_count,
-    compute_invariants, fixed_step_plan, solver_execution_report_for_backend_with_body_count,
+    compute_invariants, fixed_step_plan_with_source_count, solver_execution_report_for_backend_with_source_count,
     FixedStepPlan, MassiveBodyState, PhysicsInvariants, PhysicsPolicy, SolverExecutionReport,
     MAX_INCREMENTAL_STEPS,
 };
@@ -36,7 +47,7 @@ use solarlab_scene::{
     SceneTracer, SceneTrail, SceneTrailFamily,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct BodyState {
     pub body_id: BodyId,
     pub body_class: BodyClass,
@@ -73,7 +84,7 @@ impl BodyState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct PlaybackState {
     /// Playback controls are intentionally small and copy-friendly so shell snapshots
     /// can transport sim-speed intent without runtime coupling.
@@ -81,7 +92,7 @@ pub struct PlaybackState {
     pub sim_seconds_per_real_second: f64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct ObserverState {
     /// Observer state is persisted in snapshots to preserve viewer semantics when
     /// replaying snapshots or restoring checkpoints.
@@ -120,10 +131,23 @@ pub struct MountedManifestState {
     pub mounted_packages: Vec<MountedPackageState>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct TrailSample {
     pub epoch_seconds: f64,
     pub position_m: Vector3d,
+}
+
+/// Pinned identity of the initial-condition source. Edits and subsequent propagation
+/// remain this runtime's model; this metadata never claims that edited states are JPL predictions.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct InitialConditionsProvenance {
+    pub dataset_id: String,
+    pub version: String,
+    pub digest: String,
+    pub epoch_jd_tdb: f64,
+    pub frame: String,
+    pub center: String,
+    pub time_scale: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -145,6 +169,7 @@ pub struct WorldSnapshot {
     pub observer: ObserverState,
     pub playback: PlaybackState,
     pub mounted_manifest: Option<MountedManifestState>,
+    pub initial_conditions_provenance: Option<InitialConditionsProvenance>,
     pub trail_history_by_body: HashMap<BodyId, Vec<TrailSample>>,
     pub orbit_archives: Vec<OrbitArchive>,
     pub solver_execution: SolverExecutionReport,
@@ -207,6 +232,15 @@ pub enum WorldCommand {
         position_m: Vector3d,
         velocity_mps: Vector3d,
     },
+    /// Atomically edits physical properties and kinematics without replacing identity/history.
+    SetBodyProperties {
+        body_id: BodyId,
+        mass_kg: f64,
+        source_mass_kg: f64,
+        radius_m: f64,
+        position_m: Vector3d,
+        velocity_mps: Vector3d,
+    },
     /// Advances the system epoch.
     /// This invokes the authoritative physics solver for the delta duration.
     AdvanceEpoch { delta_seconds: f64 },
@@ -251,6 +285,8 @@ pub enum RuntimeError {
     UnknownScenario(ScenarioId),
     InvalidEpochDelta(f64),
     InvalidPlaybackRate(f64),
+    InvalidBodyProperties,
+    BodyEditRequiresPause,
     AdvanceBusy,
     AdvanceStale,
     AdvanceWorkLimit,
@@ -288,26 +324,30 @@ pub struct ApplyUpdateManifestResult {
     pub mounted_manifest: Option<MountedManifestState>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 struct BranchWorldState {
     epoch_seconds: f64,
     bodies: Vec<BodyState>,
     observer: ObserverState,
     playback: PlaybackState,
+    #[serde(skip)]
     invariants: PhysicsInvariants,
     local_data_state: LocalDataState,
     mounted_package_ids: BTreeSet<String>,
+    #[serde(default)]
+    initial_conditions_provenance: Option<InitialConditionsProvenance>,
     trail_history_by_body: HashMap<BodyId, Vec<TrailSample>>,
+    #[serde(skip, default = "SolverExecutionReport::reference_scalar")]
     solver_execution: SolverExecutionReport,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 struct CheckpointRecord {
     descriptor: CheckpointDescriptor,
     state: BranchWorldState,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 struct BranchState {
     descriptor: BranchDescriptor,
     world: BranchWorldState,
@@ -363,6 +403,7 @@ pub struct WorldRuntime {
     /// ensures that any state can be deterministically replayed or verified.
     scenario_id: ScenarioId,
     config: RuntimeConfig,
+    lab_step_policy: lab_step::LabStepPolicy,
     hardware_profile: HardwareProfile,
     branches: HashMap<BranchId, BranchState>,
     active_branch_id: BranchId,
@@ -384,9 +425,10 @@ impl WorldRuntime {
         hardware_profile: HardwareProfile,
         created_at_unix_ms: i64,
     ) -> Self {
-        let initial_solver_execution = solver_execution_report_for_backend_with_body_count(
+        let initial_solver_execution = solver_execution_report_for_backend_with_source_count(
             &config.physics.solver_backend,
             &hardware_profile.cpu_features,
+            0,
             0,
         );
         let root_descriptor = BranchDescriptor {
@@ -412,6 +454,7 @@ impl WorldRuntime {
                 invariants: PhysicsInvariants::default(),
                 local_data_state: LocalDataState::empty(),
                 mounted_package_ids: BTreeSet::new(),
+                initial_conditions_provenance: None,
                 trail_history_by_body: HashMap::new(),
                 solver_execution: initial_solver_execution,
             },
@@ -426,6 +469,7 @@ impl WorldRuntime {
         let mut runtime = Self {
             scenario_id,
             config,
+            lab_step_policy: lab_step::LabStepPolicy::PeriapsisV2,
             hardware_profile,
             branches,
             active_branch_id: root_branch_id,
@@ -560,6 +604,14 @@ impl WorldRuntime {
         self.advance_operation.as_ref()
     }
 
+    fn effective_physics_policy(&self) -> PhysicsPolicy {
+        if self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID {
+            self.lab_step_policy.for_world(&self.config.physics, &self.active_branch().world.bodies)
+        } else {
+            self.config.physics.clone()
+        }
+    }
+
     pub fn begin_advance(
         &mut self,
         intent: [u64; 2],
@@ -608,10 +660,11 @@ impl WorldRuntime {
             None
         } else {
             Some(
-                fixed_step_plan(
-                    &self.config.physics,
+                fixed_step_plan_with_source_count(
+                    &self.effective_physics_policy(),
                     delta,
                     bodies.len(),
+                    bodies.iter().filter(|body| body.mass_kg != 0.0).count(),
                     &self.hardware_profile.cpu_features,
                 )
                 .ok_or(RuntimeError::InvalidEpochDelta(delta))?,
@@ -732,7 +785,7 @@ impl WorldRuntime {
         if !requested.is_finite() || requested <= 0.0 {
             return Err(RuntimeError::InvalidEpochDelta(requested));
         }
-        let max_step = self.config.physics.max_substep_seconds;
+        let max_step = self.effective_physics_policy().max_substep_seconds;
         let max_delta = if max_step.is_finite() && max_step > 0.0 {
             max_step * MAX_INCREMENTAL_STEPS as f64
         } else {
@@ -792,13 +845,13 @@ impl WorldRuntime {
                     || *delta_seconds <= 0.0
                     || next_epoch(world.epoch_seconds, *delta_seconds).is_none()
                     || (!world.bodies.is_empty()
-                        && checked_substep_count(&self.config.physics, *delta_seconds).is_none())
+                        && checked_substep_count(&self.effective_physics_policy(), *delta_seconds).is_none())
                 {
                     return Err(RuntimeError::InvalidEpochDelta(*delta_seconds));
                 }
                 if staged.is_none()
                     && !world.bodies.is_empty()
-                    && checked_substep_count(&self.config.physics, *delta_seconds)
+                    && checked_substep_count(&self.effective_physics_policy(), *delta_seconds)
                         .is_some_and(|n| n > MAX_INCREMENTAL_STEPS)
                 {
                     return Err(RuntimeError::AdvanceWorkLimit);
@@ -816,6 +869,20 @@ impl WorldRuntime {
             _ => {}
         }
 
+        // Validate before consuming an ordinal or changing history/world state.
+        let edited_invariants = if let WorldCommand::SetBodyProperties {
+            body_id, mass_kg, source_mass_kg, radius_m, position_m, velocity_mps,
+        } = &command {
+            // Numeric body edits must not overwrite a position captured before
+            // an active playback tick. Reject before history/ordinal mutation.
+            if !self.active_branch().world.playback.paused {
+                return Err(RuntimeError::BodyEditRequiresPause);
+            }
+            Some(body_properties::validate(
+                &self.active_branch().world.bodies, body_id, *mass_kg,
+                *source_mass_kg, *radius_m, *position_m, *velocity_mps,
+            )?)
+        } else { None };
         let mut events = Vec::new();
         let mut header = self.new_command_header(&command, recorded_at_unix_ms);
         let summary = self.command_summary(&command);
@@ -830,7 +897,17 @@ impl WorldRuntime {
                 if self.active_branch().world.bodies.is_empty() {
                     let seed = scenario_pack_seed(&self.scenario_id.0)
                         .ok_or_else(|| RuntimeError::UnknownScenario(self.scenario_id.clone()))?;
+                    let initial_conditions_provenance = (self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID).then(|| InitialConditionsProvenance {
+                        dataset_id: solarlab_data::EARTH_MOON_LAB_DATASET_ID.into(),
+                        version: "1.0.0".into(),
+                        digest: solarlab_data::EARTH_MOON_LAB_DIGEST.into(),
+                        epoch_jd_tdb: solarlab_data::EARTH_MOON_LAB_EPOCH_JD_TDB,
+                        frame: "ICRF".into(),
+                        center: "solar-system-barycentre".into(),
+                        time_scale: "TDB".into(),
+                    });
                     let branch = self.active_branch_mut();
+                    branch.world.initial_conditions_provenance = initial_conditions_provenance;
                     branch.world.bodies = seed
                         .bodies
                         .into_iter()
@@ -921,8 +998,24 @@ impl WorldRuntime {
                     *position_m,
                 );
             }
+            WorldCommand::SetBodyProperties {
+                body_id, mass_kg, source_mass_kg, radius_m, position_m, velocity_mps,
+            } => {
+                let branch = self.active_branch_mut();
+                let body = branch.world.bodies.iter_mut()
+                    .find(|body| body.body_id == *body_id)
+                    .expect("body-properties preflight established identity");
+                body.mass_kg = *mass_kg;
+                body.source_mass_kg = *source_mass_kg;
+                body.radius_m = *radius_m;
+                body.position_m = *position_m;
+                body.velocity_mps = *velocity_mps;
+                branch.world.invariants = edited_invariants.expect("validated property invariants");
+                push_trail_sample(&mut branch.world.trail_history_by_body,
+                    body_id, branch.world.epoch_seconds, *position_m);
+            }
             WorldCommand::AdvanceEpoch { delta_seconds } => {
-                let physics_policy = self.config.physics.clone();
+                let physics_policy = self.effective_physics_policy();
                 let active_cpu_features = self.hardware_profile.cpu_features.clone();
                 let branch = self.active_branch_mut();
                 let (solver_bodies, invariants, solver_execution) =
@@ -1083,10 +1176,11 @@ impl WorldRuntime {
         let requested_backend = self.config.physics.solver_backend.clone();
         let active_cpu_features = self.hardware_profile.cpu_features.clone();
         let branch = self.active_branch_mut();
-        branch.world.solver_execution = solver_execution_report_for_backend_with_body_count(
+        branch.world.solver_execution = solver_execution_report_for_backend_with_source_count(
             &requested_backend,
             &active_cpu_features,
             branch.world.bodies.len(),
+            branch.world.bodies.iter().filter(|body| body.source_mass_kg != 0.0).count(),
         );
     }
 
@@ -1101,6 +1195,19 @@ impl WorldRuntime {
     #[must_use]
     pub fn next_command_ordinal(&self) -> u64 {
         self.next_command_ordinal
+    }
+
+    /// Read one body from the active branch without allocating a WorldSnapshot.
+    /// Body inspection can be called frequently while the UI is active; cloning
+    /// trail histories and all bodies just to read ten scalar fields is wasteful.
+    /// The reference lives only as long as this immutable runtime borrow.
+    #[must_use]
+    pub fn body_by_id(&self, id: &str) -> Option<&BodyState> {
+        self.active_branch()
+            .world
+            .bodies
+            .iter()
+            .find(|body| body.body_id.0 == id)
     }
 
     /// Return an ownership-safe world snapshot for host-visible status and
@@ -1132,6 +1239,7 @@ impl WorldRuntime {
             observer: active.world.observer.clone(),
             playback: active.world.playback.clone(),
             mounted_manifest,
+            initial_conditions_provenance: active.world.initial_conditions_provenance.clone(),
             trail_history_by_body: active.world.trail_history_by_body.clone(),
             orbit_archives,
             solver_execution: active.world.solver_execution.clone(),
@@ -1149,7 +1257,7 @@ impl WorldRuntime {
         build_orbit_archives(
             active,
             query,
-            &self.config.physics,
+            &self.effective_physics_policy(),
             &self.hardware_profile.cpu_features,
         )
     }
@@ -1205,7 +1313,7 @@ impl WorldRuntime {
     fn render_scene_orbit_query(&self) -> OrbitArchiveQuery {
         let active = self.active_branch();
         let full_history = active.world.bodies.len() <= RENDER_SCENE_ORBIT_BODY_LIMIT;
-        OrbitArchiveQuery {
+        let mut query = OrbitArchiveQuery {
             body_ids: render_scene_orbit_body_ids(
                 &active.world.bodies,
                 active.world.observer.focus_body_id.as_ref(),
@@ -1214,7 +1322,9 @@ impl WorldRuntime {
             include_historical_orbits: full_history,
             include_prediction: full_history,
             ..OrbitArchiveQuery::default()
-        }
+        };
+        lab_prediction::configure_display_query(&mut query, &self.scenario_id.0, &active.world.bodies);
+        query
     }
 
     fn new_command_header(
@@ -1237,6 +1347,7 @@ impl WorldRuntime {
             WorldCommand::SpawnBody { .. } => "body.spawn",
             WorldCommand::RemoveBody { .. } => "body.remove",
             WorldCommand::SetBodyKinematics { .. } => "body.set_kinematics",
+            WorldCommand::SetBodyProperties { .. } => "body.set_properties",
             WorldCommand::AdvanceEpoch { .. } => "timeline.advance_epoch",
             WorldCommand::PausePlayback => "playback.pause",
             WorldCommand::ResumePlayback => "playback.resume",
@@ -1256,6 +1367,8 @@ impl WorldRuntime {
             WorldCommand::SeedCanonicalSolarSystem => "seed canonical startup solar system".into(),
             WorldCommand::SpawnBody { body } => format!("spawn {}", body.body_id.0),
             WorldCommand::RemoveBody { body_id } => format!("remove {}", body_id.0),
+            WorldCommand::SetBodyProperties { body_id, mass_kg, source_mass_kg, .. } =>
+                format!("set properties {} mass={} kg source={} kg", body_id.0, mass_kg, source_mass_kg),
             WorldCommand::SetBodyKinematics { body_id, .. } => {
                 format!("set kinematics {}", body_id.0)
             }
@@ -1672,11 +1785,14 @@ fn extract_scene_trails(snapshot: &WorldSnapshot) -> Vec<SceneTrail> {
         .orbit_archives
         .iter()
         .filter_map(|archive| {
-            let samples_m = archive
-                .samples
-                .iter()
-                .map(|sample| sample.position_m)
-                .collect::<Vec<_>>();
+            let samples_m =
+                trail_frame::earth_relative_samples(snapshot, archive).unwrap_or_else(|| {
+                    archive
+                        .samples
+                        .iter()
+                        .map(|sample| sample.position_m)
+                        .collect()
+                });
             if samples_m.is_empty() {
                 return None;
             }
@@ -1834,7 +1950,15 @@ fn runtime_trail_history_counts(
 }
 
 fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
-    let mounted_manifest = snapshot.mounted_manifest.as_ref()?;
+    let Some(mounted_manifest) = snapshot.mounted_manifest.as_ref() else {
+        return snapshot.initial_conditions_provenance.as_ref().map(|seed| SceneProvenanceRef {
+            source: seed.dataset_id.clone(),
+            version: seed.version.clone(),
+            manifest_id: seed.dataset_id.clone(),
+            manifest_digest: Some(seed.digest.clone()),
+            package_digest: None,
+        });
+    };
     Some(SceneProvenanceRef {
         source: mounted_manifest.channel.clone(),
         version: semver_to_string(&mounted_manifest.manifest_version),
@@ -1876,6 +2000,10 @@ fn scene_revision_from_snapshot(
         snapshot.epoch_seconds,
         snapshot.observer.mode
     );
+    if let Some(seed) = &snapshot.initial_conditions_provenance {
+        use std::fmt::Write as _;
+        let _ = write!(&mut revision, "|seed={}|version={}|digest={}", seed.dataset_id, seed.version, seed.digest);
+    }
     for (body_state, body_scene) in snapshot.bodies.iter().zip(bodies.iter()) {
         let selected = selected_body_id == Some(&body_state.body_id);
         use std::fmt::Write as _;
@@ -2455,6 +2583,10 @@ mod tests {
         ));
         assert!(matches!(events[1], RuntimeEvent::SnapshotPublished(_)));
         assert_eq!(runtime.snapshot().bodies, vec![body.clone()]);
+        // Inspection must expose authoritative state without reconstructing
+        // a full snapshot; it also must not accidentally find stale branches.
+        assert_eq!(runtime.body_by_id("earth"), Some(&body));
+        assert!(runtime.body_by_id("missing").is_none());
 
         runtime
             .apply_command(
@@ -2476,6 +2608,7 @@ mod tests {
             .expect("kinematic update should succeed");
 
         assert_eq!(runtime.snapshot().bodies[0].position_m.x, 10.0);
+        assert_eq!(runtime.body_by_id("earth").map(|body| body.position_m.x), Some(10.0));
 
         runtime
             .apply_command(
@@ -2505,6 +2638,7 @@ mod tests {
             .expect("remove body should succeed");
 
         assert!(runtime.snapshot().bodies.is_empty());
+        assert!(runtime.body_by_id("earth").is_none());
         assert_eq!(runtime.snapshot().observer.focus_body_id, None);
     }
 
@@ -3081,7 +3215,7 @@ mod tests {
                 .trail_history_counts
                 .iter()
                 .map(|entry| entry.sample_count)
-                .sum()
+                .sum::<usize>()
         );
         assert_eq!(report.trail_history_counts.len(), 2);
         assert_eq!(
@@ -5329,11 +5463,11 @@ mod tests {
         }
     }
 
-    fn new_runtime() -> WorldRuntime {
+    pub(super) fn new_runtime() -> WorldRuntime {
         new_runtime_with_scenario("sol-system")
     }
 
-    fn new_runtime_with_scenario(scenario_id: &str) -> WorldRuntime {
+    pub(super) fn new_runtime_with_scenario(scenario_id: &str) -> WorldRuntime {
         WorldRuntime::new(
             ScenarioId(scenario_id.into()),
             BranchId("main".into()),
@@ -5649,7 +5783,7 @@ mod tests {
         }
     }
 
-    fn seed_major_bodies(runtime: &mut WorldRuntime) {
+    pub(super) fn seed_major_bodies(runtime: &mut WorldRuntime) {
         use solarlab_data::canonical_startup_seed;
 
         let seed = canonical_startup_seed();

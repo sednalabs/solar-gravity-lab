@@ -143,7 +143,7 @@ class ValidationLabPlanTests(unittest.TestCase):
                     "validation_mode": "stage-first-runtime",
                     "debug_stage_first_client": "true",
                     "preferred_gpu_backend": "vulkan",
-                    "hosted_debug_profile": "hosted-debug-lite",
+                    "hosted_debug_profile": "full-fidelity",
                     "gradle_configuration_cache": "enabled",
                 }
             ],

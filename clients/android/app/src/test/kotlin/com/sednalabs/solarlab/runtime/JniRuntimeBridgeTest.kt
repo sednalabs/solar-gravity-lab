@@ -64,7 +64,7 @@ class JniRuntimeBridgeTest {
     }
 
     @Test
-    fun connect_seedsDefaultSolarSystem_whenInitialSnapshotIsEmpty() = runBlocking {
+    fun connect_seedsPausedEarthMoonLab_whenInitialSnapshotIsEmpty() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
                 listOf(
@@ -90,17 +90,18 @@ class JniRuntimeBridgeTest {
         }
 
         assertEquals(listOf(42L), transport.runtimeInfoHandles)
+        assertEquals(listOf("lab.earth-moon"), transport.createdScenarioIds)
         assertEquals(listOf(42L, 42L, 42L), transport.refreshedHandles)
         assertEquals(listOf(42L), renderHostAdapter.boundSessionHandles)
         assertEquals(3, renderHostAdapter.refreshCount)
         assertEquals(1, renderHostAdapter.releaseCount)
 
         assertTrue(
-            "Expected startup to seed canonical world",
+            "Expected startup to seed the selected scenario through Rust",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM) },
         )
-        assertTrue(
-            "Expected startup to resume playback for visible motion",
+        assertFalse(
+            "Expected the laboratory to remain paused for inspection",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) },
         )
         assertTrue(
@@ -117,10 +118,11 @@ class JniRuntimeBridgeTest {
                 .filterIsInstance<RuntimeSignal.SnapshotUpdated>()
                 .any { it.summary.bodyCount == STARTUP_EXPECTED_BODY_COUNT }
         )
+        assertTrue(signals.filterIsInstance<RuntimeSignal.SnapshotUpdated>().last().summary.paused)
     }
 
     @Test
-    fun connect_doesNotSeedDefaultSolarSystem_whenSnapshotAlreadyContainsBodies() = runBlocking {
+    fun connect_doesNotReseedLab_whenSnapshotAlreadyContainsBodies() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
                 listOf(snapshotSummary(bodyCount = 2))
@@ -146,8 +148,8 @@ class JniRuntimeBridgeTest {
             "Seed should not be issued when snapshot already has bodies",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM) },
         )
-        assertTrue(
-            "Expected startup to resume playback for visible motion",
+        assertFalse(
+            "Expected the laboratory to remain paused for inspection",
             transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) },
         )
         assertTrue(
@@ -180,8 +182,7 @@ class JniRuntimeBridgeTest {
 
         withTimeout(2_000) {
             while (
-                transport.refreshedHandles.isEmpty() ||
-                transport.appliedCommands.none { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) } ||
+                transport.refreshedHandles.size < 2 ||
                 transport.appliedCommands.none { hasCommandKind(it, COMMAND_KIND_SET_PLAYBACK_RATE) }
             ) {
                 delay(25)
@@ -235,6 +236,26 @@ class JniRuntimeBridgeTest {
         assertEquals("opencl", runtimeInfo.gpuBackendLabel)
         assertTrue(runtimeInfo.workloadSummary?.contains("long-horizon") == true)
         assertTrue(runtimeInfo.interopErrorBudgetSummary?.contains("checkpoint-publication") == true)
+    }
+
+    @Test
+    fun loadScenario_canonicalSolarSystemRetainsFullCatalogAndLivePlayback() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(
+            snapshotSummary(scenarioId = "sol-system", bodyCount = 0),
+            snapshotSummary(scenarioId = "sol-system", bodyCount = 365),
+        )))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+
+        val signals = bridge.loadScenario("sol-system")
+
+        assertEquals(listOf("sol-system"), transport.createdScenarioIds)
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_SEED_CANONICAL_SOLAR_SYSTEM) })
+        assertTrue(transport.appliedCommands.any { hasCommandKind(it, COMMAND_KIND_RESUME_PLAYBACK) })
+        val finalSummary = signals.filterIsInstance<RuntimeSignal.SnapshotUpdated>().last().summary
+        assertEquals("sol-system", finalSummary.scenarioId)
+        assertEquals(365, finalSummary.bodyCount)
+        assertFalse(finalSummary.paused)
+        assertEquals(21_600.0, finalSummary.simSecondsPerRealSecond, 0.0)
     }
 
     @Test
@@ -324,7 +345,7 @@ class JniRuntimeBridgeTest {
         }
 
         bridge.loadScenario("showcase.jupiter-system")
-        assertEquals(listOf("sol-system", "showcase.jupiter-system"), transport.createdScenarioIds)
+        assertEquals(listOf("lab.earth-moon", "showcase.jupiter-system"), transport.createdScenarioIds)
         assertEquals(listOf(42L), transport.destroyedHandles)
         assertEquals(listOf(42L, 84L), renderHostAdapter.boundSessionHandles)
 
@@ -342,13 +363,7 @@ class JniRuntimeBridgeTest {
     fun connect_keepsRefreshing_whenPlaybackIsLive() = runBlocking {
         val transport = FakeNativeRuntimeTransport(
             refreshResults = ArrayDeque(
-                listOf(
-                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
-                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
-                    // Startup playback configuration performs one extra refresh before the
-                    // periodic live-refresh loop starts issuing advance-epoch commands.
-                    snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0),
-                )
+                listOf(snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT))
             ),
         )
         val bridge = JniRuntimeBridge(
@@ -360,6 +375,11 @@ class JniRuntimeBridgeTest {
         val job = scope.launch {
             bridge.connect().collect { /* keep session alive for periodic refresh */ }
         }
+
+        withTimeout(2_000) {
+            while (transport.refreshedHandles.size < 2) delay(25)
+        }
+        bridge.applyCommand(RuntimeCommand.ResumePlayback)
 
         withTimeout(2_500) {
             while (
@@ -395,13 +415,17 @@ class JniRuntimeBridgeTest {
 
     private suspend fun exerciseMeasurementFailure(postTick: Boolean) {
         val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(
-            snapshotSummary(bodyCount = 2, paused = false, simSecondsPerRealSecond = 60.0).copy(revision = 10),
+            snapshotSummary(bodyCount = STARTUP_EXPECTED_BODY_COUNT).copy(revision = 10),
         )))
         val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
         val facade = BridgeBackedRuntimeFacade(bridge)
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         val job = scope.launch { facade.startSession() }
         try {
+            withTimeout(2_000) {
+                while (transport.refreshedHandles.size < 2) delay(25)
+            }
+            facade.applyCommand(RuntimeCommand.ResumePlayback)
             withTimeout(8_000) {
                 while (facade.uiState.value.playbackMeasurement?.achievedRate == null) delay(25)
             }
@@ -439,6 +463,101 @@ class JniRuntimeBridgeTest {
 
         scope.cancel()
         return collected.toList()
+    }
+
+    @Test
+    fun probePreviewAndCommitForwardExactCandidateAndNativeBaseline() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3).copy(revision = 17))))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val candidate = probeCandidate()
+        val preview = bridge.previewProbe(candidate, "earth", 10.0)
+        assertEquals(candidate, preview.candidate)
+        assertEquals(17L, preview.baselineRevision)
+        assertEquals(2, preview.samples.size)
+        assertEquals("earth", preview.referenceBody.bodyId)
+        assertTrue(transport.committedProbeCandidates.isEmpty())
+        val (receipt, signals) = bridge.commitProbe(preview)
+        assertEquals(listOf(candidate), transport.committedProbeCandidates)
+        assertEquals(19L, receipt.committedRevision)
+        assertEquals(42L, receipt.sessionHandle)
+        assertEquals(4, signals.filterIsInstance<RuntimeSignal.SnapshotUpdated>().single().summary.bodyCount)
+        bridge.undoProbe(receipt)
+        assertEquals(listOf("probe-checkpoint" to 19L), transport.probeUndoRequests)
+    }
+
+    @Test
+    fun probeCommitRejectsSupersededCopiedAndReplacedSessionDrafts() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(
+            ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 43L)),
+        )
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val first = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        val second = bridge.previewProbe(probeCandidate().copy(positionX = 3.0e11), "earth", 10.0)
+        assertTrue(runCatching { bridge.commitProbe(first) }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching { bridge.commitProbe(second.copy()) }.exceptionOrNull() is IllegalStateException)
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        assertTrue(runCatching { bridge.commitProbe(second) }.exceptionOrNull() is IllegalStateException)
+        assertTrue(transport.committedProbeCandidates.isEmpty())
+    }
+
+    @Test
+    fun failedNewPreviewInvalidatesAnEarlierDraftAndNativeCommitFailurePropagates() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val old = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        transport.probePreviewError = IllegalStateException("outside the reference surface")
+        assertTrue(runCatching { bridge.previewProbe(probeCandidate(), "earth", 10.0) }.exceptionOrNull()?.message!!.contains("surface"))
+        assertTrue(runCatching { bridge.commitProbe(old) }.exceptionOrNull() is IllegalStateException)
+        transport.probePreviewError = null
+        val current = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        transport.probeCommitError = IllegalStateException("The experiment changed")
+        val commandsBefore = transport.appliedCommands.toList()
+        assertEquals("The experiment changed", runCatching { bridge.commitProbe(current) }.exceptionOrNull()?.message)
+        assertEquals(commandsBefore, transport.appliedCommands.toList())
+        assertTrue(transport.committedProbeCandidates.isEmpty())
+    }
+
+    @Test
+    fun probeUndoReceiptCannotActOnAReplacementExperiment() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 43L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val preview = bridge.previewProbe(probeCandidate(), "earth", 10.0)
+        val receipt = bridge.commitProbe(preview).first
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        assertTrue(runCatching { bridge.undoProbe(receipt) }.exceptionOrNull() is IllegalStateException)
+        assertTrue(transport.probeUndoRequests.isEmpty())
+    }
+
+    @Test
+    fun documentValidationOwnsOnlyTemporarySessionAndNeverRebindsRenderer() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))))
+        val renderer = FakeRenderHostAdapter()
+        val bridge = JniRuntimeBridge(transport, renderer)
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val binds = renderer.boundSessionHandles.toList()
+        val releases = renderer.releaseCount
+        val commands = transport.appliedCommands.toList()
+        assertEquals("lab.earth-moon", bridge.validateSavedSession(byteArrayOf(1)))
+        assertEquals(listOf(84L), transport.destroyedHandles)
+        assertEquals(binds, renderer.boundSessionHandles)
+        assertEquals(releases, renderer.releaseCount)
+        assertEquals(commands, transport.appliedCommands.toList())
+        assertTrue(bridge.isCurrentSession(42L))
+        transport.validationSummaryError = IllegalStateException("Malformed native state")
+        assertTrue(runCatching { bridge.validateSavedSession(byteArrayOf(2)) }.isFailure)
+        assertEquals(listOf(84L, 84L), transport.destroyedHandles)
+        transport.validationSummaryError = null
+        transport.validationHandle = 42L
+        assertTrue(runCatching { bridge.validateSavedSession(byteArrayOf(3)) }.isFailure)
+        assertEquals(listOf(84L, 84L), transport.destroyedHandles)
+        assertTrue(bridge.isCurrentSession(42L))
+        assertEquals(binds, renderer.boundSessionHandles)
     }
 
     private class FakeRenderHostAdapter : RenderHostAdapter {
@@ -482,6 +601,12 @@ class JniRuntimeBridgeTest {
         private var failRefresh = false
         var commandError: Throwable? = null
         var exportError: Throwable? = null
+        var validationHandle = 84L
+        var validationSummaryError: Throwable? = null
+        var probePreviewError: Throwable? = null
+        var probeCommitError: Throwable? = null
+        val committedProbeCandidates = mutableListOf<RuntimeBodyState>()
+        val probeUndoRequests = mutableListOf<Pair<String, Long>>()
 
         override fun ensureLibraryLoaded(): NativeLibraryLoadOutcome = NativeLibraryLoadOutcome.Success
 
@@ -513,8 +638,15 @@ class JniRuntimeBridgeTest {
             )
         }
 
-        override fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult =
-            error("snapshotSummary is unused in this test")
+        override fun snapshotSummary(handle: Long): NativeSnapshotSummaryResult {
+            validationSummaryError?.let { throw it }
+            return snapshotSummary(bodyCount = 3)
+        }
+
+        override fun importSavedSession(templateHandle: Long, bytes: ByteArray) = NativeCreateSessionResult(
+            result = NativeResult(code = 0), handle = validationHandle, abiVersion = 12,
+            cpuBackend = runtimeInfoCpuBackend, gpuBackend = runtimeInfoGpuBackend,
+        )
 
         override fun refreshSession(handle: Long): NativeSnapshotSummaryResult {
             refreshError?.let { throw it }
@@ -571,6 +703,29 @@ class JniRuntimeBridgeTest {
             error("exportVulkanScene is unused in this test")
         }
 
+        override fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult {
+            probePreviewError?.let { throw it }
+            val summary = requireNotNull(latestSummary)
+            val reference = candidate.copy(bodyId = referenceBodyId, bodyClass = RuntimeBodyClass.Planet,
+                massKg = 5.972e24, sourceMassKg = 5.972e24, radiusM = 6_371_000.0)
+            return NativeProbePreviewResult(summary.revision, summary.epochSeconds, 10.0, false, false,
+                reference.toNativeBodyValues(), doubleArrayOf(0.0, 7.0e6, 0.0, 0.0, 10.0, 7.0e6, 1.0e4, 0.0))
+        }
+
+        override fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult {
+            probeCommitError?.let { throw it }
+            val current = requireNotNull(latestSummary)
+            check(current.revision == expectedRevision && current.epochSeconds == expectedEpochSeconds && current.paused)
+            committedProbeCandidates += candidate
+            latestSummary = current.copy(bodyCount = current.bodyCount + 1, revision = current.revision + 2)
+            return NativeProbeCommitResult("probe-checkpoint", current.revision + 2, current.epochSeconds)
+        }
+
+        override fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) {
+            probeUndoRequests += checkpointId to committedRevision
+            latestSummary = requireNotNull(latestSummary).let { it.copy(bodyCount = it.bodyCount - 1, paused = true, revision = it.revision + 1) }
+        }
+
         override fun releaseVulkanScene(packetHandle: Long) = Unit
 
         override fun destroySession(handle: Long) {
@@ -593,10 +748,13 @@ class JniRuntimeBridgeTest {
         fun isProgressingAdvanceEpochCommand(command: NativeRuntimeCommandPayload): Boolean =
             command.kind == COMMAND_KIND_ADVANCE_EPOCH && command.deltaSeconds > 0.0
 
-        const val STARTUP_EXPECTED_BODY_COUNT = 365
+        const val STARTUP_EXPECTED_BODY_COUNT = 3
+
+        fun probeCandidate() = RuntimeBodyState("probe", RuntimeBodyClass.Spacecraft, 1000.0, 17.0, 2.0,
+            1.23456789012345e11, 2.34567890123456e10, 3.45678901234567e8, 12.3456789, 23.4567891, 34.5678912)
 
         fun snapshotSummary(
-            scenarioId: String = "sol-system",
+            scenarioId: String = "lab.earth-moon",
             bodyCount: Int,
             paused: Boolean = true,
             simSecondsPerRealSecond: Double = 1.0,

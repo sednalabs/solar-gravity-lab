@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab.render.vulkan
 
 import com.graciousgazelles.solarlab.render.core.CameraScaleBand
+import com.graciousgazelles.solarlab.render.core.CameraState
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.render.core.RenderLayerOptions
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
@@ -17,6 +18,11 @@ internal interface SolarRenderSurface {
     fun setCameraScaleBand(scaleBand: CameraScaleBand) {}
     fun currentCameraScaleBand(): CameraScaleBand = CameraScaleBand.SYSTEM
     fun setOnCameraScaleChangedListener(listener: ((CameraScaleBand) -> Unit)?) {}
+    fun setLabMapMode(enabled: Boolean) {}
+    fun setLabMapPlane(plane: LabPlane) {}
+    fun setOnLabViewportChangedListener(listener: ((LabViewportState?) -> Unit)?) {}
+    fun currentLabViewportState(): LabViewportState? = null
+    fun restoreLabCamera(camera: CameraState) {}
     fun bindRuntimeSessionHandle(sessionHandle: Long) {}
     fun setProcessingMode(mode: RenderProcessingMode) {}
     fun setInteractionListener(listener: RenderInteractionListener?) {}

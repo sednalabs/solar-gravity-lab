@@ -21,6 +21,33 @@ public:
         double pitchRadians = 1.0995574287564276;
     };
 
+    struct LabBodyAnchor {
+        std::string bodyId;
+        double screenX = 0.0;
+        double screenY = 0.0;
+        double radiusPx = 0.0;
+        double depthM = 0.0;
+        bool occluded = false;
+        double worldX = 0.0;
+        double worldY = 0.0;
+        double worldZ = 0.0;
+    };
+
+    struct CameraTransitionFrame {
+        CameraSnapshot start;
+        CameraSnapshot target;
+        // Nonempty centres are offsets from this live body, not absolute coordinates.
+        std::string referenceBodyId;
+    };
+
+    struct LabViewportSnapshot {
+        int width = 1;
+        int height = 1;
+        CameraSnapshot camera;
+        double metersPerPixel = 1.0;
+        std::vector<LabBodyAnchor> bodies;
+    };
+
     SolarLabStageController();
     ~SolarLabStageController();
 
@@ -68,7 +95,8 @@ public:
         double centerZ,
         double viewRadiusM,
         double yawRadians,
-        double pitchRadians);
+        double pitchRadians,
+        const std::string& referenceBodyId = {});
 
     void BindRuntimeSession(uint64_t runtimeSessionHandle);
     void UnbindRuntimeSession();
@@ -82,11 +110,16 @@ public:
     void PanAndZoomRuntimeCamera(float distanceXPx, float distanceYPx, float scaleFactor, float focusXPx, float focusYPx, int viewportWidthPx, int viewportHeightPx);
     void OrbitRuntimeCamera(float deltaXPx, float deltaYPx, float focusXPx, float focusYPx, int viewportWidthPx, int viewportHeightPx);
     CameraSnapshot GetCameraSnapshot() const;
+    LabViewportSnapshot GetLabViewportSnapshot() const;
+    void SetLabMapView(bool enabled, double normalX, double normalY, double normalZ);
+    void SetTouchDensity(double density);
     std::optional<CameraSnapshot> ResolveRuntimeHomeCamera() const;
     std::optional<CameraSnapshot> ResolveRuntimeBodyFrame(const std::string& bodyId) const;
+    std::optional<CameraTransitionFrame> ResolveRuntimeCameraTransition(const std::string& bodyId) const;
     std::string PickRuntimeBodyId(float screenXPx, float screenYPx, int viewportWidthPx, int viewportHeightPx);
 
-    bool Render();
+    bool Render(bool refreshRuntimeScene = true);
+    bool HasPendingPresentation() const;
 
     std::string LastError() const;
     std::string BackendLabel() const;
@@ -98,7 +131,11 @@ public:
         double positionRelativeX = 0.0;
         double positionRelativeY = 0.0;
         double positionRelativeZ = 0.0;
+        double previousRelativeX = 0.0;
+        double previousRelativeY = 0.0;
+        double previousRelativeZ = 0.0;
         float radiusM = 0.0f;
+        float visualRadiusM = 0.0f;
         float frameRadiusM = 0.0f;
         uint32_t kind = 0;
     };
@@ -110,6 +147,15 @@ private:
         double sceneOriginX = 0.0;
         double sceneOriginY = 0.0;
         double sceneOriginZ = 0.0;
+        std::string scenarioId;
+        std::string branchId;
+        double observedAtSeconds = 0.0;
+        double presentationStartedAtSeconds = 0.0;
+        double presentationDurationSeconds = 0.0;
+        double cameraPreviousOffsetX = 0.0;
+        double cameraPreviousOffsetY = 0.0;
+        double cameraPreviousOffsetZ = 0.0;
+        bool snapshotValid = false;
         std::string packetSummary;
         std::vector<RuntimeBodyProxy> pickBodies;
     };
@@ -119,8 +165,16 @@ private:
     void SetErrorLocked(const std::string& message);
     bool RefreshRuntimeSceneLocked();
     void PushCameraLocked();
+    CameraSnapshot PresentedCameraLocked(double fraction) const;
+    double PresentationFractionLocked() const;
+    void ClearCameraPresentationLocked();
+    void ApplyLabMapOrientationLocked();
+    void PreserveFollowOffsetLocked(double previousCenterX, double previousCenterY, double previousCenterZ);
+    void SetRuntimeObserverModeLocked(int observerModeCode);
     bool RuntimeSessionBoundLocked() const;
     double MinimumViewRadiusLocked() const;
+    std::optional<CameraSnapshot> ResolveRuntimeHomeCameraLocked() const;
+    std::optional<CameraSnapshot> ResolveRuntimeBodyFrameLocked(const std::string& bodyId) const;
     void InitializeFreeCameraFromRuntimePacketLocked(
         double sceneOriginX,
         double sceneOriginY,
@@ -145,6 +199,20 @@ private:
     int runtimeTraceLayerModeCode_ = 0;
     std::string runtimeSelectedBodyId_;
 
+    bool labMapMode_ = false;
+    double labMapYawRadians_ = 0.0;
+    double labMapPitchRadians_ = 1.5707963267948966;
+    double labOrbitYawRadians_ = -0.5934119456780721;
+    double labOrbitPitchRadians_ = 1.0995574287564276;
+    double touchDensity_ = 1.0;
+    double followOffsetX_ = 0.0;
+    double followOffsetY_ = 0.0;
+    double followOffsetZ_ = 0.0;
+    double followTargetX_ = 0.0;
+    double followTargetY_ = 0.0;
+    double followTargetZ_ = 0.0;
+    bool followTargetValid_ = false;
+
     double cameraCenterX_ = 0.0;
     double cameraCenterY_ = 0.0;
     double cameraCenterZ_ = 0.0;
@@ -152,6 +220,7 @@ private:
     double cameraYawRadians_ = -0.5934119456780721;
     double cameraPitchRadians_ = 1.0995574287564276;
     bool runtimeCameraInitialized_ = false;
+    bool runtimeHomePending_ = false;
     uint64_t cameraRevisionCounter_ = 1;
     int surfaceWidthPx_ = 1;
     int surfaceHeightPx_ = 1;

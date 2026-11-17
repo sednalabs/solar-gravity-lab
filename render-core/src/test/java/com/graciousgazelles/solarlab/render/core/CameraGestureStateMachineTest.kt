@@ -8,6 +8,28 @@ import org.junit.Test
 
 class CameraGestureStateMachineTest {
     @Test
+    fun mapDragPansAndNeverTurnsIntoOrbitAfterPinching() {
+        val gestures = CameraGestureStateMachine(touchSlopPx = 4f)
+        gestures.onDown(pointer(0, 100f, 100f))
+        val drag = gestures.onMove(listOf(pointer(0, 120f, 130f)),
+            followActive = false, onePointerPans = true) as CameraGestureUpdate.PanAndZoom
+        assertEquals(-20f, drag.distanceXPx)
+        assertEquals(-30f, drag.distanceYPx)
+        assertEquals(1f, drag.scaleFactor)
+        assertFalse(drag.detachFollow)
+
+        gestures.onPointerDown(listOf(pointer(0, 120f, 130f), pointer(1, 220f, 130f)))
+        val pinch = gestures.onMove(listOf(pointer(0, 100f, 140f), pointer(1, 240f, 140f)),
+            followActive = false, onePointerPans = true) as CameraGestureUpdate.PanAndZoom
+        assertEquals(1.4f, pinch.scaleFactor, 0.0001f)
+        assertEquals(170f, pinch.focusXPx)
+        assertEquals(140f, pinch.focusYPx)
+        gestures.onPointerUp()
+        assertNull(gestures.onMove(listOf(pointer(0, 180f, 150f)),
+            followActive = false, onePointerPans = true))
+    }
+
+    @Test
     fun onePointerCanOnlyOrbitAfterTouchSlop() {
         val gestures = CameraGestureStateMachine(touchSlopPx = 8f)
         gestures.onDown(pointer(0, 100f, 100f))

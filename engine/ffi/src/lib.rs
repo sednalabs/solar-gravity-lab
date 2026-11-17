@@ -39,6 +39,11 @@ use solarlab_vulkan_adapter::{
     VulkanTrailVertex,
 };
 
+mod persistence;
+#[cfg(any(target_os = "android", test))]
+mod probe_authoring;
+pub use persistence::{sl_v2_session_export_save, sl_v2_session_import_save, SlSaveWriteResult};
+
 pub const SOLARLAB_V2_ABI_VERSION: u32 = 12;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
@@ -161,6 +166,7 @@ pub enum SlCommandKind {
     CreateCheckpoint = 9,
     CreateBranchFromCheckpoint = 10,
     SeedCanonicalSolarSystem = 11,
+    SetBodyProperties = 12,
 }
 
 #[repr(C)]
@@ -1424,7 +1430,9 @@ fn build_session(
             solver_backend: requested_solver_backend.clone(),
             integrator: IntegratorKind::LeapfrogKickDriftKick,
             collision_model: CollisionModel::None,
-            max_substep_seconds: 1.0,
+            max_substep_seconds: if scenario_id == solarlab_data::EARTH_MOON_LAB_ID {
+                solarlab_data::EARTH_MOON_LAB_MAX_SUBSTEP_SECONDS
+            } else { 1.0 },
         },
         timeline_semantics,
         live_updates_enabled: params.live_updates_enabled != 0,
@@ -1893,6 +1901,14 @@ fn decode_world_command(command: SlSessionCommand) -> Result<WorldCommand, SlRes
         SlCommandKind::RemoveBody => Ok(WorldCommand::RemoveBody {
             body_id: BodyId(decode_identifier(&command.body_id, command.body_id_len)?),
         }),
+        SlCommandKind::SetBodyProperties => Ok(WorldCommand::SetBodyProperties {
+            body_id: BodyId(decode_identifier(&command.body_id, command.body_id_len)?),
+            mass_kg: command.body_mass_kg,
+            source_mass_kg: command.body_source_mass_kg,
+            radius_m: command.body_radius_m,
+            position_m: decode_vector3d(command.body_position),
+            velocity_mps: decode_vector3d(command.body_velocity),
+        }),
         SlCommandKind::SetBodyKinematics => {
             let body_id = decode_identifier(&command.body_id, command.body_id_len)?;
             Ok(WorldCommand::SetBodyKinematics {
@@ -1980,6 +1996,7 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
         | RuntimeError::UnknownScenario(_)
         | RuntimeError::InvalidEpochDelta(_)
         | RuntimeError::InvalidPlaybackRate(_)
+        | RuntimeError::InvalidBodyProperties | RuntimeError::BodyEditRequiresPause
         | RuntimeError::UnknownCheckpoint(_)
         | RuntimeError::DuplicateCheckpoint(_)
         | RuntimeError::DuplicateBranch(_)
@@ -2017,6 +2034,7 @@ fn cpu_solver_path_code(path_id: &str) -> u32 {
         "simd.x64.scalar-fallback" => 2,
         "simd.arm64.neon-f64-tiled-pairwise" => 3,
         "simd.arm64.neon-f64-parallel-tiled-pairwise" => 4,
+        "simd.x64.avx2-f64-pairwise" => 5,
         _ => u32::MAX,
     }
 }
@@ -2041,6 +2059,7 @@ fn cpu_fallback_code(fallback_code: &SolverFallbackCode) -> u32 {
         SolverFallbackCode::SimdArm64OnNonAarch64Host => 1,
         SolverFallbackCode::SimdArm64MissingNeon => 2,
         SolverFallbackCode::SimdX64Unavailable => 3,
+        SolverFallbackCode::WorkloadBelowVectorWidth => 4,
     }
 }
 
@@ -2204,6 +2223,8 @@ fn jni_next_ordinal(ordinal: u64) -> i64 {
 // pointers and must treat every handle as invalid after its corresponding destroy/
 // release call.
 mod android_jni {
+    mod persistence;
+    mod probe_authoring;
     use super::{
         sl_v2_session_apply_command, sl_v2_session_create, sl_v2_session_destroy,
         sl_v2_session_export_vulkan_scene, sl_v2_session_refresh, sl_v2_session_runtime_info,
@@ -2218,6 +2239,8 @@ mod android_jni {
     use jni::JNIEnv;
 
     const CLASS_NATIVE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeResult";
+    const CLASS_NATIVE_PROBE_PREVIEW_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeProbePreviewResult";
+    const CLASS_NATIVE_PROBE_COMMIT_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeProbeCommitResult";
     const CLASS_NATIVE_ADVANCE_RESULT: &str = "com/sednalabs/solarlab/runtime/NativeAdvanceResult";
     const CLASS_NATIVE_PLAYBACK_TICK_RESULT: &str = "com/sednalabs/solarlab/runtime/NativePlaybackTickResult";
     const CLASS_NATIVE_CREATE_SESSION_RESULT: &str =
@@ -2789,6 +2812,7 @@ mod android_jni {
             9 => Ok(SlCommandKind::CreateCheckpoint),
             10 => Ok(SlCommandKind::CreateBranchFromCheckpoint),
             11 => Ok(SlCommandKind::SeedCanonicalSolarSystem),
+            12 => Ok(SlCommandKind::SetBodyProperties),
             _ => Err(status(SlStatusCode::InvalidArgument)),
         }
     }
@@ -3238,6 +3262,16 @@ mod tests {
         SlVulkanTracerInstance, SlVulkanTrailSpan, SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE,
         SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
+
+    #[test]
+    fn avx2_execution_and_small_workload_fallback_have_stable_boundary_codes() {
+        assert_eq!(super::cpu_solver_path_code("simd.x64.avx2-f64-pairwise"), 5);
+        assert_eq!(
+            super::cpu_fallback_code(&solarlab_physics::SolverFallbackCode::WorkloadBelowVectorWidth),
+            4
+        );
+        assert_eq!(super::cpu_solver_path_code("scalar.reference"), 0);
+    }
 
     #[test]
     fn abi_version_matches_constant() {
@@ -4350,7 +4384,8 @@ mod tests {
             runtime_info.info.cpu_schedule_body_count,
             seed_result.summary.body_count
         );
-        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+        // Fifteen sources interact with 350 nonperturbing targets, plus 105 source pairs.
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 5_355);
 
         let second_seed_result = sl_v2_session_apply_command(
             create.handle,
@@ -4366,7 +4401,7 @@ mod tests {
     }
 
     #[test]
-    fn large_seeded_arm64_session_reports_tiled_solver_path_when_available() {
+    fn canonical_arm64_session_reports_source_aware_solver_path() {
         let mut params = new_params("sol-system", "main");
         params.cpu_backend = 1;
         let create = sl_v2_session_create(params);
@@ -4382,21 +4417,20 @@ mod tests {
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info.cpu_schedule_body_count, 365);
-        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 66_430);
+        // Fifteen sources interact with 350 nonperturbing targets, plus 105 source pairs.
+        assert_eq!(runtime_info.info.cpu_schedule_estimated_pair_count, 5_355);
         assert_eq!(runtime_info.info.cpu_schedule_tile_size_bodies, 32);
 
         let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;
         if cfg!(target_arch = "aarch64") && has_neon {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::SimdArm64);
-            assert_eq!(runtime_info.info.cpu_schedule_tile_count, 12);
-            if runtime_info.info.cpu_schedule_active_workers > 1 {
-                assert_eq!(runtime_info.info.cpu_solver_path, 4);
-                assert!(runtime_info.info.cpu_schedule_parallel_tile_workers > 1);
-                assert!(runtime_info.info.cpu_schedule_parallel_tile_workers <= 12);
-            } else {
-                assert_eq!(runtime_info.info.cpu_solver_path, 3);
-                assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
-            }
+            // 5,355 useful pairs are below the 8,128-pair work grain even
+            // on one allowed CPU. The canonical scene stays on the ordinary
+            // one-worker NEON path under both affinity configurations.
+            assert_eq!(runtime_info.info.cpu_schedule_active_workers, 1);
+            assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
+            assert_eq!(runtime_info.info.cpu_solver_path, 1);
+            assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
             assert_ne!(runtime_info.info.cpu_kernel_active_mask, 0);
         } else {
@@ -4499,7 +4533,7 @@ mod tests {
         scene_revision.split("|diag:").next().unwrap_or_default()
     }
 
-    fn new_params(scenario: &str, branch: &str) -> SlSessionCreateParams {
+    pub(super) fn new_params(scenario: &str, branch: &str) -> SlSessionCreateParams {
         let mut scenario_id = [0u8; SL_V2_ID_CAPACITY];
         scenario_id[..scenario.len()].copy_from_slice(scenario.as_bytes());
 

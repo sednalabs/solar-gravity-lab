@@ -7,6 +7,7 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 forwardAndDepth;
     vec4 viewport;
     vec4 primaryLightPositionRelativeAndFlags;
+    vec4 presentation;
 } uScene;
 
 layout(location = 0) in vec3 inPositionM;
@@ -24,6 +25,7 @@ layout(location = 11) in vec4 inCometRadiiAndTailLengths;
 layout(location = 12) in vec3 inCometAntiSolarDirectionWs;
 layout(location = 13) in vec3 inCometVelocityDirectionWs;
 layout(location = 14) in vec3 inRingPlaneNormalWs;
+layout(location = 15) in vec3 inPreviousPositionM;
 
 layout(location = 0) out vec4 vColor;
 layout(location = 1) flat out uint vKind;
@@ -31,7 +33,7 @@ layout(location = 2) flat out vec3 vLightDirection;
 layout(location = 3) out vec2 vBillboardUv;
 layout(location = 4) flat out uint vMaterial;
 layout(location = 5) flat out uint vAppearanceFlags;
-layout(location = 6) flat out float vReferenceMeridianRadians;
+layout(location = 6) flat out vec4 vSurfaceFrame;
 layout(location = 7) flat out float vBodyRadiusUv;
 layout(location = 8) flat out vec3 vNorthPoleCamera;
 layout(location = 9) flat out vec3 vRingRatiosAndOpticalDepth;
@@ -39,7 +41,7 @@ layout(location = 10) flat out vec2 vAtmosphereRatioAndDensity;
 layout(location = 11) flat out vec4 vCometRatios;
 layout(location = 12) flat out vec3 vCometAntiSolarCamera;
 layout(location = 13) flat out vec3 vCometVelocityCamera;
-layout(location = 14) flat out float vSurfaceDetail;
+layout(location = 14) flat out vec3 vSurfaceMetrics;
 layout(location = 15) flat out vec3 vRingPlaneCamera;
 
 const uint KIND_STAR = 0u;
@@ -96,13 +98,16 @@ vec2 clipXY(vec3 cameraRelativeM) {
 float clipDepth01(vec3 cameraRelativeM) {
     float halfDepth = max(uScene.forwardAndDepth.w, 1e-6);
     float centeredDepth = dot(cameraRelativeM, uScene.forwardAndDepth.xyz);
-    return clamp(0.5 + (centeredDepth / (halfDepth * 2.0)), 0.0, 1.0);
+    return 0.5 + (centeredDepth / (halfDepth * 2.0));
 }
 
 vec3 directionToCamera(vec3 worldDirection) {
+    // The fragment sphere flips clip Y back to screen-up. Use that same
+    // right/up/toward-viewer frame for its pole, meridian and light; reflecting
+    // only the world directions makes fixed geography move as the camera orbits.
     vec3 transformed = vec3(
         dot(worldDirection, uScene.rightAndSpan.xyz),
-        -dot(worldDirection, uScene.upAndSpan.xyz),
+        dot(worldDirection, uScene.upAndSpan.xyz),
         -dot(worldDirection, uScene.forwardAndDepth.xyz)
     );
     float magnitude = length(transformed);
@@ -110,7 +115,8 @@ vec3 directionToCamera(vec3 worldDirection) {
 }
 
 void main() {
-    vec3 relative = cameraRelative(inPositionM);
+    vec3 positionM = mix(inPreviousPositionM, inPositionM, uScene.presentation.x);
+    vec3 relative = cameraRelative(positionM);
     vec2 centerClip = clipXY(relative);
 
     float metersPerPixel = max(uScene.centerRelativeAndMetrics.w, 1e-6);
@@ -125,10 +131,10 @@ void main() {
         diameterPx / max(uScene.viewport.x, 1.0),
         diameterPx / max(uScene.viewport.y, 1.0)
     );
-    // Keep a co-located trajectory from winning an equal-depth comparison and
-    // visibly painting through the body it describes.
-    float bodyDepth = max(0.0, clipDepth01(relative) - 1e-5);
-    gl_Position = vec4(centerClip + cornerClipOffset, bodyDepth, 1.0);
+    // The fragment shader resolves the analytic surface depth instead of writing
+    // this flat quad's centre depth. Keep the quad available across a clip plane.
+    float bodyDepth = clipDepth01(relative);
+    gl_Position = vec4(centerClip + cornerClipOffset, clamp(bodyDepth, 0.0, 1.0), 1.0);
 
     vec4 color = unpackArgb(inColorArgb);
     color.a *= inAlpha;
@@ -137,7 +143,10 @@ void main() {
     vBillboardUv = corner;
     vMaterial = inMaterial;
     vAppearanceFlags = inAppearanceFlags;
-    vReferenceMeridianRadians = inAtmosphereRadiusDensityAndMeridian.z;
+    vec3 poleWs = length(inNorthPoleWs) > 0.0001 ? normalize(inNorthPoleWs) : vec3(0.0, 1.0, 0.0);
+    vec3 surfaceReferenceWs = abs(poleWs.z) < 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 surfaceEastCamera = directionToCamera(normalize(cross(surfaceReferenceWs, poleWs)));
+    vSurfaceFrame = vec4(surfaceEastCamera, inAtmosphereRadiusDensityAndMeridian.z);
     float physicalRatio = clamp(inPhysicalRadiusM / visualRadiusM, 0.0, 1.0);
     float minimumCoreRatio = (minimumDiameterForKind(inKind) * 0.5) / max(diameterPx, 1.0);
     vBodyRadiusUv = clamp(max(physicalRatio, minimumCoreRatio), 1e-6, 1.0);
@@ -156,15 +165,15 @@ void main() {
     vCometVelocityCamera = directionToCamera(inCometVelocityDirectionWs);
     vRingPlaneCamera = directionToCamera(inRingPlaneNormalWs);
     float physicalDiameterPx = (max(inPhysicalRadiusM, 0.0) / metersPerPixel) * 2.0;
-    vSurfaceDetail = smoothstep(7.0, 72.0, physicalDiameterPx);
+    vSurfaceMetrics = vec3(
+        smoothstep(7.0, 72.0, physicalDiameterPx),
+        bodyDepth,
+        diameterPx * 0.5 * metersPerPixel / (2.0 * max(uScene.forwardAndDepth.w, 1e-6))
+    );
 
     if (uScene.primaryLightPositionRelativeAndFlags.w > 0.5) {
-        vec3 toLightWorld = normalize(uScene.primaryLightPositionRelativeAndFlags.xyz - inPositionM);
-        vLightDirection = normalize(vec3(
-            dot(toLightWorld, uScene.rightAndSpan.xyz),
-            -dot(toLightWorld, uScene.upAndSpan.xyz),
-            -dot(toLightWorld, uScene.forwardAndDepth.xyz)
-        ));
+        vec3 toLightWorld = normalize(uScene.primaryLightPositionRelativeAndFlags.xyz - positionM);
+        vLightDirection = directionToCamera(toLightWorld);
     } else {
         vLightDirection = normalize(vec3(-0.42, -0.30, 0.86));
     }
