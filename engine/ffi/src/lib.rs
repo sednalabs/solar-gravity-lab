@@ -3267,6 +3267,7 @@ mod tests {
     #[test]
     fn avx2_execution_and_small_workload_fallback_have_stable_boundary_codes() {
         assert_eq!(super::cpu_solver_path_code("simd.x64.avx2-f64-pairwise"), 5);
+        assert_eq!(super::cpu_solver_path_code("simd.arm64.neon-f64-passive-batch"), 6);
         assert_eq!(
             super::cpu_fallback_code(&solarlab_physics::SolverFallbackCode::WorkloadBelowVectorWidth),
             4
@@ -3398,7 +3399,7 @@ mod tests {
         assert_eq!(runtime_info.info.cpu_schedule_tile_size_bodies, 32);
         assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
         assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
-        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 15);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 16);
         assert_eq!(runtime_info.info.cpu_kernel_active_count, 0);
         assert_eq!(runtime_info.info.cpu_kernel_active_mask, 0);
         assert_eq!(
@@ -3456,6 +3457,7 @@ mod tests {
                 create.runtime_info.cpu_solver_path == 1
                     || create.runtime_info.cpu_solver_path == 3
                     || create.runtime_info.cpu_solver_path == 4
+                    || create.runtime_info.cpu_solver_path == 6
             );
             assert_eq!(create.runtime_info.cpu_fallback_code, 0);
             assert_eq!(create.runtime_info.cpu_kernel_active_count, 1);
@@ -3478,7 +3480,7 @@ mod tests {
         let runtime_info = sl_v2_session_runtime_info(create.handle);
         assert_eq!(runtime_info.result.code, SlStatusCode::Ok);
         assert_eq!(runtime_info.info, create.runtime_info);
-        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 15);
+        assert_eq!(runtime_info.info.cpu_kernel_catalog_count, 16);
         assert_eq!(
             runtime_info.info.cpu_kernel_eligible_candidate_count
                 + runtime_info.info.cpu_kernel_blocked_candidate_count,
@@ -4425,12 +4427,12 @@ mod tests {
         let has_neon = runtime_info.info.cpu_feature_flags & 1 != 0;
         if cfg!(target_arch = "aarch64") && has_neon {
             assert_eq!(runtime_info.info.cpu_backend, SlCpuBackend::SimdArm64);
-            // 5,355 useful pairs are below the 8,128-pair work grain even
-            // on one allowed CPU. The canonical scene stays on the ordinary
-            // one-worker NEON path under both affinity configurations.
+            // 5,355 useful pairs are below the parallel worker threshold.
+            // Many zero-source tracers now take the two-target FP64 NEON path,
+            // without claiming multiple workers or backreaction.
             assert_eq!(runtime_info.info.cpu_schedule_active_workers, 1);
             assert_eq!(runtime_info.info.cpu_schedule_parallel_tile_workers, 0);
-            assert_eq!(runtime_info.info.cpu_solver_path, 1);
+            assert_eq!(runtime_info.info.cpu_solver_path, 6);
             assert_eq!(runtime_info.info.cpu_schedule_tile_count, 0);
             assert_eq!(runtime_info.info.cpu_kernel_active_count, 1);
             assert_ne!(runtime_info.info.cpu_kernel_active_mask, 0);

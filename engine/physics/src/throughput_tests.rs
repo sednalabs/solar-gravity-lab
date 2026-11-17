@@ -436,13 +436,12 @@ fn neon_passive_batch_matches_symmetric_neon_for_sources_and_scalar_for_passives
             let mut scalar = initial.clone();
             let mut batched = initial.clone();
             let mut old_neon = initial.clone();
-            let mut policy = PhysicsPolicy {
+            let policy = PhysicsPolicy {
                 solver_backend: SolverBackend::SimdArm64,
                 integrator: IntegratorKind::LeapfrogKickDriftKick,
                 collision_model: CollisionModel::None,
                 max_substep_seconds: 1.0,
             };
-            policy.solver_backend = SolverBackend::SimdArm64;
             let (_, report) = advance_authoritative_with_features(
                 &policy, &mut batched, 25.0, &features,
             );
