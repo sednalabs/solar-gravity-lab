@@ -60,10 +60,10 @@ contract instead of reviving these older structs unchanged.
 ### 4. Command recording now binds the streams separately
 
 The Vulkan command path now binds the five streams to distinct vertex bindings
-(0 through 4). There are still no finished graphics pipelines in-tree, but the
-command buffers now reflect the intended split between authoritative / near /
-medium / far / trails instead of treating the whole scene as a single
-undifferentiated blob.
+(0 through 4). At this historical slice there were not yet finished graphics pipelines.
+The command buffers already reflected the five-stream split, which later
+native Vulkan commits completed with SPIR-V graphics and compute pipelines.
+Do not confuse that intermediate state with current `main`.
 
 ### 5. Native diagnostics are now queryable from Kotlin
 

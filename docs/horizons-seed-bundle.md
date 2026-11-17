@@ -91,9 +91,9 @@ A good baseline for external agents is:
 - velocities must be in metres per second
 - `earth` should be the actual Earth body state, not the Earth-Moon barycenter, unless the bundle clearly documents otherwise
 
-## Validation already implemented
+## Validation implemented in the legacy TSV importer
 
-The app now validates:
+The retained v1 reference importer validated:
 
 - metadata completeness
 - unit declarations

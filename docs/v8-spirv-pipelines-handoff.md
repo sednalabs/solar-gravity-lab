@@ -44,11 +44,16 @@ SPIR-V modules through the Android asset manager using paths like:
 - `shaders/solarlab/trail.vert.spv`
 - `shaders/solarlab/trail.frag.spv`
 
-## What is still intentionally next, not already done
+## What was next at this historical slice
 
-Only after the graphics pipelines are stable should more native work land.
+At the v8 milestone, compute descriptors and 3D tracer compaction were
+still future work; they have since been implemented and passed
+[hosted native pixel/resize checks](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943).
+The original action list below is retained as history, **not** current backlog.
+Use [current rendering architecture](rendering-architecture-current-state.md)
+for live work.
 
-The next best tasks are:
+The original next-step tasks were:
 
 1. Move far-tracer density rendering toward true aggregate / tile compaction
    instead of one-vertex-per-tracer drawing.
