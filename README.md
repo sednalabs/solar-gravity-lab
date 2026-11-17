@@ -163,8 +163,11 @@ operational proof and historical handoffs before following the ADR sequence.
 15. [`docs/v2/architecture.md`](docs/v2/architecture.md)
 16. [`docs/v2/roadmap.md`](docs/v2/roadmap.md)
 
-The `docs/v2/*` paths remain named that way because they were written during
-the reset, but they now describe the architecture that lives on `main`.
+The `docs/v2/*` paths retain their original reset-era names. The
+stage-first **runtime/world-ownership contracts** remain useful descriptions of
+`main`, while the numbered stage-first **implementation slices** and earlier
+roadmap stages are historical. The [documentation guide](docs/README.md)
+classifies which references should direct new work.
 
 ## Runtime/FFI seam contract
 

@@ -70,11 +70,14 @@ The ADRs under [`adr/`](adr/) are historical **accepted decisions** and
 remain valuable; an accepted architectural direction is not proof that every
 optional service or backend exists.
 
-The `v2/` stage-first and renderer-slice documents, `v6`, `v7` and `v8`
-handoffs, catalog TSV handoffs, old Vulkan/XY compute notes and self-hosted
-runner evaluations are **historical or deferred implementation records**.
-Do not use superseded 2D packet, old camera or old scheduler instructions as
-the current build contract. Prefer the canonical documents above.
+The current Rust/native world-ownership contracts in
+[`v2/stage-first-runtime.md`](v2/stage-first-runtime.md) and
+[`v2/stage-first-native-simulation-world-unification.md`](v2/stage-first-native-simulation-world-unification.md)
+remain applicable. Other reset-era `v2/` **numbered implementation
+slices** and `v6`, `v7`, `v8` handoffs, catalog TSV instructions,
+old Vulkan/XY compaction notes and self-hosted runner evaluations are
+**historical or deferred**. Do not use superseded flat packet, old camera,
+or earlier scheduler instructions as current build contracts.
 
 ## Documentation validation convention
 
