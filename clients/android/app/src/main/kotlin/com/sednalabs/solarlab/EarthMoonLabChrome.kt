@@ -101,6 +101,7 @@ internal object LabTags {
     const val COMPACT_HEADER = "lab.compact.header"
     const val COMPACT_PLAYBACK = "lab.compact.playback"
     const val TOOLS_PANEL = "lab.tools"
+    const val TOOLS_CLOSE = "lab.tools.close"
     const val ZOOM_RAIL = "lab.zoom"
     const val SCALE = "lab.scale"
     const val MODE_MAP = "lab.mode.map"
@@ -548,7 +549,11 @@ private fun LabMenuSheet(
         containerColor = Color(0xFF0D1826), contentColor = LabInk) {
         Column(Modifier.fillMaxWidth().testTag(LabTags.TOOLS_PANEL).verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Your laboratory", style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Your laboratory", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                LabTextAction("Done", actions.toggleTools, tag = LabTags.TOOLS_CLOSE,
+                    description = "Close laboratory tools")
+            }
             LabMenuRow("Saved experiments", "Save this moment or reopen an experiment", LabTags.SAVED, ready) { open(actions.saved) }
             LabMenuRow("Choose a scene", "Explore another starting system", SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON) { open(actions.scenarios) }
             LabMenuRow("About this model", "Sources, epoch and scientific approximations", LabTags.SCIENCE) { open(actions.science) }

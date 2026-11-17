@@ -24,6 +24,21 @@ class ProbeAuthoringTest {
         reference.toNativeBodyValues(), doubleArrayOf(0.0, 7_171_000.0, 0.0, 0.0, 10.0, 7_170_000.0, 70_000.0, 0.0))
 
     @Test
+    fun previewIdentityRejectsChangedWorldAndPreservesOnlyTheExactPausedDraft() {
+        val preview = native().toPreview(42, candidate, "earth")
+        val snapshot = SnapshotPresentation("lab.earth-moon", "main", 3, 0.0, true, 1.0,
+            observerModeLabel = "Free", revision = 7)
+        assertTrue(preview.isCurrentFor(candidate, 42, snapshot))
+        assertTrue(!preview.isCurrentFor(candidate, 43, snapshot))
+        assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(revision = 8)))
+        assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(epochSeconds = 1.0)))
+        assertTrue(!preview.isCurrentFor(candidate, 42, snapshot.copy(paused = false)))
+        assertTrue(!preview.isCurrentFor(candidate.copy(massKg = 2000.0), 42, snapshot))
+        assertTrue(!preview.isCurrentFor(candidate, 42, null))
+        assertTrue(!preview.isCurrentFor(null, 42, snapshot))
+    }
+
+    @Test
     fun bodyAndPreviewDtoRetainF64ValuesAndRejectMalformedNativePayloads() {
         assertEquals(reference, bodyStateFromNative(reference.bodyId, reference.toNativeBodyValues()))
         val result = native().toPreview(42, candidate, "earth")

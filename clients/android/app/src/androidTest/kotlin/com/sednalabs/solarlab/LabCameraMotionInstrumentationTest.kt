@@ -22,7 +22,6 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.espresso.Espresso.pressBack
 import androidx.test.platform.app.InstrumentationRegistry
 import com.graciousgazelles.solarlab.render.core.ObserverMode
 import com.graciousgazelles.solarlab.core.math.Vector3d
@@ -301,7 +300,7 @@ class LabCameraMotionInstrumentationTest {
             val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
             if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) node.performClick()
         }
-        pressBack()
+        composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible().performClick()
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty() }
     }
 

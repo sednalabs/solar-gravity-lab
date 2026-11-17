@@ -104,6 +104,7 @@ import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeBodyState
 import com.sednalabs.solarlab.runtime.ShellNoticeTone
 import com.sednalabs.solarlab.runtime.RuntimeFacade
+import com.sednalabs.solarlab.runtime.isCurrentFor
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPack
 import com.sednalabs.solarlab.runtime.RuntimeScenarioPacks
@@ -588,7 +589,9 @@ internal fun StageFirstRuntimeExperience(
         fun commitProbePlacement() {
             val draft = labInteraction.draft ?: return
             val preview = labInteraction.preview ?: return
-            if (labInteraction.committing || draft.candidate() != preview.candidate) return
+            if (labInteraction.committing || !preview.isCurrentFor(
+                draft.candidate(), runtimeFacade.uiState.value.sessionHandle,
+                runtimeFacade.uiState.value.snapshot)) return
             labInteraction.committing = true
             labInteraction.error = null
             authoringScope.launch {
@@ -845,16 +848,21 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        LaunchedEffect(labInteraction.draftVersion) {
+        LaunchedEffect(labInteraction.draftVersion, runtimeSessionHandle, uiState.snapshot?.revision) {
             val version = labInteraction.draftVersion
             val draft = labInteraction.draft ?: return@LaunchedEffect
             val candidate = draft.candidate() ?: return@LaunchedEffect
-            if (labInteraction.preview?.candidate == candidate && labInteraction.preview?.sessionHandle == runtimeSessionHandle) return@LaunchedEffect
+            if (labInteraction.committing || uiState.snapshot?.paused != true) return@LaunchedEffect
+            if (labInteraction.preview?.isCurrentFor(candidate, runtimeSessionHandle, uiState.snapshot) == true) return@LaunchedEffect
+            // Camera commands during recreation also change native revision.
+            // Never offer Create against an obsolete retained preview.
+            labInteraction.preview = null
             labInteraction.previewing = true
             delay(90)
             try {
                 val result = runtimeFacade.previewProbe(candidate, draft.reference.bodyId, draft.previewHorizonSeconds())
-                if (labInteraction.draftVersion == version && result.sessionHandle == runtimeFacade.uiState.value.sessionHandle) {
+                if (labInteraction.draftVersion == version && result.isCurrentFor(candidate,
+                        runtimeFacade.uiState.value.sessionHandle, runtimeFacade.uiState.value.snapshot)) {
                     labInteraction.preview = result
                     labInteraction.error = null
                 }
@@ -1110,7 +1118,9 @@ internal fun StageFirstRuntimeExperience(
                                         camera.copy(centerM = camera.centerM + currentReference - referencePositionToRestore) else camera)
                                     observerMode = modeToRestore
                                     view.setObserverMode(modeToRestore)
-                                    syncObserver(selectedBodyId, modeToRestore)
+                                    // Restoring a draft's camera is presentation-only. Reissuing
+                                    // native observer commands invalidates the retained forecast.
+                                    if (labInteraction.draft == null) syncObserver(selectedBodyId, modeToRestore)
                                 } else {
                                     if (viewport != null) {
                                         labInteraction.savedCamera = viewport.camera
@@ -1332,7 +1342,7 @@ internal fun StageFirstRuntimeExperience(
                         previewStatus = previewStatus,
                         previewHorizonText = preview?.let { "Next ${labPreviewDuration(it.horizonSeconds)}${if (it.limited) " · bounded preview" else ""}" },
                         error = draft.validationError ?: labInteraction.error,
-                        canCreate = preview != null && preview.candidate == draft.candidate() && !labInteraction.previewing,
+                        canCreate = preview?.isCurrentFor(draft.candidate(), runtimeSessionHandle, uiState.snapshot) == true && !labInteraction.previewing,
                         committing = labInteraction.committing,
                         altitudeLocked = draft.altitudeLocked,
                         headingDegreesText = draft.headingDegreesText,

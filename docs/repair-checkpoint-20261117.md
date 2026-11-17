@@ -23,3 +23,17 @@ useful-pair scene uses the ordinary single-worker NEON path in either case.
 
 Do not promote this checkpoint until its exact-source hosted native run and
 real captures pass. Current delivery: w18944, w18954, w18955, w18967; PR237.
+
+
+A second native-diagnostics pass found draft creation after Activity recreation
+could offer a forecast from an older command revision. Forecast reuse and
+Create now require matching candidate, native session, revision, paused state
+and exact epoch. Restoration of a draft camera no longer reissues unrelated
+observer commands. Native commit's stale-preview rejection is unchanged.
+Unit cases cover every identity component and the native recreation journey
+still requires successful actual creation. Rejection now captures its error.
+
+Laboratory tools now have an explicit accessible Done action. Native compute
+qualification uses that ordinary control instead of an injected Android Back
+event that failed on the hosted system. GPU pixel, readback, resize and resource
+reuse assertions are unchanged.

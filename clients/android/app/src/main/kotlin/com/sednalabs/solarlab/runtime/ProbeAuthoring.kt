@@ -21,6 +21,16 @@ data class ProbePreviewResult(
     val intersectsReferenceBody: Boolean,
 )
 
+/** A retained forecast is usable only for the exact paused world it predicted. */
+internal fun ProbePreviewResult.isCurrentFor(
+    currentCandidate: RuntimeBodyState?,
+    currentSessionHandle: Long?,
+    snapshot: SnapshotPresentation?,
+): Boolean = currentCandidate != null && candidate == currentCandidate &&
+    sessionHandle == currentSessionHandle && snapshot != null && snapshot.paused &&
+    baselineRevision == snapshot.revision &&
+    epochSeconds.toBits() == snapshot.epochSeconds.toBits()
+
 /** Undo returns to this epoch on a new branch, preserving the abandoned future. */
 data class ProbeCommitResult(
     val sessionHandle: Long,

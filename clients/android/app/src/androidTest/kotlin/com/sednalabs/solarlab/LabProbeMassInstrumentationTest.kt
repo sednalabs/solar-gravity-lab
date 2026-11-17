@@ -20,6 +20,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import kotlinx.coroutines.runBlocking
+import androidx.lifecycle.ViewModelProvider
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -55,7 +56,13 @@ class LabProbeMassInstrumentationTest {
         capture("01-mass-draft.png")
         composeRule.waitUntil(30_000) { runCatching { composeRule.onNodeWithTag(LabPlacementTags.CREATE).assertIsEnabled() }.isSuccess }
         composeRule.onNodeWithTag(LabPlacementTags.CREATE).performClick()
-        composeRule.waitUntil(20_000) { facade.uiState.value.snapshot?.bodyCount == count + 1 && facade.lastProbeCommit.value != null }
+        fun placementError() = ViewModelProvider(composeRule.activity)[LabInteractionViewModel::class.java].state.error
+        composeRule.waitUntil(20_000) {
+            (facade.uiState.value.snapshot?.bodyCount == count + 1 && facade.lastProbeCommit.value != null) || placementError() != null
+        }
+        if (placementError() != null) capture("placement-rejected.png")
+        assertNull("Native placement must accept the recreated mass preview", placementError())
+        assertEquals(count + 1, facade.uiState.value.snapshot!!.bodyCount)
         val id = requireNotNull(facade.lastProbeCommit.value).bodyId
         fun body() = runBlocking { requireNotNull(facade.inspectBody(id)) }
         assertEquals(1e22, body().massKg, 0.0)
