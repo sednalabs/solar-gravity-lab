@@ -1534,10 +1534,10 @@ fn integrate_fixed_steps_with_kernel(
     let mut scratch = GravityScratch::default();
     #[cfg(target_arch = "aarch64")]
     {
-        // One step has only two force sweeps. Keep the allocation-free PR242
-        // traversal here; paired native Arm proof found that preparing the
-        // packed cache costs more than it saves for the sparse 1024/3 scene.
-        scratch.stream_passive_targets = count == 1;
+        // Cache preparation still regresses a two-step sparse segment on the
+        // paired native Arm host. Four-step gains are narrow; use the cache
+        // from eight steps, where both sparse controls show a clearer margin.
+        scratch.stream_passive_targets = count < 8;
     }
     gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
     let half_dt = 0.5 * dt_seconds;

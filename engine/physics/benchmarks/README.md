@@ -259,3 +259,56 @@ Artifact SHA256: `f968034574fd13f0a2120398c4a0085ae43bbf2d65786fd22dcb4fb8c3b244
 The artifact contains both reports and all 16 raw ABBA executions with immutable
 source, binary, compiler and affinity metadata. It establishes hosted Arm
 behaviour, not Galaxy/Oryon, frame, energy or thermal acceptance.
+
+### Cache crossover qualification, run 44277468936
+
+Candidate `1c1e0830681448bdf5c0a75b891a92598099d9e3` retains streaming at one
+step and uses the packed cache at two or more. Its exact tree matches local
+`2cfb32483de2884153bca5b0069ad60c839668d8`. The baseline remains
+`54b8d2036b9a03cc4b9587be0b86113db5bbbe6a`. The same two release binaries run
+all seven segment lengths, with 11 samples per execution, ABBA order and both
+affinity masks: 56 raw executions in total. Percentages are elapsed-time changes
+from the medians of the two run medians; negative values mean less time.
+
+| Steps | Measured candidate path | Canonical full | Canonical one CPU | Sparse full | Sparse one CPU |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | Streaming | −0.16% | −0.20% | −0.15% | −0.26% |
+| 2 | Cached | −1.09% | −1.18% | +0.39% | +0.52% |
+| 4 | Cached | −1.60% | −1.59% | −0.37% | −0.34% |
+| 8 | Cached | −1.90% | −1.89% | −0.92% | −0.89% |
+| 16 | Cached | −2.08% | −2.09% | −1.27% | −1.26% |
+| 32 | Cached | −2.22% | −2.23% | −1.52% | −1.63% |
+| 64 | Cached | −2.33% | −2.31% | −1.87% | −1.90% |
+
+Streaming removes the observed one-step regression. The two-step sparse loss
+appears in both candidate repeats under both affinity masks. Four steps improve
+in this sample, but the sparse margin is only about 0.35%; the selected policy
+therefore retains streaming for counts 1–7 and enables the cache from **eight
+steps**. This favours a clearer measured margin over the earliest observed
+crossover. It does not establish an Oryon-specific optimum or a confidence
+interval from two run medians. All measured cached cohorts at or above eight
+steps improve both changed workloads in both affinity modes.
+
+At eight steps, sparse medians are 137.847→136.577 µs under full affinity and
+137.802→136.570 µs on one CPU; their scalar controls move +0.12%/+0.20%.
+Canonical medians are 191.786→188.143 µs and 191.751→188.130 µs.
+At 64 steps, canonical medians are 1,357.469→1,325.867 µs and
+1,357.005→1,325.603 µs; sparse medians are 970.779→952.670 µs and
+971.096→952.664 µs. The changed-path p90 aggregates improve at eight and
+64 steps as well. All scalar-oracle checks pass, including the unchanged
+64-step sparse absolute error of 1.4551915228366852e−11.
+
+Unchanged four-worker dense-256 timings remain variable: median changes across
+cohorts range from −2.29% to +2.40%, with overlapping or widely separated
+individual run medians. Single-CPU dense-256 changes range from −0.04% to
++0.23%. Dense-128/192 changes remain within approximately −0.16% to +0.32%.
+Small-workload scalar controls also move, so their raw changes are not evidence
+of a new NEON arithmetic gain. This result supports the sparse cache policy;
+it does not establish that every path improved.
+
+Evidence: [CPU crossover job 134709151514](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44277468936/job/134709151514),
+[raw artifact 14415896541](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44277468936/artifacts/14415896541).
+Artifact SHA256: `8e5327c0f2c643b93d559a90d1a3c2cb668428e30c6e3a3ad71df102a0ef2a2c`.
+These results measure the provisional one-step-only exception. The final
+count-less-than-eight dispatch must pass exact-head integrated validation and
+paired proof; neither run substitutes for physical device acceptance.

@@ -557,8 +557,10 @@ fn neon_passive_batch_matches_symmetric_neon_for_sources_and_scalar_for_passives
                 &policy, 25.0, size, sources.len(), &features,
             ).expect("fixed source-aware plan");
             assert_eq!(plan.report().path_id, report.path_id);
-            advance_fixed_steps(&plan, &mut chunked, 9).unwrap();
-            advance_fixed_steps(&plan, &mut chunked, 16).unwrap();
+            // Cross the streaming/cache boundary without changing state bits.
+            advance_fixed_steps(&plan, &mut chunked, 7).unwrap();
+            advance_fixed_steps(&plan, &mut chunked, 8).unwrap();
+            advance_fixed_steps(&plan, &mut chunked, 10).unwrap();
             assert_eq!(chunked, batched, "staged/bulk must agree bitwise");
             // One-step segments use the original allocation-free target
             // traversal; a bulk segment uses the packed four-target cache.
