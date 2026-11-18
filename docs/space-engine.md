@@ -27,7 +27,7 @@ thrust at 450 s specific impulse, 800 N RCS axes at 300 s, fixed principal inert
 and ideal bounded reaction wheels. Wheel saturation/power, fuel slosh, drag,
 relativity, resolved collisions and structural dynamics are not simulated.
 Launch authors an approximate 400 km circular ICRF-XY orbit around current Earth;
-this is not a JPL spacecraft vector. Powered input caps warp to1x; fine attitude
+this is not a JPL spacecraft vector. Powered input caps warp to 1x; fine attitude
 steps can limit achieved coasting speed. Rust instrumentation is osculating
 two-body estimates. Numerical orbit paths are coast predictions, excluding
 future throttle, not guaranteed intercepts or planned-burn solutions.

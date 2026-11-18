@@ -21,6 +21,13 @@ python3 tools/import_spacecraft_gltf.py render/android-vulkan/assets-src/asteria
 python3 tools/test_import_spacecraft_gltf.py
 ```
 
+Run these commands from the repository root. The importer confines source and
+output files to the working directory by default. For a separate asset workspace,
+select trusted directories with `--asset-root` and `--output-root`; the two file
+arguments are then relative to their respective roots. Document-supplied buffer
+URIs remain confined to the glTF file's own directory, including symlink targets.
+The source hash records the same bytes used to generate the geometry.
+
 The deterministic **offline glTF 2.0 importer** supports rigid indexed or unindexed
 triangle meshes, FLOAT positions/normals, node hierarchies with matrix or TRS,
 and metallic/roughness/base-colour/emission material factors. The compiled
