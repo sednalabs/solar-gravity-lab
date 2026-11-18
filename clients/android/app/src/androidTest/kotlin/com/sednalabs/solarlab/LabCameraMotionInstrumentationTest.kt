@@ -16,6 +16,7 @@ import android.view.SurfaceView
 import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.runtime.BroadcastFrameClock
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
@@ -27,7 +28,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.graciousgazelles.solarlab.render.core.ObserverMode
@@ -40,6 +40,11 @@ import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.SessionConnectionState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -322,6 +327,14 @@ class LabCameraMotionInstrumentationTest {
                     composeRule.mainClock.advanceTimeByFrame()
                 }
             }
+            try {
+                composeRule.waitUntil(10_000) {
+                    composeRule.mainClock.advanceTimeByFrame()
+                    composeRule.onNodeWithTag(tag).fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)
+                }
+            } catch (timeout: ComposeTimeoutException) {
+                throw AssertionError("The two trace taps did not reach ${if (visible) "ALL" else "OFF"}", timeout)
+            }
             scrollToSettledControl(LabTags.TOOLS_CLOSE).performClick()
             composeRule.waitUntil(10_000) {
                 composeRule.mainClock.advanceTimeByFrame()
@@ -338,10 +351,16 @@ class LabCameraMotionInstrumentationTest {
         var previousPanelBounds: Rect? = null
         var previousBounds: Rect? = null
         var scrollIssued = false
+        var requestedScroll = Offset.Zero
+        val scrollClock = BroadcastFrameClock()
+        val scrollScope = CoroutineScope(Dispatchers.Main.immediate + scrollClock)
+        val scrollCompletion = CompletableFuture<Offset>()
         var lastObservation = "No visibility sample yet"
         try {
             composeRule.waitUntil(10_000) {
                 composeRule.mainClock.advanceTimeByFrame()
+                val frameTimeNanos = TimeUnit.MILLISECONDS.toNanos(composeRule.mainClock.currentTime)
+                composeRule.runOnUiThread { scrollClock.sendFrame(frameTimeNanos) }
                 if (!scrollIssued) {
                     if (!panel.isDisplayed()) {
                         lastObservation = "Android reports the tools panel is not displayed"
@@ -367,19 +386,37 @@ class LabCameraMotionInstrumentationTest {
                         else -> 0f
                     }
                     val reverse = panelSemantics.config[SemanticsProperties.VerticalScrollAxisRange].reverseScrolling
-                    // Compose 1.7.5 performScrollTo has an unbounded internal loop.
-                    // Its ScrollBy action animates, so issue it once and let this
-                    // bounded loop advance the frames needed for completion.
-                    if (abs(delta) > 0.5f) {
-                        var accepted = false
-                        panel.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
-                            accepted = scroll(0f, if (reverse) -delta else delta)
+                    // ScrollBy only starts an animation. Even pixel-stable bounds
+                    // can precede its completion, when Scrollable still consumes
+                    // the next down event to stop scrolling. ScrollByOffset returns
+                    // after that state is cleared. Give its suspend action a Main
+                    // frame clock driven by this same bounded test-clock loop.
+                    requestedScroll = Offset(0f, if (reverse) -delta else delta)
+                    val scroll = panelSemantics.config[SemanticsActions.ScrollByOffset]
+                    scrollScope.launch {
+                        try {
+                            // Zero offset still acquires/releases the scroll mutator,
+                            // so an already visible control gets the same completion
+                            // guarantee as a control that needed to move.
+                            scrollCompletion.complete(scroll(requestedScroll))
+                        } catch (error: Throwable) {
+                            scrollCompletion.completeExceptionally(error)
+                            if (error is CancellationException) throw error
                         }
-                        assertTrue("The tools panel must accept its vertical scroll", accepted)
                     }
                     scrollIssued = true
                     lastObservation = "Issued one scroll delta=$delta; viewport=$viewport, targetTop=$targetTop, targetBottom=$targetBottom"
                     return@waitUntil false
+                }
+                if (!scrollCompletion.isDone) {
+                    lastObservation = "Waiting for ScrollByOffset completion: requested=$requestedScroll, frameTimeNanos=$frameTimeNanos"
+                    return@waitUntil false
+                }
+                val consumedScroll = try {
+                    // isDone is permanent: this get cannot wait for another frame.
+                    scrollCompletion.get()
+                } catch (failure: ExecutionException) {
+                    throw AssertionError("ScrollByOffset for '$tag' failed", failure.cause ?: failure)
                 }
                 // Compose 1.7.5 checks placement, Android root visibility and the
                 // visible screen rectangle here. Semantics presence is insufficient.
@@ -396,13 +433,15 @@ class LabCameraMotionInstrumentationTest {
                 // visible frames before the caller's single coordinate click.
                 val fullyVisible = size.width > 0 && size.height > 0 &&
                     abs(bounds.width - size.width) <= 1f && abs(bounds.height - size.height) <= 1f
-                lastObservation = "displayed=true, windowBounds=$bounds, fullSize=$size, previousBounds=$previousBounds"
+                lastObservation = "scrollCompleted=true, consumed=$consumedScroll, displayed=true, windowBounds=$bounds, fullSize=$size, previousBounds=$previousBounds"
                 val settled = fullyVisible && bounds == previousBounds
                 previousBounds = bounds.takeIf { fullyVisible }
                 settled
             }
         } catch (timeout: ComposeTimeoutException) {
-            throw AssertionError("Control '$tag' did not become fully visible and stationary: $lastObservation", timeout)
+            throw AssertionError("Control '$tag' did not finish scrolling and become fully visible and stationary: $lastObservation", timeout)
+        } finally {
+            scrollScope.cancel()
         }
         return node
     }
