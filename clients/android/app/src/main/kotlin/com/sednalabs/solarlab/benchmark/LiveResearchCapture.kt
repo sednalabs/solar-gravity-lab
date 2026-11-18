@@ -198,6 +198,7 @@ object LiveResearchCapture {
 /** Preserve original strings as authority; parsed groups make timing units easier to analyse. */
 internal fun rendererSnapshot(status: RenderBackendStatus): JSONObject {
     val raw = status.message + " " + status.hardwareSummary.orEmpty()
+    val integerLiteral = Regex("[+-]?[0-9]+")
     fun group(name: String): JSONObject? {
         val match = Regex("${Regex.escape(name)}=\\[([^]]*)]").find(raw) ?: return null
         val result = JSONObject()
@@ -206,7 +207,9 @@ internal fun rendererSnapshot(status: RenderBackendStatus): JSONObject {
             if (separator <= 0) continue
             val key = part.substring(0, separator).trim()
             val text = part.substring(separator + 1).trim()
-            val value: Any = text.toLongOrNull() ?: text.toDoubleOrNull()?.takeIf(Double::isFinite) ?: text
+            // Vk timestamps are uint64. A value outside signed Long must not pass through Double.
+            val value: Any = text.toLongOrNull() ?: if (integerLiteral.matches(text)) text
+                else text.toDoubleOrNull()?.takeIf(Double::isFinite) ?: text
             result.put(key, value)
         }
         return result
@@ -220,6 +223,7 @@ internal fun rendererSnapshot(status: RenderBackendStatus): JSONObject {
         .put("subgroup", group("subgroup") ?: JSONObject.NULL)
         .put("sync2", group("sync2") ?: JSONObject.NULL)
         .put("bda", group("bda") ?: JSONObject.NULL)
+        .put("integer_representation", "signed_64_bit_JSON_integer; out_of_range_decimal_integer_preserved_as_string")
         .put("timing_scope", "last_completed_native_Vulkan_timestamp_sample; callback_is_not_every_presented_frame")
         .put("timing_units", "gpu_timing.frameNs/preGraphicsNs=ns; timestamp.periodNs=ns/tick; calibrated.hostNs/maxDeviationNs=ns; calibrated.deviceTicks=ticks")
 }

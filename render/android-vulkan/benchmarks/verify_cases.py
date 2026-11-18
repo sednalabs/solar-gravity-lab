@@ -6,6 +6,9 @@ import sys
 
 
 def run(binary: str, *args: str) -> dict:
+    # CTest supplies its locally built $<TARGET_FILE:...>. This CLI deliberately
+    # executes that caller-selected trusted binary; no report/network data can
+    # choose it, and the argument vector is never passed through a shell.
     output = subprocess.check_output([binary, *args], text=True, timeout=90)
     return json.loads(output, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
 

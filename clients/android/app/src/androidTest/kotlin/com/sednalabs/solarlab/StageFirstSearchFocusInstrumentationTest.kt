@@ -39,37 +39,39 @@ class StageFirstSearchFocusInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
         loadCanonicalCatalogue()
 
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
-        }
-
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-            .performScrollToIfPossible()
-            .performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
-        }
-        // Filter before asking for Halley: an unfiltered, scroll-clipped
-        // catalogue need not expose an offscreen result in its semantics tree.
-        // The filtered inclusion/exclusion assertions below remain mandatory.
-        Log.i("SolarLabSearchProof", "Search field ready; entering comet filter")
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("comet")
-        Log.i("SolarLabSearchProof", "Comet filter entered")
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
-        }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextReplacement("earth")
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
-        }
-        // The 365-body native scene keeps rendering while focus transitions
-        // settle. Compose must not require the entire renderer to become idle to
-        // inspect a stable selection. Control only the test frame clock here,
-        // just as the repeated-search interaction test does for feedback timers.
+        // Keep one clock policy for the entire live-scene interaction, including
+        // opening Search: an idle barrier there failed before the former narrow
+        // selection-only manual-clock section. Every state assertion is retained
+        // and each wait below explicitly advances Compose frames.
         composeRule.mainClock.autoAdvance = false
         try {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
+                .performScrollToIfPossible()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
+            }
+            // A scroll-clipped catalogue need not expose every offscreen result;
+            // filtered inclusion and exclusion remain mandatory assertions.
+            Log.i("SolarLabSearchProof", "Search field ready; entering comet filter")
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("comet")
+            Log.i("SolarLabSearchProof", "Comet filter entered")
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
+            }
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextReplacement("earth")
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
+            }
             composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
 
             var lastSelectionFailure: Throwable? = null

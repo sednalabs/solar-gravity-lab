@@ -33,7 +33,7 @@ class LiveResearchCaptureInstrumentationTest {
             override suspend fun applyCommand(command: RuntimeCommand) = Unit
         }
         val message = "gpuTiming=[samples:7,frameNs:123456,preGraphicsNs:12000] " + "full-message-".repeat(600) + "END"
-        val hardware = "timestamp=[validBits:48,periodNs:19.2,queries:1] calibrated=[hostNs:999,deviceTicks:9007199254740993,maxDeviationNs:42]"
+        val hardware = "timestamp=[validBits:64,periodNs:19.2,queries:1] calibrated=[hostNs:9007199254740993,deviceTicks:18446744073709551615,maxDeviationNs:42]"
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             assertTrue(LiveResearchCapture.start(context, runtime))
             LiveResearchCapture.rendererStatus(RenderBackendStatus(RenderBackend.VULKAN, RenderBackend.VULKAN, true, message, hardware))
@@ -49,7 +49,10 @@ class LiveResearchCaptureInstrumentationTest {
         assertEquals(hardware, renderer.getString("hardware_summary"))
         assertFalse(renderer.getBoolean("truncated"))
         assertEquals(123456L, renderer.getJSONObject("gpu_timing").getLong("frameNs"))
-        assertEquals(9007199254740993L, renderer.getJSONObject("calibrated").getLong("deviceTicks"))
+        val calibrated = renderer.getJSONObject("calibrated")
+        assertEquals(9007199254740993L, calibrated.getLong("hostNs"))
+        assertTrue(calibrated.get("deviceTicks") is String)
+        assertEquals("18446744073709551615", calibrated.getString("deviceTicks"))
         assertEquals("completed", JSONObject(File(session, "manifest.json").readText()).getString("status"))
         val summary = JSONObject(File(session, "summary.json").readText())
         assertEquals(summary.getLong("events_offered"), summary.getLong("events_written") + summary.getLong("queue_dropped_events"))

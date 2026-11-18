@@ -243,6 +243,10 @@ class Device {
     std::string Diagnostics();
 };
 void Device::Initialize(const std::string &id) {
+    // Unsupported() qualified this exact case before device creation. Enable
+    // only its consumed features, using promoted core APIs where available.
+    // Every feature struct below lives through vkCreateDevice; no pNext pointer
+    // escapes into a later call. This device is isolated from the live renderer.
     addressMode = id == "gpu.compact-bda";
     timelineMode = id == "gpu.timeline-submit";
     sync2Mode = id == "gpu.sync2-submit";
@@ -446,6 +450,10 @@ size_t Device::MakeBuffer(VkDeviceSize bytes, VkBufferUsageFlags usage, bool til
 }
 #if defined(__ANDROID__)
 size_t Device::ImportHardwareBuffer(const std::vector<float> &source) {
+    // BLOB width is a 32-bit byte count. Validate before multiplication/narrowing
+    // so a later caller cannot silently create a smaller destination allocation.
+    if (source.empty() || source.size() > UINT32_MAX / sizeof(float))
+        throw std::invalid_argument("ahb-source-size-out-of-range");
     const size_t index = buffers.size();
     buffers.emplace_back();
     auto &b = buffers.back();
@@ -459,14 +467,22 @@ size_t Device::ImportHardwareBuffer(const std::vector<float> &source) {
     const int allocationResult = AHardwareBuffer_allocate(&description, &b.hardwareBuffer);
     if (allocationResult != 0 || !b.hardwareBuffer)
         throw std::runtime_error("ahb-allocation-failed:" + std::to_string(allocationResult));
+    AHardwareBuffer_Desc allocated{};
+    AHardwareBuffer_describe(b.hardwareBuffer, &allocated);
+    if (allocated.format != AHARDWAREBUFFER_FORMAT_BLOB || allocated.width != description.width ||
+        allocated.height != 1 || allocated.layers != 1)
+        throw std::runtime_error("ahb-allocation-description-mismatch");
     void *address = nullptr;
     const int lockResult =
         AHardwareBuffer_lock(b.hardwareBuffer, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN, -1, nullptr, &address);
     if (lockResult != 0)
         throw std::runtime_error("ahb-cpu-write-lock-failed:" + std::to_string(lockResult));
-    // Unlock even if a faulty allocator supplies no CPU mapping; never leave a locked buffer behind.
+    // Source and destination are separate owning allocations. The checked BLOB
+    // width equals source.size()*sizeof(float); byte copying requires no extra
+    // alignment. Unlock even if a faulty allocator supplies no CPU mapping.
     if (address)
-        std::memcpy(address, source.data(), static_cast<size_t>(b.bytes));
+        std::copy_n(reinterpret_cast<const uint8_t *>(source.data()), static_cast<size_t>(b.bytes),
+                    static_cast<uint8_t *>(address));
     int32_t releaseFence = -1;
     const int unlockResult = AHardwareBuffer_unlock(b.hardwareBuffer, &releaseFence);
     if (releaseFence >= 0) {
@@ -804,6 +820,8 @@ std::string Device::Diagnostics() {
                 out << "{\"executable\":" << Quote(executables[i].name) << ",\"name\":" << Quote(stat.name)
                     << ",\"description\":" << Quote(stat.description) << ",\"format\":" << stat.format
                     << ",\"value\":";
+                // The driver fills format and its matching union member in
+                // statistics(...); the vector's initial zero is not its result.
                 switch (stat.format) {
                 case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
                     out << (stat.value.b32 ? "true" : "false");
@@ -1207,6 +1225,10 @@ Sample ComputeCase(Instance &instance, const std::string &id, int iterations) {
 }
 } // namespace
 GpuInventory GpuCapabilities() {
+    // Build a stable case catalogue even when Vulkan or a conditional feature
+    // is absent. Queries advertise support; they never set enabled/executed.
+    // Workload-specific format, allocation and entrypoint checks run again at
+    // execution, where a driver rejection can be recorded without a fake PASS.
     Instance instance;
     const bool available = instance.Initialize();
     GpuInventory result;

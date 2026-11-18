@@ -43,6 +43,7 @@ STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.LabCameraMotionInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeStartupInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstRuntimeInstrumentationTest"
+  "com.sednalabs.solarlab.RuntimeUiStateInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchFocusInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSemanticIntentInstrumentationTest"

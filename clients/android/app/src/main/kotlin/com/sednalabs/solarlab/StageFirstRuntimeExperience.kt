@@ -78,7 +78,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.sednalabs.solarlab.render.vulkan.RenderInteractionListener
 import com.sednalabs.solarlab.render.vulkan.LabViewportState
@@ -298,11 +297,11 @@ internal fun StageFirstRuntimeExperience(
         val lifecycleOwner = LocalLifecycleOwner.current
         val coroutineScope = rememberCoroutineScope()
 
-        val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
-        val researchRecording by com.sednalabs.solarlab.benchmark.LiveResearchCapture.recording.collectAsStateWithLifecycle()
-        val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
-        val experimentStatus by runtimeFacade.experimentStatus.collectAsStateWithLifecycle()
-        val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
+        val uiState by runtimeFacade.uiState.collectAsMainThreadState()
+        val researchRecording by com.sednalabs.solarlab.benchmark.LiveResearchCapture.recording.collectAsMainThreadState()
+        val savedExperiments by runtimeFacade.savedExperiments.collectAsMainThreadState()
+        val experimentStatus by runtimeFacade.experimentStatus.collectAsMainThreadState()
+        val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsMainThreadState()
 
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }

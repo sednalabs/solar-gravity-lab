@@ -171,7 +171,7 @@ struct Resources {
             api.releaseContext(context);
     }
 };
-const char *kKernel = R"CL(
+constexpr char kKernel[] = R"CL(
 #ifdef USE_FP64
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
 typedef double real;typedef double3 real3;typedef double4 real4;
@@ -208,6 +208,9 @@ GpuInventory OpenClCapabilities() {
     return result;
 }
 Sample RunOpenCl(const std::string &id, int iterations) {
+    // The loader and selected GPU are limited to this app's public namespace.
+    // Resources owns every OpenCL handle until queue completion; no renderer
+    // context, authoritative physics buffer or private vendor path is reused.
     Sample result;
     result.iterations = std::clamp(iterations, 1, 32);
     result.scope = "enqueue-and-finish-excluding-runtime-compile-upload-readback-and-oracle";
@@ -237,10 +240,13 @@ Sample RunOpenCl(const std::string &id, int iterations) {
         Check(error, "create-OpenCL-context");
         resources.queue = api.createQueue(resources.context, api.device, kProfiling, &error);
         Check(error, "create-OpenCL-queue");
-        const size_t sourceLength = std::strlen(kKernel);
-        resources.program = api.createProgram(resources.context, 1, &kKernel, &sourceLength, &error);
+        constexpr size_t sourceLength = sizeof(kKernel) - 1;
+        const char *kernelSource = kKernel;
+        resources.program = api.createProgram(resources.context, 1, &kernelSource, &sourceLength, &error);
         Check(error, "create-OpenCL-program");
         const auto buildStart = Clock::now();
+        // Compile this known source without fast-relaxed math. Compilation is
+        // reported separately and excluded from the submitted kernel interval.
         const ClInt buildResult =
             api.buildProgram(resources.program, 1, &api.device,
                              fp64 ? "-cl-std=CL1.2 -DUSE_FP64=1" : "-cl-std=CL1.2", nullptr, nullptr);

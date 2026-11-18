@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import com.graciousgazelles.solarlab.core.model.PhysicalConstants
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val StageOverlayPanel = Color(0xE6070D18)
 private val StageControlRail = Color(0xEA07101A)
@@ -78,13 +80,15 @@ internal fun StageFirstRuntimeApp(
     var pendingSemanticAction by remember { mutableStateOf<PendingSemanticAction?>(null) }
 
     LaunchedEffect(semanticActions) {
-        semanticActions.collect { action ->
-            nextSemanticToken += 1L
-            pendingSemanticAction = PendingSemanticAction(
-                token = nextSemanticToken,
-                action = action,
-            )
-            SolarLabSemanticActionBridge.clearPendingReplay()
+        withContext(Dispatchers.Main.immediate) {
+            semanticActions.collect { action ->
+                nextSemanticToken += 1L
+                pendingSemanticAction = PendingSemanticAction(
+                    token = nextSemanticToken,
+                    action = action,
+                )
+                SolarLabSemanticActionBridge.clearPendingReplay()
+            }
         }
     }
 

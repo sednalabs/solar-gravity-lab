@@ -40,6 +40,9 @@ class BenchmarkFileStoreTest {
             while (true) { val entry = zip.nextEntry ?: break; entries[entry.name] = zip.readBytes(); zip.closeEntry() }
         }
         assertEquals(setOf("events.ndjson", "manifest.json", "archive-index.json"), entries.keys)
+        // Golden bytes detect omitted payloads even if an empty payload's hash is self-consistent.
+        assertArrayEquals("{\"status\":\"completed\"}".toByteArray(Charsets.UTF_8), entries.getValue("manifest.json"))
+        assertArrayEquals("{\"elapsed_ns\":42}\n".toByteArray(Charsets.UTF_8), entries.getValue("events.ndjson"))
         val index = entries.getValue("archive-index.json").toString(Charsets.UTF_8)
         for (name in listOf("events.ndjson", "manifest.json")) {
             val hash = MessageDigest.getInstance("SHA-256").digest(entries.getValue(name)).joinToString("") { "%02x".format(it.toInt() and 255) }
