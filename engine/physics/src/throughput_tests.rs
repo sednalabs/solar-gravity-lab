@@ -1,5 +1,59 @@
 use super::*;
 
+/// Independently retain the pre-cache PR242 kernel as a bitwise oracle. This
+/// catches source packing, four-target register blocking and tail regressions
+/// that a loose scalar tolerance would conceal.
+#[cfg(target_arch = "aarch64")]
+#[test]
+#[allow(unsafe_code)]
+fn cached_passive_neon_is_bitwise_equal_to_pr242_for_every_tail_and_refresh() {
+    assert!(arm64_neon_runtime_available());
+    for count in (0..20).chain([256, 365, 1024]) {
+        for pattern in 0..4 {
+            let mut bodies = fixture(count, false);
+            for (index, body) in bodies.iter_mut().enumerate() {
+                if match pattern {
+                    0 => true,
+                    1 => index % 7 != 2,
+                    2 => index >= 3,
+                    _ => index + 3 < count,
+                } {
+                    body.mass_kg = 0.0;
+                }
+            }
+            let mut scratch = GravityScratch::default();
+            for sweep in 0..4 {
+                let sources = source_indices(&bodies);
+                let mut expected = vec![Vector3d::default(); count];
+                let mut actual = expected.clone();
+                // SAFETY: native AArch64 test checks the same runtime NEON
+                // precondition as production; all slices remain borrowed.
+                unsafe {
+                    arm64_neon::passive_batch_uncached_reference(&bodies, &sources, &mut expected);
+                }
+                pairwise_gravity_accelerations_arm64_neon_passive_batch(
+                    &bodies, &sources, &mut actual, &mut scratch,
+                );
+                for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+                    assert_eq!(
+                        [actual.x.to_bits(), actual.y.to_bits(), actual.z.to_bits()],
+                        [expected.x.to_bits(), expected.y.to_bits(), expected.z.to_bits()],
+                        "count={count} pattern={pattern} sweep={sweep} body={index}",
+                    );
+                }
+                for body in &mut bodies {
+                    body.position_m.x += 123.5;
+                    body.position_m.y *= 0.875;
+                }
+                // Also reuse the scratch after source membership changes.
+                if let Some(body) = bodies.get_mut(sweep) {
+                    body.mass_kg = if body.mass_kg == 0.0 { 7.0e20 } else { 0.0 };
+                }
+            }
+        }
+    }
+}
+
 fn fixture(count: usize, sparse: bool) -> Vec<MassiveBodyState> {
     (0..count)
         .map(|index| MassiveBodyState {
