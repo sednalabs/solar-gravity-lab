@@ -16,7 +16,10 @@ import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -309,17 +312,13 @@ class LabCameraMotionInstrumentationTest {
             }
             val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
             repeat(2) {
-                val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
-                // Apply the semantic scroll before reading/clicking its new bounds.
-                composeRule.mainClock.advanceTimeByFrame()
+                val node = scrollToSettledControl(tag)
                 if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) {
                     node.performClick()
                     composeRule.mainClock.advanceTimeByFrame()
                 }
             }
-            val close = composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible()
-            composeRule.mainClock.advanceTimeByFrame()
-            close.performClick()
+            scrollToSettledControl(LabTags.TOOLS_CLOSE).performClick()
             composeRule.waitUntil(10_000) {
                 composeRule.mainClock.advanceTimeByFrame()
                 composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
@@ -327,6 +326,27 @@ class LabCameraMotionInstrumentationTest {
         } finally {
             composeRule.mainClock.autoAdvance = previousAutoAdvance
         }
+    }
+
+    private fun scrollToSettledControl(tag: String): SemanticsNodeInteraction {
+        val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
+        var previousBounds: Rect? = null
+        composeRule.waitUntil(10_000) {
+            composeRule.mainClock.advanceTimeByFrame()
+            val semantics = node.fetchSemanticsNode()
+            val bounds = semantics.boundsInRoot
+            val size = semantics.size
+            // boundsInRoot is clipped by the scroll viewport and Compose root;
+            // size is not. Require the complete touch target, then consecutive
+            // stationary frames so a sliding sheet cannot move under the tap.
+            val fullyVisible = size.width > 0 && size.height > 0 &&
+                abs(bounds.width - size.width) <= 1f && abs(bounds.height - size.height) <= 1f
+            val settled = fullyVisible && bounds == previousBounds
+            previousBounds = bounds.takeIf { fullyVisible }
+            settled
+        }
+        // Also checks that the Android root is actually displayed in its window.
+        return node.assertIsDisplayed()
     }
 
     private fun computeFields(status: String, stream: String): Map<String, String> {
