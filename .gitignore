@@ -5,7 +5,6 @@ local.properties
 captures/
 out/
 target/
-/Cargo.lock
 
 *.iml
 *.jks

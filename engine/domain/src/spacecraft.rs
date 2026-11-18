@@ -49,6 +49,20 @@ pub fn finite(v: Vector3d) -> bool {
     v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
 }
 
+/// Positive principal moments realizable by a nonnegative mass distribution.
+/// Subtracting moments avoids overflow in the equivalent triangle inequalities
+/// `Ix <= Iy + Iz` while retaining planar bodies at the equality boundary.
+#[must_use]
+pub fn valid_principal_inertia(i: Vector3d) -> bool {
+    finite(i)
+        && i.x > 0.0
+        && i.y > 0.0
+        && i.z > 0.0
+        && i.x - i.y <= i.z
+        && i.y - i.z <= i.x
+        && i.z - i.x <= i.y
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Quaterniond {
     pub w: f64,
@@ -298,10 +312,7 @@ impl SpacecraftState {
             && self.propellant_mass_kg.is_finite()
             && self.propellant_mass_kg >= 0.0
             && self.mass_kg().is_finite()
-            && finite(self.inertia_kg_m2)
-            && self.inertia_kg_m2.x > 0.0
-            && self.inertia_kg_m2.y > 0.0
-            && self.inertia_kg_m2.z > 0.0
+            && valid_principal_inertia(self.inertia_kg_m2)
             && finite(self.max_control_torque_nm)
             && self.max_control_torque_nm.x >= 0.0
             && self.max_control_torque_nm.y >= 0.0
@@ -536,6 +547,41 @@ impl LocalReferenceFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn principal_inertia_preserves_physical_boundaries_without_overflow() {
+        let smallest = f64::from_bits(1);
+        for [x, y, z] in [
+            [1.0, 2.0, 3.0],
+            [3.0, 1.0, 2.0],
+            [2.0, 3.0, 1.0],
+            [f64::MAX, f64::MAX, f64::MAX],
+            [f64::MAX, smallest, f64::MAX],
+            [smallest, smallest, smallest],
+            [smallest, smallest, 2.0 * smallest],
+            [1.0e-200, 1.0e100, 1.0e100],
+        ] {
+            assert!(valid_principal_inertia(Vector3d { x, y, z }));
+        }
+    }
+
+    #[test]
+    fn principal_inertia_rejects_impossible_moments_on_every_axis() {
+        let beyond_planar = f64::from_bits(2.0_f64.to_bits() + 1);
+        for [x, y, z] in [
+            [beyond_planar, 1.0, 1.0],
+            [1.0, beyond_planar, 1.0],
+            [1.0, 1.0, beyond_planar],
+            [f64::MAX, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [-1.0, 1.0, 1.0],
+            [f64::NAN, 1.0, 1.0],
+            [1.0, f64::INFINITY, 1.0],
+        ] {
+            assert!(!valid_principal_inertia(Vector3d { x, y, z }));
+        }
+    }
+
     #[test]
     fn rotating_local_frames_roundtrip_at_astronomical_origins() {
         let frame = LocalReferenceFrame {

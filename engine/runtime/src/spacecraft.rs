@@ -903,7 +903,7 @@ mod tests {
                 },
                 0
             ),
-            Err(RuntimeError::InvalidFlightState)
+            Err(RuntimeError::ScientificFailure(solarlab_physics::science::ScientificError::NonFinite))
         );
         assert_eq!(r.snapshot(), before);
         assert_eq!(r.next_command_ordinal(), ordinal);
@@ -913,7 +913,7 @@ mod tests {
             .generation;
         assert!(matches!(
             r.continue_advance(generation, 0),
-            Err(RuntimeError::InvalidFlightState)
+            Err(RuntimeError::ScientificFailure(solarlab_physics::science::ScientificError::NonFinite))
         ));
         assert_eq!(r.query_advance().unwrap().state, AdvanceState::Cancelled);
         assert_eq!(r.snapshot(), before);

@@ -4,8 +4,10 @@ This index distinguishes the **implemented source**, **tested behaviour**,
 **published Android APK** and **historical design work**. Use it before old
 stage-first or compaction handoffs. Audited against canonical `main`
 through the A–E engine merge `dac95def8a6dda19736f1f41f3261fb19afc082d`.
-The separate docking extension below describes current branch source and requires
-its own exact-source validation.
+The later flight, desktop, scientific and authoring campaign is tracked in
+[PR #254](https://github.com/sednalabs/solar-gravity-lab/pull/254), including its
+exact-source qualification, visual evidence and remaining delivery gaps. The
+dated validation results below retain their original scope.
 See the [16–18 November integration record](mainline-integration-week-20261116.md)
 for the commit-by-commit scope and which checkpoints remain historical.
 
@@ -57,6 +59,14 @@ for the commit-by-commit scope and which checkpoints remain historical.
 
 ## Canonical contracts and implementation
 
+- [Pilot guide](pilot-guide.md): camera, controls, checkpoints, orbital directions
+  and a first native burn preview.
+- [Spacecraft and scenario authoring](spacecraft-authoring.md): external component
+  definitions, local interaction worlds and a generated asset catalogue.
+- [Native desktop flight](../clients/desktop/README.md): launch the portable
+  engine cockpit and reproduce its browser journey.
+- [Scientific flight dynamics](scientific-dynamics.md): selectable numerical
+  methods, oriented J2 gravity, independent trajectory comparisons and their limits.
 - [Architecture](architecture.md): Rust world, FFI, Android, native Vulkan
   and hardware ownership.
 - [Space-engine foundation](space-engine.md),

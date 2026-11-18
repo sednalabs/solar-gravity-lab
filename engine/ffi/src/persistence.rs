@@ -50,8 +50,23 @@ pub(super) fn import_save(template: SlRuntimeHandle, bytes: &[u8]) -> SlSessionC
                 .snapshot()
                 .hardware_profile
         };
-        let runtime =
-            WorldRuntime::import_saved_session(bytes, hardware).map_err(persistence_status)?;
+        // Authored definitions are materialised into the same native world as saves.
+        // The returned session is detached until the host explicitly opens it.
+        let header: serde_json::Value = serde_json::from_slice(bytes)
+            .map_err(|_| status(SlStatusCode::InvalidArgument))?;
+        let runtime = match header.get("format").and_then(serde_json::Value::as_str) {
+            Some("solarlab.scenario") => WorldRuntime::import_authored_scenario(bytes, hardware, 0)
+                .map_err(|_| status(SlStatusCode::InvalidArgument))?,
+            Some("solarlab.spacecraft") => {
+                let mut staged = registry().lock().map_err(|_| status(SlStatusCode::InternalError))?
+                    .get(template).ok_or_else(|| status(SlStatusCode::NotReady))?.runtime.clone();
+                staged.apply_command(WorldCommand::PausePlayback, 0).map_err(runtime_error_to_status)?;
+                staged.add_authored_spacecraft(bytes, 0).map_err(|_| status(SlStatusCode::InvalidArgument))?;
+                staged
+            }
+            Some("solarlab.experiment") => WorldRuntime::import_saved_session(bytes, hardware).map_err(persistence_status)?,
+            _ => return Err(status(SlStatusCode::InvalidArgument)),
+        };
         let report = runtime.active_solver_execution_report();
         let info = runtime_info(
             cpu_backend_for_solver_backend(&report.requested_backend),
@@ -153,6 +168,29 @@ pub unsafe extern "C" fn sl_v2_session_import_save(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn authored_documents_materialise_separately_and_export_as_portable_saves() {
+        let created = sl_v2_session_create(super::super::tests::new_params("sol-system", "main"));
+        let before = export_save(created.handle).unwrap();
+        let scenario = import_save(created.handle, include_bytes!("../../data/authoring/orbital-workshop.scenario.json"));
+        assert_eq!(scenario.result.code, SlStatusCode::Ok);
+        assert_ne!(scenario.handle, created.handle);
+        assert_eq!(export_save(created.handle).unwrap(), before);
+        let original_scenario = export_save(scenario.handle).unwrap();
+        let craft = import_save(scenario.handle, include_bytes!("../../data/authoring/iris.spacecraft.json"));
+        assert_eq!(craft.result.code, SlStatusCode::Ok);
+        assert_eq!(export_save(scenario.handle).unwrap(), original_scenario);
+        let canonical = export_save(craft.handle).unwrap();
+        let document: serde_json::Value = serde_json::from_slice(&canonical).unwrap();
+        assert_eq!(document["format"], "solarlab.experiment");
+        let restored = import_save(created.handle, &canonical);
+        assert_eq!(restored.result.code, SlStatusCode::Ok);
+        assert_eq!(restored.snapshot_summary.paused, 1);
+        for handle in [restored.handle, craft.handle, scenario.handle, created.handle] {
+            assert_eq!(sl_v2_session_destroy(handle).code, SlStatusCode::Ok);
+        }
+    }
+
     #[test]
     fn ffi_save_roundtrip_allocates_new_handle_and_bad_import_preserves_original() {
         let created = sl_v2_session_create(super::super::tests::new_params("sol-system", "main"));

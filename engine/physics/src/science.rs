@@ -17,6 +17,7 @@ use solarlab_domain::{BodyId, Vector3d};
 pub enum ScientificError {
     InvalidSettings,
     InvalidState,
+    InvalidFlightState,
     BodyOrderMismatch,
     UnknownHarmonicBody,
     HarmonicRequiresMassiveSource,
@@ -31,6 +32,9 @@ impl std::fmt::Display for ScientificError {
         f.write_str(match self {
             Self::InvalidSettings => "invalid or unsupported scientific settings",
             Self::InvalidState => "nonfinite position/velocity or negative source mass",
+            Self::InvalidFlightState => {
+                "spacecraft controls, binding or local contact state is invalid"
+            }
             Self::BodyOrderMismatch => "body identifiers do not match the integration plan",
             Self::UnknownHarmonicBody => "gravity model references an unknown body",
             Self::HarmonicRequiresMassiveSource => {
@@ -39,7 +43,7 @@ impl std::fmt::Display for ScientificError {
             Self::InsideHarmonicReferenceRadius => {
                 "J2 exterior model was entered below its reference radius"
             }
-            Self::WorkLimit => "adaptive integration exhausted its bounded trial budget",
+            Self::WorkLimit => "integration exhausted its bounded work budget",
             Self::StepTooSmall => {
                 "requested local accuracy or encounter bound needs a smaller step"
             }
@@ -49,6 +53,14 @@ impl std::fmt::Display for ScientificError {
 }
 
 impl std::error::Error for ScientificError {}
+
+// Existing contact/guidance functions use a unit error. Keep those legacy
+// signatures while preserving specific orbital errors in the checked flow.
+impl From<()> for ScientificError {
+    fn from(_: ()) -> Self {
+        Self::InvalidFlightState
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScientificStepReport {
@@ -170,7 +182,7 @@ impl crate::FixedStepPlan {
                     model: model.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, ScientificError>>()?;
         self.science = ScientificPlan {
             settings: settings.clone(),
             effective_integrator: settings.integrator,
@@ -466,6 +478,30 @@ fn evaluate_accelerations(
     Ok(())
 }
 
+fn validate_harmonic_domain(
+    bodies: &[MassiveBodyState],
+    science: &ScientificPlan,
+) -> Result<(), ScientificError> {
+    for harmonic in &science.harmonics {
+        let source = &bodies[harmonic.index];
+        if source.mass_kg <= 0.0 {
+            return Err(ScientificError::HarmonicRequiresMassiveSource);
+        }
+        if harmonic.model.j2 == 0.0 {
+            continue;
+        }
+        for (index, body) in bodies.iter().enumerate() {
+            if index != harmonic.index
+                && magnitude(sub(body.position_m, source.position_m))
+                    < harmonic.model.reference_radius_m
+            {
+                return Err(ScientificError::InsideHarmonicReferenceRadius);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn advance_selected_steps(
     plan: &crate::FixedStepPlan,
     bodies: &mut [MassiveBodyState],
@@ -491,6 +527,9 @@ pub(crate) fn advance_selected_steps(
     // private segment copy so a failed adaptive/J2 segment is never half-applied.
     let mut staged = bodies.to_vec();
     validate_state(&staged)?;
+    // Invalid input is distinct from a valid orbit whose *trial* overshoots a
+    // boundary. Only the latter is eligible for adaptive step subdivision.
+    validate_harmonic_domain(&staged, &plan.science)?;
     let sources = crate::source_indices(&staged);
     let mut scratch = GravityScratch::default();
     for _ in 0..count {

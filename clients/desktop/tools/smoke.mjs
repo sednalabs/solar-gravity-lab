@@ -55,7 +55,11 @@ try{
  await page.click('[data-assist="Prograde"]');await until(async()=>(await native()).ship.control.attitude_mode==='Prograde','prograde input');
  const slider=await page.locator('#throttle').boundingBox();await page.mouse.click(slider.x+slider.width*.4,slider.y+slider.height*.5);
  await until(async()=>(await native()).ship.control.throttle>.3,'native throttle');await page.click('#playButton');
- await until(async()=>(await native()).ship.fuel<marked.ship.fuel-.5,'native propellant consumption');await wait(250);
+ await until(async()=>(await native()).ship.fuel<marked.ship.fuel-.5,'native propellant consumption');
+ const burning=await native();
+ // Native advance, HTTP polling and GPU presentation are separate clocks.
+ // Wait for a completed frame of the observed burn, not an arbitrary delay.
+ await page.waitForFunction(epoch=>Number(document.querySelector('#universe').dataset.flightEpoch)>=epoch&&Number(document.querySelector('#universe').dataset.exhaustVertices)>0&&document.querySelector('#engineStatus').textContent==='FIRING',burning.epoch,{timeout:15000});
  assert.ok((await scenePixels(page)).exhaustVertices>0,'Powered native spacecraft must draw its authored exhaust');await page.screenshot({path:path.join(output,'desktop-powered-flight.png')});
  await page.click('#cutButton');await until(async()=>(await native()).ship.control.throttle===0,'engine cut');
  await page.locator('#universe').click({position:{x:720,y:450}});await page.keyboard.press('Space');await until(async()=>(await native()).paused,'pause shortcut');

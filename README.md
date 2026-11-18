@@ -1,22 +1,37 @@
 # Solar Gravity Lab
 
-Solar Gravity Lab's canonical `main` branch runs the Rust-owned simulation with
-the native Vulkan Android stage. **Source on `main` is newer than the currently
-published installable APK**: the latest published preview is
-[`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2).
-The later Earth–Moon interaction, probe-mass and portable-experiment changes
-merged in [PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237),
-the Arm64 FP64 two-target batching in [PR #242](https://github.com/sednalabs/solar-gravity-lab/pull/242),
-and the cache/topology/Vulkan programme in [PR #245](https://github.com/sednalabs/solar-gravity-lab/pull/245)
-are **implemented on `main`**, with hosted validation, but have **not** been
-published in another APK. Physical Galaxy S25 Ultra acceptance is outstanding. Hosted emulator
-validation is not physical Galaxy S25 acceptance.
+Solar Gravity Lab runs a Rust-owned simulation with a native Vulkan Android
+stage and an initial native-engine desktop cockpit. Published Android builds
+and their source-bound provenance are on the
+[Releases page](https://github.com/sednalabs/solar-gravity-lab/releases).
+Source implementation, exact-source hosted qualification, published APKs and
+physical Galaxy acceptance are tracked separately. Hosted emulator and software
+WebGL results do not establish physical-phone performance or installation.
 
 Start with the [documentation guide](docs/README.md) for the current/historical
 split, test evidence and known delivery limitations. The
 [16–18 November mainline integration record](docs/mainline-integration-week-20261116.md)
 reconciles all 51 commits on `main` during the current week, including the
 hardware and CI changes.
+
+## Fly, investigate and build
+
+The [pilot guide](docs/pilot-guide.md) explains camera recovery, precision
+controls, checkpoints and deliberate orbital manoeuvres. Native burn previews
+show the change in periapsis, apoapsis and fuel from the spacecraft's actual
+attitude. The [desktop cockpit](clients/desktop/README.md) uses the same Rust
+world, with keyboard/mouse controls and a WebGL presentation adapter.
+
+[Scientific dynamics](docs/scientific-dynamics.md) documents selectable
+fourth-order coasts, adaptive encounters, explicit oriented J2, and independent
+trajectory comparisons. Higher-order methods apply to conservative coasts;
+powered/contact flight keeps its positive-time second-order split.
+
+[Spacecraft and scenario authoring](docs/spacecraft-authoring.md) provides
+versioned external definitions, composed engines/hulls/ports and an offline
+visual catalogue. The Pathfinder example adds a third mesh without hand-edited
+application upload/draw branches. The campaign's current qualification and
+remaining gaps are recorded in [PR #254](https://github.com/sednalabs/solar-gravity-lab/pull/254).
 
 ## Earth–Moon laboratory
 
@@ -141,6 +156,8 @@ historical, not current operating instructions.
   render-scene contracts.
 - [`clients/android/`](clients/android)
   The Android Compose shell over the Rust core.
+- [`clients/desktop/`](clients/desktop)
+  Native Rust desktop flight host and browser cockpit over the same world.
 - [`data/`](data)
   Data-pack, manifest, validation, and provenance model documentation.
 - [`services/`](services)
