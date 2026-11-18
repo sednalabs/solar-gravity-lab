@@ -2,6 +2,7 @@ package com.sednalabs.solarlab.benchmark
 
 import android.content.ClipData
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -72,6 +73,7 @@ class BenchmarkActivity : ComponentActivity() {
     private var hints by mutableStateOf(false)
     private var requestedMode by mutableStateOf(0)
     private var runJob: Job? = null
+    private var priorRequestedOrientation: Int? = null
     private var pendingExportSession: String? = null
     private val saveArchive = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         val sessionId = pendingExportSession
@@ -115,6 +117,14 @@ class BenchmarkActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::store.isInitialized) scope.launch {
+            LiveResearchCapture.awaitClosed()
+            refreshSessions()
+        }
+    }
+
     override fun onStop() {
         runJob?.cancel(CancellationException("activity_stopped; partial observations retained"))
         frames.stop()
@@ -123,22 +133,26 @@ class BenchmarkActivity : ComponentActivity() {
 
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
 
-    private fun start(plan: BenchmarkPlan) {
+    private fun start(plan: BenchmarkPlan, selectedCaseKey: String? = null) {
         val available = discovery ?: return
         if (runJob?.isActive == true || !available.ready) return
         message = null
         progress = BenchmarkProgress(running = true, phase = "Preparing", detail = "Creating a durable report and warming the selected kernels…")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.attributes = window.attributes.apply { preferredDisplayModeId = requestedMode }
+        priorRequestedOrientation = requestedOrientation
+        val orientationLockRequested = runCatching { requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED }.isSuccess
         frames.start()
         runJob = scope.launch {
-            try { runner.run(available, plan, BenchmarkOptions(hints, requestedMode)) { progress = it } }
+            try { runner.run(available, plan, BenchmarkOptions(hints, requestedMode, selectedCaseKey, orientationLockRequested)) { progress = it } }
             catch (_: CancellationException) { /* Runner commits the partial report before returning. */ }
             catch (error: Exception) { progress = progress.copy(running = false, phase = "Stopped", detail = error.message ?: "Run failed") }
             finally {
                 frames.stop()
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 window.attributes = window.attributes.apply { preferredDisplayModeId = 0 }
+                priorRequestedOrientation?.let { previous -> runCatching { requestedOrientation = previous } }
+                priorRequestedOrientation = null
                 progress = progress.copy(running = false)
                 scope.launch { refreshSessions() }
             }
@@ -152,7 +166,9 @@ class BenchmarkActivity : ComponentActivity() {
                 val summary = runCatching { JSONObject(File(directory, "summary.json").readText()) }.getOrNull()
                 SavedBenchmarkSession(directory.name, manifest?.optString("plan", "Recovered report") ?: "Recovered report",
                     manifest?.optString("status", "interrupted") ?: "interrupted", manifest?.optString("started_utc", directory.name) ?: directory.name,
-                    summary?.optJSONObject("counts")?.let { "${it.optInt("PASS")} passed · ${it.optInt("FAIL")} failed · ${it.optInt("SKIP")} skipped" }
+                    if (manifest?.optString("plan") == "LIVE_OBSERVATORY" && summary != null) {
+                        "${summary.optLong("events_written")} observations · ${summary.optLong("queue_dropped_events")} queue drops"
+                    } else summary?.optJSONObject("counts")?.let { "${it.optInt("PASS")} passed · ${it.optInt("FAIL")} failed · ${it.optInt("SKIP")} skipped" }
                         ?: "Partial observations available")
             }
         }
@@ -193,7 +209,7 @@ class BenchmarkActivity : ComponentActivity() {
                     item { ProgressCard() }
                     item { ControlsCard() }
                     item {
-                        Text("Keep this page open. Backgrounding or rotating stops the run and saves partial data. Heat pauses are logged and included in elapsed time.", style = MaterialTheme.typography.bodySmall)
+                        Text("Keep this page open. Current orientation is held during a run where Android permits. Backgrounding or Activity recreation stops safely and saves partial data. Heat pauses count toward elapsed time.", style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(8.dp))
                         Text("Keep brightness, charging, case and room conditions consistent. Raw battery readings describe the whole device, not CPU or GPU power.", style = MaterialTheme.typography.bodySmall)
                     }
@@ -207,7 +223,7 @@ class BenchmarkActivity : ComponentActivity() {
                     item {
                         val cases = discovery?.cases.orEmpty()
                         Text("${cases.count { it.runnable }} runnable native cases · ${cases.count { !it.runnable }} explicitly unavailable", style = MaterialTheme.typography.titleMedium)
-                        Text("Implementation status comes from this build. Actual support, execution, correctness and timings are recorded separately in each run.", style = MaterialTheme.typography.bodySmall)
+                        Text("Implementation status comes from this build. Use Compare this case to run one experiment with its reference and the full fixture/step schedule, up to 10 minutes.", style = MaterialTheme.typography.bodySmall)
                     }
                     val opportunities = discovery?.research?.optJSONArray("opportunities")
                     if (opportunities != null) items(opportunities.length()) { index ->
@@ -216,7 +232,11 @@ class BenchmarkActivity : ComponentActivity() {
                         }
                     }
                     item { Text("Native case details", style = MaterialTheme.typography.titleLarge) }
-                    items(discovery?.cases.orEmpty(), key = { it.key }) { case -> CatalogueCard(case.label, case.status, case.reason) }
+                    items(discovery?.cases.orEmpty(), key = { it.key }) { case ->
+                        CatalogueCard(case.label, case.status, case.reason, if (case.runnable) {
+                            { tab = "Run"; start(BenchmarkPlan.FULL, case.key) }
+                        } else null)
+                    }
                 }
             }
             item { Spacer(Modifier.height(24.dp)) }
@@ -250,6 +270,11 @@ class BenchmarkActivity : ComponentActivity() {
                 Button(onClick = { start(BenchmarkPlan.QUICK) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Quick comparison · up to 3 min") }
                 OutlinedButton(onClick = { start(BenchmarkPlan.FULL) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Full investigation · up to 10 min") }
                 OutlinedButton(onClick = { start(BenchmarkPlan.SUSTAINED) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Sustained stability · 15 min") }
+                OutlinedButton(onClick = {
+                    startActivity(Intent(this@BenchmarkActivity, com.sednalabs.solarlab.MainActivity::class.java)
+                        .putExtra("open_observatory", true).putExtra("record_observatory", true))
+                }, enabled = !progress.running && !exporting, modifier = Modifier.fillMaxWidth()) { Text("Record observatory · up to 30 min") }
+                Text("Record observatory captures the real renderer while you explore. Back or backgrounding stops recording; export its session here.", style = MaterialTheme.typography.bodySmall)
                 Text("Quick checks a subset. Full tries admitted cases, step counts and legal CPU placements within its time budget. Unrun work is labelled explicitly.", style = MaterialTheme.typography.bodySmall)
                 HorizontalDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -277,20 +302,25 @@ class BenchmarkActivity : ComponentActivity() {
                 Text("${session.status} · ${session.started.take(19).replace('T', ' ')} UTC", style = MaterialTheme.typography.bodySmall)
                 Text(session.summary, style = MaterialTheme.typography.bodyMedium)
                 Row {
-                    TextButton(onClick = { save(session) }, enabled = !progress.running && !exporting) { Text("Save ZIP") }
+                    TextButton(onClick = { save(session) }, enabled = !progress.running && !exporting && session.status != "running") { Text("Save ZIP") }
                     Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = { share(session) }, enabled = !progress.running && !exporting) { Text("Share ZIP") }
+                    TextButton(onClick = { share(session) }, enabled = !progress.running && !exporting && session.status != "running") { Text("Share ZIP") }
                 }
             }
         }
     }
 
     @Composable
-    private fun CatalogueCard(title: String, status: String, reason: String) {
+    private fun CatalogueCard(title: String, status: String, reason: String, onCompare: (() -> Unit)? = null) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
             Text(status.replace('_', ' '), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             if (reason.isNotBlank()) Text(reason, style = MaterialTheme.typography.bodySmall)
+            if (onCompare != null) {
+                OutlinedButton(onClick = onCompare, enabled = discovery?.ready == true && !progress.running && !exporting) {
+                    Text("Compare this case")
+                }
+            }
             HorizontalDivider(Modifier.padding(top = 8.dp))
         }
     }

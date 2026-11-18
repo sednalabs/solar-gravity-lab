@@ -75,7 +75,7 @@ class BenchmarkDeviceProbe(private val context: Context) {
             headroom = value?.takeIf(Float::isFinite)?.toDouble() ?: JSONObject.NULL
             headroomStatus = if (headroom == JSONObject.NULL) "unavailable_or_rate_limited" else "available"
         }
-        val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val intent = runCatching { context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) }.getOrNull()
         fun integerProperty(id: Int): Any = runCatching { battery?.getIntProperty(id) }
             .getOrNull()?.takeUnless { it == Int.MIN_VALUE } ?: JSONObject.NULL
         fun longProperty(id: Int): Any = runCatching { battery?.getLongProperty(id) }

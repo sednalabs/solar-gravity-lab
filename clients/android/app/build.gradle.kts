@@ -397,6 +397,7 @@ val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
             include("Cargo.toml")
             include("Cargo.lock")
             include("engine/**/Cargo.toml")
+            include("engine/**/build.rs")
             include("engine/**/src/**/*.rs")
             include("engine/ffi/include/**/*.h")
         }

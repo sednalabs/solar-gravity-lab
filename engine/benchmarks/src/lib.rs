@@ -9,6 +9,9 @@ mod model;
 #[allow(unsafe_code)]
 mod neon;
 mod radau;
+mod workers;
+// Full-precision generated quadrature coefficients retain reproducible decimals.
+#[allow(clippy::excessive_precision, clippy::unreadable_literal)]
 mod radau_coefficients;
 
 use catalogue::{Algorithm, Case, CASES};
@@ -37,6 +40,8 @@ pub fn catalogue_json() -> String {
                 "implemented":true, "reason":reason, "baseline_case_id":case.baseline,
                 "fixtures":case.fixtures, "recommendation_ids":case.recommendations,
                 "scaled_state_error_limit":case.tolerance, "note":case.note,
+                "comparison_kind":case.comparison_kind(), "physics_model":case.physics_model(),
+                "baseline_physics_model":"Newtonian", "control_scope_note":case.control_scope_note(),
             })
         })
         .collect();
@@ -53,6 +58,9 @@ pub fn catalogue_json() -> String {
         .collect();
     json!({
         "schema_version":1, "kind":"solarlab_rust_research_catalogue", "cases":cases, "fixtures":fixtures,
+        "identity":{"architecture":std::env::consts::ARCH,"operating_system":std::env::consts::OS,
+            "cpu_features":detected_cpu_features(),"cpu_features_source":"solarlab_physics::detect_cpu_features",
+            "capability_scope":"current process; detected support does not imply an implemented or executed kernel"},
         "bounds":{"min_steps":1,"max_steps":64,"min_repeats":1,"max_repeats":11},
         "timing_scope":"integration including scratch setup, packing and worker lifecycle; excludes fixture, oracle, diagnostics, JSON and JNI",
         "authoritative_world_mutated":false,
@@ -67,11 +75,23 @@ pub fn run_case_json(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) 
 }
 
 fn rejected(case_id: &str, fixture_id: &str, status: &str, reason: &str) -> Value {
-    json!({"schema_version":1,"case_id":case_id,"fixture_id":fixture_id,"status":status,
+    let mut report = json!({"schema_version":1,"case_id":case_id,"fixture_id":fixture_id,"status":status,
         "reason":reason,"elapsed_ns":0,"samples_ns":[],"kernel_total_ns":0,
-        "correctness_checked":false,"authoritative_world_mutated":false})
+        "correctness_checked":false,"authoritative_world_mutated":false});
+    if let Some(case) = CASES.iter().find(|case| case.id == case_id) {
+        annotate_comparison(&mut report, case);
+    }
+    report
 }
 
+fn annotate_comparison(report: &mut Value, case: &Case) {
+    report["comparison_kind"] = json!(case.comparison_kind());
+    report["physics_model"] = json!(case.physics_model());
+    report["baseline_physics_model"] = json!("Newtonian");
+    report["control_scope_note"] = json!(case.control_scope_note());
+}
+
+#[allow(clippy::too_many_lines)]
 fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value {
     let Some(case) = CASES.iter().find(|case| case.id == case_id) else {
         return rejected(case_id, fixture_id, "FAIL", "Unknown case ID");
@@ -112,7 +132,7 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
     let mut samples = Vec::with_capacity(repeats as usize);
     let mut checksums = Vec::with_capacity(repeats as usize);
     let mut final_state = fixture.bodies.clone();
-    let mut final_stats = Stats::default();
+    let mut work_stats = Stats::default();
     for _ in 0..repeats {
         let mut bodies = fixture.bodies.clone();
         let mut production = model::to_production(&fixture.bodies);
@@ -132,12 +152,22 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
         black_box(&production);
         let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let Ok(stats) = result else {
-            return rejected(
+            let mut report = rejected(
                 case_id,
                 fixture_id,
                 "FAIL",
                 result.err().unwrap_or("Unknown integration failure"),
             );
+            samples.push(elapsed);
+            report["samples_ns"] = json!(samples);
+            report["kernel_total_ns"] = json!(samples.iter().copied().sum::<u64>());
+            report["elapsed_ns"] = json!(elapsed);
+            report["elapsed_scope"] = json!("failed_attempt_only");
+            report["steps_requested"] = json!(steps);
+            report["dt_seconds"] = json!(fixture.dt);
+            report["partial_state_checksum"] = json!(model::checksum(&bodies));
+            report["partial_state_is_accepted"] = json!(false);
+            return report;
         };
         if matches!(case.algorithm, Algorithm::Production(_)) {
             bodies = model::from_production(&production);
@@ -145,9 +175,11 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
         samples.push(elapsed);
         checksums.push(model::checksum(&bodies));
         final_state = bodies;
-        final_stats = stats;
+        work_stats = stats;
     }
-    let Some((reference, reference_name)) = reference_for(case, &fixture, steps) else {
+    let Some((reference, reference_name, reference_uncertainty)) =
+        reference_for(case, &fixture, steps)
+    else {
         return rejected(
             case_id,
             fixture_id,
@@ -158,7 +190,10 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
     let error = model::error(&final_state, &reference);
     let finite = model::finite(&final_state);
     let consistent = checksums.iter().all(|hash| hash == &checksums[0]);
-    let accuracy_pass = finite && error.scaled_state_error <= case.tolerance;
+    let reference_accuracy_pass =
+        model::finite(&reference) && reference_uncertainty <= (0.1 * case.tolerance).max(1.0e-13);
+    let accuracy_pass =
+        finite && reference_accuracy_pass && error.scaled_state_error <= case.tolerance;
     let before = model::invariants(&fixture.bodies);
     let after = model::invariants(&final_state);
     let mut sorted = samples.clone();
@@ -184,6 +219,7 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
         "schema_version":1, "kind":"solarlab_rust_research_result", "case_id":case.id,"fixture_id":fixture.id,
         "status":if accuracy_pass && consistent {"PASS"} else {"FAIL"},
         "reason":if !finite {"Non-finite candidate state"} else if !consistent {"Repeated candidates were not bitwise deterministic"}
+            else if !reference_accuracy_pass {"Independent reference failed its finer-step convergence check"}
             else if !accuracy_pass {"Candidate exceeded declared state error budget"} else {""},
         "actual_kernel":actual_kernel,"numerical_policy":numerical_policy,"note":case.note,
         "recommendation_ids":case.recommendations,"body_count":fixture.bodies.len(),"source_count":fixture.source_count(),
@@ -192,11 +228,14 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
         "elapsed_ns":elapsed_ns,"elapsed_scope":"median_per_repeat","samples_ns":samples,"kernel_total_ns":kernel_total_ns,
         "timing_scope":"integration_and_scratch_only","reference":reference_name,"correctness_checked":true,
         "accuracy_pass":accuracy_pass,"scaled_state_error_limit":case.tolerance,"error":error,
-        "invariants_before":before,"invariants_after":after,"work":final_stats,
+        "reference_scaled_uncertainty":reference_uncertainty,"reference_accuracy_pass":reference_accuracy_pass,
+        "invariants_before":before,"invariants_after":after,"work":work_stats,
+        "invariants_reference":model::invariants(&reference),
         "checksum":checksums[0],"repeat_checksums":checksums,"repeat_consistent":consistent,
         "baseline_case_id":case.baseline,"authoritative_world_mutated":false,
         "diagnostic_energy_note":"Newtonian source energy diagnostic; modified-force cases do not claim it is their conserved Hamiltonian",
     });
+    annotate_comparison(&mut report, case);
     if matches!(case.algorithm, Algorithm::Production(_)) {
         report["production"] = json!({"requested_backend":format!("{:?}",execution.requested_backend),
             "effective_backend":format!("{:?}",execution.effective_backend),"active_workers":execution.schedule.active_workers,
@@ -210,9 +249,12 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
     report
 }
 
-fn production_plan(fixture: &Fixture, steps: u32, selected: bool) -> Option<FixedStepPlan> {
+fn detected_cpu_features() -> &'static [String] {
     static FEATURES: OnceLock<Vec<String>> = OnceLock::new();
-    let features = FEATURES.get_or_init(solarlab_physics::detect_cpu_features);
+    FEATURES.get_or_init(solarlab_physics::detect_cpu_features)
+}
+
+fn production_plan(fixture: &Fixture, steps: u32, selected: bool) -> Option<FixedStepPlan> {
     let backend = if !selected {
         SolverBackend::ReferenceScalar
     } else if cfg!(target_arch = "aarch64") {
@@ -233,13 +275,16 @@ fn production_plan(fixture: &Fixture, steps: u32, selected: bool) -> Option<Fixe
         fixture.dt * f64::from(steps),
         fixture.bodies.len(),
         fixture.source_count(),
-        features,
+        detected_cpu_features(),
     )
 }
 
 fn execute(case: &Case, bodies: &mut [Body], steps: usize, dt: f64) -> Result<Stats, &'static str> {
     match case.algorithm {
         Algorithm::Leapfrog => Ok(integrators::leapfrog(bodies, case.force, steps, dt)),
+        Algorithm::PersistentWorkers(workers) => {
+            integrators::persistent_leapfrog(bodies, steps, dt, workers)
+        }
         Algorithm::Adaptive => integrators::adaptive_doubling(bodies, steps, dt),
         Algorithm::Close => integrators::close_refinement(bodies, steps, dt),
         Algorithm::Yoshida => Ok(integrators::yoshida4(bodies, steps, dt)),
@@ -253,14 +298,18 @@ fn execute(case: &Case, bodies: &mut [Body], steps: usize, dt: f64) -> Result<St
     }
 }
 
-fn reference_for(case: &Case, fixture: &Fixture, steps: u32) -> Option<(Vec<Body>, &'static str)> {
+fn reference_for(
+    case: &Case,
+    fixture: &Fixture,
+    steps: u32,
+) -> Option<(Vec<Body>, &'static str, f64)> {
     if case.family == "numerical" {
         let mut reference = fixture.bodies.clone();
         if fixture.id == "kepler" && case.algorithm != Algorithm::Rk4 {
             let time = f64::from(steps) * fixture.dt;
             reference[1].p = [time.cos(), time.sin(), 0.0];
             reference[1].v = [-time.sin(), time.cos(), 0.0];
-            Some((reference, "analytic circular Kepler orbit"))
+            Some((reference, "analytic circular Kepler orbit", 0.0))
         } else {
             integrators::rk4(
                 &mut reference,
@@ -268,9 +317,18 @@ fn reference_for(case: &Case, fixture: &Fixture, steps: u32) -> Option<(Vec<Body
                 steps as usize * 64,
                 fixture.dt / 64.0,
             );
+            let mut finer = fixture.bodies.clone();
+            integrators::rk4(
+                &mut finer,
+                case.force,
+                steps as usize * 128,
+                fixture.dt / 128.0,
+            );
+            let uncertainty = model::error(&reference, &finer).scaled_state_error;
             Some((
-                reference,
-                "independent RK4 with 64x finer fixed steps and same force law",
+                finer,
+                "independent same-force RK4, 128x finer steps, convergence checked against 64x",
+                uncertainty,
             ))
         }
     } else {
@@ -280,6 +338,7 @@ fn reference_for(case: &Case, fixture: &Fixture, steps: u32) -> Option<(Vec<Body
         Some((
             model::from_production(&reference),
             "production FP64 scalar at identical fixed steps",
+            0.0,
         ))
     }
 }
@@ -320,6 +379,51 @@ mod tests {
         let parsed: Value = serde_json::from_str(&catalogue_json()).unwrap();
         assert_eq!(parsed["schema_version"], 1);
         assert_eq!(parsed["cases"].as_array().unwrap().len(), CASES.len());
+        assert_eq!(
+            parsed["identity"]["cpu_features"],
+            json!(detected_cpu_features())
+        );
+    }
+
+    #[test]
+    fn comparison_metadata_prevents_cross_model_or_policy_speedup_claims() {
+        let catalogue: Value = serde_json::from_str(&catalogue_json()).unwrap();
+        for (id, kind, model) in [
+            ("production-selected", "equivalent_kernel", "Newtonian"),
+            ("persistent-workers-4", "equivalent_kernel", "Newtonian"),
+            ("yoshida4", "accuracy_cost_experiment", "Newtonian"),
+            ("fp32-forecast", "accuracy_cost_experiment", "Newtonian"),
+            ("force-1pn", "different_force_model_cost", "1PN"),
+            ("force-j2", "different_force_model_cost", "J2"),
+            ("force-radiation", "different_force_model_cost", "radiation"),
+        ] {
+            let entry = catalogue["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["id"] == id)
+                .unwrap();
+            assert_eq!(entry["comparison_kind"], kind);
+            assert_eq!(entry["physics_model"], model);
+            assert_eq!(entry["baseline_physics_model"], "Newtonian");
+            let case = CASES.iter().find(|case| case.id == id).unwrap();
+            // Rejected calls retain classification as well as successful samples.
+            for steps in [0, 1] {
+                let report = run_case(id, case.fixtures[0], steps, 1);
+                assert_eq!(report["status"], if steps == 0 { "FAIL" } else { "PASS" });
+                for key in [
+                    "comparison_kind",
+                    "physics_model",
+                    "baseline_physics_model",
+                    "control_scope_note",
+                ] {
+                    assert_eq!(report[key], entry[key]);
+                }
+            }
+        }
+        let skipped = run_case("force-j2", "dense256", 1, 1);
+        assert_eq!(skipped["status"], "SKIP");
+        assert_eq!(skipped["comparison_kind"], "different_force_model_cost");
     }
 
     #[test]

@@ -18,8 +18,8 @@ import sys
 from typing import Any
 import zipfile
 
-MAX_MEMBER_BYTES = 64 * 1024 * 1024
-MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
+MAX_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 768 * 1024 * 1024
 ALLOWED_MEMBERS = {
     "archive-index.json", "manifest.json", "device.json", "catalogue.json",
     "research-catalogue.json", "events.ndjson", "summary.json",
@@ -30,8 +30,22 @@ ABBA = ["A1", "B1", "B2", "A2"]
 def load_export(path: Path) -> tuple[dict[str, bytes], list[str]]:
     warnings: list[str] = []
     if path.is_dir():
-        files = {p.name: p.read_bytes() for p in path.iterdir()
-                 if p.name in ALLOWED_MEMBERS and p.is_file() and p.stat().st_size <= MAX_MEMBER_BYTES}
+        # The CLI caller deliberately chooses the input directory. Member names
+        # come from this constant allowlist, never from the report's contents.
+        # Do not follow a report member symlink outside that chosen directory.
+        files = {}
+        total_bytes = 0
+        for name in sorted(ALLOWED_MEMBERS):
+            member = path / name
+            if member.is_symlink():
+                raise ValueError(f"Symlinked report member is not accepted: {name}")
+            if not member.is_file():
+                continue
+            size = member.stat().st_size
+            total_bytes += size
+            if size > MAX_MEMBER_BYTES or total_bytes > MAX_ARCHIVE_BYTES:
+                raise ValueError("Directory export exceeds the reader limit")
+            files[name] = member.read_bytes()
         warnings.append("Directory input: archive integrity is unverified.")
     else:
         with zipfile.ZipFile(path) as archive:
@@ -60,6 +74,8 @@ def load_export(path: Path) -> tuple[dict[str, bytes], list[str]]:
             if len(content) != entry["bytes"] or hashlib.sha256(content).hexdigest() != entry["sha256"]:
                 raise ValueError(f"Integrity failure for {entry['path']}")
     elif not path.is_dir():
+        # Merely checks the user-selected input type. ZIP names are never
+        # extracted or joined to a filesystem path anywhere in this reader.
         raise ValueError("ZIP export is missing its integrity index")
     return files, warnings
 
@@ -108,6 +124,8 @@ def bootstrap_interval(values: list[float]) -> list[float] | None:
     # This descriptive interval cannot remove systematic thermal/ordering bias.
     if len(values) < 5:
         return None
+    # Statistical resampling deliberately uses a reproducible PRNG. It creates
+    # no credentials/nonces and does not implement any integrity/security check.
     random_source = random.Random(242)
     medians = [statistics.median(random_source.choices(values, k=len(values))) for _ in range(4000)]
     return [quantile(medians, .025), quantile(medians, .975)]
@@ -142,6 +160,60 @@ def error_metrics(value: Any, path: str = "") -> dict[str, float]:
     return result
 
 
+def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep observational telemetry separate from controlled kernel comparisons."""
+    snapshots = [r["data"] for r in records if r.get("event") == "observatory_snapshot"]
+    renderers = [r["data"] for r in records if r.get("event") == "observatory_renderer"]
+    environments: dict[int, dict[str, Any]] = {}
+    for record in records:
+        data = record.get("data", {})
+        candidates = [data] if record.get("event") == "environment" else [data.get(key, {}) for key in ("environment", "environment_before", "environment_after")]
+        for env in candidates:
+            if isinstance(env, dict) and isinstance(env.get("monotonic_ns"), int):
+                environments[env["monotonic_ns"]] = env
+    ordered = [environments[key] for key in sorted(environments)]
+    thermal = Counter(str(env.get("thermal_status", "unavailable")) for env in ordered)
+    plugged = {env.get("battery_plugged") for env in ordered if isinstance(env.get("battery_plugged"), int)}
+    energy = [(env["monotonic_ns"], env["battery_energy_counter_nwh"]) for env in ordered
+              if isinstance(env.get("battery_energy_counter_nwh"), (int, float))
+              and math.isfinite(env["battery_energy_counter_nwh"])]
+    energy_result: dict[str, Any] = {"scope": "whole_phone_battery_terminal_including_display_validation_and_logger",
+                                  "counter_observations": len(energy), "net_battery_energy_change_j": None}
+    if len(energy) >= 2:
+        delta_j = (energy[-1][1] - energy[0][1]) * 3.6e-6
+        energy_result.update(net_battery_energy_change_j=delta_j,
+                             observation_interval_ns=energy[-1][0] - energy[0][0],
+                             interpretation="negative_is_net_battery_depletion; counter_resolution_and_driver_support_are_unqualified")
+        if plugged == {0} and delta_j <= 0:
+            energy_result["observed_unplugged_depletion_j"] = -delta_j
+    frames, pregraphics = [], []
+    previous_counter = None
+    resets = 0
+    for renderer in renderers:
+        timing = renderer.get("gpu_timing") or {}
+        counter = timing.get("samples")
+        if not isinstance(counter, int) or counter <= 0 or counter == previous_counter:
+            continue
+        if previous_counter is not None and counter < previous_counter:
+            resets += 1
+        previous_counter = counter
+        if finite_positive(timing.get("frameNs")):
+            frames.append(timing["frameNs"])
+        if finite_positive(timing.get("preGraphicsNs")):
+            pregraphics.append(timing["preGraphicsNs"])
+    ui_intervals = [value for snapshot in snapshots for value in snapshot.get("ui_frame_intervals_ns", []) if finite_positive(value)]
+    scenarios = sorted({str(snapshot["snapshot"].get("scenario_id")) for snapshot in snapshots if isinstance(snapshot.get("snapshot"), dict)})
+    dropped = max([0] + [int(r.get("data", {}).get("queue_dropped_events_total", 0)) for r in records]
+                  + [int(r.get("data", {}).get("queue_dropped_events", 0)) for r in records])
+    return {"runtime_snapshot_count": len(snapshots), "renderer_callback_count": len(renderers),
+            "scenarios": scenarios, "queue_dropped_events": dropped,
+            "environment_observation_count": len(ordered), "thermal_status_observation_counts": dict(thermal),
+            "battery_plugged_values": sorted(plugged), "battery_energy": energy_result,
+            "gpu_last_completed_sample": timing_summary(frames), "gpu_pregraphics_sample": timing_summary(pregraphics),
+            "gpu_sample_counter_resets": resets, "ui_vsync_interval": timing_summary(ui_intervals),
+            "timing_scope": "GPU callbacks sample the last completed timestamp query and may skip frames; UI callbacks are separate. Neither population is a complete presented-frame trace."}
+
+
 def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[str, Any]:
     warnings = list(warnings or [])
     manifest = json.loads(files["manifest.json"])
@@ -150,6 +222,10 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
     if not any(record.get("event") == "session_end" for record in records):
         warnings.append("No session_end record: this is an interrupted or still-running session.")
     samples = [r["data"] for r in records if r.get("event") == "sample" and isinstance(r.get("data"), dict)]
+    thermal_paused_blocks = {
+        (str(r["data"].get("pair", "unknown")), r["data"].get("round", 0), r["data"].get("block", 0))
+        for r in records if r.get("event") == "paired_block" and r.get("data", {}).get("crossed_thermal_pause")
+    }
     blocks: dict[tuple[str, int, int], list[dict[str, Any]]] = defaultdict(list)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for sample in samples:
@@ -189,6 +265,8 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
             change = (ratio - 1.0) * 100.0
             raw_changes.append(change)
             reasons = environmental_reasons(block_samples)
+            if (block_pair, _round, _block) in thermal_paused_blocks:
+                reasons.append("crossed_thermal_pause")
             if reasons:
                 exclusions.update(reasons)
             else:
@@ -197,9 +275,12 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
         candidate = [s["elapsed_ns"] for s in pair_samples if s.get("role") == "B" and s.get("status") == "PASS" and finite_positive(s.get("elapsed_ns"))]
         maximum_errors: dict[str, float] = {}
         policies = set()
+        comparison_kinds = set()
         for sample in pair_samples:
             native = sample.get("native", {})
             if sample.get("role") == "B":
+                if native.get("comparison_kind"):
+                    comparison_kinds.add(str(native["comparison_kind"]))
                 if native.get("numerical_policy"):
                     policies.add(str(native["numerical_policy"]))
                 for key, value in error_metrics(native).items():
@@ -208,10 +289,14 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
         median_change = statistics.median(changes) if changes else None
         statuses = Counter(str(sample.get("status", "INVALID")) for sample in pair_samples)
         self_control = {s.get("case_id") for s in pair_samples if s.get("role") == "A"} == {s.get("case_id") for s in pair_samples if s.get("role") == "B"}
-        if self_control:
-            decision = "repeatability_control"
-        elif statuses.get("FAIL", 0):
+        if statuses.get("FAIL", 0) or any(s.get("native", {}).get("status") == "FAIL" for s in pair_samples):
             decision = "correctness_failure_requires_investigation"
+        elif self_control:
+            decision = "repeatability_control"
+        elif "different_force_model_cost" in comparison_kinds:
+            decision = "different_physics_cost_only"
+        elif "accuracy_cost_experiment" in comparison_kinds:
+            decision = "accuracy_cost_tradeoff_requires_domain_review"
         elif len(changes) < 5:
             decision = "insufficient_clean_blocks"
         elif interval and interval[1] < -1.0 and median_change is not None and median_change <= -5.0:
@@ -227,13 +312,14 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
             "block_change_percent": changes, "all_valid_block_change_percent": raw_changes,
             "median_change_percent": median_change, "bootstrap_95_percent_interval": interval,
             "maximum_reported_error_metrics": maximum_errors, "numerical_policies": sorted(policies),
+            "comparison_kinds": sorted(comparison_kinds),
             "decision": decision,
         })
     admission = [r["data"] for r in records if r.get("event") == "case_admission"]
     identity = {name: hashlib.sha256(files[name]).hexdigest() for name in ("manifest.json", "device.json", "catalogue.json") if name in files}
     return {"schema_version": 1, "manifest": manifest, "source_file_sha256": identity,
             "warnings": warnings, "sample_count": len(samples), "case_admission": admission,
-            "comparisons": comparisons, "promotion": "none",
+            "comparisons": comparisons, "observations": observation_summary(records), "promotion": "none",
             "limitations": [
                 "Timing scope is whatever each native result declares; compare matched scopes only.",
                 "Bootstrap intervals resample ABBA blocks and do not remove systematic device drift.",
@@ -248,6 +334,14 @@ def markdown(report: dict[str, Any]) -> str:
     lines = ["# Solar Gravity Lab device research", "", f"Recorded samples: **{report['sample_count']}**. Production policy changes: **none**.", ""]
     for warning in report["warnings"]:
         lines.append(f"- {warning}")
+    observations = report["observations"]
+    if observations["runtime_snapshot_count"] or observations["renderer_callback_count"]:
+        gpu = observations["gpu_last_completed_sample"]
+        gpu_label = "unavailable" if gpu["median_ns"] is None else f"{gpu['median_ns'] / 1e6:.3f} ms"
+        lines += ["", "## Observatory recording", "",
+                  f"Runtime snapshots: **{observations['runtime_snapshot_count']}**; renderer callbacks: **{observations['renderer_callback_count']}**; dropped queue events: **{observations['queue_dropped_events']}**.", "",
+                  f"Unique observed GPU timestamp samples: **{gpu['count']}**; median sampled GPU frame time: **{gpu_label}**.", "",
+                  observations["timing_scope"], ""]
     lines += ["", "| Matched workload | Clean blocks | Median time change | Decision |", "|---|---:|---:|---|"]
     for comparison in report["comparisons"]:
         change = comparison["median_change_percent"]

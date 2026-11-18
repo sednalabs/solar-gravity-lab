@@ -49,6 +49,11 @@ at `32e24274bca41c4398a0f979d312b7c6aae395ab` (17 November 2026).
 
 ## Build, validation and operational reference
 
+- [Physical-device research build](device-research-benchmark.md) documents the
+  separate benchmark app, the 61-opportunity coverage ledger, recording/export
+  controls, comparison rules and remaining implementation boundaries. Its
+  publication and phone acceptance are separate from the historical delivery
+  snapshot above.
 - [Vulkan runtime acceleration qualification](vulkan-runtime-qualification-20261118.md)
   records optional workload gates, profiling switches and the separate device
   acceptance requirements for the post-#242 implementation.

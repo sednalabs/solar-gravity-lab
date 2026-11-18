@@ -56,6 +56,8 @@ pub fn cross(a: V3, b: V3) -> V3 {
     ]
 }
 
+// Every generated fixture index/count is <=1024 and exactly representable in FP64.
+#[allow(clippy::cast_precision_loss)]
 pub fn fixture(id: &str) -> Option<Fixture> {
     let (id, count, source_count) = match id {
         "sparse3" => ("sparse3", 1024, 3),
@@ -105,7 +107,7 @@ pub fn fixture(id: &str) -> Option<Fixture> {
                         v: [0.0, 2.65, 0.0],
                     },
                 ],
-                dt: 1.0 / 256.0,
+                dt: 1.0 / 1024.0,
             });
         }
         _ => return None,

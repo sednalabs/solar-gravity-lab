@@ -25,6 +25,7 @@ internal interface SolarRenderSurface {
     fun restoreLabCamera(camera: CameraState) {}
     fun bindRuntimeSessionHandle(sessionHandle: Long) {}
     fun setProcessingMode(mode: RenderProcessingMode) {}
+    fun setResearchDiagnosticsEnabled(enabled: Boolean) {}
     fun setInteractionListener(listener: RenderInteractionListener?) {}
     fun setInteractionMode(mode: SceneInteractionMode) {}
     fun setSelectedBodyId(bodyId: String?) {}

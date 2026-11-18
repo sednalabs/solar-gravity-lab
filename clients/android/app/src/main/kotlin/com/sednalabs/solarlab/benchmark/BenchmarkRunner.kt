@@ -19,6 +19,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -41,6 +43,9 @@ data class BenchmarkProgress(
 
 class BenchmarkRunner(private val context: Context, private val store: BenchmarkFileStore, private val frames: BenchmarkFrameProbe) {
     private val probe = BenchmarkDeviceProbe(context)
+    private companion object {
+        val executionLock = Mutex()
+    }
 
     suspend fun discover(): BenchmarkDiscovery = withContext(Dispatchers.Default) {
         recoverInterruptedSessions()
@@ -60,14 +65,16 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
     }
 
     suspend fun run(discovery: BenchmarkDiscovery, plan: BenchmarkPlan, options: BenchmarkOptions, onProgress: (BenchmarkProgress) -> Unit): File {
-        val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "solarlab-benchmark") }.asCoroutineDispatcher()
-        return try { withContext(worker) { execute(discovery, plan, options, onProgress) } } finally { worker.close() }
+        return executionLock.withLock {
+            val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "solarlab-benchmark") }.asCoroutineDispatcher()
+            try { withContext(worker) { execute(discovery, plan, options, onProgress) } } finally { worker.close() }
+        }
     }
 
     private suspend fun record(session: File, type: String, value: JSONObject) = withContext(Dispatchers.IO) {
-        store.append(session, JSONObject().put("schema_version", 1).put("event", type)
+        store.append(session) { JSONObject().put("schema_version", 1).put("event", type)
             .put("monotonic_ns", SystemClock.elapsedRealtimeNanos()).put("wall_time_utc", Instant.now().toString())
-            .put("data", value).toString())
+            .put("data", value).toString() }
     }
 
     private fun createHint(): PerformanceHintManager.Session? = runCatching {
@@ -77,11 +84,16 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
     private suspend fun execute(discovery: BenchmarkDiscovery, plan: BenchmarkPlan, options: BenchmarkOptions, onProgress: (BenchmarkProgress) -> Unit): File = coroutineScope {
         val session = withContext(Dispatchers.IO) { store.createSession(System.currentTimeMillis()) }
         val state = RunState(session, plan, options, onProgress)
+        BenchmarkSessionOwnership.active.add(session.name)
         val placements = if (plan == BenchmarkPlan.FULL) listOf("system", "single", "big_cluster") else listOf("system")
-        val tasks = BenchmarkSchedule.pairs(discovery.cases, plan).flatMap { pair ->
+        val tasks = BenchmarkSchedule.pairs(discovery.cases, plan, options.selectedCaseKey).flatMap { pair ->
             (if (pair.candidate.backend == "cpu") placements else listOf("system")).map { pair to it }
         }
         state.progress = state.progress.copy(pairsPlanned = tasks.size)
+        state.manifest.put("selected_case", discovery.cases.firstOrNull { it.key == options.selectedCaseKey }?.let {
+            JSONObject().put("key", it.key).put("id", it.id).put("backend", it.backend)
+                .put("baseline_case_id", it.baselineId ?: JSONObject.NULL)
+        } ?: JSONObject.NULL)
         state.manifest.put("schedule", JSONArray(tasks.map { (pair, placement) ->
             JSONObject().put("pair", "${pair.key}/$placement").put("candidate_case", pair.candidate.id)
                 .put("baseline_case", pair.baseline.id).put("fixture_id", pair.fixture).put("steps", pair.steps).put("placement", placement)
@@ -109,8 +121,13 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                 round++
             } while (plan == BenchmarkPlan.SUSTAINED && tasks.isNotEmpty() && !state.expired())
             if (state.expired()) {
-                state.outcome = if (plan == BenchmarkPlan.SUSTAINED) "completed" else "budget_exhausted"
-                state.reason = "elapsed_budget_reached; unrun_cases_are_not_execution_evidence"
+                if (store.journalBudgetReached(session)) {
+                    state.outcome = "storage_budget_exhausted"
+                    state.reason = "256_MiB_journal_budget_reached; completed_records_preserved"
+                } else {
+                    state.outcome = if (plan == BenchmarkPlan.SUSTAINED) "completed" else "budget_exhausted"
+                    state.reason = "elapsed_budget_reached; unrun_cases_are_not_execution_evidence"
+                }
             }
         } catch (cancelled: CancellationException) {
             state.outcome = "cancelled"; state.reason = cancelled.message ?: "user_or_foreground_lifecycle_cancelled"
@@ -119,10 +136,12 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             state.outcome = "failed"; state.reason = "${error.javaClass.simpleName}: ${error.message}"
             Log.e("SolarLabBenchmark", "run_failed session=${session.name}", error)
         } finally {
-            withContext(NonCancellable) {
-                sampler?.cancelAndJoin()
-                state.finish()
-            }
+            try {
+                withContext(NonCancellable) {
+                    sampler?.cancelAndJoin()
+                    state.finish()
+                }
+            } finally { BenchmarkSessionOwnership.active.remove(session.name) }
         }
         session
     }
@@ -149,8 +168,12 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             .put("status", "running").put("plan", plan.name).put("started_utc", Instant.now().toString())
             .put("started_monotonic_ns", start).put("build_commit", BuildConfig.BUILD_COMMIT)
             .put("budget_seconds", plan.budgetSeconds).put("requested_display_mode_id", options.displayModeId)
+            .put("journal_budget_bytes", BenchmarkFileStore.JOURNAL_BUDGET_BYTES)
+            .put("selected_case_key", options.selectedCaseKey ?: JSONObject.NULL)
+            .put("orientation_lock_requested", options.orientationLockRequested)
+            .put("orientation_policy", "request_current_orientation_only_while_running; platform_may_ignore; onStop_cancels_and_retains_partial")
             .put("performance_hints_requested", options.performanceHints).put("benchmark_thread_tid", Process.myTid())
-            .put("protocol", "warmup A,B then ordered A1,B1,B2,A2; identical deterministic fixture and step count; one native repeat per record")
+            .put("protocol", "warmup A,B then ordered A1,B1,B2,A2; identical deterministic fixture and step count; bounded repeat count recorded per sample")
             .put("timing_scope", "native elapsed_ns with native elapsed_scope; consult native timed-scope for scratch allocation/thread costs; Java telemetry and file IO excluded")
             .put("native_repeats", if (plan == BenchmarkPlan.SUSTAINED) 11 else 1)
             .put("hardware_iterations", if (plan == BenchmarkPlan.SUSTAINED) 16 else 1)
@@ -162,7 +185,7 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             .put("baseline_scope", "same-APK selected reference case, not an earlier-commit binary")
             .put("data_export", "local-only; explicit document save or Android share")
 
-        fun expired(): Boolean = SystemClock.elapsedRealtimeNanos() >= deadline
+        fun expired(): Boolean = SystemClock.elapsedRealtimeNanos() >= deadline || store.journalBudgetReached(session)
 
         suspend fun publish(phase: String, detail: String) {
             progress = progress.copy(phase = phase, detail = detail, elapsedSeconds = (SystemClock.elapsedRealtimeNanos() - start) / 1_000_000_000L)
@@ -209,8 +232,14 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                 if (options.performanceHints && hint == null && case.backend == "cpu") hint = createHint()
                 if (case.backend != "cpu") { runCatching { hint?.close() }; hint = null }
                 val tid = Process.myTid()
-                val wrapperStart = SystemClock.elapsedRealtimeNanos()
                 val repeats = if (plan == BenchmarkPlan.SUSTAINED) { if (case.backend == "cpu") 11 else 16 } else 1
+                val sampleId = "$pairKey/$round/$block/$order"
+                // Commit intent before entering native code so an interrupted process still identifies its in-flight case.
+                record(session, "sample_start", JSONObject().put("sample_id", sampleId).put("case_id", case.id)
+                    .put("backend", case.backend).put("fixture_id", pair.fixture).put("steps", pair.steps)
+                    .put("placement", placementMode).put("repeats", repeats).put("round", round).put("block", block)
+                    .put("order", order).put("thread_tid", tid).put("native_invocation_planned", admissionKey !in blockedCases))
+                val wrapperStart = SystemClock.elapsedRealtimeNanos()
                 val result = if (admissionKey in blockedCases) failure("SKIP", "case_skipped_after_unavailable_result", admissionKey)
                     else if (case.backend == "cpu") NativeBridge.run(case.id, pair.fixture, pair.steps, repeats)
                     else NativeHardwareBench.run(case.id, repeats)
@@ -228,7 +257,7 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                         blockValues.getOrPut(block) { mutableMapOf() }.getOrPut(role) { mutableListOf() } += elapsed
                     }
                 }
-                record(session, "sample", JSONObject().put("pair", pairKey).put("case_id", case.id).put("backend", case.backend)
+                record(session, "sample", JSONObject().put("sample_id", sampleId).put("pair", pairKey).put("case_id", case.id).put("backend", case.backend)
                     .put("fixture_id", pair.fixture).put("steps", pair.steps).put("repeats", repeats).put("round", round)
                     .put("block", block).put("order", order).put("role", role).put("warmup", warmup).put("placement", placementMode)
                     .put("status", status).put("elapsed_ns", elapsed ?: JSONObject.NULL)
@@ -289,6 +318,7 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                 .put("comparisons_planned", progress.pairsPlanned).put("comparisons_visited_last_round", progress.pairsCompleted)
                 .put("reason", reason).put("elapsed_ns", finalNs - start).put("thermal_paused_ns", pausedNs)
                 .put("counts", JSONObject(counts as Map<*, *>)).put("timings", summaries)
+                .put("journal_writer", journalWriterSnapshot(store.journalIoStatistics(session)))
                 .put("interpretation", "PASS is case-local correctness, not speedup or hardware execution evidence; inspect native selected paths and complete ABBA blocks.")
             withContext(Dispatchers.IO) {
                 store.writeAtomic(session, "summary.json", summary.toString(2))
@@ -305,16 +335,23 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
 
     private fun recoverInterruptedSessions() {
         for (session in store.sessions()) {
+            if (session.name in BenchmarkSessionOwnership.active) continue
             val manifestFile = File(session, "manifest.json")
             val manifest = runCatching { JSONObject(manifestFile.readText()) }.getOrNull()
             if (manifest?.optString("status") == "running" || (!manifestFile.exists() && File(session, "events.ndjson").exists())) {
                 val removed = store.recoverJournal(session)
                 val recovered = (manifest ?: JSONObject().put("schema_version", 1).put("session_id", session.name))
                     .put("status", "interrupted").put("recovered_utc", Instant.now().toString()).put("discarded_torn_tail_bytes", removed)
+                    .put("recovered_monotonic_ns", SystemClock.elapsedRealtimeNanos())
+                    .put("recovery_clock_scope", "current_boot; may differ from recorded session boot; journal clocks remain unchanged")
                 store.writeAtomic(session, "manifest.json", recovered.toString(2))
-                store.append(session, JSONObject().put("schema_version", 1).put("event", "recovered_after_process_interruption")
-                    .put("monotonic_ns", SystemClock.elapsedRealtimeNanos()).put("discarded_torn_tail_bytes", removed).toString())
             }
         }
     }
 }
+
+internal fun journalWriterSnapshot(statistics: JournalIoStatistics): JSONObject = JSONObject()
+    .put("completed_records", statistics.records).put("bytes", statistics.bytes)
+    .put("elapsed_ns", statistics.elapsedNs).put("maximum_append_ns", statistics.maximumAppendNs)
+    .put("scope", "journal_record_serialization_UTF8_open_write_flush_fsync_wall_time; excludes_lock_wait_metadata_IO_and_current_summary_record")
+    .put("interpretation", "overhead_observation; do_not_subtract_from_native_kernel_time_or_assign_battery_energy_to_it")

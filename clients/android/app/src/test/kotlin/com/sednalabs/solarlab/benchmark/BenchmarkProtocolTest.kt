@@ -24,6 +24,31 @@ class BenchmarkProtocolTest {
         assertTrue(BenchmarkSchedule.pairs(listOf(only), BenchmarkPlan.FULL).all { it.baseline == it.candidate })
     }
 
+    @Test fun sustainedRunIncludesDenseWorkWithoutInventingUnsupportedFixtures() {
+        val cases = listOf(case("reference", fixtures = listOf("sparse3", "dense256")),
+            case("production-selected", baseline = "reference", fixtures = listOf("sparse3", "dense192", "dense256")),
+            case("workers-1", baseline = "reference", fixtures = listOf("sparse3")))
+        val schedule = BenchmarkSchedule.pairs(cases, BenchmarkPlan.SUSTAINED)
+        assertEquals(listOf("sparse3", "dense256"), schedule.filter { it.candidate.id == "production-selected" }.map { it.fixture })
+        assertEquals(listOf("sparse3"), schedule.filter { it.candidate.id == "workers-1" }.map { it.fixture })
+        assertTrue(schedule.all { it.steps == 64 })
+    }
+
+    @Test fun targetedRunPreservesReferenceLookupAndDisambiguatesIdenticalIdsAcrossBackends() {
+        val cpuReference = case("reference", fixtures = listOf("kepler", "dense256"))
+        val cpuCandidate = case("candidate", baseline = "reference", fixtures = listOf("kepler"))
+        val hardwareCandidate = cpuCandidate.copy(backend = "hardware", fixtures = listOf("native-fixed"))
+        val hardwareReference = cpuReference.copy(backend = "hardware", fixtures = listOf("native-fixed"))
+        val all = listOf(cpuReference, cpuCandidate, hardwareCandidate, hardwareReference)
+        val cpu = BenchmarkSchedule.pairs(all, BenchmarkPlan.FULL, "cpu:candidate")
+        assertTrue(cpu.all { it.candidate == cpuCandidate && it.baseline == cpuReference && it.fixture == "kepler" })
+        assertEquals(BenchmarkSchedule.fullSteps, cpu.map { it.steps })
+        val hardware = BenchmarkSchedule.pairs(all, BenchmarkPlan.FULL, "hardware:candidate")
+        assertEquals(1, hardware.size)
+        assertEquals(hardwareReference, hardware.single().baseline)
+        assertTrue(BenchmarkSchedule.pairs(all, BenchmarkPlan.FULL, "cpu:missing").isEmpty())
+    }
+
     @Test fun percentilesUseNearestRankAndMedianDoesNotOverflow() {
         val stats = TimingSummary.from(listOf(100, 1, 2, 3, 4, 5, 6, 7, 8, 9))!!
         assertEquals(5.5, stats.median, 0.0)

@@ -1,5 +1,5 @@
-//! Narrow, runtime-gated FP64 NEON experiment boundary. All vector loads and
-//! stores address local two-element arrays; no foreign pointers are accepted.
+//! Narrow, runtime-gated FP64 NEON experiment boundary. Constant lane intrinsics
+//! assemble and extract register values; no foreign pointers are accepted.
 //! Unsafe is needed solely for target-feature intrinsics, as in physics.
 use crate::kernels::Source;
 use crate::model::{Body, V3};
@@ -28,7 +28,7 @@ pub fn evaluate(
     #[cfg(target_arch = "aarch64")]
     {
         // SAFETY: actual process NEON support checked above. Typed, bounded
-        // slices and local arrays keep every load/store in its allocation.
+        // slices provide bounded scalar accesses; lane operations use registers.
         unsafe {
             if fixed_three {
                 blocked::<2, 3>(bodies, sources, out);
@@ -82,9 +82,9 @@ unsafe fn blocked<const PAIRS: usize, const FIXED_SOURCES: usize>(
         for pair in 0..PAIRS {
             let first = (start + pair * 2).min(bodies.len() - 1);
             let second = (first + 1).min(bodies.len() - 1);
-            px[pair] = vld1q_f64([bodies[first].p[0], bodies[second].p[0]].as_ptr());
-            py[pair] = vld1q_f64([bodies[first].p[1], bodies[second].p[1]].as_ptr());
-            pz[pair] = vld1q_f64([bodies[first].p[2], bodies[second].p[2]].as_ptr());
+            px[pair] = vsetq_lane_f64::<1>(bodies[second].p[0], vdupq_n_f64(bodies[first].p[0]));
+            py[pair] = vsetq_lane_f64::<1>(bodies[second].p[1], vdupq_n_f64(bodies[first].p[1]));
+            pz[pair] = vsetq_lane_f64::<1>(bodies[second].p[2], vdupq_n_f64(bodies[first].p[2]));
         }
         for source in sources.iter().take(source_count) {
             let sx = vdupq_n_f64(source.p[0]);
@@ -123,17 +123,20 @@ unsafe fn blocked<const PAIRS: usize, const FIXED_SOURCES: usize>(
             }
         }
         for pair in 0..PAIRS {
-            let mut x = [0.0; 2];
-            let mut y = [0.0; 2];
-            let mut z = [0.0; 2];
-            vst1q_f64(x.as_mut_ptr(), ax[pair]);
-            vst1q_f64(y.as_mut_ptr(), ay[pair]);
-            vst1q_f64(z.as_mut_ptr(), az[pair]);
-            for lane in 0..2 {
-                let index = start + pair * 2 + lane;
-                if index < out.len() {
-                    out[index] = [x[lane], y[lane], z[lane]];
-                }
+            let index = start + pair * 2;
+            if index < out.len() {
+                out[index] = [
+                    vgetq_lane_f64::<0>(ax[pair]),
+                    vgetq_lane_f64::<0>(ay[pair]),
+                    vgetq_lane_f64::<0>(az[pair]),
+                ];
+            }
+            if index + 1 < out.len() {
+                out[index + 1] = [
+                    vgetq_lane_f64::<1>(ax[pair]),
+                    vgetq_lane_f64::<1>(ay[pair]),
+                    vgetq_lane_f64::<1>(az[pair]),
+                ];
             }
         }
     }

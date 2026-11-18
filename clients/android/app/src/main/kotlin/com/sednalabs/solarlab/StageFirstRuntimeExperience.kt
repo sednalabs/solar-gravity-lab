@@ -299,6 +299,7 @@ internal fun StageFirstRuntimeExperience(
         val coroutineScope = rememberCoroutineScope()
 
         val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
+        val researchRecording by com.sednalabs.solarlab.benchmark.LiveResearchCapture.recording.collectAsStateWithLifecycle()
         val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
         val experimentStatus by runtimeFacade.experimentStatus.collectAsStateWithLifecycle()
         val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
@@ -1097,7 +1098,9 @@ internal fun StageFirstRuntimeExperience(
                     modifier = Modifier.fillMaxSize(),
                     factory = { viewContext ->
                         SolarSystemRenderHostView(viewContext).also { view ->
+                            view.setResearchDiagnosticsEnabled(researchRecording)
                             view.setOnBackendStatusChangedListener { status ->
+                                com.sednalabs.solarlab.benchmark.LiveResearchCapture.rendererStatus(status)
                                 hostRendererStatus = status.message
                             }
                             view.setOnCameraScaleChangedListener { scaleBand ->
@@ -1179,6 +1182,7 @@ internal fun StageFirstRuntimeExperience(
                         }
                     },
                     update = { view ->
+                        view.setResearchDiagnosticsEnabled(researchRecording)
                         val draft = labInteraction.draft
                         val reference = draft?.reference ?: labInteraction.referenceBodies["earth"]
                         val plane = draft?.plane ?: labInteraction.plane
@@ -1238,6 +1242,20 @@ internal fun StageFirstRuntimeExperience(
                     if (!labInteraction.committing) labInteraction.draft?.let { labInteraction.changeDraft(it.withVelocityPoint(point, scale)) }
                 },
             )
+            if (researchRecording) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xE61A3048),
+                ) {
+                    Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Recording performance", style = MaterialTheme.typography.labelMedium)
+                        TextButton(onClick = {
+                            com.sednalabs.solarlab.benchmark.LiveResearchCapture.stop("user_stopped_observatory_capture")
+                        }) { Text("Stop") }
+                    }
+                }
+            }
             }
 
             if (!placing) EarthMoonLabChrome(

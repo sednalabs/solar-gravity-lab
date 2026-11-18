@@ -18,6 +18,7 @@ const KEPLER: &[&str] = &["kepler"];
 pub enum Algorithm {
     Production(bool),
     Leapfrog,
+    PersistentWorkers(usize),
     Adaptive,
     Close,
     Yoshida,
@@ -38,6 +39,41 @@ pub struct Case {
     pub baseline: &'static str,
     pub tolerance: f64,
     pub note: &'static str,
+}
+
+impl Case {
+    pub fn comparison_kind(&self) -> &'static str {
+        if self.physics_model() != "Newtonian" {
+            "different_force_model_cost"
+        } else if matches!(self.family, "numerical" | "approximate") {
+            "accuracy_cost_experiment"
+        } else {
+            "equivalent_kernel"
+        }
+    }
+
+    pub fn physics_model(&self) -> &'static str {
+        match self.force {
+            ForceMode::FirstPostNewtonian => "1PN",
+            ForceMode::J2 => "J2",
+            ForceMode::Radiation => "radiation",
+            _ => "Newtonian",
+        }
+    }
+
+    pub fn control_scope_note(&self) -> &'static str {
+        match self.comparison_kind() {
+            "different_force_model_cost" => {
+                "The timing control is Newtonian production scalar; the candidate uses a different force model and RK4. This measures added model/integrator cost, not an equivalent-physics speedup. Accuracy uses a converged same-model finer-step reference."
+            }
+            "accuracy_cost_experiment" => {
+                "The control uses Newtonian production scalar at the same simulated duration. Different integration, approximation or precision policies require joint accuracy/cost assessment; raw timing ratios do not establish an equivalent-kernel speedup."
+            }
+            _ => {
+                "Candidate and control use the same Newtonian model, fixture and fixed-step schedule. Timing comparisons remain conditional on the declared state-error budget and observed device conditions."
+            }
+        }
+    }
 }
 
 macro_rules! force_case {
@@ -88,6 +124,15 @@ pub const CASES: &[Case] = &[
     force_case!("workers-2", "Two deterministic workers", ForceMode::Workers(2), &[17,18], ALL_FIXTURES, "Per-sweep thread creation/join charged; not a persistent pool."),
     force_case!("workers-4", "Four deterministic workers", ForceMode::Workers(4), &[17,18], ALL_FIXTURES, "Per-sweep thread creation/join charged; not a persistent pool."),
     force_case!("workers-8", "Eight deterministic workers", ForceMode::Workers(8), &[17,18], ALL_FIXTURES, "Per-sweep thread creation/join charged; not a persistent pool."),
+    Case { id:"persistent-workers-2", label:"Two workers retained for the segment", family:"cpu", recommendations:&[17,18], fixtures:ALL_FIXTURES,
+        algorithm:Algorithm::PersistentWorkers(2),force:ForceMode::Direct,baseline:"workers-2",tolerance:2.0e-11,
+        note:"Owned bounded-channel tasks; snapshot/output allocations reused. Creation and join once per measured segment, caller affinity inherited, fixed source order." },
+    Case { id:"persistent-workers-4", label:"Four workers retained for the segment", family:"cpu", recommendations:&[17,18], fixtures:ALL_FIXTURES,
+        algorithm:Algorithm::PersistentWorkers(4),force:ForceMode::Direct,baseline:"workers-4",tolerance:2.0e-11,
+        note:"Owned bounded-channel tasks; snapshot/output allocations reused. Creation and join once per measured segment, caller affinity inherited, fixed source order." },
+    Case { id:"persistent-workers-8", label:"Eight workers retained for the segment", family:"cpu", recommendations:&[17,18], fixtures:ALL_FIXTURES,
+        algorithm:Algorithm::PersistentWorkers(8),force:ForceMode::Direct,baseline:"workers-8",tolerance:2.0e-11,
+        note:"Owned bounded-channel tasks; snapshot/output allocations reused. Creation and join once per measured segment, caller affinity inherited, fixed source order." },
     force_case!("kahan", "Kahan force accumulation", ForceMode::Kahan, &[49], ALL_FIXTURES, "Compensated FP64 force components; no fast-math."),
     force_case!("neumaier", "Neumaier force accumulation", ForceMode::Neumaier, &[49], ALL_FIXTURES, "Compensated FP64 force components with cancellation correction."),
     force_case!("pairwise", "Deterministic pairwise reduction", ForceMode::Pairwise, &[50], ALL_FIXTURES, "Fixed binary source reduction tree, independent of scheduling."),
@@ -96,7 +141,7 @@ pub const CASES: &[Case] = &[
         note:"KDK local error <=1e-10, power-of-two subdivisions, bounded work. Adaptive schedule is not globally symplectic." },
     Case { id:"close-encounter-refine", label:"Close-encounter refinement", family:"numerical", recommendations:&[52], fixtures:SCIENCE,
         algorithm:Algorithm::Close, force:ForceMode::Direct, baseline:"production-scalar", tolerance:2.0e-4,
-        note:"Global power-of-two KDK refinement from orbital/crossing times. Not local regularisation or collision handling." },
+        note:"Global power-of-two KDK refinement at 0.005 of orbital/crossing times. Not local regularisation or collision handling." },
     Case { id:"yoshida4", label:"Fourth-order symmetric integrator", family:"numerical", recommendations:&[53], fixtures:SCIENCE,
         algorithm:Algorithm::Yoshida, force:ForceMode::Direct, baseline:"production-scalar", tolerance:1.0e-6,
         note:"Yoshida composition including negative middle step; conservative collision-free fixtures only." },

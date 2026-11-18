@@ -7,5 +7,5 @@ namespace solarlab::benchmark {
 // modify the renderer, the Rust world, or persistent experiments. The separate
 // placement JNI call changes only its calling worker and restores on that worker.
 std::string Capabilities();
-std::string RunCase(const std::string& caseId, int iterations);
+std::string RunCase(const std::string &caseId, int iterations);
 } // namespace solarlab::benchmark

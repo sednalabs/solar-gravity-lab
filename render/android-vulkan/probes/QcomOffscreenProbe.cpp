@@ -28,6 +28,12 @@
 namespace {
 std::atomic_uint validationErrors{0};
 std::mutex probeMutex;
+uint64_t Checksum(const void* pointer,size_t bytes) {
+    const auto* data=static_cast<const uint8_t*>(pointer);
+    uint64_t value=14695981039346656037ULL;
+    for(size_t i=0;i<bytes;++i)value=(value^data[i])*1099511628211ULL;
+    return value;
+}
 
 void Check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) {
@@ -85,6 +91,7 @@ public:
     uint32_t driverVersion = 0;
     double maximumError = 0;
     uint64_t submissionNs = 0;
+    uint64_t checksum = 0;
     PFN_vkCmdPipelineBarrier2 cmdBarrier2 = nullptr;
     PFN_vkCreateRenderPass2 createRenderPass2 = nullptr;
     PFN_vkCmdBeginPerTileExecutionQCOM beginTile = nullptr;
@@ -352,7 +359,16 @@ public:
         else if (shaderFile.ends_with("/box_filter.comp.spv")) { embedded = qcom_box_filter; bytes = sizeof(qcom_box_filter); }
         if (embedded == nullptr || bytes == 0 || bytes % 4 != 0) throw std::runtime_error("embedded-probe-shader-unavailable");
         words.resize(bytes/4);
-        std::memcpy(words.data(),embedded,bytes);
+        // These static byte arrays are sized with sizeof above. Decode exactly
+        // four in-bounds bytes per destination word, without pointer casts or
+        // an unchecked byte-copy API, and preserve SPIR-V's little-endian form.
+        for (size_t index = 0; index < words.size(); ++index) {
+            const size_t offset = index * 4;
+            words[index] = static_cast<uint32_t>(embedded[offset]) |
+                (static_cast<uint32_t>(embedded[offset + 1]) << 8U) |
+                (static_cast<uint32_t>(embedded[offset + 2]) << 16U) |
+                (static_cast<uint32_t>(embedded[offset + 3]) << 24U);
+        }
 #else
         std::ifstream input(shaderFile, std::ios::binary | std::ios::ate);
         if (!input) throw std::runtime_error("shader-file-unavailable: " + shaderFile);
@@ -488,6 +504,7 @@ void Probe::RunInvert(bool tiled, const std::string& shaderDirectory) {
     void* mapped = nullptr;
     Check(vkMapMemory(device, readback.memory, 0, bytes, 0, &mapped), "map invert readback");
     const auto* actual = static_cast<const uint8_t*>(mapped);
+    checksum = Checksum(actual,bytes);
     const std::array<int, 4> expected{191, 127, 64, 255};
     for (size_t index = 0; index < bytes; ++index) {
         maximumError = std::max(maximumError, static_cast<double>(std::abs(static_cast<int>(actual[index]) - expected[index % 4])));
@@ -539,6 +556,7 @@ void Probe::RunBox(bool dedicated, const std::string& shaderDirectory) {
     Submit();
     Check(vkMapMemory(device, output.memory, 0, outputBytes, 0, &mapped), "map box readback");
     const auto* actual = static_cast<const float*>(mapped);
+    checksum = Checksum(actual,outputBytes);
     bool finite = true;
     for (uint32_t y = 0; y < 16U; ++y) {
         for (uint32_t x = 0; x < 16U; ++x) {
@@ -591,6 +609,7 @@ solarlab::probes::QcomProbeResult solarlab::probes::RunQcomProbe(const std::stri
         result.validation = probe.validation;
         result.maximumError = probe.maximumError;
         result.submissionNs = probe.submissionNs;
+        result.checksum = probe.checksum;
     } // Complete destruction before assessing validation errors and printing.
     result.validationErrors = validationErrors.load();
     if (result.validationErrors != 0) { result.status = "FAIL"; result.reason = "validation-errors"; }
@@ -606,6 +625,7 @@ std::string solarlab::probes::QcomProbeResult::Json(const std::string& mode) con
         << ",\"validationLayer\":" << (validation ? "true" : "false")
         << ",\"validationErrors\":" << validationErrors
         << ",\"submission_ns\":" << submissionNs << ",\"total_ns\":" << totalNs
+        << ",\"checksum_fnv1a64\":" << JsonString(std::to_string(checksum))
         << ",\"maxAbsoluteError\":" << maximumError << "}";
     return out.str();
 }
@@ -614,10 +634,11 @@ std::string solarlab::probes::QcomProbeResult::Json(const std::string& mode) con
 int main(int argc, char** argv) {
     std::string mode = "control", shaderDirectory = ".";
     bool requireValidation = false;
-    for (int index = 1; index < argc; ++index) {
-        const std::string argument = argv[index];
-        if (argument == "--mode" && index + 1 < argc) mode = argv[++index];
-        else if (argument == "--shaders" && index + 1 < argc) shaderDirectory = argv[++index];
+    int index = 1;
+    while (index < argc) {
+        const std::string argument = argv[index++];
+        if (argument == "--mode" && index < argc) mode = argv[index++];
+        else if (argument == "--shaders" && index < argc) shaderDirectory = argv[index++];
         else if (argument == "--require-validation") requireValidation = true;
         else { std::cerr << "Usage: --mode control|box-control|tile-shading|image-processing --shaders DIR [--require-validation]\n"; return 2; }
     }

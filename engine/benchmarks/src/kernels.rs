@@ -76,7 +76,15 @@ impl ForceEvaluator {
         }
     }
 
+    // The explicit match keeps each measured implementation and its setup together.
+    // FP32 conversions are the declared approximate experiment, not accidental loss.
+    #[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
     pub fn evaluate(&mut self, bodies: &[Body], out: &mut [V3]) {
+        assert_eq!(
+            bodies.len(),
+            out.len(),
+            "acceleration output length must match body count"
+        );
         self.evaluations += 1;
         out.fill([0.0; 3]);
         match self.mode {
@@ -152,7 +160,7 @@ impl ForceEvaluator {
             ForceMode::Symmetric(size) => symmetric_tiled(bodies, out, size),
             ForceMode::Workers(workers) => parallel_targets(bodies, &self.sources, out, workers),
             ForceMode::Kahan | ForceMode::Neumaier | ForceMode::Pairwise => {
-                reduced(bodies, &self.sources, out, self.mode)
+                reduced(bodies, &self.sources, out, self.mode);
             }
             ForceMode::BarnesHut => {
                 let tree = Octree::build(bodies, &self.sources);
@@ -257,6 +265,26 @@ fn direct(bodies: &[Body], sources: &[usize], out: &mut [V3]) {
             }
         }
     }
+}
+
+#[inline]
+pub(crate) fn target_acceleration(bodies: &[Body], sources: &[usize], target: usize) -> V3 {
+    let mut sum = [0.0; 3];
+    for &source in sources {
+        if target != source {
+            sum = add(
+                sum,
+                contribution(
+                    bodies[target].p,
+                    Source {
+                        p: bodies[source].p,
+                        mu: bodies[source].mu,
+                    },
+                ),
+            );
+        }
+    }
+    sum
 }
 
 fn fixed_sources<const N: usize>(
@@ -638,6 +666,62 @@ pub fn acceleration_and_jerk(bodies: &[Body], target: usize) -> (V3, V3) {
 mod tests {
     use super::*;
     use crate::model::fixture;
+
+    #[test]
+    fn mismatched_output_shape_is_rejected_before_clearing_or_evaluation() {
+        let f = fixture("kepler").unwrap();
+        for size in [f.bodies.len() - 1, f.bodies.len() + 1] {
+            let mut evaluator = ForceEvaluator::new(ForceMode::Direct, &f.bodies);
+            let mut output = vec![[42.0; 3]; size];
+            let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                evaluator.evaluate(&f.bodies, &mut output)
+            }));
+            assert!(failed.is_err());
+            assert_eq!(output, vec![[42.0; 3]; size]);
+            assert_eq!(evaluator.evaluations, 0);
+        }
+    }
+
+    #[test]
+    fn compensated_forces_recover_known_small_residual_between_large_sources() {
+        let bodies = vec![
+            Body {
+                mu: 0.0,
+                p: [0.0; 3],
+                v: [0.0; 3],
+            },
+            Body {
+                mu: 1.0e16,
+                p: [1.0, 0.0, 0.0],
+                v: [0.0; 3],
+            },
+            Body {
+                mu: 1.0,
+                p: [1.0, 0.0, 0.0],
+                v: [0.0; 3],
+            },
+            Body {
+                mu: 1.0,
+                p: [1.0, 0.0, 0.0],
+                v: [0.0; 3],
+            },
+            Body {
+                mu: 1.0e16,
+                p: [-1.0, 0.0, 0.0],
+                v: [0.0; 3],
+            },
+        ];
+        // All source-target distances are exactly one: analytic acceleration
+        // is 10^16 + 1 + 1 - 10^16 = 2, independently of an FP64 oracle.
+        for mode in [ForceMode::Kahan, ForceMode::Neumaier] {
+            let mut a = vec![[0.0; 3]; bodies.len()];
+            ForceEvaluator::new(mode, &bodies).evaluate(&bodies, &mut a);
+            assert_eq!(a[0], [2.0, 0.0, 0.0]);
+        }
+        let mut naive = vec![[0.0; 3]; bodies.len()];
+        ForceEvaluator::new(ForceMode::Direct, &bodies).evaluate(&bodies, &mut naive);
+        assert_eq!(naive[0], [0.0; 3]);
+    }
 
     #[test]
     fn layouts_cover_odd_tails_and_preserve_source_and_passive_forces() {

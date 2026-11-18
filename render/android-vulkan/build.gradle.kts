@@ -16,6 +16,7 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-fexceptions", "-frtti")
+                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                 arguments += "-DSOLARLAB_CAPTURE_PIPELINE_STATISTICS=" +
                     if (providers.gradleProperty("solarLabCapturePipelineStatistics").orNull == "true") "ON" else "OFF"
                 arguments += "-DSOLARLAB_BUFFER_ADDRESS_COMPACTION=" +

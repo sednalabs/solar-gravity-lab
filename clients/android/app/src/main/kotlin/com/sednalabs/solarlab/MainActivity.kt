@@ -4,6 +4,7 @@ import android.app.Application
 import java.io.File
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -51,6 +52,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         runtimeViewModel.ensureStarted()
+        if (savedInstanceState == null) handleResearchIntent(intent)
 
         setContent {
             if (BuildConfig.STAGE_FIRST_CLIENT) {
@@ -70,7 +72,21 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        handleResearchIntent(intent)
         handleSemanticIntent(intent)
+    }
+
+    private fun handleResearchIntent(request: Intent?) {
+        if (!BuildConfig.BENCHMARK_ENABLED || request?.getBooleanExtra("record_observatory", false) != true) return
+        request.removeExtra("record_observatory")
+        if (com.sednalabs.solarlab.benchmark.LiveResearchCapture.start(this, runtimeViewModel.runtimeFacade)) {
+            Toast.makeText(this, "Recording observatory performance. Go back to stop and export.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onStop() {
+        com.sednalabs.solarlab.benchmark.LiveResearchCapture.stop("observatory_activity_stopped")
+        super.onStop()
     }
 
     private fun handleSemanticIntent(intent: Intent?) {

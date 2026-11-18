@@ -9,7 +9,12 @@ enum class BenchmarkPlan(val title: String, val budgetSeconds: Long, val blocks:
     SUSTAINED("15 minute stability run", 900, 3),
 }
 
-data class BenchmarkOptions(val performanceHints: Boolean = false, val displayModeId: Int = 0)
+data class BenchmarkOptions(
+    val performanceHints: Boolean = false,
+    val displayModeId: Int = 0,
+    val selectedCaseKey: String? = null,
+    val orientationLockRequested: Boolean = false,
+)
 
 data class BenchmarkCase(
     val id: String,
@@ -38,12 +43,12 @@ object BenchmarkSchedule {
     val fullSteps: List<Int> = listOf(1, 2, 4, 8, 16, 32, 64)
     val abba: List<String> = listOf("A1", "B1", "B2", "A2")
 
-    fun pairs(cases: List<BenchmarkCase>, plan: BenchmarkPlan): List<BenchmarkPair> {
+    fun pairs(cases: List<BenchmarkCase>, plan: BenchmarkPlan, selectedCaseKey: String? = null): List<BenchmarkPair> {
         val byKey = cases.associateBy(BenchmarkCase::key)
         val runnable = cases.filter(BenchmarkCase::runnable)
         val preferred = setOf("production-selected", "source-specialised", "neon-block-4", "target-block-4", "workers-1", "kahan")
         val hardwareQuick = setOf("gpu.passive-fp32", "gpu.compact-subgroup", "native.prefetch-4", "native.vector-fp64", "native.fcma-f64", "native.sve-fp64", "gpu.visual-fp16", "gpu.pipeline-cache", "gpu.transfer-persistent")
-        val selected = when (plan) {
+        val selected = if (selectedCaseKey != null) runnable.filter { it.key == selectedCaseKey } else when (plan) {
             BenchmarkPlan.QUICK -> runnable.filter { it.id in preferred || it.id in hardwareQuick }.take(15)
                 .ifEmpty { runnable.take(8) }
             BenchmarkPlan.FULL -> runnable
@@ -55,7 +60,12 @@ object BenchmarkSchedule {
                 ?.takeIf(BenchmarkCase::runnable) ?: candidate
             val commonFixtures = candidate.fixtures.filter { it in baseline.fixtures }
                 .ifEmpty { if (candidate.backend == "hardware") listOf("native-fixed") else emptyList() }
-            val fixtures = if (plan == BenchmarkPlan.FULL) commonFixtures else commonFixtures.take(1)
+            val fixtures = when {
+                plan == BenchmarkPlan.FULL -> commonFixtures
+                plan == BenchmarkPlan.SUSTAINED && candidate.backend == "cpu" ->
+                    (commonFixtures.take(1) + commonFixtures.filter { it == "dense256" }).distinct()
+                else -> commonFixtures.take(1)
+            }
             val steps = when {
                 candidate.backend == "hardware" -> listOf(1)
                 plan == BenchmarkPlan.QUICK -> listOf(1, 8, 64)
@@ -66,7 +76,7 @@ object BenchmarkSchedule {
         }
         // Spread the finite run budget across candidates before adding more step/fixture cohorts.
         // A costly early candidate must not prevent all later GPU/scientific cases from being visited.
-        val longest = perCase.maxOfOrNull(List<BenchmarkPair>::size) ?: 0
+        val longest = perCase.maxOfOrNull { it.size } ?: 0
         return (0 until longest).flatMap { index -> perCase.mapNotNull { it.getOrNull(index) } }
     }
 }

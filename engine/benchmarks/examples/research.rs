@@ -1,14 +1,15 @@
 //! A small host/native qualification entry point with the same JNI payloads.
+fn argument<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|pair| pair[0] == name)
+        .map(|pair| pair[1].as_str())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args == ["--catalogue"] {
         println!("{}", solarlab_benchmarks::catalogue_json());
         return;
-    }
-    fn argument<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-        args.windows(2)
-            .find(|pair| pair[0] == name)
-            .map(|pair| pair[1].as_str())
     }
     let Some(case) = argument(&args, "--case") else {
         eprintln!("usage: research --catalogue | --case ID --fixture ID [--steps 8] [--repeats 1]");

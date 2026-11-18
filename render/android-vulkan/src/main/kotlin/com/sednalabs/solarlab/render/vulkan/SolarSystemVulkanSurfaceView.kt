@@ -63,6 +63,8 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
+    @Volatile
+    private var researchDiagnosticsEnabled: Boolean = false
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var renderLayerOptions: RenderLayerOptions = RenderLayerOptions()
@@ -1183,6 +1185,12 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         )
     }
 
+    override fun setResearchDiagnosticsEnabled(enabled: Boolean) {
+        if (researchDiagnosticsEnabled == enabled) return
+        researchDiagnosticsEnabled = enabled
+        if (enabled) renderLatestScene()
+    }
+
     private fun renderNativeFrame(handle: Long, refreshRuntimeScene: Boolean, targetDurationNanos: Long): NativeRenderResult {
         val startedAt = performanceHints.begin(targetDurationNanos)
         var completed = false
@@ -1201,9 +1209,17 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         } finally {
             performanceHints.end(startedAt, completed)
         }
-        return if (result.sceneSummary == null) result else result.copy(
+        val withHints = if (result.sceneSummary == null) result else result.copy(
             sceneSummary = "${result.sceneSummary} ${performanceHints.summary()}",
         )
+        // Collect on the serialized worker, outside the measured ADPF duration.
+        // Inactive sessions make no additional native query.
+        return if (researchDiagnosticsEnabled && refreshRuntimeScene) {
+            withHints.copy(
+                hardwareSummary = runCatching { SolarLabVulkanBridge.hardwareSummary(handle) }
+                    .getOrElse { "researchDiagnosticsError=${it.message ?: it.javaClass.simpleName}" },
+            )
+        } else withHints
     }
 
     private fun closePerformanceHintSession() {
@@ -1246,7 +1262,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         // Display-only frames must not trigger Compose/runtime publication loops.
         if (result.sceneSummary != null && result.backendLabel != null) {
             val detail = cameraLabel?.let { "$it · ${result.sceneSummary}" } ?: result.sceneSummary
-            reportStatus("${result.backendLabel} active. $detail")
+            reportStatus("${result.backendLabel} active. $detail", result.hardwareSummary)
         }
         reportCameraScaleBand()
         scheduleFrame()
@@ -1337,13 +1353,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun reportStatus(message: String) {
+    private fun reportStatus(message: String, hardwareSummary: String? = null) {
         statusCallback(
             RenderBackendStatus(
                 requested = RenderBackend.VULKAN,
                 active = RenderBackend.VULKAN,
                 isHardwareAccelerated = true,
                 message = message,
+                hardwareSummary = hardwareSummary,
             ),
         )
     }
@@ -1381,6 +1398,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val cameraState: CameraState?,
         val viewportState: LabViewportState?,
         val hasPendingPresentation: Boolean,
+        val hardwareSummary: String? = null,
     )
 }
 

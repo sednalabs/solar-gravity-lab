@@ -13,6 +13,7 @@ LOGCAT_SHUTDOWN_TIMEOUT_SECONDS="${ANDROID_TEST_LOGCAT_SHUTDOWN_TIMEOUT_SECONDS:
 LOGCAT_FILTER_SPECS=(
   "SolarLabInstrumentation:I"
   "SolarLabDevTelemetry:I"
+  "SolarLabBenchmark:I"
   "TestRunner:I"
   "AndroidJUnitRunner:D"
   "AndroidRuntime:E"
@@ -46,6 +47,9 @@ STAGE_FIRST_RUNTIME_CORE_TEST_CLASSES=(
   "com.sednalabs.solarlab.StageFirstSearchInteractionInstrumentationTest"
   "com.sednalabs.solarlab.StageFirstSemanticIntentInstrumentationTest"
   "com.sednalabs.solarlab.BoundedAdvanceInstrumentationTest"
+  "com.sednalabs.solarlab.benchmark.BenchmarkBridgeInstrumentationTest"
+  "com.sednalabs.solarlab.benchmark.BenchmarkLifecycleInstrumentationTest"
+  "com.sednalabs.solarlab.benchmark.LiveResearchCaptureInstrumentationTest"
 )
 
 STAGE_FIRST_RUNTIME_FULL_TEST_CLASSES=(

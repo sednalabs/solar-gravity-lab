@@ -1,0 +1,603 @@
+{
+  "schema_version": 1,
+  "kind": "research_opportunity_coverage",
+  "scope": "isolated exploration; no automatic production promotion",
+  "physical_device_acceptance": "requires exported device evidence",
+  "status_meanings": {
+    "implemented": "Runnable experiment or measurement infrastructure, not proven device support or benefit",
+    "partial": "Concrete scoped primitive; remaining work explicitly described",
+    "tooling": "Compiler or offline analysis workflow",
+    "baseline": "Existing production behaviour retained",
+    "capability_only": "Discovery without a runnable consumer",
+    "not_implemented": "Explicit open implementation gap"
+  },
+  "opportunities": [
+    {
+      "id": 1,
+      "title": "Retail-device capability fingerprint",
+      "status": "implemented",
+      "reason": "App auxv, legal affinity, cache topology, firmware, GPU/OpenCL/NNAPI drivers and actual APK hashes.",
+      "case_ids": []
+    },
+    {
+      "id": 2,
+      "title": "Physical-device performance laboratory",
+      "status": "implemented",
+      "reason": "Bounded plans, raw samples, independent oracles, crash recovery and SHA-256 indexed ZIP exports.",
+      "case_ids": [
+        "production-scalar",
+        "production-selected"
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Workload-sensitive kernel selection and calibration",
+      "status": "tooling",
+      "reason": "Offline matched-workload analysis identifies candidates. Production dispatch does not automatically adopt unqualified profiles.",
+      "case_ids": [
+        "production-selected"
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Oryon topology and legal core placement",
+      "status": "implemented",
+      "reason": "System, one legal CPU and discovered high-capacity cluster. Affinity scopes the calling thread and subsequently created workers, not existing pools.",
+      "case_ids": [
+        "workers-1",
+        "workers-2",
+        "workers-4",
+        "workers-8"
+      ]
+    },
+    {
+      "id": 5,
+      "title": "ADPF hints for native work",
+      "status": "implemented",
+      "reason": "Optional ADPF hints on the dedicated native-calling Linux thread; unregistered internal worker TIDs are not claimed as hinted.",
+      "case_ids": [
+        "production-selected"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Thermal-aware scheduling",
+      "status": "implemented",
+      "reason": "Sustained protocol, thermal pause/recovery hysteresis and raw battery/headroom. Production thermal policy remains unqualified.",
+      "case_ids": [
+        "production-selected"
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Frame pacing and display-rate selection",
+      "status": "partial",
+      "reason": "Supported display-mode requests, actual display/vsync and live-render evidence. Swappy is not integrated.",
+      "case_ids": []
+    },
+    {
+      "id": 8,
+      "title": "CPU/GPU overlap versus staggered scheduling",
+      "status": "implemented",
+      "reason": "Equivalent fixed CPU/GPU jobs compared serially and concurrently, with cold end-to-end wall time, component oracles and overlap interval. Production scheduling remains unqualified.",
+      "case_ids": [
+        "cpu-gpu-serial",
+        "cpu-gpu-overlap"
+      ]
+    },
+    {
+      "id": 9,
+      "title": "PGO, ThinLTO and code placement",
+      "status": "tooling",
+      "reason": "ThinLTO is active. tools/run_research_pgo.sh trains and compares immutable host PGO candidates. No Android PGO or BOLT result.",
+      "case_ids": [
+        "production-selected"
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Packed-source four-target NEON cache",
+      "status": "implemented",
+      "reason": "Merged PR245 production cache policy measured at step counts 1/2/4/8/16/32/64.",
+      "case_ids": [
+        "production-selected"
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Source-count-specialised FP64 kernels",
+      "status": "implemented",
+      "reason": "Real constant-source loops and explicit three-source FP64 NEON, independently checked.",
+      "case_ids": [
+        "source-specialised",
+        "neon-source-3"
+      ]
+    },
+    {
+      "id": 12,
+      "title": "NEON register-block width sweep",
+      "status": "implemented",
+      "reason": "Actual two-lane FP64 NEON vectors with varying numbers of independent vector chains.",
+      "case_ids": [
+        "neon-block-2",
+        "neon-block-4",
+        "neon-block-6",
+        "neon-block-8",
+        "neon-block-16"
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Independent sqrt/divide/FMA latency chains",
+      "status": "implemented",
+      "reason": "Independent sqrt/divide/FMA chains with actual kernel identity and numerical errors.",
+      "case_ids": [
+        "pipeline-4",
+        "neon-block-4",
+        "neon-block-8"
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Source-major target tiling",
+      "status": "implemented",
+      "reason": "Source-major target tiles; source order preserved and scratch/packing charged.",
+      "case_ids": [
+        "source-tile-16",
+        "source-tile-32",
+        "source-tile-64"
+      ]
+    },
+    {
+      "id": 15,
+      "title": "SoA and AoSoA hot data",
+      "status": "implemented",
+      "reason": "SoA coordinate arrays and packed source records; canonical world unchanged.",
+      "case_ids": [
+        "soa-sources",
+        "target-block-4"
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Symmetric dense force tiling",
+      "status": "implemented",
+      "reason": "Unique triangular source pairs and deterministic equal/opposite updates.",
+      "case_ids": [
+        "dense-tile-16",
+        "dense-tile-32",
+        "dense-tile-64"
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Worker-local scratch and deterministic accumulation",
+      "status": "implemented",
+      "reason": "Independent target slices, fixed source order, deterministic worker comparisons.",
+      "case_ids": [
+        "workers-1",
+        "workers-2",
+        "workers-4",
+        "workers-8",
+        "pairwise"
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Worker-count and tile-size tuning",
+      "status": "implemented",
+      "reason": "Per-sweep worker controls and bounded pools retained across one segment; pool construction/join is charged once, affinity inherited and target/source order deterministic.",
+      "case_ids": [
+        "workers-1",
+        "workers-2",
+        "workers-4",
+        "workers-8",
+        "persistent-workers-2",
+        "persistent-workers-4",
+        "persistent-workers-8"
+      ]
+    },
+    {
+      "id": 19,
+      "title": "PRFM and range prefetch",
+      "status": "partial",
+      "reason": "Executable compiler-prefetch distance controls. Explicit RPRFM range-prefetch consumer not implemented.",
+      "case_ids": [
+        "native.prefetch-none",
+        "native.prefetch-4",
+        "native.prefetch-8"
+      ]
+    },
+    {
+      "id": 20,
+      "title": "SVE and SVE2 FP64",
+      "status": "partial",
+      "reason": "Actual predicated SVE FP64 arithmetic probe, app-auxv gated. Full SVE gravity solver not implemented.",
+      "case_ids": [
+        "native.vector-fp64",
+        "native.sve-fp64"
+      ]
+    },
+    {
+      "id": 21,
+      "title": "SME and SME2 FP64 matrix assist",
+      "status": "not_implemented",
+      "reason": "SME and independent FP64 datatype capabilities recorded. No matrix-assisted gravity kernel.",
+      "case_ids": []
+    },
+    {
+      "id": 22,
+      "title": "MOPS copy and clear",
+      "status": "partial",
+      "reason": "Actual libc copy/clear bandwidth controls. Library instruction selection is not assumed to use MOPS.",
+      "case_ids": [
+        "native.memcpy",
+        "native.memset"
+      ]
+    },
+    {
+      "id": 23,
+      "title": "LSE/LSE2/RCpc atomics",
+      "status": "partial",
+      "reason": "Real contended counters compare memory ordering; no unsafe publication rewrite or assumed LSE/RCpc selection.",
+      "case_ids": [
+        "native.atomic-seqcst",
+        "native.atomic-relaxed"
+      ]
+    },
+    {
+      "id": 24,
+      "title": "WFxT worker waiting",
+      "status": "not_implemented",
+      "reason": "Capability evidence retained; no energy/latency-qualified WFxT waiting consumer.",
+      "case_ids": []
+    },
+    {
+      "id": 25,
+      "title": "CSSC and SVE2 bit permutation",
+      "status": "not_implemented",
+      "reason": "Capability evidence retained; no dedicated CSSC or SVE2 bit-permutation consumer.",
+      "case_ids": []
+    },
+    {
+      "id": 26,
+      "title": "FCMA complex arithmetic",
+      "status": "implemented",
+      "reason": "Actual gated FCMA FP64 complex multiplication with matching ordinary control.",
+      "case_ids": [
+        "native.complex-f64",
+        "native.fcma-f64"
+      ]
+    },
+    {
+      "id": 27,
+      "title": "CRC and cryptographic integrity acceleration",
+      "status": "partial",
+      "reason": "Actual scalar/ARM CRC32. APK and export SHA-256 uses the platform provider; CRC is not cryptographic integrity.",
+      "case_ids": [
+        "native.crc32-scalar",
+        "native.crc32-arm"
+      ]
+    },
+    {
+      "id": 28,
+      "title": "PAuth, BTI and MTE",
+      "status": "capability_only",
+      "reason": "PAuth/BTI/MTE observations only. No instrumented hardening result or speedup claim.",
+      "case_ids": []
+    },
+    {
+      "id": 29,
+      "title": "Page size and allocator behaviour",
+      "status": "partial",
+      "reason": "Actual kernel page size recorded. Android ELF/ZIP 16KiB compatibility is verified separately; no forced page-size mode or allocator replacement.",
+      "case_ids": [
+        "native.memcpy",
+        "native.memset"
+      ]
+    },
+    {
+      "id": 30,
+      "title": "Vulkan capability and activation ledger",
+      "status": "implemented",
+      "reason": "Supported/implemented/enabled/executed distinctions, driver identity, limits, memory and fallback reasons.",
+      "case_ids": []
+    },
+    {
+      "id": 31,
+      "title": "Subgroup-cooperative compaction",
+      "status": "implemented",
+      "reason": "Equivalent visibility and ID oracle, odd dispatch tails and actual subgroup gating.",
+      "case_ids": [
+        "gpu.compact-atomic",
+        "gpu.compact-subgroup"
+      ]
+    },
+    {
+      "id": 32,
+      "title": "Buffer-device-address compaction",
+      "status": "implemented",
+      "reason": "Real typed physical-address compaction, allocation lifetime and readback validation.",
+      "case_ids": [
+        "gpu.compact-bda"
+      ]
+    },
+    {
+      "id": 33,
+      "title": "Descriptor indexing and descriptor buffers",
+      "status": "partial",
+      "reason": "Actual fixed-binding versus divergent nonuniform descriptor-array compute with exact output oracle. Descriptor-buffer extension and a complete renderer conversion are not implemented.",
+      "case_ids": [
+        "gpu.descriptor-control",
+        "gpu.descriptor-indexed"
+      ]
+    },
+    {
+      "id": 34,
+      "title": "GPU-generated indirect work",
+      "status": "partial",
+      "reason": "Real GPU-generated indirect compute dispatch. A complete indirect-draw renderer is not implemented.",
+      "case_ids": [
+        "gpu.dispatch-indirect"
+      ]
+    },
+    {
+      "id": 35,
+      "title": "Persistent mapping and Vulkan synchronisation",
+      "status": "implemented",
+      "reason": "Actual persistent/remapped uploads and sync2 controls, plus merged production lifetime fixes.",
+      "case_ids": [
+        "gpu.transfer-persistent",
+        "gpu.transfer-remap",
+        "gpu.sync2-submit"
+      ]
+    },
+    {
+      "id": 36,
+      "title": "Timeline semaphores and presentation retirement",
+      "status": "partial",
+      "reason": "Actual isolated compute timeline completion. WSI remains binary; swapchain-maintenance retirement not implemented.",
+      "case_ids": [
+        "gpu.timeline-submit"
+      ]
+    },
+    {
+      "id": 37,
+      "title": "Pipeline cache and binary reuse",
+      "status": "implemented",
+      "reason": "Real serialised pipeline cache reuse. Driver internal cache flushing and pipeline-binary extension not claimed.",
+      "case_ids": [
+        "gpu.pipeline-no-cache",
+        "gpu.pipeline-cache"
+      ]
+    },
+    {
+      "id": 38,
+      "title": "GPU timestamps and calibration",
+      "status": "implemented",
+      "reason": "Available GPU timestamps, host scopes and live-render calibrated timing fields preserved separately.",
+      "case_ids": [
+        "gpu.passive-fp32"
+      ]
+    },
+    {
+      "id": 39,
+      "title": "Qualcomm tile memory heap",
+      "status": "implemented",
+      "reason": "Bounded transient tile-heap counter, same-submission lifetime and CPU readback oracle.",
+      "case_ids": [
+        "gpu.compact-tile-memory"
+      ]
+    },
+    {
+      "id": 40,
+      "title": "Qualcomm tile shading",
+      "status": "implemented",
+      "reason": "Embedded pinned shaders execute ordinary/per-tile offscreen inversion. Whole-frame adoption remains unqualified.",
+      "case_ids": [
+        "gpu.qcom-control",
+        "gpu.qcom-tile-shading"
+      ]
+    },
+    {
+      "id": 41,
+      "title": "Qualcomm image processing",
+      "status": "implemented",
+      "reason": "Actual textureBoxFilterQCOM versus sixteen fetches and independent image oracle. Weighted filters/block matching absent.",
+      "case_ids": [
+        "gpu.qcom-box-control",
+        "gpu.qcom-image-processing"
+      ]
+    },
+    {
+      "id": 42,
+      "title": "Camera-relative coordinate precision",
+      "status": "baseline",
+      "reason": "Existing FP64 camera-relative subtraction retained and observable. New high/low split coordinates not implemented.",
+      "case_ids": []
+    },
+    {
+      "id": 43,
+      "title": "Particle LOD and dynamic resolution",
+      "status": "baseline",
+      "reason": "Existing near/medium/far policies and live capture retained. New calibrated adaptive LOD/dynamic-resolution controller not implemented.",
+      "case_ids": [
+        "gpu.compact-atomic",
+        "gpu.compact-subgroup"
+      ]
+    },
+    {
+      "id": 44,
+      "title": "GPU passive-population calculation",
+      "status": "partial",
+      "reason": "Actual isolated GPU passive acceleration with CPU oracle. Live population integration/promotion handoff not implemented.",
+      "case_ids": [
+        "gpu.passive-fp32"
+      ]
+    },
+    {
+      "id": 45,
+      "title": "GPU FP64 qualification",
+      "status": "implemented",
+      "reason": "Actual FP64 gravity shader gated by shaderFloat64, with full readback validation.",
+      "case_ids": [
+        "gpu.passive-fp64"
+      ]
+    },
+    {
+      "id": 46,
+      "title": "OpenCL comparison",
+      "status": "implemented",
+      "reason": "Actual public OpenCL loader/device qualification and FP32/FP64 GPU kernels; inaccessible runtimes explicitly skip.",
+      "case_ids": [
+        "opencl.passive-fp32",
+        "opencl.passive-fp64"
+      ]
+    },
+    {
+      "id": 47,
+      "title": "AHardwareBuffer sharing",
+      "status": "partial",
+      "reason": "Actual Android BLOB allocation, Vulkan import, CPU unlock fence and foreign ownership transfer with gravity readback oracle. Cross-API OpenCL/NPU zero-copy integration is not implemented.",
+      "case_ids": [
+        "gpu.ahb-import",
+        "gpu.passive-fp32"
+      ]
+    },
+    {
+      "id": 48,
+      "title": "Reduced-precision visual work",
+      "status": "implemented",
+      "reason": "Actual FP16/FP32 visual transforms with measured error; physical state remains FP64.",
+      "case_ids": [
+        "gpu.visual-fp32",
+        "gpu.visual-fp16"
+      ]
+    },
+    {
+      "id": 49,
+      "title": "Compensated FP64 accumulation",
+      "status": "implemented",
+      "reason": "Kahan and Neumaier force accumulation with analytic cancellation and scalar controls.",
+      "case_ids": [
+        "kahan",
+        "neumaier"
+      ]
+    },
+    {
+      "id": 50,
+      "title": "Reproducible pairwise reductions",
+      "status": "implemented",
+      "reason": "Fixed binary reduction and deterministic worker target slices; changed rounding measured.",
+      "case_ids": [
+        "pairwise",
+        "workers-4"
+      ]
+    },
+    {
+      "id": 51,
+      "title": "Error-driven adaptive timesteps",
+      "status": "implemented",
+      "reason": "Bounded step-doubling with convergence-checked independent reference; adaptive schedule is not asserted globally symplectic.",
+      "case_ids": [
+        "adaptive-doubling"
+      ]
+    },
+    {
+      "id": 52,
+      "title": "Close-encounter refinement",
+      "status": "partial",
+      "reason": "Actual global dyadic refinement from crossing/orbital times. Local regularisation and collision resolution not implemented.",
+      "case_ids": [
+        "close-encounter-refine"
+      ]
+    },
+    {
+      "id": 53,
+      "title": "Higher-order symplectic integration",
+      "status": "implemented",
+      "reason": "Fourth-order Yoshida on conservative collision-free fixtures; convergence and reversal tests.",
+      "case_ids": [
+        "yoshida4"
+      ]
+    },
+    {
+      "id": 54,
+      "title": "Wisdom-Holman style planetary splitting",
+      "status": "partial",
+      "reason": "Universal-variable Kepler primitive covers elliptic/parabolic/hyperbolic cases. General planetary Wisdom-Holman mapping not implemented.",
+      "case_ids": [
+        "kepler-drift"
+      ]
+    },
+    {
+      "id": 55,
+      "title": "High-order Gauss-Radau reference",
+      "status": "partial",
+      "reason": "Actual eight-stage order-15 Radau IIA collocation with bounded solve. This is not an IAS15 port.",
+      "case_ids": [
+        "radau15-reference"
+      ]
+    },
+    {
+      "id": 56,
+      "title": "1PN, J2 and radiation force models",
+      "status": "implemented",
+      "reason": "Synthetic fixed-primary force models, velocity-aware RK4 and same-law fine reference; explicit applicability limits.",
+      "case_ids": [
+        "force-1pn",
+        "force-j2",
+        "force-radiation"
+      ]
+    },
+    {
+      "id": 57,
+      "title": "Barnes-Hut and FMM",
+      "status": "partial",
+      "reason": "Actual bounded source octree and target-containing aggregate rejection, with error measurement. FMM not implemented.",
+      "case_ids": [
+        "barnes-hut"
+      ]
+    },
+    {
+      "id": 58,
+      "title": "Reciprocal-square-root refinement",
+      "status": "partial",
+      "reason": "FP32 seed plus FP64 Newton corrections; no unverified hardware-estimate instruction claim.",
+      "case_ids": [
+        "rsqrt-refine-1",
+        "rsqrt-refine-2"
+      ]
+    },
+    {
+      "id": 59,
+      "title": "Passive acceleration/jerk extrapolation",
+      "status": "implemented",
+      "reason": "Massive sources remain exact; passive acceleration/jerk predictions checked against FP64 segment checkpoints.",
+      "case_ids": [
+        "passive-extrapolate-2",
+        "passive-extrapolate-4"
+      ]
+    },
+    {
+      "id": 60,
+      "title": "Mixed-precision forecasts and checkpoints",
+      "status": "partial",
+      "reason": "CPU FP32 forecast and separate actual GPU force probe, both FP64-checked. Live GPU forecast/checkpoint handoff absent.",
+      "case_ids": [
+        "fp32-forecast",
+        "gpu.passive-fp32"
+      ]
+    },
+    {
+      "id": 61,
+      "title": "Hexagon/NPU surrogate experiments",
+      "status": "partial",
+      "reason": "Explicit public NNAPI accelerator dense layer versus FP64, no CPU fallback. No trained orbit model or private QNN access.",
+      "case_ids": [
+        "nnapi-dense-cpu",
+        "nnapi-dense-accelerator"
+      ]
+    }
+  ]
+}

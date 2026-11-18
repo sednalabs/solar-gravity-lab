@@ -1,4 +1,7 @@
 //! Isolated numerical experiments; none is selected by the production runtime.
+// Conventional r/v/mu/c/s variables follow the equations; all integer-to-FP64
+// casts are bounded step/fixture counts, far below the exact-integer limit.
+#![allow(clippy::many_single_char_names, clippy::cast_precision_loss)]
 use crate::kernels::{acceleration_and_jerk, ForceEvaluator, ForceMode};
 use crate::model::{add, dot, error, norm, scale, sub, Body, MIN_R2, V3};
 
@@ -10,8 +13,46 @@ pub struct Stats {
     pub nonlinear_iterations: u64,
     pub passive_force_refreshes: u64,
     pub passive_extrapolations: u64,
+    pub segment_workers_started: Option<usize>,
+    pub segment_workers_joined: Option<usize>,
+    pub source_snapshot_copies: Option<u64>,
 }
 
+pub fn persistent_leapfrog(
+    bodies: &mut [Body],
+    steps: usize,
+    dt: f64,
+    workers: usize,
+) -> Result<Stats, &'static str> {
+    let mut pool = crate::workers::SegmentPool::new(bodies, workers)?;
+    let started = pool.worker_count();
+    let mut a = vec![[0.0; 3]; bodies.len()];
+    pool.evaluate(bodies, &mut a)?;
+    for _ in 0..steps {
+        for (body, acceleration) in bodies.iter_mut().zip(&a) {
+            body.v = add(body.v, scale(*acceleration, 0.5 * dt));
+            body.p = add(body.p, scale(body.v, dt));
+        }
+        pool.evaluate(bodies, &mut a)?;
+        for (body, acceleration) in bodies.iter_mut().zip(&a) {
+            body.v = add(body.v, scale(*acceleration, 0.5 * dt));
+        }
+    }
+    let evaluations = pool.evaluations;
+    // Join belongs inside the measured integration, not a detached background task.
+    let joined = pool.finish()?;
+    Ok(Stats {
+        force_evaluations: evaluations,
+        accepted_steps: steps as u64,
+        segment_workers_started: Some(started),
+        segment_workers_joined: Some(joined),
+        source_snapshot_copies: Some(evaluations),
+        ..Stats::default()
+    })
+}
+
+// Deliberate FP32 state rounding is confined to the forecast candidate.
+#[allow(clippy::cast_possible_truncation)]
 pub fn leapfrog(bodies: &mut [Body], mode: ForceMode, steps: usize, dt: f64) -> Stats {
     let mut evaluator = ForceEvaluator::new(mode, bodies);
     let mut a = vec![[0.0; 3]; bodies.len()];
@@ -155,8 +196,8 @@ pub fn close_refinement(bodies: &mut [Body], steps: usize, dt: f64) -> Result<St
                     continue;
                 }
                 let r = norm(sub(body.p, other.p)).max(MIN_R2.sqrt());
-                let orbital_dt = 0.02 * (r * r * r / (body.mu + other.mu)).sqrt();
-                let crossing_dt = 0.02 * r / norm(sub(body.v, other.v)).max(1.0e-30);
+                let orbital_dt = 0.005 * (r * r * r / (body.mu + other.mu)).sqrt();
+                let crossing_dt = 0.005 * r / norm(sub(body.v, other.v)).max(1.0e-30);
                 allowed_dt = allowed_dt.min(orbital_dt).min(crossing_dt);
             }
         }

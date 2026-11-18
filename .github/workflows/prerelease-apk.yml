@@ -371,8 +371,39 @@ jobs:
           cmake --build .hardware/glslang-build --target glslang-standalone --parallel 4
           bash .github/scripts/prepare_benchmark_shaders.sh \
             "$GITHUB_WORKSPACE/.hardware/glslang-build/StandAlone/glslang" \
-            "$GITHUB_WORKSPACE/dist/benchmark-shaders"
+            "$GITHUB_WORKSPACE/dist/benchmark-shaders" \
+            "$GITHUB_WORKSPACE/.hardware/glslang"
           echo "SOLARLAB_QCOM_SHADER_DIR=$GITHUB_WORKSPACE/dist/benchmark-shaders" >> "$GITHUB_ENV"
+
+      - name: Checkout qualified Vulkan headers for native research proof
+        if: needs.route.outputs.build_variant == 'benchmark'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: 88487f687f3100ebe1d3559a8a34d971ee85b977
+          path: .hardware/vulkan-headers
+          persist-credentials: false
+
+      - name: Verify native research kernels against software Vulkan
+        if: needs.route.outputs.build_variant == 'benchmark'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers ninja-build
+          mkdir -p dist/native-benchmark-proof
+          cmake -S render/android-vulkan/benchmarks -B dist/native-benchmark-proof/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGLSLC="${ANDROID_NDK_HOME}/shader-tools/linux-x86_64/glslc" \
+            -DVulkan_INCLUDE_DIR="$GITHUB_WORKSPACE/.hardware/vulkan-headers/include" \
+            -DSOLARLAB_QCOM_SHADER_DIR="$SOLARLAB_QCOM_SHADER_DIR" \
+            2>&1 | tee dist/native-benchmark-proof/configure.log
+          cmake --build dist/native-benchmark-proof/build --parallel 4 \
+            2>&1 | tee dist/native-benchmark-proof/build.log
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          ctest --test-dir dist/native-benchmark-proof/build --output-on-failure -V \
+            2>&1 | tee dist/native-benchmark-proof/oracles.log
 
       - name: Assemble prerelease APK
         id: assemble_prerelease
@@ -438,6 +469,18 @@ jobs:
           if [[ "$build_variant" == "benchmark" ]]; then benchmark_args=(--benchmark); fi
           python3 .github/scripts/verify_prerelease_jni_r8_contract.py \
             --apk "${apk_path}" "${benchmark_args[@]}"
+
+      - name: Verify research APK native and ZIP page alignment
+        if: needs.route.outputs.build_variant == 'benchmark'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk_path="$(find clients/android/app/build/outputs/apk/benchmark -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$apk_path"
+          python3 .github/scripts/verify_apk_page_alignment.py "$apk_path" \
+            --output dist/native-page-alignment.json
+          "${ANDROID_SDK_ROOT}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$apk_path" \
+            > dist/native-zip-alignment.txt
 
       - name: Derive artifact metadata
         id: meta
@@ -650,6 +693,9 @@ jobs:
             dist/startup-smoke/**
             dist/sccache/**
             dist/benchmark-shaders/**
+            dist/native-benchmark-proof/*.log
+            dist/native-benchmark-proof/build/Testing/**
+            dist/native-zip-alignment.txt
             clients/android/app/build/outputs/apk/${{ steps.meta.outputs.build_variant }}/output-metadata.json
 
   isa-prerelease-proof:

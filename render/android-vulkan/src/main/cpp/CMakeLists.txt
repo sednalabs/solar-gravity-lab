@@ -12,11 +12,17 @@ add_library(
     QcomTileMemory.cpp
     BenchmarkNative.cpp
     BenchmarkGpu.cpp
+    BenchmarkOpenCl.cpp
+    BenchmarkOverlap.cpp
     BenchmarkNnapi.cpp
 )
 
 target_compile_features(solarlab_vulkan PRIVATE cxx_std_20)
 target_compile_options(solarlab_vulkan PRIVATE -Wall -Wextra)
+if(ANDROID)
+    target_link_options(solarlab_vulkan PRIVATE
+        "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
+endif()
 
 # Embed the isolated research shaders in the native library. JNI deliberately
 # takes no Activity or assets pointer, so a lost surface cannot invalidate a run.
@@ -48,6 +54,8 @@ solarlab_benchmark_shader(bench_compact_atomic compact.comp)
 solarlab_benchmark_shader(bench_compact_subgroup compact.comp -DUSE_SUBGROUP=1)
 solarlab_benchmark_shader(bench_compact_bda compact_bda.comp)
 solarlab_benchmark_shader(bench_dispatch_args dispatch_args.comp)
+solarlab_benchmark_shader(bench_descriptor_control descriptor.comp)
+solarlab_benchmark_shader(bench_descriptor_indexed descriptor.comp -DUSE_NONUNIFORM=1)
 target_include_directories(solarlab_vulkan PRIVATE "${BENCH_GENERATED_DIR}")
 
 # The NDK shader compiler predates the QCOM tile-shading language extension.

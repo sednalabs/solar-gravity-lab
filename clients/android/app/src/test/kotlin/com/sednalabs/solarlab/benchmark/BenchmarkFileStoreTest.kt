@@ -3,6 +3,9 @@ package com.sednalabs.solarlab.benchmark
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 import org.junit.Assert.*
 import org.junit.Rule
@@ -43,6 +46,41 @@ class BenchmarkFileStoreTest {
             assertTrue(index.contains(hash))
             assertTrue(index.contains("\"bytes\":${entries.getValue(name).size}"))
         }
+    }
+
+    @Test fun concurrentRecordFactoriesStampInCommitOrderAndWriterAccountingIncludesExactBytes() {
+        val store = BenchmarkFileStore(temporary.newFolder("benchmarks"))
+        val session = store.createSession(4)
+        val firstInsideFactory = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondAttempting = CountDownLatch(1)
+        val secondInsideFactory = CountDownLatch(1)
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            val first = workers.submit {
+                store.append(session) {
+                    firstInsideFactory.countDown()
+                    check(releaseFirst.await(5, TimeUnit.SECONDS))
+                    "first"
+                }
+            }
+            assertTrue(firstInsideFactory.await(5, TimeUnit.SECONDS))
+            val second = workers.submit {
+                secondAttempting.countDown()
+                store.append(session) { secondInsideFactory.countDown(); "second" }
+            }
+            assertTrue(secondAttempting.await(5, TimeUnit.SECONDS))
+            assertFalse(secondInsideFactory.await(100, TimeUnit.MILLISECONDS))
+            releaseFirst.countDown()
+            first.get(5, TimeUnit.SECONDS)
+            second.get(5, TimeUnit.SECONDS)
+            assertEquals(listOf("first", "second"), File(session, "events.ndjson").readLines())
+            val accounting = store.journalIoStatistics(session)
+            assertEquals(2L, accounting.records)
+            assertEquals(File(session, "events.ndjson").length(), accounting.bytes)
+            assertTrue(accounting.elapsedNs >= accounting.maximumAppendNs)
+            assertTrue(accounting.maximumAppendNs > 0)
+        } finally { releaseFirst.countDown(); workers.shutdownNow() }
     }
 
     @Test(expected = IllegalArgumentException::class)
