@@ -45,8 +45,15 @@ identity, median/p90, active worker counts and scalar-oracle errors.
 The acceptance question is whether the changed sparse paths improve without
 moving unchanged scalar controls or regressing small/dense paths. Do not infer
 a speedup from different hosted machines, and do not promote a hosted Neoverse
-result into an Oryon, thermal or application-frame result. The packed layout is
-an implemented optimisation candidate until that paired comparison is recorded.
+result into an Oryon, thermal or application-frame result.
+
+The [dated paired result](../engine/physics/benchmarks/README.md#paired-native-arm-result-run-44273135829)
+compares base `54b8d203` with candidate `2ca05d3a`: canonical/sparse medians
+improve 2.32%/1.84% under full affinity and 2.39%/1.89% on one CPU, with unchanged
+oracle errors and stable scalar controls. The dense-256 four-worker median is
+1.76% slower with substantial between-run variance; that limitation is retained.
+The final candidate also requires the one-step `short-segment` comparison, which
+uses the same binaries and reveals preparation costs hidden by 64-step amortisation.
 
 ## Use actual topology and the Android scheduler
 
@@ -66,8 +73,10 @@ measurement. The application itself does not adopt these benchmark masks.
 The production shell supplies Android Performance Hint sessions around native
 `playbackTick` and `continueAdvance`. These report completed native work after
 the serial boundary lock, excluding coroutine queue delay, hint setup and GPU
-work. The target is the existing 100 ms solver update cadence, not simulated
-time or a display-frame interval. This gives Android a truthful CPU workload
+work. Playback uses the existing 100 ms solver update cadence, not simulated
+time or a display-frame interval. Manual advance runs back-to-back; its separate
+100 ms target is a provisional maximum latency hint per bounded native call,
+not a cadence, a delay or a measured throughput optimum. This gives Android a CPU workload
 signal with which to select core capacity and frequency under its thermal policy.
 
 The coroutine boundary is serial but its Linux TID can migrate. Sessions are

@@ -7,7 +7,8 @@
 // e595aee44360593ba06c01487840666fcde1f042. No implementation is vendored.
 // Copyright 2015-2026 The Khronos Group Inc.
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-// Source: https://github.com/KhronosGroup/Vulkan-Headers/blob/main/include/vulkan/vulkan_core.h
+// Distributed under the MIT option; see QcomVulkanCompat.LICENSE.
+// Source: https://github.com/KhronosGroup/Vulkan-Headers/blob/v1.4.368/include/vulkan/vulkan_core.h
 // Runtime extension/feature checks and vkGetDeviceProcAddr remain mandatory.
 
 #ifndef VK_QCOM_tile_memory_heap
@@ -62,6 +63,8 @@ typedef void (VKAPI_PTR *PFN_vkCmdBindTileMemoryQCOM)(VkCommandBuffer commandBuf
 #endif
 
 #ifndef VK_QCOM_tile_shading
+inline constexpr VkAccessFlagBits2 VK_ACCESS_2_SHADER_TILE_ATTACHMENT_READ_BIT_QCOM = 0x8000000000000ULL;
+inline constexpr VkAccessFlagBits2 VK_ACCESS_2_SHADER_TILE_ATTACHMENT_WRITE_BIT_QCOM = 0x10000000000000ULL;
 inline constexpr VkStructureType VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TILE_SHADING_FEATURES_QCOM = static_cast<VkStructureType>(1000309000);
 inline constexpr VkStructureType VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TILE_SHADING_PROPERTIES_QCOM = static_cast<VkStructureType>(1000309001);
 inline constexpr VkStructureType VK_STRUCTURE_TYPE_RENDER_PASS_TILE_SHADING_CREATE_INFO_QCOM = static_cast<VkStructureType>(1000309002);

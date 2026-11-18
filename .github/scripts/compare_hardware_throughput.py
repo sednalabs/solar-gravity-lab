@@ -51,6 +51,7 @@ def read_measurements(path: Path) -> tuple[dict, dict]:
 def compare(directory: Path) -> dict:
     comparisons = []
     fixture_identity = None
+    measurement_policy = None
     for affinity in ("full", "one-cpu"):
         runs = {}
         reference_environment = None
@@ -60,6 +61,11 @@ def compare(directory: Path) -> dict:
             for repetition in (0, 1):
                 env, rows = read_measurements(directory / f"{affinity}-{variant}-{repetition}.ndjson")
                 signature = {key: env[key] for key in ("arch", "available_workers", "steps", "samples")}
+                policy = {key: env[key] for key in ("arch", "steps", "samples")}
+                if measurement_policy is None:
+                    measurement_policy = policy
+                if policy != measurement_policy or env["steps"] not in (1, 64) or env["samples"] != 11:
+                    raise ValueError(f"{affinity}: inconsistent or unexpected measurement policy")
                 host_backend = {"aarch64": "SimdArm64", "x86_64": "SimdX64"}.get(env["arch"])
                 expected_keys = {(workload, backend) for workload in EXPECTED_WORKLOADS
                                  for backend in ("ReferenceScalar", host_backend)}
@@ -102,6 +108,7 @@ def compare(directory: Path) -> dict:
         "schema": "solarlab.paired-throughput.v1",
         "method": "Same host/compiler, baseline-candidate-candidate-baseline; median of two run medians; eleven samples and warmup per run. Ratios below one mean less elapsed time.",
         "scope": "Hosted CPU throughput and scalar-oracle agreement only. No Galaxy, GPU, frame, energy or thermal acceptance.",
+        "measurement_policy": measurement_policy,
         "baseline_sha": (directory / "baseline-sha.txt").read_text().strip(),
         "candidate_sha": (directory / "candidate-sha.txt").read_text().strip(),
         "comparisons": comparisons,
@@ -114,7 +121,7 @@ def main() -> None:
     args = parser.parse_args()
     result = compare(args.directory)
     (args.directory / "comparison.json").write_text(json.dumps(result, indent=2) + "\n")
-    lines = ["# Paired CPU throughput", "", result["method"], "", result["scope"], "",
+    lines = [f"# Paired CPU throughput: {result['measurement_policy']['steps']} step(s)", "", result["method"], "", result["scope"], "",
              f"Baseline: `{result['baseline_sha']}`. Candidate: `{result['candidate_sha']}`.", "",
              "| Affinity | Workload | Backend | Baseline µs | Candidate µs | Change | Scalar control ratio |",
              "|---|---|---|---:|---:|---:|---:|"]

@@ -180,9 +180,10 @@ SolarLabVulkanRenderer::~SolarLabVulkanRenderer() {
 }
 
 bool SolarLabVulkanRenderer::IsRuntimeAvailable() {
-    uint32_t instanceVersion = 0;
-    const auto result = vkEnumerateInstanceVersion(&instanceVersion);
-    return result == VK_SUCCESS;
+    auto enumerateVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceVersion"));
+    uint32_t instanceVersion = VK_API_VERSION_1_0;
+    return enumerateVersion != nullptr && enumerateVersion(&instanceVersion) == VK_SUCCESS &&
+        instanceVersion >= VK_API_VERSION_1_1;
 }
 
 void SolarLabVulkanRenderer::SetAssetManager(AAssetManager* assetManager) {
@@ -581,6 +582,9 @@ std::string SolarLabVulkanRenderer::HardwareSummary() const {
         << VK_API_VERSION_MAJOR(apiVersion) << '.'
         << VK_API_VERSION_MINOR(apiVersion) << '.'
         << VK_API_VERSION_PATCH(apiVersion)
+        << " vendorId=" << physicalDeviceProperties_.vendorID
+        << " deviceId=" << physicalDeviceProperties_.deviceID
+        << " driverVersion=" << physicalDeviceProperties_.driverVersion
         << " largePoints=" << (supportedFeatures_.largePoints ? "yes" : "no")
         << " queueCompute=" << (graphicsQueueSupportsCompute_ ? "yes" : "no")
         << " compaction=" << (computeCompactionEnabled_ ? "on" : "off")
@@ -601,6 +605,9 @@ std::string SolarLabVulkanRenderer::HardwareSummary() const {
         << " executable=[supported:" << capabilities_.pipelineExecutableInfo
         << ",enabled:" << (optionalFeatures_.executable.pipelineExecutableInfo == VK_TRUE)
         << ",statistics:" << pipelineStatisticCount_ << ']'
+        << " timestamp=[validBits:" << capabilities_.timestampValidBits
+        << ",periodNs:" << capabilities_.timestampPeriod
+        << ",queries:" << (timestampQueryPool_ != VK_NULL_HANDLE) << ']'
         << " calibrated=[supported:" << capabilities_.calibratedTimestamps
         << ",monotonic:" << capabilities_.monotonicCalibration
         << ",enabled:" << optionalFeatures_.calibratedTimestamps
@@ -702,6 +709,9 @@ bool SolarLabVulkanRenderer::PickPhysicalDevice() {
     uint32_t fallbackQueueIndex = UINT32_MAX;
 
     for (const auto& candidate : devices) {
+        VkPhysicalDeviceProperties candidateProperties{};
+        vkGetPhysicalDeviceProperties(candidate, &candidateProperties);
+        if (candidateProperties.apiVersion < VK_API_VERSION_1_1) continue;
         uint32_t queueFamilyCount = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &queueFamilyCount, nullptr);
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
@@ -3749,7 +3759,7 @@ bool SolarLabVulkanRenderer::SubmitStagingCopy(
         slot.commandBuffer,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
-            (graphicsQueueSupportsCompute_ ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0U),
+            (graphicsQueueSupportsCompute_ ? VkPipelineStageFlags{VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT} : VkPipelineStageFlags{0}),
         0,
         0,
         nullptr,
@@ -4213,7 +4223,7 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
     const VkGraphicsPipelineCreateInfo pipelineCreateInfo{
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = optionalFeatures_.executable.pipelineExecutableInfo ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : VkPipelineCreateFlags{0},
+        .flags = optionalFeatures_.executable.pipelineExecutableInfo ? VkPipelineCreateFlags{VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR} : VkPipelineCreateFlags{0},
         .stageCount = 2,
         .pStages = shaderStages,
         .pVertexInputState = &vertexInputState,
@@ -4268,7 +4278,7 @@ bool SolarLabVulkanRenderer::CreateComputePipeline(
     const VkComputePipelineCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = optionalFeatures_.executable.pipelineExecutableInfo ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : VkPipelineCreateFlags{0},
+        .flags = optionalFeatures_.executable.pipelineExecutableInfo ? VkPipelineCreateFlags{VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR} : VkPipelineCreateFlags{0},
         .stage = shaderStage,
         .layout = computePipelineLayout_,
         .basePipelineHandle = VK_NULL_HANDLE,

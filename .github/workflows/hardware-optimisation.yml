@@ -8,6 +8,7 @@ on:
       - ".github/workflows/hardware-optimisation.yml"
       - ".github/scripts/*hardware_throughput*"
       - ".github/scripts/run_vulkan_hardware_proof.sh"
+      - ".github/scripts/run_qcom_offscreen_proof.sh"
   workflow_dispatch:
     inputs:
       baseline_sha:
@@ -21,6 +22,61 @@ concurrency:
   group: hardware-optimisation-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  qcom-offscreen-qualification:
+    name: QCOM shaders and offscreen controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/glslang
+          ref: e1b562a8bed273a02f30b59b66a5d499793cede5 # 16.6.0
+          path: .hardware/glslang
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: 88487f687f3100ebe1d3559a8a34d971ee85b977 # v1.4.368
+          path: .hardware/vulkan-headers
+          persist-credentials: false
+      - name: Install software Vulkan and validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers ninja-build
+      - name: Build the pinned compiler with QCOM language support
+        run: |
+          cmake -S .hardware/glslang -B .hardware/glslang-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_OPT=OFF -DENABLE_HLSL=OFF \
+            -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=ON
+          cmake --build .hardware/glslang-build --target glslang-standalone --parallel 4
+      - name: Compile probes and execute validated controls
+        run: bash .github/scripts/run_qcom_offscreen_proof.sh "$GITHUB_WORKSPACE/.hardware/glslang-build/StandAlone/glslang" "$GITHUB_WORKSPACE/.hardware/vulkan-headers/include"
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          ndk-version: "27.3.13750724"
+      - name: Cross-compile the standalone device probe
+        run: |
+          bash .github/scripts/ensure_android_sdk_packages.sh "ndk;27.3.13750724"
+          cmake -S render/android-vulkan/probes -B dist/qcom-offscreen-proof/android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.3.13750724/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-35 -DANDROID_STL=c++_static \
+            -DGLSLANG_VALIDATOR="$GITHUB_WORKSPACE/.hardware/glslang-build/StandAlone/glslang"
+          cmake --build dist/qcom-offscreen-proof/android --parallel 4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: qcom-offscreen-proof-${{ github.run_id }}
+          path: |
+            dist/qcom-offscreen-proof/*.json
+            dist/qcom-offscreen-proof/*.txt
+            dist/qcom-offscreen-proof/*.md
+            dist/qcom-offscreen-proof/host/shaders
+            dist/qcom-offscreen-proof/android/shaders
+            dist/qcom-offscreen-proof/android/solarlab-qcom-offscreen-probe
   optional-vulkan-build:
     name: Optional Vulkan paths and contracts
     runs-on: ubuntu-24.04
@@ -67,6 +123,9 @@ jobs:
         run: |
           if [[ -f dist/hardware-throughput/comparison.md ]]; then
             cat dist/hardware-throughput/comparison.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -f dist/hardware-throughput/short-segment/comparison.md ]]; then
+            cat dist/hardware-throughput/short-segment/comparison.md >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()

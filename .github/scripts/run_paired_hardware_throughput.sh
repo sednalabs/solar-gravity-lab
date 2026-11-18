@@ -41,19 +41,32 @@ for variant in baseline candidate; do
 done
 workloads=canonical-mixed-365,sparse-1024,lab-3,lab-probe-4,dense-128,dense-192,dense-256
 single_cpu="$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"
-for affinity in full one-cpu; do
-  sequence=(baseline candidate candidate baseline)
-  baseline_round=0
-  candidate_round=0
-  for variant in "${sequence[@]}"; do
-    if [[ "$variant" == baseline ]]; then
-      round="$baseline_round"; baseline_round=$((baseline_round + 1))
-    else
-      round="$candidate_round"; candidate_round=$((candidate_round + 1))
-    fi
-    command=("$workspace/$variant-throughput" --samples 11 --steps 64 --workloads "$workloads")
-    if [[ "$affinity" == one-cpu ]]; then command=(taskset -c "$single_cpu" "${command[@]}"); fi
-    "${command[@]}" | tee "$output/$affinity-$variant-$round.ndjson"
+# The same two binaries also exercise a single-step segment. This exposes
+# preparation/allocation overhead that a 64-step amortised result can conceal.
+for steps in 64 1; do
+  report_dir="$output"
+  if [[ "$steps" == 1 ]]; then
+    report_dir="$output/short-segment"
+    mkdir -p "$report_dir"
+    for metadata in candidate-sha.txt baseline-sha.txt compiler.txt cpu.json affinity.json \
+      baseline-Cargo.lock candidate-Cargo.lock baseline-binary.sha256 candidate-binary.sha256; do
+      cp "$output/$metadata" "$report_dir/$metadata"
+    done
+  fi
+  for affinity in full one-cpu; do
+    sequence=(baseline candidate candidate baseline)
+    baseline_round=0
+    candidate_round=0
+    for variant in "${sequence[@]}"; do
+      if [[ "$variant" == baseline ]]; then
+        round="$baseline_round"; baseline_round=$((baseline_round + 1))
+      else
+        round="$candidate_round"; candidate_round=$((candidate_round + 1))
+      fi
+      command=("$workspace/$variant-throughput" --samples 11 --steps "$steps" --workloads "$workloads")
+      if [[ "$affinity" == one-cpu ]]; then command=(taskset -c "$single_cpu" "${command[@]}"); fi
+      "${command[@]}" | tee "$report_dir/$affinity-$variant-$round.ndjson"
+    done
   done
+  python3 .github/scripts/compare_hardware_throughput.py "$report_dir"
 done
-python3 .github/scripts/compare_hardware_throughput.py "$output"

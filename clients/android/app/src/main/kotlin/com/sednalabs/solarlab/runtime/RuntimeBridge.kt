@@ -557,7 +557,7 @@ internal class JniRuntimeBridge(
 
     override suspend fun continueAdvance(generation: Long, expectedCompleted: Long): NativeAdvanceResult =
         withActiveSession { handle ->
-            performanceHints.measure(PHYSICS_TARGET_NANOS, { it: NativeAdvanceResult -> it.code == 0 }) {
+            performanceHints.measure(MANUAL_CHUNK_TARGET_NANOS, { it: NativeAdvanceResult -> it.code == 0 }) {
                 transport.continueAdvance(handle, generation, expectedCompleted)
             }.also {
                 if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) {
@@ -569,11 +569,15 @@ internal class JniRuntimeBridge(
         }
 
     override suspend fun cancelAdvance(generation: Long): NativeAdvanceResult =
-        withActiveSession { handle -> transport.cancelAdvance(handle, generation)
-            .also {
+        withActiveSession { handle ->
+            try {
+                transport.cancelAdvance(handle, generation).also {
+                    if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) { advanceMayBeActive = false; advanceIntent = null }
+                }
+            } finally {
                 performanceHints.close()
-                if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) { advanceMayBeActive = false; advanceIntent = null }
-            } }
+            }
+        }
 
     // Explicit pull refresh for currently bound session; reuses handle snapshot guard.
     override suspend fun refresh(): List<RuntimeSignal> {
@@ -688,7 +692,7 @@ internal class JniRuntimeBridge(
                 rememberRevision(handle, summary.revision)
                 if (advancePlayback && !summary.paused) {
                     val tick = runCatching {
-                        performanceHints.measure(PHYSICS_TARGET_NANOS, { it: NativePlaybackTickResult -> it.code == 0 }) {
+                        performanceHints.measure(PLAYBACK_TARGET_NANOS, { it: NativePlaybackTickResult -> it.code == 0 }) {
                             transport.playbackTick(handle, REFRESH_INTERVAL_MS.toDouble() / 1_000.0, System.currentTimeMillis())
                         }
                     }.getOrElse { error ->
@@ -1064,7 +1068,11 @@ internal class JniRuntimeBridge(
         // interpolates committed snapshots while each authority tick remains work-bounded.
         private const val REFRESH_INTERVAL_MS = 100L
         // The solver update cadence, not the display interval or simulation dt.
-        private const val PHYSICS_TARGET_NANOS = REFRESH_INTERVAL_MS * 1_000_000L
+        private const val PLAYBACK_TARGET_NANOS = REFRESH_INTERVAL_MS * 1_000_000L
+        // Manual chunks run back-to-back with coroutine yields, not at 10 Hz.
+        // This is a provisional maximum-latency hint per bounded native call;
+        // it neither delays work nor asserts a measured throughput optimum.
+        private const val MANUAL_CHUNK_TARGET_NANOS = 100_000_000L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
 
         private fun refreshIntervalMillis(): Long =

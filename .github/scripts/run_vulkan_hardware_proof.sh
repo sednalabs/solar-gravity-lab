@@ -24,9 +24,10 @@ for shader in render/android-vulkan/src/main/shaders/solarlab/*; do
   "$ndk_root/shader-tools/linux-x86_64/glslc" --target-env=vulkan1.1 -O \
     "$shader" -o "$output/shaders/$(basename "$shader").spv"
 done
+minimum_api="$(python3 -c 'import tomllib; print(tomllib.load(open("gradle/libs.versions.toml", "rb"))["versions"]["minSdk"])')"
 cmake -S "$cpp" -B "$output/native" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$ndk_root/build/cmake/android.toolchain.cmake" \
-  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 -DCMAKE_BUILD_TYPE=Debug \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$minimum_api" -DCMAKE_BUILD_TYPE=Debug \
   -DSOLARLAB_CAPTURE_PIPELINE_STATISTICS=ON -DSOLARLAB_BUFFER_ADDRESS_COMPACTION=ON
 cmake --build "$output/native" --parallel 4
 printf '%s\n' 'Host capability/fault tests, all packaged shaders and optional-path Arm64 NDK build passed. This is not device extension execution.' > "$output/summary.txt"

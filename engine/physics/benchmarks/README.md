@@ -169,5 +169,52 @@ refreshing source coordinates every force sweep. A frozen PR #242 force kernel
 is the bitwise native Arm regression oracle. The cache layout, ADPF solver
 boundary, discovered CPU/cache topology and optional Arm datatype qualification
 are documented in [CPU cache and topology](../../../docs/cpu-cache-topology-20261118.md).
-This candidate requires a paired same-host release comparison before claiming
-a throughput improvement; it does not inherit PR #242's measured speedup.
+This candidate does not inherit PR #242's measured speedup. The following
+paired comparison independently measures its incremental effect.
+
+### Paired native Arm result, run 44273135829
+
+Baseline `54b8d2036b9a03cc4b9587be0b86113db5bbbe6a` and candidate
+`2ca05d3aabecf6521d96397cdb4668d914b64cc0` were built on the same native Arm
+runner with the same compiler. The harness executes baseline, candidate,
+candidate, baseline under each affinity. Each execution uses 11 warmed samples
+and 64 fixed KDK steps. These figures are medians of the two run medians.
+
+| Affinity | Workload | Baseline µs | Candidate µs | Median change |
+| --- | --- | ---: | ---: | ---: |
+| All four allowed CPUs | Canonical 365 / 15 sources | 1,356.378 | 1,324.934 | −2.32% |
+| All four allowed CPUs | Sparse 1,024 / 3 sources | 971.053 | 953.198 | −1.84% |
+| One allowed CPU | Canonical 365 / 15 sources | 1,356.978 | 1,324.601 | −2.39% |
+| One allowed CPU | Sparse 1,024 / 3 sources | 971.472 | 953.104 | −1.89% |
+
+Both changed workloads use one active solver worker in either affinity mode.
+Their p90s also improve: the means of the two reported p90s are respectively
+1,357.032→1,325.433 µs and 971.209→953.396 µs under full affinity, and
+1,357.730→1,325.554 µs and 971.798→953.610 µs on one CPU. Scalar controls for
+the same workloads move by +0.09% to +0.45%. Canonical oracle discrepancy is
+zero; sparse maximum absolute/relative discrepancies remain
+1.4551915228366852e−11 / 1.2336296197834854e−15.
+
+The unchanged dense-256 four-worker path is **1.76% slower in median** in this
+run: 8,847.341→9,003.208 µs. Its two candidate run medians are 8,887.286 and
+9,119.129 µs, versus 8,869.535 and 8,825.147 µs at baseline. Its p90 aggregate
+does not rise (9,162.525→9,126.767 µs), and its single-CPU median changes by
++0.20%. This variance is retained rather than presenting a blanket claim that
+every path improved. Other unchanged small/dense paths vary by approximately
+−0.37% to +0.62%. No confidence interval or sustained-device conclusion is
+implied by two run medians.
+
+The measured incremental sparse improvement is modest, about 2% on this host;
+the full-precision square-root/divide work remains. Single-step segments need
+separate qualification because cache preparation is less amortised. The paired
+harness now reuses these same binaries for a `short-segment` report with one
+step, the same ABBA order, workloads and affinity checks.
+
+Evidence: [paired run 44273135829](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44273135829),
+[native Arm job 134694569922](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44273135829/job/134694569922),
+[raw artifact 14412912797](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44273135829/artifacts/14412912797).
+The uploaded artifact SHA256 is
+`755d0cdccd24c5017e79c18bda003c6b07b241e28bf7aa489bc9f6b6905bd17f`.
+It retains immutable source IDs, binary hashes, compiler/CPU/affinity metadata,
+eight raw NDJSON runs and the comparison JSON/Markdown. This dated result is
+not a substitute for final-head validation or physical Oryon acceptance.
