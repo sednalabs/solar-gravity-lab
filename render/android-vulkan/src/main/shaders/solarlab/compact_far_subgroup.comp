@@ -1,0 +1,139 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std140) uniform SceneUniforms {
+    vec4 centerRelativeAndMetrics;
+    vec4 rightAndSpan;
+    vec4 upAndSpan;
+    vec4 forwardAndDepth;
+    vec4 viewport;
+} uScene;
+
+// Scalar std430 fields match the 40-byte C++ state and 20-byte graphics vertex.
+struct FarTracerState {
+    float x;
+    float y;
+    float z;
+    float vx;
+    float vy;
+    float vz;
+    uint colorArgb;
+    uint densityWeight;
+    uint stableId;
+    uint reserved;
+};
+
+struct DensityPointVertex {
+    float x;
+    float y;
+    float z;
+    uint colorArgb;
+    uint densityWeight;
+};
+
+layout(set = 0, binding = 1, std430) readonly buffer SourceVertices {
+    FarTracerState src[];
+} uSource;
+
+layout(set = 0, binding = 2, std430) writeonly buffer OutputVertices {
+    DensityPointVertex dst[];
+} uOutput;
+
+layout(set = 0, binding = 3, std430) buffer DrawCommandBuffer {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+} uDraw;
+
+layout(set = 0, binding = 4, std430) buffer TileCounterBuffer {
+    uint counts[];
+} uTiles;
+
+layout(push_constant) uniform PushConstants {
+    uint sourceCount;
+    uint tileCounterCount;
+    uint reserved1;
+    uint reserved2;
+} uPush;
+
+const uint kFarTileMaxCapacity = 8u;
+
+vec2 cameraPlanePosition(vec3 positionM) {
+    vec3 relative = positionM - uScene.centerRelativeAndMetrics.xyz;
+    return vec2(dot(relative, uScene.rightAndSpan.xyz), dot(relative, uScene.upAndSpan.xyz));
+}
+
+bool isInsideExtendedView(vec3 positionM) {
+    vec2 span = max(vec2(uScene.rightAndSpan.w, uScene.upAndSpan.w), vec2(1e-6)) * 1.08;
+    return all(lessThanEqual(abs(cameraPlanePosition(positionM)), span));
+}
+
+uint farStrideForZoom(uint densityWeight) {
+    float zoom = max(uScene.centerRelativeAndMetrics.w / 5.0e8, 1.0);
+    uint zoomStride = 1u + uint(clamp(floor(log2(zoom)), 0.0, 6.0));
+    return max(max(densityWeight, 1u), zoomStride);
+}
+
+uint farTileCapacity(uint stride) {
+    uint clampedStride = clamp(stride, 1u, 8u);
+    return max(1u, 8u / clampedStride);
+}
+
+// Tile admission remains the existing bounded atomic algorithm. Only its two
+// highly contended global telemetry counters are aggregated across each subgroup.
+// All lanes reach both ballots, so source-count tails never split a collective.
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    bool accepted = false;
+    bool dropped = false;
+    if (index < uPush.sourceCount) {
+        FarTracerState candidate = uSource.src[index];
+        vec3 positionM = vec3(candidate.x, candidate.y, candidate.z);
+        if (isInsideExtendedView(positionM)) {
+            uint stride = farStrideForZoom(candidate.densityWeight);
+            vec2 relative = cameraPlanePosition(positionM);
+            vec2 span = max(vec2(uScene.rightAndSpan.w, uScene.upAndSpan.w), vec2(1e-6));
+            // Matches density_point.vert and native picking, including window Y.
+            vec2 uv = vec2(relative.x, -relative.y) / span * 0.5 + 0.5;
+            uvec2 viewportPx = max(uvec2(uScene.viewport.xy), uvec2(1u));
+            vec2 clampedUv = clamp(uv, vec2(0.0), vec2(0.999999));
+            uvec2 pixel = uvec2(floor(clampedUv * vec2(viewportPx)));
+            const uint tileShift = 4u;
+            uvec2 tileCoord = pixel >> tileShift;
+            uvec2 tileGrid = (viewportPx + ((1u << tileShift) - 1u)) >> tileShift;
+            uint tileIndex = tileCoord.x + (tileCoord.y * max(tileGrid.x, 1u));
+            if (tileIndex < uPush.tileCounterCount) {
+                uint tileCapacity = farTileCapacity(stride);
+                uint slot = atomicAdd(uTiles.counts[tileIndex], 1u);
+                accepted = slot < tileCapacity;
+                dropped = !accepted;
+                if (accepted) {
+                    candidate.densityWeight = max(candidate.densityWeight, stride);
+                    uint outputIndex = tileIndex * kFarTileMaxCapacity + slot;
+                    uOutput.dst[outputIndex] = DensityPointVertex(
+                        candidate.x,
+                        candidate.y,
+                        candidate.z,
+                        candidate.colorArgb,
+                        candidate.densityWeight
+                    );
+                }
+            }
+        }
+    }
+
+    uint acceptedCount = subgroupBallotBitCount(subgroupBallot(accepted));
+    uint droppedCount = subgroupBallotBitCount(subgroupBallot(dropped));
+    if (subgroupElect()) {
+        if (acceptedCount != 0u) {
+            atomicAdd(uDraw.vertexCount, acceptedCount);
+        }
+        if (droppedCount != 0u) {
+            atomicAdd(uTiles.counts[uPush.tileCounterCount], droppedCount);
+        }
+    }
+}

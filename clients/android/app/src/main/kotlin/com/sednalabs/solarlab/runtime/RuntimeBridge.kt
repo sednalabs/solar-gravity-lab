@@ -1440,6 +1440,14 @@ private const val CPU_FEATURE_DIT = 1L shl 31
 private const val CPU_FEATURE_SB = 1L shl 32
 private const val CPU_FEATURE_SSBS = 1L shl 33
 private const val CPU_FEATURE_SVE_I8MM = 1L shl 34
+private const val CPU_FEATURE_SME_F64F64 = 1L shl 35
+private const val CPU_FEATURE_SVE_F64MM = 1L shl 36
+private const val CPU_FEATURE_RPRFM = 1L shl 37
+private const val CPU_FEATURE_CSSC = 1L shl 38
+private const val CPU_FEATURE_RCPC = 1L shl 39
+private const val CPU_FEATURE_RCPC2 = 1L shl 40
+private const val CPU_FEATURE_WFXT = 1L shl 41
+private const val CPU_FEATURE_SVE_BITPERM = 1L shl 42
 
 /** Select an architecture request; native feature checks still decide actual execution. */
 internal fun preferredCpuBackendCode(processArchitecture: String): Int = when (processArchitecture.lowercase(Locale.US)) {
@@ -1802,6 +1810,14 @@ internal data class NativeRuntimeInfoResult(
         addIfPresent(CPU_FEATURE_SVE, "sve")
         addIfPresent(CPU_FEATURE_SVE2, "sve2")
         addIfPresent(CPU_FEATURE_SVE_I8MM, "sve-i8mm")
+        addIfPresent(CPU_FEATURE_SME_F64F64, "sme-f64f64")
+        addIfPresent(CPU_FEATURE_SVE_F64MM, "sve-f64mm")
+        addIfPresent(CPU_FEATURE_RPRFM, "rprfm")
+        addIfPresent(CPU_FEATURE_CSSC, "cssc")
+        addIfPresent(CPU_FEATURE_RCPC, "rcpc")
+        addIfPresent(CPU_FEATURE_RCPC2, "rcpc2")
+        addIfPresent(CPU_FEATURE_WFXT, "wfxt")
+        addIfPresent(CPU_FEATURE_SVE_BITPERM, "sve-bitperm")
         addIfPresent(CPU_FEATURE_SME, "sme")
         addIfPresent(CPU_FEATURE_SME2, "sme2")
         addIfPresent(CPU_FEATURE_LSE, "lse")

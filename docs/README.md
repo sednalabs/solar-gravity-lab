@@ -40,6 +40,7 @@ at `32e24274bca41c4398a0f979d312b7c6aae395ab` (17 November 2026).
   [scenario packs](scenario-packs.md), and
   [laboratory timestep profiles](../engine/physics/benchmarks/lab-step-policy.md).
 - [CPU performance evidence](../engine/physics/benchmarks/README.md),
+  [CPU/GPU hardware programme after PR242](hardware-maximisation-20261118.md),
   [new passive FP64 NEON batch and measured improvements](aarch64-extension-assessment-20261118.md),
   [Arm64 activation truth](android-acceleration-truth.md),
   [device capability programme](device-native-acceleration.md) and

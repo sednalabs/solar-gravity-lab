@@ -6,6 +6,8 @@ use solarlab_domain::Vector3d;
 
 #[cfg(any(target_arch = "aarch64", test))]
 mod pair_work;
+#[cfg(any(target_arch = "aarch64", test))]
+mod passive_cache;
 #[cfg(test)]
 mod throughput_tests;
 #[cfg(target_arch = "x86_64")]
@@ -212,6 +214,14 @@ pub const CPU_FEATURE_DIT: u64 = 1 << 31;
 pub const CPU_FEATURE_SB: u64 = 1 << 32;
 pub const CPU_FEATURE_SSBS: u64 = 1 << 33;
 pub const CPU_FEATURE_SVE_I8MM: u64 = 1 << 34;
+pub const CPU_FEATURE_SME_F64F64: u64 = 1 << 35;
+pub const CPU_FEATURE_SVE_F64MM: u64 = 1 << 36;
+pub const CPU_FEATURE_RPRFM: u64 = 1 << 37;
+pub const CPU_FEATURE_CSSC: u64 = 1 << 38;
+pub const CPU_FEATURE_RCPC: u64 = 1 << 39;
+pub const CPU_FEATURE_RCPC2: u64 = 1 << 40;
+pub const CPU_FEATURE_WFXT: u64 = 1 << 41;
+pub const CPU_FEATURE_SVE_BITPERM: u64 = 1 << 42;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuFeatureUseStatus {
@@ -291,13 +301,13 @@ pub const ARM64_KERNEL_CATALOG: &[Arm64KernelCatalogEntry] = &[
     },
     Arm64KernelCatalogEntry {
         path_id: "simd.arm64.sme-tiled-f64-candidate",
-        required_features: &["sme"],
+        required_features: &["sme", "sme-f64f64"],
         readiness: Arm64KernelReadiness::Candidate,
         workload: "tile-oriented f64 gravity/tracer assist",
     },
     Arm64KernelCatalogEntry {
         path_id: "simd.arm64.sme2-tiled-f64-candidate",
-        required_features: &["sme2"],
+        required_features: &["sme2", "sme-f64f64"],
         readiness: Arm64KernelReadiness::Candidate,
         workload: "tile-oriented f64 gravity/tracer assist",
     },
@@ -562,6 +572,54 @@ pub const ARM64_CPU_FEATURE_CATALOG: &[CpuFeatureCatalogEntry] = &[
         flag: CPU_FEATURE_SSBS,
         status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
         current_workload: "speculative store bypass control capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sme-f64f64",
+        flag: CPU_FEATURE_SME_F64F64,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "optional FP64 SME matrix arithmetic; required for every FP64 SME candidate",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sve-f64mm",
+        flag: CPU_FEATURE_SVE_F64MM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "optional SVE FP64 matrix arithmetic; not required for ordinary SVE FP64 vectors",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rprfm",
+        flag: CPU_FEATURE_RPRFM,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "range prefetch hint; requires measured cache-miss benefit and OS feature gate",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "cssc",
+        flag: CPU_FEATURE_CSSC,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "common short scalar instructions; compiler-selected integer/control utility",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rcpc",
+        flag: CPU_FEATURE_RCPC,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "release-consistent acquire loads; no hand substitution for Rust atomics",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rcpc2",
+        flag: CPU_FEATURE_RCPC2,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "extended release-consistent acquire addressing; runtime utility",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "wfxt",
+        flag: CPU_FEATURE_WFXT,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "timed wait-for-event/interrupt; no busy-wait worker policy",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sve-bitperm",
+        flag: CPU_FEATURE_SVE_BITPERM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "SVE2 bit permutation for a future packed visibility workload",
     },
 ];
 
@@ -1012,6 +1070,44 @@ fn add_arm64_features(features: &mut BTreeSet<String>) {
     for token in cpuinfo_feature_tokens() {
         insert_normalized_cpu_feature(features, &token);
     }
+    // Stable Rust probes do not cover every newer Arm extension. Read the OS
+    // auxiliary vector without executing optional instructions. Kernels must
+    // retain an independent OS/runtime gate, regardless of feature overrides.
+    if let Ok(auxv) = fs::read("/proc/self/auxv") {
+        for feature in arm64_auxv_extension_names(&auxv) {
+            insert_normalized_cpu_feature(features, feature);
+        }
+    }
+}
+
+/// Linux AArch64 UAPI masks, independent of compiler target-feature support.
+/// Source: arch/arm64/include/uapi/asm/hwcap.h. Never interpret a host of a
+/// different architecture's auxv as Arm; the production caller is cfg-gated.
+#[cfg(any(target_arch = "aarch64", test))]
+fn arm64_auxv_extension_names(auxv: &[u8]) -> Vec<&'static str> {
+    let mut features = Vec::new();
+    for entry in auxv.chunks_exact(16) {
+        let kind = u64::from_ne_bytes(entry[..8].try_into().expect("eight bytes"));
+        let flags = u64::from_ne_bytes(entry[8..].try_into().expect("eight bytes"));
+        if kind == 0 { break; }
+        for &(word, mask, name) in &[
+            (16, 1_u64 << 15, "rcpc"),
+            (16, 1_u64 << 25, "lse2"),
+            (16, 1_u64 << 26, "rcpc2"),
+            (26, 1_u64 << 4, "sve-bitperm"),
+            (26, 1_u64 << 11, "sve-f64mm"),
+            (26, 1_u64 << 23, "sme"),
+            (26, 1_u64 << 25, "sme-f64f64"),
+            (26, 1_u64 << 31, "wfxt"),
+            (26, 1_u64 << 34, "cssc"),
+            (26, 1_u64 << 35, "rprfm"),
+            (26, 1_u64 << 37, "sme2"),
+            (26, 1_u64 << 43, "mops"),
+        ] {
+            if kind == word && flags & mask != 0 { features.push(name); }
+        }
+    }
+    features
 }
 
 #[cfg(not(target_arch = "aarch64"))]
@@ -1574,6 +1670,8 @@ fn interaction_partners(
 #[derive(Default)]
 struct GravityScratch {
     #[cfg(target_arch = "aarch64")]
+    passive_cache: passive_cache::PassiveCache,
+    #[cfg(target_arch = "aarch64")]
     parallel_partitions: Option<Vec<pair_work::PairPartition>>,
     #[cfg(target_arch = "aarch64")]
     partials: Vec<Vec<Vector3d>>,
@@ -1696,7 +1794,7 @@ fn pairwise_gravity_accelerations_arm64_into(
             pairwise_gravity_accelerations_arm64_neon(bodies, sources, accelerations)
         }
         Arm64GravityKernel::NeonF64PassiveBatch => {
-            pairwise_gravity_accelerations_arm64_neon_passive_batch(bodies, sources, accelerations)
+            pairwise_gravity_accelerations_arm64_neon_passive_batch(bodies, sources, accelerations, scratch)
         }
         Arm64GravityKernel::NeonF64TiledPairwise => {
             pairwise_gravity_accelerations_arm64_neon_tiled(bodies, sources, accelerations)
@@ -1746,11 +1844,17 @@ fn pairwise_gravity_accelerations_arm64_neon_passive_batch(
     bodies: &[MassiveBodyState],
     sources: &[usize],
     accelerations: &mut [Vector3d],
+    scratch: &mut GravityScratch,
 ) {
     assert!(arm64_neon_runtime_available(), "passive NEON path without CPU support");
+    scratch.passive_cache.refresh(bodies, sources);
     // SAFETY: the checked NEON runtime feature is the sole ISA precondition.
     // All slices are owned by the caller for the full acceleration sweep.
-    unsafe { arm64_neon::pairwise_gravity_accelerations_passive_batch(bodies, sources, accelerations) }
+    unsafe {
+        arm64_neon::pairwise_gravity_accelerations_passive_batch(
+            bodies, sources, accelerations, &scratch.passive_cache,
+        )
+    }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
@@ -1758,6 +1862,7 @@ fn pairwise_gravity_accelerations_arm64_neon_passive_batch(
     _bodies: &[MassiveBodyState],
     _sources: &[usize],
     _accelerations: &mut [Vector3d],
+    _scratch: &mut GravityScratch,
 ) {
     panic!("Arm64 passive NEON batch selected on a non-aarch64 host")
 }
@@ -1874,14 +1979,136 @@ mod arm64_neon {
         }
     }
 
+    /// Four passive targets use two independent FP64 NEON vectors. Packed
+    /// sources are scanned once for both pairs; source order, full-precision
+    /// sqrt/div and each lane's fused accumulation expression are unchanged.
+    /// The additional independent vector exposes sqrt/div instruction overlap
+    /// without a horizontal reduction or any change to the force law.
+    #[target_feature(enable = "neon")]
+    pub unsafe fn pairwise_gravity_accelerations_passive_batch(
+        bodies: &[MassiveBodyState],
+        sources: &[usize],
+        accelerations: &mut [Vector3d],
+        cache: &super::passive_cache::PassiveCache,
+    ) {
+        for (cursor, &i) in sources.iter().enumerate() {
+            for &j in &sources[cursor + 1..] {
+                accumulate_pair(bodies, accelerations, i, j);
+            }
+        }
+        let min_distance = vdupq_n_f64(MIN_DISTANCE_M2);
+        let one = vdupq_n_f64(1.0);
+        let mut groups = cache.targets.chunks_exact(4);
+        for indices in &mut groups {
+            let p0 = bodies[indices[0]].position_m;
+            let p1 = bodies[indices[1]].position_m;
+            let p2 = bodies[indices[2]].position_m;
+            let p3 = bodies[indices[3]].position_m;
+            let x0 = xy_vector(p0.x, p1.x);
+            let y0 = xy_vector(p0.y, p1.y);
+            let z0 = xy_vector(p0.z, p1.z);
+            let x1 = xy_vector(p2.x, p3.x);
+            let y1 = xy_vector(p2.y, p3.y);
+            let z1 = xy_vector(p2.z, p3.z);
+            let mut ax0 = vdupq_n_f64(0.0);
+            let mut ay0 = vdupq_n_f64(0.0);
+            let mut az0 = vdupq_n_f64(0.0);
+            let mut ax1 = vdupq_n_f64(0.0);
+            let mut ay1 = vdupq_n_f64(0.0);
+            let mut az1 = vdupq_n_f64(0.0);
+            for source in &cache.sources {
+                let sx = vdupq_n_f64(source.x);
+                let sy = vdupq_n_f64(source.y);
+                let sz = vdupq_n_f64(source.z);
+                let mu = vdupq_n_f64(source.mu);
+                let dx0 = vsubq_f64(sx, x0);
+                let dy0 = vsubq_f64(sy, y0);
+                let dz0 = vsubq_f64(sz, z0);
+                let dx1 = vsubq_f64(sx, x1);
+                let dy1 = vsubq_f64(sy, y1);
+                let dz1 = vsubq_f64(sz, z1);
+                let sq0 = vmaxq_f64(
+                    vfmaq_f64(vfmaq_f64(vmulq_f64(dz0, dz0), dy0, dy0), dx0, dx0),
+                    min_distance,
+                );
+                let sq1 = vmaxq_f64(
+                    vfmaq_f64(vfmaq_f64(vmulq_f64(dz1, dz1), dy1, dy1), dx1, dx1),
+                    min_distance,
+                );
+                let inv0 = vdivq_f64(one, vsqrtq_f64(sq0));
+                let inv1 = vdivq_f64(one, vsqrtq_f64(sq1));
+                let factor0 = vmulq_f64(mu, vmulq_f64(vmulq_f64(inv0, inv0), inv0));
+                let factor1 = vmulq_f64(mu, vmulq_f64(vmulq_f64(inv1, inv1), inv1));
+                ax0 = vfmaq_f64(ax0, dx0, factor0);
+                ay0 = vfmaq_f64(ay0, dy0, factor0);
+                az0 = vfmaq_f64(az0, dz0, factor0);
+                ax1 = vfmaq_f64(ax1, dx1, factor1);
+                ay1 = vfmaq_f64(ay1, dy1, factor1);
+                az1 = vfmaq_f64(az1, dz1, factor1);
+            }
+            store_passive_pair(accelerations, indices[0], indices[1], ax0, ay0, az0);
+            store_passive_pair(accelerations, indices[2], indices[3], ax1, ay1, az1);
+        }
+        let remainder = groups.remainder();
+        if remainder.len() >= 2 {
+            let p0 = bodies[remainder[0]].position_m;
+            let p1 = bodies[remainder[1]].position_m;
+            let x = xy_vector(p0.x, p1.x);
+            let y = xy_vector(p0.y, p1.y);
+            let z = xy_vector(p0.z, p1.z);
+            let mut ax = vdupq_n_f64(0.0);
+            let mut ay = vdupq_n_f64(0.0);
+            let mut az = vdupq_n_f64(0.0);
+            for source in &cache.sources {
+                let dx = vsubq_f64(vdupq_n_f64(source.x), x);
+                let dy = vsubq_f64(vdupq_n_f64(source.y), y);
+                let dz = vsubq_f64(vdupq_n_f64(source.z), z);
+                let squared = vmaxq_f64(
+                    vfmaq_f64(vfmaq_f64(vmulq_f64(dz, dz), dy, dy), dx, dx),
+                    min_distance,
+                );
+                let inv = vdivq_f64(one, vsqrtq_f64(squared));
+                let factor = vmulq_f64(vdupq_n_f64(source.mu), vmulq_f64(vmulq_f64(inv, inv), inv));
+                ax = vfmaq_f64(ax, dx, factor);
+                ay = vfmaq_f64(ay, dy, factor);
+                az = vfmaq_f64(az, dz, factor);
+            }
+            store_passive_pair(accelerations, remainder[0], remainder[1], ax, ay, az);
+        }
+        if remainder.len() % 2 == 1 {
+            let target = remainder[remainder.len() - 1];
+            for &source in sources {
+                accumulate_pair(bodies, accelerations, target.min(source), target.max(source));
+            }
+        }
+    }
+
+    #[target_feature(enable = "neon")]
+    unsafe fn store_passive_pair(
+        accelerations: &mut [Vector3d],
+        first: usize,
+        second: usize,
+        ax: float64x2_t,
+        ay: float64x2_t,
+        az: float64x2_t,
+    ) {
+        accelerations[first] = Vector3d {
+            x: vgetq_lane_f64::<0>(ax), y: vgetq_lane_f64::<0>(ay), z: vgetq_lane_f64::<0>(az),
+        };
+        accelerations[second] = Vector3d {
+            x: vgetq_lane_f64::<1>(ax), y: vgetq_lane_f64::<1>(ay), z: vgetq_lane_f64::<1>(az),
+        };
+    }
+
     /// Source-source pairs retain the exact symmetric pairwise NEON kernel.
     /// Passive bodies are independent *targets*: pack two FP64 targets per
     /// vector and iterate the original ascending source order. This keeps
     /// backreaction identically zero, uses full-precision sqrt/div/FMA and
     /// avoids the scatter of the ordinary source/passive pair path.
     /// No reciprocal estimate, FP32, FP16 or reordered source reduction.
+    #[cfg(test)]
     #[target_feature(enable = "neon")]
-    pub unsafe fn pairwise_gravity_accelerations_passive_batch(
+    pub unsafe fn passive_batch_uncached_reference(
         bodies: &[MassiveBodyState],
         sources: &[usize],
         accelerations: &mut [Vector3d],
@@ -2330,8 +2557,13 @@ fn insert_normalized_cpu_feature(features: &mut BTreeSet<String>, raw_feature: &
         "svei8mm" | "sve_i8mm" | "sve-i8mm" => "sve-i8mm",
         "sme" => "sme",
         "sme2" => "sme2",
+        "smef64" | "sme_f64f64" | "sme-f64f64" => "sme-f64f64",
+        "svef64mm" | "sve_f64mm" | "sve-f64mm" => "sve-f64mm",
+        "svebitperm" | "sve_bitperm" | "sve-bitperm" => "sve-bitperm",
+        "lrcpc" | "rcpc" => "rcpc",
+        "ilrcpc" | "rcpc2" => "rcpc2",
         "atomics" | "lse" => "lse",
-        "lse2" => "lse2",
+        "uscat" | "lse2" => "lse2",
         "crc32" | "crc" => "crc",
         "mops" => "mops",
         "aes" => "aes",
@@ -3040,7 +3272,7 @@ mod tests {
 
     #[test]
     fn arm64_kernel_availability_marks_feature_qualified_candidate_lanes() {
-        let features = ["asimd", "sve2", "sme2", "i8mm", "bf16"]
+        let features = ["asimd", "sve2", "sme2", "sme-f64f64", "i8mm", "bf16"]
             .iter()
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();

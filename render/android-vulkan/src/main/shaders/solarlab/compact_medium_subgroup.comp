@@ -1,0 +1,108 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std140) uniform SceneUniforms {
+    vec4 centerRelativeAndMetrics;
+    vec4 rightAndSpan;
+    vec4 upAndSpan;
+    vec4 forwardAndDepth;
+    vec4 viewport;
+} uScene;
+
+// Scalar std430 fields match the 40-byte C++ state and 20-byte graphics vertex.
+// A vec3 member would impose a different array stride.
+struct MediumTracerState {
+    float x;
+    float y;
+    float z;
+    float vx;
+    float vy;
+    float vz;
+    uint colorArgb;
+    float sizePx;
+    uint stableId;
+    uint reserved;
+};
+
+struct CheapPointVertex {
+    float x;
+    float y;
+    float z;
+    uint colorArgb;
+    float sizePx;
+};
+
+layout(set = 0, binding = 1, std430) readonly buffer SourceVertices {
+    MediumTracerState src[];
+} uSource;
+
+layout(set = 0, binding = 2, std430) writeonly buffer OutputVertices {
+    CheapPointVertex dst[];
+} uOutput;
+
+layout(set = 0, binding = 3, std430) buffer DrawCommandBuffer {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+} uDraw;
+
+layout(push_constant) uniform PushConstants {
+    uint sourceCount;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+} uPush;
+
+vec2 cameraPlanePosition(vec3 positionM) {
+    vec3 relative = positionM - uScene.centerRelativeAndMetrics.xyz;
+    return vec2(dot(relative, uScene.rightAndSpan.xyz), dot(relative, uScene.upAndSpan.xyz));
+}
+
+bool isInsideExtendedView(vec3 positionM) {
+    vec2 span = max(vec2(uScene.rightAndSpan.w, uScene.upAndSpan.w), vec2(1e-6)) * 1.05;
+    return all(lessThanEqual(abs(cameraPlanePosition(positionM)), span));
+}
+
+uint mediumStrideForZoom() {
+    float zoom = max(uScene.centerRelativeAndMetrics.w / 2.5e8, 1.0);
+    return 1u + uint(clamp(floor(log2(zoom)), 0.0, 4.0));
+}
+
+// Every invocation reaches the collectives, including inactive source-tail lanes.
+// Subgroup width is a device property, never assumed to be 32 or 64 here.
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    MediumTracerState candidate;
+    bool visible = false;
+    uint stride = mediumStrideForZoom();
+    if (index < uPush.sourceCount) {
+        candidate = uSource.src[index];
+        visible = isInsideExtendedView(vec3(candidate.x, candidate.y, candidate.z)) &&
+            (stride == 1u || (index % stride) == 0u);
+    }
+
+    uvec4 mask = subgroupBallot(visible);
+    uint visibleCount = subgroupBallotBitCount(mask);
+    uint outputBase = 0u;
+    if (subgroupElect() && visibleCount != 0u) {
+        outputBase = atomicAdd(uDraw.vertexCount, visibleCount);
+    }
+    outputBase = subgroupBroadcastFirst(outputBase);
+    uint outputOffset = subgroupBallotExclusiveBitCount(mask);
+
+    if (visible) {
+        candidate.sizePx = min(candidate.sizePx + float(stride - 1u) * 0.15, max(uScene.viewport.z, 1.0));
+        uint outputIndex = outputBase + outputOffset;
+        uOutput.dst[outputIndex] = CheapPointVertex(
+            candidate.x,
+            candidate.y,
+            candidate.z,
+            candidate.colorArgb,
+            candidate.sizePx
+        );
+    }
+}
