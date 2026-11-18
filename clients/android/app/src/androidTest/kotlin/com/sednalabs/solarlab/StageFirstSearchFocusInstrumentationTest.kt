@@ -74,14 +74,18 @@ class StageFirstSearchFocusInstrumentationTest {
             }
             composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
 
-            var lastSelectionFailure: Throwable? = null
+            var lastSelectionFailure: AssertionError? = null
             try {
                 composeRule.waitUntil(timeoutMillis = 20_000) {
                     composeRule.mainClock.advanceTimeByFrame()
-                    runCatching {
+                    try {
                         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                             .assertTextContains("Earth")
-                    }.onFailure { lastSelectionFailure = it }.isSuccess
+                        true
+                    } catch (failure: AssertionError) {
+                        lastSelectionFailure = failure
+                        false
+                    }
                 }
             } catch (failure: ComposeTimeoutException) {
                 throw AssertionError("Selection title did not update to Earth", lastSelectionFailure ?: failure)
@@ -124,8 +128,14 @@ class StageFirstSearchFocusInstrumentationTest {
                 "request-id=connector-request-42; query=comet; resolved-body=halley"
         SolarLabSemanticActionBridge.clearPendingReplay()
 
+        // The native camera and scene keep publishing independently of Compose's
+        // test clock. Observe explicit frames instead of waiting for the whole
+        // live scene to become idle, as in the search and semantic-intent tests.
+        val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        composeRule.mainClock.autoAdvance = false
         try {
             composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                     .fetchSemanticsNodes()
                     .isNotEmpty()
@@ -139,17 +149,39 @@ class StageFirstSearchFocusInstrumentationTest {
                 )
             )
 
-            composeRule.waitUntil(timeoutMillis = 20_000) {
-                runCatching {
-                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                        .assertTextContains("Halley")
-                        .assertContentDescriptionEquals(expectedAcknowledgement)
-                }.isSuccess
+            var lastAcknowledgementFailure: AssertionError? = null
+            try {
+                composeRule.waitUntil(timeoutMillis = 20_000) {
+                    composeRule.mainClock.advanceTimeByFrame()
+                    try {
+                        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                            .assertTextContains("Halley")
+                            .assertContentDescriptionEquals(expectedAcknowledgement)
+                        assertTrue(
+                            "The Rust runtime must also focus Halley",
+                            composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "halley",
+                        )
+                        true
+                    } catch (failure: AssertionError) {
+                        // A not-yet-updated semantic node is an expected wait
+                        // condition. Synchronization failures must propagate;
+                        // catching every Throwable hid a 30-second idle timeout.
+                        lastAcknowledgementFailure = failure
+                        false
+                    }
+                }
+            } catch (failure: ComposeTimeoutException) {
+                val focusedBodyId = composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId
+                throw AssertionError(
+                    "Correlated focus acknowledgement did not reach Halley; runtime focus=$focusedBodyId",
+                    lastAcknowledgementFailure ?: failure,
+                )
             }
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                 .assertTextContains("Halley")
                 .assertContentDescriptionEquals(expectedAcknowledgement)
         } finally {
+            composeRule.mainClock.autoAdvance = previousAutoAdvance
             SolarLabSemanticActionBridge.clearPendingReplay()
         }
     }
