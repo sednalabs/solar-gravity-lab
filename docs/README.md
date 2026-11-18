@@ -3,20 +3,37 @@
 This index distinguishes the **implemented source**, **tested behaviour**,
 **published Android APK** and **historical design work**. Use it before old
 stage-first or compaction handoffs. Audited against canonical `main`
-at `32e24274bca41c4398a0f979d312b7c6aae395ab` (17 November 2026).
+through `b2e3dbed9e73e98fd6d749d71ee7f2c7a29b6d74` (18 November 2026).
+See the [16–18 November integration record](mainline-integration-week-20261116.md)
+for the commit-by-commit scope and which checkpoints remain historical.
 
 ## Delivery truth
 
 - **Source:** PR [#237](https://github.com/sednalabs/solar-gravity-lab/pull/237)
   merged the native Earth–Moon lab, probe mass, portable documents,
-  camera/selection, renderer and physics work at `bd79d5de`. A later
-  security-maintenance fix left `main` at `32e24274`.
-- **Hosted proof:** the [exact-source validation run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
+  camera/selection, renderer and physics work at `bd79d5de`.
+  The 17 November documentation/security reconciliation followed, then
+  [#242](https://github.com/sednalabs/solar-gravity-lab/pull/242) delivered
+  NEON FP64 two-target passive batching and
+  [#245](https://github.com/sednalabs/solar-gravity-lab/pull/245) delivered
+  cache-aware physics, topology, optional Vulkan and Qualcomm paths.
+  [#247](https://github.com/sednalabs/solar-gravity-lab/pull/247) made
+  the hardware proof manual-only and
+  [#248](https://github.com/sednalabs/solar-gravity-lab/pull/248)
+  narrowed CI routing for unrelated changes. All were merged by
+  `b2e3dbed` on 18 November.
+- **Hosted proof:** the [#237 exact-source validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
   passed Rust x64/Arm64, FFI, Android JVM/lint, native Android journeys,
-  camera/compute pixel checks and parity. CodeQL, security, coverage and docs
-  checks also passed on the qualified PR. The
-  [main security run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44014438874)
-  then passed the full OSV scan.
+  camera/compute pixel checks and parity. The
+  [#245 final-head validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44279625030)
+  and [hardware proof](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44279624931)
+  passed hosted CPU, Vulkan portability and Android qualifications; a later
+  source-identical replay also passed
+  ([validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44283854151),
+  [hardware](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44283854331)).
+  These are **not** Qualcomm vendor-hardware runs or physical-phone acceptance.
+  The [17 November main security run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44014438874)
+  passed its OSV scan.
 - **Published APK:** [`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2)
   is still the most recent installable release. **The later `main` changes
   are not yet a released APK.**
@@ -52,7 +69,8 @@ at `32e24274bca41c4398a0f979d312b7c6aae395ab` (17 November 2026).
 - [Vulkan runtime acceleration qualification](vulkan-runtime-qualification-20261118.md)
   records optional workload gates, profiling switches and the separate device
   acceptance requirements for the post-#242 implementation.
-- [Validation Lab](validation-lab.md),
+- [Weekly mainline integration and remaining gates](mainline-integration-week-20261116.md),
+  [Validation Lab](validation-lab.md),
   [rapid Android iteration](rapid-android-iteration.md),
   [hosted AI development](hosted-ai-development.md) and
   [live interactive sessions](interactive-android-session.md).

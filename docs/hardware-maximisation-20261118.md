@@ -99,3 +99,52 @@ CPU/GPU timing, frame-time, sustained thermal and energy behaviour. BDA and
 pipeline statistics remain opt-in, tile/image probes remain qualification
 workloads, and SVE/SME candidates remain feature-qualified possibilities rather
 than implemented force kernels.
+
+## Final integration and merge addendum (18 November 2026)
+
+The earlier checkpoints above remain dated evidence, not the current mainline
+head. The full programme was integrated in
+[PR #245](https://github.com/sednalabs/solar-gravity-lab/pull/245)
+at qualified source `dc5b1084cadf97a1f152147a0062704c3ca7dc40`
+and squash-merged as `1a273918f97fbd432309f74470fde2a77d63a408`.
+The independent CPU and Vulkan PRs #243 and #244 were closed as superseded;
+their historical lane branches remain available for recovery.
+
+At the final qualified source, the Rust/Arm, Android (21 instrumentation tests
+across 12 classes, Vulkan under SwiftShader), security and hardware-proof
+checks passed. [Exact-head validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44279625030)
+and [hardware proof](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44279624931)
+passed, followed by source-identical successful
+[validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44283854151)
+and [hardware](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44283854331)
+replays. The portable offscreen tests reported zero validation errors; optional
+QCOM tile/image modes **SKIP** on software Vulkan and are not device-proven.
+
+Hosted native Arm same-host ABBA comparisons against PR242 at 64 steps
+measured **-2.32%** elapsed time for canonical sparse 365 bodies/15 sources
+(1357.063 → 1325.610 µs) and **-1.84%** for sparse 1024 bodies/3 sources
+(970.855 → 952.993 µs). Sparse batches with fewer than eight steps retain
+streaming to avoid the measured low-step cache overhead. Dense-256 repeated
+blocks did not show a stable speedup or a consistent regression; tail timings
+varied considerably. Treat these as **hosted N2 CPU microbenchmarks**, not
+Galaxy S25 acceleration or frame-rate measurements. The detailed dense cohort
+and raw measurements are archived with
+[PR #243](https://github.com/sednalabs/solar-gravity-lab/pull/243).
+
+On `main`, [PR #247](https://github.com/sednalabs/solar-gravity-lab/pull/247)
+(merge `d14ea118988eacfa64cf6b195846e552bb45b0ba`) removed the automatic
+PR trigger from `.github/workflows/hardware-optimisation.yml`. The expensive
+paired Arm and Qualcomm compiler/probe jobs are now **manual-dispatch only**.
+[PR #248](https://github.com/sednalabs/solar-gravity-lab/pull/248)
+(merge `b2e3dbed9e73e98fd6d749d71ee7f2c7a29b6d74`) routes unrelated
+CI-only PR and main pushes away from Rust/Arm/Android validation-lab jobs.
+Neither change removes normal security checks or implemented hardware code.
+See [Validation Lab](validation-lab.md) for precise evidence-reuse limitations
+and Ops **w18993** for the still-unimplemented cross-squash lane reuse.
+
+Ops **w18987**, **w18988**, **w18989** are complete for the hosted
+implementation; **w3454** remains a programme tracking item and **w3455**
+remains blocked on physical S25 access. Confirm vendor capability activation,
+app-process affinity (not adb-shell cpuset), actual user interaction,
+frame-time, thermals and battery/energy before claiming phone performance or
+publishing a new installable preview.

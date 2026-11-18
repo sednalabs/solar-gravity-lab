@@ -1,7 +1,9 @@
 # Validation Lab
 
-This repository uses a dispatch-only remote validation workflow so heavy proof
-work can run on GitHub-hosted runners instead of consuming Orchard host compute.
+This repository uses a **triggered and manually dispatchable** remote validation
+workflow so heavy proof runs on GitHub-hosted runners rather than consuming
+local development compute. `validation-lab` runs on scoped PR and main pushes,
+merge-group checkpoints, and `workflow_dispatch`; it is **not dispatch-only**.
 
 On canonical `main`, `validation-lab` validates the Rust-owned platform line and
 the forward Android shell under `clients/android`. It is no longer the old
@@ -18,7 +20,9 @@ checkpoint.
 
 ## Workflow files
 
-- `.github/workflows/validation-lab.yml`
+- `.github/workflows/validation-lab.yml` for canonical Rust/Android validation
+- `.github/workflows/hardware-optimisation.yml` for **manual-only** native Arm,
+  optional Vulkan and Qualcomm hardware experiments (PR #247)
 - `.github/workflows/docs-sanity.yml` for documentation-only link sanity
 - `.github/workflows/prerelease-apk.yml` for installable internal dev previews
 - `.github/workflows/interactive-android-build.yml` for reusable hosted Android
@@ -241,3 +245,49 @@ itself, let `.github/workflows/docs-sanity.yml` answer the first question:
 
 That keeps documentation maintenance fast while preserving `validation-lab` as
 the deliberate remote compute path for canonical code and build changes.
+
+## CI reuse and lane-selection truth (18 November 2026)
+
+The canonical [mainline integration record](mainline-integration-week-20261116.md)
+distinguishes the source and qualification checkpoints for PRs #237, #242,
+#245, #247 and #248. These are separate from the latest published alpha.2 APK.
+
+- **Already implemented:** on a PR `synchronize` or `ready_for_review`,
+  `validation-lab` looks for a successful exact prior PR-head validation with
+  matching PR number, base SHA, profile and lane set. When the prior head is
+  identical (for example, draft-to-ready) and the latest delta is empty, it
+  skips the expensive runtime lanes; otherwise it routes lanes using only the
+  newly changed files when trusted prior proof exists. The new run still
+  publishes its own summary. Evidence download, identity or schema failure
+  falls back to normal validation. This is **same-PR reuse**, not general
+  cross-commit caching.
+- **Already implemented in PR #248:** the manual hardware proof workflow and
+  its exclusive benchmark/probe scripts are treated as separate CI consumers.
+  An unrelated or documentation-only PR no longer needs Rust/Arm/Android
+  validation-lab lanes; an equivalent push to `main` runs the lightweight
+  plan/parity/summary without rerunning unaffected product lanes. Mixed product
+  changes still route to their real owners; unknown/shared-validation paths
+  fail closed to full qualification.
+- **Still required:** a product-facing `main` push and `merge_group`
+  checkpoint use the full runtime route. Explicit `broad`/`full` choices
+  and missing/untrusted change lists also run full. Independent CodeQL,
+  Security SARIF, docs and release workflows retain their own triggers and
+  GitHub's required status checks remain enforced.
+- **Not yet implemented:** cross-squash-merge reuse of successful per-lane
+  results. The PR head and squash commit may have the same Git tree but
+  different SHAs, and a targeted PR run may omit modes in the default-branch
+  full checkpoint. Ops **w18993** tracks trusted exact-tree/provenance,
+  matching lane/toolchain/environment fingerprints, complete prior evidence
+  and a fresh per-commit status, without skipping newly required coverage or
+  default-branch CodeQL scans. Do **not** claim that a green targeted PR
+  automatically qualifies an entire post-merge checkpoint.
+
+The expensive hardware proof is not required for routine source PRs:
+**Actions → Hardware optimisation proof → Run workflow** intentionally selects
+its `baseline_sha` when new benchmarks or device probes are needed. It retains
+its original deterministic scripts and artifacts, but has no
+`pull_request`/push trigger after [PR #247](https://github.com/sednalabs/solar-gravity-lab/pull/247).
+
+The relevant routing implementation is
+[`resolve_validation_lab_plan.py`](../.github/scripts/resolve_validation_lab_plan.py)
+with [`test_validation_lab_plan.py`](../.github/scripts/test_validation_lab_plan.py).
