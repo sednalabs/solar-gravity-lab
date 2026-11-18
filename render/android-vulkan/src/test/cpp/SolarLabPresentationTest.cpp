@@ -156,6 +156,18 @@ void TestFramingWhileTheReferenceMoves() {
 
 void TestGpuBufferAndCommandReuse() {
     using namespace solarlab::rendering;
+    // Scene hashes use all 64 bits. A paused rendezvous advance changes poses
+    // without moving the camera controls, so it must still invalidate GPU data
+    // when both old and new hashes have their high bit set.
+    constexpr uint64_t departure = 0x8000000000000061ULL;
+    constexpr uint64_t arrival = 0x80000000000002EBULL;
+    const auto departureRevision = SceneUploadRevision(departure, 17, 0, 1, 0);
+    const auto arrivalRevision = SceneUploadRevision(arrival, 17, 0, 1, 0);
+    assert(departureRevision != arrivalRevision);
+    assert(arrivalRevision == SceneUploadRevision(arrival, 17, 0, 1, 0));
+    assert(arrivalRevision != SceneUploadRevision(arrival, 18, 0, 1, 0));
+    assert(arrivalRevision != SceneUploadRevision(arrival ^ (1ULL << 63), 17, 0, 1, 0));
+    assert(arrivalRevision > 0 && arrivalRevision <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
     // A buffer is reusable only for the required capacity, binding usage and actual
     // memory capabilities. Host-visible fallback cannot masquerade as device-local.
     assert(CanReuseBuffer(1024, 768, 3, 3, 7, 6));

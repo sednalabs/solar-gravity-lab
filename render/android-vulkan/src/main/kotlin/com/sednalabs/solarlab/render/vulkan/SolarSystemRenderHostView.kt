@@ -39,6 +39,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var runtimeSessionHandle: Long = 0L
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
+    private var flightCameraMode = 0
     private var labMapMode = false
     private var labMapPlane = LabPlane.XY
     private var labViewportChangedListener: ((LabViewportState?) -> Unit)? = null
@@ -113,6 +114,14 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.zoomBy(scaleFactor)
     }
 
+    /** 0: laboratory/map camera; 1: external ship orbit; 2: attitude-follow chase. */
+    fun setFlightCamera(mode: Int) {
+        val next = mode.coerceIn(0, 2)
+        if (flightCameraMode == next) return
+        flightCameraMode = next
+        activeSurface?.setFlightCamera(next)
+    }
+
     fun setLabMapMode(enabled: Boolean) {
         if (labMapMode == enabled) return
         labMapMode = enabled
@@ -142,9 +151,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.focusAndFrameBody(bodyId, observerMode)
     }
 
-    fun frameBody(bodyId: String) {
-        selectedBodyId = bodyId
-        activeSurface?.frameBody(bodyId)
+    /** Frame a reference without replacing the flown/selected object when [selectBody] is false. */
+    fun frameBody(bodyId: String, selectBody: Boolean = true) {
+        if (selectBody) selectedBodyId = bodyId
+        activeSurface?.frameBody(bodyId, selectBody)
     }
 
     fun setCameraScaleBand(scaleBand: CameraScaleBand) {
@@ -295,6 +305,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setOnCameraScaleChangedListener(cameraScaleChangedListener)
         activeSurface?.setLabMapPlane(labMapPlane)
         activeSurface?.setLabMapMode(labMapMode)
+        activeSurface?.setFlightCamera(flightCameraMode)
         activeSurface?.setOnLabViewportChangedListener(labViewportChangedListener)
         addView(
             view,

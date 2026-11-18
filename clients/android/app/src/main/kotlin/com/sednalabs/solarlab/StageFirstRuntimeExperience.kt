@@ -95,6 +95,8 @@ import com.graciousgazelles.solarlab.render.core.RenderBodyKind
 import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.RenderTrail as StageRenderTrail
 import com.graciousgazelles.solarlab.render.core.TraceLayerMode
+import com.sednalabs.solarlab.runtime.FlightControl
+import com.sednalabs.solarlab.runtime.REFERENCE_SPACECRAFT_ID
 import com.sednalabs.solarlab.runtime.RenderFrame
 import com.sednalabs.solarlab.runtime.PlaybackSpeedPreset
 import com.sednalabs.solarlab.runtime.ManualAdvanceOutcome
@@ -296,13 +298,22 @@ internal fun StageFirstRuntimeExperience(
     SolarLabTheme {
         val context = LocalContext.current.applicationContext
         val lifecycleOwner = LocalLifecycleOwner.current
-        val coroutineScope = rememberCoroutineScope()
+        // These continuations update Android views and dialog state after native
+        // dispatcher hops. Keep their owner on the main thread, including when a
+        // Compose test supplies an unconfined effect dispatcher.
+        val coroutineScope = rememberCoroutineScope { kotlinx.coroutines.Dispatchers.Main.immediate }
 
         val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
         val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
         val experimentStatus by runtimeFacade.experimentStatus.collectAsStateWithLifecycle()
         val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
 
+        var flightActive by rememberSaveable { mutableStateOf(false) }
+        var flightStarting by remember { mutableStateOf(false) }
+        var lunarBriefVisible by rememberSaveable { mutableStateOf(false) }
+        var lunarStarting by remember { mutableStateOf(false) }
+        var lunarStartError by remember { mutableStateOf<String?>(null) }
+        var flightCameraMode by rememberSaveable { mutableStateOf(1) }
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
         var renderProcessingMode by remember { mutableStateOf(HostedDebugMode.initialRenderProcessingMode) }
@@ -736,7 +747,79 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
+        fun exitFlight() {
+            runtimeFacade.suspendFlightControls()
+            flightActive = false
+            renderHostView?.setFlightCamera(0)
+            changeLabView(labViewMode)
+            resetRuntimeCamera()
+        }
+
+        fun enterFlight() {
+            if (flightStarting || !canSendCommands) return
+            flightStarting = true
+            coroutineScope.launch {
+                try {
+                    runtimeFacade.applyCommand(RuntimeCommand.PausePlayback)
+                    runtimeFacade.applyCommand(RuntimeCommand.SetPlaybackRate(1.0))
+                    runtimeFacade.startFlight()
+                    runtimeFacade.setFlightControl(FlightControl())
+                    runtimeFacade.applyCommand(RuntimeCommand.FocusBody(REFERENCE_SPACECRAFT_ID))
+                    runtimeFacade.applyCommand(RuntimeCommand.SetObserverMode(RuntimeObserverMode.FollowSelected))
+                    selectedBodyId = REFERENCE_SPACECRAFT_ID
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    flightCameraMode = 1
+                    flightActive = true
+                    chromeModeName = StageChromeMode.COLLAPSED.name
+                } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                catch (error: Throwable) { labNotice = error.message ?: "Could not enter flight" }
+                finally { flightStarting = false }
+            }
+        }
+
+        fun launchLunarMission() {
+            if (lunarStarting || !canSendCommands) return
+            lunarStarting = true
+            lunarStartError = null
+            coroutineScope.launch {
+                try {
+                    runtimeFacade.startLunarMission()
+                    labInteraction.clearDraft()
+                    labInteraction.lastCommit = null
+                    selectedBodyId = REFERENCE_SPACECRAFT_ID
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    flightCameraMode = 2
+                    flightActive = true
+                    lunarBriefVisible = false
+                    chromeModeName = StageChromeMode.COLLAPSED.name
+                } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                catch (error: Throwable) { lunarStartError = error.message ?: "The lunar mission could not start" }
+                finally { lunarStarting = false }
+            }
+        }
+
+        LaunchedEffect(flightActive, flightCameraMode, renderHostView, runtimeSessionHandle) {
+            val host = renderHostView ?: return@LaunchedEffect
+            if (flightActive) {
+                selectedBodyId = REFERENCE_SPACECRAFT_ID
+                host.setSelectedBodyId(REFERENCE_SPACECRAFT_ID)
+                host.setFlightCamera(flightCameraMode)
+                if (flightCameraMode == 0) {
+                    observerMode = ObserverMode.FREE
+                    host.setObserverMode(ObserverMode.FREE)
+                    host.setLabMapMode(true)
+                    if (runtimeFacade.lunarMissionState() != null) host.resetCamera()
+                    else host.frameBody("earth", selectBody = false)
+                } else {
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    host.setLabMapMode(false)
+                    host.setObserverMode(ObserverMode.FOLLOW_SELECTED)
+                }
+            }
+        }
+
         fun loadScenarioPack(scenarioId: String) {
+            if (flightActive) exitFlight()
             labInteraction.clearDraft()
             labInteraction.lastCommit = null
             val scenarioPack = scenarioPacks.firstOrNull { it.scenarioId == scenarioId }
@@ -969,8 +1052,8 @@ internal fun StageFirstRuntimeExperience(
         }
 
         LaunchedEffect(runtimeSessionHandle, uiState.snapshot?.scenarioId, renderHostView, searchableBodies,
-            pendingScenarioFrame, openingSavedExperiment) {
-            if (!openingSavedExperiment && pendingScenarioFrame == null &&
+            pendingScenarioFrame, openingSavedExperiment, flightActive, lunarStarting) {
+            if (!openingSavedExperiment && !flightActive && !lunarStarting && pendingScenarioFrame == null &&
                 runtimeSessionHandle != 0L && framedLabSession != runtimeSessionHandle &&
                 uiState.snapshot?.scenarioId == "lab.earth-moon" && renderHostView != null &&
                 searchableBodies.any { it.id == "earth" } && searchableBodies.any { it.id == "moon" }) {
@@ -1082,15 +1165,19 @@ internal fun StageFirstRuntimeExperience(
             val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
             val placing = labInteraction.draft != null
             val typingPlacement = placing && landscape && WindowInsets.ime.getBottom(density) > 0
-            val headerHeight = if (typingPlacement) 0.dp else if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
-            val dockHeight = if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
+            val headerHeight = if (flightActive) { if (landscape) FlightChromeMetrics.LandscapeHeader else FlightChromeMetrics.Header } else if (typingPlacement) 0.dp else if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
+            val dockHeight = if (flightActive) { if (landscape) FlightChromeMetrics.LandscapeDock else FlightChromeMetrics.PortraitDock }
+                else if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
             val placementHeight = minOf(LabPlacementMetrics.PortraitHeight, maxHeight * 0.44f)
             val placementWidth = minOf(LabPlacementMetrics.LandscapeWidth, maxWidth * 0.46f)
             val bottomInset = navigationInset + if (placing) { if (landscape) 8.dp else placementHeight + 8.dp }
-                else if (chromeMode == StageChromeMode.MINIMAL) 0.dp else dockHeight
-            val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing) 0.dp else headerHeight
+                else if (chromeMode == StageChromeMode.MINIMAL && !flightActive) 0.dp else dockHeight
+            val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing && !flightActive) 0.dp else headerHeight
             Box(Modifier.fillMaxSize()
-                .padding(top = topInset, bottom = bottomInset, end = if (placing && landscape) placementWidth + 12.dp else 0.dp)
+                .padding(top = topInset, bottom = bottomInset,
+                    start = if (flightActive && landscape) FlightChromeMetrics.LandscapeSide else 0.dp,
+                    end = if (placing && landscape) placementWidth + 12.dp
+                        else if (flightActive && landscape) FlightChromeMetrics.LandscapeSide else 0.dp)
                 .testTag(LabSpatialTags.VIEWPORT)) {
             if (attachRenderHost) {
                 AndroidView(
@@ -1103,13 +1190,20 @@ internal fun StageFirstRuntimeExperience(
                             view.setOnCameraScaleChangedListener { scaleBand ->
                                 cameraScaleBand = scaleBand
                             }
-                            val cameraToRestore = labInteraction.savedCamera.takeIf { labInteraction.boundSessionHandle == runtimeSessionHandle }
+                            val cameraToRestore = labInteraction.savedCamera.takeIf {
+                                !flightActive && labInteraction.boundSessionHandle == runtimeSessionHandle
+                            }
                             val referenceToRestore = labInteraction.savedCameraReferenceId
                             val referencePositionToRestore = labInteraction.savedCameraReferencePosition
                             var restoredCamera = cameraToRestore == null
                             view.setOnLabViewportChangedListener { viewport ->
                                 labInteraction.viewport = viewport
-                                if (viewport != null && !restoredCamera) {
+                                if (flightActive) {
+                                    // Flight owns its camera across recreation. Consume any
+                                    // delayed lab restore and retain the lab's own saved view;
+                                    // a first close-flight frame must not trigger a map restore.
+                                    restoredCamera = true
+                                } else if (viewport != null && !restoredCamera) {
                                     restoredCamera = true
                                     val modeToRestore = observerMode
                                     val currentReference = viewport.bodies.firstOrNull { it.bodyId == referenceToRestore }?.worldPositionM
@@ -1135,7 +1229,7 @@ internal fun StageFirstRuntimeExperience(
                             view.setInteractionListener(
                                 object : RenderInteractionListener {
                                     override fun onBodySelectionChanged(bodyId: String?) {
-                                        if (labInteraction.draft != null) return
+                                        if (labInteraction.draft != null || flightActive) return
                                         selectedBodyId = bodyId
                                         if (semanticFocusAcknowledgement?.resolvedBodyId != bodyId) {
                                             semanticFocusAcknowledgement = null
@@ -1147,6 +1241,7 @@ internal fun StageFirstRuntimeExperience(
                                     }
 
                                     override fun onCameraNavigationModeChanged(mode: ObserverMode) {
+                                        if (flightActive) return
                                         observerMode = mode
                                         if (labInteraction.draft == null) syncObserver(selectedBodyId, mode)
                                     }
@@ -1183,7 +1278,7 @@ internal fun StageFirstRuntimeExperience(
                         val reference = draft?.reference ?: labInteraction.referenceBodies["earth"]
                         val plane = draft?.plane ?: labInteraction.plane
                         if (plane != null && reference != null) view.setLabMapPlane(plane.through(reference))
-                        view.setLabMapMode(labViewMode == LabViewMode.ORBIT_MAP)
+                        view.setLabMapMode(if (flightActive) flightCameraMode == 0 else labViewMode == LabViewMode.ORBIT_MAP)
                         view.updateRuntimeStageState(
                             sessionHandle = runtimeSessionHandle,
                             processingMode = renderProcessingMode,
@@ -1225,7 +1320,7 @@ internal fun StageFirstRuntimeExperience(
                 }
             }
 
-            LabSceneOverlay(
+            if (!flightActive || flightCameraMode == 0) LabSceneOverlay(
                 viewport = labInteraction.viewport,
                 names = searchableBodies.associate { it.id to it.displayName },
                 selectedBodyId = selectedBodyId,
@@ -1240,7 +1335,13 @@ internal fun StageFirstRuntimeExperience(
             )
             }
 
-            if (!placing) EarthMoonLabChrome(
+            if (flightActive) FlightModeChrome(
+                facade = runtimeFacade, uiState = uiState, cameraMode = flightCameraMode,
+                onCamera = { flightCameraMode = it }, onExit = ::exitFlight,
+                onSaved = { savedVisible = true },
+                onLunarMission = { lunarStartError = null; lunarBriefVisible = true },
+            )
+            if (!placing && !flightActive) EarthMoonLabChrome(
                 uiState = uiState,
                 selectedBody = selectedBody,
                 selectedName = selectedBody?.displayName ?: uiState.focusedBodyId?.let(::displayNameForBodyId) ?: activeScenarioPack.title,
@@ -1305,6 +1406,8 @@ internal fun StageFirstRuntimeExperience(
                         syncObserver(selectedBodyId, next)
                     },
                     undo = ::undoProbePlacement,
+                    enterFlight = ::enterFlight,
+                    enterLunarFlight = { lunarStartError = null; lunarBriefVisible = true },
                 ),
             )
             labInteraction.draft?.let { draft ->
@@ -1374,6 +1477,10 @@ internal fun StageFirstRuntimeExperience(
         }
 
         if (scienceVisible) LabScienceDialog(uiState, activeScenarioPack, onDismiss = { scienceVisible = false })
+        if (lunarBriefVisible) LunarFlightBriefDialog(
+            busy = lunarStarting, error = lunarStartError, onStart = ::launchLunarMission,
+            onDismiss = { if (!lunarStarting) lunarBriefVisible = false },
+        )
         if (inspectorVisible) {
             LabBodyInspectorDialog(
                 body = inspectedBody,
@@ -3368,7 +3475,9 @@ private fun RenderFrame.toRuntimeStageScene(): RuntimeStageScene {
         RuntimeStageBody(
             id = body.bodyId,
             displayName = displayNameForBodyId(body.bodyId),
-            positionM = origin + Vector3d(body.x.toDouble(), body.y.toDouble(), body.z.toDouble()),
+            positionM = origin + (body.spacecraft?.let {
+                Vector3d(it.positionFromOriginX, it.positionFromOriginY, it.positionFromOriginZ)
+            } ?: Vector3d(body.x.toDouble(), body.y.toDouble(), body.z.toDouble())),
             radiusM = body.radiusM.toDouble(),
             colorArgb = argbFrom(body.colorR, body.colorG, body.colorB, body.colorA),
             kind = body.kind.toStageRenderBodyKind(),
@@ -3425,6 +3534,7 @@ private fun RenderFrame.toRuntimeStageScene(): RuntimeStageScene {
 }
 
 private fun displayNameForBodyId(bodyId: String): String {
+    if (bodyId == REFERENCE_SPACECRAFT_ID) return "Odyssey"
     return SolarLabTeachingCatalog.entries
         .firstOrNull { entry -> entry.bodyId.equals(bodyId, ignoreCase = true) }
         ?.displayName

@@ -55,6 +55,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
     private var cameraState: CameraState = CameraState()
+    private var flightCameraMode = 0
     private var labMapMode = false
     private var labMapPlane = LabPlane.XY
     private var labViewportState: LabViewportState? = null
@@ -275,6 +276,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun resetCamera() {
         cancelCameraTransition()
+        if (isRuntimeBound() && flightCameraMode != 0) {
+            // Close flight owns its ship frame. The ordinary animated Home query
+            // resolves a laboratory overview and would bypass the native flight
+            // reset guard by applying each animation sample through setCamera.
+            serializedRenderer.execute { handle -> SolarLabVulkanBridge.resetRuntimeCamera(handle) }
+            renderLatestScene()
+            return
+        }
         val request = cameraTransitionGeneration
         switchToFreeCameraForManualNavigation()
         if (isRuntimeBound()) {
@@ -402,13 +411,16 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         }
     }
 
-    override fun frameBody(bodyId: String) {
+    override fun frameBody(bodyId: String, selectBody: Boolean) {
         cancelCameraTransition()
         val request = cameraTransitionGeneration
         switchToFreeCameraForManualNavigation()
-        selectedBodyId = bodyId
+        // Flight maps frame Earth while the ship remains selected. Replacing selection
+        // here makes the next Compose stage update restore the ship and cancel this
+        // pending transition, stranding the map at the close-flight metre scale.
+        if (selectBody) selectedBodyId = bodyId
         if (isRuntimeBound()) {
-            serializedRenderer.execute { handle ->
+            if (selectBody) serializedRenderer.execute { handle ->
                 SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, bodyId)
             }
             requestRuntimeCameraTransition(bodyId, request) { renderLatestScene() }
@@ -436,6 +448,15 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         cameraScaleChangedListener = listener
         lastReportedCameraScaleBand = null
         reportCameraScaleBand()
+    }
+
+    override fun setFlightCamera(mode: Int) {
+        val next = mode.coerceIn(0, 2)
+        if (flightCameraMode == next) return
+        cancelCameraTransition()
+        flightCameraMode = next
+        serializedRenderer.execute { handle -> SolarLabVulkanBridge.setFlightCamera(handle, next) }
+        renderLatestScene()
     }
 
     override fun setLabMapMode(enabled: Boolean) {
@@ -485,6 +506,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     override fun currentLabViewportState(): LabViewportState? = labViewportState
 
     override fun restoreLabCamera(camera: CameraState) {
+        // A retained laboratory viewport can arrive from the first-frame listener
+        // after activity recreation. Close flight owns its ship frame; restoring
+        // that old map here would overwrite the frame that just became visible.
+        if (flightCameraMode != 0) return
         cancelCameraTransition()
         switchToFreeCameraForManualNavigation()
         applyCameraState(camera)
@@ -1059,6 +1084,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val nextSelectedBodyId = selectedBodyId
         val nextTraceLayerMode = renderLayerOptions.traceLayerMode
         val nextCamera = cameraState
+        val nextFlightMode = flightCameraMode
         val nextMapMode = labMapMode
         val nextMapPlane = labMapPlane
         val density = resources.displayMetrics.density.toDouble()
@@ -1071,6 +1097,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 SolarLabVulkanBridge.setRuntimeObserverMode(handle, nextObserverMode)
                 SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, nextSelectedBodyId)
                 SolarLabVulkanBridge.setRuntimeTraceLayerMode(handle, nextTraceLayerMode)
+                SolarLabVulkanBridge.setFlightCamera(handle, nextFlightMode)
             } else {
                 SolarLabVulkanBridge.unbindRuntimeSession(handle)
                 SolarLabVulkanBridge.setCamera(

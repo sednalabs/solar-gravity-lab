@@ -14,11 +14,12 @@ internal interface SolarRenderSurface {
     fun resetCamera()
     fun zoomBy(scaleFactor: Float) {}
     fun focusAndFrameBody(bodyId: String?, observerMode: ObserverMode) {}
-    fun frameBody(bodyId: String) {}
+    fun frameBody(bodyId: String, selectBody: Boolean = true) {}
     fun setCameraScaleBand(scaleBand: CameraScaleBand) {}
     fun currentCameraScaleBand(): CameraScaleBand = CameraScaleBand.SYSTEM
     fun setOnCameraScaleChangedListener(listener: ((CameraScaleBand) -> Unit)?) {}
     fun setLabMapMode(enabled: Boolean) {}
+    fun setFlightCamera(mode: Int) {}
     fun setLabMapPlane(plane: LabPlane) {}
     fun setOnLabViewportChangedListener(listener: ((LabViewportState?) -> Unit)?) {}
     fun currentLabViewportState(): LabViewportState? = null

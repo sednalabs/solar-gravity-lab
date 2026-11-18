@@ -46,6 +46,15 @@ data class RenderBody(
     val colorB: Float,
     val colorA: Float,
     val appearance: RenderCelestialAppearance,
+    val spacecraft: RenderSpacecraft? = null,
+)
+
+/** Immutable packet projection, never an alternate physical state. */
+data class RenderSpacecraft(
+    val meshKind: Int,
+    val attitudeX: Float, val attitudeY: Float, val attitudeZ: Float, val attitudeW: Float,
+    val engineThrottle: Float,
+    val positionFromOriginX: Double, val positionFromOriginY: Double, val positionFromOriginZ: Double,
 )
 
 enum class RenderCelestialMaterial(val nativeCode: Int) {
@@ -176,7 +185,7 @@ data class RenderPoint(
 )
 
 internal object VulkanPacketRenderFrameDecoder {
-    private const val BODY_STRIDE_BYTES = 244
+    private const val BODY_STRIDE_BYTES = 296
     private const val TRACER_STRIDE_BYTES = 132
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
     private const val TRAIL_SPAN_STRIDE_BYTES = 136
@@ -257,6 +266,15 @@ internal object VulkanPacketRenderFrameDecoder {
                 colorA = ordered.getFloat(base + 28),
                 selected = ordered.getInt(base + 36) != 0,
                 appearance = decodeAppearance(ordered, base + BODY_APPEARANCE_OFFSET_BYTES),
+                spacecraft = if (ordered.getInt(base + 244) != 0) RenderSpacecraft(
+                    meshKind = ordered.getInt(base + 244),
+                    attitudeX = ordered.getFloat(base + 248), attitudeY = ordered.getFloat(base + 252),
+                    attitudeZ = ordered.getFloat(base + 256), attitudeW = ordered.getFloat(base + 260),
+                    engineThrottle = ordered.getFloat(base + 264),
+                    positionFromOriginX = ordered.getDouble(base + 272),
+                    positionFromOriginY = ordered.getDouble(base + 280),
+                    positionFromOriginZ = ordered.getDouble(base + 288),
+                ) else null,
             )
         }
     }

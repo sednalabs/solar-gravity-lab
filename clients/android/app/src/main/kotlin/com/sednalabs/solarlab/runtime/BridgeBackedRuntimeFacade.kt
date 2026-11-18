@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Android-local implementation of `RuntimeFacade`.
@@ -54,6 +55,8 @@ class BridgeBackedRuntimeFacade internal constructor(
         JniRuntimeBridge(performanceHints = androidRuntimePerformanceHints(context)),
         operationScope = operationScope, experimentStore = FileExperimentStore(experimentDirectory),
     )
+
+    private val flightInputGeneration = AtomicLong(0)
 
     private val manualLock = Any()
     private var manualJob: Job? = null
@@ -171,6 +174,89 @@ class BridgeBackedRuntimeFacade internal constructor(
     } catch (error: Throwable) {
         _uiState.update { it.copy(noticeLine = "Could not inspect body: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
         null
+    }
+
+    override suspend fun startFlight(shipId: String) = withContext(NonCancellable + boundaryDispatcher) {
+        check(_uiState.value.manualAdvance == null) { "Finish or cancel time advance before entering flight" }
+        bridge.startFlight(shipId).forEach(::applySignal)
+    }
+
+    override suspend fun startLunarMission(shipId: String) = experimentMutex.withLock {
+        val store = checkNotNull(experimentStore) { "Save storage is unavailable; your current world has not been replaced" }
+        _experimentStatus.value = ExperimentStatus(busyLabel = "Saving this experiment and preparing lunar flight")
+        _uiState.update { it.copy(pendingActionLabel = "Preparing lunar flight") }
+        try {
+            withContext(NonCancellable) {
+                check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance before starting a mission" }
+                flightInputGeneration.incrementAndGet()
+                val previous = withContext(boundaryDispatcher) {
+                    bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal)
+                    bridge.exportSavedSession()
+                }
+                val saved = withContext(Dispatchers.IO) {
+                    store.save("Before lunar flight ${java.text.SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(java.util.Date())}", previous)
+                }
+                refreshSavedExperiments()
+                // Native construction is isolated until seeding, mission authoring and validation succeed.
+                withContext(boundaryDispatcher) { bridge.startLunarFlight(shipId).forEach(::applySignal) }
+                _lastProbeCommit.value = null
+                _experimentStatus.value = ExperimentStatus(notice = "Lunar flight ready. Previous world saved as ${saved.name}", tone = ShellNoticeTone.Positive)
+                _uiState.update { it.copy(pendingActionLabel = null, playbackMeasurement = null,
+                    manualAdvanceOutcome = null, noticeLine = "Lunar flight ready. Your previous experiment has been saved.",
+                    noticeTone = ShellNoticeTone.Positive) }
+            }
+        } catch (error: Throwable) {
+            _experimentStatus.value = ExperimentStatus(notice = "Lunar flight could not start: ${error.message}", tone = ShellNoticeTone.Caution)
+            _uiState.update { it.copy(pendingActionLabel = null, noticeLine = "Lunar flight could not start: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+            throw error
+        }
+    }
+
+    override suspend fun beginLunarDeparture(shipId: String) {
+        flightInputGeneration.incrementAndGet()
+        withContext(NonCancellable + boundaryDispatcher) {
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance first" }
+            bridge.beginLunarDeparture(shipId).forEach(::applySignal)
+            bridge.applyCommand(RuntimeCommand.ResumePlayback).forEach(::applySignal)
+        }
+    }
+
+    override suspend fun setFlightControl(control: FlightControl, shipId: String) {
+        val generation = flightInputGeneration.get()
+        withContext(boundaryDispatcher) {
+            if (generation != flightInputGeneration.get()) return@withContext
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel time advance before controlling flight" }
+            if (control.requiresRealTime && (_uiState.value.snapshot?.simSecondsPerRealSecond ?: 1.0) > 1.0) {
+                bridge.applyCommand(RuntimeCommand.SetPlaybackRate(1.0)).forEach(::applySignal)
+            }
+            bridge.setFlightControl(shipId, control)
+        }
+    }
+
+    override suspend fun flightState(shipId: String): FlightState? =
+        withContext(boundaryDispatcher) { bridge.flightState(shipId) }
+
+    override suspend fun lunarMissionState(shipId: String): LunarMissionState? =
+        withContext(boundaryDispatcher) { bridge.lunarMissionState(shipId) }
+
+    override fun suspendFlightControls(shipId: String) {
+        // Invalidate inputs queued by the old Activity before scheduling the retained stop.
+        flightInputGeneration.incrementAndGet()
+        val session = _uiState.value.sessionHandle
+        operationScope.launch(NonCancellable + boundaryDispatcher) {
+            if (session == null || session != _uiState.value.sessionHandle) return@launch
+            try {
+                bridge.setFlightControl(shipId, FlightControl.Cut)
+            } catch (error: Throwable) {
+                _uiState.update { it.copy(noticeLine = "Could not cut flight input: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+            } finally {
+                // A missing or removed ship must never prevent stopping simulation time.
+                try { bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal) }
+                catch (error: Throwable) {
+                    _uiState.update { it.copy(noticeLine = "Could not pause flight: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+                }
+            }
+        }
     }
 
     override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =

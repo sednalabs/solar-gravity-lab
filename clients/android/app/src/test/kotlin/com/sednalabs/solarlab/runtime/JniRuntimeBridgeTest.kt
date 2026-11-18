@@ -18,6 +18,31 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 
 class JniRuntimeBridgeTest {
+    @Test fun lunarCandidateFailurePreservesTheCurrentSession() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 84L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        transport.lunarFlightError = IllegalStateException("Mission authoring rejected")
+        var rejected = false
+        try { bridge.startLunarFlight(REFERENCE_SPACECRAFT_ID) } catch (_: IllegalStateException) { rejected = true }
+        assertTrue(rejected)
+        assertTrue(bridge.isCurrentSession(42L))
+        assertEquals(listOf(84L), transport.destroyedHandles)
+    }
+
+    @Test fun lunarCandidateIsSeededAndValidatedBeforeReplacingTheLaboratory() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 84L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        val signals = bridge.startLunarFlight(REFERENCE_SPACECRAFT_ID)
+        assertTrue(bridge.isCurrentSession(84L))
+        assertEquals(listOf(42L), transport.destroyedHandles)
+        assertEquals(listOf(84L to REFERENCE_SPACECRAFT_ID), transport.lunarStarts)
+        assertTrue(signals.any { it is RuntimeSignal.Connected && it.handle == 84L })
+    }
+
     @Test
     fun transportCancellationPropagatesThroughRefreshAndCommand() = runBlocking {
         val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 1))))
@@ -605,8 +630,18 @@ class JniRuntimeBridgeTest {
         var validationSummaryError: Throwable? = null
         var probePreviewError: Throwable? = null
         var probeCommitError: Throwable? = null
+        var lunarFlightError: Throwable? = null
+        val lunarStarts = mutableListOf<Pair<Long, String>>()
         val committedProbeCandidates = mutableListOf<RuntimeBodyState>()
         val probeUndoRequests = mutableListOf<Pair<String, Long>>()
+
+        override fun startLunarFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) {
+            lunarFlightError?.let { throw it }
+            lunarStarts += handle to shipId
+        }
+        override fun flightState(handle: Long, shipId: String) = DoubleArray(44).apply {
+            this[0] = 1.0; this[3] = 100.0; this[4] = 500.0; this[5] = 600.0; this[20] = 1.0
+        }
 
         override fun ensureLibraryLoaded(): NativeLibraryLoadOutcome = NativeLibraryLoadOutcome.Success
 
@@ -618,7 +653,7 @@ class JniRuntimeBridgeTest {
             return NativeCreateSessionResult(
                 result = NativeResult(code = 0),
                 handle = sessionHandles.removeFirstOrNull() ?: 42L,
-                abiVersion = 12,
+                abiVersion = 13,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
             )
@@ -628,7 +663,7 @@ class JniRuntimeBridgeTest {
             runtimeInfoHandles += handle
             return NativeRuntimeInfoResult(
                 result = NativeResult(code = 0),
-                abiVersion = 12,
+                abiVersion = 13,
                 requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
@@ -644,7 +679,7 @@ class JniRuntimeBridgeTest {
         }
 
         override fun importSavedSession(templateHandle: Long, bytes: ByteArray) = NativeCreateSessionResult(
-            result = NativeResult(code = 0), handle = validationHandle, abiVersion = 12,
+            result = NativeResult(code = 0), handle = validationHandle, abiVersion = 13,
             cpuBackend = runtimeInfoCpuBackend, gpuBackend = runtimeInfoGpuBackend,
         )
 

@@ -45,6 +45,7 @@ class VulkanPacketRenderFrameDecoderTest {
                 put(bodyId)
                 position(BODY_ID_LENGTH_OFFSET_BYTES)
                 putInt(bodyId.size)
+                position(BODY_STRIDE_BYTES)
                 flip()
             }
 
@@ -311,7 +312,7 @@ class VulkanPacketRenderFrameDecoderTest {
     }
 
     private companion object {
-        private const val BODY_STRIDE_BYTES = 244
+        private const val BODY_STRIDE_BYTES = 296
         private const val BODY_APPEARANCE_OFFSET_BYTES = 44
         private const val BODY_ID_OFFSET_BYTES = 144
         private const val BODY_ID_LENGTH_OFFSET_BYTES = 240

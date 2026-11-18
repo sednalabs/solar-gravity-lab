@@ -113,6 +113,7 @@ public:
     LabViewportSnapshot GetLabViewportSnapshot() const;
     void SetLabMapView(bool enabled, double normalX, double normalY, double normalZ);
     void SetTouchDensity(double density);
+    void SetFlightCamera(int mode);
     std::optional<CameraSnapshot> ResolveRuntimeHomeCamera() const;
     std::optional<CameraSnapshot> ResolveRuntimeBodyFrame(const std::string& bodyId) const;
     std::optional<CameraTransitionFrame> ResolveRuntimeCameraTransition(const std::string& bodyId) const;
@@ -138,11 +139,14 @@ public:
         float visualRadiusM = 0.0f;
         float frameRadiusM = 0.0f;
         uint32_t kind = 0;
+        uint32_t meshKind = 0;
+        std::array<float, 4> attitude{0, 0, 0, 1};
     };
 
 private:
     struct RuntimeSceneState {
-        int64_t packetRevision = -1;
+        // Snapshot validity is tracked separately; preserve the packet's u64 epoch frame.
+        uint64_t packetRevision = 0;
         int64_t uploadedRevision = -1;
         double sceneOriginX = 0.0;
         double sceneOriginY = 0.0;
@@ -199,6 +203,8 @@ private:
     int runtimeTraceLayerModeCode_ = 0;
     std::string runtimeSelectedBodyId_;
 
+    int flightCameraMode_ = 0;
+    bool flightFramePending_ = false;
     bool labMapMode_ = false;
     double labMapYawRadians_ = 0.0;
     double labMapPitchRadians_ = 1.5707963267948966;

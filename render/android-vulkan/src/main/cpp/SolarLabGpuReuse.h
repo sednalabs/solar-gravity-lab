@@ -7,6 +7,21 @@
 
 namespace solarlab::rendering {
 
+inline uint64_t SceneUploadRevision(uint64_t sceneIdentity, uint64_t cameraRevisionCounter,
+    int processingModeCode, int observerModeCode, int traceLayerModeCode) {
+    // The source is an unsigned scene hash, not an optional signed frame index.
+    // Clamping its high-bit values to zero aliases half of all physical scenes
+    // and leaves GPU poses stale when the camera settings have not changed.
+    uint64_t revision = sceneIdentity;
+    revision ^= (cameraRevisionCounter + 0x9E3779B97F4A7C15ULL + (revision << 6U) + (revision >> 2U));
+    revision ^= (static_cast<uint64_t>(processingModeCode & 0xFFFF) << 16U);
+    revision ^= (static_cast<uint64_t>(observerModeCode & 0xFFFF) << 32U);
+    revision ^= (static_cast<uint64_t>(traceLayerModeCode & 0xFFFF) << 48U);
+    // -1 is the upload sentinel. Fold every source bit before the final mask.
+    revision &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+    return revision == 0 ? 1 : revision;
+}
+
 inline bool CanReuseBuffer(uint64_t capacity, uint64_t required, uint32_t usage, uint32_t requiredUsage,
     uint32_t memoryProperties, uint32_t requiredMemoryProperties) {
     return capacity >= required && usage == requiredUsage &&
@@ -37,7 +52,8 @@ struct ComputeCommandState {
 };
 
 struct SceneCommandState {
-    std::array<DrawCommandState, 5> draws{};
+    bool flightPerspective = false;
+    std::array<DrawCommandState, 8> draws{};
     ComputeCommandState medium;
     ComputeCommandState far;
     std::vector<uint32_t> trailStrips;
