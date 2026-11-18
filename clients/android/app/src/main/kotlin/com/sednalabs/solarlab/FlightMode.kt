@@ -402,7 +402,7 @@ internal fun FlightModeChrome(
                 FlightAction("Station mission", { cut(); facade.suspendFlightControls(); onRendezvousMission() }, RendezvousTags.BRIEF)
             }
             if (rendezvous != null) {
-                RendezvousPanel(requireNotNull(rendezvous), landscape, paused, ready, missionActionBusy,
+                if (!landscape) RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
                     onGuidance = ::setEncounterGuidance)
             } else if (lunarMission != null) {
                 LunarMissionPanel(requireNotNull(lunarMission), landscape, paused, ready, missionActionBusy, coasting,
@@ -439,6 +439,16 @@ internal fun FlightModeChrome(
                         FlightEnginePanel(control, sample, ready, paused, actions)
                         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = FlightLine)
                         FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—", "lowest altitude")
+                    }
+                }
+                if (rendezvous != null) {
+                    // Keep the encounter's centre clear between the camera row
+                    // and guidance controls without shrinking either touch area.
+                    Box(Modifier.align(Alignment.BottomCenter)
+                        .padding(horizontal = FlightChromeMetrics.LandscapeSide)
+                        .widthIn(max = 600.dp)) {
+                        RendezvousPanel(requireNotNull(rendezvous), true, paused, ready, missionActionBusy,
+                            onGuidance = ::setEncounterGuidance)
                     }
                 }
             }

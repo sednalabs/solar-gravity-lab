@@ -387,7 +387,8 @@ class OrbitalFlightJourneyInstrumentationTest {
         waitUntil { composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && nodes(RendezvousTags.PANEL) }
         assertEncounterView(targetId)
         composeRule.onNodeWithTag(RendezvousTags.APPROACH).assertIsDisplayed()
-        capture("rendezvous-restored-landscape.png", encounterTargetId = targetId, requireEncounterDetail = true)
+        capture("rendezvous-restored-landscape.png", encounterTargetId = targetId, requireEncounterDetail = true,
+            requireUnobscuredEncounter = true)
     }
 
     private fun encounter(facade: RuntimeFacade): RendezvousState = runBlocking { requireNotNull(facade.rendezvousState()) }
@@ -461,7 +462,8 @@ class OrbitalFlightJourneyInstrumentationTest {
     }
 
     private fun capture(name: String, requireCloseShip: Boolean = false,
-        encounterTargetId: String? = null, requireEncounterDetail: Boolean = false) {
+        encounterTargetId: String? = null, requireEncounterDetail: Boolean = false,
+        requireUnobscuredEncounter: Boolean = false) {
         if (requireCloseShip) assertCloseFlightView(name)
         var surface: SurfaceView? = null
         var submitted: LabViewportState? = null
@@ -485,6 +487,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         var sampleCount = 0
         var attempt = 0
         var meshDiagnostic = ""
+        var encounterEnvelopesClear = !requireUnobscuredEncounter
         try {
             while (SystemClock.uptimeMillis() < deadline) {
                 // Both acquisitions must be fresh. PixelCopy may initially return
@@ -517,6 +520,12 @@ class OrbitalFlightJourneyInstrumentationTest {
                     val anchors = ids.mapNotNull { id -> frame?.bodies?.firstOrNull { it.bodyId == id } }
                     val overlays = encounterOverlayBoundsOnScreen()
                     val evidence = anchors.map { encounterMeshMatches(nativeImage, windowImage, origin, it, overlays) }
+                    val envelopes = if (requireUnobscuredEncounter) anchors.map {
+                        encounterEnvelope(nativeImage, windowImage, origin, it, overlays)
+                    } else emptyList()
+                    encounterEnvelopesClear = !requireUnobscuredEncounter ||
+                        (envelopes.size == 2 && envelopes.all { it.clear } && frame != null &&
+                            frame.widthPx == nativeImage.width && frame.heightPx == nativeImage.height)
                     matchCount = evidence.sumOf { it.matches }
                     sampleCount = evidence.sumOf { it.samples }
                     val authoritative = encounter(composeRule.activity.runtimeFacadeForTesting)
@@ -526,14 +535,15 @@ class OrbitalFlightJourneyInstrumentationTest {
                     // A distant, true-scale hull may cover fewer than twelve
                     // material pixels. It must still contribute matching pixels;
                     // the readable arrival/reopened views prove each mesh alone.
-                    matched = evidence.size == 2 && sampleCount >= 12 && matchCount * 4 >= sampleCount * 3 &&
+                    matched = encounterEnvelopesClear && evidence.size == 2 && sampleCount >= 12 && matchCount * 4 >= sampleCount * 3 &&
                         evidence.all { it.samples > 0 && it.matches * 4 >= it.samples * 3 &&
                             (!requireEncounterDetail || it.samples >= 12) } &&
                         authoritative.targetAvailable && authoritative.targetBodyId == encounterTargetId &&
                         renderedRange != null && abs(renderedRange - authoritative.rangeM) < 1.0
                     meshDiagnostic = " renderedRange=$renderedRange nativeRange=${authoritative.rangeM} " +
                         evidence.joinToString { "${it.bodyId}@${it.x},${it.y},r=${it.radius}:" +
-                            "${it.matches}/${it.samples},hudExcluded=${it.hudExcluded}" }
+                            "${it.matches}/${it.samples},hudExcluded=${it.hudExcluded}" } +
+                        if (requireUnobscuredEncounter) " envelopes=" + envelopes.joinToString { it.diagnostic } else ""
                 } else if (requireCloseShip) {
                     val matches = nativeWindowMatches(nativeImage, windowImage, origin)
                     matchCount = matches.first
@@ -551,6 +561,9 @@ class OrbitalFlightJourneyInstrumentationTest {
                 if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeByFrame()
                 SystemClock.sleep((deadline - SystemClock.uptimeMillis()).coerceIn(0, 80))
             }
+            if (requireUnobscuredEncounter) assertTrue(
+                "Both encounter hull envelopes must be fully visible outside the actual HUD: $name;$meshDiagnostic",
+                encounterEnvelopesClear)
             assertTrue("Native stage and window did not converge: $name; matched=$matchCount/$sampleCount, " +
                 "pairs=$attempt, currentRadius=${submitted?.camera?.viewRadiusM}$meshDiagnostic", matched)
         } finally {
@@ -604,6 +617,32 @@ class OrbitalFlightJourneyInstrumentationTest {
 
     private data class EncounterMeshEvidence(val bodyId: String, val x: Float, val y: Float, val radius: Float,
         val matches: Int, val samples: Int, val hudExcluded: Int)
+
+    private data class EncounterEnvelopeEvidence(val clear: Boolean, val diagnostic: String)
+
+    private fun encounterEnvelope(stage: Bitmap, window: Bitmap, origin: IntArray,
+        anchor: LabBodyAnchor, overlays: List<RectF>): EncounterEnvelopeEvidence {
+        if (!anchor.xPx.isFinite() || !anchor.yPx.isFinite() || !anchor.radiusPx.isFinite() || anchor.radiusPx <= 0f) {
+            return EncounterEnvelopeEvidence(false, "${anchor.bodyId}:invalid projected hull")
+        }
+        // The native radius encloses the physical hull, including unlit material.
+        // Enough matching pixels below an overlay cannot prove an unobscured ship.
+        // The landscape cockpit must leave the whole projected envelope clear,
+        // with a two-pixel raster margin against surface/window edges and the HUD.
+        val radius = anchor.radiusPx + 2f
+        val x = origin[0] + anchor.xPx
+        val y = origin[1] + anchor.yPx
+        val envelope = RectF(x - radius, y - radius, x + radius, y + radius)
+        val surfaceBounds = RectF(origin[0].toFloat(), origin[1].toFloat(),
+            origin[0] + stage.width.toFloat(), origin[1] + stage.height.toFloat())
+        val inSurface = surfaceBounds.contains(envelope)
+        val inWindow = RectF(0f, 0f, window.width.toFloat(), window.height.toFloat()).contains(envelope)
+        val intersections = overlays.filter { RectF.intersects(envelope, it) }
+        val clear = !anchor.occluded && inSurface && inWindow && intersections.isEmpty()
+        return EncounterEnvelopeEvidence(clear,
+            "${anchor.bodyId}:clear=$clear,hull=$envelope,inSurface=$inSurface,inWindow=$inWindow," +
+                "occluded=${anchor.occluded},hud=$intersections")
+    }
 
     private fun encounterOverlayBoundsOnScreen(): List<RectF> {
         val screen = IntArray(2)
