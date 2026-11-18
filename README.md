@@ -4,13 +4,19 @@ Solar Gravity Lab's canonical `main` branch runs the Rust-owned simulation with
 the native Vulkan Android stage. **Source on `main` is newer than the currently
 published installable APK**: the latest published preview is
 [`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2).
-The later interaction, probe-mass and portable-experiment changes merged in
-[PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237) passed hosted
-validation but have **not** yet been published as another APK. Hosted emulator
+The later Earth–Moon interaction, probe-mass and portable-experiment changes
+merged in [PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237),
+the Arm64 FP64 two-target batching in [PR #242](https://github.com/sednalabs/solar-gravity-lab/pull/242),
+and the cache/topology/Vulkan programme in [PR #245](https://github.com/sednalabs/solar-gravity-lab/pull/245)
+are **implemented on `main`**, with hosted validation, but have **not** been
+published in another APK. Physical Galaxy S25 Ultra acceptance is outstanding. Hosted emulator
 validation is not physical Galaxy S25 acceptance.
 
 Start with the [documentation guide](docs/README.md) for the current/historical
-split, test evidence and known delivery limitations.
+split, test evidence and known delivery limitations. The
+[16–18 November mainline integration record](docs/mainline-integration-week-20261116.md)
+reconciles all 51 commits on `main` during the current week, including the
+hardware and CI changes.
 
 ## Earth–Moon laboratory
 
@@ -81,6 +87,10 @@ What is real on this canonical main line today:
   bodies can carry display mass without silently perturbing canonical bodies
 - working Android native builds through `cargo-ndk` and the Android app Gradle
   pipeline
+- the merged cache-aware FP64 NEON kernel, OS-qualified Arm capability/topology
+  probes and optional Vulkan/QCOM acceleration paths; portable fallbacks and
+  hosted correctness tests are in place, but vendor execution and physical
+  speedups are not established
 
 What is intentionally still transitional:
 
@@ -229,7 +239,14 @@ not the old root app:
 Use `.github/workflows/validation-lab.yml` for canonical validation slices and
 `.github/workflows/prerelease-apk.yml` for installable release candidates.
 `validation-lab` includes a hosted Arm64 capability census lane and an
-ARM64-native ISA proof lane. `prerelease-apk` also runs the ISA proof gate
+ARM64-native ISA proof lane. Exact-head same-PR evidence can be reused when
+eligible; CI-only or other-consumer changes no longer force unrelated runtime
+lanes on PRs or post-merge main pushes. Product, unknown and shared-validation
+changes retain full post-merge qualification, and cross-squash per-lane proof
+reuse is **not yet implemented** (Ops w18993). The large
+`.github/workflows/hardware-optimisation.yml` proof is **manual-dispatch only**
+after PR #247, not a normal PR gate. See [Validation Lab](docs/validation-lab.md).
+`prerelease-apk` also runs the ISA proof gate
 (`ubuntu-24.04-arm`) via `.github/scripts/run_arm64_isa_proof.sh` before
 publish.
 
