@@ -1,7 +1,7 @@
 pub mod assembly;
 pub mod spacecraft;
 pub use assembly::{
-    ContactPart, ContactShape, DockingPortGeometry, SpacecraftAssembly, SpacecraftContactGeometry,
+    ContactPart, ContactShape, DockingPortGeometry, SpacecraftAssembly, SpacecraftContactGeometry, SpacecraftVisualBinding,
 };
 pub mod docking;
 pub mod science;

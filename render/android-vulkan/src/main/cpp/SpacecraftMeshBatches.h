@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SpacecraftMeshCatalog.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,10 +10,10 @@
 namespace solarlab::spacecraft {
 inline constexpr uint32_t kAsteriaMeshKind = 1;
 inline constexpr uint32_t kRelayStationMeshKind = 2;
-inline constexpr std::array<uint32_t, 2> kMeshKinds{kAsteriaMeshKind, kRelayStationMeshKind};
 
 inline bool IsSupportedMesh(uint32_t kind) {
-    return kind == kAsteriaMeshKind || kind == kRelayStationMeshKind;
+    for (const auto registered : kMeshKinds) if (kind == registered) return true;
+    return false;
 }
 
 struct MeshInstanceRange {

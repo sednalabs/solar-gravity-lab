@@ -1,0 +1,33 @@
+{
+  "format": "solarlab.asset-catalog",
+  "version": 1,
+  "assets": [
+    {
+      "id": "builtin:asteria",
+      "mesh_kind": 1,
+      "source": "render/android-vulkan/assets-src/asteria.gltf",
+      "symbol_prefix": "Reference",
+      "header": "ReferenceSpacecraftMesh.h",
+      "framing_radius_m": 8,
+      "contact_profile": "asteria"
+    },
+    {
+      "id": "builtin:relay-station",
+      "mesh_kind": 2,
+      "source": "render/android-vulkan/assets-src/relay-station.gltf",
+      "symbol_prefix": "RelayStation",
+      "header": "RelayStationMesh.h",
+      "framing_radius_m": 12,
+      "contact_profile": "relay-station"
+    },
+    {
+      "id": "example:pathfinder",
+      "mesh_kind": 3,
+      "source": "engine/data/authoring/assets/pathfinder.gltf",
+      "symbol_prefix": "Pathfinder",
+      "header": "PathfinderMesh.h",
+      "framing_radius_m": 5,
+      "contact_profile": null
+    }
+  ]
+}

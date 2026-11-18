@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SpacecraftMeshCatalog.h"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -53,8 +54,8 @@ struct ComputeCommandState {
 
 struct SceneCommandState {
     bool flightPerspective = false;
-    std::array<DrawCommandState, 9> draws{};
-    std::array<uint32_t, 2> meshInstanceCounts{};
+    std::array<DrawCommandState, 6 + 2 * solarlab::spacecraft::kMeshKinds.size()> draws{};
+    std::array<uint32_t, solarlab::spacecraft::kMeshKinds.size()> meshInstanceCounts{};
     ComputeCommandState medium;
     ComputeCommandState far;
     std::vector<uint32_t> trailStrips;

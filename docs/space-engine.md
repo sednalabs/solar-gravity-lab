@@ -113,3 +113,13 @@ exact-source hosted journey evidence. That scenario retains its contact-free
 75 m stand-off objective. The separate [30 m docking mission](station-docking.md)
 adds force-driven approach, safe physical collar contact, a retained fixed
 attachment, and release followed by manual RCS departure.
+
+## External spacecraft and scenario authoring
+
+The [spacecraft authoring guide](spacecraft-authoring.md) describes versioned JSON
+construction, atomic imports, composable contact geometry, independent local
+interaction islands, the generated visual-asset catalog and the native
+`authoring_lab` example. The checked-in workshop, lunar depot and Pathfinder
+examples construct different vehicles/scenarios without application-internal
+spawn functions. Existing saves preserve their authoritative components and
+validated visual bindings.

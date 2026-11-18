@@ -516,6 +516,7 @@ fn externally_composed_ports_capture_independently_of_visual_asset_identity() {
         ship.state.authored = Some(SpacecraftAssembly {
             definition_id: format!("external.{index}"),
             display_name: "External utility craft".into(),
+            visual_asset: None,
             contact: Some(SpacecraftContactGeometry {
                 hull: vec![ContactPart {
                     position_body_m: Vector3d::default(),
@@ -623,6 +624,7 @@ fn nonoverlapping_authored_annular_faces_cannot_report_capture_ready() {
     ships[0].state.authored = Some(SpacecraftAssembly {
         definition_id: "narrow-port".into(),
         display_name: "Narrow port".into(),
+        visual_asset: None,
         contact: Some(SpacecraftContactGeometry {
             hull: vec![ContactPart {
                 position_body_m: Vector3d::default(),

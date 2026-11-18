@@ -57,27 +57,13 @@ pub enum ScenarioBase {
     EarthMoon,
 }
 
-/// An explicit vetted mesh registry. Physics composition is independent of the
-/// selected appearance. No untrusted file path becomes a renderer resource.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpacecraftVisualAsset {
-    #[serde(rename = "builtin:asteria")]
-    Asteria,
-    #[serde(rename = "builtin:relay-station")]
-    RelayStation,
-}
+/// Stable identifier resolved against the generated build-time asset catalog.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct SpacecraftVisualAsset(pub String);
 impl SpacecraftVisualAsset {
-    fn appearance(self) -> SpacecraftAppearance {
-        match self {
-            Self::Asteria => SpacecraftAppearance::Asteria,
-            Self::RelayStation => SpacecraftAppearance::RelayStation,
-        }
-    }
-    fn minimum_framing_radius_m(self) -> f64 {
-        match self {
-            Self::Asteria => 8.0,
-            Self::RelayStation => 12.0,
-        }
+    fn record(&self) -> Option<&'static solarlab_data::SpacecraftVisualAssetRecord> {
+        solarlab_data::spacecraft_visual_asset(&self.0)
     }
 }
 
@@ -166,6 +152,15 @@ impl SpacecraftDefinition {
             reason,
         };
         let s = &self.structure;
+        let asset = self
+            .visual_asset
+            .record()
+            .ok_or_else(|| fail("unregistered visual asset"))?;
+        if asset.contact_profile.is_none() && self.contact.is_none() {
+            return Err(fail(
+                "a custom visual asset requires explicit physical contact geometry",
+            ));
+        }
         if !valid_text(&self.id, 96) || !valid_text(&self.display_name, 128) {
             return Err(fail("invalid identity or display name"));
         }
@@ -199,9 +194,7 @@ impl SpacecraftDefinition {
         {
             return Err(fail("invalid reaction-wheel torque"));
         }
-        if !s.radius_m.is_finite()
-            || !(self.visual_asset.minimum_framing_radius_m()..=1000.0).contains(&s.radius_m)
-        {
+        if !s.radius_m.is_finite() || !(asset.framing_radius_m..=1000.0).contains(&s.radius_m) {
             return Err(fail(
                 "radius must enclose the selected visual asset and be at most 1000 m",
             ));
@@ -251,9 +244,20 @@ impl SpacecraftDefinition {
         ship.authored = Some(SpacecraftAssembly {
             definition_id: self.id.clone(),
             display_name: self.display_name.clone(),
+            visual_asset: self.visual_asset.record().map(|asset| {
+                solarlab_domain::SpacecraftVisualBinding {
+                    asset_id: asset.asset_id.into(),
+                    mesh_kind: asset.mesh_kind,
+                    geometry_sha256: asset.geometry_sha256.into(),
+                }
+            }),
             contact: self.contact.clone(),
         });
-        ship.appearance = self.visual_asset.appearance();
+        ship.appearance = self
+            .visual_asset
+            .record()
+            .and_then(|asset| asset.contact_profile)
+            .unwrap_or(SpacecraftAppearance::Asteria);
         ship.dry_mass_kg = self.structure.dry_mass_kg;
         ship.propellant_mass_kg = propellant;
         ship.inertia_kg_m2 = self.structure.inertia_kg_m2;

@@ -236,6 +236,12 @@ void TestGpuBufferAndCommandReuse() {
     changed = recorded;
     ++changed.draws[8].bufferGeneration; // Station buffer replaced after device recreation.
     assert(changed != recorded);
+    changed = recorded;
+    ++changed.draws.back().bufferGeneration; // Last catalog mesh/exhaust is covered.
+    assert(changed != recorded);
+    changed = recorded;
+    ++changed.meshInstanceCounts.back();
+    assert(changed != recorded);
 }
 
 void TestExclusiveTracerPresentation() {

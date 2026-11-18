@@ -123,7 +123,7 @@ def has_rust_surface(files: list[str]) -> bool:
     return any(
         path_matches(
             path,
-            ("engine/", "proto/", "services/", "labs/", "core-math/", "core-model/", "core-simulation/"),
+            ("engine/", "proto/", "services/", "labs/", "clients/desktop/", "core-math/", "core-model/", "core-simulation/"),
         )
         or (path.startswith("render/") and not path.startswith("render/android-vulkan/"))
         for path in files
@@ -140,6 +140,18 @@ def has_runtime_scene_surface(files: list[str]) -> bool:
 
 def has_ffi_surface(files: list[str]) -> bool:
     return any(path.startswith(("engine/ffi/", "proto/")) for path in files)
+
+
+def has_desktop_surface(files: list[str]) -> bool:
+    return any(
+        path.startswith((
+            "clients/desktop/", "engine/runtime/", "engine/physics/", "engine/domain/",
+            "engine/data/", "engine/hardware/", "engine/history/", "engine/math/",
+            "render/android-vulkan/assets-src/",
+            "render/android-vulkan/src/main/assets/solarlab/surfaces/",
+        ))
+        for path in files
+    )
 
 
 def has_arm64_surface(files: list[str]) -> bool:
@@ -249,6 +261,7 @@ def apply_lane_set(lanes: dict[str, bool], lane_set: str, profile: str) -> None:
     lane_map = {
         "bootstrap": "wrapper_bootstrap",
         "rust-workspace": "rust_workspace",
+        "desktop-browser": "desktop_browser",
         "rust-workspace-arm64": "rust_workspace_arm64",
         "arm64-capability-census": "arm64_capability_census",
         "arm64-isa-proof": "arm64_isa_proof",
@@ -277,6 +290,7 @@ def route_auto_lanes(files: list[str] | None, profile: str, evidence_reused: boo
     lanes = {
         "wrapper_bootstrap": False,
         "rust_workspace": False,
+        "desktop_browser": False,
         "rust_workspace_arm64": False,
         "arm64_capability_census": False,
         "arm64_isa_proof": False,
@@ -319,6 +333,8 @@ def route_auto_lanes(files: list[str] | None, profile: str, evidence_reused: boo
 
     if has_rust_surface(files):
         lanes["rust_workspace"] = True
+    if has_desktop_surface(files):
+        lanes["desktop_browser"] = True
     if has_runtime_scene_surface(files):
         lanes["runtime_scene_telemetry"] = True
     if has_ffi_surface(files):
@@ -456,6 +472,7 @@ def main() -> None:
         lanes = {
             "wrapper_bootstrap": False,
             "rust_workspace": False,
+            "desktop_browser": False,
             "rust_workspace_arm64": False,
             "arm64_capability_census": False,
             "arm64_isa_proof": False,
@@ -484,6 +501,7 @@ def main() -> None:
     lane_summary = (
         f"intent={profile_intent}, wrapper_bootstrap={str(lanes['wrapper_bootstrap']).lower()}, "
         f"rust_workspace={str(lanes['rust_workspace']).lower()}, "
+        f"desktop_browser={str(lanes['desktop_browser']).lower()}, "
         f"rust_workspace_arm64={str(lanes['rust_workspace_arm64']).lower()}, "
         f"arm64_capability_census={str(lanes['arm64_capability_census']).lower()}, "
         f"arm64_isa_proof={str(lanes['arm64_isa_proof']).lower()}, "
@@ -507,6 +525,7 @@ def main() -> None:
         "profile_notes": PROFILE_NOTES[profile],
         "wrapper_bootstrap": str(lanes["wrapper_bootstrap"]).lower(),
         "rust_workspace": str(lanes["rust_workspace"]).lower(),
+        "desktop_browser": str(lanes["desktop_browser"]).lower(),
         "rust_workspace_arm64": str(lanes["rust_workspace_arm64"]).lower(),
         "arm64_capability_census": str(lanes["arm64_capability_census"]).lower(),
         "arm64_isa_proof": str(lanes["arm64_isa_proof"]).lower(),

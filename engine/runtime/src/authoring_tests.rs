@@ -228,3 +228,72 @@ fn authored_additions_require_a_paused_committed_world() {
     assert!(world.add_authored_spacecraft(IRIS, 1_600).is_err());
     assert!(world.body_by_id("custom.iris").is_none());
 }
+
+#[test]
+fn catalog_authored_third_spacecraft_reaches_scene_and_rejects_forged_asset_binding() {
+    let bytes = include_bytes!("../../data/authoring/pathfinder.scenario.json");
+    let world = load(bytes);
+    let scene = extract_render_scene(&world.snapshot());
+    let craft = scene
+        .bodies
+        .iter()
+        .find(|body| body.body_id.0 == "survey.pathfinder")
+        .unwrap();
+    assert_eq!(craft.display_name, "Pathfinder surveyor");
+    assert_eq!(craft.spacecraft.unwrap().mesh_kind, 3);
+    let save = world.export_saved_session().unwrap();
+    let mut forged: Value = serde_json::from_slice(&save).unwrap();
+    forged["branches"][0]["world"]["spacecraft"][0]["authored"]["visual_asset"]["mesh_kind"] =
+        json!(2);
+    assert!(WorldRuntime::import_saved_session(
+        &serde_json::to_vec(&forged).unwrap(),
+        HardwareProfile::offline_reference()
+    )
+    .is_err());
+    let mut changed_payload: Value = serde_json::from_slice(&save).unwrap();
+    changed_payload["branches"][0]["world"]["spacecraft"][0]["authored"]["visual_asset"]
+        ["geometry_sha256"] = json!("a".repeat(64));
+    assert!(WorldRuntime::import_saved_session(
+        &serde_json::to_vec(&changed_payload).unwrap(),
+        HardwareProfile::offline_reference()
+    )
+    .is_err());
+    let mut no_collision_definition: Value = serde_json::from_slice(bytes).unwrap();
+    no_collision_definition["spacecraft_definitions"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("contact");
+    assert!(WorldRuntime::import_authored_scenario(
+        &serde_json::to_vec(&no_collision_definition).unwrap(),
+        HardwareProfile::offline_reference(),
+        0
+    )
+    .is_err());
+}
+
+#[test]
+fn authored_attachment_and_its_actual_rest_pose_resume_without_hidden_solver_state() {
+    let mut document: Value = serde_json::from_slice(DEPOT).unwrap();
+    document["spacecraft"][0]["placement"]["position_m"]["y"] = json!(-7.56);
+    document["spacecraft"][0]["placement"]["velocity_mps"]["y"] = json!(0.05);
+    let mut world = load(&serde_json::to_vec(&document).unwrap());
+    world
+        .set_docking_guidance("depot.tender", DockingGuidanceMode::Approach, 1_500)
+        .unwrap();
+    advance(&mut world, 0.1);
+    assert!(world
+        .spacecraft_by_id("depot.tender")
+        .unwrap()
+        .docking
+        .as_ref()
+        .unwrap()
+        .attachment
+        .is_some());
+    let bytes = world.export_saved_session().unwrap();
+    let mut reopened =
+        WorldRuntime::import_saved_session(&bytes, HardwareProfile::offline_reference()).unwrap();
+    advance(&mut world, 0.5);
+    advance(&mut reopened, 0.5);
+    assert_eq!(world.snapshot().bodies, reopened.snapshot().bodies);
+    assert_eq!(world.snapshot().spacecraft, reopened.snapshot().spacecraft);
+}
