@@ -45,6 +45,11 @@ interface RuntimeFacade {
     suspend fun setFlightControl(control: FlightControl, shipId: String = REFERENCE_SPACECRAFT_ID,
         expectedSessionHandle: Long? = null) { error("Spaceflight is unavailable") }
     suspend fun flightState(shipId: String = REFERENCE_SPACECRAFT_ID): FlightState? = null
+    suspend fun flightDynamicsSettings(): FlightDynamicsSettings = error("Flight dynamics are unavailable")
+    suspend fun setFlightDynamicsSettings(value: FlightDynamicsSettings,
+        expectedSessionHandle: Long? = null) { error("Flight dynamics are unavailable") }
+    suspend fun previewFlightBurn(durationSeconds: Double, throttle: Double, assist: FlightAssist,
+        expectedSessionHandle: Long? = null): FlightBurnPreview = error("Burn planning is unavailable")
     suspend fun lunarMissionState(shipId: String = REFERENCE_SPACECRAFT_ID): LunarMissionState? = null
     suspend fun rendezvousState(shipId: String = REFERENCE_SPACECRAFT_ID): RendezvousState? = null
     /** Retained operation: cuts input and pauses even when the composing Activity is destroyed. */

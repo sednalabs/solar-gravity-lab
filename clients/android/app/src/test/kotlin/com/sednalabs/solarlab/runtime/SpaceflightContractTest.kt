@@ -8,6 +8,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SpaceflightContractTest {
+    @Test fun radialAssistCodesRemainStableAcrossTheNativeBoundary() {
+        assertEquals(6, FlightAssist.RadialOut.nativeCode)
+        assertEquals(7, FlightAssist.RadialIn.nativeCode)
+        assertEquals(FlightAssist.RadialOut, FlightAssist.fromNative(6))
+        assertEquals(FlightAssist.RadialIn, FlightAssist.fromNative(7))
+        assertEquals(7.0, FlightControl(assist = FlightAssist.RadialIn).toNativeValues()[7], 0.0)
+    }
     @Test fun controlPacketHasStableAxesAndRejectsInvalidInputs() {
         val command = FlightControl(.6, -.2, .3, .4, -.5, .6, -.7, FlightAssist.Retrograde)
         assertArrayEquals(doubleArrayOf(.6, -.2, .3, .4, -.5, .6, -.7, 3.0), command.toNativeValues(), 0.0)

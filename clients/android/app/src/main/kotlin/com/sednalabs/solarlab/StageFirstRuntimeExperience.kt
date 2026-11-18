@@ -1395,6 +1395,11 @@ internal fun StageFirstRuntimeExperience(
             if (flightActive) FlightModeChrome(
                 facade = runtimeFacade, uiState = uiState, cameraMode = flightCameraMode,
                 onCamera = { flightCameraMode = it }, onExit = ::exitFlight,
+                onRecenter = {
+                    if (flightCameraMode == 0) {
+                        renderHostView?.frameBody("earth", selectBody = false)
+                    } else renderHostView?.resetCamera()
+                },
                 onSaved = { savedVisible = true },
                 onLunarMission = { lunarStartError = null; lunarBriefVisible = true },
                 onRendezvousMission = { rendezvousStartError = null; rendezvousBriefVisible = true },
