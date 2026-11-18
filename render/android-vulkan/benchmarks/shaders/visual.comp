@@ -1,0 +1,18 @@
+#version 450
+#ifdef USE_FP16
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#define Real float16_t
+#else
+#define Real float
+#endif
+layout(local_size_x=64) in;
+layout(std430,binding=0) readonly buffer Input { vec4 positions[]; };
+layout(std430,binding=1) writeonly buffer Output { vec4 colours[]; };
+layout(push_constant) uniform Params { uint count; } params;
+void main() {
+    uint i=gl_GlobalInvocationID.x;
+    if(i>=params.count) return;
+    Real x=Real(positions[i].x)*Real(0.5)+Real(0.5);
+    Real y=Real(positions[i].y)*Real(0.5)+Real(0.5);
+    colours[i]=vec4(float(x*x),float(y*y),float((x+y)*Real(0.25)),1);
+}

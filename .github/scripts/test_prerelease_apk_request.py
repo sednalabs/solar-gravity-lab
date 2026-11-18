@@ -70,6 +70,29 @@ def parse_outputs(text: str) -> dict[str, str]:
 
 
 class PrereleaseApkRequestTests(unittest.TestCase):
+    def test_benchmark_branch_uses_the_isolated_variant_at_the_proven_sha(self) -> None:
+        outputs, _stderr = run_request(
+            event_ref="refs/heads/release/0.2.0-benchmark.1",
+            head_message="research build\n\nSolarLab-Build-Variant: benchmark\nSolarLab-Version-Code: 2004001\n",
+        )
+        self.assertEqual(outputs["build_variant"], "benchmark")
+        self.assertEqual(outputs["release_channel"], "prerelease")
+        self.assertEqual(outputs["version_code"], "2004001")
+        self.assertEqual(outputs["checkout_ref"], "f" * 40)
+
+    def test_benchmark_cannot_be_published_as_a_stable_scientific_release(self) -> None:
+        for event in ("push", "workflow_dispatch"):
+            with self.subTest(event=event):
+                _outputs, stderr = run_request(
+                    event_name=event,
+                    event_ref="refs/heads/release/0.2.0",
+                    head_message="SolarLab-Build-Variant: benchmark\n",
+                    input_version_name="0.2.0",
+                    input_build_variant="benchmark",
+                    expect_success=False,
+                )
+                self.assertIn("benchmark variant requires a prerelease", stderr)
+
     def test_main_push_without_release_trailer_is_clean_noop(self) -> None:
         outputs, _stderr = run_request(head_message="regular merge\n")
 

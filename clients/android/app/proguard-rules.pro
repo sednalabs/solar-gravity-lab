@@ -4,6 +4,10 @@
     native <methods>;
 }
 
+# Benchmark JNI uses exported symbol names in both Rust and the Vulkan library.
+-keep class com.sednalabs.solarlab.benchmark.NativeBridge { *; }
+-keep class com.sednalabs.solarlab.benchmark.NativeHardwareBench { *; }
+
 # The Rust FFI builds these payloads with hard-coded JVM class names and
 # constructor descriptors. Keeping only the JNI entry-point owner above is not
 # enough: R8 may rename a DTO such as NativeResult, which makes native session

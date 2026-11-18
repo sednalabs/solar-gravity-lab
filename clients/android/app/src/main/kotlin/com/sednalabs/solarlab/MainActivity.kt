@@ -40,6 +40,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.BUILD_TYPE == "benchmark" && !intent.getBooleanExtra("open_observatory", false)) {
+            startActivity(Intent(this, com.sednalabs.solarlab.benchmark.BenchmarkActivity::class.java))
+            finish()
+            return
+        }
         // The observatory is always dark, independently of the system theme.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),

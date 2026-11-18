@@ -1,0 +1,22 @@
+#version 450
+#ifdef USE_SUBGROUP
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#endif
+layout(local_size_x=64) in;
+layout(std430,binding=1) writeonly buffer Output { uint ids[]; };
+layout(std430,binding=2) buffer Counter { uint count; } outputCount;
+layout(push_constant) uniform Params { uint count; } params;
+void main() {
+    uint i=gl_GlobalInvocationID.x;
+    bool accept=i<params.count && (i*17+13)%7<3;
+#ifdef USE_SUBGROUP
+    uvec4 votes=subgroupBallot(accept);
+    uint total=subgroupBallotBitCount(votes), base=0;
+    if(subgroupElect() && total>0) base=atomicAdd(outputCount.count,total);
+    base=subgroupBroadcastFirst(base);
+    if(accept) ids[base+subgroupBallotExclusiveBitCount(votes)]=i;
+#else
+    if(accept) ids[atomicAdd(outputCount.count,1)]=i;
+#endif
+}

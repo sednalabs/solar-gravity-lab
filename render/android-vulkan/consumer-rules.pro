@@ -3,3 +3,6 @@
 -keepclasseswithmembernames,includedescriptorclasses class com.sednalabs.solarlab.render.vulkan.** {
     native <methods>;
 }
+-keepclasseswithmembernames,includedescriptorclasses class com.sednalabs.solarlab.benchmark.NativeHardwareBench {
+    native <methods>;
+}

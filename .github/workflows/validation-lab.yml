@@ -277,6 +277,9 @@ jobs:
       - name: Verify Rust JNI R8 keep-rule coverage
         run: python3 .github/scripts/test_prerelease_jni_r8_contract.py
 
+      - name: Verify device research evidence analysis
+        run: python3 tools/test_analyse_benchmark_report.py
+
       - name: Resolve prior validation evidence
         id: prior_evidence
         if: ${{ github.event_name == 'pull_request' && (github.event.action == 'synchronize' || github.event.action == 'ready_for_review') }}

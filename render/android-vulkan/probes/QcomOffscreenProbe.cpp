@@ -2,21 +2,32 @@
 // simulation state is involved. Unsupported features report SKIP, never PASS.
 #include "../src/main/cpp/QcomVulkanCompat.h"
 #include "QcomProbeFixtures.h"
+#include "QcomOffscreenProbe.h"
+#ifdef SOLARLAB_EMBED_QCOM_SHADERS
+#include "qcom_invert_control.h"
+#include "qcom_tile_invert.h"
+#include "qcom_box_control.h"
+#include "qcom_box_filter.h"
+#endif
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <sstream>
+#include <mutex>
 #include <vector>
 
 namespace {
 std::atomic_uint validationErrors{0};
+std::mutex probeMutex;
 
 void Check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) {
@@ -73,6 +84,9 @@ public:
     std::string skip;
     uint32_t driverVersion = 0;
     double maximumError = 0;
+    uint64_t submissionNs = 0;
+    PFN_vkCmdPipelineBarrier2 cmdBarrier2 = nullptr;
+    PFN_vkCreateRenderPass2 createRenderPass2 = nullptr;
     PFN_vkCmdBeginPerTileExecutionQCOM beginTile = nullptr;
     PFN_vkCmdEndPerTileExecutionQCOM endTile = nullptr;
 
@@ -240,6 +254,9 @@ public:
                 0, nullptr, static_cast<uint32_t>(enabledExtensions.size()), enabledExtensions.data(), nullptr};
             Check(vkCreateDevice(candidate, &deviceInfo, nullptr, &device), "create probe device");
             vkGetDeviceQueue(device, queueFamily, 0, &queue);
+            cmdBarrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2>(vkGetDeviceProcAddr(device, "vkCmdPipelineBarrier2"));
+            createRenderPass2 = reinterpret_cast<PFN_vkCreateRenderPass2>(vkGetDeviceProcAddr(device, "vkCreateRenderPass2"));
+            if (cmdBarrier2 == nullptr || createRenderPass2 == nullptr) throw std::runtime_error("required-vulkan-1.3-entrypoints-absent");
             if (tileMode) {
                 beginTile = reinterpret_cast<PFN_vkCmdBeginPerTileExecutionQCOM>(vkGetDeviceProcAddr(device, "vkCmdBeginPerTileExecutionQCOM"));
                 endTile = reinterpret_cast<PFN_vkCmdEndPerTileExecutionQCOM>(vkGetDeviceProcAddr(device, "vkCmdEndPerTileExecutionQCOM"));
@@ -325,13 +342,26 @@ public:
         const VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0,
             1, &descriptorLayout, 0, nullptr};
         Check(vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout), "create pipeline layout");
+        std::vector<uint32_t> words;
+#ifdef SOLARLAB_EMBED_QCOM_SHADERS
+        const unsigned char* embedded = nullptr;
+        size_t bytes = 0;
+        if (shaderFile.ends_with("/invert_control.comp.spv")) { embedded = qcom_invert_control; bytes = sizeof(qcom_invert_control); }
+        else if (shaderFile.ends_with("/tile_invert.comp.spv")) { embedded = qcom_tile_invert; bytes = sizeof(qcom_tile_invert); }
+        else if (shaderFile.ends_with("/box_control.comp.spv")) { embedded = qcom_box_control; bytes = sizeof(qcom_box_control); }
+        else if (shaderFile.ends_with("/box_filter.comp.spv")) { embedded = qcom_box_filter; bytes = sizeof(qcom_box_filter); }
+        if (embedded == nullptr || bytes == 0 || bytes % 4 != 0) throw std::runtime_error("embedded-probe-shader-unavailable");
+        words.resize(bytes/4);
+        std::memcpy(words.data(),embedded,bytes);
+#else
         std::ifstream input(shaderFile, std::ios::binary | std::ios::ate);
         if (!input) throw std::runtime_error("shader-file-unavailable: " + shaderFile);
         const auto bytes = input.tellg();
         if (bytes <= 0 || bytes % 4 != 0 || bytes > 1024 * 1024) throw std::runtime_error("invalid-shader-length");
-        std::vector<uint32_t> words(static_cast<size_t>(bytes) / 4);
+        words.resize(static_cast<size_t>(bytes) / 4);
         input.seekg(0);
         if (!input.read(reinterpret_cast<char*>(words.data()), bytes)) throw std::runtime_error("shader-read-failed");
+#endif
         if (words.front() != 0x07230203U) throw std::runtime_error("invalid-spirv-magic");
         const VkShaderModuleCreateInfo shaderInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
             static_cast<size_t>(bytes), words.data()};
@@ -352,8 +382,10 @@ public:
     void Submit() {
         Check(vkEndCommandBuffer(command), "end command buffer");
         const VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &command, 0, nullptr};
+        const auto start = std::chrono::steady_clock::now();
         Check(vkQueueSubmit(queue, 1, &submit, fence), "submit probe");
         Check(vkWaitForFences(device, 1, &fence, VK_TRUE, 5000000000ULL), "wait probe fence");
+        submissionNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count());
     }
 
     void ImageBarrier(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
@@ -363,7 +395,7 @@ public:
             sourceStage, sourceAccess, destinationStage, destinationAccess, oldLayout, newLayout,
             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
         const VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &barrier};
-        vkCmdPipelineBarrier2(command, &dependency);
+        cmdBarrier2(command, &dependency);
     }
 
     void HostBarrier(VkBuffer buffer, VkDeviceSize size, VkPipelineStageFlags2 stage, VkAccessFlags2 access) {
@@ -371,7 +403,7 @@ public:
             stage, access, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT,
             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, buffer, 0, size};
         const VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 1, &barrier, 0, nullptr};
-        vkCmdPipelineBarrier2(command, &dependency);
+        cmdBarrier2(command, &dependency);
     }
 
     void RunInvert(bool tiled, const std::string& shaderDirectory);
@@ -411,7 +443,7 @@ void Probe::RunInvert(bool tiled, const std::string& shaderDirectory) {
             0, 0, 0, 0, 0, 0, VK_DEPENDENCY_BY_REGION_BIT, 0};
         const VkRenderPassCreateInfo2 passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2, &tileInfo, 0,
             1, &attachment, 1, &subpass, 1, &selfDependency, 0, nullptr};
-        Check(vkCreateRenderPass2(device, &passInfo, nullptr, &renderPass), "create tile render pass");
+        Check(createRenderPass2(device, &passInfo, nullptr, &renderPass), "create tile render pass");
         const VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, nullptr, 0,
             renderPass, 1, &image.view, width, height, 1};
         Check(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffer), "create tile framebuffer");
@@ -423,7 +455,7 @@ void Probe::RunInvert(bool tiled, const std::string& shaderDirectory) {
         beginTile(command, &perTileBegin);
         const VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, VK_DEPENDENCY_BY_REGION_BIT,
             1, &localBarrier, 0, nullptr, 0, nullptr};
-        vkCmdPipelineBarrier2(command, &dependency);
+        cmdBarrier2(command, &dependency);
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
         vkCmdDispatch(command, 1, 1, 1); // Repeated once per tile by the enabled execution model.
@@ -531,6 +563,54 @@ void Probe::RunBox(bool dedicated, const std::string& shaderDirectory) {
 
 } // namespace
 
+solarlab::probes::QcomProbeResult solarlab::probes::RunQcomProbe(const std::string& mode,
+    const std::string& shaderDirectory, bool requireValidation) {
+    std::lock_guard<std::mutex> lock(probeMutex);
+    const auto started = std::chrono::steady_clock::now();
+    validationErrors = 0;
+    QcomProbeResult result;
+    if (mode != "control" && mode != "box-control" && mode != "tile-shading" && mode != "image-processing") {
+        result.reason = "unknown-probe-mode";
+        return result;
+    }
+    {
+        Probe probe;
+        try {
+            if (!probe.Initialize(mode, requireValidation)) {
+                result.status = "SKIP";
+                result.reason = probe.skip;
+            } else {
+                if (mode == "control" || mode == "tile-shading") probe.RunInvert(mode == "tile-shading", shaderDirectory);
+                else probe.RunBox(mode == "image-processing", shaderDirectory);
+                result.status = "PASS";
+                result.reason = "submitted-and-cpu-oracle-matched";
+            }
+        } catch (const std::exception& error) { result.reason = error.what(); }
+        result.device = probe.name;
+        result.driverVersion = probe.driverVersion;
+        result.validation = probe.validation;
+        result.maximumError = probe.maximumError;
+        result.submissionNs = probe.submissionNs;
+    } // Complete destruction before assessing validation errors and printing.
+    result.validationErrors = validationErrors.load();
+    if (result.validationErrors != 0) { result.status = "FAIL"; result.reason = "validation-errors"; }
+    result.totalNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count());
+    return result;
+}
+
+std::string solarlab::probes::QcomProbeResult::Json(const std::string& mode) const {
+    std::ostringstream out;
+    out << "{\"schema\":\"solarlab.vulkan-probe.v1\",\"mode\":" << JsonString(mode)
+        << ",\"status\":" << JsonString(status) << ",\"reason\":" << JsonString(reason)
+        << ",\"device\":" << JsonString(device) << ",\"driverVersion\":" << driverVersion
+        << ",\"validationLayer\":" << (validation ? "true" : "false")
+        << ",\"validationErrors\":" << validationErrors
+        << ",\"submission_ns\":" << submissionNs << ",\"total_ns\":" << totalNs
+        << ",\"maxAbsoluteError\":" << maximumError << "}";
+    return out.str();
+}
+
+#ifndef SOLARLAB_QCOM_PROBE_LIBRARY
 int main(int argc, char** argv) {
     std::string mode = "control", shaderDirectory = ".";
     bool requireValidation = false;
@@ -541,38 +621,8 @@ int main(int argc, char** argv) {
         else if (argument == "--require-validation") requireValidation = true;
         else { std::cerr << "Usage: --mode control|box-control|tile-shading|image-processing --shaders DIR [--require-validation]\n"; return 2; }
     }
-    if (mode != "control" && mode != "box-control" && mode != "tile-shading" && mode != "image-processing") {
-        std::cerr << "Unknown probe mode\n";
-        return 2;
-    }
-    std::string status = "FAIL", reason, name;
-    bool validation = false;
-    uint32_t driverVersion = 0;
-    double maximumError = 0.0;
-    {
-        Probe probe;
-        try {
-            if (!probe.Initialize(mode, requireValidation)) {
-                status = "SKIP";
-                reason = probe.skip;
-            } else {
-                if (mode == "control" || mode == "tile-shading") probe.RunInvert(mode == "tile-shading", shaderDirectory);
-                else probe.RunBox(mode == "image-processing", shaderDirectory);
-                status = "PASS";
-                reason = "submitted-and-cpu-oracle-matched";
-            }
-        } catch (const std::exception& error) { reason = error.what(); }
-        name = probe.name;
-        driverVersion = probe.driverVersion;
-        validation = probe.validation;
-        maximumError = probe.maximumError;
-    } // Complete destruction before assessing validation errors and printing.
-    if (validationErrors != 0) { status = "FAIL"; reason = "validation-errors"; }
-    std::cout << "{\"schema\":\"solarlab.vulkan-probe.v1\",\"mode\":" << JsonString(mode)
-        << ",\"status\":" << JsonString(status) << ",\"reason\":" << JsonString(reason)
-        << ",\"device\":" << JsonString(name) << ",\"driverVersion\":" << driverVersion
-        << ",\"validationLayer\":" << (validation ? "true" : "false")
-        << ",\"validationErrors\":" << validationErrors.load()
-        << ",\"maxAbsoluteError\":" << maximumError << "}\n";
-    return status == "FAIL" ? 1 : 0;
+    const auto result = solarlab::probes::RunQcomProbe(mode, shaderDirectory, requireValidation);
+    std::cout << result.Json(mode) << '\n';
+    return result.status == "FAIL" ? 1 : 0;
 }
+#endif

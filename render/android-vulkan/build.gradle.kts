@@ -20,6 +20,9 @@ android {
                     if (providers.gradleProperty("solarLabCapturePipelineStatistics").orNull == "true") "ON" else "OFF"
                 arguments += "-DSOLARLAB_BUFFER_ADDRESS_COMPACTION=" +
                     if (providers.gradleProperty("solarLabBufferAddressCompaction").orNull == "true") "ON" else "OFF"
+                arguments += "-DSOLARLAB_QCOM_SHADER_DIR=" + providers.gradleProperty("solarLabQcomShaderDir")
+                    .orElse(providers.environmentVariable("SOLARLAB_QCOM_SHADER_DIR"))
+                    .orElse("").get()
             }
         }
         shaders {

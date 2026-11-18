@@ -40,6 +40,8 @@ use solarlab_vulkan_adapter::{
 };
 
 mod persistence;
+#[cfg(target_os = "android")]
+mod benchmark_jni;
 #[cfg(any(target_os = "android", test))]
 mod probe_authoring;
 pub use persistence::{sl_v2_session_export_save, sl_v2_session_import_save, SlSaveWriteResult};

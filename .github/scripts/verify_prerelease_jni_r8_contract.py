@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apk", required=True, type=Path)
     parser.add_argument("--ffi-source", type=Path, default=DEFAULT_FFI_SOURCE)
+    parser.add_argument("--benchmark", action="store_true", help="Also require the two research JNI entrypoint classes")
     return parser.parse_args()
 
 
@@ -90,6 +91,11 @@ def main() -> int:
         print(str(error), file=sys.stderr)
         return 1
     missing = missing_jni_dto_classes(args.ffi_source, defined_classes)
+    if args.benchmark:
+        missing.update({
+            "com.sednalabs.solarlab.benchmark.NativeBridge",
+            "com.sednalabs.solarlab.benchmark.NativeHardwareBench",
+        }.difference(defined_classes))
     if missing:
         details = "\n".join(f"- {class_name}" for class_name in sorted(missing))
         print(
