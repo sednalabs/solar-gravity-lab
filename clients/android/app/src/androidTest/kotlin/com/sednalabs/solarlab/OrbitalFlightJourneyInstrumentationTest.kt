@@ -120,12 +120,29 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals(0.0, body.sourceMassKg, 0.0)
         assertEquals(initial.totalMassKg, body.massKg, 1e-9)
         composeRule.onNodeWithTag(FlightTags.ALTITUDE).assertIsDisplayed()
+        composeRule.onNodeWithTag(FlightTags.PERIAPSIS).assertIsDisplayed()
+        composeRule.onNodeWithTag(FlightTags.DIRECTOR).assertIsDisplayed()
         composeRule.onNodeWithTag(FlightTags.THROTTLE).assertIsDisplayed()
+        composeRule.onNodeWithTag(FlightTags.GUIDE).performClick()
+        composeRule.onNodeWithText("Fly with intent").assertIsDisplayed()
+        composeRule.onNodeWithText("Back to flight").performClick()
+        composeRule.onNodeWithTag(FlightTags.PLAN).performClick()
+        composeRule.onNodeWithTag(FlightPlanningTags.assist(FlightAssist.Prograde)).performScrollToIfPossible().performClick()
+        composeRule.onNodeWithTag(FlightPlanningTags.PREVIEW).performScrollToIfPossible().performClick()
+        waitUntil(30_000) { nodes(FlightPlanningTags.RESULT) }
+        composeRule.onNodeWithTag(FlightPlanningTags.RESULT).performScrollToIfPossible().assertIsDisplayed()
+        val afterPreview = flight(facade)
+        assertEquals("Planning must not advance the world", initial.epochSeconds.toBits(), afterPreview.epochSeconds.toBits())
+        assertEquals("Planning must not spend live fuel", initial.propellantMassKg.toBits(), afterPreview.propellantMassKg.toBits())
+        assertEquals("Planning must not change live controls", initial.control, afterPreview.control)
+        composeRule.onNodeWithText("Back to flight").performClick()
         capture("flight-portrait-orbit.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
         capture("flight-initial-chase.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(1)).performClick()
         capture("flight-orbit-after-chase.png", requireCloseShip = true)
+        composeRule.onNodeWithTag(FlightTags.RECENTER).performClick()
+        capture("flight-centre-control.png", requireCloseShip = true)
         try {
             assertTrue(SolarLabSemanticActionBridge.submit(SolarLabSemanticAction.ResetCamera))
             composeRule.mainClock.advanceTimeByFrame()
@@ -280,6 +297,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         waitUntil { nodes(FlightTags.ROOT) && runBlocking { facade.flightState() } != null }
         val oldEpoch = flight(facade).epochSeconds
         val previousSaves = facade.savedExperiments.value.map { it.id }.toSet()
+        composeRule.onNodeWithTag(FlightTags.MISSIONS).performClick()
         composeRule.onNodeWithTag(RendezvousTags.BRIEF).performScrollToIfPossible().performClick()
         composeRule.onNodeWithTag(RendezvousTags.START).assertIsEnabled().performClick()
         waitUntil(30_000) { runBlocking { facade.rendezvousState() } != null && nodes(RendezvousTags.PANEL) }
@@ -381,6 +399,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         waitUntil { nodes(FlightTags.ROOT) && runBlocking { facade.flightState() } != null }
         val oldEpoch = flight(facade).epochSeconds
         val previousSaves = facade.savedExperiments.value.map { it.id }.toSet()
+        composeRule.onNodeWithTag(FlightTags.MISSIONS).performClick()
         composeRule.onNodeWithTag(DockingTags.BRIEF).performScrollToIfPossible().performClick()
         clickReadyFlightAction(DockingTags.START)
         waitUntil(30_000) { runBlocking { facade.dockingState() } != null && nodes(DockingTags.PANEL) }
@@ -795,7 +814,8 @@ class OrbitalFlightJourneyInstrumentationTest {
             composeRule.activity.window.decorView.getLocationOnScreen(screen)
             composeRule.activity.window.decorView.getLocationInWindow(inWindow)
         }
-        val tags = listOf(RendezvousTags.PANEL, RendezvousTags.BRIEF, LunarFlightTags.BRIEF, DockingTags.PANEL, DockingTags.BRIEF) +
+        val tags = listOf(RendezvousTags.PANEL, RendezvousTags.BRIEF, LunarFlightTags.BRIEF, DockingTags.PANEL, DockingTags.BRIEF,
+            FlightTags.RECENTER, FlightTags.GUIDE, FlightTags.DIRECTOR, FlightTags.PLAN, FlightTags.MISSIONS) +
             (0..3).map(FlightTags::camera)
         return tags.flatMap { composeRule.onAllNodesWithTag(it).fetchSemanticsNodes() }.mapNotNull {
             val bounds = it.boundsInWindow

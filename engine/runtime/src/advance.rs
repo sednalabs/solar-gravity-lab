@@ -17,9 +17,11 @@ impl WorldRuntime {
     /// Gravity-only prediction shares the scientific orbital step ceiling,
     /// without importing powered-flight attitude work into a coast forecast.
     pub(super) fn coast_physics_policy(&self) -> PhysicsPolicy {
-        if self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID {
+        let mut policy = if self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID {
             self.lab_step_policy.for_world(&self.config.physics, &self.active_branch().world.bodies)
-        } else { self.config.physics.clone() }
+        } else { self.config.physics.clone() };
+        policy.integrator = self.scientific_settings().integrator;
+        policy
     }
 
     pub(super) fn effective_physics_policy(&self) -> PhysicsPolicy {
@@ -80,16 +82,9 @@ impl WorldRuntime {
         let plan = if bodies.is_empty() {
             None
         } else {
-            Some(
-                fixed_step_plan_with_source_count(
-                    &self.effective_physics_policy(),
-                    delta,
-                    bodies.len(),
-                    bodies.iter().filter(|body| body.mass_kg != 0.0).count(),
-                    &self.hardware_profile.cpu_features,
-                )
-                .ok_or(RuntimeError::InvalidEpochDelta(delta))?,
-            )
+            Some(scientific_flight::bind_plan(&self.effective_physics_policy(),
+                &world.scientific_settings, &world.bodies, &world.spacecraft,
+                delta, &self.hardware_profile.cpu_features)?)
         };
         let total_steps = plan.as_ref().map_or(0, |p| p.total_steps);
         if total_steps > i64::MAX as usize {
@@ -135,7 +130,8 @@ impl WorldRuntime {
         let mut events = Vec::new();
         let count = (op.total_steps - op.completed_steps).min(MAX_INCREMENTAL_STEPS);
         if let Some(plan) = &op.plan {
-            if solarlab_physics::spacecraft::advance_spacecraft_steps(plan, &mut op.bodies, &mut op.spacecraft, count).is_err() {
+            if solarlab_physics::spacecraft::advance_spacecraft_steps(plan, &mut op.bodies, &mut op.spacecraft, count).is_err()
+                || plan.compute_invariants(&op.bodies).is_err() {
                 op.state = AdvanceState::Cancelled;
                 op.bodies.clear();
                 op.spacecraft.clear();

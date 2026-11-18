@@ -5,7 +5,8 @@ const val REFERENCE_SPACECRAFT_ID = "flight.odyssey"
 
 enum class FlightAssist(val nativeCode: Int, val label: String) {
     Manual(0, "Manual"), Hold(1, "Stabilise"), Prograde(2, "Prograde"),
-    Retrograde(3, "Retrograde"), Normal(4, "Normal"), AntiNormal(5, "Anti-normal");
+    Retrograde(3, "Retrograde"), Normal(4, "Normal"), AntiNormal(5, "Anti-normal"),
+    RadialOut(6, "Radial out"), RadialIn(7, "Radial in");
 
     companion object {
         fun fromNative(code: Int): FlightAssist = entries.firstOrNull { it.nativeCode == code }

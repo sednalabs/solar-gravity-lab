@@ -164,6 +164,8 @@ pub enum AttitudeMode {
     Retrograde,
     Normal,
     AntiNormal,
+    RadialOut,
+    RadialIn,
 }
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
 pub struct FlightControl {
@@ -252,6 +254,8 @@ pub enum SpacecraftAppearance {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SpacecraftState {
     pub body_id: BodyId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authored: Option<crate::SpacecraftAssembly>,
     #[serde(default)]
     pub appearance: SpacecraftAppearance,
     pub reference_body_id: Option<BodyId>,
@@ -284,7 +288,10 @@ impl SpacecraftState {
     }
     #[must_use]
     pub fn valid(&self) -> bool {
-        self.attitude.is_unit()
+        self.authored
+            .as_ref()
+            .is_none_or(crate::SpacecraftAssembly::valid)
+            && self.attitude.is_unit()
             && finite(self.angular_velocity_body_radps)
             && self.dry_mass_kg.is_finite()
             && self.dry_mass_kg > 0.0
@@ -318,7 +325,10 @@ impl SpacecraftState {
                         || (self.control.throttle == 0.0
                             && magnitude(self.control.translation_body) == 0.0
                             && magnitude(self.control.rotation_body) == 0.0
-                            && matches!(self.control.attitude_mode, AttitudeMode::Manual | AttitudeMode::Hold)))
+                            && matches!(
+                                self.control.attitude_mode,
+                                AttitudeMode::Manual | AttitudeMode::Hold
+                            )))
             })
             && self.rendezvous.as_ref().is_none_or(|r| {
                 r.valid(&self.body_id)
@@ -444,6 +454,7 @@ impl SpacecraftState {
         }
         Self {
             body_id,
+            authored: None,
             appearance: SpacecraftAppearance::Asteria,
             reference_body_id,
             attitude: Quaterniond::IDENTITY,

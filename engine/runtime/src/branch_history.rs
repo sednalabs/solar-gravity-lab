@@ -19,6 +19,7 @@ impl WorldRuntime {
 
     pub(super) fn command_kind(&self, command: &WorldCommand) -> String {
         match command {
+            WorldCommand::SetScientificSettings { .. } => "physics.set_scientific_settings",
             WorldCommand::SeedCanonicalSolarSystem => "catalog.seed_canonical_solar_system",
             WorldCommand::SpawnSpacecraft { .. } => "spacecraft.spawn",
             WorldCommand::SetFlightControl { .. } => "spacecraft.control",
@@ -46,6 +47,7 @@ impl WorldRuntime {
 
     pub(super) fn command_summary(&self, command: &WorldCommand) -> String {
         match command {
+            WorldCommand::SetScientificSettings { settings } => serde_json::to_string(settings).expect("validated finite scientific settings"),
             WorldCommand::SeedCanonicalSolarSystem => "seed canonical startup solar system".into(),
             WorldCommand::SpawnSpacecraft { body, .. } => format!("spawn spacecraft {}",body.body_id.0),
             WorldCommand::SetFlightControl { body_id, control } => format!("flight {} throttle={} translation={:?} rotation={:?} assist={:?}",body_id.0,control.throttle,control.translation_body,control.rotation_body,control.attitude_mode),

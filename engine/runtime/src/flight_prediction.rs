@@ -5,7 +5,7 @@ use crate::{
     WorldRuntime,
 };
 use solarlab_domain::spacecraft::{finite, magnitude, sub};
-use solarlab_physics::{advance_authoritative_with_features, checked_substep_count};
+use solarlab_physics::checked_substep_count;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,8 @@ impl FlightPredictionCache {
     pub(super) fn invalidate_for(&self, command: &WorldCommand) {
         if matches!(
             command,
-            WorldCommand::SeedCanonicalSolarSystem
+            WorldCommand::SetScientificSettings { .. }
+            | WorldCommand::SeedCanonicalSolarSystem
                 | WorldCommand::SpawnBody { .. }
                 | WorldCommand::SpawnSpacecraft { .. }
                 | WorldCommand::RemoveBody { .. }
@@ -209,12 +210,13 @@ fn build_forecast(runtime: &WorldRuntime, ship_id: &BodyId) -> Option<Forecast> 
         if steps > MAX_INTEGRATION_STEPS - integration_steps {
             break;
         }
-        let _ = advance_authoritative_with_features(
-            &policy,
+        if solarlab_physics::science::advance_authoritative_scientific(
+            &policy, runtime.scientific_settings(),
+            &projected.iter().map(|b| b.body_id.clone()).collect::<Vec<_>>(),
             &mut solver,
             next - epoch,
             &runtime.hardware_profile.cpu_features,
-        );
+        ).is_err() { break; }
         if solver
             .iter()
             .any(|b| !finite(b.position_m) || !finite(b.velocity_mps))

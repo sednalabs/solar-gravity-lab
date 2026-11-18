@@ -31,6 +31,7 @@ impl WorldRuntime {
             world: BranchWorldState {
                 epoch_seconds: 0.0,
                 bodies: Vec::new(),
+                scientific_settings: ScientificSettings { integrator: config.physics.integrator.clone(), ..ScientificSettings::default() },
                 spacecraft: Vec::new(),
                 observer: ObserverState {
                     mode: ObserverMode::Free,

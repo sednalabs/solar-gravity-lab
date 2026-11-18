@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -84,7 +85,9 @@ import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.ShellUiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -103,10 +106,18 @@ internal object FlightTags {
     const val FUEL = "flight.fuel"
     const val ALTITUDE = "flight.altitude"
     const val APOAPSIS = "flight.apoapsis"
+    const val PERIAPSIS = "flight.periapsis"
     const val CHECKPOINT = "flight.checkpoint"
     const val RESET = "flight.reset"
     const val SAVE = "flight.save"
     const val CONTROL_MODE = "flight.control_mode"
+    const val PRECISION = "flight.precision"
+    const val ASSIST_MORE = "flight.assist_more"
+    const val RECENTER = "flight.camera.recenter"
+    const val MISSIONS = "flight.missions"
+    const val GUIDE = "flight.guide"
+    const val DIRECTOR = "flight.director"
+    const val PLAN = "flight.plan"
     fun assist(value: FlightAssist) = "flight.assist.${value.name}"
     fun camera(mode: Int) = "flight.camera.$mode"
     fun axis(name: String) = "flight.axis.$name"
@@ -121,12 +132,12 @@ internal object FlightChromeMetrics {
     val LandscapeSide = 184.dp
 }
 
-private val FlightInk = Color(0xFFEDF6FF)
-private val FlightMuted = Color(0xFF9CAEBF)
-private val FlightTeal = Color(0xFF8BE6DC)
-private val FlightAmber = Color(0xFFFFC582)
-private val FlightPanel = Color(0xF00B1724)
-private val FlightLine = Color(0xFF294451)
+internal val FlightInk = Color(0xFFEDF6FF)
+internal val FlightMuted = Color(0xFF9CAEBF)
+internal val FlightTeal = Color(0xFF8BE6DC)
+internal val FlightAmber = Color(0xFFFFC582)
+internal val FlightPanel = Color(0xF00B1724)
+internal val FlightLine = Color(0xFF294451)
 
 /** A touchscreen cockpit over the same native scene and same Rust session as the laboratory. */
 @Composable
@@ -135,6 +146,7 @@ internal fun FlightModeChrome(
     uiState: ShellUiState,
     cameraMode: Int,
     onCamera: (Int) -> Unit,
+    onRecenter: () -> Unit,
     onExit: () -> Unit,
     onSaved: () -> Unit,
     onLunarMission: () -> Unit,
@@ -167,7 +179,12 @@ internal fun FlightModeChrome(
         }
     }
     var translationMode by rememberSaveable { mutableStateOf(false) }
-    var missionHelp by rememberSaveable { mutableStateOf(true) }
+    var precision by rememberSaveable { mutableStateOf(false) }
+    var heldButtons by remember(facade, uiState.sessionHandle) { mutableStateOf(emptySet<Int>()) }
+    var inputGeneration by remember(facade, uiState.sessionHandle) { mutableStateOf(0) }
+    var missionsVisible by rememberSaveable { mutableStateOf(false) }
+    var guideVisible by rememberSaveable { mutableStateOf(false) }
+    var planVisible by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(uiState.sessionHandle, rendezvous != null, docking != null) {
         if (rendezvous != null || docking != null) translationMode = true
     }
@@ -183,8 +200,12 @@ internal fun FlightModeChrome(
     fun manualBase() = manualFlightControlBase(control,
         (rendezvous?.guidance?.let { it != RendezvousGuidance.Manual } == true ||
             docking?.guidance?.let { it != DockingGuidance.Manual } == true), manualGuidanceInputOwned)
-    fun cut() { send(manualBase().copy(throttle = 0.0, translationX = 0.0, translationY = 0.0,
-        translationZ = 0.0, rotationX = 0.0, rotationY = 0.0, rotationZ = 0.0)) }
+    fun releaseHeldInput() { heldButtons = emptySet(); inputGeneration += 1 }
+    fun cut() {
+        releaseHeldInput()
+        send(manualBase().copy(throttle = 0.0, translationX = 0.0, translationY = 0.0,
+            translationZ = 0.0, rotationX = 0.0, rotationY = 0.0, rotationZ = 0.0))
+    }
     fun action(block: suspend () -> Unit) {
         scope.launch {
             try { block() } catch (error: CancellationException) { throw error }
@@ -241,6 +262,7 @@ internal fun FlightModeChrome(
         val inputSession = uiState.sessionHandle
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
+                releaseHeldInput()
                 control = FlightControl.Cut
                 pendingControl = null
                 manualGuidanceInputOwned = false
@@ -284,11 +306,21 @@ internal fun FlightModeChrome(
     }
 
     val actions = FlightUiActions(
-        assist = { send(manualBase().copy(assist = it)) },
+        assist = {
+            releaseHeldInput()
+            send(flightHeldAxisIntent(manualBase(), translationMode, emptySet(), precision).copy(assist = it))
+        },
         axis = { index, held ->
-            send(flightAxisIntent(manualBase(), translationMode, index, held))
+            if (held || index in heldButtons) {
+                heldButtons = if (held) heldButtons + index else heldButtons - index
+                send(flightHeldAxisIntent(manualBase(), translationMode, heldButtons, precision))
+            }
         },
         toggleRcs = { cut(); translationMode = !translationMode },
+        togglePrecision = {
+            precision = !precision
+            send(flightHeldAxisIntent(manualBase(), translationMode, heldButtons, precision))
+        },
         throttle = { send(manualBase().copy(throttle = it.toDouble())) },
         cut = ::cut,
         playPause = { action { facade.applyCommand(if (paused) RuntimeCommand.ResumePlayback else RuntimeCommand.PausePlayback) } },
@@ -319,9 +351,11 @@ internal fun FlightModeChrome(
         fuel <= 0.0 && ready -> "Propellant depleted. You can still coast and orient the spacecraft."
         docking != null -> dockingInstruction(requireNotNull(docking))
         rendezvous != null -> "RCS acts along the ship’s axes. Manual input or CUT releases guidance; nearby operations stay at 1×."
-        !coasting -> "Time acceleration is available while coasting."
-        control.assist == FlightAssist.Prograde -> "Prograde points along your motion. Thrust raises the opposite side of your orbit."
-        control.assist == FlightAssist.Retrograde -> "Retrograde points against your motion. Thrust lowers the opposite side of your orbit."
+        sample != null && flightOrbitCaution(sample) != null -> flightOrbitCaution(sample)!!
+        paused && control.throttle > 0.0 -> "Throttle is staged. Run starts the burn; CUT clears it."
+        !coasting -> "Time acceleration is available while coasting. CUT stops thrust and releases held controls."
+        control.assist == FlightAssist.Prograde -> "Prograde follows velocity. Near periapsis, a short burn mainly raises apoapsis."
+        control.assist == FlightAssist.Retrograde -> "Retrograde opposes velocity. Near apoapsis, a short burn mainly lowers periapsis."
         control.assist == FlightAssist.Hold -> "Stabilise damps rotation. Hold a direction to steer."
         else -> "Hold a direction to steer. Release to stop the control input."
     }
@@ -339,6 +373,7 @@ internal fun FlightModeChrome(
     fun beginMissionBurn() {
         if (missionActionBusy || !ready) return
         missionActionBusy = true
+        releaseHeldInput()
         guidedCoast = false
         while (commands.tryReceive().isSuccess) { /* Superseded manual inputs must not cancel new guidance. */ }
         pendingControl = null
@@ -367,6 +402,7 @@ internal fun FlightModeChrome(
     fun setEncounterGuidance(guidance: RendezvousGuidance) {
         if (!ready || missionActionBusy) return
         missionActionBusy = true
+        releaseHeldInput()
         guidedCoast = false
         while (commands.tryReceive().isSuccess) { /* Native guidance supersedes queued touch input. */ }
         pendingControl = null
@@ -387,6 +423,7 @@ internal fun FlightModeChrome(
     fun dockingAction(guidance: DockingGuidance? = null) {
         if (!ready || missionActionBusy) return
         missionActionBusy = true
+        releaseHeldInput()
         guidedCoast = false
         while (commands.tryReceive().isSuccess) { /* A new native command supersedes pending touch input. */ }
         pendingControl = null
@@ -441,7 +478,7 @@ internal fun FlightModeChrome(
                     drawPath(p, FlightTeal, style = Stroke(1.5.dp.toPx()))
                 }
                 Column(if (landscape) Modifier.width(128.dp) else Modifier.weight(1f)) {
-                    Text("ODYSSEY", color = FlightInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 3.sp)
+                    Text("ODYSSEY", color = FlightInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 3.sp, maxLines = 1)
                     Text(status, color = if (burning) FlightAmber else FlightTeal, fontSize = 11.sp, maxLines = 1)
                 }
                 if (landscape) FlightOrbitInstruments(sample, Modifier.weight(1f), rendezvous, docking)
@@ -455,15 +492,23 @@ internal fun FlightModeChrome(
             .padding(top = header + 8.dp, start = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp,
                 end = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp)
             .widthIn(max = 600.dp)) {
-            Row(Modifier.onGloballyPositioned { cameraBounds = it.boundsInWindow() }
-                .horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (rendezvous != null || docking != null) FlightAction("Encounter", { onCamera(3) }, FlightTags.camera(3), active = cameraMode == 3)
-                listOf(1 to "Orbit camera", 2 to "Chase", 0 to "Coast prediction").forEach { (mode, label) ->
-                    FlightAction(label, { onCamera(mode) }, FlightTags.camera(mode), active = cameraMode == mode)
+            Column(Modifier.onGloballyPositioned { cameraBounds = it.boundsInWindow() }) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (rendezvous != null || docking != null) FlightAction("Encounter", { onCamera(3) }, FlightTags.camera(3), active = cameraMode == 3)
+                    listOf(1 to "Orbit", 2 to "Chase", 0 to "Map").forEach { (mode, label) ->
+                        FlightAction(label, { onCamera(mode) }, FlightTags.camera(mode), active = cameraMode == mode)
+                    }
+                    FlightAction("Centre", onRecenter, FlightTags.RECENTER)
                 }
-                FlightAction("Moon mission", { cut(); facade.suspendFlightControls(); onLunarMission() }, LunarFlightTags.BRIEF)
-                FlightAction("Station mission", { cut(); facade.suspendFlightControls(); onRendezvousMission() }, RendezvousTags.BRIEF)
-                FlightAction("Docking mission", { cut(); facade.suspendFlightControls(); onDockingMission() }, DockingTags.BRIEF)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (rendezvous == null && docking == null) {
+                        FlightDirectorReadout(sample, control.assist, Modifier.weight(1f))
+                    } else Spacer(Modifier.weight(1f))
+                    FlightAction("Guide", { guideVisible = true }, FlightTags.GUIDE)
+                    FlightAction("Plan", { planVisible = true }, FlightTags.PLAN, enabled = ready)
+                    FlightAction("Missions", { missionsVisible = true }, FlightTags.MISSIONS)
+                }
             }
             if (rendezvous != null || docking != null) {
                 // Encounter guidance sits below the clear scene in both orientations.
@@ -471,14 +516,6 @@ internal fun FlightModeChrome(
                 LunarMissionPanel(requireNotNull(lunarMission), landscape, paused, ready, missionActionBusy, coasting,
                     onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
                     onDetails = { action { facade.applyCommand(RuntimeCommand.PausePlayback); missionDetailsVisible = true } })
-            } else if (missionHelp && !landscape) {
-                Surface(color = Color(0xD20C1D2B), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, FlightLine)) {
-                    Row(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Raise your orbit: choose Prograde, run time, then ease up the throttle. Watch apoapsis climb.",
-                            Modifier.weight(1f), color = FlightInk, fontSize = 12.sp, lineHeight = 17.sp)
-                        FlightAction("×", { missionHelp = false })
-                    }
-                }
             }
         }
 
@@ -492,7 +529,7 @@ internal fun FlightModeChrome(
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(8.dp)) {
                         Text("ORIENTATION", color = FlightMuted, fontSize = 9.sp, letterSpacing = 1.sp)
                         FlightAssistStrip(control.assist, controlsReady, actions.assist)
-                        FlightAttitudePad(translationMode, controlsReady && (!translationMode || fuel > 0.0), actions)
+                        FlightAttitudePad(translationMode, precision, inputGeneration, controlsReady && (!translationMode || fuel > 0.0), actions)
                     }
                 }
                 Surface(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp)
@@ -548,7 +585,7 @@ internal fun FlightModeChrome(
                     Row(Modifier.fillMaxWidth().height(158.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(Modifier.width(156.dp)) {
-                            FlightAttitudePad(translationMode, controlsReady && (!translationMode || fuel > 0.0), actions)
+                            FlightAttitudePad(translationMode, precision, inputGeneration, controlsReady && (!translationMode || fuel > 0.0), actions)
                         }
                         Box(Modifier.weight(1f)) { FlightEnginePanel(control, sample, controlsReady, paused, actions) }
                     }
@@ -563,12 +600,28 @@ internal fun FlightModeChrome(
     if (missionDetailsVisible && lunarMission != null) {
         LunarMissionDetailsDialog(requireNotNull(lunarMission)) { missionDetailsVisible = false }
     }
+    if (guideVisible) FlightGuideDialog(sample, control.assist) { guideVisible = false }
+    if (planVisible) FlightPlanningDialog(facade, uiState.sessionHandle, sample, control, paused, ready,
+        onPause = { action { facade.applyCommand(RuntimeCommand.PausePlayback) } },
+        onDismiss = { planVisible = false })
+    if (missionsVisible) AlertDialog(onDismissRequest = { missionsVisible = false },
+        containerColor = FlightPanel, titleContentColor = FlightInk,
+        title = { Text("Choose a flight") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Each mission creates a fresh scenario and preserves this flight in Saves.", color = FlightMuted)
+                FlightAction("Lunar flyby", { missionsVisible = false; cut(); facade.suspendFlightControls(); onLunarMission() }, LunarFlightTags.BRIEF)
+                FlightAction("Station rendezvous", { missionsVisible = false; cut(); facade.suspendFlightControls(); onRendezvousMission() }, RendezvousTags.BRIEF)
+                FlightAction("Station docking", { missionsVisible = false; cut(); facade.suspendFlightControls(); onDockingMission() }, DockingTags.BRIEF)
+            }
+        }, confirmButton = { FlightAction("Close", { missionsVisible = false }) })
 }
 
 private data class FlightUiActions(
     val assist: (FlightAssist) -> Unit,
     val axis: (Int, Boolean) -> Unit,
     val toggleRcs: () -> Unit,
+    val togglePrecision: () -> Unit,
     val throttle: (Float) -> Unit,
     val cut: () -> Unit,
     val playPause: () -> Unit,
@@ -600,7 +653,7 @@ private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Mo
         } else {
         FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above Earth", FlightTags.ALTITUDE,
             Modifier.weight(1f))
-        FlightInstrument("ORBITAL SPEED", sample?.speedMps?.let { "%.2f km/s".format(Locale.US, it / 1_000) } ?: "—", "relative to Earth",
+        FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—", "lowest altitude", FlightTags.PERIAPSIS,
             modifier = Modifier.weight(1f))
         FlightInstrument("APOAPSIS", sample?.apoapsisAltitudeM?.let(::flightDistance)
             ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—", "highest altitude", FlightTags.APOAPSIS,
@@ -611,22 +664,53 @@ private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Mo
 
 @Composable
 private fun FlightAssistStrip(assist: FlightAssist, ready: Boolean, onAssist: (FlightAssist) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(44.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(3.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        FlightAssist.entries.forEach { item ->
-            FlightAction(item.label, { onAssist(item) }, FlightTags.assist(item), active = assist == item, enabled = ready)
+    var expanded by remember { mutableStateOf(false) }
+    val primary = listOf(FlightAssist.Hold, FlightAssist.Prograde, FlightAssist.Retrograde)
+    @Composable fun Choice(index: Int, modifier: Modifier) {
+        val item = primary.getOrNull(index)
+        if (item != null) FlightAction(item.label, { onAssist(item) }, FlightTags.assist(item),
+            active = assist == item, enabled = ready, modifier = modifier)
+        else FlightAction(if (assist in primary) "More" else assist.label, { expanded = true }, FlightTags.ASSIST_MORE,
+            active = assist !in primary, enabled = ready, modifier = modifier)
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 280.dp) Column {
+            repeat(2) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Choice(row * 2, Modifier.weight(1f))
+                    Choice(row * 2 + 1, Modifier.weight(1f))
+                }
+            }
+        } else Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            repeat(4) { Choice(it, Modifier.weight(1f)) }
         }
     }
+    if (expanded) AlertDialog(onDismissRequest = { expanded = false }, containerColor = FlightPanel,
+        title = { Text("Point the spacecraft", color = FlightInk) },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                FlightAssist.entries.forEach { item ->
+                    FlightAction(item.label, { onAssist(item); expanded = false }, FlightTags.assist(item), active = assist == item,
+                        enabled = ready, modifier = Modifier.fillMaxWidth())
+                    Text(flightManoeuvreDescription(item), color = FlightMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                }
+            }
+        }, confirmButton = { FlightAction("Close", { expanded = false }) })
 }
 
 @Composable
-private fun FlightAttitudePad(translation: Boolean, enabled: Boolean, actions: FlightUiActions) {
+private fun FlightAttitudePad(translation: Boolean, precision: Boolean, inputGeneration: Int, enabled: Boolean, actions: FlightUiActions) {
     Column {
-        Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (translation) "Translate" else "Rotate", color = FlightMuted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-            TextButton(onClick = actions.toggleRcs, modifier = Modifier.testTag(FlightTags.CONTROL_MODE), contentPadding = PaddingValues(2.dp)) {
-                Text(if (translation) "Attitude" else "RCS", color = FlightTeal, fontSize = 11.sp)
-            }
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            FlightAction(if (translation) "RCS" else "Rotate", actions.toggleRcs, FlightTags.CONTROL_MODE,
+                active = translation, modifier = Modifier.weight(1f).semantics {
+                    contentDescription = if (translation) "Translation controls. Switch to rotation" else "Rotation controls. Switch to translation"
+                })
+            FlightAction(if (precision) "Fine 20%" else "Full", actions.togglePrecision, FlightTags.PRECISION,
+                active = precision, modifier = Modifier.weight(1f).semantics {
+                    contentDescription = if (precision) "Fine control, 20 percent. Switch to full" else "Full control. Switch to fine, 20 percent"
+                })
         }
         val labels = if (translation) listOf("Left", "Up", "Forward", "Right", "Down", "Back")
             else listOf("Yaw left", "Pitch up", "Roll left", "Yaw right", "Pitch down", "Roll right")
@@ -634,7 +718,8 @@ private fun FlightAttitudePad(translation: Boolean, enabled: Boolean, actions: F
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 repeat(3) { column ->
                     val index = row * 3 + column
-                    FlightHoldButton(labels[index], FlightTags.axis(labels[index]), Modifier.weight(1f), enabled) { actions.axis(index, it) }
+                    FlightHoldButton(labels[index], FlightTags.axis(labels[index]), Modifier.weight(1f), enabled,
+                        inputGeneration) { actions.axis(index, it) }
                 }
             }
         }
@@ -704,9 +789,10 @@ private fun FlightInstrument(label: String, value: String, detail: String, tag: 
 }
 
 @Composable
-private fun FlightAction(label: String, action: () -> Unit, tag: String? = null, active: Boolean = false, enabled: Boolean = true) {
+internal fun FlightAction(label: String, action: () -> Unit, tag: String? = null, active: Boolean = false, enabled: Boolean = true,
+    modifier: Modifier = Modifier) {
     TextButton(onClick = action, enabled = enabled,
-        modifier = Modifier.heightIn(min = 40.dp).then(if (tag == null) Modifier else Modifier.testTag(tag)),
+        modifier = modifier.heightIn(min = 44.dp).then(if (tag == null) Modifier else Modifier.testTag(tag)),
         shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
         colors = ButtonDefaults.textButtonColors(contentColor = if (active) FlightTeal else FlightInk,
             containerColor = if (active) Color(0xFF1B3A42) else Color(0xA00A1824),
@@ -716,22 +802,30 @@ private fun FlightAction(label: String, action: () -> Unit, tag: String? = null,
 }
 
 @Composable
-private fun FlightHoldButton(label: String, tag: String, modifier: Modifier, enabled: Boolean, onHeld: (Boolean) -> Unit) {
+private fun FlightHoldButton(label: String, tag: String, modifier: Modifier, enabled: Boolean, inputGeneration: Int, onHeld: (Boolean) -> Unit) {
     var pressed by remember { mutableStateOf(false) }
+    var pulse by remember { mutableStateOf<Job?>(null) }
     val latest by rememberUpdatedState(onHeld)
     val scope = rememberCoroutineScope { Dispatchers.Main.immediate }
-    DisposableEffect(Unit) { onDispose { if (pressed) latest(false) } }
+    DisposableEffect(enabled, inputGeneration, label) { onDispose {
+        pulse?.cancel(); pulse = null
+        if (pressed) { pressed = false; latest(false) }
+    } }
     Surface(modifier.height(48.dp).testTag(tag)
         .semantics {
             contentDescription = label
             if (!enabled) disabled()
             onClick("Pulse $label") {
-                if (enabled) scope.launch { latest(true); try { delay(180) } finally { latest(false) } }
+                if (enabled && !pressed) pulse = scope.launch {
+                    pressed = true; latest(true)
+                    try { delay(180) } finally { pressed = false; latest(false) }
+                }
                 enabled
             }
         }
-        .pointerInput(enabled) {
+        .pointerInput(enabled, inputGeneration, label) {
             if (enabled) detectTapGestures(onPress = {
+                pulse?.cancelAndJoin(); pulse = null
                 pressed = true; latest(true)
                 try { tryAwaitRelease() } finally { pressed = false; latest(false) }
             })

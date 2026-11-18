@@ -4,15 +4,12 @@ use super::*;
 
 impl WorldRuntime {
     pub(super) fn refresh_active_solver_execution_report(&mut self) {
-        let requested_backend = self.config.physics.solver_backend.clone();
-        let active_cpu_features = self.hardware_profile.cpu_features.clone();
-        let branch = self.active_branch_mut();
-        branch.world.solver_execution = solver_execution_report_for_backend_with_source_count(
-            &requested_backend,
-            &active_cpu_features,
-            branch.world.bodies.len(),
-            branch.world.bodies.iter().filter(|body| body.source_mass_kg != 0.0).count(),
-        );
+        let world = &self.active_branch().world;
+        if let Ok(plan) = scientific_flight::bind_plan(&self.effective_physics_policy(),
+            &world.scientific_settings, &world.bodies, &world.spacecraft, 1.0,
+            &self.hardware_profile.cpu_features) {
+            self.active_branch_mut().world.solver_execution = plan.report();
+        }
     }
 
     /// Monotonic command ordinal for ordering snapshots within this session.
