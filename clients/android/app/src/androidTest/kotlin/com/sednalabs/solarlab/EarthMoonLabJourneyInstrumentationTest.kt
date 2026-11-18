@@ -105,8 +105,15 @@ class EarthMoonLabJourneyInstrumentationTest {
         capture("earth-moon-probe.png")
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CAMERA_HOME_BUTTON).performClick()
 
+        // Home applies native focus and observer commands asynchronously. Play is
+        // deliberately disabled during that action; wait for the real UI target.
+        composeRule.waitUntil(10_000) {
+            runCatching {
+                composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed().assertIsEnabled()
+            }.isSuccess
+        }
         val initialEpoch = requireNotNull(facade.uiState.value.snapshot).epochSeconds
-        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).performClick()
+        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsEnabled().performClick()
         composeRule.waitUntil(10_000) { facade.uiState.value.snapshot?.paused == false }
         Log.i("SolarLabJourney", "Playback acknowledged; waiting for epoch after $initialEpoch")
         composeRule.waitUntil(20_000) { (facade.uiState.value.snapshot?.epochSeconds ?: initialEpoch) > initialEpoch }

@@ -156,6 +156,23 @@ void TestFramingWhileTheReferenceMoves() {
 
 void TestGpuBufferAndCommandReuse() {
     using namespace solarlab::rendering;
+    // Refreshing a paused scene varies extraction timing, not its uploaded
+    // content. Keep completed compute readbacks observable across those refreshes.
+    constexpr std::string_view paused = "scenario|epoch=0|body:earth@(1,2,3)|appearance:earth";
+    const auto contentIdentity = SceneContentIdentity(paused);
+    assert(contentIdentity == SceneContentIdentity(
+        "scenario|epoch=0|body:earth@(1,2,3)|appearance:earth|diag:frame=0:cpu=0.131:gpu=0.000:drop=0"));
+    assert(contentIdentity == SceneContentIdentity(
+        "scenario|epoch=0|body:earth@(1,2,3)|appearance:earth|diag:frame=0:cpu=0.947:gpu=6.125:drop=3"));
+    assert(contentIdentity != SceneContentIdentity(
+        "scenario|epoch=1|body:earth@(1,2,3)|appearance:earth|diag:frame=60:cpu=0.131:gpu=0.000:drop=0"));
+    assert(contentIdentity != SceneContentIdentity(
+        "scenario|epoch=0|body:earth@(4,2,3)|appearance:earth|diag:frame=0:cpu=0.131:gpu=0.000:drop=0"));
+    assert(contentIdentity != SceneContentIdentity(
+        "scenario|epoch=0|body:earth@(1,2,3)|appearance:moon|diag:frame=0:cpu=0.131:gpu=0.000:drop=0"));
+    // The explicit native frame term still invalidates an otherwise equal packet.
+    assert(SceneUploadRevision(contentIdentity, 17, 0, 1, 0) !=
+        SceneUploadRevision(contentIdentity ^ 60, 17, 0, 1, 0));
     // Scene hashes use all 64 bits. A paused rendezvous advance changes poses
     // without moving the camera controls, so it must still invalidate GPU data
     // when both old and new hashes have their high bit set.
