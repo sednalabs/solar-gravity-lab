@@ -1,6 +1,10 @@
+pub mod assembly;
 pub mod spacecraft;
-pub mod rendezvous;
+pub use assembly::{
+    ContactPart, ContactShape, DockingPortGeometry, SpacecraftAssembly, SpacecraftContactGeometry,
+};
 pub mod docking;
+pub mod rendezvous;
 pub use docking::{DockingAttachment, DockingGuidanceMode, DockingStatus, SpacecraftDockingState};
 pub use rendezvous::{
     RendezvousGuidance, RendezvousGuidanceMode, RendezvousStatus, SpacecraftRendezvousState,
