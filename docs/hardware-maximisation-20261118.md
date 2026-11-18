@@ -24,7 +24,7 @@ checkpoints, test evidence and outstanding hardware gates.
 | QCOM image processing | Bounded image-processing workload qualification | Feature, format, sampler and device execution requirements |
 | Vulkan subgroups | Ballot-based cooperative medium compaction and far telemetry reduction | Subgroup-stage/operation checks and portable shaders |
 | Synchronisation | Synchronization2 with legacy fallback, persistent coherent maps, per-image presentation semaphores | Resource ownership, Android build and validation-layer/device exercise |
-| Advanced Vulkan | Compiled pipeline statistics, GPU duration/calibrated timestamps; evaluate concrete BDA workload | Report support, enablement, implementation and activation independently |
+| Advanced Vulkan | Compiled pipeline statistics, GPU duration/calibrated timestamps and optional BDA medium compaction | Report support, enablement, implementation and activation independently |
 
 ## Measurement contract
 
@@ -55,3 +55,47 @@ must follow the measured workload and confidence, not a universal ISA ranking.
 Later evidence is appended as the integrated code is qualified. A test passing
 on a host without an optional extension proves fallback/compilation only, not
 that extension's execution on Adreno or Oryon.
+
+## Hosted qualification and measured cache policy
+
+The integrated checkpoint `a6251811f5dc5d47c02ebb5d4ff50a5bdeddd7e8`
+passes [validation 44275712538](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44275712538)
+and [hardware proof 44275712028](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44275712028).
+This includes native x64/Arm correctness, ISA/census/FFI/runtime contracts,
+Android JVM/lint and **21 instrumentation tests across 12 classes** with the
+Vulkan backend executing under SwiftShader. It is emulator integration evidence;
+no live visual or physical S25 acceptance was performed.
+
+The optional Vulkan proof links the production Arm64 library with NDK
+27.3.13750724 at API 31 and both BDA/pipeline-statistics flags enabled. Compiled
+SPIR-V verifies the BDA pointer layout and record strides without requiring
+`shaderInt64`. The offscreen proof compiles actual QCOM tile-shading and box-filter
+instructions with pinned glslang 16.6.0, runs portable inversion and box-filter
+controls with validation enabled and zero errors, and cross-compiles the
+standalone Android Arm64 probe. Both vendor execution modes report **SKIP** on
+llvmpipe because the required capabilities are absent.
+
+The original cache candidate exposed a one-step sparse regression. The
+[CPU crossover run 44277468936](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44277468936)
+then measured all 1/2/4/8/16/32/64-step cohorts with the same paired binaries:
+streaming removes the one-step loss, cached two-step sparse work still regresses,
+and eight steps give a clearer benefit than four. The selected policy retains
+the original streaming kernel below eight steps and uses the packed cache from
+eight steps. The boundary is covered by a 7/8/10-step schedule compared bitwise
+with a 25-step bulk run. This final policy requires exact-head integrated proof;
+the earlier runs retain their own source identities.
+
+Evidence archives from checkpoint `a6251811`:
+
+| Evidence | Artifact | Archive SHA-256 |
+|---|---|---|
+| Optional native Vulkan and compiled BDA contract | [14415275437](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44275712028/artifacts/14415275437) | `ce1ef0e2e4056388d9d6f4a3fc16fee2efd048ef3b4daa2abe37858494ca848f` |
+| QCOM shaders, software controls and Android probe | [14415000802](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44275712028/artifacts/14415000802) | `6616a1f02a795273d9a912dedb865ee925388fbab52da9488e40cd5acd5ab30a` |
+| Android instrumentation | [14415477368](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44275712538/artifacts/14415477368) | `578b1b6982d0c3783c2df1bd743f70a8e8f8b9f9fd470d985f44d37ffbd2aba4` |
+
+Physical-device qualification remains **Ops w3455**. It must capture the actual
+application cpuset, Oryon placement experiments, driver and extension activation,
+CPU/GPU timing, frame-time, sustained thermal and energy behaviour. BDA and
+pipeline statistics remain opt-in, tile/image probes remain qualification
+workloads, and SVE/SME candidates remain feature-qualified possibilities rather
+than implemented force kernels.

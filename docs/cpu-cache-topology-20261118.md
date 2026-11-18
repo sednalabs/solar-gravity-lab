@@ -24,7 +24,13 @@ target still accumulates sources in ascending original order. Source/source
 forces and the odd scalar tail retain the original symmetric kernel. No
 reciprocal estimate, low-precision force arithmetic or horizontal source
 reduction has been introduced. The public path identifier remains
-`simd.arm64.neon-f64-passive-batch`, with the existing conservative dispatch.
+`simd.arm64.neon-f64-passive-batch`, with the existing conservative workload
+eligibility. Within that path, segments shorter than **eight steps** retain
+PR #242's allocation-free two-target traversal; segments of eight or more steps
+use the packed four-target cache. The paired segment-length curve found that
+two-step sparse work still regressed, four-step gains were narrow, and eight
+steps gave a clearer margin in both affinity modes. This is a conservative
+hosted-Arm threshold, not a claim of the optimal crossover on Oryon.
 
 The native Arm regression freezes the PR #242 kernel as an independent oracle
 and requires **bitwise** force agreement over all four-target tail sizes,
@@ -36,7 +42,7 @@ tests also execute on x64.
 ### Performance qualification
 
 Compare the merge base and candidate on the **same native Arm runner**, same
-compiler and affinity, in release mode with 11 samples and 64 steps. Use the
+compiler and affinity, in release mode with 11 samples at 1/2/4/8/16/32/64 steps. Use the
 existing throughput example with canonical 365/15, sparse 1024/3, small 3/4-body
 controls and dense 128/192/256 workloads. Repeat unrestricted and restricted to
 one CPU from the actual allowed mask. Preserve all JSON output, compiler/source
@@ -52,8 +58,15 @@ compares base `54b8d203` with candidate `2ca05d3a`: canonical/sparse medians
 improve 2.32%/1.84% under full affinity and 2.39%/1.89% on one CPU, with unchanged
 oracle errors and stable scalar controls. The dense-256 four-worker median is
 1.76% slower with substantial between-run variance; that limitation is retained.
-The final candidate also requires the one-step `short-segment` comparison, which
-uses the same binaries and reveals preparation costs hidden by 64-step amortisation.
+The [expanded paired result](../engine/physics/benchmarks/README.md#short-segment-qualification-run-44275712028)
+reproduces longer-segment gains but identifies a 1.87%/2.12% single-step sparse
+regression under full/one-CPU affinity. The original streaming traversal removes
+that regression. The [segment-length curve](../engine/physics/benchmarks/README.md#cache-crossover-qualification-run-44277468936)
+then measures every power of two through 64: sparse caching still regresses at
+two steps, improves only about 0.35% at four, and improves about 0.9% at eight.
+The chosen eight-step threshold preserves a larger measured margin. Exact-head
+integrated proof remains required after that threshold change; physical Oryon,
+thermal, energy and frame acceptance remain separate.
 
 ## Use actual topology and the Android scheduler
 
