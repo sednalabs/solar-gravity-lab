@@ -70,6 +70,14 @@ def is_other_consumer_surface(path: str) -> bool:
         ".github/workflows/codeql-query-tests.yml",
         ".github/workflows/interactive-android-build.yml",
         ".github/workflows/interactive-android-session.yml",
+        # Hardware-only proof is manual. Changes to its workflow/protocol do
+        # not invalidate validation-lab product runtime results.
+        ".github/workflows/hardware-optimisation.yml",
+        ".github/scripts/run_paired_hardware_throughput.sh",
+        ".github/scripts/compare_hardware_throughput.py",
+        ".github/scripts/test_compare_hardware_throughput.py",
+        ".github/scripts/run_vulkan_hardware_proof.sh",
+        ".github/scripts/run_qcom_offscreen_proof.sh",
         ".github/scripts/render_release_notes.py",
         ".github/scripts/generate_release_changelog.py",
         ".github/scripts/resolve_prerelease_apk_request.py",
@@ -417,6 +425,17 @@ def main() -> None:
     effective_files = latest_files if evidence.reused else primary_files
     changed_source = "latest_delta" if evidence.reused else "primary_diff"
 
+    # Only product changes or shared validation policy need a full main
+    # checkpoint. A push changing exclusively docs/other-consumer tooling
+    # cannot change any validation-lab runtime inputs; do not launch its
+    # Android emulator, Rust and native Arm jobs again after the PR.
+    passive_push = (
+        event_name == "push"
+        and primary_files is not None
+        and bool(primary_files)
+        and all(is_docs_only([path]) or is_other_consumer_surface(path)
+                for path in primary_files)
+    )
     checkpoint_event = event_name in {"push", "merge_group", "schedule"}
     if checkpoint_event:
         profile = "full"
@@ -424,8 +443,14 @@ def main() -> None:
         evidence = Evidence(False)
         effective_files = primary_files
         changed_source = "checkpoint_event"
+    if passive_push:
+        # No cross-commit proof is being asserted: this is narrow routing for
+        # files whose owning workflows are independent of validation-lab.
+        profile = "targeted"
+        lane_set = "auto"
+        changed_source = "push_consumer_only"
 
-    if lane_set == "auto" and event_name == "pull_request":
+    if lane_set == "auto" and (event_name == "pull_request" or passive_push):
         lanes, route_reason = route_auto_lanes(effective_files, profile, evidence.reused)
     else:
         lanes = {
