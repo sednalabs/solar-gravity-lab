@@ -658,6 +658,48 @@ mod tests {
     }
 
     #[test]
+    fn numeric_overflow_rejects_direct_and_staged_publication_atomically() {
+        let mut r = vacuum(0.05);
+        let world = &mut r.active_branch_mut().world;
+        world.spacecraft[0].dry_mass_kg = 1e-300;
+        world.spacecraft[0].propellant_mass_kg = 1e-300;
+        world.spacecraft[0].engines[0].max_thrust_n = 1e308;
+        world.spacecraft[0].engines[0].max_mass_flow_kgps = 1e-300;
+        world.bodies[0].mass_kg = 2e-300;
+        control(
+            &mut r,
+            FlightControl {
+                throttle: 1.0,
+                ..FlightControl::default()
+            },
+        );
+        let before = r.snapshot();
+        let ordinal = r.next_command_ordinal();
+        assert_eq!(
+            r.apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 0.01
+                },
+                0
+            ),
+            Err(RuntimeError::InvalidFlightState)
+        );
+        assert_eq!(r.snapshot(), before);
+        assert_eq!(r.next_command_ordinal(), ordinal);
+        let generation = r
+            .begin_advance([ordinal, 17], 0, ordinal, 0.01, 0)
+            .unwrap()
+            .generation;
+        assert!(matches!(
+            r.continue_advance(generation, 0),
+            Err(RuntimeError::InvalidFlightState)
+        ));
+        assert_eq!(r.query_advance().unwrap().state, AdvanceState::Cancelled);
+        assert_eq!(r.snapshot(), before);
+        assert_eq!(r.next_command_ordinal(), ordinal);
+    }
+
+    #[test]
     fn lifecycle_removes_components_and_clears_missing_reference() {
         let mut r = orbital(0.05);
         r.apply_command(

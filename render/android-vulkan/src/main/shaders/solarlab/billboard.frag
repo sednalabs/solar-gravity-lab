@@ -1,5 +1,19 @@
 #version 450
 
+layout(set=0,binding=0,std140) uniform SceneUniforms {
+    vec4 centerRelativeAndMetrics;
+    vec4 rightAndSpan;
+    vec4 upAndSpan;
+    vec4 forwardAndDepth;
+    vec4 viewport;
+    vec4 primaryLightPositionRelativeAndFlags;
+    vec4 presentation;
+    vec4 trailPresentationTranslation;
+    vec4 cameraCenterLow;
+    vec4 flightProjection;
+} uScene;
+
+
 layout(set = 0, binding = 1, std430) readonly buffer SurfaceColors {
     uint rgba[];
 } uSurface;
@@ -20,6 +34,7 @@ layout(location = 12) flat in vec3 vCometAntiSolarCamera;
 layout(location = 13) flat in vec3 vCometVelocityCamera;
 layout(location = 14) flat in vec3 vSurfaceMetrics;
 layout(location = 15) flat in vec3 vRingPlaneCamera;
+layout(location = 16) flat in vec4 vPerspectiveSphere;
 layout(location = 0) out vec4 outColor;
 
 const uint KIND_STAR = 0u;
@@ -202,7 +217,60 @@ vec3 litSurface(vec3 normal, vec3 color, float sphereZ) {
     return min(shaded, vec3(1.0));
 }
 
+bool sphereRay(vec3 ray,vec3 center,float radius,out float distance) {
+    // Camera-space +Z points into the scene. The camera is at the ray origin.
+    float along=dot(ray,center);
+    vec3 perpendicular=center-ray*along;
+    float discriminant=radius*radius-dot(perpendicular,perpendicular);
+    if(discriminant<0.0) return false;
+    float root=sqrt(max(discriminant,0.0));
+    distance=along-root;
+    if(distance<uScene.flightProjection.z) distance=along+root;
+    return distance>=uScene.flightProjection.z;
+}
+
+void perspectiveBody() {
+    vec2 ndc=2.0*gl_FragCoord.xy/uScene.viewport.xy-1.0;
+    vec2 tangents=vec2(uScene.rightAndSpan.w,uScene.upAndSpan.w)/uScene.flightProjection.y;
+    vec3 ray=normalize(vec3(ndc.x*tangents.x,-ndc.y*tangents.y,1.0));
+    float radius=max(vPerspectiveSphere.w,0.0);
+    if(radius<=0.0) discard;
+    vec3 center=vPerspectiveSphere.xyz;
+    float distance;
+    if(sphereRay(ray,center,radius,distance)) {
+        if(distance*ray.z>uScene.flightProjection.w) discard;
+        vec3 outward=normalize(ray*distance-center);
+        // Surface appearance uses right/up/toward-viewer, unlike +Z camera depth.
+        vec3 normal=vec3(outward.xy,-outward.z);
+        float facing=max(dot(-ray,outward),0.0);
+        vec3 color=(vKind==KIND_STAR || vMaterial==MATERIAL_STELLAR)
+            ? vec3(1.0,0.83,0.54) : litSurface(normal,surfaceColor(normal,facing),facing);
+        if((vAppearanceFlags & HAS_ATMOSPHERE)!=0u) {
+            float sunlight=smoothstep(-0.16,0.28,dot(normal,normalize(vLightDirection)));
+            color+=vec3(0.10,0.34,0.68)*pow(1.0-facing,4.0)*sunlight*0.45;
+        }
+        outColor=vec4(min(color,vec3(1.0)),vColor.a);
+        gl_FragDepth=log2(1.0+distance*ray.z)/log2(uScene.flightProjection.w);
+        return;
+    }
+    float atmosphereRadius=radius*vAtmosphereRatioAndDensity.x/max(vBodyRadiusUv,1e-9);
+    if((vAppearanceFlags & HAS_ATMOSPHERE)!=0u && atmosphereRadius>radius &&
+       sphereRay(ray,center,atmosphereRadius,distance)) {
+        if(distance*ray.z>uScene.flightProjection.w) discard;
+        float closest=length(center-ray*dot(center,ray));
+        float shell=1.0-smoothstep(radius,atmosphereRadius,closest);
+        vec3 outward=normalize(ray*distance-center);
+        float sunlight=smoothstep(-0.16,0.28,dot(vec3(outward.xy,-outward.z),normalize(vLightDirection)));
+        outColor=vec4(0.15,0.45,0.92,shell*sunlight*0.42);
+        gl_FragDepth=log2(1.0+distance*ray.z)/log2(uScene.flightProjection.w);
+        return;
+    }
+    discard;
+}
+
 void main() {
+    if(uScene.flightProjection.x>0.5) { perspectiveBody(); return; }
+
     vec2 cameraUv = vec2(vBillboardUv.x, -vBillboardUv.y);
     float distanceFromCenter = length(cameraUv);
     // Derivatives are evaluated before divergent surface/effect branches. A close

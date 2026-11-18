@@ -101,7 +101,7 @@ public:
         std::vector<SpacecraftInput> spacecraft = {});
 
     void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
-        double previousOffsetX = 0.0, double previousOffsetY = 0.0, double previousOffsetZ = 0.0);
+        double previousOffsetX = 0.0, double previousOffsetY = 0.0, double previousOffsetZ = 0.0, bool flightPerspective = false);
     bool Render();
     double PresentedFraction() const;
 
@@ -279,6 +279,7 @@ private:
         std::array<float, 4> presentation{};
         std::array<float, 4> trailPresentationTranslation{};
         std::array<float, 4> cameraCenterLow{};
+        std::array<float, 4> flightProjection{};
     };
 
     struct ComputePushConstants {
@@ -486,6 +487,7 @@ private:
     SceneGpuStreams sceneGpuStreams_;
     StreamUploadStats uploadStats_;
 
+    bool flightPerspective_ = false;
     double cameraCenterX_ = 0.0;
     double cameraCenterY_ = 0.0;
     double cameraCenterZ_ = 0.0;

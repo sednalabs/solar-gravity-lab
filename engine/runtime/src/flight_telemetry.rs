@@ -61,6 +61,8 @@ pub struct FlightTelemetry {
     pub reference_body_id: String,
     pub reference_radius_m: f64,
     pub altitude_m: f64,
+    pub speed_mps: f64,
+    pub radial_speed_mps: f64,
     pub orbit: Option<OrbitalElements>,
     pub moon_distance_m: Option<f64>,
     pub relative_position_m: Vector3d,
@@ -106,6 +108,12 @@ impl super::WorldRuntime {
             reference_body_id: host.body_id.0.clone(),
             reference_radius_m: host.radius_m,
             altitude_m: length(position) - host.radius_m,
+            speed_mps: length(velocity),
+            radial_speed_mps: if length(position) > 0.0 {
+                dot(position, velocity) / length(position)
+            } else {
+                0.0
+            },
             orbit: OrbitalElements::from_relative(
                 position,
                 velocity,

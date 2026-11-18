@@ -27,6 +27,29 @@ int main() {
         assert(std::abs(local-.125f) < .02f);
     }
     assert(std::abs(SmoothAngle(pi-.01,-pi+.01,.5)-pi) < 1e-10);
+    // A 60-degree short-axis perspective must resolve the actual Earth horizon
+    // from a 400 km orbit and still retain metre-scale local mesh depth.
+    constexpr double earthRadius=6371000.0;
+    const double eyeDistance=FlightEyeDistance(16.0);
+    assert(std::abs(eyeDistance-27.71281292110204)<1e-10);
+    const auto centerRay=FlightCameraRay(360,360,720,720);
+    assert((centerRay==std::array<double,3>{0,0,1}));
+    const auto edgeRay=FlightCameraRay(0,360,720,720);
+    assert(std::abs(edgeRay[0]+0.5)<1e-12 && std::abs(edgeRay[2]-std::sqrt(0.75))<1e-12);
+    const std::array<double,3> earthCenter{-earthRadius-400000.0,0,eyeDistance};
+    assert(!RaySphere(centerRay,earthCenter,earthRadius));
+    const auto horizon=RaySphere(edgeRay,earthCenter,earthRadius);
+    assert(horizon && *horizon>400000.0 && *horizon<3000000.0);
+    const auto nearShip=RaySphere(centerRay,{0,0,eyeDistance},4.0);
+    assert(nearShip && std::abs(*nearShip-(eyeDistance-4.0))<1e-10);
+    assert(!RaySphere(centerRay,{0,0,-100.0},10.0));
+    assert(FlightDepth(*nearShip)<FlightDepth(*horizon*edgeRay[2]));
+    assert(FlightDepth(400000.0)<FlightDepth(384400000.0));
+    assert(FlightDepth(384400000.0)<FlightDepth(149597870700.0));
+    assert(FlightDepth(0.1)>0.0 && FlightDepth(1.0e16)==1.0);
+    // Pixel aspect preserves the same short-axis angle for a landscape stage.
+    assert(FlightCameraRay(1280/2.,720/2.,1280,720)==centerRay);
+    assert(std::abs(FlightCameraRay(1280/2.,0,1280,720)[1]-0.5)<1e-12);
     assert(kReferenceMesh.size() % 3 == 0 && kReferenceMesh.size() > 3000);
     assert(kReferenceExhaust.size() % 3 == 0 && !kReferenceExhaust.empty());
     double minZ=100,maxZ=-100,minX=100,maxX=-100;
@@ -40,5 +63,5 @@ int main() {
     assert(minZ < -4 && maxZ > 3.5 && maxZ-minZ < 8); // metres, nose +Z
     assert(maxX-minX > 13 && maxX-minX < 14);
     for(const auto& v:kReferenceExhaust) {assert(v.effect==1);assert(v.z <= -4.029f);}
-    std::cout << "PASS spacecraft geometry, materials, attitude, chase frame, astronomical precision\n";
+    std::cout << "PASS spacecraft geometry, materials, attitude, chase frame, astronomical precision, perspective horizon and shared depth\n";
 }

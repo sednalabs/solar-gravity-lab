@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.PixelCopy
 import android.view.SurfaceView
@@ -26,6 +27,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.FlightAssist
 import com.sednalabs.solarlab.runtime.FlightState
 import com.sednalabs.solarlab.runtime.REFERENCE_SPACECRAFT_ID
+import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.SessionConnectionState
@@ -63,6 +65,9 @@ class OrbitalFlightJourneyInstrumentationTest {
         composeRule.onNodeWithTag(FlightTags.ALTITUDE).assertIsDisplayed()
         composeRule.onNodeWithTag(FlightTags.THROTTLE).assertIsDisplayed()
         capture("flight-portrait-orbit.png")
+        composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
+        capture("flight-initial-chase.png")
+        composeRule.onNodeWithTag(FlightTags.camera(1)).performClick()
         composeRule.onNodeWithTag(FlightTags.CHECKPOINT).performClick()
         waitUntil { facade.uiState.value.activeCheckpointId?.startsWith("flight.mark.") == true }
         val marked = flight(facade)
@@ -124,6 +129,9 @@ class OrbitalFlightJourneyInstrumentationTest {
         waitUntil { composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && nodes(FlightTags.ROOT) }
         composeRule.onNodeWithTag(FlightTags.THROTTLE).assertIsDisplayed()
         composeRule.onNodeWithTag(FlightTags.CUT).assertIsDisplayed()
+        val viewport = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInRoot
+        val density = composeRule.activity.resources.displayMetrics.density
+        assertTrue("Landscape flight must leave a usable central scene", viewport.height > 120 * density && viewport.width > 200 * density)
         capture("flight-landscape.png")
         composeRule.onNodeWithTag(FlightTags.EXIT).performClick()
         waitUntil { nodes(LabTags.ROOT) && !nodes(FlightTags.ROOT) }
@@ -142,16 +150,27 @@ class OrbitalFlightJourneyInstrumentationTest {
         var surface: SurfaceView? = null
         waitUntil {
             composeRule.runOnUiThread { surface = findSurface(composeRule.activity.window.decorView) }
-            surface?.holder?.surface?.isValid == true && (surface?.width ?: 0) > 0 && (surface?.height ?: 0) > 0
+            composeRule.activity.runtimeFacadeForTesting.uiState.value.renderStatus.readiness == RenderHostReadiness.Ready &&
+                surface?.holder?.surface?.isValid == true && (surface?.width ?: 0) > 0 && (surface?.height ?: 0) > 0
         }
         val native = requireNotNull(surface)
-        val stage = Bitmap.createBitmap(native.width, native.height, Bitmap.Config.ARGB_8888)
-        val completed = CountDownLatch(1)
-        var status = PixelCopy.ERROR_UNKNOWN
-        PixelCopy.request(native, stage, { status = it; completed.countDown() }, Handler(Looper.getMainLooper()))
-        assertTrue("Native flight surface must present a frame", completed.await(5, TimeUnit.SECONDS))
+        // A valid recreated Surface can precede its first presented Vulkan frame.
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        var stage: Bitmap? = null
+        var status = PixelCopy.ERROR_SOURCE_NO_DATA
+        while (stage == null && SystemClock.uptimeMillis() < deadline) {
+            val image = Bitmap.createBitmap(native.width, native.height, Bitmap.Config.ARGB_8888)
+            val completed = CountDownLatch(1)
+            PixelCopy.request(native, image, { status = it; completed.countDown() }, Handler(Looper.getMainLooper()))
+            assertTrue("Native flight surface must present a frame", completed.await(5, TimeUnit.SECONDS))
+            if (status == PixelCopy.SUCCESS) stage = image else {
+                image.recycle()
+                if (status != PixelCopy.ERROR_SOURCE_NO_DATA) break
+                SystemClock.sleep(80)
+            }
+        }
         assertEquals(PixelCopy.SUCCESS, status)
-        writeImage(name.removeSuffix(".png") + "-stage.png", stage)
+        writeImage(name.removeSuffix(".png") + "-stage.png", requireNotNull(stage))
         writeImage(name, requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()))
     }
 

@@ -274,7 +274,8 @@ ProjectedBody ProjectBody(
     double yawRadians,
     double pitchRadians,
     int viewportWidthPx,
-    int viewportHeightPx) {
+    int viewportHeightPx,
+    bool flightPerspective = false) {
     const int width = std::max(viewportWidthPx, 1);
     const int height = std::max(viewportHeightPx, 1);
     const CameraFrame frame = BuildCameraFrame(viewRadiusM, yawRadians, pitchRadians, width, height);
@@ -284,6 +285,19 @@ ProjectedBody ProjectBody(
         cameraCenterZ - sceneOriginZ);
     const Float3 positionRelative = MakeFloat3(body.positionRelativeX, body.positionRelativeY, body.positionRelativeZ);
     const Float3 delta = positionRelative - cameraCenterRelative;
+    if (flightPerspective) {
+        const double eyeDistance = solarlab::spacecraft::FlightEyeDistance(viewRadiusM);
+        const double depth = Dot(delta, frame.forward) + eyeDistance;
+        if (depth <= 0.1) return {};
+        const double scale = eyeDistance / depth;
+        return ProjectedBody{
+            .screenX = (0.5 + 0.5 * Dot(delta, frame.right) / frame.halfSpanX * scale) * width,
+            .screenY = (0.5 - 0.5 * Dot(delta, frame.up) / frame.halfSpanY * scale) * height,
+            .radiusPx = static_cast<float>(body.radiusM / frame.metersPerPixel * scale),
+            .centerDepthM = depth,
+            .visible = true,
+        };
+    }
     const double clipX = Dot(delta, frame.right) / std::max(frame.halfSpanX, 1.0);
     const double clipY = Dot(delta, frame.up) / std::max(frame.halfSpanY, 1.0);
     ProjectedBody result;
@@ -770,7 +784,8 @@ SolarLabStageController::LabViewportSnapshot SolarLabStageController::GetLabView
             runtimeScene_.sceneOriginX, runtimeScene_.sceneOriginY, runtimeScene_.sceneOriginZ,
             snapshot.camera.centerX, snapshot.camera.centerY, snapshot.camera.centerZ,
             snapshot.camera.viewRadiusM, snapshot.camera.yawRadians, snapshot.camera.pitchRadians,
-            snapshot.width, snapshot.height);
+            snapshot.width, snapshot.height, flightCameraMode_ != 0);
+        if (!projected.visible) continue;
         snapshot.bodies.push_back(LabBodyAnchor{
             .bodyId = body.bodyId,
             .screenX = projected.screenX,
@@ -782,6 +797,26 @@ SolarLabStageController::LabViewportSnapshot SolarLabStageController::GetLabView
             .worldY = runtimeScene_.sceneOriginY + displayed.positionRelativeY,
             .worldZ = runtimeScene_.sceneOriginZ + displayed.positionRelativeZ,
         });
+    }
+    if (flightCameraMode_ != 0) {
+        const auto basis = solarlab::presentation::MakeCameraBasis(snapshot.camera.yawRadians, snapshot.camera.pitchRadians);
+        for (auto& anchor : snapshot.bodies) {
+            const auto ray = solarlab::spacecraft::FlightCameraRay(anchor.screenX, anchor.screenY, snapshot.width, snapshot.height);
+            for (const auto& other : snapshot.bodies) {
+                if (&other == &anchor) continue;
+                const Float3 delta = MakeFloat3(other.worldX - snapshot.camera.centerX,
+                    other.worldY - snapshot.camera.centerY, other.worldZ - snapshot.camera.centerZ);
+                const std::array<double, 3> center{delta.x*basis.right[0]+delta.y*basis.right[1]+delta.z*basis.right[2],
+                    delta.x*basis.up[0]+delta.y*basis.up[1]+delta.z*basis.up[2],
+                    delta.x*basis.forward[0]+delta.y*basis.forward[1]+delta.z*basis.forward[2] +
+                        solarlab::spacecraft::FlightEyeDistance(snapshot.camera.viewRadiusM)};
+                const double radius = other.radiusPx * projection.metersPerPixel * other.depthM /
+                    solarlab::spacecraft::FlightEyeDistance(snapshot.camera.viewRadiusM);
+                const auto hit = solarlab::spacecraft::RaySphere(ray, center, radius);
+                if (hit && *hit * ray[2] < anchor.depthM - 1.0) { anchor.occluded = true; break; }
+            }
+        }
+        return snapshot;
     }
     for (auto& body : snapshot.bodies) {
         const double ownSurfaceDepth = body.depthM - body.radiusPx * projection.metersPerPixel;
@@ -1018,6 +1053,7 @@ void SolarLabStageController::BindRuntimeSession(uint64_t runtimeSessionHandle) 
         return;
     }
     boundRuntimeSessionHandle_ = runtimeSessionHandle;
+    flightFramePending_ = flightCameraMode_ != 0;
     runtimeCameraInitialized_ = false;
     runtimeHomePending_ = false;
     runtimeScene_ = RuntimeSceneState{};
@@ -1361,6 +1397,25 @@ std::string SolarLabStageController::PickRuntimeBodyId(float screenXPx, float sc
     const auto projection = solarlab::presentation::MakeProjection(cameraViewRadiusM_, viewportWidthPx, viewportHeightPx);
     const double fraction = PresentationFractionLocked();
     const auto camera = PresentedCameraLocked(fraction);
+    if (flightCameraMode_ != 0) {
+        const auto basis = solarlab::presentation::MakeCameraBasis(camera.yawRadians, camera.pitchRadians);
+        const auto ray = solarlab::spacecraft::FlightCameraRay(screenXPx, screenYPx, viewportWidthPx, viewportHeightPx);
+        double closest = std::numeric_limits<double>::max();
+        std::string selected;
+        for (const auto& body : runtimeScene_.pickBodies) {
+            const Float3 delta = MakeFloat3(
+                runtimeScene_.sceneOriginX + solarlab::presentation::Mix(body.previousRelativeX, body.positionRelativeX, fraction) - camera.centerX,
+                runtimeScene_.sceneOriginY + solarlab::presentation::Mix(body.previousRelativeY, body.positionRelativeY, fraction) - camera.centerY,
+                runtimeScene_.sceneOriginZ + solarlab::presentation::Mix(body.previousRelativeZ, body.positionRelativeZ, fraction) - camera.centerZ);
+            const std::array<double,3> center{delta.x*basis.right[0]+delta.y*basis.right[1]+delta.z*basis.right[2],
+                delta.x*basis.up[0]+delta.y*basis.up[1]+delta.z*basis.up[2],
+                delta.x*basis.forward[0]+delta.y*basis.forward[1]+delta.z*basis.forward[2] +
+                    solarlab::spacecraft::FlightEyeDistance(camera.viewRadiusM)};
+            const auto hit = solarlab::spacecraft::RaySphere(ray, center, body.radiusM);
+            if (hit && *hit < closest) {closest = *hit; selected = body.bodyId;}
+        }
+        return selected;
+    }
     std::optional<solarlab::presentation::SphereHit> bestHit;
     std::string bestBodyId;
     for (const RuntimeBodyProxy& body : runtimeScene_.pickBodies) {
@@ -1464,7 +1519,8 @@ void SolarLabStageController::PushCameraLocked() {
         cameraPitchRadians_,
         runtimeScene_.cameraPreviousOffsetX,
         runtimeScene_.cameraPreviousOffsetY,
-        runtimeScene_.cameraPreviousOffsetZ);
+        runtimeScene_.cameraPreviousOffsetZ,
+        flightCameraMode_ != 0);
 }
 
 void SolarLabStageController::InitializeFreeCameraFromRuntimePacketLocked(

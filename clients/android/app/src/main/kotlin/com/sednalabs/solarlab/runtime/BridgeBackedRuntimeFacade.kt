@@ -204,9 +204,14 @@ class BridgeBackedRuntimeFacade internal constructor(
             if (session == null || session != _uiState.value.sessionHandle) return@launch
             try {
                 bridge.setFlightControl(shipId, FlightControl.Cut)
-                bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal)
             } catch (error: Throwable) {
-                _uiState.update { it.copy(noticeLine = "Flight input stopped: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+                _uiState.update { it.copy(noticeLine = "Could not cut flight input: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+            } finally {
+                // A missing or removed ship must never prevent stopping simulation time.
+                try { bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal) }
+                catch (error: Throwable) {
+                    _uiState.update { it.copy(noticeLine = "Could not pause flight: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+                }
             }
         }
     }

@@ -161,8 +161,8 @@ pub(super) fn sample(
         ship.control.throttle,
         t.remaining_delta_v_mps,
         t.altitude_m,
-        orbit.map_or(0.0, |o| o.speed_mps),
-        orbit.map_or(0.0, |o| o.radial_speed_mps),
+        t.speed_mps,
+        t.radial_speed_mps,
         orbit.map_or(0.0, |o| o.periapsis_radius_m - t.reference_radius_m),
         orbit
             .and_then(|o| o.apoapsis_radius_m)
@@ -218,6 +218,46 @@ pub(super) fn sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radial_flight_reports_speed_without_an_orbital_plane() {
+        let handle =
+            sl_v2_session_create(super::super::tests::new_params("lab.earth-moon", "radial"))
+                .handle;
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 1)
+            .unwrap();
+        start(handle, "flight.odyssey", 2).unwrap();
+        {
+            let mut registry = registry().lock().unwrap();
+            let r = &mut registry.get_mut(handle).unwrap().runtime;
+            let body = r.body_by_id("flight.odyssey").unwrap().clone();
+            let earth = r.body_by_id("earth").unwrap().clone();
+            r.apply_command(
+                WorldCommand::SetBodyKinematics {
+                    body_id: body.body_id,
+                    position_m: body.position_m,
+                    velocity_mps: Vector3d {
+                        x: earth.velocity_mps.x + 123.0,
+                        y: earth.velocity_mps.y,
+                        z: earth.velocity_mps.z,
+                    },
+                },
+                3,
+            )
+            .unwrap();
+        }
+        let state = sample(handle, "flight.odyssey").unwrap().unwrap();
+        assert_eq!(state[35], 0.0);
+        assert!((state[10] - 123.0).abs() < 1e-9);
+        assert!((state[11] - 123.0).abs() < 1e-9);
+        sl_v2_session_destroy(handle);
+    }
+
     #[test]
     fn malformed_controls_are_rejected_before_mutation() {
         assert!(control_from_values(&[0.0; 7]).is_err());

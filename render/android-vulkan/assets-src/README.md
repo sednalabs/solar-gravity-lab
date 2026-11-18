@@ -34,3 +34,13 @@ and a small illustrative fill for readability. All physical state remains in
 Rust. The mesh transport retains its double-precision position, then splits it
 into high/low float pairs before GPU camera subtraction. Unit tests cover local
 precision at astronomical offsets, quaternion conventions and chase orientation.
+
+Flight camera modes use a 60-degree short-axis perspective with a 0.1 m near
+plane. The mesh and analytically intersected celestial surfaces share logarithmic
+depth through 1e16 m, so nearby triangle geometry and the real Earth horizon can
+coexist. The planet surface maps and scene illumination remain the existing
+renderer assets. Camera-follow changes presentation only; it never edits physics.
+The laboratory/map retains its orthographic projection, tracer compaction and
+trajectory rendering. Close flight hides those map layers; switch to Map for
+orbital paths. Flight's analytic background currently covers spherical bodies
+and atmospheres; ring/comet effects remain in the laboratory projection.

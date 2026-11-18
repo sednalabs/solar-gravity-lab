@@ -37,6 +37,7 @@ struct ComputeCommandState {
 };
 
 struct SceneCommandState {
+    bool flightPerspective = false;
     std::array<DrawCommandState, 8> draws{};
     ComputeCommandState medium;
     ComputeCommandState far;

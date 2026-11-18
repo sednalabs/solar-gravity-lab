@@ -423,8 +423,10 @@ void SolarLabVulkanRenderer::SubmitScene(
 }
 
 void SolarLabVulkanRenderer::SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
-    double previousOffsetX, double previousOffsetY, double previousOffsetZ) {
+    double previousOffsetX, double previousOffsetY, double previousOffsetZ, bool flightPerspective) {
     std::scoped_lock lock(stateMutex_);
+    if (flightPerspective_ != flightPerspective) commandBuffersDirty_ = true;
+    flightPerspective_ = flightPerspective;
     cameraCenterX_ = centerX;
     cameraCenterY_ = centerY;
     cameraCenterZ_ = centerZ;
@@ -1344,7 +1346,7 @@ bool SolarLabVulkanRenderer::CreateDescriptorResources() {
     // Scene uniforms and immutable surface colours survive ordinary swapchain rebuilds.
     if (sceneDescriptorSetLayout_ == VK_NULL_HANDLE) {
         const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {{
-            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         }};
         const VkDescriptorSetLayoutCreateInfo layoutCreateInfo{
@@ -2059,6 +2061,7 @@ solarlab::rendering::SceneCommandState SolarLabVulkanRenderer::SceneCommandState
         };
     };
     return {
+        .flightPerspective = flightPerspective_,
         .draws = {draw(sceneGpuStreams_.authoritative), draw(sceneGpuStreams_.tracerNear),
             draw(sceneGpuStreams_.tracerMedium), draw(sceneGpuStreams_.tracerFar), draw(sceneGpuStreams_.trails),
             draw(sceneGpuStreams_.spacecraft), {sceneGpuStreams_.referenceMesh.allocationGeneration, 0},
@@ -2746,6 +2749,9 @@ bool SolarLabVulkanRenderer::UpdateSceneUniformBufferLocked() {
             0.0f,
         },
         .cameraCenterLow = centerLow,
+        // 60 degree short-axis FOV, 0.1 metre near plane and logarithmic astronomical depth.
+        .flightProjection = {flightPerspective_ ? 1.0f : 0.0f,
+            static_cast<float>(solarlab::spacecraft::FlightEyeDistance(cameraViewRadiusM_)), 0.1f, 1.0e16f},
     };
 
     if (!UploadBytes(&uniformData, sizeof(uniformData), sceneUniformBuffer_)) return false;
@@ -3338,32 +3344,34 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
     // authoritative, near, and medium streams duplicated around the far pass;
     // with depth writes enabled that only repeated vertex/fragment work and
     // compounded translucent edges.
-    if (sceneGpuStreams_.tracerFarCompute.enabled) {
-        bindAndDrawFixedCount(farDensityPipeline_, sceneGpuStreams_.tracerFarCompute);
-    } else {
-        bindAndDraw(farDensityPipeline_, sceneGpuStreams_.tracerFar);
-    }
-    if (sceneGpuStreams_.tracerMediumCompute.enabled) {
-        bindAndDrawIndirect(mediumPointPipeline_, sceneGpuStreams_.tracerMediumCompute);
-    } else {
-        bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
-    }
-    bindAndDrawBillboards(sceneGpuStreams_.tracerNear);
+    if (!flightPerspective_) {
+        if (sceneGpuStreams_.tracerFarCompute.enabled) {
+            bindAndDrawFixedCount(farDensityPipeline_, sceneGpuStreams_.tracerFarCompute);
+        } else {
+            bindAndDraw(farDensityPipeline_, sceneGpuStreams_.tracerFar);
+        }
+        if (sceneGpuStreams_.tracerMediumCompute.enabled) {
+            bindAndDrawIndirect(mediumPointPipeline_, sceneGpuStreams_.tracerMediumCompute);
+        } else {
+            bindAndDraw(mediumPointPipeline_, sceneGpuStreams_.tracerMedium);
+        }
+        bindAndDrawBillboards(sceneGpuStreams_.tracerNear);
 
-    // Trails describe motion but must remain behind the solid celestial stage.
-    // Drawing them first lets authoritative bodies and their ring/coma effects
-    // occlude paths naturally instead of painting a line across a planet.
-    if (trailPipeline_ != VK_NULL_HANDLE && sceneGpuStreams_.trails.vertexCount > 1 && sceneGpuStreams_.trails.vertexBuffer.buffer != VK_NULL_HANDLE) {
-        const VkBuffer trailBuffer = sceneGpuStreams_.trails.vertexBuffer.buffer;
-        const VkDeviceSize trailOffset = 0;
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trailPipeline_);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineLayout_, 0, 1, &sceneDescriptorSet_, 0, nullptr);
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &trailBuffer, &trailOffset);
-        uint32_t firstVertex = 0;
-        for (uint32_t stripVertexCount : sceneGpuStreams_.trailStripVertexCounts) {
-            if (stripVertexCount >= 2U) {
-                vkCmdDraw(commandBuffer, stripVertexCount, 1, firstVertex, 0);
-                firstVertex += stripVertexCount;
+        // Trails describe motion but must remain behind the solid celestial stage.
+        // Drawing them first lets authoritative bodies and their ring/coma effects
+        // occlude paths naturally instead of painting a line across a planet.
+        if (trailPipeline_ != VK_NULL_HANDLE && sceneGpuStreams_.trails.vertexCount > 1 && sceneGpuStreams_.trails.vertexBuffer.buffer != VK_NULL_HANDLE) {
+            const VkBuffer trailBuffer = sceneGpuStreams_.trails.vertexBuffer.buffer;
+            const VkDeviceSize trailOffset = 0;
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trailPipeline_);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineLayout_, 0, 1, &sceneDescriptorSet_, 0, nullptr);
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &trailBuffer, &trailOffset);
+            uint32_t firstVertex = 0;
+            for (uint32_t stripVertexCount : sceneGpuStreams_.trailStripVertexCounts) {
+                if (stripVertexCount >= 2U) {
+                    vkCmdDraw(commandBuffer, stripVertexCount, 1, firstVertex, 0);
+                    firstVertex += stripVertexCount;
+                }
             }
         }
     }

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -101,7 +102,9 @@ internal object FlightTags {
 internal object FlightChromeMetrics {
     val Header = 112.dp
     val PortraitDock = 302.dp
-    val LandscapeDock = 186.dp
+    val LandscapeDock = 76.dp
+    val LandscapeHeader = 64.dp
+    val LandscapeSide = 184.dp
 }
 
 private val FlightInk = Color(0xFFEDF6FF)
@@ -200,11 +203,76 @@ internal fun FlightModeChrome(
     val coasting = !control.requiresRealTime && (sample?.commandedThrottle ?: 0.0) == 0.0 &&
         (sample?.massFlowKgPerSecond ?: 0.0) == 0.0
 
+    val actions = FlightUiActions(
+        assist = { send(control.copy(assist = it)) },
+        axis = { index, held ->
+            val value = if (held) 1.0 else 0.0
+            send(if (translationMode) when (index) {
+                0 -> control.copy(translationX = -value)
+                1 -> control.copy(translationY = value)
+                2 -> control.copy(translationZ = value)
+                3 -> control.copy(translationX = value)
+                4 -> control.copy(translationY = -value)
+                else -> control.copy(translationZ = -value)
+            } else when (index) {
+                0 -> control.copy(rotationY = -value, assist = FlightAssist.Manual)
+                1 -> control.copy(rotationX = -value, assist = FlightAssist.Manual)
+                2 -> control.copy(rotationZ = -value, assist = FlightAssist.Manual)
+                3 -> control.copy(rotationY = value, assist = FlightAssist.Manual)
+                4 -> control.copy(rotationX = value, assist = FlightAssist.Manual)
+                else -> control.copy(rotationZ = value, assist = FlightAssist.Manual)
+            })
+        },
+        toggleRcs = { cut(); translationMode = !translationMode },
+        throttle = { send(control.copy(throttle = it.toDouble())) },
+        cut = ::cut,
+        playPause = { action { facade.applyCommand(if (paused) RuntimeCommand.ResumePlayback else RuntimeCommand.PausePlayback) } },
+        warp = { value -> action { facade.applyCommand(RuntimeCommand.SetPlaybackRate(value.toDouble())) } },
+        mark = { action {
+            cut(); facade.setFlightControl(FlightControl.Cut)
+            facade.applyCommand(RuntimeCommand.PausePlayback)
+            val id = "flight.mark.${UUID.randomUUID()}"
+            facade.applyCommand(RuntimeCommand.CreateCheckpoint(id, "Odyssey flight checkpoint"))
+            if (facade.uiState.value.activeCheckpointId == id) {
+                checkpoint = id; message = "Checkpoint ready. Reset returns to this moment."
+            } else controlError = "The checkpoint was not confirmed"
+        } },
+        reset = { checkpoint?.let { id -> action {
+            cut(); facade.setFlightControl(FlightControl.Cut)
+            facade.applyCommand(RuntimeCommand.PausePlayback)
+            val branch = "flight.retry.${UUID.randomUUID()}"
+            facade.applyCommand(RuntimeCommand.CreateBranchFromCheckpoint(id, branch))
+            facade.setFlightControl(FlightControl.Cut)
+            facade.applyCommand(RuntimeCommand.PausePlayback)
+            control = FlightControl.Cut
+            if (facade.uiState.value.snapshot?.activeBranchId == branch)
+                message = "Checkpoint restored on a new timeline"
+            else controlError = "The checkpoint could not be restored"
+        } } },
+    )
+    val notice = controlError ?: message ?: when {
+        fuel <= 0.0 && ready -> "Propellant depleted. You can still coast and orient the spacecraft."
+        !coasting -> "Time acceleration is available while coasting."
+        control.assist == FlightAssist.Prograde -> "Prograde points along your motion. Thrust raises the opposite side of your orbit."
+        control.assist == FlightAssist.Retrograde -> "Retrograde points against your motion. Thrust lowers the opposite side of your orbit."
+        control.assist == FlightAssist.Hold -> "Stabilise damps rotation. Hold a direction to steer."
+        else -> "Hold a direction to steer. Release to stop the control input."
+    }
+    val status = when {
+        !ready -> "Establishing flight link"
+        paused -> "Flight paused"
+        burning -> "Engine firing"
+        rate > 1.0 -> "Coasting at ${rate.toInt()}×"
+        else -> "Earth orbital flight"
+    }
+
     BoxWithConstraints(modifier.fillMaxSize().testTag(FlightTags.ROOT)) {
         val landscape = maxWidth > maxHeight && maxHeight < 600.dp
+        val header = if (landscape) FlightChromeMetrics.LandscapeHeader else FlightChromeMetrics.Header
         Column(Modifier.align(Alignment.TopCenter).statusBarsPadding().fillMaxWidth()
             .background(FlightPanel).padding(horizontal = 16.dp)) {
-            Row(Modifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().height(if (landscape) header else 50.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Canvas(Modifier.size(23.dp)) {
                     val p = Path().apply {
                         moveTo(size.width * .5f, 0f); lineTo(size.width, size.height)
@@ -212,28 +280,21 @@ internal fun FlightModeChrome(
                     }
                     drawPath(p, FlightTeal, style = Stroke(1.5.dp.toPx()))
                 }
-                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                Column(if (landscape) Modifier.width(128.dp) else Modifier.weight(1f)) {
                     Text("ODYSSEY", color = FlightInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 3.sp)
-                    Text(when { !ready -> "Establishing flight link"; paused -> "Flight paused";
-                        burning -> "Engine firing"; rate > 1.0 -> "Coasting at ${rate.toInt()}×"; else -> "Earth orbital flight" },
-                        color = if (burning) FlightAmber else FlightTeal, fontSize = 11.sp)
+                    Text(status, color = if (burning) FlightAmber else FlightTeal, fontSize = 11.sp, maxLines = 1)
                 }
+                if (landscape) FlightOrbitInstruments(sample, Modifier.weight(1f))
                 FlightAction("Saves", { cut(); facade.suspendFlightControls(); onSaved() }, FlightTags.SAVE, enabled = ready)
                 FlightAction("Lab", onExit, FlightTags.EXIT)
             }
-            Row(Modifier.fillMaxWidth().height(62.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above Earth", FlightTags.ALTITUDE)
-                FlightInstrument("ORBITAL SPEED", sample?.speedMps?.let { "%.2f km/s".format(Locale.US, it / 1_000) } ?: "—", "relative to Earth")
-                FlightInstrument("APOAPSIS", sample?.apoapsisAltitudeM?.let(::flightDistance)
-                    ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—",
-                    "highest altitude", FlightTags.APOAPSIS)
-            }
+            if (!landscape) FlightOrbitInstruments(sample, Modifier.fillMaxWidth().height(62.dp))
         }
 
-        val dockHeight = if (landscape) FlightChromeMetrics.LandscapeDock else FlightChromeMetrics.PortraitDock
-        Column(Modifier.align(Alignment.TopStart).statusBarsPadding()
-            .padding(top = FlightChromeMetrics.Header + 8.dp, start = 12.dp, end = 12.dp)
-            .widthIn(max = if (landscape) 380.dp else 520.dp)) {
+        Column(Modifier.align(Alignment.TopCenter).statusBarsPadding()
+            .padding(top = header + 8.dp, start = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp,
+                end = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp)
+            .widthIn(max = 600.dp)) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf(1 to "Orbit camera", 2 to "Chase", 0 to "Coast prediction").forEach { (mode, label) ->
                     FlightAction(label, { onCamera(mode) }, FlightTags.camera(mode), active = cameraMode == mode)
@@ -250,141 +311,153 @@ internal fun FlightModeChrome(
             }
         }
 
-        Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
-            .height(dockHeight), color = FlightPanel, border = BorderStroke(1.dp, FlightLine),
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("ATTITUDE", color = FlightMuted, fontSize = 9.sp, letterSpacing = 1.sp,
-                        modifier = Modifier.padding(end = 8.dp))
-                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        FlightAssist.entries.forEach { assist ->
-                            FlightAction(assist.label, { send(control.copy(assist = assist)) }, FlightTags.assist(assist),
-                                active = control.assist == assist, enabled = ready)
-                        }
+        if (landscape) {
+            // Side consoles leave a large, unobstructed central Vulkan viewport.
+            Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+                .padding(top = header, bottom = FlightChromeMetrics.LandscapeDock)) {
+                Surface(Modifier.align(Alignment.CenterStart).padding(start = 8.dp)
+                    .width(FlightChromeMetrics.LandscapeSide - 16.dp),
+                    color = FlightPanel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, FlightLine)) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(8.dp)) {
+                        Text("ORIENTATION", color = FlightMuted, fontSize = 9.sp, letterSpacing = 1.sp)
+                        FlightAssistStrip(control.assist, ready, actions.assist)
+                        FlightAttitudePad(translationMode, ready && (!translationMode || fuel > 0.0), actions)
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(if (landscape) 92.dp else 158.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.width(if (landscape) 210.dp else 156.dp)) {
-                        if (!landscape) {
-                            Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(if (translationMode) "Translate" else "Rotate", color = FlightMuted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                                TextButton(onClick = { cut(); translationMode = !translationMode }, contentPadding = PaddingValues(2.dp)) {
-                                    Text(if (translationMode) "Attitude" else "RCS", color = FlightTeal, fontSize = 11.sp)
-                                }
-                            }
-                        }
-                        val labels = if (translationMode) listOf("Left", "Up", "Forward", "Right", "Down", "Back")
-                            else listOf("Yaw left", "Pitch up", "Roll left", "Yaw right", "Pitch down", "Roll right")
-                        repeat(2) { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                                repeat(3) { column ->
-                                    val index = row * 3 + column
-                                    val label = labels[index]
-                                    FlightHoldButton(label, FlightTags.axis(label), Modifier.weight(1f), ready && (!translationMode || fuel > 0.0)) { held ->
-                                        val value = if (held) 1.0 else 0.0
-                                        val next = if (translationMode) when (index) {
-                                            0 -> control.copy(translationX = -value)
-                                            1 -> control.copy(translationY = value)
-                                            2 -> control.copy(translationZ = value)
-                                            3 -> control.copy(translationX = value)
-                                            4 -> control.copy(translationY = -value)
-                                            else -> control.copy(translationZ = -value)
-                                        } else when (index) {
-                                            0 -> control.copy(rotationY = -value, assist = FlightAssist.Manual)
-                                            1 -> control.copy(rotationX = -value, assist = FlightAssist.Manual)
-                                            2 -> control.copy(rotationZ = -value, assist = FlightAssist.Manual)
-                                            3 -> control.copy(rotationY = value, assist = FlightAssist.Manual)
-                                            4 -> control.copy(rotationX = value, assist = FlightAssist.Manual)
-                                            else -> control.copy(rotationZ = value, assist = FlightAssist.Manual)
-                                        }
-                                        send(next)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("MAIN ENGINE", color = FlightMuted, fontSize = 9.sp, letterSpacing = 1.sp)
-                                Text("${(control.throttle * 100).roundToInt()}%", color = if (control.throttle > 0) FlightAmber else FlightInk,
-                                    fontSize = if (landscape) 24.sp else 30.sp, fontWeight = FontWeight.Light)
-                            }
-                            Button(onClick = { cut() }, enabled = ready, modifier = Modifier.heightIn(min = 48.dp).testTag(FlightTags.CUT),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF413427), contentColor = FlightAmber),
-                                shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp)) { Text("CUT", fontSize = 12.sp) }
-                        }
-                        Slider(value = control.throttle.toFloat(), onValueChange = { send(control.copy(throttle = it.toDouble())) },
-                            enabled = ready && fuel > 0.0, modifier = Modifier.fillMaxWidth().height(40.dp)
-                                .testTag(FlightTags.THROTTLE).semantics { contentDescription = "Main engine throttle" })
-                        if (!landscape) {
-                            Text("${flightMass(fuel)} propellant · ${sample?.remainingDeltaVMps?.roundToInt() ?: 0} m/s Δv",
-                                Modifier.testTag(FlightTags.FUEL), color = FlightTeal, fontSize = 11.sp, maxLines = 2)
-                            Text(if (paused && control.throttle > 0) "Ready to burn when time runs" else
-                                "${"%.2f".format(Locale.US, sample?.actualMainAccelerationMps2 ?: 0.0)} m/s² · ${"%.2f".format(Locale.US, sample?.massFlowKgPerSecond ?: 0.0)} kg/s",
-                                color = FlightMuted, fontSize = 10.sp)
-                        }
-                    }
-                    if (landscape) {
-                        Column(Modifier.width(170.dp)) {
-                            FlightInstrument("PROPELLANT", flightMass(fuel), "${sample?.remainingDeltaVMps?.roundToInt() ?: 0} m/s Δv", FlightTags.FUEL)
-                            Text(sample?.periapsisAltitudeM?.let { "Periapsis ${flightDistance(it)}" } ?: "Orbit unavailable",
-                                color = FlightMuted, fontSize = 11.sp)
-                        }
+                Surface(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp)
+                    .width(FlightChromeMetrics.LandscapeSide - 16.dp),
+                    color = FlightPanel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, FlightLine)) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(10.dp)) {
+                        FlightEnginePanel(control, sample, ready, paused, actions)
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = FlightLine)
+                        FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—", "lowest altitude")
                     }
                 }
-                HorizontalDivider(color = FlightLine)
-                Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(onClick = { action { facade.applyCommand(if (paused) RuntimeCommand.ResumePlayback else RuntimeCommand.PausePlayback) } },
-                        enabled = ready, modifier = Modifier.height(44.dp).testTag(FlightTags.PLAY_PAUSE),
-                        colors = ButtonDefaults.buttonColors(containerColor = FlightTeal, contentColor = Color(0xFF102D31)),
-                        shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
-                        Text(if (paused) "Run" else "Pause", fontSize = 12.sp)
-                    }
-                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        listOf(1, 10, 100, 1000).forEach { warp ->
-                            FlightAction("${warp}×", { action { facade.applyCommand(RuntimeCommand.SetPlaybackRate(warp.toDouble())) } },
-                                FlightTags.warp(warp), active = rate == warp.toDouble(), enabled = ready && (warp == 1 || coasting))
-                        }
-                    }
-                    FlightAction("Mark", { action {
-                        cut()
-                        facade.setFlightControl(FlightControl.Cut)
-                        facade.applyCommand(RuntimeCommand.PausePlayback)
-                        val id = "flight.mark.${UUID.randomUUID()}"
-                        facade.applyCommand(RuntimeCommand.CreateCheckpoint(id, "Odyssey flight checkpoint"))
-                        if (facade.uiState.value.activeCheckpointId == id) {
-                            checkpoint = id; message = "Checkpoint ready. Reset returns to this moment."
-                        } else controlError = "The checkpoint was not confirmed"
-                    } }, FlightTags.CHECKPOINT, enabled = ready)
-                    FlightAction("Reset", { checkpoint?.let { id -> action {
-                        cut(); facade.setFlightControl(FlightControl.Cut)
-                        facade.applyCommand(RuntimeCommand.PausePlayback)
-                        val branch = "flight.retry.${UUID.randomUUID()}"
-                        facade.applyCommand(RuntimeCommand.CreateBranchFromCheckpoint(id, branch))
-                        facade.setFlightControl(FlightControl.Cut)
-                        facade.applyCommand(RuntimeCommand.PausePlayback)
-                        control = FlightControl.Cut
-                        if (facade.uiState.value.snapshot?.activeBranchId == branch)
-                            message = "Checkpoint restored on a new timeline"
-                        else controlError = "The checkpoint could not be restored"
-                    } } }, FlightTags.RESET, enabled = ready && checkpoint != null)
+            }
+            Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
+                .height(FlightChromeMetrics.LandscapeDock), color = FlightPanel, border = BorderStroke(1.dp, FlightLine)) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions)
+                    Text(notice, color = if (controlError == null) FlightMuted else FlightAmber, fontSize = 10.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (!landscape) {
-                    Text(controlError ?: message ?: when {
-                        fuel <= 0.0 && ready -> "Propellant depleted. You can still coast and explore your orbit."
-                        !coasting -> "Time acceleration is available while coasting."
-                        control.assist == FlightAssist.Prograde -> "Prograde points along your motion. Thrust raises the opposite side of your orbit."
-                        control.assist == FlightAssist.Retrograde -> "Retrograde points against your motion. Thrust lowers the opposite side of your orbit."
-                        else -> "Hold a direction to steer. Release to stop the control input."
-                    }, Modifier.fillMaxWidth().padding(top = 3.dp), color = if (controlError != null) FlightAmber else FlightMuted,
+            }
+        } else {
+            Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
+                .height(FlightChromeMetrics.PortraitDock), color = FlightPanel, border = BorderStroke(1.dp, FlightLine),
+                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
+                Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    FlightAssistStrip(control.assist, ready, actions.assist)
+                    Row(Modifier.fillMaxWidth().height(158.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(Modifier.width(156.dp)) {
+                            FlightAttitudePad(translationMode, ready && (!translationMode || fuel > 0.0), actions)
+                        }
+                        Box(Modifier.weight(1f)) { FlightEnginePanel(control, sample, ready, paused, actions) }
+                    }
+                    HorizontalDivider(color = FlightLine)
+                    FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions)
+                    Text(notice, Modifier.fillMaxWidth().padding(top = 3.dp), color = if (controlError == null) FlightMuted else FlightAmber,
                         fontSize = 10.sp, maxLines = 2, lineHeight = 13.sp, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
+    }
+}
+
+private data class FlightUiActions(
+    val assist: (FlightAssist) -> Unit,
+    val axis: (Int, Boolean) -> Unit,
+    val toggleRcs: () -> Unit,
+    val throttle: (Float) -> Unit,
+    val cut: () -> Unit,
+    val playPause: () -> Unit,
+    val warp: (Int) -> Unit,
+    val mark: () -> Unit,
+    val reset: () -> Unit,
+)
+
+@Composable
+private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above Earth", FlightTags.ALTITUDE)
+        FlightInstrument("ORBITAL SPEED", sample?.speedMps?.let { "%.2f km/s".format(Locale.US, it / 1_000) } ?: "—", "relative to Earth")
+        FlightInstrument("APOAPSIS", sample?.apoapsisAltitudeM?.let(::flightDistance)
+            ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—", "highest altitude", FlightTags.APOAPSIS)
+    }
+}
+
+@Composable
+private fun FlightAssistStrip(assist: FlightAssist, ready: Boolean, onAssist: (FlightAssist) -> Unit) {
+    Row(Modifier.fillMaxWidth().height(44.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        FlightAssist.entries.forEach { item ->
+            FlightAction(item.label, { onAssist(item) }, FlightTags.assist(item), active = assist == item, enabled = ready)
+        }
+    }
+}
+
+@Composable
+private fun FlightAttitudePad(translation: Boolean, enabled: Boolean, actions: FlightUiActions) {
+    Column {
+        Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (translation) "Translate" else "Rotate", color = FlightMuted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = actions.toggleRcs, contentPadding = PaddingValues(2.dp)) {
+                Text(if (translation) "Attitude" else "RCS", color = FlightTeal, fontSize = 11.sp)
+            }
+        }
+        val labels = if (translation) listOf("Left", "Up", "Forward", "Right", "Down", "Back")
+            else listOf("Yaw left", "Pitch up", "Roll left", "Yaw right", "Pitch down", "Roll right")
+        repeat(2) { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                repeat(3) { column ->
+                    val index = row * 3 + column
+                    FlightHoldButton(labels[index], FlightTags.axis(labels[index]), Modifier.weight(1f), enabled) { actions.axis(index, it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlightEnginePanel(control: FlightControl, sample: FlightState?, ready: Boolean, paused: Boolean, actions: FlightUiActions) {
+    Column {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("MAIN ENGINE", color = FlightMuted, fontSize = 9.sp, letterSpacing = .8.sp)
+                Text("${(control.throttle * 100).roundToInt()}%", color = if (control.throttle > 0) FlightAmber else FlightInk,
+                    fontSize = 28.sp, fontWeight = FontWeight.Light)
+            }
+            Button(onClick = actions.cut, enabled = ready, modifier = Modifier.heightIn(min = 48.dp).testTag(FlightTags.CUT),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF413427), contentColor = FlightAmber),
+                shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 10.dp)) { Text("CUT", fontSize = 11.sp) }
+        }
+        Slider(value = control.throttle.toFloat(), onValueChange = actions.throttle,
+            enabled = ready && (sample?.propellantMassKg ?: 0.0) > 0.0, modifier = Modifier.fillMaxWidth().height(40.dp)
+                .testTag(FlightTags.THROTTLE).semantics { contentDescription = "Main engine throttle" })
+        Text("${flightMass(sample?.propellantMassKg ?: 0.0)} propellant · ${sample?.remainingDeltaVMps?.roundToInt() ?: 0} m/s Δv",
+            Modifier.testTag(FlightTags.FUEL), color = FlightTeal, fontSize = 11.sp, maxLines = 2)
+        Text(if (paused && control.throttle > 0) "Ready to burn when time runs" else
+            "${"%.2f".format(Locale.US, sample?.actualMainAccelerationMps2 ?: 0.0)} m/s² · ${"%.2f".format(Locale.US, sample?.massFlowKgPerSecond ?: 0.0)} kg/s",
+            color = FlightMuted, fontSize = 10.sp, maxLines = 2)
+    }
+}
+
+@Composable
+private fun FlightTimeBar(ready: Boolean, paused: Boolean, rate: Double, coasting: Boolean, canReset: Boolean, actions: FlightUiActions) {
+    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Button(onClick = actions.playPause, enabled = ready, modifier = Modifier.height(44.dp).testTag(FlightTags.PLAY_PAUSE),
+            colors = ButtonDefaults.buttonColors(containerColor = FlightTeal, contentColor = Color(0xFF102D31)),
+            shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
+            Text(if (paused) "Run" else "Pause", fontSize = 12.sp)
+        }
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            listOf(1, 10, 100, 1000).forEach { warp ->
+                FlightAction("${warp}×", { actions.warp(warp) }, FlightTags.warp(warp), active = rate == warp.toDouble(), enabled = ready && (warp == 1 || coasting))
+            }
+        }
+        FlightAction("Mark", actions.mark, FlightTags.CHECKPOINT, enabled = ready)
+        FlightAction("Reset", actions.reset, FlightTags.RESET, enabled = ready && canReset)
     }
 }
 
@@ -415,7 +488,7 @@ private fun FlightHoldButton(label: String, tag: String, modifier: Modifier, ena
     val latest by rememberUpdatedState(onHeld)
     val scope = rememberCoroutineScope()
     DisposableEffect(Unit) { onDispose { if (pressed) latest(false) } }
-    Surface(modifier.height(46.dp).testTag(tag)
+    Surface(modifier.height(48.dp).testTag(tag)
         .semantics {
             contentDescription = label
             onClick("Pulse $label") {

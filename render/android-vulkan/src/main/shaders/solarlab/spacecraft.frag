@@ -6,8 +6,12 @@ layout(location=3) in vec3 vView;
 layout(location=4) in vec4 vMaterial;
 layout(location=5) in float vPlumeFraction;
 layout(location=6) flat in float vThrottle;
+layout(location=7) in float vCameraDepth;
+layout(location=8) flat in float vFlight;
 layout(location=0) out vec4 outColor;
 void main() {
+    if(vFlight>0.5 && (vCameraDepth<0.1 || vCameraDepth>1.0e16)) discard;
+    gl_FragDepth=vFlight>0.5 ? log2(1.0+max(vCameraDepth,0.0))/log2(1.0e16) : gl_FragCoord.z;
     if(vMaterial.w>0.5) {
         if(vThrottle<=0.001) discard;
         float fade=pow(1.0-vPlumeFraction,1.3);

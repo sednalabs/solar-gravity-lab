@@ -1137,7 +1137,7 @@ internal fun StageFirstRuntimeExperience(
             val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
             val placing = labInteraction.draft != null
             val typingPlacement = placing && landscape && WindowInsets.ime.getBottom(density) > 0
-            val headerHeight = if (flightActive) FlightChromeMetrics.Header else if (typingPlacement) 0.dp else if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
+            val headerHeight = if (flightActive) { if (landscape) FlightChromeMetrics.LandscapeHeader else FlightChromeMetrics.Header } else if (typingPlacement) 0.dp else if (placing) LabPlacementMetrics.SceneHeaderHeight else if (landscape) LabChromeMetrics.LandscapeHeaderHeight else LabChromeMetrics.PortraitHeaderHeight
             val dockHeight = if (flightActive) { if (landscape) FlightChromeMetrics.LandscapeDock else FlightChromeMetrics.PortraitDock }
                 else if (landscape) LabChromeMetrics.LandscapeDockHeight else LabChromeMetrics.PortraitDockHeight
             val placementHeight = minOf(LabPlacementMetrics.PortraitHeight, maxHeight * 0.44f)
@@ -1146,7 +1146,10 @@ internal fun StageFirstRuntimeExperience(
                 else if (chromeMode == StageChromeMode.MINIMAL && !flightActive) 0.dp else dockHeight
             val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing && !flightActive) 0.dp else headerHeight
             Box(Modifier.fillMaxSize()
-                .padding(top = topInset, bottom = bottomInset, end = if (placing && landscape) placementWidth + 12.dp else 0.dp)
+                .padding(top = topInset, bottom = bottomInset,
+                    start = if (flightActive && landscape) FlightChromeMetrics.LandscapeSide else 0.dp,
+                    end = if (placing && landscape) placementWidth + 12.dp
+                        else if (flightActive && landscape) FlightChromeMetrics.LandscapeSide else 0.dp)
                 .testTag(LabSpatialTags.VIEWPORT)) {
             if (attachRenderHost) {
                 AndroidView(
@@ -1240,7 +1243,7 @@ internal fun StageFirstRuntimeExperience(
                         val reference = draft?.reference ?: labInteraction.referenceBodies["earth"]
                         val plane = draft?.plane ?: labInteraction.plane
                         if (plane != null && reference != null) view.setLabMapPlane(plane.through(reference))
-                        view.setLabMapMode(labViewMode == LabViewMode.ORBIT_MAP)
+                        view.setLabMapMode(if (flightActive) flightCameraMode == 0 else labViewMode == LabViewMode.ORBIT_MAP)
                         view.updateRuntimeStageState(
                             sessionHandle = runtimeSessionHandle,
                             processingMode = renderProcessingMode,
