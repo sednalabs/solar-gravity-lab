@@ -84,13 +84,15 @@ void VulkanDeviceFeatures::DisableOptional() {
     synchronization2.synchronization2 = VK_FALSE;
     executable.pNext = nullptr;
     executable.pipelineExecutableInfo = VK_FALSE;
+    bufferAddress.pNext = nullptr;
+    bufferAddress.bufferDeviceAddress = VK_FALSE;
     chain = nullptr;
     extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     calibratedTimestamps = false;
     calibratedTimestampsKhr = false;
 }
 
-void VulkanDeviceFeatures::Prepare(const VulkanCapabilities& supported, bool capturePipelineStatistics) {
+void VulkanDeviceFeatures::Prepare(const VulkanCapabilities& supported, bool capturePipelineStatistics, bool addressCompaction) {
     DisableOptional();
     if (supported.synchronization2) {
         synchronization2.synchronization2 = VK_TRUE;
@@ -102,13 +104,18 @@ void VulkanDeviceFeatures::Prepare(const VulkanCapabilities& supported, bool cap
         executable.pNext = chain; chain = &executable;
         extensions.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
     }
+    if (addressCompaction && supported.bufferDeviceAddress && supported.shaderInt64 && supported.SupportsSubgroupCompaction()) {
+        bufferAddress.bufferDeviceAddress = VK_TRUE;
+        bufferAddress.pNext = chain; chain = &bufferAddress;
+        if (supported.apiVersion < VK_API_VERSION_1_2) extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+    }
     if (supported.calibratedTimestamps && supported.monotonicCalibration) {
         calibratedTimestamps = true;
         calibratedTimestampsKhr = supported.calibratedTimestampsKhr;
         extensions.push_back(calibratedTimestampsKhr ? "VK_KHR_calibrated_timestamps" : VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
     }
-    // BDA and timeline support are measured. Enabling them without a consumer
-    // does no useful work; existing one-queue resource ownership remains explicit.
+    // Timeline support is measured. Enabling it without a consumer does no
+    // useful work; existing one-queue resource ownership remains explicit.
 }
 
 } // namespace solarlab::rendering

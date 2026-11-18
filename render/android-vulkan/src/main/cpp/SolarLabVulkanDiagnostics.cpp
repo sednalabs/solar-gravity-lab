@@ -123,6 +123,12 @@ void SolarLabVulkanRenderer::InitialiseGpuProfiling() {
 }
 
 void SolarLabVulkanRenderer::RefreshGpuTimingsLocked() {
+    // Called only after the frame fence, so these count retired GPU submissions,
+    // independent of timestamp-query availability or driver compiler telemetry.
+    if ((pendingAccelerationPaths_ & 1U) != 0U) ++subgroupCompletedFrames_;
+    if ((pendingAccelerationPaths_ & 2U) != 0U) ++bufferAddressCompletedFrames_;
+    if ((pendingAccelerationPaths_ & 4U) != 0U) ++tileMemoryCompletedFrames_;
+    pendingAccelerationPaths_ = 0;
     if (!gpuTimingPending_ || timestampQueryPool_ == VK_NULL_HANDLE) return;
     gpuTimingPending_ = false;
     struct QueryValue { uint64_t ticks; uint64_t available; };

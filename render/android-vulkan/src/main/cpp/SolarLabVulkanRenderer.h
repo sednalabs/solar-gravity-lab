@@ -2,6 +2,7 @@
 
 #include "SolarLabGpuReuse.h"
 #include "SolarLabVulkanCapabilities.h"
+#include "QcomTileMemory.h"
 
 #include <android/asset_manager.h>
 #include <android/native_window.h>
@@ -263,7 +264,12 @@ private:
         uint32_t tileCounterCount = 0;
         uint32_t reserved1 = 0;
         uint32_t reserved2 = 0;
+        VkDeviceAddress sourceAddress = 0;
+        VkDeviceAddress outputAddress = 0;
+        VkDeviceAddress drawAddress = 0;
     };
+    static_assert(sizeof(ComputePushConstants) == 40 && offsetof(ComputePushConstants, sourceAddress) == 16 &&
+        offsetof(ComputePushConstants, outputAddress) == 24 && offsetof(ComputePushConstants, drawAddress) == 32);
 
     struct GpuBuffer {
         VkBuffer buffer = VK_NULL_HANDLE;
@@ -272,6 +278,8 @@ private:
         VkBufferUsageFlags usage = 0;
         VkMemoryPropertyFlags memoryProperties = 0;
         void* mapped = nullptr;
+        bool isTileMemory = false;
+        VkDeviceAddress deviceAddress = 0;
         uint64_t allocationGeneration = 0;
         const char* debugLabel = nullptr;
     };
@@ -417,6 +425,7 @@ private:
         GpuBuffer& buffer);
     bool EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& buffer);
     bool EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, bool reportErrors, GpuBuffer& buffer);
+    bool EnsureFarCounterBuffer(VkDeviceSize sizeBytes, GpuBuffer& buffer);
     StagingUploadSlot* AcquireStagingUploadSlot(bool reportErrors);
     bool SubmitStagingCopy(StagingUploadSlot& slot, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors);
     void DestroyStagingUploadRing();
@@ -477,8 +486,10 @@ private:
     VkPhysicalDeviceProperties physicalDeviceProperties_{};
     solarlab::rendering::VulkanCapabilities capabilities_;
     solarlab::rendering::VulkanDeviceFeatures optionalFeatures_;
+    solarlab::rendering::QcomTileMemory qcomTileMemory_;
     PFN_vkCmdPipelineBarrier2KHR cmdPipelineBarrier2_ = nullptr;
     PFN_vkQueueSubmit2KHR queueSubmit2_ = nullptr;
+    PFN_vkGetBufferDeviceAddressKHR getBufferDeviceAddress_ = nullptr;
     PFN_vkGetCalibratedTimestampsEXT getCalibratedTimestamps_ = nullptr;
     PFN_vkGetPipelineExecutablePropertiesKHR getPipelineExecutableProperties_ = nullptr;
     PFN_vkGetPipelineExecutableStatisticsKHR getPipelineExecutableStatistics_ = nullptr;
@@ -493,7 +504,12 @@ private:
     uint64_t pipelineStatisticCount_ = 0;
     uint64_t synchronization2Submissions_ = 0;
     uint64_t persistentMappingCount_ = 0;
+    uint32_t pendingAccelerationPaths_ = 0;
+    uint64_t subgroupCompletedFrames_ = 0;
+    uint64_t bufferAddressCompletedFrames_ = 0;
+    uint64_t tileMemoryCompletedFrames_ = 0;
     bool mediumSubgroupPipeline_ = false;
+    bool mediumBufferAddressPipeline_ = false;
     bool farSubgroupPipeline_ = false;
     VkDevice device_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;

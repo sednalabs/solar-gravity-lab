@@ -18,6 +18,8 @@ android {
                 cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-fexceptions", "-frtti")
                 arguments += "-DSOLARLAB_CAPTURE_PIPELINE_STATISTICS=" +
                     if (providers.gradleProperty("solarLabCapturePipelineStatistics").orNull == "true") "ON" else "OFF"
+                arguments += "-DSOLARLAB_BUFFER_ADDRESS_COMPACTION=" +
+                    if (providers.gradleProperty("solarLabBufferAddressCompaction").orNull == "true") "ON" else "OFF"
             }
         }
         shaders {
