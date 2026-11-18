@@ -90,7 +90,11 @@ int main() {
         const std::array<double,3> previousShip{ship[0]-.125,ship[1]-2,ship[2]};
         const std::array<double,3> previousTarget{target[0]-.125,target[1]-1,target[2]};
         const auto frame=EncounterFrame(ship,target,previousShip,previousTarget,8,12);
-        assert(frame && frame->center[0]==ship[0] && frame->center[1]==-separation*.5);
+        assert(frame);
+        // At one AU, a double's spacing is about 0.031 mm. Bound the absolute
+        // centre error below 0.1 mm; retain a tighter bound on the local axis.
+        assert(std::abs(frame->center[0]-ship[0]) < 1e-4);
+        assert(std::abs(frame->center[1]+separation*.5) < 1e-12);
         assert(frame->previousOffset[0]==-.125 && frame->previousOffset[1]==-1.5);
         assert(std::abs(frame->yawRadians-pi*.5)<1e-12);
         const auto basis=solarlab::presentation::MakeCameraBasis(frame->yawRadians,frame->pitchRadians);
