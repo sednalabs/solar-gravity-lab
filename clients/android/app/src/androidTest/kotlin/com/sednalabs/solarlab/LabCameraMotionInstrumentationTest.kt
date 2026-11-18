@@ -294,14 +294,39 @@ class LabCameraMotionInstrumentationTest {
         point.x > 6f && point.y > 6f && point.x < view.widthPx - 6 && point.y < view.heightPx - 6
 
     private fun setAllTracesVisible(visible: Boolean) {
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
-        val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
-        repeat(2) {
-            val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
-            if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) node.performClick()
+        // Native frames and their status arrive on the Android clock even when
+        // physics is paused. Reading a scroll target must not require that live
+        // scene to become globally idle. Step the modal UI explicitly; all
+        // native projection, pixel and resource-reuse checks stay unchanged.
+        val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        composeRule.mainClock.autoAdvance = false
+        try {
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isNotEmpty()
+            }
+            val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
+            repeat(2) {
+                val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
+                // Apply the semantic scroll before reading/clicking its new bounds.
+                composeRule.mainClock.advanceTimeByFrame()
+                if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) {
+                    node.performClick()
+                    composeRule.mainClock.advanceTimeByFrame()
+                }
+            }
+            val close = composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible()
+            composeRule.mainClock.advanceTimeByFrame()
+            close.performClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            composeRule.mainClock.autoAdvance = previousAutoAdvance
         }
-        composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible().performClick()
-        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty() }
     }
 
     private fun computeFields(status: String, stream: String): Map<String, String> {
