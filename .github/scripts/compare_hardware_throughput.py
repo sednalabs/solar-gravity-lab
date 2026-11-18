@@ -11,6 +11,7 @@ EXPECTED_WORKLOADS = {
     "canonical-mixed-365", "sparse-1024", "lab-3", "lab-probe-4",
     "dense-128", "dense-192", "dense-256",
 }
+EXPECTED_SEGMENT_STEPS = (1, 2, 4, 8, 16, 32, 64)
 
 
 def read_measurements(path: Path) -> tuple[dict, dict]:
@@ -64,7 +65,7 @@ def compare(directory: Path) -> dict:
                 policy = {key: env[key] for key in ("arch", "steps", "samples")}
                 if measurement_policy is None:
                     measurement_policy = policy
-                if policy != measurement_policy or env["steps"] not in (1, 64) or env["samples"] != 11:
+                if policy != measurement_policy or env["steps"] not in EXPECTED_SEGMENT_STEPS or env["samples"] != 11:
                     raise ValueError(f"{affinity}: inconsistent or unexpected measurement policy")
                 host_backend = {"aarch64": "SimdArm64", "x86_64": "SimdX64"}.get(env["arch"])
                 expected_keys = {(workload, backend) for workload in EXPECTED_WORKLOADS

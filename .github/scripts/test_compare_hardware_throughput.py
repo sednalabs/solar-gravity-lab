@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compare_hardware_throughput import EXPECTED_WORKLOADS, compare
+from compare_hardware_throughput import EXPECTED_SEGMENT_STEPS, EXPECTED_WORKLOADS, compare
 
 
 class PairedThroughputTests(unittest.TestCase):
@@ -75,21 +75,22 @@ class PairedThroughputTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 compare(directory)
 
-    def test_single_step_report_is_explicit_and_cannot_mix_segment_lengths(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            self.fixture(directory)
-            for path in directory.glob("*.ndjson"):
-                rows = [json.loads(line) for line in path.read_text().splitlines()]
-                rows[0]["steps"] = 1
-                self.write_rows(path, rows)
-            self.assertEqual(compare(directory)["measurement_policy"]["steps"], 1)
-            for path in directory.glob("one-cpu-*.ndjson"):
-                rows = [json.loads(line) for line in path.read_text().splitlines()]
-                rows[0]["steps"] = 64
-                self.write_rows(path, rows)
-            with self.assertRaisesRegex(ValueError, "measurement policy"):
-                compare(directory)
+    def test_segment_length_report_is_explicit_and_cannot_mix_lengths(self) -> None:
+        for steps in EXPECTED_SEGMENT_STEPS:
+            with self.subTest(steps=steps), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                self.fixture(directory)
+                for path in directory.glob("*.ndjson"):
+                    rows = [json.loads(line) for line in path.read_text().splitlines()]
+                    rows[0]["steps"] = steps
+                    self.write_rows(path, rows)
+                self.assertEqual(compare(directory)["measurement_policy"]["steps"], steps)
+                for path in directory.glob("one-cpu-*.ndjson"):
+                    rows = [json.loads(line) for line in path.read_text().splitlines()]
+                    rows[0]["steps"] = 1 if steps != 1 else 64
+                    self.write_rows(path, rows)
+                with self.assertRaisesRegex(ValueError, "measurement policy"):
+                    compare(directory)
 
 
 if __name__ == "__main__":

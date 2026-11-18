@@ -41,12 +41,16 @@ for variant in baseline candidate; do
 done
 workloads=canonical-mixed-365,sparse-1024,lab-3,lab-probe-4,dense-128,dense-192,dense-256
 single_cpu="$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"
-# The same two binaries also exercise a single-step segment. This exposes
-# preparation/allocation overhead that a 64-step amortised result can conceal.
-for steps in 64 1; do
+# Reuse the same binaries across the segment-length curve. A one-step result
+# exposes setup cost; intermediate cohorts measure where that cost amortises.
+for steps in 64 1 2 4 8 16 32; do
   report_dir="$output"
   if [[ "$steps" == 1 ]]; then
     report_dir="$output/short-segment"
+  elif [[ "$steps" != 64 ]]; then
+    report_dir="$output/segment-$steps"
+  fi
+  if [[ "$report_dir" != "$output" ]]; then
     mkdir -p "$report_dir"
     for metadata in candidate-sha.txt baseline-sha.txt compiler.txt cpu.json affinity.json \
       baseline-Cargo.lock candidate-Cargo.lock baseline-binary.sha256 candidate-binary.sha256; do
