@@ -53,13 +53,18 @@ integrate independent Rapier and celestial positions for one entity.
 ```sh
 cargo test -p solarlab-domain -p solarlab-physics -p solarlab-runtime -p solarlab-ffi
 cargo run -p solarlab-runtime --example orbital_flight
+cargo run --release -p solarlab-runtime --example lunar_flight -- 60
+cargo run --release -p solarlab-runtime --example orbital_rendezvous
+cargo run --release -p solarlab-runtime --example orbital_rendezvous -- match
 cargo check -p solarlab-ffi --target aarch64-linux-android
 python3 tools/test_import_spacecraft_gltf.py
 ```
 
-Flight saves use version2 and flight_model `six-dof-strang-rocket-v1`; ordinary
-lab saves retain v1. Unsupported clients reject flight rather than losing its
-components. Scene ABI13/body stride296 transports mesh facts and precise offsets.
+Flight saves use version2 and flight_model `six-dof-strang-rocket-v2`; ordinary
+lab saves retain v1. The reader retains compatibility with the first flight
+model. Older flight clients reject the new mission/burn model rather than
+silently discarding a pending engine cutoff. Scene ABI13/body stride296
+transports mesh facts and precise offsets.
 The original glTF asset includes documented provenance under
 [assets-src](../render/android-vulkan/assets-src/).
 
@@ -67,3 +72,29 @@ Tests cover Kepler and independent RK4 references, rocket-equation delta-v,
 step convergence, torque, fuel, lifecycle, frames and persistence. The demo
 burns/coasts, saves/reopens and compares future states. Exact hosted results and
 APK evidence are recorded per checkpoint; unrecorded evidence is not acceptance.
+
+## Implemented scenarios
+
+Android Flight Mode provides touch attitude/RCS controls, throttle, orientation
+assists, close/chase cameras, an orbit map, checkpoints and ordinary session
+saves. Flight map framing preserves controlled-ship selection. The perspective
+renderer shares logarithmic depth between the actual spacecraft triangles and
+the Earth/Moon backgrounds; ordinary laboratory projection is unchanged.
+
+The lunar entry first saves the current complete laboratory, then creates an
+isolated canonical Earth–Moon session. Its optional guided departure applies
+300 full-throttle seconds through the same native force integration. Physics
+owns cutoff and persisted closest-approach observations. Manual input cancels
+the programme, and a later request uses the actual remaining firing time.
+Mission rules and numerical convergence are documented in
+[lunar-flight.md](../engine/physics/benchmarks/lunar-flight.md).
+
+The lunar map's bounded, cached engine-off forecast is a display approximation.
+It uses separate temporary solver buffers and never supplies mission outcomes.
+Full trajectory prediction and native observed encounter distances must not be
+confused. A strict forecast work budget can shorten its horizon.
+
+[Orbital rendezvous](orbital-rendezvous.md) demonstrates native reuse with a
+passive station and an RCS chaser, including approach and velocity matching.
+It has executable examples and analytical/convergence/persistence tests, but
+does not yet provide a dedicated Android station interaction or docking.

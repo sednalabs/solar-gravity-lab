@@ -139,8 +139,10 @@ impl WorldRuntime {
     /// scene export.
     #[must_use]
     pub fn render_scene(&self) -> RenderScene {
-        let snapshot = self
-            .snapshot_with_orbit_archives(self.orbit_archives(&self.render_scene_orbit_query()));
+        let query = self.render_scene_orbit_query();
+        let archives = flight_prediction::display_archives(self, &query)
+            .unwrap_or_else(|| self.orbit_archives(&query));
+        let snapshot = self.snapshot_with_orbit_archives(archives);
         extract_render_scene(&snapshot)
     }
 

@@ -46,6 +46,38 @@ pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTrans
 
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeStartLunarFlight(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    ship_id: JByteArray,
+    recorded: jlong,
+) {
+    let result = request(&env, handle, &ship_id)
+        .and_then(|(h, id)| transport::start_lunar(h, &id, recorded));
+    if let Err(message) = result {
+        fail(&mut env, &message);
+    }
+}
+
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeBeginLunarDeparture(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    ship_id: JByteArray,
+    recorded: jlong,
+) {
+    let result = request(&env, handle, &ship_id)
+        .and_then(|(h, id)| transport::begin_lunar_departure(h, &id, recorded));
+    if let Err(message) = result {
+        fail(&mut env, &message);
+    }
+}
+
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeSetFlightControl(
     mut env: JNIEnv,
     _this: JObject,
@@ -82,27 +114,47 @@ pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTrans
     ship_id: JByteArray,
 ) -> jdoubleArray {
     let result = request(&env, handle, &ship_id).and_then(|(h, id)| transport::sample(h, &id));
+    export_sample(&mut env, result)
+}
+
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeLunarMissionState(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    ship_id: JByteArray,
+) -> jdoubleArray {
+    let result =
+        request(&env, handle, &ship_id).and_then(|(h, id)| transport::lunar_sample(h, &id));
+    export_sample(&mut env, result)
+}
+
+fn export_sample<const N: usize>(
+    env: &mut JNIEnv,
+    result: Result<Option<[f64; N]>, String>,
+) -> jdoubleArray {
     match result {
         Ok(Some(values)) => {
-            let array = env.new_double_array(transport::FLIGHT_SAMPLE_LEN as i32);
+            let array = env.new_double_array(N as i32);
             match array {
                 Ok(array) => {
                     if env.set_double_array_region(&array, 0, &values).is_err() {
-                        fail(&mut env, "Could not return flight telemetry");
+                        fail(env, "Could not return flight telemetry");
                         std::ptr::null_mut()
                     } else {
                         array.into_raw()
                     }
                 }
                 Err(_) => {
-                    fail(&mut env, "Could not allocate flight telemetry");
+                    fail(env, "Could not allocate flight telemetry");
                     std::ptr::null_mut()
                 }
             }
         }
         Ok(None) => std::ptr::null_mut(),
         Err(message) => {
-            fail(&mut env, &message);
+            fail(env, &message);
             std::ptr::null_mut()
         }
     }

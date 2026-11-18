@@ -403,13 +403,16 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         }
     }
 
-    override fun frameBody(bodyId: String) {
+    override fun frameBody(bodyId: String, selectBody: Boolean) {
         cancelCameraTransition()
         val request = cameraTransitionGeneration
         switchToFreeCameraForManualNavigation()
-        selectedBodyId = bodyId
+        // Flight maps frame Earth while the ship remains selected. Replacing selection
+        // here makes the next Compose stage update restore the ship and cancel this
+        // pending transition, stranding the map at the close-flight metre scale.
+        if (selectBody) selectedBodyId = bodyId
         if (isRuntimeBound()) {
-            serializedRenderer.execute { handle ->
+            if (selectBody) serializedRenderer.execute { handle ->
                 SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, bodyId)
             }
             requestRuntimeCameraTransition(bodyId, request) { renderLatestScene() }

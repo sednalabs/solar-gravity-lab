@@ -67,10 +67,13 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.sednalabs.solarlab.runtime.FlightAssist
 import com.sednalabs.solarlab.runtime.FlightControl
 import com.sednalabs.solarlab.runtime.FlightState
+import com.sednalabs.solarlab.runtime.LunarMissionPhase
+import com.sednalabs.solarlab.runtime.LunarMissionState
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.ShellUiState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -123,13 +126,19 @@ internal fun FlightModeChrome(
     onCamera: (Int) -> Unit,
     onExit: () -> Unit,
     onSaved: () -> Unit,
+    onLunarMission: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val scope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope { Dispatchers.Main.immediate }
     val commands = remember(facade, uiState.sessionHandle) { Channel<FlightControl>(Channel.CONFLATED) }
     var control by remember(facade, uiState.sessionHandle) { mutableStateOf(FlightControl()) }
+    var pendingControl by remember(facade, uiState.sessionHandle) { mutableStateOf<FlightControl?>(null) }
     var state by remember(facade, uiState.sessionHandle) { mutableStateOf<FlightState?>(null) }
+    var lunarMission by remember(facade, uiState.sessionHandle) { mutableStateOf<LunarMissionState?>(null) }
+    var missionActionBusy by remember(facade, uiState.sessionHandle) { mutableStateOf(false) }
+    var missionDetailsVisible by rememberSaveable { mutableStateOf(false) }
+    var guidedCoast by rememberSaveable(uiState.sessionHandle) { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var controlError by remember { mutableStateOf<String?>(null) }
     var checkpoint by rememberSaveable { mutableStateOf<String?>(null) }
@@ -144,6 +153,8 @@ internal fun FlightModeChrome(
     var missionHelp by rememberSaveable { mutableStateOf(true) }
 
     fun send(value: FlightControl) {
+        guidedCoast = false
+        pendingControl = value
         control = value
         commands.trySend(value)
     }
@@ -161,7 +172,13 @@ internal fun FlightModeChrome(
             launch {
                 while (isActive) {
                     try {
-                        state = facade.flightState()
+                        val sampledFlight = facade.flightState()
+                        val sampledMission = facade.lunarMissionState()
+                        state = sampledFlight
+                        lunarMission = sampledMission
+                        // Native guidance can cut the engine without a touch event.
+                        // Do not overwrite a still-pending manual slider/axis input.
+                        if (pendingControl == null && !missionActionBusy && sampledFlight != null) control = sampledFlight.control
                         if (state == null) controlError = "Odyssey is not in this saved world. Return to the lab to launch."
                     } catch (error: CancellationException) { throw error }
                     catch (error: Throwable) { controlError = error.message ?: "Flight telemetry unavailable" }
@@ -170,9 +187,16 @@ internal fun FlightModeChrome(
             }
             launch {
                 for (next in commands) {
-                    try { facade.setFlightControl(next); controlError = null }
+                    try {
+                        facade.setFlightControl(next)
+                        if (pendingControl == next) pendingControl = null
+                        controlError = null
+                    }
                     catch (error: CancellationException) { throw error }
-                    catch (error: Throwable) { controlError = error.message ?: "Flight control unavailable" }
+                    catch (error: Throwable) {
+                        if (pendingControl == next) pendingControl = null
+                        controlError = error.message ?: "Flight control unavailable"
+                    }
                 }
             }
         }
@@ -181,6 +205,7 @@ internal fun FlightModeChrome(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 control = FlightControl.Cut
+                pendingControl = null
                 commands.trySend(FlightControl.Cut)
                 facade.suspendFlightControls()
             }
@@ -202,6 +227,22 @@ internal fun FlightModeChrome(
     val burning = !paused && (sample?.massFlowKgPerSecond ?: 0.0) > 0.0
     val coasting = !control.requiresRealTime && (sample?.commandedThrottle ?: 0.0) == 0.0 &&
         (sample?.massFlowKgPerSecond ?: 0.0) == 0.0
+
+    LaunchedEffect(guidedCoast, lunarMission?.phase, lunarMission?.outcome, uiState.manualAdvance) {
+        val mission = lunarMission ?: return@LaunchedEffect
+        if (!guidedCoast || uiState.manualAdvance != null) return@LaunchedEffect
+        try {
+            if (mission.hasOutcome) {
+                guidedCoast = false
+                facade.suspendFlightControls()
+                message = "Mission outcome recorded. Flight paused."
+            } else if (mission.phase == LunarMissionPhase.LunarApproach && rate > 100.0) {
+                facade.applyCommand(RuntimeCommand.SetPlaybackRate(100.0))
+                message = "Lunar approach. Coast slowed to 100×."
+            }
+        } catch (error: CancellationException) { throw error }
+        catch (error: Throwable) { controlError = error.message ?: "Could not adjust mission time" }
+    }
 
     val actions = FlightUiActions(
         assist = { send(control.copy(assist = it)) },
@@ -227,7 +268,7 @@ internal fun FlightModeChrome(
         throttle = { send(control.copy(throttle = it.toDouble())) },
         cut = ::cut,
         playPause = { action { facade.applyCommand(if (paused) RuntimeCommand.ResumePlayback else RuntimeCommand.PausePlayback) } },
-        warp = { value -> action { facade.applyCommand(RuntimeCommand.SetPlaybackRate(value.toDouble())) } },
+        warp = { value -> guidedCoast = false; action { facade.applyCommand(RuntimeCommand.SetPlaybackRate(value.toDouble())) } },
         mark = { action {
             cut(); facade.setFlightControl(FlightControl.Cut)
             facade.applyCommand(RuntimeCommand.PausePlayback)
@@ -266,6 +307,34 @@ internal fun FlightModeChrome(
         else -> "Earth orbital flight"
     }
 
+    fun beginMissionBurn() {
+        if (missionActionBusy || !ready) return
+        missionActionBusy = true
+        guidedCoast = false
+        while (commands.tryReceive().isSuccess) { /* Superseded manual inputs must not cancel new guidance. */ }
+        pendingControl = null
+        action {
+            try {
+                facade.beginLunarDeparture()
+                state = facade.flightState()
+                state?.let { control = it.control }
+                lunarMission = facade.lunarMissionState()
+                message = null
+            } finally { missionActionBusy = false }
+        }
+    }
+
+    fun beginMissionCoast() {
+        if (!ready || !coasting || missionActionBusy) return
+        guidedCoast = true
+        action {
+            val coastRate = if (lunarMission?.phase == LunarMissionPhase.LunarApproach) 100.0 else 1_000.0
+            facade.applyCommand(RuntimeCommand.SetPlaybackRate(coastRate))
+            facade.applyCommand(RuntimeCommand.ResumePlayback)
+            message = "Coasting towards the Moon. Approach slows automatically; an observed outcome pauses flight."
+        }
+    }
+
     BoxWithConstraints(modifier.fillMaxSize().testTag(FlightTags.ROOT)) {
         val landscape = maxWidth > maxHeight && maxHeight < 600.dp
         val header = if (landscape) FlightChromeMetrics.LandscapeHeader else FlightChromeMetrics.Header
@@ -299,8 +368,13 @@ internal fun FlightModeChrome(
                 listOf(1 to "Orbit camera", 2 to "Chase", 0 to "Coast prediction").forEach { (mode, label) ->
                     FlightAction(label, { onCamera(mode) }, FlightTags.camera(mode), active = cameraMode == mode)
                 }
+                FlightAction("Moon mission", { cut(); facade.suspendFlightControls(); onLunarMission() }, LunarFlightTags.BRIEF)
             }
-            if (missionHelp && !landscape) {
+            if (lunarMission != null) {
+                LunarMissionPanel(requireNotNull(lunarMission), landscape, paused, ready, missionActionBusy, coasting,
+                    onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
+                    onDetails = { action { facade.applyCommand(RuntimeCommand.PausePlayback); missionDetailsVisible = true } })
+            } else if (missionHelp && !landscape) {
                 Surface(color = Color(0xD20C1D2B), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, FlightLine)) {
                     Row(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Raise your orbit: choose Prograde, run time, then ease up the throttle. Watch apoapsis climb.",
@@ -362,6 +436,9 @@ internal fun FlightModeChrome(
                 }
             }
         }
+    }
+    if (missionDetailsVisible && lunarMission != null) {
+        LunarMissionDetailsDialog(requireNotNull(lunarMission)) { missionDetailsVisible = false }
     }
 }
 
@@ -464,9 +541,9 @@ private fun FlightTimeBar(ready: Boolean, paused: Boolean, rate: Double, coastin
 @Composable
 private fun FlightInstrument(label: String, value: String, detail: String, tag: String? = null) {
     Column(Modifier.then(if (tag == null) Modifier else Modifier.testTag(tag))) {
-        Text(label, color = FlightMuted, fontSize = 8.sp, letterSpacing = .8.sp)
-        Text(value, color = FlightInk, fontSize = 19.sp, fontWeight = FontWeight.Light, fontFamily = FontFamily.SansSerif, maxLines = 1)
-        Text(detail, color = FlightMuted, fontSize = 9.sp, maxLines = 1)
+        Text(label, color = FlightMuted, fontSize = 8.sp, lineHeight = 10.sp, letterSpacing = .8.sp)
+        Text(value, color = FlightInk, fontSize = 19.sp, lineHeight = 23.sp, fontWeight = FontWeight.Light, fontFamily = FontFamily.SansSerif, maxLines = 1)
+        Text(detail, color = FlightMuted, fontSize = 9.sp, lineHeight = 11.sp, maxLines = 1)
     }
 }
 
@@ -486,7 +563,7 @@ private fun FlightAction(label: String, action: () -> Unit, tag: String? = null,
 private fun FlightHoldButton(label: String, tag: String, modifier: Modifier, enabled: Boolean, onHeld: (Boolean) -> Unit) {
     var pressed by remember { mutableStateOf(false) }
     val latest by rememberUpdatedState(onHeld)
-    val scope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope { Dispatchers.Main.immediate }
     DisposableEffect(Unit) { onDispose { if (pressed) latest(false) } }
     Surface(modifier.height(48.dp).testTag(tag)
         .semantics {

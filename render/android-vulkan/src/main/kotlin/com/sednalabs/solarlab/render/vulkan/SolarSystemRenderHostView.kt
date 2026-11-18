@@ -151,9 +151,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.focusAndFrameBody(bodyId, observerMode)
     }
 
-    fun frameBody(bodyId: String) {
-        selectedBodyId = bodyId
-        activeSurface?.frameBody(bodyId)
+    /** Frame a reference without replacing the flown/selected object when [selectBody] is false. */
+    fun frameBody(bodyId: String, selectBody: Boolean = true) {
+        if (selectBody) selectedBodyId = bodyId
+        activeSurface?.frameBody(bodyId, selectBody)
     }
 
     fun setCameraScaleBand(scaleBand: CameraScaleBand) {

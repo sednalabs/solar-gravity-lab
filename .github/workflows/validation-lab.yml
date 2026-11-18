@@ -552,6 +552,9 @@ jobs:
           /tmp/spacecraft-presentation-test
           cargo test --workspace
           cargo run -p solarlab-runtime --example orbital_flight
+          cargo run -p solarlab-runtime --example lunar_flight -- 60
+          cargo run -p solarlab-runtime --example orbital_rendezvous
+          cargo run -p solarlab-runtime --example orbital_rendezvous -- match
 
       - name: Measure release physics throughput (x64)
         timeout-minutes: 10

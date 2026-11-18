@@ -6,7 +6,13 @@
 //! semantics.
 mod lab_prediction;
 mod spacecraft;
+mod flight_mission;
+mod flight_prediction;
+pub use flight_prediction::LunarCoastForecastDiagnostics;
+pub use flight_mission::{LunarMissionOutcome,LUNAR_FLYBY_SUCCESS_ALTITUDE_M,LUNAR_APPROACH_ALTITUDE_M,LUNAR_MISSION_DEADLINE_SECONDS,LunarMissionPhase,LunarMissionTelemetry,LUNAR_FLIGHT_BODY_ID,LUNAR_FLIGHT_MODEL,LUNAR_DEPARTURE_BURN_SECONDS,LUNAR_INSERTION_PHASE_RADIANS,LUNAR_INSERTION_ALTITUDE_M,LUNAR_EXPECTED_FLYBY_WINDOW_SECONDS};
 mod flight_telemetry;
+mod rendezvous;
+pub use rendezvous::{RendezvousGuidance, RendezvousScenario, RendezvousStatus, RendezvousTelemetry};
 pub use flight_telemetry::FlightTelemetry;
 mod body_properties;
 mod lab_step;
@@ -248,6 +254,7 @@ pub struct RuntimeTelemetryReport {
 pub enum WorldCommand {
     SpawnSpacecraft { body: BodyState, spacecraft: SpacecraftState },
     SetFlightControl { body_id: BodyId, control: FlightControl },
+    StartGuidedBurn { body_id: BodyId, full_throttle_seconds: f64 },
     /// Seeds the canonical startup solar-system catalog into an empty world.
     /// Runtime owns the catalog truth; host clients only request this action.
     SeedCanonicalSolarSystem,
@@ -449,6 +456,7 @@ pub struct WorldRuntime {
     next_branch_ordinal: u64,
     advance_generation: u64,
     advance_operation: Option<AdvanceOperation>,
+    flight_prediction_cache: flight_prediction::FlightPredictionCache,
 }
 
 

@@ -3,7 +3,7 @@
 //! direction; the gravity solver continues to see only gravitational source mass.
 use crate::{advance_fixed_steps, FixedStepPlan, MassiveBodyState, MAX_INCREMENTAL_STEPS};
 use solarlab_domain::spacecraft::{add, cross, finite, magnitude, scale, sub, unit};
-use solarlab_domain::{AttitudeMode, Quaterniond, SpacecraftState, Vector3d};
+use solarlab_domain::{AttitudeMode, EngineControl, Quaterniond, SpacecraftState, Vector3d};
 
 pub const MAX_FLIGHT_SUBSTEP_SECONDS: f64 = 0.05;
 
@@ -11,6 +11,13 @@ pub const MAX_FLIGHT_SUBSTEP_SECONDS: f64 = 0.05;
 pub struct SpacecraftBinding {
     pub body_index: usize,
     pub reference_body_index: Option<usize>,
+    pub mission_target_index: Option<usize>,
+    pub reference_radius_m: f64,
+    pub target_radius_m: f64,
+    pub body_radius_m: f64,
+    /// Staged integration clock, published only with the authoritative advance.
+    pub epoch_seconds: f64,
+    pub epoch_compensation_seconds: f64,
     pub state: SpacecraftState,
 }
 
@@ -41,14 +48,15 @@ pub fn advance_spacecraft_steps(
         || ships.iter().any(|s| {
             s.body_index >= bodies.len()
                 || s.reference_body_index.is_some_and(|i| i >= bodies.len())
+                || s.mission_target_index.is_some_and(|i| i >= bodies.len())
+                || (s.state.mission.is_some() && s.mission_target_index.is_none())
         })
     {
         return Err(());
     }
-    if ships
-        .iter()
-        .all(|s| !s.state.has_powered_input() && !s.state.needs_attitude_steps())
-    {
+    if ships.iter().all(|s| {
+        !s.state.has_powered_input() && !s.state.needs_attitude_steps() && s.state.mission.is_none()
+    }) {
         advance_fixed_steps(plan, bodies, count)?;
     } else {
         for _ in 0..count {
@@ -60,6 +68,11 @@ pub fn advance_spacecraft_steps(
                     let (_, _, flow) = engine_wrench(&ship.state);
                     if flow > 0.0 {
                         dt = dt.min(ship.state.propellant_mass_kg / flow);
+                    }
+                    if let Some(program) = &ship.state.burn_program {
+                        dt = dt.min(
+                            program.remaining_full_throttle_seconds / ship.state.control.throttle,
+                        );
                     }
                 }
                 if !dt.is_finite() || dt <= 0.0 {
@@ -73,6 +86,14 @@ pub fn advance_spacecraft_steps(
                 advance_fixed_steps(&segment, bodies, 1)?;
                 for ship in ships.iter_mut() {
                     propulsion_rotation_halfstep(bodies, ship, dt * 0.5);
+                    // Compensate repeated substep additions: millions of 0.05s
+                    // burn-selected steps must not timestamp an observation
+                    // after the exact committed operation boundary.
+                    let adjusted = dt - ship.epoch_compensation_seconds;
+                    let next_epoch = ship.epoch_seconds + adjusted;
+                    ship.epoch_compensation_seconds = (next_epoch - ship.epoch_seconds) - adjusted;
+                    ship.epoch_seconds = next_epoch;
+                    record_mission_observation(bodies, ship);
                 }
                 let next = remaining - dt;
                 remaining = if next < remaining {
@@ -91,6 +112,37 @@ pub fn advance_spacecraft_steps(
         return Err(());
     }
     Ok(())
+}
+
+/// Observe actual solver states at every integration boundary, including warp.
+/// Prediction buffers and presentation queries never call this function.
+fn record_mission_observation(bodies: &[MassiveBodyState], ship: &mut SpacecraftBinding) {
+    let Some(mission) = &mut ship.state.mission else {
+        return;
+    };
+    let Some(target_index) = ship.mission_target_index else {
+        return;
+    };
+    let body = &bodies[ship.body_index];
+    let target = &bodies[target_index];
+    let relative = sub(body.position_m, target.position_m);
+    let range = magnitude(relative);
+    if range < mission.closest_target_distance_m {
+        mission.closest_target_distance_m = range;
+        mission.closest_approach_epoch_seconds = ship.epoch_seconds;
+        mission.closest_approach_passed = false;
+    } else if range > mission.closest_target_distance_m + 0.01
+        && solarlab_domain::spacecraft::dot(relative, sub(body.velocity_mps, target.velocity_mps))
+            > 0.0
+    {
+        mission.closest_approach_passed = true;
+    }
+    mission.target_surface_crossed |= range <= ship.target_radius_m + ship.body_radius_m;
+    if let Some(reference_index) = ship.reference_body_index {
+        mission.reference_surface_crossed |=
+            magnitude(sub(body.position_m, bodies[reference_index].position_m))
+                <= ship.reference_radius_m + ship.body_radius_m;
+    }
 }
 
 fn engine_wrench(s: &SpacecraftState) -> (Vector3d, Vector3d, f64) {
@@ -185,6 +237,9 @@ fn propulsion_rotation_halfstep(
     ship: &mut SpacecraftBinding,
     dt: f64,
 ) {
+    if !ship.state.has_powered_input() && !ship.state.needs_attitude_steps() {
+        return;
+    }
     let error = assist_error(bodies, ship);
     let s = &mut ship.state;
     let (force, engine_torque, flow) = engine_wrench(s);
@@ -220,10 +275,28 @@ fn propulsion_rotation_halfstep(
         let delta_v = scale(mid_attitude.rotate(force), impulse_per_force);
         bodies[ship.body_index].velocity_mps = add(bodies[ship.body_index].velocity_mps, delta_v);
         s.delivered_delta_v_mps += magnitude(delta_v);
+        // Actual main firing excludes RCS use of the shared tank. All engines
+        // receive the same fuel-limited fraction of this halfstep.
+        if s.control.throttle > 0.0 && s.engines.iter().any(|e| e.control == EngineControl::Main) {
+            let equivalent_seconds = (fuel_used / flow) * s.control.throttle;
+            s.main_engine_full_throttle_seconds += equivalent_seconds;
+            if let Some(program) = &mut s.burn_program {
+                program.remaining_full_throttle_seconds =
+                    (program.remaining_full_throttle_seconds - equivalent_seconds).max(0.0);
+            }
+        }
         s.propellant_mass_kg = (s.propellant_mass_kg - fuel_used).max(0.0);
         // Exact depletion can leave a few ulps after two half steps.
         if s.propellant_mass_kg < 4.0 * f64::EPSILON * initial_mass {
             s.propellant_mass_kg = 0.0;
         }
+    }
+    if s.burn_program
+        .as_ref()
+        .is_some_and(|p| p.remaining_full_throttle_seconds < 1e-10 || s.propellant_mass_kg == 0.0)
+    {
+        s.burn_program = None;
+        s.control.throttle = 0.0;
+        s.control.attitude_mode = AttitudeMode::Hold;
     }
 }

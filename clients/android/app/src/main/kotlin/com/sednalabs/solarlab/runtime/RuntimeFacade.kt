@@ -27,8 +27,12 @@ interface RuntimeFacade {
     suspend fun refreshExperimentCatalogue() {}
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
     suspend fun startFlight(shipId: String = REFERENCE_SPACECRAFT_ID) { error("Spaceflight is unavailable") }
+    /** Saves the current world before atomically opening a new, paused lunar starting world. */
+    suspend fun startLunarMission(shipId: String = REFERENCE_SPACECRAFT_ID) { error("Lunar flight is unavailable") }
+    suspend fun beginLunarDeparture(shipId: String = REFERENCE_SPACECRAFT_ID) { error("Guided departure is unavailable") }
     suspend fun setFlightControl(control: FlightControl, shipId: String = REFERENCE_SPACECRAFT_ID) { error("Spaceflight is unavailable") }
     suspend fun flightState(shipId: String = REFERENCE_SPACECRAFT_ID): FlightState? = null
+    suspend fun lunarMissionState(shipId: String = REFERENCE_SPACECRAFT_ID): LunarMissionState? = null
     /** Retained operation: cuts input and pauses even when the composing Activity is destroyed. */
     fun suspendFlightControls(shipId: String = REFERENCE_SPACECRAFT_ID) {}
 

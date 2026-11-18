@@ -88,6 +88,7 @@ impl WorldRuntime {
                     return Err(RuntimeError::DuplicateBody(body.body_id.clone()));
                 }
                 if !valid_ship_body(body, spacecraft)
+                    || !valid_mission(world, spacecraft)
                     || spacecraft.reference_body_id.as_ref().is_some_and(|id| {
                         *id == body.body_id || !world.bodies.iter().any(|b| b.body_id == *id)
                     })
@@ -106,6 +107,26 @@ impl WorldRuntime {
                     control.attitude_mode,
                     solarlab_domain::AttitudeMode::Manual | solarlab_domain::AttitudeMode::Hold
                 ) && ship.reference_body_id.is_none()
+                {
+                    return Err(RuntimeError::InvalidFlightState);
+                }
+            }
+            WorldCommand::StartGuidedBurn {
+                body_id,
+                full_throttle_seconds,
+            } => {
+                let ship = self
+                    .spacecraft_by_id(&body_id.0)
+                    .ok_or_else(|| RuntimeError::UnknownBody(body_id.clone()))?;
+                if !full_throttle_seconds.is_finite()
+                    || *full_throttle_seconds <= 0.0
+                    || *full_throttle_seconds > 86_400.0
+                    || ship.propellant_mass_kg <= 0.0
+                    || ship.reference_body_id.is_none()
+                    || !ship
+                        .engines
+                        .iter()
+                        .any(|e| e.control == solarlab_domain::EngineControl::Main)
                 {
                     return Err(RuntimeError::InvalidFlightState);
                 }
@@ -149,21 +170,49 @@ pub(super) fn valid_ship_body(body: &BodyState, ship: &SpacecraftState) -> bool 
         && finite(body.velocity_mps)
 }
 
+pub(super) fn valid_mission(world: &BranchWorldState, ship: &SpacecraftState) -> bool {
+    ship.mission.as_ref().is_none_or(|mission| {
+        mission.launch_epoch_seconds <= world.epoch_seconds
+            && mission.closest_approach_epoch_seconds <= world.epoch_seconds + 1e-6
+            && mission.target_body_id != ship.body_id
+            && world
+                .bodies
+                .iter()
+                .any(|b| b.body_id == mission.target_body_id)
+    })
+}
+
 pub(super) fn bindings(world: &BranchWorldState) -> Vec<SpacecraftBinding> {
     world
         .spacecraft
         .iter()
-        .map(|state| SpacecraftBinding {
-            body_index: world
+        .map(|state| {
+            let body_index = world
                 .bodies
                 .iter()
                 .position(|b| b.body_id == state.body_id)
-                .expect("spacecraft body invariant"),
-            reference_body_index: state
+                .expect("spacecraft body invariant");
+            let reference_body_index = state
                 .reference_body_id
                 .as_ref()
-                .and_then(|id| world.bodies.iter().position(|b| b.body_id == *id)),
-            state: state.clone(),
+                .and_then(|id| world.bodies.iter().position(|b| b.body_id == *id));
+            let mission_target_index = state.mission.as_ref().and_then(|m| {
+                world
+                    .bodies
+                    .iter()
+                    .position(|b| b.body_id == m.target_body_id)
+            });
+            SpacecraftBinding {
+                body_index,
+                reference_body_index,
+                mission_target_index,
+                reference_radius_m: reference_body_index.map_or(0.0, |i| world.bodies[i].radius_m),
+                target_radius_m: mission_target_index.map_or(0.0, |i| world.bodies[i].radius_m),
+                body_radius_m: world.bodies[body_index].radius_m,
+                epoch_seconds: world.epoch_seconds,
+                epoch_compensation_seconds: 0.0,
+                state: state.clone(),
+            }
         })
         .collect()
 }

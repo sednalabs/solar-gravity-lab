@@ -298,7 +298,10 @@ internal fun StageFirstRuntimeExperience(
     SolarLabTheme {
         val context = LocalContext.current.applicationContext
         val lifecycleOwner = LocalLifecycleOwner.current
-        val coroutineScope = rememberCoroutineScope()
+        // These continuations update Android views and dialog state after native
+        // dispatcher hops. Keep their owner on the main thread, including when a
+        // Compose test supplies an unconfined effect dispatcher.
+        val coroutineScope = rememberCoroutineScope { kotlinx.coroutines.Dispatchers.Main.immediate }
 
         val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
         val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
@@ -307,6 +310,9 @@ internal fun StageFirstRuntimeExperience(
 
         var flightActive by rememberSaveable { mutableStateOf(false) }
         var flightStarting by remember { mutableStateOf(false) }
+        var lunarBriefVisible by rememberSaveable { mutableStateOf(false) }
+        var lunarStarting by remember { mutableStateOf(false) }
+        var lunarStartError by remember { mutableStateOf<String?>(null) }
         var flightCameraMode by rememberSaveable { mutableStateOf(1) }
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
@@ -771,6 +777,27 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
+        fun launchLunarMission() {
+            if (lunarStarting || !canSendCommands) return
+            lunarStarting = true
+            lunarStartError = null
+            coroutineScope.launch {
+                try {
+                    runtimeFacade.startLunarMission()
+                    labInteraction.clearDraft()
+                    labInteraction.lastCommit = null
+                    selectedBodyId = REFERENCE_SPACECRAFT_ID
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    flightCameraMode = 2
+                    flightActive = true
+                    lunarBriefVisible = false
+                    chromeModeName = StageChromeMode.COLLAPSED.name
+                } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                catch (error: Throwable) { lunarStartError = error.message ?: "The lunar mission could not start" }
+                finally { lunarStarting = false }
+            }
+        }
+
         LaunchedEffect(flightActive, flightCameraMode, renderHostView, runtimeSessionHandle) {
             val host = renderHostView ?: return@LaunchedEffect
             if (flightActive) {
@@ -781,7 +808,8 @@ internal fun StageFirstRuntimeExperience(
                     observerMode = ObserverMode.FREE
                     host.setObserverMode(ObserverMode.FREE)
                     host.setLabMapMode(true)
-                    host.frameBody("earth")
+                    if (runtimeFacade.lunarMissionState() != null) host.resetCamera()
+                    else host.frameBody("earth", selectBody = false)
                 } else {
                     observerMode = ObserverMode.FOLLOW_SELECTED
                     host.setLabMapMode(false)
@@ -1024,8 +1052,8 @@ internal fun StageFirstRuntimeExperience(
         }
 
         LaunchedEffect(runtimeSessionHandle, uiState.snapshot?.scenarioId, renderHostView, searchableBodies,
-            pendingScenarioFrame, openingSavedExperiment) {
-            if (!openingSavedExperiment && pendingScenarioFrame == null &&
+            pendingScenarioFrame, openingSavedExperiment, flightActive, lunarStarting) {
+            if (!openingSavedExperiment && !flightActive && !lunarStarting && pendingScenarioFrame == null &&
                 runtimeSessionHandle != 0L && framedLabSession != runtimeSessionHandle &&
                 uiState.snapshot?.scenarioId == "lab.earth-moon" && renderHostView != null &&
                 searchableBodies.any { it.id == "earth" } && searchableBodies.any { it.id == "moon" }) {
@@ -1304,6 +1332,7 @@ internal fun StageFirstRuntimeExperience(
                 facade = runtimeFacade, uiState = uiState, cameraMode = flightCameraMode,
                 onCamera = { flightCameraMode = it }, onExit = ::exitFlight,
                 onSaved = { savedVisible = true },
+                onLunarMission = { lunarStartError = null; lunarBriefVisible = true },
             )
             if (!placing && !flightActive) EarthMoonLabChrome(
                 uiState = uiState,
@@ -1371,6 +1400,7 @@ internal fun StageFirstRuntimeExperience(
                     },
                     undo = ::undoProbePlacement,
                     enterFlight = ::enterFlight,
+                    enterLunarFlight = { lunarStartError = null; lunarBriefVisible = true },
                 ),
             )
             labInteraction.draft?.let { draft ->
@@ -1440,6 +1470,10 @@ internal fun StageFirstRuntimeExperience(
         }
 
         if (scienceVisible) LabScienceDialog(uiState, activeScenarioPack, onDismiss = { scienceVisible = false })
+        if (lunarBriefVisible) LunarFlightBriefDialog(
+            busy = lunarStarting, error = lunarStartError, onStart = ::launchLunarMission,
+            onDismiss = { if (!lunarStarting) lunarBriefVisible = false },
+        )
         if (inspectorVisible) {
             LabBodyInspectorDialog(
                 body = inspectedBody,

@@ -105,6 +105,8 @@ class CanonicalAndroidRendererModuleTest(unittest.TestCase):
             "compact_medium_bda.comp",
             "density_point.frag",
             "density_point.vert",
+            "spacecraft.frag",
+            "spacecraft.vert",
             "trail.frag",
             "trail.vert",
         }

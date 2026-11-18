@@ -218,6 +218,28 @@ impl SpacecraftEngine {
     }
 }
 
+/// Optional finite main-engine programme, explicitly started and cancelled by
+/// any manual control command. Remaining time is full-throttle equivalent.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SpacecraftBurnProgram {
+    pub remaining_full_throttle_seconds: f64,
+}
+
+/// Mission observations contain no second position/velocity store. Closest
+/// range and surface crossings are sampled at actual integration boundaries.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SpacecraftMissionState {
+    pub mission_id: String,
+    pub target_body_id: BodyId,
+    pub launch_epoch_seconds: f64,
+    pub closest_target_distance_m: f64,
+    pub closest_approach_epoch_seconds: f64,
+    /// Records passage after the closest sampled target approach.
+    pub closest_approach_passed: bool,
+    pub reference_surface_crossed: bool,
+    pub target_surface_crossed: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SpacecraftState {
     pub body_id: BodyId,
@@ -233,6 +255,12 @@ pub struct SpacecraftState {
     pub engines: Vec<SpacecraftEngine>,
     pub control: FlightControl,
     pub delivered_delta_v_mps: f64,
+    #[serde(default)]
+    pub main_engine_full_throttle_seconds: f64,
+    #[serde(default)]
+    pub burn_program: Option<SpacecraftBurnProgram>,
+    #[serde(default)]
+    pub mission: Option<SpacecraftMissionState>,
 }
 impl SpacecraftState {
     #[must_use]
@@ -260,6 +288,38 @@ impl SpacecraftState {
             && self.engines.len() <= 64
             && self.delivered_delta_v_mps.is_finite()
             && self.delivered_delta_v_mps >= 0.0
+            && self.main_engine_full_throttle_seconds.is_finite()
+            && self.main_engine_full_throttle_seconds >= 0.0
+            && self.burn_program.as_ref().is_none_or(|p| {
+                p.remaining_full_throttle_seconds.is_finite()
+                    && p.remaining_full_throttle_seconds > 0.0
+                    && p.remaining_full_throttle_seconds <= 86_400.0
+                    && self.control.throttle == 1.0
+                    && self.control.attitude_mode == AttitudeMode::Prograde
+                    && magnitude(self.control.translation_body) == 0.0
+                    && magnitude(self.control.rotation_body) == 0.0
+                    && self.propellant_mass_kg > 0.0
+                    && self.reference_body_id.is_some()
+                    && self
+                        .engines
+                        .iter()
+                        .any(|e| e.control == EngineControl::Main)
+            })
+            && self.mission.as_ref().is_none_or(|m| {
+                !m.mission_id.trim().is_empty()
+                    && m.mission_id.len() <= 96
+                    && !m.mission_id.chars().any(char::is_control)
+                    && !m.target_body_id.0.trim().is_empty()
+                    && m.target_body_id.0.len() <= 96
+                    && !m.target_body_id.0.chars().any(char::is_control)
+                    && m.target_body_id != self.body_id
+                    && m.launch_epoch_seconds.is_finite()
+                    && m.launch_epoch_seconds >= 0.0
+                    && m.closest_target_distance_m.is_finite()
+                    && m.closest_target_distance_m >= 0.0
+                    && m.closest_approach_epoch_seconds.is_finite()
+                    && m.closest_approach_epoch_seconds >= m.launch_epoch_seconds
+            })
             && self.engines.iter().all(|e| {
                 finite(e.direction_body)
                     && (magnitude(e.direction_body) - 1.0).abs() < 1e-8
@@ -361,6 +421,9 @@ impl SpacecraftState {
             engines,
             control: FlightControl::default(),
             delivered_delta_v_mps: 0.0,
+            main_engine_full_throttle_seconds: 0.0,
+            burn_program: None,
+            mission: None,
         }
     }
     #[must_use]

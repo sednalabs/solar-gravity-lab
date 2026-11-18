@@ -41,8 +41,11 @@ internal interface RuntimeBridge {
     suspend fun validateSavedSession(bytes: ByteArray): String = error("Experiment validation is unavailable")
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
     suspend fun startFlight(shipId: String): List<RuntimeSignal> = error("Spaceflight is unavailable")
+    suspend fun startLunarFlight(shipId: String): List<RuntimeSignal> = error("Lunar flight is unavailable")
+    suspend fun beginLunarDeparture(shipId: String): List<RuntimeSignal> = error("Guided departure is unavailable")
     suspend fun setFlightControl(shipId: String, control: FlightControl) { error("Spaceflight is unavailable") }
     suspend fun flightState(shipId: String): FlightState? = null
+    suspend fun lunarMissionState(shipId: String): LunarMissionState? = null
     suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult = error("Probe preview is unavailable")
     suspend fun commitProbe(preview: ProbePreviewResult): Pair<ProbeCommitResult, List<RuntimeSignal>> = error("Probe placement is unavailable")
     suspend fun undoProbe(commit: ProbeCommitResult): List<RuntimeSignal> = error("Probe undo is unavailable")
@@ -504,12 +507,58 @@ internal class JniRuntimeBridge(
         refreshSignalsForHandle(handle, includeSummary = true, traceLabel = "flight.start")
     }
 
+    override suspend fun startLunarFlight(shipId: String): List<RuntimeSignal> = withActiveSession { oldHandle ->
+        val created = transport.createSession(RuntimeScenarioPacks.DEFAULT_SCENARIO_ID, DEFAULT_ROOT_BRANCH_ID)
+        if (!created.result.isOk() || created.handle == 0L || created.abiVersion != ABI_VERSION) {
+            if (created.handle != 0L && created.handle != oldHandle) transport.destroySession(created.handle)
+            error("The lunar mission could not create its own world")
+        }
+        check(created.handle != oldHandle) { "The lunar mission needs a separate session" }
+        var bound = false
+        try {
+            // Fully author the new epoch-zero world before exposing it or releasing the laboratory.
+            for (command in listOf(RuntimeCommand.SeedCanonicalSolarSystem, RuntimeCommand.PausePlayback,
+                RuntimeCommand.SetPlaybackRate(1.0))) {
+                val result = transport.applyCommand(created.handle, command.toNativePayload())
+                check(result.result.isOk()) { "The lunar starting world could not be prepared" }
+            }
+            transport.startLunarFlight(created.handle, shipId, System.currentTimeMillis())
+            flightStateFromNative(checkNotNull(transport.flightState(created.handle, shipId)) { "The lunar spacecraft was not created" })
+            synchronized(stateLock) {
+                renderHostAdapter.releasePacket()
+                renderHostAdapter.bindSession(created.handle)
+                activeSessionHandle = created.handle
+                bound = true
+            }
+            playbackSample = null
+            lastObservation = null
+            latestProbePreview = null
+            advanceMayBeActive = false
+            advanceIntent = null
+            transport.destroySession(oldHandle)
+            listOf(RuntimeSignal.Connected(created.handle)) +
+                runtimeInfoSignalsForHandle(created.handle, "lunarFlight.runtime-info") +
+                refreshSignalsForHandle(created.handle, includeSummary = true)
+        } finally {
+            if (!bound) transport.destroySession(created.handle)
+        }
+    }
+
+    override suspend fun beginLunarDeparture(shipId: String): List<RuntimeSignal> = withActiveSession { handle ->
+        transport.beginLunarDeparture(handle, shipId, System.currentTimeMillis())
+        refreshSignalsForHandle(handle, includeSummary = true, traceLabel = "flight.lunar-departure")
+    }
+
     override suspend fun setFlightControl(shipId: String, control: FlightControl) = withActiveSession { handle ->
         transport.setFlightControl(handle, shipId, control.toNativeValues(), System.currentTimeMillis())
     }
 
     override suspend fun flightState(shipId: String): FlightState? = withActiveSession { handle ->
         transport.flightState(handle, shipId)?.let(::flightStateFromNative)
+    }
+
+    override suspend fun lunarMissionState(shipId: String): LunarMissionState? = withActiveSession { handle ->
+        transport.lunarMissionState(handle, shipId)?.let(::lunarMissionStateFromNative)
     }
 
     override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =
@@ -1411,8 +1460,11 @@ internal interface NativeRuntimeTransport {
     fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = error("Experiment loading is unavailable")
     fun inspectBody(handle: Long, bodyId: String): DoubleArray? = null
     fun startFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Spaceflight is unavailable") }
+    fun startLunarFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Lunar flight is unavailable") }
+    fun beginLunarDeparture(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Guided departure is unavailable") }
     fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) { error("Spaceflight is unavailable") }
     fun flightState(handle: Long, shipId: String): DoubleArray? = null
+    fun lunarMissionState(handle: Long, shipId: String): DoubleArray? = null
     fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult = error("Probe preview is unavailable")
     fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult = error("Probe placement is unavailable")
     fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) { error("Probe undo is unavailable") }
@@ -1627,14 +1679,23 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
 
     override fun startFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) =
         nativeStartFlight(handle, shipId.toByteArray(StandardCharsets.UTF_8), recordedAtUnixMs)
+    override fun startLunarFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) =
+        nativeStartLunarFlight(handle, shipId.toByteArray(StandardCharsets.UTF_8), recordedAtUnixMs)
+    override fun beginLunarDeparture(handle: Long, shipId: String, recordedAtUnixMs: Long) =
+        nativeBeginLunarDeparture(handle, shipId.toByteArray(StandardCharsets.UTF_8), recordedAtUnixMs)
     override fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) =
         nativeSetFlightControl(handle, shipId.toByteArray(StandardCharsets.UTF_8), values, recordedAtUnixMs)
     override fun flightState(handle: Long, shipId: String): DoubleArray? =
         nativeFlightState(handle, shipId.toByteArray(StandardCharsets.UTF_8))
+    override fun lunarMissionState(handle: Long, shipId: String): DoubleArray? =
+        nativeLunarMissionState(handle, shipId.toByteArray(StandardCharsets.UTF_8))
 
     private external fun nativeStartFlight(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
+    private external fun nativeStartLunarFlight(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
+    private external fun nativeBeginLunarDeparture(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
     private external fun nativeSetFlightControl(handle: Long, shipId: ByteArray, values: DoubleArray, recordedAtUnixMs: Long)
     private external fun nativeFlightState(handle: Long, shipId: ByteArray): DoubleArray?
+    private external fun nativeLunarMissionState(handle: Long, shipId: ByteArray): DoubleArray?
 
     private external fun nativeExportSavedSession(handle: Long): ByteArray
     private external fun nativeImportSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult

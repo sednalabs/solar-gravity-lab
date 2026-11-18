@@ -181,6 +181,46 @@ class BridgeBackedRuntimeFacade internal constructor(
         bridge.startFlight(shipId).forEach(::applySignal)
     }
 
+    override suspend fun startLunarMission(shipId: String) = experimentMutex.withLock {
+        val store = checkNotNull(experimentStore) { "Save storage is unavailable; your current world has not been replaced" }
+        _experimentStatus.value = ExperimentStatus(busyLabel = "Saving this experiment and preparing lunar flight")
+        _uiState.update { it.copy(pendingActionLabel = "Preparing lunar flight") }
+        try {
+            withContext(NonCancellable) {
+                check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance before starting a mission" }
+                flightInputGeneration.incrementAndGet()
+                val previous = withContext(boundaryDispatcher) {
+                    bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal)
+                    bridge.exportSavedSession()
+                }
+                val saved = withContext(Dispatchers.IO) {
+                    store.save("Before lunar flight ${java.text.SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(java.util.Date())}", previous)
+                }
+                refreshSavedExperiments()
+                // Native construction is isolated until seeding, mission authoring and validation succeed.
+                withContext(boundaryDispatcher) { bridge.startLunarFlight(shipId).forEach(::applySignal) }
+                _lastProbeCommit.value = null
+                _experimentStatus.value = ExperimentStatus(notice = "Lunar flight ready. Previous world saved as ${saved.name}", tone = ShellNoticeTone.Positive)
+                _uiState.update { it.copy(pendingActionLabel = null, playbackMeasurement = null,
+                    manualAdvanceOutcome = null, noticeLine = "Lunar flight ready. Your previous experiment has been saved.",
+                    noticeTone = ShellNoticeTone.Positive) }
+            }
+        } catch (error: Throwable) {
+            _experimentStatus.value = ExperimentStatus(notice = "Lunar flight could not start: ${error.message}", tone = ShellNoticeTone.Caution)
+            _uiState.update { it.copy(pendingActionLabel = null, noticeLine = "Lunar flight could not start: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+            throw error
+        }
+    }
+
+    override suspend fun beginLunarDeparture(shipId: String) {
+        flightInputGeneration.incrementAndGet()
+        withContext(NonCancellable + boundaryDispatcher) {
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance first" }
+            bridge.beginLunarDeparture(shipId).forEach(::applySignal)
+            bridge.applyCommand(RuntimeCommand.ResumePlayback).forEach(::applySignal)
+        }
+    }
+
     override suspend fun setFlightControl(control: FlightControl, shipId: String) {
         val generation = flightInputGeneration.get()
         withContext(boundaryDispatcher) {
@@ -195,6 +235,9 @@ class BridgeBackedRuntimeFacade internal constructor(
 
     override suspend fun flightState(shipId: String): FlightState? =
         withContext(boundaryDispatcher) { bridge.flightState(shipId) }
+
+    override suspend fun lunarMissionState(shipId: String): LunarMissionState? =
+        withContext(boundaryDispatcher) { bridge.lunarMissionState(shipId) }
 
     override fun suspendFlightControls(shipId: String) {
         // Invalidate inputs queued by the old Activity before scheduling the retained stop.

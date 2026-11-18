@@ -1,5 +1,5 @@
 pub mod spacecraft;
-pub use spacecraft::{AttitudeMode, EngineControl, FlightControl, LocalReferenceFrame, Quaterniond, SpacecraftEngine, SpacecraftState};
+pub use spacecraft::{AttitudeMode, EngineControl, FlightControl, LocalReferenceFrame, Quaterniond, SpacecraftEngine, SpacecraftState, SpacecraftBurnProgram, SpacecraftMissionState};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BodyId(pub String);

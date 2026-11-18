@@ -162,6 +162,7 @@ internal data class LabStageActions(
     val toggleFollow: () -> Unit = {},
     val undo: () -> Unit = {},
     val enterFlight: () -> Unit = {},
+    val enterLunarFlight: () -> Unit = {},
 )
 
 internal val LabInk = Color(0xFFF0F5FA)
@@ -559,6 +560,7 @@ private fun LabMenuSheet(
                     description = "Close laboratory tools")
             }
             LabMenuRow("Launch orbital flight", "Pilot Odyssey, change your orbit and explore", "flight.launch.menu", ready) { open(actions.enterFlight) }
+            LabMenuRow("Lunar flight", "Start in Earth orbit and attempt a lunar flyby", LunarFlightTags.BRIEF, ready) { open(actions.enterLunarFlight) }
             LabMenuRow("Saved experiments", "Save this moment or reopen an experiment", LabTags.SAVED, ready) { open(actions.saved) }
             LabMenuRow("Choose a scene", "Explore another starting system", SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON) { open(actions.scenarios) }
             LabMenuRow("About this model", "Sources, epoch and scientific approximations", LabTags.SCIENCE) { open(actions.science) }

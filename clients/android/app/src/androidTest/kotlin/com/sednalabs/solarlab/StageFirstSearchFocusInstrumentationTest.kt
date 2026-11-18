@@ -15,6 +15,7 @@ import androidx.test.espresso.IdlingPolicies
 import java.util.concurrent.TimeUnit
 import android.util.Log
 import org.junit.Before
+import org.junit.After
 import kotlinx.coroutines.runBlocking
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.RuntimeCommand
@@ -34,33 +35,39 @@ class StageFirstSearchFocusInstrumentationTest {
         IdlingPolicies.setIdlingResourceTimeout(30, TimeUnit.SECONDS)
     }
 
+    @After fun restoreFrameClock() {
+        composeRule.mainClock.autoAdvance = true
+    }
+
     @Test
     fun searchFocus_updatesVisibleSelectionCard() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
         loadCanonicalCatalogue()
 
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
 
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
             .performScrollToIfPossible()
             .performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
         }
         // Filter before asking for Halley: an unfiltered, scroll-clipped
         // catalogue need not expose an offscreen result in its semantics tree.
         // The filtered inclusion/exclusion assertions below remain mandatory.
         Log.i("SolarLabSearchProof", "Search field ready; entering comet filter")
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("comet")
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick()
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("comet")
         Log.i("SolarLabSearchProof", "Comet filter entered")
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
         }
         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextReplacement("earth")
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
         }
@@ -74,7 +81,7 @@ class StageFirstSearchFocusInstrumentationTest {
 
             var lastSelectionFailure: Throwable? = null
             try {
-                composeRule.waitUntil(timeoutMillis = 20_000) {
+                awaitCondition(timeoutMillis = 20_000) {
                     composeRule.mainClock.advanceTimeByFrame()
                     runCatching {
                         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
@@ -88,7 +95,7 @@ class StageFirstSearchFocusInstrumentationTest {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
             composeRule.onNodeWithTag(LabTags.FOLLOW).assertIsDisplayed()
             composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
-            composeRule.waitUntil(timeoutMillis = 20_000) {
+            awaitCondition(timeoutMillis = 20_000) {
                 composeRule.mainClock.advanceTimeByFrame()
                 composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "earth"
             }
@@ -123,7 +130,7 @@ class StageFirstSearchFocusInstrumentationTest {
         SolarLabSemanticActionBridge.clearPendingReplay()
 
         try {
-            composeRule.waitUntil(timeoutMillis = 20_000) {
+            awaitCondition(timeoutMillis = 20_000) {
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                     .fetchSemanticsNodes()
                     .isNotEmpty()
@@ -137,7 +144,7 @@ class StageFirstSearchFocusInstrumentationTest {
                 )
             )
 
-            composeRule.waitUntil(timeoutMillis = 20_000) {
+            awaitCondition(timeoutMillis = 20_000) {
                 runCatching {
                     composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                         .assertTextContains("Halley")
@@ -153,9 +160,13 @@ class StageFirstSearchFocusInstrumentationTest {
     }
     private fun loadCanonicalCatalogue() {
         val facade = composeRule.activity.runtimeFacadeForTesting
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             facade.uiState.value.connectionState == SessionConnectionState.Active
         }
+        // Native viewport presentation keeps producing Compose state even after
+        // the authoritative world pauses. Step UI frames explicitly throughout
+        // the catalogue journey; global renderer idleness is not an assertion.
+        composeRule.mainClock.autoAdvance = false
         // This fixture qualifies search/catalogue semantics, not moving playback.
         // Continuous clock recomposition prevents Compose's idle barrier;
         // real moving focus and pinch remain covered by LabCameraMotion.
@@ -163,9 +174,16 @@ class StageFirstSearchFocusInstrumentationTest {
             facade.loadScenario("sol-system")
             facade.applyCommand(RuntimeCommand.PausePlayback)
         }
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             facade.uiState.value.snapshot?.paused == true &&
                 facade.uiState.value.renderFrame?.bodies?.any { it.bodyId == "halley" } == true
+        }
+    }
+
+    private fun awaitCondition(timeoutMillis: Long, condition: () -> Boolean) {
+        composeRule.waitUntil(timeoutMillis) {
+            if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeBy(32)
+            condition()
         }
     }
 

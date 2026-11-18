@@ -103,9 +103,17 @@ impl WorldRuntime {
                 let world = &mut self.active_branch_mut().world;
                 let ship = world.spacecraft.iter_mut().find(|s|s.body_id==*body_id).expect("preflight checked flight identity");
                 ship.control = *control;
+                ship.burn_program = None;
                 if ship.has_powered_input() || solarlab_domain::spacecraft::magnitude(control.rotation_body)>0.0 {
                     world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
                 }
+            }
+            WorldCommand::StartGuidedBurn { body_id, full_throttle_seconds } => {
+                let world = &mut self.active_branch_mut().world;
+                let ship = world.spacecraft.iter_mut().find(|s|s.body_id == *body_id).expect("preflight checked flight identity");
+                ship.control = FlightControl { throttle: 1.0, attitude_mode: solarlab_domain::AttitudeMode::Prograde, ..FlightControl::default() };
+                ship.burn_program = Some(solarlab_domain::SpacecraftBurnProgram { remaining_full_throttle_seconds: *full_throttle_seconds });
+                world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
             }
             WorldCommand::SeedCanonicalSolarSystem => {
                 if self.active_branch().world.bodies.is_empty() {
@@ -191,7 +199,15 @@ impl WorldRuntime {
                 for ship in &mut branch.world.spacecraft {
                     if ship.reference_body_id.as_ref()==Some(body_id) {
                         ship.reference_body_id=None;
+                        ship.burn_program=None;
+                        ship.control.throttle=0.0;
                         ship.control.attitude_mode=solarlab_domain::AttitudeMode::Hold;
+                    }
+                    if ship.mission.as_ref().is_some_and(|m| m.target_body_id == *body_id) {
+                        ship.mission = None;
+                        ship.burn_program = None;
+                        ship.control.throttle = 0.0;
+                        ship.control.attitude_mode = solarlab_domain::AttitudeMode::Hold;
                     }
                 }
             }
@@ -368,6 +384,7 @@ impl WorldRuntime {
             }
         }
 
+        self.flight_prediction_cache.invalidate_for(&command);
         if refresh_solver_execution_after_command {
             self.refresh_active_solver_execution_report();
         }

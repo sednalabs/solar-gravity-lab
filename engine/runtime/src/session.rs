@@ -67,6 +67,7 @@ impl WorldRuntime {
             next_branch_ordinal: 1,
             advance_generation: 0,
             advance_operation: None,
+            flight_prediction_cache: flight_prediction::FlightPredictionCache::default(),
         };
 
         let active_branch_id = runtime.active_branch_id.clone();

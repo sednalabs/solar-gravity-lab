@@ -2,6 +2,7 @@
 use super::*;
 use solarlab_domain::{AttitudeMode, FlightControl};
 pub(super) const FLIGHT_SAMPLE_LEN: usize = 44;
+pub(super) const LUNAR_SAMPLE_LEN: usize = 21;
 
 pub(super) fn control_from_values(v: &[f64]) -> Result<FlightControl, String> {
     if v.len() != 8 || v.iter().any(|x| !x.is_finite()) {
@@ -55,6 +56,12 @@ pub(super) fn start(handle: SlRuntimeHandle, ship_id: &str, recorded: i64) -> Re
             .spawn_reference_spacecraft("earth", ship_id, 400_000.0, recorded)
             .map_err(|e| format!("Could not launch spacecraft: {e:?}"))?;
     }
+    configure_flight(&mut staged, ship_id, recorded)?;
+    session.runtime = staged;
+    Ok(())
+}
+
+fn configure_flight(staged: &mut WorldRuntime, ship_id: &str, recorded: i64) -> Result<(), String> {
     for command in [
         WorldCommand::PausePlayback,
         WorldCommand::SetPlaybackRate {
@@ -84,7 +91,49 @@ pub(super) fn start(handle: SlRuntimeHandle, ship_id: &str, recorded: i64) -> Re
             .apply_command(command, recorded)
             .map_err(|e| format!("Could not enter flight: {e:?}"))?;
     }
+    Ok(())
+}
+
+pub(super) fn start_lunar(
+    handle: SlRuntimeHandle,
+    ship_id: &str,
+    recorded: i64,
+) -> Result<(), String> {
+    if ship_id.is_empty() || ship_id.len() > SL_V2_ID_CAPACITY {
+        return Err("Invalid spacecraft identifier".into());
+    }
+    let mut registry = registry()
+        .lock()
+        .map_err(|_| "Runtime lock is unavailable")?;
+    let session = registry
+        .get_mut(handle)
+        .ok_or("The experiment is no longer open")?;
+    let mut staged = session.runtime.clone();
+    staged
+        .apply_command(WorldCommand::PausePlayback, recorded)
+        .map_err(|e| format!("Could not pause lunar flight: {e:?}"))?;
+    staged
+        .spawn_lunar_spacecraft(ship_id, recorded)
+        .map_err(|e| format!("Could not prepare the lunar departure: {e:?}"))?;
+    configure_flight(&mut staged, ship_id, recorded)?;
     session.runtime = staged;
+    Ok(())
+}
+
+pub(super) fn begin_lunar_departure(
+    handle: SlRuntimeHandle,
+    ship_id: &str,
+    recorded: i64,
+) -> Result<(), String> {
+    let mut registry = registry()
+        .lock()
+        .map_err(|_| "Runtime lock is unavailable")?;
+    registry
+        .get_mut(handle)
+        .ok_or("The experiment is no longer open")?
+        .runtime
+        .start_lunar_departure(ship_id, recorded)
+        .map_err(|e| format!("Could not start the guided departure: {e:?}"))?;
     Ok(())
 }
 
@@ -215,9 +264,163 @@ pub(super) fn sample(
     Ok(Some(result))
 }
 
+pub(super) fn lunar_sample(
+    handle: SlRuntimeHandle,
+    ship_id: &str,
+) -> Result<Option<[f64; LUNAR_SAMPLE_LEN]>, String> {
+    use solarlab_runtime::{LunarMissionOutcome, LunarMissionPhase};
+    let registry = registry()
+        .lock()
+        .map_err(|_| "Runtime lock is unavailable")?;
+    let runtime = &registry
+        .get(handle)
+        .ok_or("The experiment is no longer open")?
+        .runtime;
+    let Some(t) = runtime.lunar_mission_telemetry(ship_id) else {
+        return Ok(None);
+    };
+    let phase = match t.phase {
+        LunarMissionPhase::Ready => 0.0,
+        LunarMissionPhase::PoweredFlight => 1.0,
+        LunarMissionPhase::Coast => 2.0,
+        LunarMissionPhase::LunarApproach => 3.0,
+        LunarMissionPhase::LunarFlyby => 4.0,
+        LunarMissionPhase::LunarSurfaceCrossing => 5.0,
+        LunarMissionPhase::EarthSurfaceCrossing => 6.0,
+        LunarMissionPhase::EscapingEarth => 7.0,
+        LunarMissionPhase::Missed => 8.0,
+    };
+    let outcome = match t.outcome {
+        LunarMissionOutcome::InProgress => 0.0,
+        LunarMissionOutcome::FlybyAchieved => 1.0,
+        LunarMissionOutcome::LunarSurfaceCrossing => 2.0,
+        LunarMissionOutcome::EarthSurfaceCrossing => 3.0,
+        LunarMissionOutcome::Missed => 4.0,
+    };
+    let values = [
+        1.0,
+        t.epoch_seconds,
+        t.launch_epoch_seconds,
+        t.elapsed_seconds,
+        phase,
+        outcome,
+        t.departure_burn_seconds,
+        t.main_engine_full_throttle_seconds,
+        t.departure_remaining_seconds,
+        if t.guided_burn_active { 1.0 } else { 0.0 },
+        t.guided_burn_remaining_seconds,
+        t.earth_altitude_m,
+        t.moon_altitude_m,
+        t.moon_range_rate_mps,
+        t.moon_relative_speed_mps,
+        t.closest_observed_moon_altitude_m,
+        t.closest_observed_epoch_seconds,
+        t.remaining_propellant_kg,
+        if t.surface_response_modelled {
+            1.0
+        } else {
+            0.0
+        },
+        solarlab_runtime::LUNAR_EXPECTED_FLYBY_WINDOW_SECONDS[0],
+        solarlab_runtime::LUNAR_EXPECTED_FLYBY_WINDOW_SECONDS[1],
+    ];
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err("Non-finite lunar mission telemetry".into());
+    }
+    Ok(Some(values))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lunar_boundary_preserves_mission_and_native_cutoff_across_save() {
+        let created =
+            sl_v2_session_create(super::super::tests::new_params("lab.earth-moon", "lunar"));
+        assert_eq!(created.result.code, SlStatusCode::Ok);
+        let handle = created.handle;
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0)
+            .unwrap();
+        start_lunar(handle, "flight.odyssey", 1).unwrap();
+        let ready = lunar_sample(handle, "flight.odyssey").unwrap().unwrap();
+        assert_eq!(ready[0], 1.0);
+        assert_eq!(ready[4], 0.0);
+        assert_eq!(ready[6], 300.0);
+        assert_eq!(ready[8], 300.0);
+        assert_eq!(ready[18], 0.0);
+        begin_lunar_departure(handle, "flight.odyssey", 2).unwrap();
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(
+                WorldCommand::AdvanceEpoch {
+                    delta_seconds: 1.25,
+                },
+                3,
+            )
+            .unwrap();
+        let burning = lunar_sample(handle, "flight.odyssey").unwrap().unwrap();
+        assert_eq!(burning[4], 1.0);
+        assert!((burning[7] - 1.25).abs() < 1e-10);
+        assert_eq!(burning[9], 1.0);
+        assert!((burning[10] - 298.75).abs() < 1e-8);
+        let saved = super::super::persistence::export_save(handle).unwrap();
+        // Starting a new mission on an evolved world must not mutate it.
+        assert!(start_lunar(handle, "another-ship", 4).is_err());
+        assert_eq!(
+            saved,
+            super::super::persistence::export_save(handle).unwrap()
+        );
+        let restored = super::super::persistence::import_save(handle, &saved);
+        assert_eq!(restored.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            burning,
+            lunar_sample(restored.handle, "flight.odyssey")
+                .unwrap()
+                .unwrap()
+        );
+        // A repeated user request resumes the remaining programme, not another 300 s.
+        begin_lunar_departure(restored.handle, "flight.odyssey", 5).unwrap();
+        {
+            let mut registry = registry().lock().unwrap();
+            let runtime = &mut registry.get_mut(restored.handle).unwrap().runtime;
+            let ordinal = runtime.next_command_ordinal();
+            let generation = runtime
+                .begin_advance([ordinal, ordinal + 1], 0, ordinal, 310.0, 6)
+                .unwrap()
+                .generation;
+            let mut completed = 0;
+            loop {
+                let (operation, _) = runtime.continue_advance(generation, completed).unwrap();
+                completed = operation.completed_steps;
+                if operation.state == solarlab_runtime::AdvanceState::Committed {
+                    break;
+                }
+            }
+        }
+        let coast = lunar_sample(restored.handle, "flight.odyssey")
+            .unwrap()
+            .unwrap();
+        assert!((coast[7] - 300.0).abs() < 1e-7);
+        assert!(coast[8].abs() < 1e-8);
+        assert_eq!(coast[9], 0.0);
+        assert_eq!(
+            sample(restored.handle, "flight.odyssey").unwrap().unwrap()[7],
+            0.0
+        );
+        sl_v2_session_destroy(restored.handle);
+        sl_v2_session_destroy(handle);
+    }
+
     #[test]
     fn radial_flight_reports_speed_without_an_orbital_plane() {
         let handle =
