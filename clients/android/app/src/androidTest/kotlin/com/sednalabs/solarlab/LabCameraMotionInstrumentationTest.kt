@@ -18,8 +18,9 @@ import android.view.ViewGroup
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsNodeInteraction
-import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -331,22 +332,34 @@ class LabCameraMotionInstrumentationTest {
     private fun scrollToSettledControl(tag: String): SemanticsNodeInteraction {
         val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
         var previousBounds: Rect? = null
-        composeRule.waitUntil(10_000) {
-            composeRule.mainClock.advanceTimeByFrame()
-            val semantics = node.fetchSemanticsNode()
-            val bounds = semantics.boundsInRoot
-            val size = semantics.size
-            // boundsInRoot is clipped by the scroll viewport and Compose root;
-            // size is not. Require the complete touch target, then consecutive
-            // stationary frames so a sliding sheet cannot move under the tap.
-            val fullyVisible = size.width > 0 && size.height > 0 &&
-                abs(bounds.width - size.width) <= 1f && abs(bounds.height - size.height) <= 1f
-            val settled = fullyVisible && bounds == previousBounds
-            previousBounds = bounds.takeIf { fullyVisible }
-            settled
+        var lastObservation = "No visibility sample yet"
+        try {
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                // Compose 1.7.5 checks placement, Android root visibility and the
+                // visible screen rectangle here. Semantics presence is insufficient.
+                if (!node.isDisplayed()) {
+                    lastObservation = "Android reports the control is not displayed"
+                    previousBounds = null
+                    return@waitUntil false
+                }
+                val semantics = node.fetchSemanticsNode()
+                val bounds = semantics.boundsInWindow
+                val size = semantics.size
+                // Unlike boundsInRoot, boundsInWindow also clamps to root extents.
+                // Compare with the unclipped size, then require consecutive stable
+                // visible frames before the caller's single coordinate click.
+                val fullyVisible = size.width > 0 && size.height > 0 &&
+                    abs(bounds.width - size.width) <= 1f && abs(bounds.height - size.height) <= 1f
+                lastObservation = "displayed=true, windowBounds=$bounds, fullSize=$size, previousBounds=$previousBounds"
+                val settled = fullyVisible && bounds == previousBounds
+                previousBounds = bounds.takeIf { fullyVisible }
+                settled
+            }
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Control '$tag' did not become fully visible and stationary: $lastObservation", timeout)
         }
-        // Also checks that the Android root is actually displayed in its window.
-        return node.assertIsDisplayed()
+        return node
     }
 
     private fun computeFields(status: String, stream: String): Map<String, String> {
