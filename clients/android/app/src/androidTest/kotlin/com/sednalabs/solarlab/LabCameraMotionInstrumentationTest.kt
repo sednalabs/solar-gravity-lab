@@ -32,6 +32,7 @@ import com.sednalabs.solarlab.render.vulkan.LabViewportState
 import com.sednalabs.solarlab.render.vulkan.SolarSystemRenderHostView
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RenderFrame
+import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import kotlinx.coroutines.runBlocking
