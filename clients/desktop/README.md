@@ -5,7 +5,13 @@ WebGL 2 presentation/input adapter: there is no JavaScript flight propagator.
 `WorldRuntime` owns motion, attitude, finite burns, fuel, scientific settings,
 checkpoints, saves, authored spacecraft/scenarios and coast/burn prediction.
 
-From the repository root with the Rust toolchain installed:
+For a published Linux x64 preview, extract the desktop `.tar.gz` asset from the
+release and run `./solarlab-desktop --port 8787` in the extracted directory.
+The packaged binary is qualified on Ubuntu 24.04; other operating systems do not
+yet have packaged previews. The neighbouring checksum and provenance files tie
+it to the release source and native browser proof.
+
+To build from the repository root with the Rust toolchain installed:
 
 ```sh
 cargo run -p solarlab-desktop -- --port 8787
@@ -58,8 +64,8 @@ experiment without introducing a desktop-specific format.
 
 ## Scope and validation
 
-This is a source-level desktop demonstrator, not a packaged mature desktop
-release. Seven focused Rust tests cover preview immutability, CUT ordering and
+This is the first desktop flight preview. Seven focused Rust tests cover
+preview immutability, CUT ordering and
 lost-contact pause, general authored vehicles, and the loopback request boundary:
 
 ```sh

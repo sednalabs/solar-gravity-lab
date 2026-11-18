@@ -684,7 +684,64 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Resolve desktop proof from the identical source
+        id: desktop_proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          repo, source = os.environ['GITHUB_REPOSITORY'], os.environ['RELEASE_SOURCE']
+          def api(endpoint):
+              return json.loads(subprocess.check_output(['gh', 'api', f'/repos/{repo}/{endpoint}'], text=True))
+          runs = api(f'actions/workflows/validation-lab.yml/runs?head_sha={source}&status=success&per_page=50')['workflow_runs']
+          for run in runs:
+              if run['head_sha'] != source or run['conclusion'] != 'success':
+                  continue
+              run_id = int(run['id'])
+              name = f'solarlab-desktop-linux-x64-{run_id}'
+              artifacts = api(f'actions/runs/{run_id}/artifacts?per_page=100')['artifacts']
+              if any(a['name'] == name and not a['expired'] and a.get('workflow_run', {}).get('head_sha') == source for a in artifacts):
+                  with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+                      output.write(f'run_id={run_id}\nartifact_name={name}\n')
+                  break
+          else:
+              raise SystemExit('No successful native desktop journey artifact exists for this exact release source; qualify it before publishing.')
+          PY
+
+      - name: Download the qualified desktop binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ steps.desktop_proof.outputs.artifact_name }}
+          run-id: ${{ steps.desktop_proof.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/qualified-desktop
+
+      - name: Package the source-bound Linux desktop preview
+        shell: bash
+        env:
+          RELEASE_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          RELEASE_VERSION: ${{ needs.build-prerelease-apk.outputs.version_name }}
+          DESKTOP_VALIDATION_RUN: ${{ steps.desktop_proof.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/package_desktop_preview.py \
+            --input "$RUNNER_TEMP/qualified-desktop" --output dist \
+            --source "$RELEASE_SOURCE" --version "$RELEASE_VERSION" \
+            --validation-run "$DESKTOP_VALIDATION_RUN"
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -752,10 +809,12 @@ jobs:
 
       - name: Generate release provenance
         shell: bash
+        env:
+          RELEASE_NOTES_PATH: ${{ steps.release_artifacts.outputs.release_notes_md }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json
+          import json, os
           from datetime import datetime, timezone
           from pathlib import Path
 
@@ -764,6 +823,9 @@ jobs:
           sha_candidates = sorted(Path("dist").rglob(f"{artifact_name}.sha256"))
           if not sha_candidates:
               raise SystemExit(f"Missing SHA-256 file for {artifact_name}")
+          desktop = json.loads((Path("dist") / f"desktop-provenance-{safe_version}.json").read_text())
+          if desktop["commit_sha"] != "${{ needs.build-prerelease-apk.outputs.head_sha }}":
+              raise SystemExit("Desktop and Android release sources differ")
           payload = {
               "schema_version": 1,
               "provenance_kind": "github-release",
@@ -780,6 +842,7 @@ jobs:
               "release_channel": "${{ needs.build-prerelease-apk.outputs.release_channel }}",
               "artifact_name": artifact_name,
               "artifact_sha256": sha_candidates[0].read_text(encoding="utf-8").split()[0],
+              "desktop_preview": desktop,
               "launch_smoke_outcome": "${{ needs.build-prerelease-apk.outputs.launch_smoke_outcome }}",
               "arm64_isa_proof": "${{ needs.isa-prerelease-proof.result }}",
               "changelog_baseline_tag": "${{ needs.build-prerelease-apk.outputs.changelog_baseline_tag }}",
@@ -788,6 +851,21 @@ jobs:
           }
           output = Path("dist") / f"release-provenance-{safe_version}.json"
           output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          notes = Path(os.environ["RELEASE_NOTES_PATH"])
+          notes.write_text(notes.read_text() + (
+              "\n\n## Linux desktop flight preview\n\n"
+              f"Download `{desktop['artifact_name']}` and its `.sha256` file, "
+              "verify the checksum, then extract the archive and run "
+              "`./solarlab-desktop --port 8787`. Open `http://127.0.0.1:8787` "
+              "in a local browser with WebGL 2. The native host embeds the cockpit "
+              "and assets; it does not need a separate Node or Rust installation.\n\n"
+              "This first Linux x64 preview is qualified on Ubuntu 24.04. "
+              "Windows and macOS packages are not included. The archive contains "
+              "the exact binary exercised by the native desktop journey, from "
+              "the same source as this Android build. "
+              f"[Validation run](https://github.com/${{ github.repository }}/actions/runs/{desktop['validation_run_id']}). "
+              "The visual proof uses Chromium software WebGL and does not establish physical GPU performance.\n"
+          ), encoding="utf-8")
           PY
 
       - name: Publish GitHub Release
@@ -814,7 +892,7 @@ jobs:
             prerelease_flag="--prerelease"
           fi
 
-          mapfile -t release_assets < <(find dist -type f \( -name '*.apk' -o -name '*.sha256' -o -name '*.json' -o -name '*.md' \) | sort)
+          mapfile -t release_assets < <(find dist -type f \( -name '*.apk' -o -name '*.tar.gz' -o -name '*.sha256' -o -name '*.json' -o -name '*.md' \) | sort)
           if [[ ${#release_assets[@]} -eq 0 ]]; then
             echo "No release assets found under dist/." >&2
             exit 1

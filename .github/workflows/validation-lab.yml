@@ -278,6 +278,9 @@ jobs:
       - name: Verify release version routing
         run: python3 .github/scripts/test_prerelease_apk_request.py
 
+      - name: Verify qualified desktop packaging
+        run: python3 .github/scripts/test_package_desktop_preview.py
+
       - name: Verify Rust JNI R8 keep-rule coverage
         run: python3 .github/scripts/test_prerelease_jni_r8_contract.py
 
