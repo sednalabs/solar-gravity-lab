@@ -506,6 +506,10 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     override fun currentLabViewportState(): LabViewportState? = labViewportState
 
     override fun restoreLabCamera(camera: CameraState) {
+        // A retained laboratory viewport can arrive from the first-frame listener
+        // after activity recreation. Close flight owns its ship frame; restoring
+        // that old map here would overwrite the frame that just became visible.
+        if (flightCameraMode != 0) return
         cancelCameraTransition()
         switchToFreeCameraForManualNavigation()
         applyCameraState(camera)

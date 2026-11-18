@@ -1190,13 +1190,20 @@ internal fun StageFirstRuntimeExperience(
                             view.setOnCameraScaleChangedListener { scaleBand ->
                                 cameraScaleBand = scaleBand
                             }
-                            val cameraToRestore = labInteraction.savedCamera.takeIf { labInteraction.boundSessionHandle == runtimeSessionHandle }
+                            val cameraToRestore = labInteraction.savedCamera.takeIf {
+                                !flightActive && labInteraction.boundSessionHandle == runtimeSessionHandle
+                            }
                             val referenceToRestore = labInteraction.savedCameraReferenceId
                             val referencePositionToRestore = labInteraction.savedCameraReferencePosition
                             var restoredCamera = cameraToRestore == null
                             view.setOnLabViewportChangedListener { viewport ->
                                 labInteraction.viewport = viewport
-                                if (viewport != null && !restoredCamera) {
+                                if (flightActive) {
+                                    // Flight owns its camera across recreation. Consume any
+                                    // delayed lab restore and retain the lab's own saved view;
+                                    // a first close-flight frame must not trigger a map restore.
+                                    restoredCamera = true
+                                } else if (viewport != null && !restoredCamera) {
                                     restoredCamera = true
                                     val modeToRestore = observerMode
                                     val currentReference = viewport.bodies.firstOrNull { it.bodyId == referenceToRestore }?.worldPositionM

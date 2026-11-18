@@ -298,7 +298,10 @@ class OrbitalFlightJourneyInstrumentationTest {
                 val nativeImage = copyNativeImage(native, name, deadline)
                 stage = nativeImage
                 val origin = IntArray(2)
-                composeRule.runOnUiThread { native.getLocationOnScreen(origin) }
+                composeRule.runOnUiThread {
+                    native.getLocationOnScreen(origin)
+                    submitted = findHost(composeRule.activity.window.decorView)?.currentLabViewportState()
+                }
                 val windowImage = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
                 window = windowImage
                 attempt += 1
@@ -307,7 +310,9 @@ class OrbitalFlightJourneyInstrumentationTest {
                     matchCount = matches.first
                     sampleCount = matches.second
                     // Retain the same geometry and colour-match requirements.
-                    matched = sampleCount >= 12 && matchCount * 4 >= sampleCount * 3
+                    val currentRadius = submitted?.camera?.viewRadiusM
+                    matched = sampleCount >= 12 && matchCount * 4 >= sampleCount * 3 &&
+                        currentRadius != null && currentRadius in 8.0..100.0
                 } else matched = true
                 Log.i("SolarLabFlightEvidence", "$name pair=$attempt native=${native.width}x${native.height} " +
                     "submittedRadius=${submitted?.camera?.viewRadiusM} nativeMatches=$matchCount/$sampleCount " +
@@ -317,7 +322,8 @@ class OrbitalFlightJourneyInstrumentationTest {
                 if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeByFrame()
                 SystemClock.sleep((deadline - SystemClock.uptimeMillis()).coerceIn(0, 80))
             }
-            assertTrue("Native stage and window did not converge: $name; matched=$matchCount/$sampleCount, pairs=$attempt", matched)
+            assertTrue("Native stage and window did not converge: $name; matched=$matchCount/$sampleCount, " +
+                "pairs=$attempt, currentRadius=${submitted?.camera?.viewRadiusM}", matched)
         } finally {
             // Keep the actual pair on failure as well as success. Never paste a
             // native buffer into window evidence or substitute a previous capture.

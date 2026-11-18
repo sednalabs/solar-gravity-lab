@@ -17,11 +17,15 @@ import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.graciousgazelles.solarlab.render.core.ObserverMode
@@ -45,6 +49,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.floor
@@ -303,32 +309,88 @@ class LabCameraMotionInstrumentationTest {
     private fun setAllTracesVisible(visible: Boolean) {
         Log.i("SolarLabCameraEvidence", "Setting trace visibility=$visible")
         val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        val phase = AtomicReference("initial frame")
+        val completed = CountDownLatch(1)
+        val testThread = Thread.currentThread()
+        // Capture the actual blocked call even if a platform synchronization
+        // primitive never returns to the test's ordinary timeout/catch path.
+        thread(name = "SolarLabCameraWatchdog", isDaemon = true) {
+            if (!completed.await(20, TimeUnit.SECONDS)) {
+                val main = Looper.getMainLooper().thread
+                val heartbeat = CountDownLatch(1)
+                Handler(Looper.getMainLooper()).post { heartbeat.countDown() }
+                val mainResponded = heartbeat.await(2, TimeUnit.SECONDS)
+                Log.e("SolarLabInstrumentation", "Trace visibility=$visible stalled at ${phase.get()}; mainResponded=$mainResponded")
+                for (target in listOf(testThread, main)) {
+                    Log.e("SolarLabInstrumentation", "Camera evidence thread=${target.name} state=${target.state}")
+                    target.stackTrace.take(48).forEach { Log.e("SolarLabInstrumentation", "  at $it") }
+                }
+            }
+        }
+        fun step(name: String) {
+            phase.set(name)
+            Log.i("SolarLabCameraEvidence", "Trace visibility=$visible: $name")
+        }
         // The stress scene continues submitting native frames while this menu is
         // open. Qualify each control state on explicit Compose frames instead of
         // requiring the entire renderer and sheet to become globally idle.
         composeRule.mainClock.autoAdvance = false
         try {
             composeRule.mainClock.advanceTimeByFrame()
+            step("open tools")
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
+            step("settle tools")
             composeRule.mainClock.advanceTimeBy(400)
             val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
-            repeat(2) {
-                val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
-                composeRule.mainClock.advanceTimeBy(400)
+            repeat(2) { index ->
+                step("scroll trace control ${index + 1}")
+                val node = scrollToolsControlIntoView(tag)
+                step("click trace control ${index + 1}")
                 if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) node.performClick()
                 composeRule.mainClock.advanceTimeBy(64)
             }
-            composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible()
-            composeRule.mainClock.advanceTimeBy(400)
-            composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performClick()
+            step("scroll close control")
+            val close = scrollToolsControlIntoView(LabTags.TOOLS_CLOSE)
+            step("close tools")
+            close.performClick()
             composeRule.waitUntil(10_000) {
                 composeRule.mainClock.advanceTimeBy(32)
                 composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
             }
             Log.i("SolarLabCameraEvidence", "Trace visibility=$visible; tools dismissed")
         } finally {
+            completed.countDown()
             composeRule.mainClock.autoAdvance = previousAutoAdvance
         }
+    }
+
+    private fun scrollToolsControlIntoView(tag: String): SemanticsNodeInteraction {
+        val control = composeRule.onNodeWithTag(tag)
+        val panel = composeRule.onNodeWithTag(LabTags.TOOLS_PANEL)
+        // performScrollTo() repeats synchronously until layout moves. With the
+        // clock paused, its animated ScrollBy cannot progress and the loop never
+        // returns (AndroidX issue 556780784). Drive the real scroll semantics one
+        // bounded step at a time, advancing frames between layout observations.
+        composeRule.waitUntil(10_000) {
+            composeRule.mainClock.advanceTimeBy(32)
+            val target = control.fetchSemanticsNode()
+            val viewport = panel.fetchSemanticsNode().boundsInRoot
+            val top = target.positionInRoot.y
+            val bottom = top + target.size.height
+            val delta = when {
+                top < viewport.top -> top - viewport.top
+                bottom > viewport.bottom -> bottom - viewport.bottom
+                else -> 0f
+            }
+            if (abs(delta) <= 1f) true else {
+                panel.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                    assertTrue("Tools must accept scrolling to $tag", scroll(0f, delta))
+                }
+                composeRule.mainClock.advanceTimeBy(400)
+                false
+            }
+        }
+        return control.assertIsDisplayed()
     }
 
     private fun computeFields(status: String, stream: String): Map<String, String> {
