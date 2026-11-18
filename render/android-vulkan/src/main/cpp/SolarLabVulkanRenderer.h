@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SolarLabGpuReuse.h"
+#include "SolarLabVulkanCapabilities.h"
 
 #include <android/asset_manager.h>
 #include <android/native_window.h>
@@ -270,6 +271,7 @@ private:
         VkDeviceSize sizeBytes = 0;
         VkBufferUsageFlags usage = 0;
         VkMemoryPropertyFlags memoryProperties = 0;
+        void* mapped = nullptr;
         uint64_t allocationGeneration = 0;
         const char* debugLabel = nullptr;
     };
@@ -372,6 +374,16 @@ private:
     bool CreateComputePipelines();
     bool AllocateAndRecordCommandBuffers();
     bool CreateSyncObjects();
+    void CmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags sourceStages,
+        VkPipelineStageFlags destinationStages, VkDependencyFlags flags,
+        uint32_t memoryCount, const VkMemoryBarrier* memory,
+        uint32_t bufferCount, const VkBufferMemoryBarrier* buffers,
+        uint32_t imageCount, const VkImageMemoryBarrier* images);
+    VkResult SubmitWithSynchronization2(VkCommandBuffer commandBuffer, VkFence fence,
+        VkSemaphore waitSemaphore = VK_NULL_HANDLE, VkSemaphore signalSemaphore = VK_NULL_HANDLE);
+    void InitialiseGpuProfiling();
+    void RefreshGpuTimingsLocked();
+    void CapturePipelineStatistics(VkPipeline pipeline, const char* label);
     void DestroySurfaceResources();
     void DestroyDepthResources();
     void Cleanup();
@@ -457,11 +469,32 @@ private:
     ANativeWindow* nativeWindow_ = nullptr;
 
     VkInstance instance_ = VK_NULL_HANDLE;
+    uint32_t instanceApiVersion_ = VK_API_VERSION_1_1;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkPhysicalDeviceFeatures supportedFeatures_{};
     VkPhysicalDeviceFeatures enabledFeatures_{};
     VkPhysicalDeviceProperties physicalDeviceProperties_{};
+    solarlab::rendering::VulkanCapabilities capabilities_;
+    solarlab::rendering::VulkanDeviceFeatures optionalFeatures_;
+    PFN_vkCmdPipelineBarrier2KHR cmdPipelineBarrier2_ = nullptr;
+    PFN_vkQueueSubmit2KHR queueSubmit2_ = nullptr;
+    PFN_vkGetCalibratedTimestampsEXT getCalibratedTimestamps_ = nullptr;
+    PFN_vkGetPipelineExecutablePropertiesKHR getPipelineExecutableProperties_ = nullptr;
+    PFN_vkGetPipelineExecutableStatisticsKHR getPipelineExecutableStatistics_ = nullptr;
+    VkQueryPool timestampQueryPool_ = VK_NULL_HANDLE;
+    bool gpuTimingPending_ = false;
+    uint64_t gpuTimingSamples_ = 0;
+    double gpuFrameNs_ = 0.0;
+    double gpuPreGraphicsNs_ = 0.0;
+    uint64_t calibratedDeviceTicks_ = 0;
+    uint64_t calibratedHostNs_ = 0;
+    uint64_t calibratedMaxDeviationNs_ = 0;
+    uint64_t pipelineStatisticCount_ = 0;
+    uint64_t synchronization2Submissions_ = 0;
+    uint64_t persistentMappingCount_ = 0;
+    bool mediumSubgroupPipeline_ = false;
+    bool farSubgroupPipeline_ = false;
     VkDevice device_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     uint32_t graphicsQueueFamilyIndex_ = UINT32_MAX;
@@ -515,6 +548,8 @@ private:
     size_t nextStagingUploadSlot_ = 0U;
 
     VkSemaphore imageAvailableSemaphore_ = VK_NULL_HANDLE;
-    VkSemaphore renderFinishedSemaphore_ = VK_NULL_HANDLE;
+    // Presentation completion is not implied by a rendering fence. Reacquiring
+    // each swapchain image makes its own presentation-wait semaphore reusable.
+    std::vector<VkSemaphore> renderFinishedSemaphores_;
     VkFence inFlightFence_ = VK_NULL_HANDLE;
 };
