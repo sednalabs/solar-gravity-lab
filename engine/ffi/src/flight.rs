@@ -5,58 +5,6 @@ pub(super) const FLIGHT_SAMPLE_LEN: usize = 44;
 pub(super) const LUNAR_SAMPLE_LEN: usize = 21;
 pub(super) const RENDEZVOUS_SAMPLE_LEN: usize = 27;
 
-fn planning_error(error: RuntimeError) -> String {
-    match error {
-        RuntimeError::ScientificFailure(reason) => reason.to_string(),
-        RuntimeError::BodyEditRequiresPause => "pause the simulation first".into(),
-        RuntimeError::AdvanceBusy => "finish or cancel the current advance first".into(),
-        RuntimeError::AdvanceWorkLimit => "shorten this preview to fit its calculation budget".into(),
-        other => format!("{other:?}"),
-    }
-}
-
-pub(super) fn dynamics(handle: SlRuntimeHandle) -> Result<[f64; 3], String> {
-    use solarlab_domain::science::IntegratorKind;
-    let registry = registry().lock().map_err(|_| "Runtime lock is unavailable")?;
-    let settings = registry.get(handle).ok_or("The experiment is no longer open")?.runtime.scientific_settings();
-    let method = match settings.integrator {
-        IntegratorKind::LeapfrogKickDriftKick => 0.0,
-        IntegratorKind::YoshidaFourthOrder => 1.0,
-        IntegratorKind::DormandPrince54 => 2.0,
-        _ => return Err("Unsupported scientific method".into()),
-    };
-    Ok([1.0, method, settings.harmonics.len() as f64])
-}
-
-pub(super) fn set_dynamics(handle: SlRuntimeHandle, method: i32, recorded: i64) -> Result<(), String> {
-    use solarlab_domain::science::IntegratorKind;
-    let integrator = match method {
-        0 => IntegratorKind::LeapfrogKickDriftKick,
-        1 => IntegratorKind::YoshidaFourthOrder,
-        2 => IntegratorKind::DormandPrince54,
-        _ => return Err("Unsupported scientific method".into()),
-    };
-    let mut registry = registry().lock().map_err(|_| "Runtime lock is unavailable")?;
-    let runtime = &mut registry.get_mut(handle).ok_or("The experiment is no longer open")?.runtime;
-    let mut settings = runtime.scientific_settings().clone();
-    settings.integrator = integrator;
-    runtime.apply_command(WorldCommand::SetScientificSettings { settings }, recorded)
-        .map_err(|e| format!("Could not change flight dynamics: {}", planning_error(e)))?;
-    Ok(())
-}
-
-pub(super) fn preview_burn(handle: SlRuntimeHandle, ship_id: &str, duration: f64, throttle: f64, assist: i32) -> Result<Vec<u8>, String> {
-    let control = control_from_values(&[throttle, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, f64::from(assist)])?;
-    let runtime = {
-        let registry = registry().lock().map_err(|_| "Runtime lock is unavailable")?;
-        registry.get(handle).ok_or("The experiment is no longer open")?.runtime.clone()
-    };
-    let preview = runtime.preview_flight_burn(ship_id, solarlab_runtime::FlightBurnRequest {
-        duration_seconds: duration, throttle, attitude_mode: control.attitude_mode,
-    }).map_err(|e| format!("Could not preview the burn: {}", planning_error(e)))?;
-    serde_json::to_vec(&preview).map_err(|_| "Could not encode burn preview".into())
-}
-
 pub(super) fn control_from_values(v: &[f64]) -> Result<FlightControl, String> {
     if v.len() != 8 || v.iter().any(|x| !x.is_finite()) {
         return Err("Invalid flight control payload".into());
@@ -71,8 +19,6 @@ pub(super) fn control_from_values(v: &[f64]) -> Result<FlightControl, String> {
         3.0 => AttitudeMode::Retrograde,
         4.0 => AttitudeMode::Normal,
         5.0 => AttitudeMode::AntiNormal,
-        6.0 => AttitudeMode::RadialOut,
-        7.0 => AttitudeMode::RadialIn,
         _ => return Err("Unknown attitude assist".into()),
     };
     Ok(FlightControl {
@@ -373,8 +319,6 @@ pub(super) fn sample(
         AttitudeMode::Retrograde => 3.0,
         AttitudeMode::Normal => 4.0,
         AttitudeMode::AntiNormal => 5.0,
-        AttitudeMode::RadialOut => 6.0,
-        AttitudeMode::RadialIn => 7.0,
     };
     let firing = if ship.propellant_mass_kg > 0.0 {
         ship.control.throttle
@@ -520,28 +464,6 @@ pub(super) fn lunar_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn planning_transport_preserves_world_and_roundtrips_radial_assist() {
-        let created = sl_v2_session_create(super::super::tests::new_params("lab.earth-moon", "planning"));
-        let handle = created.handle;
-        registry().lock().unwrap().get_mut(handle).unwrap().runtime
-            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0).unwrap();
-        start(handle, "pilot", 1).unwrap();
-        set_dynamics(handle, 1, 2).unwrap();
-        assert_eq!(dynamics(handle).unwrap(), [1.0, 1.0, 0.0]);
-        let before = super::super::persistence::export_save(handle).unwrap();
-        let bytes = preview_burn(handle, "pilot", 3.0, 0.25, 6).unwrap();
-        let preview: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(preview["fuelUsedKg"].as_f64().unwrap() > 0.0);
-        assert_eq!(preview["elapsedSeconds"], 3.0);
-        assert_eq!(super::super::persistence::export_save(handle).unwrap(), before);
-        assert!(set_dynamics(handle, 99, 3).is_err());
-        assert_eq!(super::super::persistence::export_save(handle).unwrap(), before);
-        set_control(handle, "pilot", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 6.0], 4).unwrap();
-        assert_eq!(sample(handle, "pilot").unwrap().unwrap()[24], 6.0);
-        assert_eq!(sl_v2_session_destroy(handle).code, SlStatusCode::Ok);
-    }
-
 
     #[test]
     fn bounded_rendezvous_commit_publishes_current_mesh_poses_through_cached_scene_ffi() {

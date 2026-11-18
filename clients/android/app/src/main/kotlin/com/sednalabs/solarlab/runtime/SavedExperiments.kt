@@ -47,8 +47,6 @@ data class RuntimeBodyState(
 
 internal data class SavedRuntimeSession(val scenarioId: String, val bytes: ByteArray)
 internal data class StoredExperiment(val info: SavedExperimentInfo, val bytes: ByteArray)
-internal data class ImportedRuntimeDocument(val name: String, val expectedScenarioId: String?,
-    val bytes: ByteArray, val nativeDefinition: Boolean)
 
 internal interface ExperimentStore {
     fun list(): List<SavedExperimentInfo>
@@ -64,28 +62,6 @@ internal object ExperimentDocumentCodec {
     private const val MAGIC = 0x53474C45 // SGLE
     private const val VERSION = 1
     internal val ID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-
-    fun readForImport(stream: InputStream): ImportedRuntimeDocument {
-        val input = stream.buffered()
-        input.mark(4)
-        val prefix = ByteArray(4)
-        var count = 0
-        while (count < prefix.size) {
-            val read = input.read(prefix, count, prefix.size - count)
-            if (read < 0) break
-            count += read
-        }
-        input.reset()
-        val envelope = count == 4 && prefix.contentEquals(byteArrayOf(0x53, 0x47, 0x4c, 0x45))
-        if (envelope) {
-            val saved = read(input)
-            return ImportedRuntimeDocument(saved.info.name, saved.info.scenarioId, saved.bytes, false)
-        }
-        // Only the Rust loader interprets authored spacecraft/scenario JSON.
-        val bytes = BoundedInput(input).readBytes()
-        require(bytes.size in 1..MAX_PAYLOAD_BYTES) { "Invalid native definition size" }
-        return ImportedRuntimeDocument("Authored experiment", null, bytes, true)
-    }
 
     fun read(stream: InputStream): StoredExperiment {
         val counted = BoundedInput(stream)

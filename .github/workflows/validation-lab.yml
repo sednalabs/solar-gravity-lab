@@ -11,7 +11,6 @@ on:
       - "Cargo.lock"
       - "Cargo.toml"
       - "clients/android/**"
-      - "clients/desktop/**"
       - "core-math/**"
       - "core-model/**"
       - "core-simulation/**"
@@ -40,7 +39,6 @@ on:
       - ".github/scripts/**"
       - ".github/actions/**"
       - "clients/android/**"
-      - "clients/desktop/**"
       - "feature-lab/**"
       - "render-core/**"
       - "core-math/**"
@@ -77,7 +75,6 @@ on:
           - auto
           - bootstrap
           - rust-workspace
-          - desktop-browser
           - rust-workspace-arm64
           - arm64-capability-census
           - arm64-isa-proof
@@ -183,7 +180,6 @@ jobs:
       profile_notes: ${{ steps.plan.outputs.profile_notes }}
       wrapper_bootstrap: ${{ steps.plan.outputs.wrapper_bootstrap }}
       rust_workspace: ${{ steps.plan.outputs.rust_workspace }}
-      desktop_browser: ${{ steps.plan.outputs.desktop_browser }}
       rust_workspace_arm64: ${{ steps.plan.outputs.rust_workspace_arm64 }}
       arm64_capability_census: ${{ steps.plan.outputs.arm64_capability_census }}
       arm64_isa_proof: ${{ steps.plan.outputs.arm64_isa_proof }}
@@ -553,8 +549,6 @@ jobs:
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/solarlab-presentation-test
           /tmp/solarlab-presentation-test
           python3 tools/test_import_spacecraft_gltf.py
-          python3 tools/test_spacecraft_catalog.py
-          python3 tools/build_spacecraft_catalog.py --check
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SpacecraftPresentationTest.cpp -o /tmp/spacecraft-presentation-test
           /tmp/spacecraft-presentation-test
           cargo test --workspace
@@ -563,7 +557,6 @@ jobs:
           cargo run -p solarlab-runtime --example orbital_rendezvous
           cargo run -p solarlab-runtime --example orbital_rendezvous -- match
           cargo run -p solarlab-runtime --example station_docking
-          cargo run -p solarlab-runtime --example authoring_lab -- engine/data/authoring/pathfinder.scenario.json --burn 10 --coast 60
 
       - name: Measure release physics throughput (x64)
         timeout-minutes: 10
@@ -594,69 +587,6 @@ jobs:
             echo "## rust-workspace sccache"
             cat dist/sccache/rust-workspace.txt
           } >> "$GITHUB_STEP_SUMMARY"
-
-  desktop-browser:
-    name: Native desktop flight journey
-    needs: metadata
-    if: ${{ needs.metadata.outputs.desktop_browser == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          ref: ${{ needs.metadata.outputs.checkout_ref }}
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
-      - uses: ./.github/actions/rust-shared-cache
-        with:
-          shared-key: solarlab-desktop-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Build and test the native desktop host
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked -p solarlab-desktop
-          cargo build --locked --release -p solarlab-desktop
-          mkdir -p dist/desktop-flight
-          git rev-parse HEAD > dist/desktop-flight/source.txt
-          cp target/release/solarlab-desktop clients/desktop/README.md dist/desktop-flight/
-          (cd dist/desktop-flight && sha256sum solarlab-desktop > SHA256SUMS)
-
-      - name: Exercise the native cockpit in Chromium
-        shell: bash
-        env:
-          SGL_DESKTOP_BINARY: target/release/solarlab-desktop
-          SGL_DESKTOP_EVIDENCE: dist/desktop-flight/evidence
-        run: |
-          set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/sgl-desktop-smoke" --no-save --ignore-scripts --package-lock=false playwright-core@1.57.0
-          export SGL_PLAYWRIGHT_MODULE="$RUNNER_TEMP/sgl-desktop-smoke/node_modules/playwright-core"
-          export SGL_CHROMIUM="$(command -v google-chrome)"
-          node clients/desktop/tools/smoke.mjs
-
-      - name: Upload desktop flight evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: desktop-flight-evidence-${{ github.run_id }}
-          if-no-files-found: error
-          path: |
-            dist/desktop-flight/source.txt
-            dist/desktop-flight/evidence/**
-
-      - name: Upload the qualified Linux desktop preview
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: solarlab-desktop-linux-x64-${{ github.run_id }}
-          if-no-files-found: error
-          path: |
-            dist/desktop-flight/solarlab-desktop
-            dist/desktop-flight/README.md
-            dist/desktop-flight/source.txt
-            dist/desktop-flight/SHA256SUMS
 
   rust-workspace-arm64:
     name: Rust workspace tests (Arm64)
@@ -1636,7 +1566,6 @@ jobs:
       - parity-matrix
       - wrapper-bootstrap
       - rust-workspace
-      - desktop-browser
       - rust-workspace-arm64
       - arm64-capability-census
       - arm64-isa-proof
@@ -1697,7 +1626,6 @@ jobs:
             --job parity-matrix=${{ needs.parity-matrix.result }} \
             --job wrapper-bootstrap=${{ needs.wrapper-bootstrap.result || 'skipped' }} \
             --job rust-workspace=${{ needs.rust-workspace.result || 'skipped' }} \
-            --job desktop-browser=${{ needs.desktop-browser.result || 'skipped' }} \
             --job rust-workspace-arm64=${{ needs.rust-workspace-arm64.result || 'skipped' }} \
             --job arm64-capability-census=${{ needs.arm64-capability-census.result || 'skipped' }} \
             --job arm64-isa-proof=${{ needs.arm64-isa-proof.result || 'skipped' }} \

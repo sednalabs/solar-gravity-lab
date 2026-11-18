@@ -4,41 +4,6 @@ use super::*;
 use jni::objects::JDoubleArray;
 use jni::sys::{jdoubleArray, jstring};
 
-#[allow(non_snake_case)]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeFlightDynamics(
-    mut env: JNIEnv, _this: JObject, handle: jlong,
-) -> jdoubleArray {
-    export_sample(&mut env, transport::dynamics(SlRuntimeHandle { raw: handle as u64 }).map(Some))
-}
-
-#[allow(non_snake_case)]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeSetFlightDynamics(
-    mut env: JNIEnv, _this: JObject, handle: jlong, method: jint, recorded: jlong,
-) {
-    if let Err(message) = transport::set_dynamics(SlRuntimeHandle { raw: handle as u64 }, method, recorded) {
-        fail(&mut env, &message);
-    }
-}
-
-#[allow(non_snake_case)]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativePreviewFlightBurn(
-    mut env: JNIEnv, _this: JObject, handle: jlong, ship_id: JByteArray,
-    duration: jni::sys::jdouble, throttle: jni::sys::jdouble, assist: jint,
-) -> jni::sys::jbyteArray {
-    let result = request(&env, handle, &ship_id)
-        .and_then(|(handle, id)| transport::preview_burn(handle, &id, duration, throttle, assist));
-    match result {
-        Ok(bytes) => match env.byte_array_from_slice(&bytes) {
-            Ok(value) => value.into_raw(),
-            Err(_) => { fail(&mut env, "Could not return burn preview"); std::ptr::null_mut() }
-        },
-        Err(message) => { fail(&mut env, &message); std::ptr::null_mut() }
-    }
-}
-
 pub(super) fn request(
     env: &JNIEnv,
     handle: jlong,

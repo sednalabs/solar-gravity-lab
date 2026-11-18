@@ -115,7 +115,7 @@ class ValidationLabPlanTests(unittest.TestCase):
     RUNTIME_LANES = (
         "rust_workspace", "rust_workspace_arm64", "arm64_capability_census",
         "arm64_isa_proof", "ffi_abi", "android_unit", "android_lint",
-        "android_shell", "runtime_scene_telemetry", "desktop_browser",
+        "android_shell", "runtime_scene_telemetry",
     )
 
     def test_docs_only_pr_has_no_validation_lab_runtime_lanes(self) -> None:
@@ -134,7 +134,6 @@ class ValidationLabPlanTests(unittest.TestCase):
         self.assertEqual(outputs["android_lint"], "true")
         self.assertEqual(outputs["android_shell"], "true")
         self.assertEqual(outputs["rust_workspace_arm64"], "false")
-        self.assertEqual(outputs["desktop_browser"], "false")
         self.assertEqual(outputs["emulator_boot_strategy"], "snapshot-cache")
         self.assertEqual(outputs["gradle_configuration_cache"], "enabled")
         self.assertEqual(
@@ -149,30 +148,6 @@ class ValidationLabPlanTests(unittest.TestCase):
                 }
             ],
         )
-
-    def test_desktop_change_qualifies_native_host_and_browser_without_android(self) -> None:
-        for path in ("clients/desktop/src/flight.rs", "clients/desktop/web/flight.js"):
-            with self.subTest(path=path):
-                outputs = run_plan([path])
-                self.assertEqual(outputs["rust_workspace"], "true")
-                self.assertEqual(outputs["desktop_browser"], "true")
-                self.assertEqual(outputs["android_shell"], "false")
-                self.assertEqual(outputs["rust_workspace_arm64"], "false")
-
-    def test_shared_runtime_and_embedded_assets_qualify_desktop(self) -> None:
-        for path in (
-            "engine/runtime/src/spacecraft.rs",
-            "render/android-vulkan/assets-src/asteria.gltf",
-            "render/android-vulkan/src/main/assets/solarlab/surfaces/earth-nasa.png",
-        ):
-            with self.subTest(path=path):
-                self.assertEqual(run_plan([path])["desktop_browser"], "true")
-
-    def test_desktop_browser_can_be_requested_independently(self) -> None:
-        outputs = run_plan([], event_name="workflow_dispatch", lane_set="desktop-browser")
-        self.assertEqual(outputs["desktop_browser"], "true")
-        self.assertEqual(outputs["rust_workspace"], "false")
-        self.assertEqual(outputs["android_shell"], "false")
 
     def test_canonical_android_renderer_routes_to_android_lanes_only(self) -> None:
         outputs = run_plan(["render/android-vulkan/src/main/cpp/SolarLabVulkanRenderer.cpp"])

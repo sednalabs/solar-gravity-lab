@@ -100,7 +100,6 @@ impl WorldRuntime {
             recorded_at_unix_ms,
             completed_steps: 0,
             total_steps,
-            scientific_report: plan.as_ref().map(FixedStepPlan::empty_scientific_report),
             plan,
             bodies,
             spacecraft,
@@ -131,30 +130,23 @@ impl WorldRuntime {
         let mut events = Vec::new();
         let count = (op.total_steps - op.completed_steps).min(MAX_INCREMENTAL_STEPS);
         if let Some(plan) = &op.plan {
-            let scientific_result = solarlab_physics::spacecraft::advance_spacecraft_steps_checked(plan, &mut op.bodies, &mut op.spacecraft, count)
-                .and_then(|report| plan.compute_invariants(&op.bodies).map(|_| report));
-            match scientific_result {
-                Ok(step_report) => {
-                    if let Some(report) = &mut op.scientific_report { report.accumulate(&step_report); }
-                }
-                Err(error) => {
-                    op.state = AdvanceState::Cancelled;
-                    op.bodies.clear();
-                    op.spacecraft.clear();
-                    op.plan = None;
-                    return Err(RuntimeError::ScientificFailure(error));
-                }
+            if solarlab_physics::spacecraft::advance_spacecraft_steps(plan, &mut op.bodies, &mut op.spacecraft, count).is_err()
+                || plan.compute_invariants(&op.bodies).is_err() {
+                op.state = AdvanceState::Cancelled;
+                op.bodies.clear();
+                op.spacecraft.clear();
+                op.plan = None;
+                return Err(RuntimeError::InvalidFlightState);
             }
         }
         op.completed_steps += count;
         if op.completed_steps == op.total_steps {
             let mut op = self.advance_operation.take().expect("operation exists");
-            let mut report = op
+            let report = op
                 .plan
                 .as_ref()
                 .map(FixedStepPlan::report)
                 .unwrap_or_else(|| self.active_branch().world.solver_execution.clone());
-            if let Some(science) = &op.scientific_report { science.apply_to_solver_report(&mut report); }
             let staged = std::mem::take(&mut op.bodies);
             events = self.apply_command_inner(
                 WorldCommand::AdvanceEpoch {

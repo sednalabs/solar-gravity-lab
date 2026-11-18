@@ -441,7 +441,6 @@ pub struct AdvanceOperation {
     pub completed_steps: usize,
     pub total_steps: usize,
     plan: Option<FixedStepPlan>,
-    scientific_report: Option<solarlab_physics::science::ScientificStepReport>,
     bodies: Vec<MassiveBodyState>,
     spacecraft: Vec<solarlab_physics::spacecraft::SpacecraftBinding>,
 }

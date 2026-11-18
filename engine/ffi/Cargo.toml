@@ -11,7 +11,6 @@ name = "solarlab_v2"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-serde_json = { version = "1", features = ["float_roundtrip"] }
 solarlab-data = { path = "../data" }
 solarlab-domain = { path = "../domain" }
 solarlab-hardware = { path = "../hardware" }

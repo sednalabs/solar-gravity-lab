@@ -292,24 +292,6 @@ class BridgeBackedRuntimeFacade internal constructor(
     override suspend fun flightState(shipId: String): FlightState? =
         withContext(boundaryDispatcher) { bridge.flightState(shipId) }
 
-    override suspend fun flightDynamicsSettings(): FlightDynamicsSettings =
-        withContext(boundaryDispatcher) { bridge.flightDynamicsSettings() }
-
-    override suspend fun setFlightDynamicsSettings(value: FlightDynamicsSettings, expectedSessionHandle: Long?) {
-        withContext(NonCancellable + boundaryDispatcher) {
-            check(expectedSessionHandle == null || expectedSessionHandle == _uiState.value.sessionHandle) { "This flight session has changed" }
-            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance first" }
-            bridge.setFlightDynamicsSettings(value).forEach(::applySignal)
-        }
-    }
-
-    override suspend fun previewFlightBurn(durationSeconds: Double, throttle: Double, assist: FlightAssist,
-        expectedSessionHandle: Long?): FlightBurnPreview = withContext(boundaryDispatcher) {
-        check(expectedSessionHandle == null || expectedSessionHandle == _uiState.value.sessionHandle) { "This flight session has changed" }
-        check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance first" }
-        bridge.previewFlightBurn(REFERENCE_SPACECRAFT_ID, durationSeconds, throttle, assist)
-    }
-
     override suspend fun lunarMissionState(shipId: String): LunarMissionState? =
         withContext(boundaryDispatcher) { bridge.lunarMissionState(shipId) }
 
@@ -428,18 +410,13 @@ class BridgeBackedRuntimeFacade internal constructor(
         "Importing experiment", "Could not import experiment",
     ) { store ->
         val document = withContext(Dispatchers.IO) {
-            checkNotNull(openInput()) { "The selected document is unavailable" }.use(ExperimentDocumentCodec::readForImport)
+            checkNotNull(openInput()) { "The selected document is unavailable" }.use(ExperimentDocumentCodec::read)
         }
-        val session = withContext(boundaryDispatcher) {
-            if (document.nativeDefinition) bridge.materializeExternalSession(document.bytes)
-            else SavedRuntimeSession(bridge.validateSavedSession(document.bytes), document.bytes)
-        }
-        check(document.expectedScenarioId == null || session.scenarioId == document.expectedScenarioId) {
-            "The document and its simulation have different identities"
-        }
+        val nativeScenario = withContext(boundaryDispatcher) { bridge.validateSavedSession(document.bytes) }
+        check(nativeScenario == document.info.scenarioId) { "The document and its simulation have different identities" }
         val saved = withContext(NonCancellable + Dispatchers.IO) {
             // Import is a new local version. An external UUID never overwrites a saved copy.
-            store.save(document.name, session)
+            store.save(document.info.name, SavedRuntimeSession(nativeScenario, document.bytes))
         }
         "Imported ${saved.name} · open it when you are ready"
     }

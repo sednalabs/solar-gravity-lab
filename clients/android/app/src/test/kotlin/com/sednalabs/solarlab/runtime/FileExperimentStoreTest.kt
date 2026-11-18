@@ -12,25 +12,6 @@ import org.junit.Test
 
 class FileExperimentStoreTest {
     @Test
-    fun importAcceptsOpaqueAuthoredJsonAndRetainsEnvelopeIntegrity() {
-        val native = "{\"format\":\"solarlab.scenario\",\"version\":1}".toByteArray()
-        val definition = ExperimentDocumentCodec.readForImport(ByteArrayInputStream(native))
-        assertTrue(definition.nativeDefinition)
-        assertNull(definition.expectedScenarioId)
-        assertArrayEquals(native, definition.bytes)
-        val saved = StoredExperiment(SavedExperimentInfo(UUID.randomUUID().toString(), "Source", 123, "lab.earth-moon"), native)
-        val envelope = ByteArrayOutputStream().also { ExperimentDocumentCodec.write(it, saved) }.toByteArray()
-        val imported = ExperimentDocumentCodec.readForImport(ByteArrayInputStream(envelope))
-        assertFalse(imported.nativeDefinition)
-        assertEquals("lab.earth-moon", imported.expectedScenarioId)
-        envelope[envelope.lastIndex] = 0
-        assertThrows(IllegalArgumentException::class.java) { ExperimentDocumentCodec.readForImport(ByteArrayInputStream(envelope)) }
-        assertThrows(IllegalArgumentException::class.java) {
-            ExperimentDocumentCodec.readForImport(ByteArrayInputStream(ByteArray(ExperimentDocumentCodec.MAX_DOCUMENT_BYTES + 1)))
-        }
-    }
-
-    @Test
     fun savedBytesSurviveFreshStoreAndKeepPreviousVersions() {
         val root = Files.createTempDirectory("solarlab-save-test").toFile()
         try {

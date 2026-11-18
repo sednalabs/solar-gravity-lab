@@ -168,7 +168,7 @@ impl WorldRuntime {
 
 impl SavedConfig {
     fn from_runtime(config: &RuntimeConfig) -> Result<Self, SessionPersistenceError> {
-        if !config.physics.integrator.implemented()
+        if config.physics.integrator != IntegratorKind::LeapfrogKickDriftKick
             || config.physics.collision_model != CollisionModel::None
         {
             return Err(SessionPersistenceError::UnsupportedVersion);
@@ -180,12 +180,7 @@ impl SavedConfig {
                 SolverBackend::SimdX64 => "x64",
             }
             .into(),
-            integrator: match config.physics.integrator {
-                IntegratorKind::LeapfrogKickDriftKick => "leapfrog-kdk",
-                IntegratorKind::YoshidaFourthOrder => "yoshida-fourth-order",
-                IntegratorKind::DormandPrince54 => "dormand-prince54",
-                _ => return Err(SessionPersistenceError::UnsupportedVersion),
-            }.into(),
+            integrator: "leapfrog-kdk".into(),
             collision_model: "none".into(),
             max_substep_seconds: config.physics.max_substep_seconds,
             timeline_semantics: config.timeline_semantics.clone(),
@@ -193,7 +188,7 @@ impl SavedConfig {
         })
     }
     fn to_runtime(&self) -> Result<RuntimeConfig, SessionPersistenceError> {
-        if self.collision_model != "none" {
+        if self.integrator != "leapfrog-kdk" || self.collision_model != "none" {
             return Err(SessionPersistenceError::UnsupportedVersion);
         }
         if !self.max_substep_seconds.is_finite() || self.max_substep_seconds <= 0.0 {
@@ -209,12 +204,7 @@ impl SavedConfig {
                     "x64" => SolverBackend::SimdX64,
                     _ => return Err(SessionPersistenceError::UnsupportedVersion),
                 },
-                integrator: match self.integrator.as_str() {
-                    "leapfrog-kdk" => IntegratorKind::LeapfrogKickDriftKick,
-                    "yoshida-fourth-order" => IntegratorKind::YoshidaFourthOrder,
-                    "dormand-prince54" => IntegratorKind::DormandPrince54,
-                    _ => return Err(SessionPersistenceError::UnsupportedVersion),
-                },
+                integrator: IntegratorKind::LeapfrogKickDriftKick,
                 collision_model: CollisionModel::None,
                 max_substep_seconds: self.max_substep_seconds,
             },
@@ -412,19 +402,10 @@ fn branches_have_science(branches: &[BranchState]) -> bool {
         .any(|w| w.scientific_settings != ScientificSettings::default())
 }
 
-fn scientific_persistence_error(error: RuntimeError) -> SessionPersistenceError {
-    let reason = match error {
-        RuntimeError::ScientificFailure(solarlab_physics::science::ScientificError::NonFinite) =>
-            "physical values overflow invariant calculation",
-        _ => "invalid scientific settings or gravity source",
-    };
-    SessionPersistenceError::InvalidState(reason)
-}
-
 fn validate_world(world: &BranchWorldState) -> Result<(), SessionPersistenceError> {
     use SessionPersistenceError::InvalidState as invalid;
     scientific_flight::world_invariants(&world.bodies, &world.scientific_settings)
-        .map_err(scientific_persistence_error)?;
+        .map_err(|_| invalid("invalid scientific settings or gravity source"))?;
     if !world.epoch_seconds.is_finite()
         || world.epoch_seconds < 0.0
         || !world.playback.sim_seconds_per_real_second.is_finite()
@@ -535,7 +516,7 @@ fn restore_computed_state(
     hardware: &HardwareProfile,
 ) -> Result<(), SessionPersistenceError> {
     world.invariants = scientific_flight::world_invariants(&world.bodies, &world.scientific_settings)
-        .map_err(scientific_persistence_error)?;
+        .map_err(|_| SessionPersistenceError::InvalidState("invalid scientific force model"))?;
     if !world.invariants.total_energy_j.is_finite()
         || !finite_vector(world.invariants.barycenter_m)
         || !finite_vector(world.invariants.linear_momentum_kg_mps)
@@ -545,9 +526,12 @@ fn restore_computed_state(
             "physical values overflow invariant calculation",
         ));
     }
-    world.solver_execution = scientific_flight::bind_plan(&config.physics,
-        &world.scientific_settings, &world.bodies, &world.spacecraft, 1.0,
-        &hardware.cpu_features).map_err(|_| SessionPersistenceError::InvalidState("invalid scientific plan"))?.report();
+    world.solver_execution = solver_execution_report_for_backend_with_source_count(
+        &config.physics.solver_backend,
+        &hardware.cpu_features,
+        world.bodies.len(),
+        world.bodies.iter().filter(|body| body.source_mass_kg != 0.0).count(),
+    );
     Ok(())
 }
 
