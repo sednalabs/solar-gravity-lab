@@ -1,14 +1,8 @@
 name: Hardware optimisation proof
+# Expensive hardware experiments are manual-only. Routine PRs use validation-lab.
+# Keep the reproducible harness, without compiling a shader toolchain or
+# running a full paired Arm throughput matrix for each physics/render PR.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "engine/physics/**"
-      - "render/android-vulkan/**"
-      - ".github/workflows/hardware-optimisation.yml"
-      - ".github/scripts/*hardware_throughput*"
-      - ".github/scripts/run_vulkan_hardware_proof.sh"
-      - ".github/scripts/run_qcom_offscreen_proof.sh"
   workflow_dispatch:
     inputs:
       baseline_sha:
