@@ -13,6 +13,32 @@ The workspace boundary strategy is explicit:
 - `ffi` owns process-boundary representation (C ABI + JNI bridge) and never owns simulation decisions.
 - `domain`, `history`, `physics`, `hardware`, and `data` crates provide stable types, invariants, and policies consumed by `runtime` and projected by `ffi`.
 
+## Runtime subsystem ownership
+
+The canonical `engine/runtime/src/lib.rs` defines the authoritative state, public
+commands, snapshots and runtime type. The implementations are split by the
+responsibility they own, rather than allowing the root runtime to accumulate
+spaceflight/gameplay logic:
+
+- `session.rs`: session construction, installed-data lifecycle and mounting.
+- `advance.rs`: synchronous playback, staged progression and cancellation.
+- `command_application.rs`: authoritative command application and event publication.
+- `observations.rs`: read-only snapshots, telemetry, scene and body inspection.
+- `branch_history.rs`: history metadata, checkpoint/branch identity and lookup.
+- `scene_projection.rs`: purely derived renderer-neutral appearance and scene state.
+- `orbit_archives.rs`: orbital predictions, histories and bounded trail samples.
+- `world_support.rs`: package/solver conversion helpers.
+- `tests.rs`: the existing regression suite, preserved across the split.
+
+There is still exactly **one** `WorldRuntime` and one authoritative mutable
+world. Modules are private implementation partitions, not separate runtimes.
+Existing experiment formats, public method signatures, FFI layouts, step
+policies and physical force laws are unchanged. Introduce spacecraft force,
+attitude and gameplay functionality through explicit new domain and command
+contracts; do not start a second body store or change scene projections into
+physics authority. The existing Rust/Android parity, playback, checkpoint,
+source-mass, scene and persistence tests remain required release gates.
+
 Seam-level behavior expectations:
 
 - Ownership boundary:
