@@ -485,7 +485,7 @@ pub(super) fn runtime_trail_history_counts(
     counts
 }
 
-fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
+pub(super) fn scene_provenance(snapshot: &WorldSnapshot) -> Option<SceneProvenanceRef> {
     let Some(mounted_manifest) = snapshot.mounted_manifest.as_ref() else {
         return snapshot.initial_conditions_provenance.as_ref().map(|seed| SceneProvenanceRef {
             source: seed.dataset_id.clone(),

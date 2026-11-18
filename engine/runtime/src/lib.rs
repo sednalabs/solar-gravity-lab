@@ -34,6 +34,7 @@ use orbit_archives::{
 };
 use scene_projection::{
     format_manifest_digest, mounted_manifest_telemetry_from_state, runtime_trail_history_counts,
+    scene_provenance,
 };
 use world_support::{
     apply_solver_state_to_world_bodies, compute_world_invariants, mounted_manifest_from_state,

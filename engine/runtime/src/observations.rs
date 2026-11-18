@@ -49,7 +49,7 @@ impl WorldRuntime {
         self.snapshot_with_orbit_archives(Vec::new())
     }
 
-    fn snapshot_with_orbit_archives(&self, orbit_archives: Vec<OrbitArchive>) -> WorldSnapshot {
+    pub(super) fn snapshot_with_orbit_archives(&self, orbit_archives: Vec<OrbitArchive>) -> WorldSnapshot {
         let active = self.active_branch();
         let checkpoint = active.last_checkpoint.clone();
         let mounted_manifest = mounted_manifest_from_state(
@@ -141,7 +141,7 @@ impl WorldRuntime {
         extract_render_scene(&snapshot)
     }
 
-    fn render_scene_orbit_query(&self) -> OrbitArchiveQuery {
+    pub(super) fn render_scene_orbit_query(&self) -> OrbitArchiveQuery {
         let active = self.active_branch();
         let full_history = active.world.bodies.len() <= RENDER_SCENE_ORBIT_BODY_LIMIT;
         let mut query = OrbitArchiveQuery {
