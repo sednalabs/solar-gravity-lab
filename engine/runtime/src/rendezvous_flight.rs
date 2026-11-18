@@ -40,6 +40,19 @@ impl WorldRuntime {
         ship_id: &str,
         time: i64,
     ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
+        self.validate_fresh_station_mission()?;
+        self.spawn_rendezvous_scenario_impl(
+            &RendezvousScenario {
+                chaser_body_id: BodyId(ship_id.into()),
+                target_body_id: BodyId(RENDEZVOUS_STATION_BODY_ID.into()),
+                ..RendezvousScenario::default()
+            },
+            time,
+            true,
+        )
+    }
+
+    pub(super) fn validate_fresh_station_mission(&self) -> Result<(), RuntimeError> {
         let world = &self.active_branch().world;
         let seed = solarlab_data::earth_moon_lab_bodies();
         if self.scenario_id.0 != solarlab_data::EARTH_MOON_LAB_ID
@@ -68,15 +81,7 @@ impl WorldRuntime {
         {
             return Err(RuntimeError::InvalidFlightState);
         }
-        self.spawn_rendezvous_scenario_impl(
-            &RendezvousScenario {
-                chaser_body_id: BodyId(ship_id.into()),
-                target_body_id: BodyId(RENDEZVOUS_STATION_BODY_ID.into()),
-                ..RendezvousScenario::default()
-            },
-            time,
-            true,
-        )
+        Ok(())
     }
 
     pub fn set_rendezvous_guidance(

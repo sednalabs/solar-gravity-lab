@@ -1,5 +1,7 @@
 pub mod spacecraft;
 pub mod rendezvous;
+pub mod docking;
+pub use docking::{DockingAttachment, DockingGuidanceMode, DockingStatus, SpacecraftDockingState};
 pub use rendezvous::{
     RendezvousGuidance, RendezvousGuidanceMode, RendezvousStatus, SpacecraftRendezvousState,
 };

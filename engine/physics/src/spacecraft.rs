@@ -28,6 +28,9 @@ pub struct SpacecraftBinding {
 pub fn max_substep_seconds(states: &[SpacecraftState], coast_step: f64) -> f64 {
     let mut step = coast_step;
     for s in states {
+        if s.docking.is_some() {
+            step = step.min(crate::docking::MAX_CONTACT_SUBSTEP_SECONDS);
+        }
         if s.has_powered_input()
             || s.needs_attitude_steps()
             || s.rendezvous
@@ -58,6 +61,7 @@ pub fn advance_spacecraft_steps(
     count: usize,
 ) -> Result<(), ()> {
     if count > MAX_INCREMENTAL_STEPS
+        || bodies.len() != plan.body_count
         || ships.iter().any(|s| {
             s.body_index >= bodies.len()
                 || s.reference_body_index.is_some_and(|i| i >= bodies.len())
@@ -76,6 +80,7 @@ pub fn advance_spacecraft_steps(
             && !s.state.needs_attitude_steps()
             && s.state.mission.is_none()
             && s.state.rendezvous.is_none()
+            && s.state.docking.is_none()
     }) {
         advance_fixed_steps(plan, bodies, count)?;
     } else {
@@ -84,7 +89,13 @@ pub fn advance_spacecraft_steps(
             // Split exactly at depletion so no thrust is applied beyond the last fuel.
             while remaining > 0.0 {
                 crate::rendezvous::update_guidance(bodies, ships)?;
+                crate::docking::update_guidance(bodies, ships)?;
+                let contact_members = crate::docking::contact_members(bodies, ships)?;
+                let contacts = contact_members.iter().any(|member| *member);
                 let mut dt = remaining;
+                if contacts {
+                    dt = dt.min(crate::docking::MAX_CONTACT_SUBSTEP_SECONDS);
+                }
                 for ship in ships.iter() {
                     let (_, _, flow) = engine_wrench(&ship.state);
                     if flow > 0.0 {
@@ -99,14 +110,26 @@ pub fn advance_spacecraft_steps(
                 if !dt.is_finite() || dt <= 0.0 {
                     return Err(());
                 }
-                for ship in ships.iter_mut() {
-                    propulsion_rotation_halfstep(bodies, ship, dt * 0.5);
+                for (index, ship) in ships.iter_mut().enumerate() {
+                    if contact_members[index] {
+                        propulsion_wrench_halfstep(bodies, ship, dt * 0.5);
+                    } else {
+                        propulsion_rotation_halfstep(bodies, ship, dt * 0.5);
+                    }
                 }
                 let mut segment = plan.clone();
                 segment.dt_seconds = dt;
-                advance_fixed_steps(&segment, bodies, 1)?;
-                for ship in ships.iter_mut() {
-                    propulsion_rotation_halfstep(bodies, ship, dt * 0.5);
+                if contacts {
+                    crate::docking::advance_contact_step(&segment, bodies, ships, dt)?;
+                } else {
+                    advance_fixed_steps(&segment, bodies, 1)?;
+                }
+                for (index, ship) in ships.iter_mut().enumerate() {
+                    if contact_members[index] {
+                        propulsion_wrench_halfstep(bodies, ship, dt * 0.5);
+                    } else {
+                        propulsion_rotation_halfstep(bodies, ship, dt * 0.5);
+                    }
                     // Compensate repeated substep additions: millions of 0.05s
                     // burn-selected steps must not timestamp an observation
                     // after the exact committed operation boundary.
@@ -117,6 +140,7 @@ pub fn advance_spacecraft_steps(
                     record_mission_observation(bodies, ship);
                 }
                 crate::rendezvous::record_observations(bodies, ships)?;
+                crate::docking::finish_step(ships);
                 let next = remaining - dt;
                 remaining = if next < remaining {
                     next
@@ -289,13 +313,50 @@ fn propulsion_rotation_halfstep(
     {
         s.angular_velocity_body_radps = Vector3d::default();
     }
+    propulsion_impulse(&mut bodies[ship.body_index], s, force, flow, mid_attitude, dt);
+}
+
+/// External actuator kick at fixed attitude. The contact drift owns free rigid
+/// rotation and its gyroscopic term; applying either here would count it twice.
+fn propulsion_wrench_halfstep(
+    bodies: &mut [MassiveBodyState],
+    ship: &mut SpacecraftBinding,
+    dt: f64,
+) {
+    if !ship.state.has_powered_input() && !ship.state.needs_attitude_steps() {
+        return;
+    }
+    let error = assist_error(bodies, ship);
+    let s = &mut ship.state;
+    let (force, engine_torque, flow) = engine_wrench(s);
+    let divide = |torque: Vector3d| Vector3d {
+        x: torque.x / s.inertia_kg_m2.x,
+        y: torque.y / s.inertia_kg_m2.y,
+        z: torque.z / s.inertia_kg_m2.z,
+    };
+    let initial_omega = s.angular_velocity_body_radps;
+    let initial_torque = add(engine_torque, control_torque(s, initial_omega, error));
+    let mid_omega = add(initial_omega, scale(divide(initial_torque), 0.5 * dt));
+    let mid_torque = add(engine_torque, control_torque(s, mid_omega, error));
+    s.angular_velocity_body_radps = add(initial_omega, scale(divide(mid_torque), dt));
+    propulsion_impulse(&mut bodies[ship.body_index], s, force, flow, s.attitude, dt);
+}
+
+fn propulsion_impulse(
+    body: &mut MassiveBodyState,
+    s: &mut SpacecraftState,
+    force: Vector3d,
+    flow: f64,
+    attitude: Quaterniond,
+    dt: f64,
+) {
     if flow > 0.0 {
         let fuel_used = (flow * dt).min(s.propellant_mass_kg);
         let initial_mass = s.mass_kg();
         // log1p avoids cancellation for small timesteps / low throttle.
         let impulse_per_force = -(-fuel_used / initial_mass).ln_1p() / flow;
-        let delta_v = scale(mid_attitude.rotate(force), impulse_per_force);
-        bodies[ship.body_index].velocity_mps = add(bodies[ship.body_index].velocity_mps, delta_v);
+        let delta_v = scale(attitude.rotate(force), impulse_per_force);
+        body.velocity_mps = add(body.velocity_mps, delta_v);
         s.delivered_delta_v_mps += magnitude(delta_v);
         // Actual main firing excludes RCS use of the shared tank. All engines
         // receive the same fuel-limited fraction of this halfstep.

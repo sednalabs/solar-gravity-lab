@@ -47,6 +47,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -54,6 +58,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -65,6 +70,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.repeatOnLifecycle
+import com.sednalabs.solarlab.runtime.DockingGuidance
+import com.sednalabs.solarlab.runtime.DockingState
 import com.sednalabs.solarlab.runtime.FlightAssist
 import com.sednalabs.solarlab.runtime.FlightControl
 import com.sednalabs.solarlab.runtime.FlightState
@@ -132,6 +139,8 @@ internal fun FlightModeChrome(
     onSaved: () -> Unit,
     onLunarMission: () -> Unit,
     onRendezvousMission: () -> Unit,
+    onDockingMission: () -> Unit,
+    onSceneClearArea: (Rect?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -142,7 +151,8 @@ internal fun FlightModeChrome(
     var state by remember(facade, uiState.sessionHandle) { mutableStateOf<FlightState?>(null) }
     var lunarMission by remember(facade, uiState.sessionHandle) { mutableStateOf<LunarMissionState?>(null) }
     var rendezvous by remember(facade, uiState.sessionHandle) { mutableStateOf<RendezvousState?>(null) }
-    var manualRendezvousInputOwned by remember(facade, uiState.sessionHandle) { mutableStateOf(false) }
+    var docking by remember(facade, uiState.sessionHandle) { mutableStateOf<DockingState?>(null) }
+    var manualGuidanceInputOwned by remember(facade, uiState.sessionHandle) { mutableStateOf(false) }
     var missionActionBusy by remember(facade, uiState.sessionHandle) { mutableStateOf(false) }
     var missionDetailsVisible by rememberSaveable { mutableStateOf(false) }
     var guidedCoast by rememberSaveable(uiState.sessionHandle) { mutableStateOf(false) }
@@ -158,19 +168,21 @@ internal fun FlightModeChrome(
     }
     var translationMode by rememberSaveable { mutableStateOf(false) }
     var missionHelp by rememberSaveable { mutableStateOf(true) }
-    LaunchedEffect(uiState.sessionHandle, rendezvous != null) {
-        if (rendezvous != null) translationMode = true
+    LaunchedEffect(uiState.sessionHandle, rendezvous != null, docking != null) {
+        if (rendezvous != null || docking != null) translationMode = true
     }
 
     fun send(value: FlightControl) {
         guidedCoast = false
-        if (rendezvous != null) manualRendezvousInputOwned = true
-        pendingControl = value
-        control = value
-        commands.trySend(value)
+        if (rendezvous != null || docking != null) manualGuidanceInputOwned = true
+        val intent = flightControlForAttachment(value, docking?.attached == true)
+        pendingControl = intent
+        control = intent
+        commands.trySend(intent)
     }
     fun manualBase() = manualFlightControlBase(control,
-        rendezvous?.guidance?.let { it != RendezvousGuidance.Manual } == true, manualRendezvousInputOwned)
+        (rendezvous?.guidance?.let { it != RendezvousGuidance.Manual } == true ||
+            docking?.guidance?.let { it != DockingGuidance.Manual } == true), manualGuidanceInputOwned)
     fun cut() { send(manualBase().copy(throttle = 0.0, translationX = 0.0, translationY = 0.0,
         translationZ = 0.0, rotationX = 0.0, rotationY = 0.0, rotationZ = 0.0)) }
     fun action(block: suspend () -> Unit) {
@@ -189,14 +201,18 @@ internal fun FlightModeChrome(
                         val sampledFlight = facade.flightState()
                         val sampledMission = facade.lunarMissionState()
                         val sampledRendezvous = facade.rendezvousState()
+                        val sampledDocking = facade.dockingState()
                         state = sampledFlight
                         lunarMission = sampledMission
                         rendezvous = sampledRendezvous
+                        docking = sampledDocking
                         // Native guidance can cut the engine without a touch event.
                         // Do not overwrite a still-pending manual slider/axis input.
-                        if (pendingControl == null && !missionActionBusy && sampledFlight != null && !manualRendezvousInputOwned) {
-                            control = manualFlightControlBase(sampledFlight.control,
-                                sampledRendezvous?.guidance?.let { it != RendezvousGuidance.Manual } == true, false)
+                        if (pendingControl == null && !missionActionBusy && sampledFlight != null && !manualGuidanceInputOwned) {
+                            control = flightControlForAttachment(manualFlightControlBase(sampledFlight.control,
+                                (sampledRendezvous?.guidance?.let { it != RendezvousGuidance.Manual } == true ||
+                                    sampledDocking?.guidance?.let { it != DockingGuidance.Manual } == true), false),
+                                sampledDocking?.attached == true)
                         }
                         if (state == null) controlError = "Odyssey is not in this saved world. Return to the lab to launch."
                     } catch (error: CancellationException) { throw error }
@@ -214,7 +230,7 @@ internal fun FlightModeChrome(
                     catch (error: CancellationException) { throw error }
                     catch (error: Throwable) {
                         if (pendingControl == next) pendingControl = null
-                        manualRendezvousInputOwned = false
+                        manualGuidanceInputOwned = false
                         controlError = error.message ?: "Flight control unavailable"
                     }
                 }
@@ -227,7 +243,7 @@ internal fun FlightModeChrome(
             if (event == Lifecycle.Event.ON_STOP) {
                 control = FlightControl.Cut
                 pendingControl = null
-                manualRendezvousInputOwned = false
+                manualGuidanceInputOwned = false
                 commands.trySend(FlightControl.Cut)
                 facade.suspendFlightControls(expectedSessionHandle = inputSession)
             }
@@ -243,11 +259,12 @@ internal fun FlightModeChrome(
 
     val sample = state
     val ready = sample != null && uiState.manualAdvance == null
+    val controlsReady = ready && docking?.attached != true
     val paused = uiState.snapshot?.paused != false
     val rate = uiState.snapshot?.simSecondsPerRealSecond ?: 1.0
     val fuel = sample?.propellantMassKg ?: 0.0
     val burning = !paused && (sample?.massFlowKgPerSecond ?: 0.0) > 0.0
-    val coasting = rendezvous == null && !control.requiresRealTime && (sample?.commandedThrottle ?: 0.0) == 0.0 &&
+    val coasting = rendezvous == null && docking == null && !control.requiresRealTime && (sample?.commandedThrottle ?: 0.0) == 0.0 &&
         (sample?.massFlowKgPerSecond ?: 0.0) == 0.0
 
     LaunchedEffect(guidedCoast, lunarMission?.phase, lunarMission?.outcome, uiState.manualAdvance) {
@@ -300,6 +317,7 @@ internal fun FlightModeChrome(
     )
     val notice = controlError ?: message ?: when {
         fuel <= 0.0 && ready -> "Propellant depleted. You can still coast and orient the spacecraft."
+        docking != null -> dockingInstruction(requireNotNull(docking))
         rendezvous != null -> "RCS acts along the ship’s axes. Manual input or CUT releases guidance; nearby operations stay at 1×."
         !coasting -> "Time acceleration is available while coasting."
         control.assist == FlightAssist.Prograde -> "Prograde points along your motion. Thrust raises the opposite side of your orbit."
@@ -309,8 +327,10 @@ internal fun FlightModeChrome(
     }
     val status = when {
         !ready -> "Establishing flight link"
+        docking?.attached == true -> "Docked to Relay"
         paused -> "Flight paused"
         burning -> "Engine firing"
+        docking != null -> "Station docking"
         rendezvous != null -> "Station rendezvous"
         rate > 1.0 -> "Coasting at ${rate.toInt()}×"
         else -> "Earth orbital flight"
@@ -350,12 +370,12 @@ internal fun FlightModeChrome(
         guidedCoast = false
         while (commands.tryReceive().isSuccess) { /* Native guidance supersedes queued touch input. */ }
         pendingControl = null
-        manualRendezvousInputOwned = false
+        manualGuidanceInputOwned = false
         action {
             try {
                 facade.setRendezvousGuidance(guidance, expectedSessionHandle = uiState.sessionHandle)
                 state = facade.flightState()
-                if (!manualRendezvousInputOwned && pendingControl == null) {
+                if (!manualGuidanceInputOwned && pendingControl == null) {
                     state?.let { control = manualFlightControlBase(it.control, guidance != RendezvousGuidance.Manual, false) }
                 }
                 rendezvous = facade.rendezvousState()
@@ -364,7 +384,51 @@ internal fun FlightModeChrome(
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxSize().testTag(FlightTags.ROOT)) {
+    fun dockingAction(guidance: DockingGuidance? = null) {
+        if (!ready || missionActionBusy) return
+        missionActionBusy = true
+        guidedCoast = false
+        while (commands.tryReceive().isSuccess) { /* A new native command supersedes pending touch input. */ }
+        pendingControl = null
+        manualGuidanceInputOwned = false
+        control = FlightControl.Cut
+        action {
+            try {
+                if (guidance == null) facade.undock(expectedSessionHandle = uiState.sessionHandle)
+                else facade.setDockingGuidance(guidance, expectedSessionHandle = uiState.sessionHandle)
+                state = facade.flightState()
+                docking = facade.dockingState()
+                translationMode = true
+                message = if (guidance == null) "Attachment released. Hold Back on the RCS pad to separate." else null
+            } finally { missionActionBusy = false }
+        }
+    }
+
+    var chromeBounds by remember { mutableStateOf<Rect?>(null) }
+    var cameraBounds by remember { mutableStateOf<Rect?>(null) }
+    var topPanelBounds by remember { mutableStateOf<Rect?>(null) }
+    var bottomPanelBounds by remember { mutableStateOf<Rect?>(null) }
+    var dockBounds by remember { mutableStateOf<Rect?>(null) }
+    val clearMargin = with(LocalDensity.current) { 8.dp.toPx() }
+    val currentClearAreaCallback by rememberUpdatedState(onSceneClearArea)
+    LaunchedEffect(chromeBounds, cameraBounds, topPanelBounds, bottomPanelBounds, dockBounds,
+        rendezvous != null, docking != null, cameraMode) {
+        val root = chromeBounds
+        val camera = cameraBounds
+        val dock = dockBounds
+        val clear = if (root != null && camera != null && dock != null && cameraMode == 3) {
+            val topPanel = topPanelBounds.takeIf { rendezvous != null && root.width <= root.height }
+            val bottomPanel = bottomPanelBounds.takeIf { docking != null || (rendezvous != null && root.width > root.height) }
+            val top = maxOf(camera.bottom, topPanel?.bottom ?: camera.bottom) + clearMargin
+            val bottom = minOf(dock.top, bottomPanel?.top ?: dock.top) - clearMargin
+            if (bottom > top) Rect(root.left + clearMargin, top, root.right - clearMargin, bottom) else null
+        } else null
+        currentClearAreaCallback(clear)
+    }
+    DisposableEffect(Unit) { onDispose { currentClearAreaCallback(null) } }
+
+    BoxWithConstraints(modifier.fillMaxSize().testTag(FlightTags.ROOT)
+        .onGloballyPositioned { chromeBounds = it.boundsInWindow() }) {
         val landscape = maxWidth > maxHeight && maxHeight < 600.dp
         val header = if (landscape) FlightChromeMetrics.LandscapeHeader else FlightChromeMetrics.Header
         Column(Modifier.align(Alignment.TopCenter).statusBarsPadding().fillMaxWidth()
@@ -382,28 +446,34 @@ internal fun FlightModeChrome(
                     Text("ODYSSEY", color = FlightInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 3.sp)
                     Text(status, color = if (burning) FlightAmber else FlightTeal, fontSize = 11.sp, maxLines = 1)
                 }
-                if (landscape) FlightOrbitInstruments(sample, Modifier.weight(1f), rendezvous)
+                if (landscape) FlightOrbitInstruments(sample, Modifier.weight(1f), rendezvous, docking)
                 FlightAction("Saves", { cut(); facade.suspendFlightControls(); onSaved() }, FlightTags.SAVE, enabled = ready)
                 FlightAction("Lab", onExit, FlightTags.EXIT)
             }
-            if (!landscape) FlightOrbitInstruments(sample, Modifier.fillMaxWidth().height(62.dp), rendezvous)
+            if (!landscape) FlightOrbitInstruments(sample, Modifier.fillMaxWidth().height(62.dp), rendezvous, docking)
         }
 
         Column(Modifier.align(Alignment.TopCenter).statusBarsPadding()
             .padding(top = header + 8.dp, start = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp,
                 end = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp)
             .widthIn(max = 600.dp)) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (rendezvous != null) FlightAction("Encounter", { onCamera(3) }, FlightTags.camera(3), active = cameraMode == 3)
+            Row(Modifier.onGloballyPositioned { cameraBounds = it.boundsInWindow() }
+                .horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (rendezvous != null || docking != null) FlightAction("Encounter", { onCamera(3) }, FlightTags.camera(3), active = cameraMode == 3)
                 listOf(1 to "Orbit camera", 2 to "Chase", 0 to "Coast prediction").forEach { (mode, label) ->
                     FlightAction(label, { onCamera(mode) }, FlightTags.camera(mode), active = cameraMode == mode)
                 }
                 FlightAction("Moon mission", { cut(); facade.suspendFlightControls(); onLunarMission() }, LunarFlightTags.BRIEF)
                 FlightAction("Station mission", { cut(); facade.suspendFlightControls(); onRendezvousMission() }, RendezvousTags.BRIEF)
+                FlightAction("Docking mission", { cut(); facade.suspendFlightControls(); onDockingMission() }, DockingTags.BRIEF)
             }
             if (rendezvous != null) {
-                if (!landscape) RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
-                    onGuidance = ::setEncounterGuidance)
+                if (!landscape) Box(Modifier.onGloballyPositioned { topPanelBounds = it.boundsInWindow() }) {
+                    RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
+                        onGuidance = ::setEncounterGuidance)
+                }
+            } else if (docking != null) {
+                // Port guidance sits below the clear scene in both orientations.
             } else if (lunarMission != null) {
                 LunarMissionPanel(requireNotNull(lunarMission), landscape, paused, ready, missionActionBusy, coasting,
                     onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
@@ -428,32 +498,36 @@ internal fun FlightModeChrome(
                     color = FlightPanel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, FlightLine)) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(8.dp)) {
                         Text("ORIENTATION", color = FlightMuted, fontSize = 9.sp, letterSpacing = 1.sp)
-                        FlightAssistStrip(control.assist, ready, actions.assist)
-                        FlightAttitudePad(translationMode, ready && (!translationMode || fuel > 0.0), actions)
+                        FlightAssistStrip(control.assist, controlsReady, actions.assist)
+                        FlightAttitudePad(translationMode, controlsReady && (!translationMode || fuel > 0.0), actions)
                     }
                 }
                 Surface(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp)
                     .width(FlightChromeMetrics.LandscapeSide - 16.dp),
                     color = FlightPanel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, FlightLine)) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(10.dp)) {
-                        FlightEnginePanel(control, sample, ready, paused, actions)
+                        FlightEnginePanel(control, sample, controlsReady, paused, actions)
                         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = FlightLine)
                         FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—", "lowest altitude")
                     }
                 }
-                if (rendezvous != null) {
+                if (rendezvous != null || docking != null) {
                     // Keep the encounter's centre clear between the camera row
                     // and guidance controls without shrinking either touch area.
                     Box(Modifier.align(Alignment.BottomCenter)
                         .padding(horizontal = FlightChromeMetrics.LandscapeSide)
-                        .widthIn(max = 600.dp)) {
-                        RendezvousPanel(requireNotNull(rendezvous), true, paused, ready, missionActionBusy,
+                        .widthIn(max = 600.dp)
+                        .onGloballyPositioned { bottomPanelBounds = it.boundsInWindow() }) {
+                        if (docking != null) DockingPanel(requireNotNull(docking), true, paused, ready, missionActionBusy,
+                            onGuidance = { dockingAction(it) }, onUndock = { dockingAction() })
+                        else RendezvousPanel(requireNotNull(rendezvous), true, paused, ready, missionActionBusy,
                             onGuidance = ::setEncounterGuidance)
                     }
                 }
             }
             Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
-                .height(FlightChromeMetrics.LandscapeDock), color = FlightPanel, border = BorderStroke(1.dp, FlightLine)) {
+                .height(FlightChromeMetrics.LandscapeDock)
+                .onGloballyPositioned { dockBounds = it.boundsInWindow() }, color = FlightPanel, border = BorderStroke(1.dp, FlightLine)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                     FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions)
                     Text(notice, color = if (controlError == null) FlightMuted else FlightAmber, fontSize = 10.sp,
@@ -461,17 +535,25 @@ internal fun FlightModeChrome(
                 }
             }
         } else {
+            if (docking != null) Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+                .padding(bottom = FlightChromeMetrics.PortraitDock, start = 12.dp, end = 12.dp)
+                .widthIn(max = 600.dp)) {
+                DockingPanel(requireNotNull(docking), true, paused, ready, missionActionBusy,
+                    onGuidance = { dockingAction(it) }, onUndock = { dockingAction() },
+                    modifier = Modifier.onGloballyPositioned { bottomPanelBounds = it.boundsInWindow() })
+            }
             Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
-                .height(FlightChromeMetrics.PortraitDock), color = FlightPanel, border = BorderStroke(1.dp, FlightLine),
+                .height(FlightChromeMetrics.PortraitDock)
+                .onGloballyPositioned { dockBounds = it.boundsInWindow() }, color = FlightPanel, border = BorderStroke(1.dp, FlightLine),
                 shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
                 Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    FlightAssistStrip(control.assist, ready, actions.assist)
+                    FlightAssistStrip(control.assist, controlsReady, actions.assist)
                     Row(Modifier.fillMaxWidth().height(158.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(Modifier.width(156.dp)) {
-                            FlightAttitudePad(translationMode, ready && (!translationMode || fuel > 0.0), actions)
+                            FlightAttitudePad(translationMode, controlsReady && (!translationMode || fuel > 0.0), actions)
                         }
-                        Box(Modifier.weight(1f)) { FlightEnginePanel(control, sample, ready, paused, actions) }
+                        Box(Modifier.weight(1f)) { FlightEnginePanel(control, sample, controlsReady, paused, actions) }
                     }
                     HorizontalDivider(color = FlightLine)
                     FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions)
@@ -499,9 +581,18 @@ private data class FlightUiActions(
 )
 
 @Composable
-private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Modifier, encounter: RendezvousState? = null) {
+private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Modifier,
+    encounter: RendezvousState? = null, docking: DockingState? = null) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (encounter != null) {
+        if (docking != null) {
+            FlightInstrument("PORT GAP", if (docking.targetAvailable) dockingDistance(docking.positionPortZM) else "—",
+                "along port axis", DockingTags.GAP, Modifier.weight(1f))
+            FlightInstrument(if (docking.closingSpeedMps >= 0.0) "CLOSING" else "RECEDING",
+                if (docking.targetAvailable) rendezvousSpeed(abs(docking.closingSpeedMps)) else "—",
+                "port motion", DockingTags.CLOSING, Modifier.weight(1f))
+            FlightInstrument("ALIGNMENT", if (docking.targetAvailable) dockingAngle(docking.alignmentErrorRad) else "—",
+                "including roll", DockingTags.ALIGNMENT, Modifier.weight(1f))
+        } else if (encounter != null) {
             FlightInstrument("STATION RANGE", if (encounter.targetAvailable) rendezvousDistance(encounter.rangeM) else "—",
                 "centre to centre", RendezvousTags.RANGE, Modifier.weight(1f))
             FlightInstrument("RELATIVE SPEED", if (encounter.targetAvailable) rendezvousSpeed(encounter.relativeSpeedMps) else "—",
@@ -636,6 +727,7 @@ private fun FlightHoldButton(label: String, tag: String, modifier: Modifier, ena
     Surface(modifier.height(48.dp).testTag(tag)
         .semantics {
             contentDescription = label
+            if (!enabled) disabled()
             onClick("Pulse $label") {
                 if (enabled) scope.launch { latest(true); try { delay(180) } finally { latest(false) } }
                 enabled

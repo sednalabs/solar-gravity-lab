@@ -274,6 +274,8 @@ pub struct SpacecraftState {
     pub mission: Option<SpacecraftMissionState>,
     #[serde(default)]
     pub rendezvous: Option<crate::SpacecraftRendezvousState>,
+    #[serde(default)]
+    pub docking: Option<crate::SpacecraftDockingState>,
 }
 impl SpacecraftState {
     #[must_use]
@@ -303,6 +305,21 @@ impl SpacecraftState {
             && self.delivered_delta_v_mps >= 0.0
             && self.main_engine_full_throttle_seconds.is_finite()
             && self.main_engine_full_throttle_seconds >= 0.0
+            && self.docking.as_ref().is_none_or(|d| {
+                d.valid(&self.body_id)
+                    && self.mission.is_none()
+                    && self.rendezvous.is_none()
+                    && self.burn_program.is_none()
+                    && (d.guidance_mode != crate::DockingGuidanceMode::Approach
+                        || (self.control.throttle == 0.0
+                            && self.control.attitude_mode == AttitudeMode::Manual
+                            && self.propellant_mass_kg > 0.0))
+                    && (d.attachment.is_none()
+                        || (self.control.throttle == 0.0
+                            && magnitude(self.control.translation_body) == 0.0
+                            && magnitude(self.control.rotation_body) == 0.0
+                            && matches!(self.control.attitude_mode, AttitudeMode::Manual | AttitudeMode::Hold)))
+            })
             && self.rendezvous.as_ref().is_none_or(|r| {
                 r.valid(&self.body_id)
                     && self.mission.is_none()
@@ -450,6 +467,7 @@ impl SpacecraftState {
             burn_program: None,
             mission: None,
             rendezvous: None,
+            docking: None,
         }
     }
     #[must_use]

@@ -44,6 +44,17 @@ class FlightControlIntentTest {
         assertNeutral(flightAxisIntent(pitched, false, 1, false))
     }
 
+    @Test fun attachmentPreventsEveryPropulsiveInputAndReleaseDoesNotInventMotion() {
+        assertNeutral(flightControlForAttachment(guidedDemand, true))
+        val released = flightControlForAttachment(FlightControl.Cut, false)
+        assertNeutral(released)
+        val back = flightAxisIntent(released, true, 5, true)
+        assertEquals(-1.0, back.translationZ, 0.0)
+        assertEquals(back, flightControlForAttachment(back, false))
+        assertNeutral(flightControlForAttachment(back, true))
+        assertNeutral(flightAxisIntent(back, true, 5, false))
+    }
+
     private fun assertNeutral(control: FlightControl) {
         assertEquals(0.0, control.throttle, 0.0)
         assertEquals(0.0, control.translationX, 0.0)

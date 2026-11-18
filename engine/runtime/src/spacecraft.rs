@@ -87,7 +87,9 @@ impl WorldRuntime {
                 if world.bodies.iter().any(|b| b.body_id == body.body_id) {
                     return Err(RuntimeError::DuplicateBody(body.body_id.clone()));
                 }
-                if !valid_ship_body(body, spacecraft)
+                if world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == body.body_id))
+                    || spacecraft.docking.as_ref().is_some_and(|d| !world.spacecraft.iter().any(|s| s.body_id == d.target_body_id))
+                    || !valid_ship_body(body, spacecraft)
                     || !valid_mission(world, body, spacecraft)
                     || spacecraft.reference_body_id.as_ref().is_some_and(|id| {
                         *id == body.body_id || !world.bodies.iter().any(|b| b.body_id == *id)
@@ -96,6 +98,10 @@ impl WorldRuntime {
                     return Err(RuntimeError::InvalidFlightState);
                 }
             }
+            WorldCommand::SpawnBody { body }
+                if world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == body.body_id)) => {
+                return Err(RuntimeError::InvalidFlightState);
+            }
             WorldCommand::SetFlightControl { body_id, control } => {
                 if !control.valid() {
                     return Err(RuntimeError::InvalidFlightState);
@@ -103,6 +109,22 @@ impl WorldRuntime {
                 let ship = self
                     .spacecraft_by_id(&body_id.0)
                     .ok_or_else(|| RuntimeError::UnknownBody(body_id.clone()))?;
+                let mut proposed = ship.clone();
+                proposed.control = *control;
+                proposed.burn_program = None;
+                if let Some(r) = &mut proposed.rendezvous {
+                    r.guidance_mode = RendezvousGuidanceMode::Manual;
+                    r.status = RendezvousStatus::Manual;
+                }
+                if let Some(d) = &mut proposed.docking {
+                    d.guidance_mode = DockingGuidanceMode::Manual;
+                    d.capture_armed = false;
+                }
+                if !proposed.valid() || (world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == *body_id))
+                    && (proposed.has_powered_input() || solarlab_domain::spacecraft::magnitude(control.rotation_body) > 0.0
+                        || !matches!(control.attitude_mode, solarlab_domain::AttitudeMode::Manual | solarlab_domain::AttitudeMode::Hold))) {
+                    return Err(RuntimeError::InvalidFlightState);
+                }
                 if !matches!(
                     control.attitude_mode,
                     solarlab_domain::AttitudeMode::Manual | solarlab_domain::AttitudeMode::Hold
@@ -118,7 +140,8 @@ impl WorldRuntime {
                 let ship = self
                     .spacecraft_by_id(&body_id.0)
                     .ok_or_else(|| RuntimeError::UnknownBody(body_id.clone()))?;
-                if !full_throttle_seconds.is_finite()
+                if ship.docking.is_some() || world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == *body_id))
+                    || !full_throttle_seconds.is_finite()
                     || *full_throttle_seconds <= 0.0
                     || *full_throttle_seconds > 86_400.0
                     || ship.propellant_mass_kg <= 0.0
@@ -134,11 +157,23 @@ impl WorldRuntime {
             WorldCommand::SetRendezvousGuidance { body_id, mode } => {
                 self.rendezvous_command_control(body_id, *mode)?;
             }
+            WorldCommand::SetDockingGuidance { body_id, mode } => {
+                self.validate_docking_guidance(body_id, *mode)?;
+            }
+            WorldCommand::UndockSpacecraft { body_id } => {
+                if self.spacecraft_by_id(&body_id.0).and_then(|s| s.docking.as_ref()).and_then(|d| d.attachment).is_none() {
+                    return Err(RuntimeError::InvalidFlightState);
+                }
+            }
+            WorldCommand::SetBodyKinematics { body_id, .. }
+                if world.spacecraft.iter().any(|s| (s.body_id == *body_id && s.docking.is_some()) || s.docking.as_ref().is_some_and(|d| d.target_body_id == *body_id)) => {
+                return Err(RuntimeError::InvalidFlightState);
+            }
             WorldCommand::SetPlaybackRate {
                 sim_seconds_per_real_second,
             } if *sim_seconds_per_real_second > 1.0
                 && world.spacecraft.iter().any(|s| {
-                    s.has_powered_input()
+                    s.docking.is_some() || s.has_powered_input()
                         || s.rendezvous
                             .as_ref()
                             .is_some_and(|r| r.guidance_mode.active())
@@ -237,6 +272,7 @@ pub(super) fn valid_mission(
         .is_ok()
     });
     valid_rendezvous
+        && docking_flight::valid_docking(world, body, ship)
         && ship.mission.as_ref().is_none_or(|mission| {
             mission.launch_epoch_seconds <= world.epoch_seconds
                 && mission.closest_approach_epoch_seconds <= world.epoch_seconds + 1e-6

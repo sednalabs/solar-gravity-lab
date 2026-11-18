@@ -3,6 +3,10 @@ package com.sednalabs.solarlab
 import com.sednalabs.solarlab.runtime.FlightAssist
 import com.sednalabs.solarlab.runtime.FlightControl
 
+/** UI prevention complements the native joint's command gate, including late queued input. */
+internal fun flightControlForAttachment(intent: FlightControl, attached: Boolean): FlightControl =
+    if (attached) FlightControl.Cut else intent
+
 /** Native guidance demand must never become an implicit held touchscreen input. */
 internal fun manualFlightControlBase(
     current: FlightControl,

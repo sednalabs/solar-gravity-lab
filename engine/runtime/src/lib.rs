@@ -15,6 +15,9 @@ mod rendezvous;
 pub use rendezvous::{RendezvousGuidance, RendezvousGuidanceMode, RendezvousScenario, RendezvousStatus, RendezvousTelemetry};
 mod rendezvous_flight;
 pub use rendezvous_flight::{RendezvousFlightTelemetry, RENDEZVOUS_STATION_BODY_ID};
+mod docking_flight;
+pub use docking_flight::{DockingFlightTelemetry, DOCKING_STATION_BODY_ID};
+pub use solarlab_domain::{DockingGuidanceMode, DockingStatus};
 pub use flight_telemetry::FlightTelemetry;
 mod body_properties;
 mod lab_step;
@@ -258,6 +261,9 @@ pub enum WorldCommand {
     SetFlightControl { body_id: BodyId, control: FlightControl },
     StartGuidedBurn { body_id: BodyId, full_throttle_seconds: f64 },
     SetRendezvousGuidance { body_id: BodyId, mode: RendezvousGuidanceMode },
+    SetDockingGuidance { body_id: BodyId, mode: DockingGuidanceMode },
+    /// Release a fixed attachment without changing either body's momentum.
+    UndockSpacecraft { body_id: BodyId },
     /// Seeds the canonical startup solar-system catalog into an empty world.
     /// Runtime owns the catalog truth; host clients only request this action.
     SeedCanonicalSolarSystem,

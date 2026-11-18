@@ -4,7 +4,7 @@ use super::*;
 use jni::objects::JDoubleArray;
 use jni::sys::{jdoubleArray, jstring};
 
-fn request(
+pub(super) fn request(
     env: &JNIEnv,
     handle: jlong,
     id: &JByteArray,
@@ -24,7 +24,7 @@ fn request(
     let id = String::from_utf8(bytes).map_err(|_| "Invalid spacecraft identifier encoding")?;
     Ok((SlRuntimeHandle { raw: handle as u64 }, id))
 }
-fn fail(env: &mut JNIEnv, message: &str) {
+pub(super) fn fail(env: &mut JNIEnv, message: &str) {
     let _ = env.throw_new("java/lang/IllegalStateException", message);
 }
 
@@ -202,7 +202,7 @@ pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTrans
     export_sample(&mut env, result)
 }
 
-fn export_sample<const N: usize>(
+pub(super) fn export_sample<const N: usize>(
     env: &mut JNIEnv,
     result: Result<Option<[f64; N]>, String>,
 ) -> jdoubleArray {

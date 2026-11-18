@@ -785,6 +785,13 @@ SolarLabStageController::LabViewportSnapshot SolarLabStageController::GetLabView
             const auto ray = solarlab::spacecraft::FlightCameraRay(anchor.screenX, anchor.screenY, snapshot.width, snapshot.height);
             for (const auto& other : snapshot.bodies) {
                 if (&other == &anchor) continue;
+                const auto source = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+                    [&](const RuntimeBodyProxy& body) { return body.bodyId == other.bodyId; });
+                // Mesh radii enclose solar wings and ports for framing/picking.
+                // They are not opaque spheres: at docking range those envelopes
+                // overlap while the actual hulls remain visibly side by side.
+                // Only the analytic celestial surfaces provide this ray test.
+                if (source == runtimeScene_.pickBodies.end() || source->meshKind != 0) continue;
                 const Float3 delta = MakeFloat3(other.worldX - snapshot.camera.centerX,
                     other.worldY - snapshot.camera.centerY, other.worldZ - snapshot.camera.centerZ);
                 const std::array<double, 3> center{delta.x*basis.right[0]+delta.y*basis.right[1]+delta.z*basis.right[2],
@@ -859,6 +866,16 @@ void SolarLabStageController::SetFlightTargetBodyId(const std::string& bodyId) {
     if (flightTargetBodyId_ == bodyId) return;
     flightTargetBodyId_ = bodyId;
     if (flightCameraMode_ == 3) flightFramePending_ = true;
+    ++cameraRevisionCounter_;
+}
+
+void SolarLabStageController::SetFlightSafeArea(double halfWidth, double halfHeight) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    const double width = std::isfinite(halfWidth) ? std::clamp(halfWidth, 0.0, 1024.0) : 0.0;
+    const double height = std::isfinite(halfHeight) ? std::clamp(halfHeight, 0.0, 1024.0) : 0.0;
+    if (flightSafeHalfWidth_ == width && flightSafeHalfHeight_ == height) return;
+    flightSafeHalfWidth_ = width;
+    flightSafeHalfHeight_ = height;
     ++cameraRevisionCounter_;
 }
 
@@ -2206,6 +2223,15 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                             cameraYawRadians_ = frame->yawRadians;
                             cameraPitchRadians_ = frame->pitchRadians;
                         }
+                        const double shortAxis = std::max(1, std::min(surfaceWidthPx_, surfaceHeightPx_));
+                        cameraViewRadiusM_ = solarlab::spacecraft::EncounterSafeViewRadius(*frame,
+                            {ship->positionRelativeX, ship->positionRelativeY, ship->positionRelativeZ},
+                            {target->positionRelativeX, target->positionRelativeY, target->positionRelativeZ},
+                            {ship->previousRelativeX, ship->previousRelativeY, ship->previousRelativeZ},
+                            {target->previousRelativeX, target->previousRelativeY, target->previousRelativeZ},
+                            ship->radiusM, target->radiusM, cameraYawRadians_, cameraPitchRadians_,
+                            flightSafeHalfWidth_ > 0 ? flightSafeHalfWidth_ : surfaceWidthPx_ / shortAxis,
+                            flightSafeHalfHeight_ > 0 ? flightSafeHalfHeight_ : surfaceHeightPx_ / shortAxis);
                     }
                 }
             }

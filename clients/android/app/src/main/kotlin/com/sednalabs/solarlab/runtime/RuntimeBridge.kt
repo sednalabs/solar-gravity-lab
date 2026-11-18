@@ -45,6 +45,10 @@ internal interface RuntimeBridge {
     suspend fun beginLunarDeparture(shipId: String): List<RuntimeSignal> = error("Guided departure is unavailable")
     suspend fun startRendezvousFlight(shipId: String): List<RuntimeSignal> = error("Station rendezvous is unavailable")
     suspend fun setRendezvousGuidance(shipId: String, guidance: RendezvousGuidance): List<RuntimeSignal> = error("Rendezvous guidance is unavailable")
+    suspend fun startDockingFlight(shipId: String): List<RuntimeSignal> = error("Station docking is unavailable")
+    suspend fun setDockingGuidance(shipId: String, mode: DockingGuidance): List<RuntimeSignal> = error("Docking guidance is unavailable")
+    suspend fun undock(shipId: String): List<RuntimeSignal> = error("Docking release is unavailable")
+    suspend fun dockingState(shipId: String): DockingState? = null
     suspend fun setFlightControl(shipId: String, control: FlightControl) { error("Spaceflight is unavailable") }
     suspend fun flightState(shipId: String): FlightState? = null
     suspend fun lunarMissionState(shipId: String): LunarMissionState? = null
@@ -520,6 +524,13 @@ internal class JniRuntimeBridge(
                 checkNotNull(transport.rendezvousTargetId(handle, id)) { "The encounter target was not created" })
         }
 
+    override suspend fun startDockingFlight(shipId: String): List<RuntimeSignal> =
+        startFreshFlightMission(shipId, "docking") { handle, id, recordedAt ->
+            transport.startDockingFlight(handle, id, recordedAt)
+            dockingStateFromNative(checkNotNull(transport.dockingState(handle, id)) { "The docking mission was not created" },
+                checkNotNull(transport.dockingTargetId(handle, id)) { "The docking target was not created" })
+        }
+
     private suspend fun startFreshFlightMission(
         shipId: String,
         mission: String,
@@ -569,6 +580,24 @@ internal class JniRuntimeBridge(
     override suspend fun setRendezvousGuidance(shipId: String, guidance: RendezvousGuidance): List<RuntimeSignal> = withActiveSession { handle ->
         transport.setRendezvousGuidance(handle, shipId, guidance.nativeCode, System.currentTimeMillis())
         refreshSignalsForHandle(handle, includeSummary = true, traceLabel = "flight.rendezvous-guidance")
+    }
+
+    override suspend fun setDockingGuidance(shipId: String, mode: DockingGuidance): List<RuntimeSignal> = withActiveSession { handle ->
+        transport.setDockingGuidance(handle, shipId, mode.nativeCode, System.currentTimeMillis())
+        refreshSignalsForHandle(handle, includeSummary = true, traceLabel = "flight.docking-guidance")
+    }
+
+    override suspend fun undock(shipId: String): List<RuntimeSignal> = withActiveSession { handle ->
+        transport.undock(handle, shipId, System.currentTimeMillis())
+        refreshSignalsForHandle(handle, includeSummary = true, traceLabel = "flight.undock")
+    }
+
+    override suspend fun dockingState(shipId: String): DockingState? = withActiveSession { handle ->
+        transport.dockingState(handle, shipId)?.let { values ->
+            dockingStateFromNative(values, checkNotNull(transport.dockingTargetId(handle, shipId)) {
+                "Docking target identity is missing"
+            })
+        }
     }
 
     override suspend fun setFlightControl(shipId: String, control: FlightControl) = withActiveSession { handle ->
@@ -1494,6 +1523,11 @@ internal interface NativeRuntimeTransport {
     fun beginLunarDeparture(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Guided departure is unavailable") }
     fun startRendezvousFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Station rendezvous is unavailable") }
     fun setRendezvousGuidance(handle: Long, shipId: String, mode: Int, recordedAtUnixMs: Long) { error("Rendezvous guidance is unavailable") }
+    fun startDockingFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Station docking is unavailable") }
+    fun setDockingGuidance(handle: Long, shipId: String, mode: Int, recordedAtUnixMs: Long) { error("Docking guidance is unavailable") }
+    fun undock(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Docking release is unavailable") }
+    fun dockingState(handle: Long, shipId: String): DoubleArray? = null
+    fun dockingTargetId(handle: Long, shipId: String): String? = null
     fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) { error("Spaceflight is unavailable") }
     fun flightState(handle: Long, shipId: String): DoubleArray? = null
     fun lunarMissionState(handle: Long, shipId: String): DoubleArray? = null
@@ -1721,6 +1755,16 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         nativeStartRendezvousFlight(handle, shipId.toByteArray(StandardCharsets.UTF_8), recordedAtUnixMs)
     override fun setRendezvousGuidance(handle: Long, shipId: String, mode: Int, recordedAtUnixMs: Long) =
         nativeSetRendezvousGuidance(handle, shipId.toByteArray(StandardCharsets.UTF_8), mode, recordedAtUnixMs)
+    override fun startDockingFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) =
+        nativeStartDockingFlight(handle, shipId.toByteArray(StandardCharsets.UTF_8), recordedAtUnixMs)
+    override fun setDockingGuidance(handle: Long, shipId: String, mode: Int, recordedAtUnixMs: Long) =
+        nativeSetDockingGuidance(handle, shipId.toByteArray(StandardCharsets.UTF_8), mode, recordedAtUnixMs)
+    override fun undock(handle: Long, shipId: String, recordedAtUnixMs: Long) =
+        nativeUndockSpacecraft(handle, shipId.toByteArray(StandardCharsets.UTF_8), recordedAtUnixMs)
+    override fun dockingState(handle: Long, shipId: String): DoubleArray? =
+        nativeDockingState(handle, shipId.toByteArray(StandardCharsets.UTF_8))
+    override fun dockingTargetId(handle: Long, shipId: String): String? =
+        nativeDockingTargetId(handle, shipId.toByteArray(StandardCharsets.UTF_8))
     override fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) =
         nativeSetFlightControl(handle, shipId.toByteArray(StandardCharsets.UTF_8), values, recordedAtUnixMs)
     override fun flightState(handle: Long, shipId: String): DoubleArray? =
@@ -1737,6 +1781,11 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private external fun nativeBeginLunarDeparture(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
     private external fun nativeStartRendezvousFlight(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
     private external fun nativeSetRendezvousGuidance(handle: Long, shipId: ByteArray, mode: Int, recordedAtUnixMs: Long)
+    private external fun nativeStartDockingFlight(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
+    private external fun nativeSetDockingGuidance(handle: Long, shipId: ByteArray, mode: Int, recordedAtUnixMs: Long)
+    private external fun nativeUndockSpacecraft(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
+    private external fun nativeDockingState(handle: Long, shipId: ByteArray): DoubleArray?
+    private external fun nativeDockingTargetId(handle: Long, shipId: ByteArray): String?
     private external fun nativeSetFlightControl(handle: Long, shipId: ByteArray, values: DoubleArray, recordedAtUnixMs: Long)
     private external fun nativeFlightState(handle: Long, shipId: ByteArray): DoubleArray?
     private external fun nativeLunarMissionState(handle: Long, shipId: ByteArray): DoubleArray?

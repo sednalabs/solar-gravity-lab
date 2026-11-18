@@ -3,7 +3,9 @@
 This index distinguishes the **implemented source**, **tested behaviour**,
 **published Android APK** and **historical design work**. Use it before old
 stage-first or compaction handoffs. Audited against canonical `main`
-through `b2e3dbed9e73e98fd6d749d71ee7f2c7a29b6d74` (18 November 2026).
+through the A–E engine merge `dac95def8a6dda19736f1f41f3261fb19afc082d`.
+The separate docking extension below describes current branch source and requires
+its own exact-source validation.
 See the [16–18 November integration record](mainline-integration-week-20261116.md)
 for the commit-by-commit scope and which checkpoints remain historical.
 
@@ -22,6 +24,10 @@ for the commit-by-commit scope and which checkpoints remain historical.
   [#248](https://github.com/sednalabs/solar-gravity-lab/pull/248)
   narrowed CI routing for unrelated changes. All were merged by
   `b2e3dbed` on 18 November.
+  [#251](https://github.com/sednalabs/solar-gravity-lab/pull/251) and
+  [#252](https://github.com/sednalabs/solar-gravity-lab/pull/252) subsequently
+  delivered native orbital/lunar flight and reusable station rendezvous, merged
+  through `dac95def`. See [space-engine.md](space-engine.md).
 - **Hosted proof:** the [#237 exact-source validation](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943)
   passed Rust x64/Arm64, FFI, Android JVM/lint, native Android journeys,
   camera/compute pixel checks and parity. The
@@ -34,17 +40,29 @@ for the commit-by-commit scope and which checkpoints remain historical.
   These are **not** Qualcomm vendor-hardware runs or physical-phone acceptance.
   The [17 November main security run](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44014438874)
   passed its OSV scan.
-- **Published APK:** [`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2)
-  is still the most recent installable release. **The later `main` changes
-  are not yet a released APK.**
+  A–E's exact source `b373145b` passed
+  [Validation Lab 44348359492](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44348359492):
+  24 Android tests, 265 JVM tests, 301 x64 and 304 Arm64 Rust tests
+  (one ignored on each native architecture), plus native/window visual evidence.
+  The merged `dac95def` tree equals that tested source tree.
+- **Installable artifacts:** the tagged
+  [`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2)
+  remains a dated published preview. The later A–E validation above also provides
+  a source-bound debug APK with arm64-v8a and x86_64 libraries. A CI APK does not
+  establish a new tagged release, stable signing or physical-device acceptance.
 - **Not proven:** no installed Galaxy S25 Ultra user/thermal/battery validation
   for the newer code, no stable signing or guaranteed upgrade between different
-  preview certificates, no general relativistic, drag or collision simulation.
+  preview certificates, and no general relativistic, drag or celestial contact
+  simulation. The new local docking path is explicit and separately qualified.
 
 ## Canonical contracts and implementation
 
 - [Architecture](architecture.md): Rust world, FFI, Android, native Vulkan
   and hardware ownership.
+- [Space-engine foundation](space-engine.md),
+  [orbital rendezvous](orbital-rendezvous.md) and
+  [physical station docking](station-docking.md): shared world authority,
+  native guidance and opt-in local contacts.
 - [Renderer current state](rendering-architecture-current-state.md),
   [camera and interactions](camera-and-interaction-model.md),
   [scene/world contract](scene-world-model-contract.md) and

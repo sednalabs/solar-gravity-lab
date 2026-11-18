@@ -43,6 +43,8 @@ mod persistence;
 #[cfg(any(target_os = "android", test))]
 mod flight;
 #[cfg(any(target_os = "android", test))]
+mod docking;
+#[cfg(any(target_os = "android", test))]
 mod probe_authoring;
 pub use persistence::{sl_v2_session_export_save, sl_v2_session_import_save, SlSaveWriteResult};
 
@@ -2240,6 +2242,7 @@ fn jni_next_ordinal(ordinal: u64) -> i64 {
 // release call.
 mod android_jni {
     mod flight;
+    mod docking;
     mod persistence;
     mod probe_authoring;
     use super::{

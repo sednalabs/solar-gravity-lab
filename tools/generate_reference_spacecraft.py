@@ -2,7 +2,7 @@
 """Author Sedna's original Asteria orbital tug as a reproducible glTF2 asset."""
 import math
 from pathlib import Path
-from gltf_mesh_builder import MeshAsset, box, cylinder
+from gltf_mesh_builder import MeshAsset, annulus, box, cylinder
 
 ROOT = Path(__file__).resolve().parents[1]
 asset = MeshAsset()
@@ -21,8 +21,15 @@ plume = material('Illustrative main exhaust',[.20,.60,1.0],0,.7,1.,True)
 
 add_mesh('Pressurised cabin',cylinder(1.15,1.15,-.6,2.15),pearl)
 add_mesh('Forward tapered nose',cylinder(1.15,.52,2.15,3.1),pearl)
-add_mesh('Docking collar',cylinder(.52,.52,3.1,3.5),graphite)
-add_mesh('Docking rim',cylinder(.57,.57,3.38,3.52),trim)
+port = [add_mesh('Docking collar',annulus(.43,.52,3.1,3.38),graphite),
+        add_mesh('Docking rim',annulus(.43,.72,3.38,3.52),trim),
+        add_mesh('Recessed sealed docking hatch',cylinder(.43,.43,3.28,3.31,32),pearl)]
+for angle in (math.pi/2, 7*math.pi/6, 11*math.pi/6):
+    port.append(add_mesh('Copper port alignment key',box(.028,.028,.018),orange,
+                         (.50*math.cos(angle),.50*math.sin(angle),3.49)))
+port_node = asset.group('Asteria active docking port', port)
+asset.nodes[port_node]['extras'] = {'sglDockingPort': {'positionM':[0,0,3.52],
+    'rotationXyzw':[0,0,0,1], 'outwardAxis':'+Z', 'keyUpAxis':'+Y', 'outerRadiusM':.72}}
 add_mesh('Copper identification band',cylinder(1.16,1.16,1.25,1.48),orange)
 add_mesh('Service module',cylinder(1.27,1.27,-2.75,-.75),gold)
 add_mesh('Module separation ring',cylinder(1.32,1.32,-.85,-.62),graphite)

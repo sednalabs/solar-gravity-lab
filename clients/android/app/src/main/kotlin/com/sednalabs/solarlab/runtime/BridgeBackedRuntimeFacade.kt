@@ -189,6 +189,10 @@ class BridgeBackedRuntimeFacade internal constructor(
         bridge.startRendezvousFlight(shipId)
     }
 
+    override suspend fun startDockingMission(shipId: String) = startSavedFlightMission("Station docking") {
+        bridge.startDockingFlight(shipId)
+    }
+
     private suspend fun startSavedFlightMission(
         missionName: String,
         start: suspend () -> List<RuntimeSignal>,
@@ -250,6 +254,27 @@ class BridgeBackedRuntimeFacade internal constructor(
             if (guidance != RendezvousGuidance.Manual) bridge.applyCommand(RuntimeCommand.ResumePlayback).forEach(::applySignal)
         }
     }
+
+    override suspend fun setDockingGuidance(mode: DockingGuidance, shipId: String, expectedSessionHandle: Long?) =
+        withDockingIntent(expectedSessionHandle) { bridge.setDockingGuidance(shipId, mode).forEach(::applySignal) }
+
+    override suspend fun undock(shipId: String, expectedSessionHandle: Long?) =
+        withDockingIntent(expectedSessionHandle) { bridge.undock(shipId).forEach(::applySignal) }
+
+    private suspend fun withDockingIntent(expectedSessionHandle: Long?, action: suspend () -> Unit) {
+        val session = expectedSessionHandle ?: _uiState.value.sessionHandle ?: return
+        if (session != _uiState.value.sessionHandle) return
+        val generation = flightInputGeneration.incrementAndGet()
+        withContext(NonCancellable + boundaryDispatcher) {
+            if (session != _uiState.value.sessionHandle || generation != flightInputGeneration.get()) return@withContext
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance first" }
+            // Run/Pause remains the sole control of time, including a paused release.
+            action()
+        }
+    }
+
+    override suspend fun dockingState(shipId: String): DockingState? =
+        withContext(boundaryDispatcher) { bridge.dockingState(shipId) }
 
     override suspend fun setFlightControl(control: FlightControl, shipId: String, expectedSessionHandle: Long?) {
         val generation = flightInputGeneration.get()

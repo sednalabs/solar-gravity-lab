@@ -35,6 +35,13 @@ interface RuntimeFacade {
     suspend fun startRendezvousMission(shipId: String = REFERENCE_SPACECRAFT_ID) { error("Station rendezvous is unavailable") }
     suspend fun setRendezvousGuidance(guidance: RendezvousGuidance, shipId: String = REFERENCE_SPACECRAFT_ID,
         expectedSessionHandle: Long? = null) { error("Rendezvous guidance is unavailable") }
+    /** Saves the current experiment before opening the native close-range docking mission. */
+    suspend fun startDockingMission(shipId: String = REFERENCE_SPACECRAFT_ID) { error("Station docking is unavailable") }
+    suspend fun setDockingGuidance(mode: DockingGuidance, shipId: String = REFERENCE_SPACECRAFT_ID,
+        expectedSessionHandle: Long? = null) { error("Docking guidance is unavailable") }
+    suspend fun undock(shipId: String = REFERENCE_SPACECRAFT_ID,
+        expectedSessionHandle: Long? = null) { error("Docking release is unavailable") }
+    suspend fun dockingState(shipId: String = REFERENCE_SPACECRAFT_ID): DockingState? = null
     suspend fun setFlightControl(control: FlightControl, shipId: String = REFERENCE_SPACECRAFT_ID,
         expectedSessionHandle: Long? = null) { error("Spaceflight is unavailable") }
     suspend fun flightState(shipId: String = REFERENCE_SPACECRAFT_ID): FlightState? = null

@@ -2,7 +2,7 @@
 """Author the original Relay orbital station; all rigid geometry fits a 12 m hull."""
 import math
 from pathlib import Path
-from gltf_mesh_builder import MeshAsset, box, cylinder
+from gltf_mesh_builder import MeshAsset, annulus, box, cylinder
 
 ROOT = Path(__file__).resolve().parents[1]
 asset = MeshAsset()
@@ -43,14 +43,21 @@ for sign in (-1, 1):
     core.append(mesh('Array structural spar', box(4.4, .085, .085), silver, (sign*5.25, 0, -.5)))
 asset.group('Pressure modules and axial ports', core)
 
-# A forward service port faces the mission's -Y stand-off direction. This is
-# visual geometry only; the scenario stops outside the collision keep-out zone.
+# The service port has a genuine opening, a recessed sealed hatch, alignment
+# keys and beacons. The docking engine owns the matching physical port frame.
 port = [mesh('Service port tunnel', cylinder(.8, .8, 0, 2.1, 20), pearl),
-        mesh('Service port collar', cylinder(.99, .99, 1.7, 2.15, 20), graphite),
-        mesh('Service port rim', cylinder(1.05, 1.05, 2.11, 2.28, 20), silver),
-        mesh('Service port beacon', cylinder(.94, .94, 2.29, 2.34, 20), beacon)]
-asset.group('Service port facing stand-off', port, (0, -1.7, 0),
-            (math.sqrt(.5), 0, 0, math.sqrt(.5)))
+        mesh('Service port collar', annulus(.62, .99, 2.10, 2.15), graphite),
+        mesh('Service port rim', annulus(.62, 1.05, 2.11, 2.28), silver),
+        mesh('Service port beacon', annulus(.64, .94, 2.29, 2.34), beacon),
+        mesh('Recessed sealed service hatch', cylinder(.61, .61, 2.07, 2.10, 32), graphite)]
+for angle in (math.pi/2, 7*math.pi/6, 11*math.pi/6):
+    port.append(mesh('Copper service alignment key', box(.055, .055, .025), copper,
+                     (.82*math.cos(angle), .82*math.sin(angle), 2.305)))
+port_node = asset.group('Relay active service port', port, (0, -1.7, 0),
+                        (math.sqrt(.5), 0, 0, math.sqrt(.5)))
+asset.nodes[port_node]['extras'] = {'sglDockingPort': {'positionM':[0,-4.04,0],
+    'rotationXyzw':[math.sqrt(.5),0,0,math.sqrt(.5)], 'outwardAxis':'-Y',
+    'openingRadiusM':.62, 'outerRadiusM':1.05, 'hatchRecessM':.24}}
 
 # Four separate bifacial array wings have explicit cells on both visible faces,
 # perimeter rails and thin conductors. No opaque backing hides the blue cells.
