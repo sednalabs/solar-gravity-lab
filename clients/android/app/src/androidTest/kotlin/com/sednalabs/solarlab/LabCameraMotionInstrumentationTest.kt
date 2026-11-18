@@ -17,11 +17,16 @@ import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.graciousgazelles.solarlab.render.core.ObserverMode
@@ -45,6 +50,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.floor
@@ -303,32 +310,136 @@ class LabCameraMotionInstrumentationTest {
     private fun setAllTracesVisible(visible: Boolean) {
         Log.i("SolarLabCameraEvidence", "Setting trace visibility=$visible")
         val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        val phase = AtomicReference("initial frame")
+        val completed = CountDownLatch(1)
+        val testThread = Thread.currentThread()
+        // Capture the actual blocked call even if a platform synchronization
+        // primitive never returns to the test's ordinary timeout/catch path.
+        thread(name = "SolarLabCameraWatchdog", isDaemon = true) {
+            if (!completed.await(20, TimeUnit.SECONDS)) {
+                val main = Looper.getMainLooper().thread
+                val heartbeat = CountDownLatch(1)
+                Handler(Looper.getMainLooper()).post { heartbeat.countDown() }
+                val mainResponded = heartbeat.await(2, TimeUnit.SECONDS)
+                Log.e("SolarLabInstrumentation", "Trace visibility=$visible stalled at ${phase.get()}; mainResponded=$mainResponded")
+                for (target in listOf(testThread, main)) {
+                    Log.e("SolarLabInstrumentation", "Camera evidence thread=${target.name} state=${target.state}")
+                    target.stackTrace.take(48).forEach { Log.e("SolarLabInstrumentation", "  at $it") }
+                }
+            }
+        }
+        fun step(name: String) {
+            phase.set(name)
+            Log.i("SolarLabCameraEvidence", "Trace visibility=$visible: $name")
+        }
         // The stress scene continues submitting native frames while this menu is
         // open. Qualify each control state on explicit Compose frames instead of
         // requiring the entire renderer and sheet to become globally idle.
         composeRule.mainClock.autoAdvance = false
         try {
             composeRule.mainClock.advanceTimeByFrame()
+            step("open tools")
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
+            step("settle tools")
             composeRule.mainClock.advanceTimeBy(400)
             val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
-            repeat(2) {
-                val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
-                composeRule.mainClock.advanceTimeBy(400)
+            repeat(2) { index ->
+                step("scroll trace control ${index + 1}")
+                val node = scrollToolsControlIntoView(tag)
+                step("click trace control ${index + 1}")
                 if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) node.performClick()
                 composeRule.mainClock.advanceTimeBy(64)
             }
-            composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible()
-            composeRule.mainClock.advanceTimeBy(400)
-            composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performClick()
+            step("scroll close control")
+            val close = scrollToolsControlIntoView(LabTags.TOOLS_CLOSE)
+            step("close tools")
+            close.performClick()
             composeRule.waitUntil(10_000) {
                 composeRule.mainClock.advanceTimeBy(32)
                 composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
             }
             Log.i("SolarLabCameraEvidence", "Trace visibility=$visible; tools dismissed")
         } finally {
+            completed.countDown()
             composeRule.mainClock.autoAdvance = previousAutoAdvance
         }
+    }
+
+    private fun scrollToolsControlIntoView(tag: String): SemanticsNodeInteraction {
+        val control = composeRule.onNodeWithTag(tag)
+        val panel = composeRule.onNodeWithTag(LabTags.TOOLS_PANEL)
+        var lastGeometry = "Waiting for the tools sheet to be displayed"
+        var visibleFrames = 0
+        // performScrollTo() repeats synchronously until layout moves. With the
+        // clock paused, its animated ScrollBy cannot progress and the loop never
+        // returns (AndroidX issue 556780784). Drive the real scroll semantics one
+        // bounded step at a time, advancing frames between layout observations.
+        try {
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeBy(32)
+                // The dialog's semantics can exist before its Android window is
+                // placed. A fixed clock advance does not guarantee that layout
+                // or drawing has happened; zero bounds must never mean success.
+                if (!panel.isDisplayed()) {
+                    visibleFrames = 0
+                    val pending = composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL)
+                        .fetchSemanticsNodes().singleOrNull()
+                    lastGeometry = pending?.let {
+                        "Tools sheet not displayed: placed=${it.layoutInfo.isPlaced} " +
+                            "size=${it.size} root=${it.boundsInRoot} window=${it.boundsInWindow}"
+                    } ?: "Tools sheet not composed"
+                    return@waitUntil false
+                }
+                val scrollNode = panel.fetchSemanticsNode()
+                val target = control.fetchSemanticsNode()
+                var root = scrollNode
+                while (true) root = root.parent ?: break
+                // Clip to this dialog's root, not the underlying activity. The
+                // sheet and its scrollable content may still extend off-screen
+                // while the opening animation and Android layout catch up.
+                val viewport = scrollNode.boundsInRoot.intersect(root.boundsInRoot)
+                val top = target.positionInRoot.y
+                val bottom = top + target.size.height
+                val clipped = target.boundsInRoot
+                val placed = target.layoutInfo.isPlaced && scrollNode.layoutInfo.isPlaced &&
+                    target.size.width > 0 && target.size.height > 0 &&
+                    viewport.width > 0f && viewport.height > 0f
+                val displayed = control.isDisplayed()
+                val delta = when {
+                    !placed -> 0f
+                    top < viewport.top -> top - viewport.top
+                    bottom > viewport.bottom -> bottom - viewport.bottom
+                    else -> 0f
+                }
+                lastGeometry = "$tag placed=$placed displayed=$displayed " +
+                    "position=${target.positionInRoot} size=${target.size} clipped=$clipped " +
+                    "panel=${scrollNode.boundsInRoot} root=${root.boundsInRoot} " +
+                    "viewport=$viewport delta=$delta"
+                if (placed && abs(delta) > 1f) {
+                    visibleFrames = 0
+                    Log.i("SolarLabCameraEvidence", "Scrolling tools: $lastGeometry")
+                    panel.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                        assertTrue("Tools must accept scrolling to $tag", scroll(0f, delta))
+                    }
+                    composeRule.mainClock.advanceTimeBy(400)
+                    false
+                } else {
+                    // Keep the actual Compose/Android display gate inside the
+                    // wait, and require the whole control's height to survive
+                    // clipping on consecutive frames before clicking it.
+                    val visible = placed && displayed && clipped.width > 0f &&
+                        clipped.height >= target.size.height - 1f
+                    visibleFrames = if (visible) visibleFrames + 1 else 0
+                    visibleFrames >= 2
+                }
+            }
+        } catch (error: Throwable) {
+            Log.e("SolarLabCameraEvidence", "Cannot reveal tools control: $lastGeometry", error)
+            proof.put("toolsScrollFailure", lastGeometry)
+            throw error
+        }
+        Log.i("SolarLabCameraEvidence", "Tools control visible: $lastGeometry")
+        return control.assertIsDisplayed()
     }
 
     private fun computeFields(status: String, stream: String): Map<String, String> {

@@ -146,7 +146,8 @@ public:
 
 private:
     struct RuntimeSceneState {
-        int64_t packetRevision = -1;
+        // Snapshot validity is tracked separately; preserve the packet's u64 epoch frame.
+        uint64_t packetRevision = 0;
         int64_t uploadedRevision = -1;
         double sceneOriginX = 0.0;
         double sceneOriginY = 0.0;

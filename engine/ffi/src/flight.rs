@@ -464,6 +464,188 @@ pub(super) fn lunar_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_rendezvous_commit_publishes_current_mesh_poses_through_cached_scene_ffi() {
+        struct EncounterScene {
+            revision: String,
+            epoch: f64,
+            frame: u64,
+            origin: SlVector3d,
+            bodies: [SlVulkanBodyInstance; 2],
+        }
+        fn export(handle: SlRuntimeHandle) -> EncounterScene {
+            let packet = sl_v2_session_export_vulkan_scene(handle);
+            assert_eq!(packet.result.code, SlStatusCode::Ok);
+            let view =
+                sl_v2_vulkan_scene_packet_buffer(packet.handle, SlVulkanSceneBufferKind::BodyInstances);
+            assert_eq!(view.result.code, SlStatusCode::Ok);
+            assert_eq!(
+                view.view.stride_bytes as usize,
+                size_of::<SlVulkanBodyInstance>()
+            );
+            // Both views remain owned by the live packet until release below.
+            let bodies = unsafe {
+                std::slice::from_raw_parts(
+                    view.view.data.cast::<SlVulkanBodyInstance>(),
+                    view.view.element_count as usize,
+                )
+            };
+            let revision = unsafe {
+                std::slice::from_raw_parts(
+                    packet.info.scene_revision.data,
+                    packet.info.scene_revision.length as usize,
+                )
+            };
+            let result = EncounterScene {
+                revision: std::str::from_utf8(revision).unwrap().to_owned(),
+                epoch: packet.info.epoch_seconds,
+                frame: packet.info.diagnostics.frame_number,
+                origin: packet.info.camera.frame_origin_m,
+                bodies: ["flight.odyssey", "rendezvous.station"].map(|id| {
+                    *bodies
+                        .iter()
+                        .find(|body| decode_identifier(&body.body_id, body.body_id_len).unwrap() == id)
+                        .unwrap()
+                }),
+            };
+            assert_eq!(
+                sl_v2_vulkan_scene_packet_release(packet.handle).code,
+                SlStatusCode::Ok
+            );
+            result
+        }
+        fn stable_revision(scene: &EncounterScene) -> &str {
+            scene.revision.split("|diag:").next().unwrap()
+        }
+
+        let created = sl_v2_session_create(super::super::tests::new_params(
+            "lab.earth-moon",
+            "rendezvous-scene-boundary",
+        ));
+        assert_eq!(created.result.code, SlStatusCode::Ok);
+        let handle = created.handle;
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0)
+            .unwrap();
+        start_rendezvous(handle, "flight.odyssey", 1).unwrap();
+        set_rendezvous_guidance(handle, "flight.odyssey", 1, 2).unwrap();
+        let before = export(handle); // Warm the production adapter cache before integrating.
+        let initial = rendezvous_sample(handle, "flight.odyssey")
+            .unwrap()
+            .unwrap();
+        assert!((initial[6] - 1_000.0).abs() < 0.01);
+
+        let query = sl_v2_session_query_advance(handle);
+        let mut operation = sl_v2_session_begin_advance(
+            handle,
+            17,
+            23,
+            query.generation,
+            query.current_next_ordinal,
+            650.0,
+            3,
+        );
+        assert_eq!(operation.result.code, SlStatusCode::Ok);
+        operation = sl_v2_session_continue_advance(handle, operation.generation, 0);
+        assert_eq!(operation.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            operation.state, 1,
+            "One bounded continuation cannot commit 650 s of guidance"
+        );
+        let staged = export(handle);
+        assert_eq!(staged.epoch, before.epoch);
+        assert_eq!(
+            staged.bodies, before.bodies,
+            "Uncommitted solver poses cannot leak into a scene"
+        );
+        assert_eq!(stable_revision(&staged), stable_revision(&before));
+        while operation.state == 1 {
+            operation =
+                sl_v2_session_continue_advance(handle, operation.generation, operation.completed_steps);
+            assert_eq!(operation.result.code, SlStatusCode::Ok);
+        }
+        assert_eq!(operation.state, 2);
+        let after = export(handle);
+        let telemetry = rendezvous_sample(handle, "flight.odyssey")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.epoch, 650.0);
+        assert_eq!(after.epoch, telemetry[1]);
+        assert_eq!(after.frame, 39_000);
+        assert_ne!(stable_revision(&before), stable_revision(&after));
+        assert_eq!(after.bodies[0].mesh_kind, 1);
+        assert_eq!(after.bodies[1].mesh_kind, 2);
+        {
+            let registry = registry().lock().unwrap();
+            let runtime = &registry.get(handle).unwrap().runtime;
+            for (id, packed) in ["flight.odyssey", "rendezvous.station"]
+                .iter()
+                .zip(after.bodies.iter())
+            {
+                let truth = runtime.body_by_id(id).unwrap().position_m;
+                assert_eq!(
+                    packed.mesh_position_from_origin_m,
+                    [
+                        truth.x - after.origin.x,
+                        truth.y - after.origin.y,
+                        truth.z - after.origin.z,
+                    ],
+                    "Scene f64 mesh coordinates must equal authoritative current {id} position"
+                );
+            }
+        }
+        let range = after.bodies[0]
+            .mesh_position_from_origin_m
+            .iter()
+            .zip(after.bodies[1].mesh_position_from_origin_m.iter())
+            .map(|(ship, station)| (ship - station).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!((range - telemetry[6]).abs() < 1e-4);
+        assert!(
+            (range - 75.0).abs() < 1.0,
+            "Exported encounter range is {range}"
+        );
+
+        // Playback state comes from snapshot_summary, not a fabricated motion
+        // endpoint: pausing an unchanged physical scene must not rewrite its poses.
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::ResumePlayback, 4)
+            .unwrap();
+        let playing = export(handle);
+        assert_eq!(sl_v2_session_snapshot_summary(handle).summary.paused, 0);
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::PausePlayback, 5)
+            .unwrap();
+        let paused = export(handle);
+        assert_eq!(sl_v2_session_snapshot_summary(handle).summary.paused, 1);
+        assert_eq!(playing.bodies, after.bodies);
+        assert_eq!(paused.bodies, after.bodies);
+        assert_eq!(stable_revision(&playing), stable_revision(&paused));
+        assert_eq!(paused.epoch, after.epoch);
+        println!(
+            "Rendezvous committed mesh range={range:.9} m telemetry={:.9} m epoch={}",
+            telemetry[6], after.epoch
+        );
+        assert_eq!(sl_v2_session_destroy(handle).code, SlStatusCode::Ok);
+    }
+
     #[test]
     fn rendezvous_boundary_preserves_guidance_target_and_future_motion() {
         let created = sl_v2_session_create(super::super::tests::new_params(
