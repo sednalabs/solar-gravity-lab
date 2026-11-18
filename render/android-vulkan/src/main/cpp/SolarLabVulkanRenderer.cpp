@@ -1,5 +1,6 @@
 #include "SolarLabVulkanRenderer.h"
 #include "ReferenceSpacecraftMesh.h"
+#include "RelayStationMesh.h"
 #include "SpacecraftPresentation.h"
 #include "SolarLabPresentation.h"
 
@@ -2065,7 +2066,9 @@ solarlab::rendering::SceneCommandState SolarLabVulkanRenderer::SceneCommandState
         .draws = {draw(sceneGpuStreams_.authoritative), draw(sceneGpuStreams_.tracerNear),
             draw(sceneGpuStreams_.tracerMedium), draw(sceneGpuStreams_.tracerFar), draw(sceneGpuStreams_.trails),
             draw(sceneGpuStreams_.spacecraft), {sceneGpuStreams_.referenceMesh.allocationGeneration, 0},
-            {sceneGpuStreams_.referenceExhaust.allocationGeneration, 0}},
+            {sceneGpuStreams_.referenceExhaust.allocationGeneration, 0},
+            {sceneGpuStreams_.relayStationMesh.allocationGeneration, 0}},
+        .meshInstanceCounts = {sceneGpuStreams_.meshRanges[0].instanceCount, sceneGpuStreams_.meshRanges[1].instanceCount},
         .medium = compute(sceneGpuStreams_.tracerMediumCompute),
         .far = compute(sceneGpuStreams_.tracerFarCompute),
         .trailStrips = sceneGpuStreams_.trailStripVertexCounts,
@@ -2133,7 +2136,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
                 ? sceneBuffers_.authoritativePreviousPositionsM
                 : sceneBuffers_.authoritativePositionsM;
         const bool drawMesh = std::any_of(sceneBuffers_.spacecraft.begin(), sceneBuffers_.spacecraft.end(),
-            [index](const SpacecraftInput& ship) { return ship.authoritativeIndex == index; });
+            [index](const SpacecraftInput& ship) {
+                return ship.authoritativeIndex == index && solarlab::spacecraft::IsSupportedMesh(ship.meshKind);
+            });
         if (!drawMesh) authoritativeVertices.push_back(BillboardVertex{
             .x = static_cast<float>(sceneBuffers_.authoritativePositionsM[base]),
             .y = static_cast<float>(sceneBuffers_.authoritativePositionsM[base + 1U]),
@@ -2181,7 +2186,12 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
 
     std::vector<SpacecraftInstance> spacecraftInstances;
     spacecraftInstances.reserve(sceneBuffers_.spacecraft.size());
-    for (const auto& ship : sceneBuffers_.spacecraft) {
+    std::vector<uint32_t> meshKinds;
+    meshKinds.reserve(sceneBuffers_.spacecraft.size());
+    for (const auto& ship : sceneBuffers_.spacecraft) meshKinds.push_back(ship.meshKind);
+    const auto meshPlan = solarlab::spacecraft::PlanMeshInstances(meshKinds);
+    for (const uint32_t sourceIndex : meshPlan.sourceIndices) {
+        const auto& ship = sceneBuffers_.spacecraft[sourceIndex];
         SpacecraftInstance instance;
         for (size_t axis = 0; axis < 3; ++axis) {
             const auto current = solarlab::spacecraft::Split(ship.positionM[axis]);
@@ -2324,6 +2334,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.spacecraft.strideBytes = sizeof(SpacecraftInstance);
     sceneGpuStreams_.spacecraft.plannedUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     sceneGpuStreams_.spacecraft.vertexCount = static_cast<uint32_t>(spacecraftInstances.size());
+    sceneGpuStreams_.meshRanges = meshPlan.ranges;
 
     sceneGpuStreams_.tracerNear.path = DrawPath::BillboardSprite;
     sceneGpuStreams_.tracerNear.label = "tracer-near";
@@ -2418,7 +2429,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
 
     // Immutable geometry uploads once per device lifetime. Scene changes update
     // only the 68-byte pose per ship, under the shared graphics-fence policy.
-    if (!spacecraftInstances.empty()) {
+    if (meshPlan.ranges[0].instanceCount > 0) {
         if (!sceneGpuStreams_.referenceMeshUploaded) {
             if (!uploadTracerStream(solarlab::spacecraft::kReferenceMesh.data(), sizeof(solarlab::spacecraft::kReferenceMesh),
                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "reference-spacecraft", sceneGpuStreams_.referenceMesh)) return false;
@@ -2429,6 +2440,11 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "reference-exhaust", sceneGpuStreams_.referenceExhaust)) return false;
             sceneGpuStreams_.referenceExhaustUploaded = true;
         }
+    }
+    if (meshPlan.ranges[1].instanceCount > 0 && !sceneGpuStreams_.relayStationMeshUploaded) {
+        if (!uploadTracerStream(solarlab::spacecraft::kRelayStationMesh.data(), sizeof(solarlab::spacecraft::kRelayStationMesh),
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "relay-station", sceneGpuStreams_.relayStationMesh)) return false;
+        sceneGpuStreams_.relayStationMeshUploaded = true;
     }
     if (!uploadStream(spacecraftInstances.data(), ByteSize(spacecraftInstances), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             "spacecraft-instances", sceneGpuStreams_.spacecraft.vertexBuffer)) return false;
@@ -2601,7 +2617,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.totalBytes =
         sceneGpuStreams_.authoritativeInfluenceBuffer.sizeBytes +
         sceneGpuStreams_.spacecraft.vertexBuffer.sizeBytes + sceneGpuStreams_.referenceMesh.sizeBytes +
-        sceneGpuStreams_.referenceExhaust.sizeBytes +
+        sceneGpuStreams_.referenceExhaust.sizeBytes + sceneGpuStreams_.relayStationMesh.sizeBytes +
         sceneGpuStreams_.authoritative.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerNear.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMedium.vertexBuffer.sizeBytes +
@@ -3377,17 +3393,22 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
     }
     bindAndDrawBillboards(sceneGpuStreams_.authoritative);
     if (sceneGpuStreams_.spacecraft.vertexCount > 0 && sceneGpuStreams_.spacecraft.vertexBuffer.buffer != VK_NULL_HANDLE) {
-        const auto drawMesh = [&](VkPipeline pipeline, const GpuBuffer& geometry, uint32_t count) {
-            if (pipeline == VK_NULL_HANDLE || geometry.buffer == VK_NULL_HANDLE) return;
+        const auto drawMesh = [&](VkPipeline pipeline, const GpuBuffer& geometry, uint32_t count,
+                                  const solarlab::spacecraft::MeshInstanceRange& range) {
+            if (pipeline == VK_NULL_HANDLE || geometry.buffer == VK_NULL_HANDLE || range.instanceCount == 0) return;
             const VkBuffer buffers[] = {geometry.buffer, sceneGpuStreams_.spacecraft.vertexBuffer.buffer};
             const VkDeviceSize offsets[] = {0, 0};
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineLayout_, 0, 1, &sceneDescriptorSet_, 0, nullptr);
             vkCmdBindVertexBuffers(commandBuffer, 0, 2, buffers, offsets);
-            vkCmdDraw(commandBuffer, count, sceneGpuStreams_.spacecraft.vertexCount, 0, 0);
+            vkCmdDraw(commandBuffer, count, range.instanceCount, 0, range.firstInstance);
         };
-        drawMesh(spacecraftPipeline_, sceneGpuStreams_.referenceMesh, static_cast<uint32_t>(solarlab::spacecraft::kReferenceMesh.size()));
-        drawMesh(spacecraftExhaustPipeline_, sceneGpuStreams_.referenceExhaust, static_cast<uint32_t>(solarlab::spacecraft::kReferenceExhaust.size()));
+        drawMesh(spacecraftPipeline_, sceneGpuStreams_.referenceMesh,
+            static_cast<uint32_t>(solarlab::spacecraft::kReferenceMesh.size()), sceneGpuStreams_.meshRanges[0]);
+        drawMesh(spacecraftPipeline_, sceneGpuStreams_.relayStationMesh,
+            static_cast<uint32_t>(solarlab::spacecraft::kRelayStationMesh.size()), sceneGpuStreams_.meshRanges[1]);
+        drawMesh(spacecraftExhaustPipeline_, sceneGpuStreams_.referenceExhaust,
+            static_cast<uint32_t>(solarlab::spacecraft::kReferenceExhaust.size()), sceneGpuStreams_.meshRanges[0]);
     }
 
 
@@ -3418,6 +3439,7 @@ void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.spacecraft.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.referenceMesh);
     DestroyGpuBuffer(sceneGpuStreams_.referenceExhaust);
+    DestroyGpuBuffer(sceneGpuStreams_.relayStationMesh);
     DestroyGpuBuffer(sceneGpuStreams_.tracerNear.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMedium.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFar.vertexBuffer);

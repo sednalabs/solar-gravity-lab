@@ -33,6 +33,46 @@ inline double SmoothAngle(double previous, double next, double fraction) {
     return previous + std::remainder(next-previous, 6.283185307179586) * std::clamp(fraction, 0.0, 1.0);
 }
 inline double FlightEyeDistance(double viewRadiusM) { return viewRadiusM / std::tan(3.14159265358979323846 / 6.0); }
+
+struct EncounterCameraFrame {
+    std::array<double, 3> center;
+    std::array<double, 3> previousOffset;
+    double viewRadiusM;
+    double yawRadians;
+    double pitchRadians;
+};
+
+inline std::optional<EncounterCameraFrame> EncounterFrame(
+    const std::array<double, 3>& ship, const std::array<double, 3>& target,
+    const std::array<double, 3>& previousShip, const std::array<double, 3>& previousTarget,
+    double shipRadiusM, double targetRadiusM) {
+    if (!std::isfinite(shipRadiusM) || !std::isfinite(targetRadiusM) ||
+        shipRadiusM <= 0 || targetRadiusM <= 0) return std::nullopt;
+    EncounterCameraFrame frame{};
+    std::array<double, 3> delta{}, previousDelta{};
+    for (size_t axis = 0; axis < 3; ++axis) {
+        if (!std::isfinite(ship[axis]) || !std::isfinite(target[axis]) ||
+            !std::isfinite(previousShip[axis]) || !std::isfinite(previousTarget[axis])) return std::nullopt;
+        delta[axis] = target[axis] - ship[axis];
+        previousDelta[axis] = previousTarget[axis] - previousShip[axis];
+        frame.center[axis] = ship[axis] + delta[axis] * 0.5;
+        frame.previousOffset[axis] = (previousShip[axis] - ship[axis]) * 0.5 +
+            (previousTarget[axis] - target[axis]) * 0.5;
+        if (!std::isfinite(delta[axis]) || !std::isfinite(previousDelta[axis]) ||
+            !std::isfinite(frame.center[axis]) || !std::isfinite(frame.previousOffset[axis])) return std::nullopt;
+    }
+    // Fit both physical envelopes at both ends of the submitted pose interval.
+    // 1.35 leaves margin beyond the perspective sphere-fit factor 1/cos(30deg).
+    const double extent = std::max(std::hypot(delta[0], delta[1], delta[2]),
+        std::hypot(previousDelta[0], previousDelta[1], previousDelta[2])) * 0.5 +
+        std::max(shipRadiusM, targetRadiusM);
+    frame.viewRadiusM = std::max(20.0, extent * 1.35);
+    if (!std::isfinite(extent) || !std::isfinite(frame.viewRadiusM)) return std::nullopt;
+    frame.yawRadians = std::atan2(delta[1], delta[0]);
+    frame.pitchRadians = 0.55;
+    return frame;
+}
+
 inline std::array<double, 3> FlightCameraRay(double x, double y, int width, int height) {
     const double shortDimension = std::max(1, std::min(width, height));
     const double tangent = std::tan(3.14159265358979323846 / 6.0);

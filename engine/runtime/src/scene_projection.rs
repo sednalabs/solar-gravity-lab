@@ -29,6 +29,7 @@ pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
                     .unwrap_or(false),
                 appearance: scene_celestial_appearance(body, star_position_m),
                 spacecraft: snapshot.spacecraft.iter().find(|s|s.body_id==body.body_id).map(|s| solarlab_scene::SceneSpacecraftAppearance {
+                    mesh_kind: s.appearance as u32,
                     attitude_xyzw:[s.attitude.x,s.attitude.y,s.attitude.z,s.attitude.w],
                     main_engine_throttle:if s.propellant_mass_kg>0.0{s.control.throttle}else{0.0},
                 }),

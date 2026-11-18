@@ -240,9 +240,20 @@ pub struct SpacecraftMissionState {
     pub target_surface_crossed: bool,
 }
 
+/// Presentation selection only; it never changes mass, shape or forces.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum SpacecraftAppearance {
+    #[default]
+    Asteria = 1,
+    RelayStation = 2,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SpacecraftState {
     pub body_id: BodyId,
+    #[serde(default)]
+    pub appearance: SpacecraftAppearance,
     pub reference_body_id: Option<BodyId>,
     pub attitude: Quaterniond,
     pub angular_velocity_body_radps: Vector3d,
@@ -261,6 +272,8 @@ pub struct SpacecraftState {
     pub burn_program: Option<SpacecraftBurnProgram>,
     #[serde(default)]
     pub mission: Option<SpacecraftMissionState>,
+    #[serde(default)]
+    pub rendezvous: Option<crate::SpacecraftRendezvousState>,
 }
 impl SpacecraftState {
     #[must_use]
@@ -290,6 +303,17 @@ impl SpacecraftState {
             && self.delivered_delta_v_mps >= 0.0
             && self.main_engine_full_throttle_seconds.is_finite()
             && self.main_engine_full_throttle_seconds >= 0.0
+            && self.rendezvous.as_ref().is_none_or(|r| {
+                r.valid(&self.body_id)
+                    && self.mission.is_none()
+                    && self.propellant_mass_kg <= r.initial_propellant_mass_kg
+                    && (!r.guidance_mode.active()
+                        || (self.burn_program.is_none()
+                            && self.control.throttle == 0.0
+                            && magnitude(self.control.rotation_body) == 0.0
+                            && self.control.attitude_mode == AttitudeMode::Hold
+                            && self.propellant_mass_kg > 0.0))
+            })
             && self.burn_program.as_ref().is_none_or(|p| {
                 p.remaining_full_throttle_seconds.is_finite()
                     && p.remaining_full_throttle_seconds > 0.0
@@ -403,6 +427,7 @@ impl SpacecraftState {
         }
         Self {
             body_id,
+            appearance: SpacecraftAppearance::Asteria,
             reference_body_id,
             attitude: Quaterniond::IDENTITY,
             angular_velocity_body_radps: Vector3d::default(),
@@ -424,6 +449,7 @@ impl SpacecraftState {
             main_engine_full_throttle_seconds: 0.0,
             burn_program: None,
             mission: None,
+            rendezvous: None,
         }
     }
     #[must_use]

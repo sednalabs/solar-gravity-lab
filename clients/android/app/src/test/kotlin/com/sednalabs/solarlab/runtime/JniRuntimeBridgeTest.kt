@@ -18,6 +18,31 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 
 class JniRuntimeBridgeTest {
+    @Test fun invalidRendezvousTargetCannotReplaceTheCurrentWorld() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 84L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        transport.rendezvousTarget = null
+        assertTrue(runCatching { bridge.startRendezvousFlight(REFERENCE_SPACECRAFT_ID) }.isFailure)
+        assertTrue(bridge.isCurrentSession(42L))
+        assertEquals(listOf(84L), transport.destroyedHandles)
+    }
+
+    @Test fun rendezvousBindsACompleteMissionAndPreservesItsNativeTargetIdentity() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 84L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        transport.rendezvousTarget = "saved.station.identity"
+        val signals = bridge.startRendezvousFlight(REFERENCE_SPACECRAFT_ID)
+        assertTrue(bridge.isCurrentSession(84L))
+        assertEquals(listOf(42L), transport.destroyedHandles)
+        assertEquals(listOf(84L to REFERENCE_SPACECRAFT_ID), transport.rendezvousStarts)
+        assertEquals("saved.station.identity", requireNotNull(bridge.rendezvousState(REFERENCE_SPACECRAFT_ID)).targetBodyId)
+        assertTrue(signals.any { it is RuntimeSignal.Connected && it.handle == 84L })
+    }
+
     @Test fun lunarCandidateFailurePreservesTheCurrentSession() = runBlocking {
         val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
             sessionHandles = ArrayDeque(listOf(42L, 84L)))
@@ -632,12 +657,22 @@ class JniRuntimeBridgeTest {
         var probeCommitError: Throwable? = null
         var lunarFlightError: Throwable? = null
         val lunarStarts = mutableListOf<Pair<Long, String>>()
+        val rendezvousStarts = mutableListOf<Pair<Long, String>>()
+        var rendezvousTarget: String? = "rendezvous.station"
         val committedProbeCandidates = mutableListOf<RuntimeBodyState>()
         val probeUndoRequests = mutableListOf<Pair<String, Long>>()
 
         override fun startLunarFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) {
             lunarFlightError?.let { throw it }
             lunarStarts += handle to shipId
+        }
+        override fun startRendezvousFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) {
+            rendezvousStarts += handle to shipId
+        }
+        override fun rendezvousTargetId(handle: Long, shipId: String) = rendezvousTarget
+        override fun rendezvousState(handle: Long, shipId: String) = DoubleArray(27).apply {
+            this[0] = 1.0; this[5] = 1.0; this[6] = 1_000.0
+            this[18] = 25.0; this[19] = 75.0; this[21] = 1_000.0; this[24] = 8_000.0
         }
         override fun flightState(handle: Long, shipId: String) = DoubleArray(44).apply {
             this[0] = 1.0; this[3] = 100.0; this[4] = 500.0; this[5] = 600.0; this[20] = 1.0

@@ -1,5 +1,7 @@
 #include "../../main/cpp/SpacecraftPresentation.h"
 #include "../../main/cpp/ReferenceSpacecraftMesh.h"
+#include "../../main/cpp/RelayStationMesh.h"
+#include "../../main/cpp/SpacecraftMeshBatches.h"
 #include "../../main/cpp/SolarLabPresentation.h"
 #include <cassert>
 #include <iostream>
@@ -63,5 +65,56 @@ int main() {
     assert(minZ < -4 && maxZ > 3.5 && maxZ-minZ < 8); // metres, nose +Z
     assert(maxX-minX > 13 && maxX-minX < 14);
     for(const auto& v:kReferenceExhaust) {assert(v.effect==1);assert(v.z <= -4.029f);}
-    std::cout << "PASS spacecraft geometry, materials, attitude, chase frame, astronomical precision, perspective horizon and shared depth\n";
+    assert(kRelayStationMesh.size() > kReferenceMesh.size() && kRelayStationMesh.size() % 3 == 0);
+    assert(kRelayStationExhaust.empty());
+    for(const auto& v:kRelayStationMesh) {
+        assert(v.x*v.x+v.y*v.y+v.z*v.z <= 12.0f*12.0f);
+        assert(std::abs(v.nx*v.nx+v.ny*v.ny+v.nz*v.nz-1) < 1e-5);
+        assert(v.effect==0);
+    }
+    // Mixed scene order must not attach a station mesh or plume to the tug.
+    const std::array<uint32_t,6> kinds{2,1,99,2,1,0};
+    const auto plan=PlanMeshInstances(kinds);
+    assert((plan.sourceIndices==std::vector<uint32_t>{1,4,0,3}));
+    assert(plan.ranges[0].firstInstance==0 && plan.ranges[0].instanceCount==2);
+    assert(plan.ranges[1].firstInstance==2 && plan.ranges[1].instanceCount==2);
+    const auto stationOnly=PlanMeshInstances(std::array<uint32_t,1>{2});
+    assert(stationOnly.ranges[0].instanceCount==0);
+    assert(stationOnly.ranges[1].firstInstance==0 && stationOnly.ranges[1].instanceCount==1);
+    assert(PlanMeshInstances(std::array<uint32_t,0>{}).sourceIndices.empty());
+    // Both physical envelopes remain inside the perspective frustum through the
+    // complete approach, at AU-scale origins and between submitted pose samples.
+    for(double separation:{1000.0,250.0,75.0}) {
+        const std::array<double,3> ship{149597870700.,-separation,100.};
+        const std::array<double,3> target{149597870700.,0.,100.};
+        const std::array<double,3> previousShip{ship[0]-.125,ship[1]-2,ship[2]};
+        const std::array<double,3> previousTarget{target[0]-.125,target[1]-1,target[2]};
+        const auto frame=EncounterFrame(ship,target,previousShip,previousTarget,8,12);
+        assert(frame && frame->center[0]==ship[0] && frame->center[1]==-separation*.5);
+        assert(frame->previousOffset[0]==-.125 && frame->previousOffset[1]==-1.5);
+        assert(std::abs(frame->yawRadians-pi*.5)<1e-12);
+        const auto basis=solarlab::presentation::MakeCameraBasis(frame->yawRadians,frame->pitchRadians);
+        const double eye=FlightEyeDistance(frame->viewRadiusM);
+        for(double fraction:{0.,.25,.5,.75,1.}) {
+            for(size_t body=0;body<2;++body) {
+                const auto& current=body?target:ship;
+                const auto& previous=body?previousTarget:previousShip;
+                const double radius=body?12.:8.;
+                std::array<double,3> relative{};
+                for(size_t axis=0;axis<3;++axis) relative[axis]=
+                    (previous[axis]-frame->center[axis]-frame->previousOffset[axis])*(1-fraction)+
+                    (current[axis]-frame->center[axis])*fraction;
+                const double cameraZ=eye+relative[0]*basis.forward[0]+relative[1]*basis.forward[1]+relative[2]*basis.forward[2];
+                const double cameraX=relative[0]*basis.right[0]+relative[1]*basis.right[1]+relative[2]*basis.right[2];
+                const double cameraY=relative[0]*basis.up[0]+relative[1]*basis.up[1]+relative[2]*basis.up[2];
+                assert(cameraZ>radius+.1);
+                assert((std::abs(cameraX)+radius)/(cameraZ-radius)<std::tan(pi/6));
+                assert((std::abs(cameraY)+radius)/(cameraZ-radius)<std::tan(pi/6));
+            }
+        }
+    }
+    assert(!EncounterFrame({0,0,0},{NAN,0,0},{0,0,0},{0,0,0},8,12));
+    assert(!EncounterFrame({-1e308,0,0},{1e308,0,0},{-1e308,0,0},{1e308,0,0},8,12));
+    assert(!EncounterFrame({0,0,0},{0,75,0},{0,0,0},{0,75,0},8,1.7e308));
+    std::cout << "PASS spacecraft/station meshes, draw ranges, attitude, astronomical precision, perspective horizon, encounter framing and shared depth\n";
 }

@@ -25,6 +25,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.FlightAssist
@@ -33,6 +34,9 @@ import com.sednalabs.solarlab.runtime.FlightState
 import com.sednalabs.solarlab.runtime.LunarMissionOutcome
 import com.sednalabs.solarlab.runtime.LunarMissionPhase
 import com.sednalabs.solarlab.runtime.LunarMissionState
+import com.sednalabs.solarlab.runtime.RendezvousGuidance
+import com.sednalabs.solarlab.runtime.RendezvousState
+import com.sednalabs.solarlab.runtime.RendezvousStatus
 import com.sednalabs.solarlab.runtime.REFERENCE_SPACECRAFT_ID
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
@@ -44,6 +48,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -249,6 +254,150 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals(0.0, flight(facade).commandedThrottle, 0.0)
     }
 
+    @Test fun stationEncounterReusesFlightControlsAndPersistsNativeGuidance() {
+        assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && !BuildConfig.HOSTED_DEBUG_LITE_MODE)
+        val facade = composeRule.activity.runtimeFacadeForTesting
+        waitUntil(30_000) { facade.uiState.value.connectionState == SessionConnectionState.Active }
+        runBlocking { facade.loadScenario("lab.earth-moon") }
+        advanceAndWait(facade, 42.0)
+        composeRule.onNodeWithTag(FlightTags.LAUNCH).assertIsEnabled().performClick()
+        waitUntil { nodes(FlightTags.ROOT) && runBlocking { facade.flightState() } != null }
+        val oldEpoch = flight(facade).epochSeconds
+        val previousSaves = facade.savedExperiments.value.map { it.id }.toSet()
+        composeRule.onNodeWithTag(RendezvousTags.BRIEF).performScrollToIfPossible().performClick()
+        composeRule.onNodeWithTag(RendezvousTags.START).assertIsEnabled().performClick()
+        waitUntil(30_000) { runBlocking { facade.rendezvousState() } != null && nodes(RendezvousTags.PANEL) }
+        val backup = facade.savedExperiments.value.single { it.id !in previousSaves }
+        val initial = encounter(facade)
+        assertEquals(0.0, initial.epochSeconds, 0.0)
+        assertEquals(RendezvousGuidance.Manual, initial.guidance)
+        assertTrue(initial.targetAvailable)
+        assertTrue(initial.rangeM in 990.0..1_010.0)
+        assertEquals(0.0, requireNotNull(runBlocking { facade.inspectBody(initial.targetBodyId) }).sourceMassKg, 0.0)
+        assertEncounterView(initial.targetBodyId)
+        composeRule.onNodeWithTag(RendezvousTags.RANGE).assertIsDisplayed()
+        composeRule.onNodeWithTag(RendezvousTags.DIRECTION).assertIsDisplayed()
+        capture("rendezvous-departure.png", requireMatchingStage = true)
+
+        composeRule.mainClock.autoAdvance = false
+        composeRule.onNodeWithTag(RendezvousTags.MATCH).assertIsEnabled().performClick()
+        waitUntil { encounter(facade).guidance == RendezvousGuidance.MatchVelocity && facade.uiState.value.snapshot?.paused == false }
+        assertEquals(1.0, requireNotNull(facade.uiState.value.snapshot).simSecondsPerRealSecond, 0.0)
+        advanceAndWait(facade, 90.0)
+        val matched = encounter(facade)
+        assertTrue("Native RCS must remove relative velocity", matched.relativeSpeedMps < .03)
+        assertTrue(matched.rangeM > 900.0)
+        assertTrue(matched.remainingPropellantKg < initial.remainingPropellantKg)
+
+        // Actual held input during real playback exercises force and release;
+        // advancing a Compose clock cannot substitute for spacecraft dynamics.
+        composeRule.onNodeWithTag(FlightTags.PLAY_PAUSE).performClick()
+        waitUntil { facade.uiState.value.snapshot?.paused == false }
+        val right = composeRule.onNodeWithTag(FlightTags.axis("Right")).assertIsDisplayed()
+        right.performTouchInput { down(center) }
+        try {
+            waitUntil { flight(facade).control.translationX > .99 && encounter(facade).guidance == RendezvousGuidance.Manual }
+            val held = flight(facade)
+            assertEquals("Taking over one axis must clear autonomous Y demand", 0.0, held.control.translationY, 0.0)
+            assertEquals("Taking over one axis must clear autonomous Z demand", 0.0, held.control.translationZ, 0.0)
+            waitUntil(15_000) { flight(facade).epochSeconds >= held.epochSeconds + 2.0 }
+        } finally { right.performTouchInput { up() } }
+        waitUntil { !flight(facade).control.hasManualInput && flight(facade).commandedThrottle == 0.0 }
+        runBlocking { facade.applyCommand(RuntimeCommand.PausePlayback) }
+        val releasedFuel = flight(facade).propellantMassKg
+        advanceAndWait(facade, 1.0)
+        assertEquals("Released manual RCS must not leave hidden thrust", releasedFuel, flight(facade).propellantMassKg, 1e-9)
+
+        composeRule.onNodeWithTag(RendezvousTags.APPROACH).assertIsEnabled().performClick()
+        waitUntil { encounter(facade).guidance == RendezvousGuidance.Approach }
+        advanceAndWait(facade, 650.0)
+        val arrived = encounter(facade)
+        assertTrue(arrived.standOffAchieved)
+        assertEquals(RendezvousStatus.Holding, arrived.status)
+        assertTrue(arrived.standOffErrorM < 1.0)
+        assertTrue(arrived.relativeSpeedMps < .02)
+        assertFalse(arrived.keepOutEntered)
+        assertTrue(arrived.closestObservedRangeM > arrived.keepOutDistanceM)
+        assertEncounterView(arrived.targetBodyId)
+        capture("rendezvous-stand-off.png", requireMatchingStage = true)
+
+        // Import paused active guidance through the production save boundary;
+        // old-session UI disposal must not cut the newly imported control state.
+        val guidedName = "Guided station hold ${System.currentTimeMillis()}"
+        runBlocking { facade.saveExperiment(guidedName) }
+        val guidedSave = facade.savedExperiments.value.first { it.name == guidedName }
+        advanceAndWait(facade, 10.0)
+        runBlocking { facade.loadExperiment(guidedSave.id) }
+        waitUntil { encounter(facade).epochSeconds == arrived.epochSeconds && nodes(RendezvousTags.PANEL) }
+        assertEncounterView(arrived.targetBodyId)
+        val restored = encounter(facade)
+        assertEquals(RendezvousGuidance.Approach, restored.guidance)
+        assertEquals(arrived.targetBodyId, restored.targetBodyId)
+        assertEquals(arrived.closestObservedRangeM.toBits(), restored.closestObservedRangeM.toBits())
+        assertEquals(arrived.remainingPropellantKg.toBits(), restored.remainingPropellantKg.toBits())
+        assertTrue(facade.uiState.value.snapshot?.paused == true)
+        advanceAndWait(facade, 10.0)
+        assertTrue(encounter(facade).standOffErrorM < 1.0)
+        assertEquals("Old-session disposal must not silently cancel restored guidance", RendezvousGuidance.Approach, encounter(facade).guidance)
+        saveAndReopenEncounterThroughUi(facade, backup.id, oldEpoch, initial.targetBodyId)
+    }
+
+    private fun saveAndReopenEncounterThroughUi(facade: RuntimeFacade, backupId: String, oldEpoch: Double, targetId: String) {
+        // The user-facing Saves flow intentionally cuts guidance before opening.
+        composeRule.onNodeWithTag(FlightTags.SAVE).performClick()
+        waitUntil { nodes(LabTags.SAVED_DIALOG) && encounter(facade).guidance == RendezvousGuidance.Manual }
+        val savedName = "Station rendezvous ${System.currentTimeMillis()}"
+        composeRule.onNodeWithTag(LabTags.SAVE_NAME).performTextReplacement(savedName)
+        composeRule.onNodeWithTag(LabTags.SAVE_COMMIT).performClick()
+        waitUntil { facade.savedExperiments.value.any { it.name == savedName } }
+        val userSave = facade.savedExperiments.value.first { it.name == savedName }
+        androidx.test.espresso.Espresso.pressBack()
+        runBlocking { facade.loadExperiment(backupId) }
+        assertEquals(oldEpoch.toBits(), flight(facade).epochSeconds.toBits())
+        assertTrue(runBlocking { facade.rendezvousState() } == null)
+        assertTrue(runBlocking { facade.inspectBody(targetId) } == null)
+        runBlocking { facade.loadExperiment(userSave.id) }
+        waitUntil { encounter(facade).standOffAchieved && nodes(RendezvousTags.PANEL) }
+        assertEquals(targetId, encounter(facade).targetBodyId)
+        assertEquals(RendezvousGuidance.Manual, encounter(facade).guidance)
+        composeRule.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        waitUntil { composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && nodes(RendezvousTags.PANEL) }
+        assertEncounterView(targetId)
+        composeRule.onNodeWithTag(RendezvousTags.APPROACH).assertIsDisplayed()
+        capture("rendezvous-restored-landscape.png", requireMatchingStage = true)
+    }
+
+    private fun encounter(facade: RuntimeFacade): RendezvousState = runBlocking { requireNotNull(facade.rendezvousState()) }
+
+    private fun assertEncounterView(targetId: String) {
+        var stableSince = 0L
+        var diagnostic = "No submitted encounter view"
+        try {
+            waitUntil {
+                var framed = false
+                composeRule.runOnUiThread {
+                    val host = findHost(composeRule.activity.window.decorView)
+                    val frame = host?.currentLabViewportState()
+                    val ship = frame?.bodies?.firstOrNull { it.bodyId == REFERENCE_SPACECRAFT_ID }
+                    val target = frame?.bodies?.firstOrNull { it.bodyId == targetId }
+                    if (host != null && frame != null && ship != null && target != null) {
+                        val midpoint = (ship.worldPositionM + target.worldPositionM) * .5
+                        val range = labLength(ship.worldPositionM - target.worldPositionM)
+                        diagnostic = "radius=${frame.camera.viewRadiusM} range=$range shipRadius=${ship.radiusPx} targetRadius=${target.radiusPx}"
+                        framed = host.selectedBodyId() == REFERENCE_SPACECRAFT_ID &&
+                            frame.camera.viewRadiusM >= 20.0 && frame.camera.viewRadiusM < 2 * range.coerceAtLeast(50.0) &&
+                            labLength(frame.camera.centerM - midpoint) < 10.0 && listOf(ship, target).all {
+                                !it.occluded && it.radiusPx >= 1f && it.xPx in 0f..frame.widthPx.toFloat() &&
+                                    it.yPx in 0f..frame.heightPx.toFloat()
+                            }
+                    }
+                }
+                if (!framed) stableSince = 0L else if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
+                framed && SystemClock.uptimeMillis() - stableSince >= 500L
+            }
+        } catch (error: Throwable) { throw AssertionError("Both native encounter meshes must be framed: $diagnostic", error) }
+    }
+
     private fun advanceAndWait(facade: RuntimeFacade, seconds: Double) {
         val target = requireNotNull(facade.uiState.value.snapshot).epochSeconds + seconds
         runBlocking { facade.applyCommand(RuntimeCommand.PausePlayback); facade.applyCommand(RuntimeCommand.AdvanceEpoch(seconds)) }
@@ -263,7 +412,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         predicate()
     }
 
-    private fun capture(name: String, requireCloseShip: Boolean = false) {
+    private fun capture(name: String, requireCloseShip: Boolean = false, requireMatchingStage: Boolean = false) {
         if (requireCloseShip) assertCloseFlightView(name)
         var surface: SurfaceView? = null
         var submitted: LabViewportState? = null
@@ -302,7 +451,7 @@ class OrbitalFlightJourneyInstrumentationTest {
                 val windowImage = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
                 window = windowImage
                 attempt += 1
-                if (requireCloseShip) {
+                if (requireCloseShip || requireMatchingStage) {
                     val matches = nativeWindowMatches(nativeImage, windowImage, origin)
                     matchCount = matches.first
                     sampleCount = matches.second

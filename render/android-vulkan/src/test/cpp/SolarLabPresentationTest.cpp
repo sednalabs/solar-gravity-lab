@@ -185,6 +185,7 @@ void TestGpuBufferAndCommandReuse() {
     recorded.trailStrips = {128, 128};
     recorded.medium = {true, {3, 4, 5, 6, 0, 0}, 1024, 16, 0, 0};
     recorded.far = {true, {7, 8, 9, 10, 11, 12}, 4096, 64, 800, 100};
+    recorded.meshInstanceCounts = {1, 1};
     assert(recorded == SceneCommandState(recorded));
     // New payload bytes and camera uniforms use these same bindings; every recorded
     // count, indirect dependency, fallback or strip boundary must invalidate reuse.
@@ -216,6 +217,12 @@ void TestGpuBufferAndCommandReuse() {
     assert(changed != recorded);
     changed = recorded;
     changed.trailStrips = {127, 129};
+    assert(changed != recorded);
+    changed = recorded;
+    changed.meshInstanceCounts = {2, 0}; // Same total instances, different mesh draw ranges.
+    assert(changed != recorded);
+    changed = recorded;
+    ++changed.draws[8].bufferGeneration; // Station buffer replaced after device recreation.
     assert(changed != recorded);
 }
 

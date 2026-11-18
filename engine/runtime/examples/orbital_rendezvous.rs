@@ -1,46 +1,42 @@
 //! Run: cargo run -p solarlab-runtime --example orbital_rendezvous --release
 //! Pass `match` to demonstrate velocity matching instead of stand-off approach.
+//! A single command starts native guidance; no host-side control timer is used.
 use solarlab_domain::{BranchId, ScenarioId, TimelineSemantics};
 use solarlab_hardware::HardwareProfile;
 use solarlab_physics::{CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
 use solarlab_runtime::{
-    RendezvousGuidance, RendezvousScenario, RendezvousStatus, RuntimeConfig, WorldCommand,
-    WorldRuntime,
+    RendezvousGuidanceMode, RendezvousStatus, RuntimeConfig, WorldCommand, WorldRuntime,
 };
 
-fn tick(world: &mut WorldRuntime, scenario: &RendezvousScenario, guidance: RendezvousGuidance) {
+const SHIP: &str = "flight.odyssey";
+fn tick(world: &mut WorldRuntime) {
     world
-        .apply_rendezvous_guidance(scenario, guidance, 0)
-        .expect("bounded RCS guidance");
-    // A 0.5 s control cadence; the production integrator uses at most 0.05 s while firing.
-    world
-        .apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 0.5 }, 0)
-        .expect("native physics step");
+        .apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 1.0 }, 0)
+        .expect("native guided integration");
 }
-
-fn print(world: &WorldRuntime, scenario: &RendezvousScenario, guidance: RendezvousGuidance) {
+fn print(world: &WorldRuntime) {
     let t = world
-        .rendezvous_telemetry(scenario)
-        .expect("live target-relative telemetry");
-    let ship = world.spacecraft_by_id(&scenario.chaser_body_id.0).unwrap();
-    let status = world.rendezvous_control(scenario, guidance).unwrap().1;
-    println!("t={:6.1} s | range={:8.3} m | relative speed={:6.3} m/s | closing={:7.3} m/s | fuel={:8.3} kg | {status:?}",
-        t.epoch_seconds, t.range_m, t.relative_speed_mps, t.closing_speed_mps, ship.propellant_mass_kg);
+        .rendezvous_flight_telemetry(SHIP)
+        .expect("native rendezvous telemetry");
+    println!("t={:6.1} s | range={:8.3} m | relative speed={:7.4} m/s | closing={:7.3} m/s | fuel={:8.3} kg | {:?}",
+        t.epoch_seconds, t.range_m, t.relative_speed_mps, t.closing_speed_mps, t.remaining_propellant_kg, t.status);
 }
-
 fn main() {
     let argument = std::env::args().nth(1);
     assert!(
         argument.as_deref().is_none_or(|s| s == "match"),
         "Optional argument: match"
     );
-    let guidance = if argument.is_some() {
-        RendezvousGuidance::velocity_match()
+    let mode = if argument.is_some() {
+        RendezvousGuidanceMode::MatchVelocity
     } else {
-        RendezvousGuidance::default()
+        RendezvousGuidanceMode::Approach
     };
-    let duration = if guidance.approach { 650 } else { 90 };
-    let scenario = RendezvousScenario::default();
+    let duration = if mode == RendezvousGuidanceMode::Approach {
+        650
+    } else {
+        90
+    };
     let mut world = WorldRuntime::new(
         ScenarioId(solarlab_data::EARTH_MOON_LAB_ID.into()),
         BranchId("rendezvous-demo".into()),
@@ -49,7 +45,7 @@ fn main() {
                 solver_backend: SolverBackend::ReferenceScalar,
                 integrator: IntegratorKind::LeapfrogKickDriftKick,
                 collision_model: CollisionModel::None,
-                max_substep_seconds: 0.05,
+                max_substep_seconds: 30.0,
             },
             timeline_semantics: TimelineSemantics::BranchedSandbox,
             live_updates_enabled: false,
@@ -61,25 +57,18 @@ fn main() {
         .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0)
         .unwrap();
     world.apply_command(WorldCommand::PausePlayback, 0).unwrap();
-    world.spawn_rendezvous_scenario(&scenario, 0).unwrap();
-    let station = world.spacecraft_by_id(&scenario.target_body_id.0).unwrap();
-    assert!(station.engines.is_empty());
-    let initial_fuel = world
-        .spacecraft_by_id(&scenario.chaser_body_id.0)
-        .unwrap()
-        .propellant_mass_kg;
-    println!("Passive station and RCS chaser, 1 km apart in approximate 400 km Earth orbits.");
-    print(&world, &scenario, guidance);
+    world.spawn_rendezvous_flight(SHIP, 0).unwrap();
+    world.set_rendezvous_guidance(SHIP, mode, 0).unwrap();
+    println!("Native persistent RCS guidance: passive Relay station and Asteria chaser, 1 km apart in approximate 400 km Earth orbits.");
+    print(&world);
     let mut resumed = None;
     let mut save_size = 0;
-    let mut nearest = f64::INFINITY;
-    for step in 1..=duration * 2 {
-        tick(&mut world, &scenario, guidance);
+    for second in 1..=duration {
+        tick(&mut world);
         if let Some(reopened) = resumed.as_mut() {
-            tick(reopened, &scenario, guidance);
+            tick(reopened);
         }
-        nearest = nearest.min(world.rendezvous_telemetry(&scenario).unwrap().range_m);
-        if step == duration {
+        if second == duration / 2 {
             let saved = world.export_saved_session().unwrap();
             save_size = saved.len();
             resumed = Some(
@@ -87,33 +76,25 @@ fn main() {
                     .unwrap(),
             );
         }
-        if step % 120 == 0 || step == duration * 2 {
-            print(&world, &scenario, guidance);
+        if second % 60 == 0 || second == duration {
+            print(&world);
         }
     }
-    let t = world.rendezvous_telemetry(&scenario).unwrap();
-    assert!(nearest > t.keep_out_distance_m, "keep-out margin crossed");
-    if guidance.approach {
-        assert_eq!(
-            world.rendezvous_control(&scenario, guidance).unwrap().1,
-            RendezvousStatus::Holding
-        );
+    let t = world.rendezvous_flight_telemetry(SHIP).unwrap();
+    assert!(!t.keep_out_entered && t.closest_observed_range_m > t.keep_out_distance_m);
+    if mode == RendezvousGuidanceMode::Approach {
+        assert_eq!(t.status, RendezvousStatus::Holding);
+        assert!(t.stand_off_achieved && t.stand_off_error_m < 1.0);
     } else {
-        assert!(t.relative_speed_mps < 0.03);
-        assert!(t.range_m > 900.0);
+        assert!(t.relative_speed_mps < 0.03 && t.range_m > 900.0);
     }
     let reopened = resumed.unwrap();
     assert_eq!(world.snapshot().bodies, reopened.snapshot().bodies);
     assert_eq!(world.snapshot().spacecraft, reopened.snapshot().spacecraft);
-    let fuel_used = initial_fuel
-        - world
-            .spacecraft_by_id(&scenario.chaser_body_id.0)
-            .unwrap()
-            .propellant_mass_kg;
     println!(
-        "Accepted: {:.3} m stand-off, {:.5} m/s relative speed, {:.3} kg RCS fuel used.",
-        t.range_m, t.relative_speed_mps, fuel_used
+        "Accepted: {:.3} m separation, {:.5} m/s relative speed, {:.3} kg RCS fuel used.",
+        t.range_m, t.relative_speed_mps, t.propellant_used_kg
     );
-    println!("Save/resume future matched exactly ({save_size} bytes); both vehicles have zero gravitational source mass.");
-    println!("Full native world gravity and finite RCS burns; station-fixed guidance, no contact or docking simulation.");
+    println!("Active guidance save/resume future matched exactly ({save_size} bytes); mode, target and progress persisted.");
+    println!("Full native world gravity and finite RCS burns; station-fixed guidance, no collision, contact or docking simulation.");
 }

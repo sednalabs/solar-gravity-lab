@@ -414,7 +414,7 @@ fn adapt_camera(camera: &CameraPose, frame_origin_m: Vector3d) -> VulkanCameraPa
 
 fn adapt_body(body: &SceneBody, frame_origin_m: Vector3d) -> VulkanBodyInstance {
     VulkanBodyInstance {
-        mesh_kind: u32::from(body.spacecraft.is_some()),
+        mesh_kind: body.spacecraft.map_or(0, |ship| ship.mesh_kind),
         attitude_xyzw: body.spacecraft.map_or([0.0, 0.0, 0.0, 1.0], |ship| {
             ship.attitude_xyzw.map(|v| v as f32)
         }),
@@ -729,6 +729,7 @@ mod tests {
         scene.bodies[0].position_m.x = scene.camera.target_m.x + 6_800_000.125;
         scene.bodies[0].kind = SceneBodyKind::Spacecraft;
         scene.bodies[0].spacecraft = Some(solarlab_scene::SceneSpacecraftAppearance {
+            mesh_kind: 1,
             attitude_xyzw: [0.0, 0.6, 0.0, 0.8],
             main_engine_throttle: 0.42,
         });
@@ -743,6 +744,24 @@ mod tests {
             ship.mesh_position_from_origin_m[0],
             f64::from(ship.position_from_origin_m.x)
         );
+        assert_eq!(scene, before);
+    }
+
+    #[test]
+    fn station_mesh_identity_preserves_shared_authoritative_pose() {
+        let mut scene = sample_scene();
+        scene.bodies[0].body_id = BodyId("rendezvous.station".into());
+        scene.bodies[0].kind = SceneBodyKind::Spacecraft;
+        scene.bodies[0].spacecraft = Some(solarlab_scene::SceneSpacecraftAppearance {
+            mesh_kind: 2,
+            attitude_xyzw: [0.0, 0.0, 0.0, 1.0],
+            main_engine_throttle: 0.0,
+        });
+        let before = scene.clone();
+        let packet = VulkanSceneAdapter::default().adapt(&scene);
+        assert_eq!(packet.body_instances[0].mesh_kind, 2);
+        assert_eq!(packet.body_instances[0].body_id, scene.bodies[0].body_id);
+        assert_eq!(packet.body_instances[0].engine_throttle, 0.0);
         assert_eq!(scene, before);
     }
 

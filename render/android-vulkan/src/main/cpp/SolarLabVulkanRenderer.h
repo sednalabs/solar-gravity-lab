@@ -3,6 +3,7 @@
 #include "SolarLabGpuReuse.h"
 #include "SolarLabVulkanCapabilities.h"
 #include "QcomTileMemory.h"
+#include "SpacecraftMeshBatches.h"
 
 #include <android/asset_manager.h>
 #include <android/native_window.h>
@@ -46,6 +47,7 @@ public:
 
     struct SpacecraftInput {
         uint32_t authoritativeIndex = 0;
+        uint32_t meshKind = solarlab::spacecraft::kAsteriaMeshKind;
         std::array<double, 3> positionM{};
         std::array<double, 3> previousPositionM{};
         std::array<float, 4> attitudeXyzw{0, 0, 0, 1};
@@ -368,8 +370,11 @@ private:
         DrawStreamBuffers spacecraft;
         GpuBuffer referenceMesh;
         GpuBuffer referenceExhaust;
+        GpuBuffer relayStationMesh;
         bool referenceMeshUploaded = false;
         bool referenceExhaustUploaded = false;
+        bool relayStationMeshUploaded = false;
+        std::array<solarlab::spacecraft::MeshInstanceRange, 2> meshRanges{};
         DrawStreamBuffers tracerNear;
         DrawStreamBuffers tracerMedium;
         DrawStreamBuffers tracerFar;

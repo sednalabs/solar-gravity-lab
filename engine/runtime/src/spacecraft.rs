@@ -88,7 +88,7 @@ impl WorldRuntime {
                     return Err(RuntimeError::DuplicateBody(body.body_id.clone()));
                 }
                 if !valid_ship_body(body, spacecraft)
-                    || !valid_mission(world, spacecraft)
+                    || !valid_mission(world, body, spacecraft)
                     || spacecraft.reference_body_id.as_ref().is_some_and(|id| {
                         *id == body.body_id || !world.bodies.iter().any(|b| b.body_id == *id)
                     })
@@ -131,11 +131,17 @@ impl WorldRuntime {
                     return Err(RuntimeError::InvalidFlightState);
                 }
             }
+            WorldCommand::SetRendezvousGuidance { body_id, mode } => {
+                self.rendezvous_command_control(body_id, *mode)?;
+            }
             WorldCommand::SetPlaybackRate {
                 sim_seconds_per_real_second,
             } if *sim_seconds_per_real_second > 1.0
                 && world.spacecraft.iter().any(|s| {
                     s.has_powered_input()
+                        || s.rendezvous
+                            .as_ref()
+                            .is_some_and(|r| r.guidance_mode.active())
                         || solarlab_domain::spacecraft::magnitude(s.control.rotation_body) > 0.0
                 }) =>
             {
@@ -170,16 +176,76 @@ pub(super) fn valid_ship_body(body: &BodyState, ship: &SpacecraftState) -> bool 
         && finite(body.velocity_mps)
 }
 
-pub(super) fn valid_mission(world: &BranchWorldState, ship: &SpacecraftState) -> bool {
-    ship.mission.as_ref().is_none_or(|mission| {
-        mission.launch_epoch_seconds <= world.epoch_seconds
-            && mission.closest_approach_epoch_seconds <= world.epoch_seconds + 1e-6
-            && mission.target_body_id != ship.body_id
-            && world
-                .bodies
-                .iter()
-                .any(|b| b.body_id == mission.target_body_id)
-    })
+pub(super) fn valid_mission(
+    world: &BranchWorldState,
+    body: &BodyState,
+    ship: &SpacecraftState,
+) -> bool {
+    let valid_rendezvous = ship.rendezvous.as_ref().is_none_or(|r| {
+        if r.launch_epoch_seconds > world.epoch_seconds
+            || r.closest_observed_epoch_seconds > world.epoch_seconds + 1e-6
+        {
+            return false;
+        }
+        if !r.guidance_mode.active() {
+            return true;
+        }
+        if ship.reference_body_id.is_none()
+            || !solarlab_physics::rendezvous::supports_guidance(ship)
+        {
+            return false;
+        }
+        let Some(target) = world.bodies.iter().find(|b| b.body_id == r.target_body_id) else {
+            return false;
+        };
+        let Some(target_ship) = world
+            .spacecraft
+            .iter()
+            .find(|s| s.body_id == r.target_body_id)
+        else {
+            return false;
+        };
+        let frame = solarlab_domain::LocalReferenceFrame {
+            origin_m: target.position_m,
+            velocity_mps: target.velocity_mps,
+            attitude: target_ship.attitude,
+            angular_velocity_world_radps: target_ship
+                .attitude
+                .rotate(target_ship.angular_velocity_body_radps),
+        };
+        let guidance = if r.guidance_mode == RendezvousGuidanceMode::Approach {
+            RendezvousGuidance::default()
+        } else {
+            RendezvousGuidance::velocity_match()
+        };
+        solarlab_physics::rendezvous::observe(
+            body.position_m,
+            body.velocity_mps,
+            body.radius_m,
+            frame,
+            target.radius_m,
+        )
+        .and_then(|observation| {
+            solarlab_physics::rendezvous::control(
+                ship,
+                body.velocity_mps,
+                frame,
+                &observation,
+                guidance,
+            )
+        })
+        .is_ok()
+    });
+    valid_rendezvous
+        && ship.mission.as_ref().is_none_or(|mission| {
+            mission.launch_epoch_seconds <= world.epoch_seconds
+                && mission.closest_approach_epoch_seconds <= world.epoch_seconds + 1e-6
+                && mission.target_body_id != ship.body_id
+                && world
+                    .bodies
+                    .iter()
+                    .any(|b| b.body_id == mission.target_body_id)
+        })
 }
 
 pub(super) fn bindings(world: &BranchWorldState) -> Vec<SpacecraftBinding> {
@@ -206,6 +272,23 @@ pub(super) fn bindings(world: &BranchWorldState) -> Vec<SpacecraftBinding> {
                 body_index,
                 reference_body_index,
                 mission_target_index,
+                rendezvous_target_body_index: state.rendezvous.as_ref().and_then(|r| {
+                    world
+                        .bodies
+                        .iter()
+                        .position(|b| b.body_id == r.target_body_id)
+                }),
+                rendezvous_target_spacecraft_index: state.rendezvous.as_ref().and_then(|r| {
+                    world
+                        .spacecraft
+                        .iter()
+                        .position(|s| s.body_id == r.target_body_id)
+                }),
+                rendezvous_target_radius_m: state
+                    .rendezvous
+                    .as_ref()
+                    .and_then(|r| world.bodies.iter().find(|b| b.body_id == r.target_body_id))
+                    .map_or(0.0, |b| b.radius_m),
                 reference_radius_m: reference_body_index.map_or(0.0, |i| world.bodies[i].radius_m),
                 target_radius_m: mission_target_index.map_or(0.0, |i| world.bodies[i].radius_m),
                 body_radius_m: world.bodies[body_index].radius_m,
