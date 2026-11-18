@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -74,6 +75,10 @@ class StageFirstSearchInteractionInstrumentationTest {
                 .assertIsDisplayed().assertTextContains("Frame requested · Earth")
             val firstObserved = composeRule.mainClock.currentTime
             composeRule.mainClock.advanceTimeBy(1200)
+            // Publish delayed state before checking a timer checkpoint. With a
+            // manual clock, semantic queries do not advance pending recompositions.
+            composeRule.runOnUiThread { Snapshot.sendApplyNotifications() }
+            composeRule.mainClock.advanceTimeByFrame()
             searchAndFrameEarth {
                 // The first event must still be active immediately before the second click.
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
@@ -83,9 +88,13 @@ class StageFirstSearchInteractionInstrumentationTest {
             composeRule.mainClock.advanceTimeByFrame()
             val secondObserved = composeRule.mainClock.currentTime
             composeRule.mainClock.advanceTimeBy(firstObserved + 2300 - secondObserved)
+            composeRule.runOnUiThread { Snapshot.sendApplyNotifications() }
+            composeRule.mainClock.advanceTimeByFrame()
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
                 .assertIsDisplayed().assertTextContains("Frame requested · Earth")
             composeRule.mainClock.advanceTimeBy(secondObserved + 2300 - composeRule.mainClock.currentTime)
+            composeRule.runOnUiThread { Snapshot.sendApplyNotifications() }
+            composeRule.mainClock.advanceTimeByFrame()
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
                 .assertCountEquals(0)
         } finally {
