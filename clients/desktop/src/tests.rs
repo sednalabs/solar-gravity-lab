@@ -88,9 +88,35 @@ fn data_authored_vehicles_are_flyable_without_desktop_special_cases() {
             .unwrap()
             > 0.8
     );
+    session
+        .handle(Action::Select {
+            body_id: ids[0].clone(),
+        })
+        .unwrap();
+    let saved = session.world.export_saved_session().unwrap();
+    session.import(&saved).unwrap();
+    assert_eq!(
+        session.selected, ids[0],
+        "Portable saves retain the chosen spacecraft"
+    );
     let previous = session.world.export_saved_session().unwrap();
     assert!(session.import(br#"{"format":"unknown"}"#).is_err());
     assert_eq!(previous, session.world.export_saved_session().unwrap());
+}
+
+#[test]
+fn a_third_catalog_visual_keeps_its_native_identity() {
+    let mut session = FlightSession::new().unwrap();
+    session
+        .import(include_bytes!(
+            "../../../engine/data/authoring/pathfinder.scenario.json"
+        ))
+        .unwrap();
+    let state = session.state().unwrap();
+    assert_eq!(state["ship"]["name"], "Pathfinder surveyor");
+    assert_eq!(state["ship"]["visual"]["assetId"], "example:pathfinder");
+    assert_eq!(state["ship"]["visual"]["meshKind"], 3);
+    assert_eq!(state["crafts"][0]["visual"], state["ship"]["visual"]);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 import base64
 import struct
+import hashlib
 import copy
 import json
 from pathlib import Path
@@ -33,6 +34,11 @@ class SpacecraftCatalogTests(unittest.TestCase):
         assets = compile_catalog(check=True)
         self.assertEqual([a['mesh_kind'] for a in assets], [1, 2, 3])
         self.assertEqual([len(a['vertices']) for a in assets], [7428, 17556, 3348])
+        for asset in assets:
+            payload = (ROOT / f'engine/data/authoring/assets/compiled/{asset["mesh_kind"]}.vertices.bin').read_bytes()
+            self.assertEqual(len(payload), len(asset['vertices']) * 13 * 4)
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), asset['geometry_sha256'])
+            self.assertEqual(payload, b''.join(struct.pack('<13f', *v) for v in asset['vertices']))
 
     def test_added_catalog_entry_generates_runtime_binding_and_native_draw_registration(self):
         def add(doc):
@@ -97,6 +103,16 @@ class SpacecraftCatalogTests(unittest.TestCase):
             generated = Path(directory)/'engine/data/src/spacecraft_assets.rs'
             generated.write_text(generated.read_text().replace('example:pathfinder', 'stale:pathfinder'))
             with self.assertRaisesRegex(ValueError, 'stale generated'):
+                compile_catalog(output_root=directory, check=True)
+
+    def test_stale_binary_payload_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            compile_catalog(output_root=directory)
+            generated = Path(directory)/'engine/data/authoring/assets/compiled/3.vertices.bin'
+            changed = bytearray(generated.read_bytes())
+            changed[0] ^= 1
+            generated.write_bytes(changed)
+            with self.assertRaisesRegex(ValueError, 'stale generated output.*3.vertices.bin'):
                 compile_catalog(output_root=directory, check=True)
 
     def test_source_geometry_change_changes_bound_digest(self):

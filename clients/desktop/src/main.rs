@@ -187,13 +187,44 @@ fn serve(mut stream: TcpStream, session: &Arc<Mutex<FlightSession>>, host: &str,
         return;
     }
     if request.method == "GET" {
+        if request.path == "/assets/spacecraft.json" {
+            let assets: Vec<_> = solarlab_data::SPACECRAFT_VISUAL_ASSETS
+                .iter()
+                .map(|asset| {
+                    json!({"assetId":asset.asset_id,"meshKind":asset.mesh_kind,
+                    "geometrySha256":asset.geometry_sha256,"framingRadiusM":asset.framing_radius_m,
+                    "url":format!("/assets/spacecraft/{}.bin",asset.mesh_kind)})
+                })
+                .collect();
+            respond(
+                &mut stream,
+                200,
+                "application/json",
+                json!({"vertexStrideFloats":13,"assets":assets})
+                    .to_string()
+                    .as_bytes(),
+                false,
+            );
+            return;
+        }
+        for asset in solarlab_data::SPACECRAFT_VISUAL_ASSETS {
+            if request.path == format!("/assets/spacecraft/{}.bin", asset.mesh_kind) {
+                respond(
+                    &mut stream,
+                    200,
+                    "application/octet-stream",
+                    asset.vertex_payload,
+                    false,
+                );
+                return;
+            }
+        }
         let asset: Option<(&str, &[u8])> = match request.path.as_str() {
             "/" => Some(("text/html; charset=utf-8", include_bytes!("../web/index.html"))),
             "/flight.css" => Some(("text/css; charset=utf-8", include_bytes!("../web/flight.css"))),
             "/flight.js" => Some(("text/javascript; charset=utf-8", include_bytes!("../web/flight.js"))),
             "/renderer.js" => Some(("text/javascript; charset=utf-8", include_bytes!("../web/renderer.js"))),
-            "/assets/asteria.gltf" => Some(("model/gltf+json", include_bytes!("../../../render/android-vulkan/assets-src/asteria.gltf"))),
-            "/assets/relay.gltf" => Some(("model/gltf+json", include_bytes!("../../../render/android-vulkan/assets-src/relay-station.gltf"))),
+            "/favicon.svg" => Some(("image/svg+xml", br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#0b1824"/><g fill="none" stroke="#9be6d9" stroke-width="1.5"><circle cx="20" cy="20" r="16"/><path d="M20 7 29 29 20 24 11 29Z"/></g></svg>"##)),
             "/assets/earth.png" => Some(("image/png", include_bytes!("../../../render/android-vulkan/src/main/assets/solarlab/surfaces/earth-nasa.png"))),
             "/assets/moon.jpg" => Some(("image/jpeg", include_bytes!("../../../render/android-vulkan/src/main/assets/solarlab/surfaces/moon-nasa.jpg"))),
             _ => None,

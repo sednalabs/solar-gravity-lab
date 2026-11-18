@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 use solarlab_domain::{
-    AttitudeMode, BodyId, BranchId, CheckpointId, FlightControl, ScenarioId, TimelineSemantics,
-    Vector3d,
+    AttitudeMode, BodyId, BranchId, CheckpointId, FlightControl, ScenarioId, SpacecraftState,
+    TimelineSemantics, Vector3d,
 };
 use solarlab_hardware::HardwareProfile;
 use solarlab_history::OrbitArchiveQuery;
@@ -65,6 +65,22 @@ fn runtime_error(error: impl std::fmt::Debug) -> String {
     format!("{error:?}")
 }
 
+fn visual_asset(ship: &SpacecraftState) -> Value {
+    let binding = ship.authored.as_ref().and_then(|a| a.visual_asset.as_ref());
+    let record = if let Some(binding) = binding {
+        solarlab_data::spacecraft_visual_asset(&binding.asset_id)
+    } else {
+        solarlab_data::SPACECRAFT_VISUAL_ASSETS
+            .iter()
+            .find(|asset| asset.mesh_kind == ship.appearance as u32)
+    };
+    match record {
+        Some(asset) => json!({"assetId":asset.asset_id,"meshKind":asset.mesh_kind,
+            "geometrySha256":asset.geometry_sha256,"framingRadiusM":asset.framing_radius_m}),
+        None => Value::Null,
+    }
+}
+
 impl FlightSession {
     pub fn new() -> Result<Self, String> {
         let mut world = WorldRuntime::new(
@@ -119,12 +135,14 @@ impl FlightSession {
     }
 
     pub fn tick(&mut self, seconds: f64) {
-        let needs_release = !self.world.snapshot().playback.paused
-            || self
-                .world
-                .spacecraft_by_id(&self.selected)
-                .is_some_and(|ship| ship.control != FlightControl::default());
-        if self.last_heartbeat.elapsed().as_secs_f64() > 1.5 && needs_release {
+        let disconnected = self.last_heartbeat.elapsed().as_secs_f64() > 1.5;
+        let needs_release = disconnected
+            && (!self.world.snapshot().playback.paused
+                || self
+                    .world
+                    .spacecraft_by_id(&self.selected)
+                    .is_some_and(|ship| ship.control != FlightControl::default()));
+        if needs_release {
             let _ = self.cut(true);
             self.generation += 1;
             self.notice = Some(
@@ -151,13 +169,19 @@ impl FlightSession {
             .world
             .body_by_id(&telemetry.reference_body_id)
             .ok_or("Reference body unavailable")?;
-        let name = ship
-            .authored
-            .as_ref()
-            .map_or("Odyssey", |a| a.display_name.as_str());
+        let name = ship.authored.as_ref().map_or_else(
+            || {
+                if self.selected == SHIP {
+                    "Odyssey"
+                } else {
+                    &self.selected
+                }
+            },
+            |a| a.display_name.as_str(),
+        );
         let crafts: Vec<_> = snapshot.spacecraft.iter().filter(|s| self.world.flight_telemetry(&s.body_id.0).is_some())
-            .map(|s| json!({"id": s.body_id.0, "name": s.authored.as_ref().map_or(s.body_id.0.as_str(), |a| a.display_name.as_str()),
-                "appearance": s.appearance, "attitude": s.attitude,
+            .map(|s| json!({"id": s.body_id.0, "name": s.authored.as_ref().map_or_else(|| if s.body_id.0 == SHIP { "Odyssey" } else { s.body_id.0.as_str() }, |a| a.display_name.as_str()),
+                "appearance": s.appearance, "visual":visual_asset(s), "attitude": s.attitude,
                 "position": self.world.body_by_id(&s.body_id.0).map(|b| difference(b.position_m, host.position_m))})).collect();
         let bodies: Vec<_> = snapshot.bodies.iter().filter(|b| b.source_mass_kg > 0.0)
             .map(|b| json!({"id": b.body_id.0, "radius": b.radius_m, "position": difference(b.position_m, host.position_m),
@@ -177,7 +201,7 @@ impl FlightSession {
             "scenario": snapshot.scenario_id.0, "branch": snapshot.branch_id.0, "notice": self.notice,
             "checkpoint": self.checkpoint.is_some(), "settings": self.world.scientific_settings(),
             "nextControlSequence": self.last_control_sequence.saturating_add(1),
-            "ship": {"id": self.selected, "name": name, "appearance": ship.appearance,
+            "ship": {"id": self.selected, "name": name, "appearance": ship.appearance, "visual":visual_asset(ship),
                 "position": vector(telemetry.relative_position_m), "velocity": vector(telemetry.relative_velocity_mps),
                 "attitude": ship.attitude, "spin": vector(ship.angular_velocity_body_radps), "control": control,
                 "fuel": ship.propellant_mass_kg, "mass": ship.mass_kg(), "deltaV": telemetry.remaining_delta_v_mps,
@@ -250,6 +274,14 @@ impl FlightSession {
                 self.cut(true)?;
                 self.selected = body_id;
                 self.cut(true)?;
+                self.world
+                    .apply_command(
+                        WorldCommand::FocusBody {
+                            body_id: Some(BodyId(self.selected.clone())),
+                        },
+                        0,
+                    )
+                    .map_err(runtime_error)?;
                 self.generation += 1;
             }
             Action::Checkpoint => {
@@ -283,9 +315,7 @@ impl FlightSession {
                         0,
                     )
                     .map_err(runtime_error)?;
-                if self.world.flight_telemetry(&self.selected).is_none() {
-                    self.selected = Self::initial_selection(&self.world)?;
-                }
+                self.selected = Self::initial_selection(&self.world)?;
                 self.cut(true)?;
             }
             Action::Integrator { method } => {

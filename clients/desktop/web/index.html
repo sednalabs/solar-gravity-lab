@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Solar Gravity Lab · Flight</title><link rel="stylesheet" href="/flight.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Solar Gravity Lab · Flight</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/flight.css"></head>
 <body>
 <canvas id="universe" tabindex="0" aria-label="Spacecraft view. Drag to orbit, scroll to zoom. Keyboard flight controls are described in Guide."></canvas>
 <header class="topbar">
@@ -11,7 +11,7 @@
 <nav class="camera-bar" aria-label="Camera"><span class="caption">VIEW</span><button data-camera="orbit" class="active">Orbit</button><button data-camera="chase">Chase</button><button data-camera="map">Map</button><button id="centreButton">Centre <kbd>R</kbd></button></nav>
 <aside class="panel navigation">
   <div class="eyebrow">SPACECRAFT</div><select id="craftSelect" aria-label="Active spacecraft"><option>Connecting…</option></select>
-  <div class="director"><svg id="directionSight" viewBox="0 0 100 100" aria-hidden="true"><circle class="outer" cx="50" cy="50" r="41"/><circle class="inner" cx="50" cy="50" r="22"/><path d="M40 50H60M50 40V60"/><circle id="directionMarker" cx="50" cy="50" r="4"/></svg><div><span id="directionName">Prograde</span><strong id="alignment">—</strong><small id="spin">Attitude reference</small></div></div>
+  <small id="visualIdentity" class="visual-identity"></small><div class="director"><svg id="directionSight" viewBox="0 0 100 100" aria-hidden="true"><circle class="outer" cx="50" cy="50" r="41"/><circle class="inner" cx="50" cy="50" r="22"/><path d="M40 50H60M50 40V60"/><circle id="directionMarker" cx="50" cy="50" r="4"/></svg><div><span id="directionName">Prograde</span><strong id="alignment">—</strong><small id="spin">Attitude reference</small></div></div>
   <div class="eyebrow">POINT THE NOSE</div><div class="assist-grid" id="assistButtons">
     <button data-assist="Hold">Stabilise</button><button data-assist="Manual">Manual</button><button data-assist="Prograde">Prograde</button><button data-assist="Retrograde">Retrograde</button><button data-assist="Normal">Normal</button><button data-assist="AntiNormal">Anti-normal</button><button data-assist="RadialOut">Radial out</button><button data-assist="RadialIn">Radial in</button>
   </div>

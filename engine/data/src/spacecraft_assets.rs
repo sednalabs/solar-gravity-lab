@@ -5,6 +5,8 @@ pub struct SpacecraftVisualAssetRecord {
     pub asset_id: &'static str,
     pub mesh_kind: u32,
     pub geometry_sha256: &'static str,
+    /// Canonical little-endian position, normal, RGB, metallic, roughness, emission, exhaust (13 floats).
+    pub vertex_payload: &'static [u8],
     pub framing_radius_m: f64,
     pub contact_profile: Option<SpacecraftAppearance>,
 }
@@ -13,6 +15,7 @@ pub const SPACECRAFT_VISUAL_ASSETS: &[SpacecraftVisualAssetRecord] = &[
         asset_id: "builtin:asteria",
         mesh_kind: 1,
         geometry_sha256: "6836651a88411890fdc189088a2b98d2025ab6ff876f92f5e0dd6730f89182e5",
+        vertex_payload: include_bytes!("../authoring/assets/compiled/1.vertices.bin"),
         framing_radius_m: 8_f64,
         contact_profile: Some(SpacecraftAppearance::Asteria),
     },
@@ -20,6 +23,7 @@ pub const SPACECRAFT_VISUAL_ASSETS: &[SpacecraftVisualAssetRecord] = &[
         asset_id: "builtin:relay-station",
         mesh_kind: 2,
         geometry_sha256: "3eef5834010000fa15b6322f8c250776e7d49a9ca5196f900046ee69364a93fc",
+        vertex_payload: include_bytes!("../authoring/assets/compiled/2.vertices.bin"),
         framing_radius_m: 12_f64,
         contact_profile: Some(SpacecraftAppearance::RelayStation),
     },
@@ -27,6 +31,7 @@ pub const SPACECRAFT_VISUAL_ASSETS: &[SpacecraftVisualAssetRecord] = &[
         asset_id: "example:pathfinder",
         mesh_kind: 3,
         geometry_sha256: "8a2c808ea510f09d0753bc2ea8a718637a50c1a7176e49c8c87c2e79fc63ca33",
+        vertex_payload: include_bytes!("../authoring/assets/compiled/3.vertices.bin"),
         framing_radius_m: 5_f64,
         contact_profile: None,
     },

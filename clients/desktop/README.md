@@ -12,7 +12,7 @@ cargo run -p solarlab-desktop -- --port 8787
 ```
 
 Open `http://127.0.0.1:8787` in a local browser supporting WebGL 2. The binary
-embeds the UI, existing Asteria/Relay glTF and NASA Earth/Moon assets; there is no
+embeds the UI, catalog-generated Asteria, Relay and Pathfinder geometry and NASA Earth/Moon assets; there is no
 Node build, CDN or external asset service. Ctrl-C stops the host. A built binary
 can be run directly as `solarlab-desktop --port 8787`.
 
@@ -47,14 +47,19 @@ authoring API. No desktop internals or hardcoded spacecraft IDs need editing.
 Workshop loads `engine/data/authoring/orbital-workshop.scenario.json`: two
 spacecraft sharing one world but using different propulsion. Open can load
 modified or new definitions instead. The spacecraft selector exposes their
-authored names. Opening a replacement world downloads the current flight first;
+authored names. `pathfinder.scenario.json` demonstrates a distinct third mesh.
+The existing asset catalog/compiler emits identical 13-float vertex payloads and
+digests for both hosts. The desktop embeds every registered payload automatically;
+adding a catalog entry and rerunning the compiler needs no desktop source edit.
+The browser verifies the payload digest, uses the native asset binding and draws
+its authored exhaust only during actual powered flight. Opening a replacement world downloads the current flight first;
 adding a spacecraft retains the current world. Save downloads a native portable
 experiment without introducing a desktop-specific format.
 
 ## Scope and validation
 
 This is a source-level desktop demonstrator, not a packaged mature desktop
-release. Six focused Rust tests cover preview immutability, CUT ordering and
+release. Seven focused Rust tests cover preview immutability, CUT ordering and
 lost-contact pause, general authored vehicles, and the loopback request boundary:
 
 ```sh
@@ -88,7 +93,9 @@ selects a built host, and `SGL_DESKTOP_EVIDENCE` selects output (default
 Chromium with software WebGL, then shuts them down. It checks preview
 immutability, real fuel consumption, CUT, keyboard pause, checkpoint restore,
 native coast prediction, download preservation and a new data-authored Ariadne
-spacecraft. Six screenshots and a JSON receipt require actual browser execution.
+spacecraft using the distinct Pathfinder visual. Keyboard pitch, opposing held keys,
+release and 20% fine control must reach native state. Actual WebGL pixel diversity,
+selected mesh identity and core control reachability are checked at both sizes. Six screenshots and a JSON receipt require actual browser execution.
 
 The managed command sandbox can deny Chromium's local sockets. An automatically
 rejected escalation is not browser evidence: use a permitted hosted runner.
