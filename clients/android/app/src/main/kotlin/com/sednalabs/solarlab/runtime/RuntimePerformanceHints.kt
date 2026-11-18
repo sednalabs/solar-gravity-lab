@@ -98,7 +98,9 @@ internal class RuntimePerformanceHints(
     private fun setState(next: String) {
         if (state == next) return
         state = next
-        onStateChanged(summary())
+        try { onStateChanged(summary()) } catch (_: RuntimeException) {
+            // Optional diagnostics must not turn a hint into a physics failure.
+        }
     }
 
     companion object {

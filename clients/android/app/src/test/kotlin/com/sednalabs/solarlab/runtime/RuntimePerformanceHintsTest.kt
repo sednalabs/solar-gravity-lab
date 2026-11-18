@@ -83,4 +83,18 @@ class RuntimePerformanceHintsTest {
         assertEquals(1, session.closed)
         assertTrue(hints.summary().contains("unavailable_error"))
     }
+
+    @Test
+    fun optionalDiagnosticsCannotBreakPhysicsOrSessionClosure() {
+        var clock = 0L
+        val session = FakeSession()
+        val hints = RuntimePerformanceHints(
+            RuntimePerformanceHints.Factory { session },
+            nanoTime = { clock }, onStateChanged = { error("diagnostic sink failed") },
+        )
+        assertEquals(42, hints.measure(100L, { _: Int -> true }) { clock += 10L; 42 })
+        assertEquals(listOf(10L), session.reported)
+        hints.close()
+        assertEquals(1, session.closed)
+    }
 }
