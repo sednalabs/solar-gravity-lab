@@ -64,7 +64,7 @@ impl WorldRuntime {
                 let mut bodies = world_bodies_to_solver_state(&world.bodies);
                 let mut ships = spacecraft::bindings(world);
                 let plan = scientific_flight::bind_plan(&self.effective_physics_policy(), &world.scientific_settings, &world.bodies, &world.spacecraft, *delta_seconds, &self.hardware_profile.cpu_features)?;
-                let science = solarlab_physics::spacecraft::advance_spacecraft_steps_reported(&plan, &mut bodies, &mut ships, plan.total_steps).map_err(|()|RuntimeError::InvalidFlightState)?;
+                let science = solarlab_physics::spacecraft::advance_spacecraft_steps_checked(&plan, &mut bodies, &mut ships, plan.total_steps).map_err(RuntimeError::ScientificFailure)?;
                 plan.compute_invariants(&bodies).map_err(RuntimeError::ScientificFailure)?;
                 let mut report = plan.report();
                 science.apply_to_solver_report(&mut report);

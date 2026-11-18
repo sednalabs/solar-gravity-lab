@@ -5,6 +5,16 @@ pub(super) const FLIGHT_SAMPLE_LEN: usize = 44;
 pub(super) const LUNAR_SAMPLE_LEN: usize = 21;
 pub(super) const RENDEZVOUS_SAMPLE_LEN: usize = 27;
 
+fn planning_error(error: RuntimeError) -> String {
+    match error {
+        RuntimeError::ScientificFailure(reason) => reason.to_string(),
+        RuntimeError::BodyEditRequiresPause => "pause the simulation first".into(),
+        RuntimeError::AdvanceBusy => "finish or cancel the current advance first".into(),
+        RuntimeError::AdvanceWorkLimit => "shorten this preview to fit its calculation budget".into(),
+        other => format!("{other:?}"),
+    }
+}
+
 pub(super) fn dynamics(handle: SlRuntimeHandle) -> Result<[f64; 3], String> {
     use solarlab_domain::science::IntegratorKind;
     let registry = registry().lock().map_err(|_| "Runtime lock is unavailable")?;
@@ -31,7 +41,7 @@ pub(super) fn set_dynamics(handle: SlRuntimeHandle, method: i32, recorded: i64) 
     let mut settings = runtime.scientific_settings().clone();
     settings.integrator = integrator;
     runtime.apply_command(WorldCommand::SetScientificSettings { settings }, recorded)
-        .map_err(|e| format!("Could not change paused flight dynamics: {e:?}"))?;
+        .map_err(|e| format!("Could not change flight dynamics: {}", planning_error(e)))?;
     Ok(())
 }
 
@@ -43,7 +53,7 @@ pub(super) fn preview_burn(handle: SlRuntimeHandle, ship_id: &str, duration: f64
     };
     let preview = runtime.preview_flight_burn(ship_id, solarlab_runtime::FlightBurnRequest {
         duration_seconds: duration, throttle, attitude_mode: control.attitude_mode,
-    }).map_err(|e| format!("Could not preview the paused burn: {e:?}"))?;
+    }).map_err(|e| format!("Could not preview the burn: {}", planning_error(e)))?;
     serde_json::to_vec(&preview).map_err(|_| "Could not encode burn preview".into())
 }
 

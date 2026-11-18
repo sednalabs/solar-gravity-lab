@@ -17,6 +17,7 @@ use solarlab_domain::{BodyId, Vector3d};
 pub enum ScientificError {
     InvalidSettings,
     InvalidState,
+    InvalidFlightState,
     BodyOrderMismatch,
     UnknownHarmonicBody,
     HarmonicRequiresMassiveSource,
@@ -31,6 +32,9 @@ impl std::fmt::Display for ScientificError {
         f.write_str(match self {
             Self::InvalidSettings => "invalid or unsupported scientific settings",
             Self::InvalidState => "nonfinite position/velocity or negative source mass",
+            Self::InvalidFlightState => {
+                "spacecraft controls, binding or local contact state is invalid"
+            }
             Self::BodyOrderMismatch => "body identifiers do not match the integration plan",
             Self::UnknownHarmonicBody => "gravity model references an unknown body",
             Self::HarmonicRequiresMassiveSource => {
@@ -39,7 +43,7 @@ impl std::fmt::Display for ScientificError {
             Self::InsideHarmonicReferenceRadius => {
                 "J2 exterior model was entered below its reference radius"
             }
-            Self::WorkLimit => "adaptive integration exhausted its bounded trial budget",
+            Self::WorkLimit => "integration exhausted its bounded work budget",
             Self::StepTooSmall => {
                 "requested local accuracy or encounter bound needs a smaller step"
             }
@@ -49,6 +53,14 @@ impl std::fmt::Display for ScientificError {
 }
 
 impl std::error::Error for ScientificError {}
+
+// Existing contact/guidance functions use a unit error. Keep those legacy
+// signatures while preserving specific orbital errors in the checked flow.
+impl From<()> for ScientificError {
+    fn from(_: ()) -> Self {
+        Self::InvalidFlightState
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScientificStepReport {
@@ -170,7 +182,7 @@ impl crate::FixedStepPlan {
                     model: model.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, ScientificError>>()?;
         self.science = ScientificPlan {
             settings: settings.clone(),
             effective_integrator: settings.integrator,

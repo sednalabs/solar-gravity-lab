@@ -131,16 +131,19 @@ impl WorldRuntime {
         let mut events = Vec::new();
         let count = (op.total_steps - op.completed_steps).min(MAX_INCREMENTAL_STEPS);
         if let Some(plan) = &op.plan {
-            let scientific_result = solarlab_physics::spacecraft::advance_spacecraft_steps_reported(plan, &mut op.bodies, &mut op.spacecraft, count);
-            if scientific_result.is_err() || plan.compute_invariants(&op.bodies).is_err() {
-                op.state = AdvanceState::Cancelled;
-                op.bodies.clear();
-                op.spacecraft.clear();
-                op.plan = None;
-                return Err(RuntimeError::InvalidFlightState);
-            }
-            if let Some(report) = &mut op.scientific_report {
-                report.accumulate(&scientific_result.expect("checked scientific step"));
+            let scientific_result = solarlab_physics::spacecraft::advance_spacecraft_steps_checked(plan, &mut op.bodies, &mut op.spacecraft, count)
+                .and_then(|report| plan.compute_invariants(&op.bodies).map(|_| report));
+            match scientific_result {
+                Ok(step_report) => {
+                    if let Some(report) = &mut op.scientific_report { report.accumulate(&step_report); }
+                }
+                Err(error) => {
+                    op.state = AdvanceState::Cancelled;
+                    op.bodies.clear();
+                    op.spacecraft.clear();
+                    op.plan = None;
+                    return Err(RuntimeError::ScientificFailure(error));
+                }
             }
         }
         op.completed_steps += count;

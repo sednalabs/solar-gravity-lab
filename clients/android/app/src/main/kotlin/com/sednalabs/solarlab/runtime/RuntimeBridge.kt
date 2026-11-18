@@ -628,7 +628,7 @@ internal class JniRuntimeBridge(
     }
     override suspend fun setFlightDynamicsSettings(value: FlightDynamicsSettings): List<RuntimeSignal> = withActiveSession { handle ->
         transport.setFlightDynamics(handle, value.integrator.nativeCode, System.currentTimeMillis())
-        refreshSignalsForHandle(handle)
+        refreshSignalsForHandle(handle, includeSummary = true)
     }
     override suspend fun previewFlightBurn(shipId: String, duration: Double, throttle: Double, assist: FlightAssist): FlightBurnPreview = withActiveSession { handle ->
         flightBurnPreviewFromNative(transport.previewFlightBurn(handle, shipId, duration, throttle, assist.nativeCode))

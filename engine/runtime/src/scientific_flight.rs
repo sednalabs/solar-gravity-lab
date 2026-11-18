@@ -122,6 +122,29 @@ mod tests {
     }
 
     #[test]
+    fn staged_harmonic_domain_failure_preserves_world_and_reason() {
+        let mut runtime = world();
+        let earth = runtime.body_by_id("earth").unwrap().clone();
+        let radius = 6_378_137.0;
+        runtime.apply_command(WorldCommand::SetBodyKinematics { body_id: BodyId("pilot".into()),
+            position_m: Vector3d { x: earth.position_m.x + radius + 1.0, ..earth.position_m },
+            velocity_mps: Vector3d { x: earth.velocity_mps.x - 1000.0, ..earth.velocity_mps },
+        }, 2).unwrap();
+        runtime.apply_command(WorldCommand::SetScientificSettings { settings: ScientificSettings {
+            harmonics: vec![ZonalHarmonic { body_id: BodyId("earth".into()), j2: 1.08263e-3,
+                reference_radius_m: radius, axis_ws: Vector3d { x: 0.0, y: 0.0, z: 1.0 } }],
+            ..ScientificSettings::default()
+        } }, 3).unwrap();
+        let original = runtime.export_saved_session().unwrap();
+        let ordinal = runtime.next_command_ordinal();
+        let generation = runtime.begin_advance([41, 57], 0, ordinal, 0.1, 4).unwrap().generation;
+        assert!(matches!(runtime.continue_advance(generation, 0), Err(RuntimeError::ScientificFailure(
+            solarlab_physics::science::ScientificError::InsideHarmonicReferenceRadius))));
+        assert_eq!(runtime.query_advance().unwrap().state, AdvanceState::Cancelled);
+        assert_eq!(runtime.export_saved_session().unwrap(), original);
+    }
+
+    #[test]
     fn science_choice_survives_save_and_checkpoint_branch() {
         let mut runtime = world();
         let settings = ScientificSettings {
@@ -368,13 +391,13 @@ impl WorldRuntime {
         while remaining > 0 {
             let count = remaining.min(MAX_INCREMENTAL_STEPS);
             scientific_report.accumulate(
-                &solarlab_physics::spacecraft::advance_spacecraft_steps_reported(
+                &solarlab_physics::spacecraft::advance_spacecraft_steps_checked(
                     &plan,
                     &mut bodies,
                     &mut ships,
                     count,
                 )
-                .map_err(|_| RuntimeError::InvalidFlightState)?,
+                .map_err(RuntimeError::ScientificFailure)?,
             );
             remaining -= count;
         }

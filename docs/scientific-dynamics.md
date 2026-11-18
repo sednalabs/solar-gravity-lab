@@ -125,9 +125,13 @@ numerical_report.apply_to_solver_report(&mut execution_report);
 ```
 
 For an atomic blocking advance, use `advance_authoritative_scientific`. For
-fuel/attitude/contact flow, use `spacecraft::advance_spacecraft_steps_reported`
+fuel/attitude/contact flow, use `spacecraft::advance_spacecraft_steps_checked`
 on staged body and spacecraft buffers and retain the returned actual-method
-report. The solver backend/path continues to describe the monopole force
+report. This checked flow preserves numerical rejection reasons; the older
+`advance_spacecraft_steps_reported` wrapper maps them to a legacy unit error.
+Counts refer to accepted positive intervals (adaptive substeps for DP, outer
+steps for KDK/Yoshida); signed Yoshida stages are counted as force evaluations,
+not separate accepted intervals. The solver backend/path describes the monopole force
 kernel; J2 corrections share that kernel's results and are added in scalar f64.
 
 The older nonfallible `advance_authoritative_*` APIs now honour an implemented

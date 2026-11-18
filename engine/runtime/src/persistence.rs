@@ -412,10 +412,19 @@ fn branches_have_science(branches: &[BranchState]) -> bool {
         .any(|w| w.scientific_settings != ScientificSettings::default())
 }
 
+fn scientific_persistence_error(error: RuntimeError) -> SessionPersistenceError {
+    let reason = match error {
+        RuntimeError::ScientificFailure(solarlab_physics::science::ScientificError::NonFinite) =>
+            "physical values overflow invariant calculation",
+        _ => "invalid scientific settings or gravity source",
+    };
+    SessionPersistenceError::InvalidState(reason)
+}
+
 fn validate_world(world: &BranchWorldState) -> Result<(), SessionPersistenceError> {
     use SessionPersistenceError::InvalidState as invalid;
     scientific_flight::world_invariants(&world.bodies, &world.scientific_settings)
-        .map_err(|_| invalid("invalid scientific settings or gravity source"))?;
+        .map_err(scientific_persistence_error)?;
     if !world.epoch_seconds.is_finite()
         || world.epoch_seconds < 0.0
         || !world.playback.sim_seconds_per_real_second.is_finite()
@@ -526,7 +535,7 @@ fn restore_computed_state(
     hardware: &HardwareProfile,
 ) -> Result<(), SessionPersistenceError> {
     world.invariants = scientific_flight::world_invariants(&world.bodies, &world.scientific_settings)
-        .map_err(|_| SessionPersistenceError::InvalidState("invalid scientific force model"))?;
+        .map_err(scientific_persistence_error)?;
     if !world.invariants.total_energy_j.is_finite()
         || !finite_vector(world.invariants.barycenter_m)
         || !finite_vector(world.invariants.linear_momentum_kg_mps)
