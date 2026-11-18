@@ -19,6 +19,7 @@ internal interface SolarRenderSurface {
     fun currentCameraScaleBand(): CameraScaleBand = CameraScaleBand.SYSTEM
     fun setOnCameraScaleChangedListener(listener: ((CameraScaleBand) -> Unit)?) {}
     fun setLabMapMode(enabled: Boolean) {}
+    fun setFlightCamera(mode: Int) {}
     fun setLabMapPlane(plane: LabPlane) {}
     fun setOnLabViewportChangedListener(listener: ((LabViewportState?) -> Unit)?) {}
     fun currentLabViewportState(): LabViewportState? = null

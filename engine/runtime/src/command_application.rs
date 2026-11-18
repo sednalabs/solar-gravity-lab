@@ -18,7 +18,7 @@ impl WorldRuntime {
         &mut self,
         command: WorldCommand,
         recorded_at_unix_ms: i64,
-        staged: Option<(Vec<MassiveBodyState>, SolverExecutionReport)>,
+        mut staged: Option<(Vec<MassiveBodyState>, SolverExecutionReport, Vec<solarlab_physics::spacecraft::SpacecraftBinding>)>,
     ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
         if self.advance_running() {
             return Err(RuntimeError::AdvanceBusy);
@@ -54,6 +54,20 @@ impl WorldRuntime {
             _ => {}
         }
 
+        self.validate_flight_command(&command)?;
+        // Flight integration is transactional, including fuel/attitude. Numeric failure
+        // leaves command ordinals and the committed world unchanged.
+        if let WorldCommand::AdvanceEpoch { delta_seconds } = &command {
+            if staged.is_none() && !self.active_branch().world.spacecraft.is_empty() {
+                let world = &self.active_branch().world;
+                let mut bodies = world_bodies_to_solver_state(&world.bodies);
+                let mut ships = spacecraft::bindings(world);
+                let plan = fixed_step_plan_with_source_count(&self.effective_physics_policy(), *delta_seconds, bodies.len(), bodies.iter().filter(|b|b.mass_kg!=0.0).count(), &self.hardware_profile.cpu_features).ok_or(RuntimeError::InvalidFlightState)?;
+                solarlab_physics::spacecraft::advance_spacecraft_steps(&plan, &mut bodies, &mut ships, plan.total_steps).map_err(|()|RuntimeError::InvalidFlightState)?;
+                staged = Some((bodies, plan.report(), ships));
+            }
+        }
+
         // Validate before consuming an ordinal or changing history/world state.
         let edited_invariants = if let WorldCommand::SetBodyProperties {
             body_id, mass_kg, source_mass_kg, radius_m, position_m, velocity_mps,
@@ -78,6 +92,21 @@ impl WorldRuntime {
         self.next_command_ordinal += 1;
 
         match &command {
+            WorldCommand::SpawnSpacecraft { body, spacecraft } => {
+                let branch = self.active_branch_mut();
+                branch.world.bodies.push(body.clone());
+                branch.world.spacecraft.push(spacecraft.clone());
+                branch.world.invariants = compute_world_invariants(&branch.world.bodies);
+                push_trail_sample(&mut branch.world.trail_history_by_body, &body.body_id, branch.world.epoch_seconds, body.position_m);
+            }
+            WorldCommand::SetFlightControl { body_id, control } => {
+                let world = &mut self.active_branch_mut().world;
+                let ship = world.spacecraft.iter_mut().find(|s|s.body_id==*body_id).expect("preflight checked flight identity");
+                ship.control = *control;
+                if ship.has_powered_input() || solarlab_domain::spacecraft::magnitude(control.rotation_body)>0.0 {
+                    world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
+                }
+            }
             WorldCommand::SeedCanonicalSolarSystem => {
                 if self.active_branch().world.bodies.is_empty() {
                     let seed = scenario_pack_seed(&self.scenario_id.0)
@@ -158,6 +187,13 @@ impl WorldRuntime {
                 }
                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
                 branch.world.trail_history_by_body.remove(body_id);
+                branch.world.spacecraft.retain(|s|s.body_id!=*body_id);
+                for ship in &mut branch.world.spacecraft {
+                    if ship.reference_body_id.as_ref()==Some(body_id) {
+                        ship.reference_body_id=None;
+                        ship.control.attitude_mode=solarlab_domain::AttitudeMode::Hold;
+                    }
+                }
             }
             WorldCommand::SetBodyKinematics {
                 body_id,
@@ -204,7 +240,8 @@ impl WorldRuntime {
                 let active_cpu_features = self.hardware_profile.cpu_features.clone();
                 let branch = self.active_branch_mut();
                 let (solver_bodies, invariants, solver_execution) =
-                    if let Some((solver_bodies, report)) = staged {
+                    if let Some((solver_bodies, report, ships)) = staged {
+                        spacecraft::apply_bindings(&mut branch.world, ships);
                         let invariants = compute_invariants(&solver_bodies);
                         (solver_bodies, invariants, report)
                     } else {

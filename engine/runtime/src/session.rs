@@ -31,6 +31,7 @@ impl WorldRuntime {
             world: BranchWorldState {
                 epoch_seconds: 0.0,
                 bodies: Vec::new(),
+                spacecraft: Vec::new(),
                 observer: ObserverState {
                     mode: ObserverMode::Free,
                     focus_body_id: None,

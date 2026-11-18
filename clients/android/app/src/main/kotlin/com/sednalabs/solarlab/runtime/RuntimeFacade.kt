@@ -26,6 +26,12 @@ interface RuntimeFacade {
     suspend fun deleteExperiment(id: String) {}
     suspend fun refreshExperimentCatalogue() {}
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
+    suspend fun startFlight(shipId: String = REFERENCE_SPACECRAFT_ID) { error("Spaceflight is unavailable") }
+    suspend fun setFlightControl(control: FlightControl, shipId: String = REFERENCE_SPACECRAFT_ID) { error("Spaceflight is unavailable") }
+    suspend fun flightState(shipId: String = REFERENCE_SPACECRAFT_ID): FlightState? = null
+    /** Retained operation: cuts input and pauses even when the composing Activity is destroyed. */
+    fun suspendFlightControls(shipId: String = REFERENCE_SPACECRAFT_ID) {}
+
 
     /** Draft work is bounded and read-only; failures are thrown to the placement UI. */
     suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double = 43_200.0): ProbePreviewResult =

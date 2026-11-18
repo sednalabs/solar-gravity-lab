@@ -9,6 +9,8 @@ use solarlab_physics::{CollisionModel, IntegratorKind, SolverBackend};
 pub const MAX_SAVED_SESSION_BYTES: usize = 16 * 1024 * 1024;
 const FORMAT: &str = "solarlab.experiment";
 const VERSION: u32 = 1;
+const FLIGHT_VERSION: u32 = 2;
+const FLIGHT_MODEL: &str = "six-dof-strang-rocket-v1";
 const MAX_BRANCHES: usize = 64;
 const MAX_BODIES: usize = 4096;
 const MAX_CHECKPOINTS: usize = 256;
@@ -47,6 +49,8 @@ struct SavedSession {
     format: String,
     version: u32,
     model: String,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    flight_model: Option<String>,
     runtime_version: String,
     source_revision: String,
     scenario_id: String,
@@ -79,9 +83,11 @@ impl WorldRuntime {
         }
         let mut branches: Vec<_> = self.branches.values().cloned().collect();
         branches.sort_by(|a, b| a.descriptor.branch_id.0.cmp(&b.descriptor.branch_id.0));
+        let has_flight = branches.iter().any(|b|!b.world.spacecraft.is_empty()||b.checkpoints.iter().any(|c|!c.state.spacecraft.is_empty()));
         let mut saved = SavedSession {
             format: FORMAT.into(),
-            version: VERSION,
+            version: if has_flight { FLIGHT_VERSION } else { VERSION },
+            flight_model: has_flight.then(||FLIGHT_MODEL.into()),
             model: self.lab_step_policy.model_id().into(),
             runtime_version: env!("CARGO_PKG_VERSION").into(),
             source_revision: option_env!("SOLARLAB_BUILD_COMMIT")
@@ -220,7 +226,8 @@ impl SavedSession {
 
     fn validate(&self) -> Result<(), SessionPersistenceError> {
         use SessionPersistenceError::InvalidState as invalid;
-        if self.format != FORMAT || self.version != VERSION
+        let has_flight = self.branches.iter().any(|b|!b.world.spacecraft.is_empty()||b.checkpoints.iter().any(|c|!c.state.spacecraft.is_empty()));
+        if self.format != FORMAT || !((self.version==VERSION && !has_flight && self.flight_model.is_none()) || (self.version==FLIGHT_VERSION && self.flight_model.as_deref()==Some(FLIGHT_MODEL)))
             || lab_step::LabStepPolicy::from_model_id(&self.model).is_none() {
             return Err(SessionPersistenceError::UnsupportedVersion);
         }
@@ -364,6 +371,13 @@ fn validate_world(world: &BranchWorldState) -> Result<(), SessionPersistenceErro
             || !finite_vector(b.velocity_mps)
         {
             return Err(invalid("duplicate body or invalid physical value"));
+        }
+    }
+    let mut spacecraft_ids = HashSet::new();
+    for ship in &world.spacecraft {
+        let Some(body)=world.bodies.iter().find(|b|b.body_id==ship.body_id) else {return Err(invalid("spacecraft body missing"));};
+        if !spacecraft_ids.insert(&ship.body_id) || !spacecraft::valid_ship_body(body,ship) || ship.reference_body_id.as_ref().is_some_and(|id|*id==ship.body_id || !ids.contains(id)) {
+            return Err(invalid("invalid spacecraft component or reference"));
         }
     }
     if world

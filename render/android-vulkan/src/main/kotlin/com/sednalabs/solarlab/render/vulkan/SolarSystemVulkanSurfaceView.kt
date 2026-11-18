@@ -55,6 +55,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var latestPacket: NativeScenePacket? = null
     private var packetDirty: Boolean = true
     private var cameraState: CameraState = CameraState()
+    private var flightCameraMode = 0
     private var labMapMode = false
     private var labMapPlane = LabPlane.XY
     private var labViewportState: LabViewportState? = null
@@ -436,6 +437,15 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         cameraScaleChangedListener = listener
         lastReportedCameraScaleBand = null
         reportCameraScaleBand()
+    }
+
+    override fun setFlightCamera(mode: Int) {
+        val next = mode.coerceIn(0, 2)
+        if (flightCameraMode == next) return
+        cancelCameraTransition()
+        flightCameraMode = next
+        serializedRenderer.execute { handle -> SolarLabVulkanBridge.setFlightCamera(handle, next) }
+        renderLatestScene()
     }
 
     override fun setLabMapMode(enabled: Boolean) {
@@ -1059,6 +1069,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val nextSelectedBodyId = selectedBodyId
         val nextTraceLayerMode = renderLayerOptions.traceLayerMode
         val nextCamera = cameraState
+        val nextFlightMode = flightCameraMode
         val nextMapMode = labMapMode
         val nextMapPlane = labMapPlane
         val density = resources.displayMetrics.density.toDouble()
@@ -1071,6 +1082,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 SolarLabVulkanBridge.setRuntimeObserverMode(handle, nextObserverMode)
                 SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, nextSelectedBodyId)
                 SolarLabVulkanBridge.setRuntimeTraceLayerMode(handle, nextTraceLayerMode)
+                SolarLabVulkanBridge.setFlightCamera(handle, nextFlightMode)
             } else {
                 SolarLabVulkanBridge.unbindRuntimeSession(handle)
                 SolarLabVulkanBridge.setCamera(

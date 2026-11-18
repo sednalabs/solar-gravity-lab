@@ -618,7 +618,7 @@ class JniRuntimeBridgeTest {
             return NativeCreateSessionResult(
                 result = NativeResult(code = 0),
                 handle = sessionHandles.removeFirstOrNull() ?: 42L,
-                abiVersion = 12,
+                abiVersion = 13,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
             )
@@ -628,7 +628,7 @@ class JniRuntimeBridgeTest {
             runtimeInfoHandles += handle
             return NativeRuntimeInfoResult(
                 result = NativeResult(code = 0),
-                abiVersion = 12,
+                abiVersion = 13,
                 requestedCpuBackend = NATIVE_CPU_BACKEND_SIMD_ARM64,
                 cpuBackend = runtimeInfoCpuBackend,
                 gpuBackend = runtimeInfoGpuBackend,
@@ -644,7 +644,7 @@ class JniRuntimeBridgeTest {
         }
 
         override fun importSavedSession(templateHandle: Long, bytes: ByteArray) = NativeCreateSessionResult(
-            result = NativeResult(code = 0), handle = validationHandle, abiVersion = 12,
+            result = NativeResult(code = 0), handle = validationHandle, abiVersion = 13,
             cpuBackend = runtimeInfoCpuBackend, gpuBackend = runtimeInfoGpuBackend,
         )
 

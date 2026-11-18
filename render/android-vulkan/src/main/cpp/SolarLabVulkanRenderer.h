@@ -44,6 +44,14 @@ public:
         float cometVelocityZ = 1.0f;
     };
 
+    struct SpacecraftInput {
+        uint32_t authoritativeIndex = 0;
+        std::array<double, 3> positionM{};
+        std::array<double, 3> previousPositionM{};
+        std::array<float, 4> attitudeXyzw{0, 0, 0, 1};
+        float throttle = 0.0f;
+    };
+
     SolarLabVulkanRenderer();
     ~SolarLabVulkanRenderer();
 
@@ -89,7 +97,8 @@ public:
         std::vector<double> authoritativePreviousPositionsM = {},
         double presentationStartedAtSeconds = 0.0,
         double presentationDurationSeconds = 0.0,
-        std::array<double, 3> trailPreviousOffsetM = {});
+        std::array<double, 3> trailPreviousOffsetM = {},
+        std::vector<SpacecraftInput> spacecraft = {});
 
     void SetCamera(double centerX, double centerY, double centerZ, double viewRadiusM, double yawRadians, double pitchRadians,
         double previousOffsetX = 0.0, double previousOffsetY = 0.0, double previousOffsetZ = 0.0);
@@ -107,6 +116,7 @@ private:
         double sceneOriginX = 0.0;
         double sceneOriginY = 0.0;
         double sceneOriginZ = 0.0;
+        std::vector<SpacecraftInput> spacecraft;
         std::vector<double> authoritativePositionsM;
         std::vector<double> authoritativePreviousPositionsM;
         double presentationStartedAtSeconds = 0.0;
@@ -144,6 +154,7 @@ private:
         CheapPointSprite = 2,
         DensityPoint = 3,
         ThinLineStrip = 4,
+        TriangleMesh = 5,
     };
 
     struct BillboardVertex {
@@ -183,6 +194,16 @@ private:
         float previousY = 0.0f;
         float previousZ = 0.0f;
     };
+
+    struct SpacecraftInstance {
+        std::array<float, 3> centerHigh{};
+        std::array<float, 3> centerLow{};
+        std::array<float, 3> previousHigh{};
+        std::array<float, 3> previousLow{};
+        std::array<float, 4> attitude{0, 0, 0, 1};
+        float throttle = 0.0f;
+    };
+    static_assert(sizeof(SpacecraftInstance) == 68);
 
     struct CheapPointVertex {
         float x = 0.0f;
@@ -257,6 +278,7 @@ private:
         std::array<float, 4> primaryLightPositionRelativeAndFlags{};
         std::array<float, 4> presentation{};
         std::array<float, 4> trailPresentationTranslation{};
+        std::array<float, 4> cameraCenterLow{};
     };
 
     struct ComputePushConstants {
@@ -342,6 +364,11 @@ private:
         GpuBuffer authoritativeInfluenceBuffer;
         uint32_t authoritativeInfluenceCount = 0;
         DrawStreamBuffers authoritative;
+        DrawStreamBuffers spacecraft;
+        GpuBuffer referenceMesh;
+        GpuBuffer referenceExhaust;
+        bool referenceMeshUploaded = false;
+        bool referenceExhaustUploaded = false;
         DrawStreamBuffers tracerNear;
         DrawStreamBuffers tracerMedium;
         DrawStreamBuffers tracerFar;
@@ -355,6 +382,7 @@ private:
         int64_t sourceRevision = -1;
         size_t bytesUploaded = 0;
         uint32_t authoritativeCount = 0;
+        uint32_t spacecraftCount = 0;
         uint32_t ringBodyCount = 0;
         uint32_t atmosphereBodyCount = 0;
         uint32_t cometBodyCount = 0;
@@ -538,6 +566,8 @@ private:
     VkDescriptorSet sceneDescriptorSet_ = VK_NULL_HANDLE;
     VkPipelineLayout graphicsPipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline billboardPipeline_ = VK_NULL_HANDLE;
+    VkPipeline spacecraftPipeline_ = VK_NULL_HANDLE;
+    VkPipeline spacecraftExhaustPipeline_ = VK_NULL_HANDLE;
     VkPipeline mediumPointPipeline_ = VK_NULL_HANDLE;
     VkPipeline farDensityPipeline_ = VK_NULL_HANDLE;
     VkPipeline trailPipeline_ = VK_NULL_HANDLE;

@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Android-local implementation of `RuntimeFacade`.
@@ -54,6 +55,8 @@ class BridgeBackedRuntimeFacade internal constructor(
         JniRuntimeBridge(performanceHints = androidRuntimePerformanceHints(context)),
         operationScope = operationScope, experimentStore = FileExperimentStore(experimentDirectory),
     )
+
+    private val flightInputGeneration = AtomicLong(0)
 
     private val manualLock = Any()
     private var manualJob: Job? = null
@@ -171,6 +174,41 @@ class BridgeBackedRuntimeFacade internal constructor(
     } catch (error: Throwable) {
         _uiState.update { it.copy(noticeLine = "Could not inspect body: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
         null
+    }
+
+    override suspend fun startFlight(shipId: String) = withContext(NonCancellable + boundaryDispatcher) {
+        check(_uiState.value.manualAdvance == null) { "Finish or cancel time advance before entering flight" }
+        bridge.startFlight(shipId).forEach(::applySignal)
+    }
+
+    override suspend fun setFlightControl(control: FlightControl, shipId: String) {
+        val generation = flightInputGeneration.get()
+        withContext(boundaryDispatcher) {
+            if (generation != flightInputGeneration.get()) return@withContext
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel time advance before controlling flight" }
+            if (control.requiresRealTime && (_uiState.value.snapshot?.simSecondsPerRealSecond ?: 1.0) > 1.0) {
+                bridge.applyCommand(RuntimeCommand.SetPlaybackRate(1.0)).forEach(::applySignal)
+            }
+            bridge.setFlightControl(shipId, control)
+        }
+    }
+
+    override suspend fun flightState(shipId: String): FlightState? =
+        withContext(boundaryDispatcher) { bridge.flightState(shipId) }
+
+    override fun suspendFlightControls(shipId: String) {
+        // Invalidate inputs queued by the old Activity before scheduling the retained stop.
+        flightInputGeneration.incrementAndGet()
+        val session = _uiState.value.sessionHandle
+        operationScope.launch(NonCancellable + boundaryDispatcher) {
+            if (session == null || session != _uiState.value.sessionHandle) return@launch
+            try {
+                bridge.setFlightControl(shipId, FlightControl.Cut)
+                bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal)
+            } catch (error: Throwable) {
+                _uiState.update { it.copy(noticeLine = "Flight input stopped: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+            }
+        }
     }
 
     override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =

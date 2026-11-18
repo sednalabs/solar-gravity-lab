@@ -14,12 +14,19 @@ impl WorldRuntime {
         self.advance_operation.as_ref()
     }
 
-    pub(super) fn effective_physics_policy(&self) -> PhysicsPolicy {
+    /// Gravity-only prediction shares the scientific orbital step ceiling,
+    /// without importing powered-flight attitude work into a coast forecast.
+    pub(super) fn coast_physics_policy(&self) -> PhysicsPolicy {
         if self.scenario_id.0 == solarlab_data::EARTH_MOON_LAB_ID {
             self.lab_step_policy.for_world(&self.config.physics, &self.active_branch().world.bodies)
-        } else {
-            self.config.physics.clone()
-        }
+        } else { self.config.physics.clone() }
+    }
+
+    pub(super) fn effective_physics_policy(&self) -> PhysicsPolicy {
+        let mut policy = self.coast_physics_policy();
+        policy.max_substep_seconds = solarlab_physics::spacecraft::max_substep_seconds(
+            &self.active_branch().world.spacecraft, policy.max_substep_seconds);
+        policy
     }
 
     pub fn begin_advance(
@@ -69,6 +76,7 @@ impl WorldRuntime {
             .filter(|g| *g <= i64::MAX as u64)
             .ok_or(RuntimeError::AdvanceStale)?;
         let bodies = world_bodies_to_solver_state(&world.bodies);
+        let spacecraft = spacecraft::bindings(world);
         let plan = if bodies.is_empty() {
             None
         } else {
@@ -99,6 +107,7 @@ impl WorldRuntime {
             total_steps,
             plan,
             bodies,
+            spacecraft,
         });
         Ok(self.advance_operation.as_ref().expect("operation exists"))
     }
@@ -126,8 +135,13 @@ impl WorldRuntime {
         let mut events = Vec::new();
         let count = (op.total_steps - op.completed_steps).min(MAX_INCREMENTAL_STEPS);
         if let Some(plan) = &op.plan {
-            advance_fixed_steps(plan, &mut op.bodies, count)
-                .map_err(|()| RuntimeError::AdvanceStale)?;
+            if solarlab_physics::spacecraft::advance_spacecraft_steps(plan, &mut op.bodies, &mut op.spacecraft, count).is_err() {
+                op.state = AdvanceState::Cancelled;
+                op.bodies.clear();
+                op.spacecraft.clear();
+                op.plan = None;
+                return Err(RuntimeError::InvalidFlightState);
+            }
         }
         op.completed_steps += count;
         if op.completed_steps == op.total_steps {
@@ -143,7 +157,7 @@ impl WorldRuntime {
                     delta_seconds: op.requested_seconds,
                 },
                 op.recorded_at_unix_ms,
-                Some((staged, report)),
+                Some((staged, report, std::mem::take(&mut op.spacecraft))),
             )?;
             op.state = AdvanceState::Committed;
             self.advance_operation = Some(op);
@@ -165,6 +179,7 @@ impl WorldRuntime {
         if op.state == AdvanceState::Running {
             op.state = AdvanceState::Cancelled;
             op.bodies.clear();
+            op.spacecraft.clear();
             op.plan = None;
         }
         Ok(self.advance_operation.as_ref().expect("operation exists"))

@@ -292,6 +292,12 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetCameraSt
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetFlightCamera(
+    JNIEnv*, jclass, jlong handle, jint mode) {
+    if (auto* controller = FromHandle(handle)) controller->SetFlightCamera(mode);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetLabMapView(
     JNIEnv*, jclass, jlong handle, jboolean enabled, jdouble normalX, jdouble normalY, jdouble normalZ) {
     if (auto* controller = FromHandle(handle)) {

@@ -20,6 +20,8 @@ impl WorldRuntime {
     pub(super) fn command_kind(&self, command: &WorldCommand) -> String {
         match command {
             WorldCommand::SeedCanonicalSolarSystem => "catalog.seed_canonical_solar_system",
+            WorldCommand::SpawnSpacecraft { .. } => "spacecraft.spawn",
+            WorldCommand::SetFlightControl { .. } => "spacecraft.control",
             WorldCommand::SpawnBody { .. } => "body.spawn",
             WorldCommand::RemoveBody { .. } => "body.remove",
             WorldCommand::SetBodyKinematics { .. } => "body.set_kinematics",
@@ -41,6 +43,8 @@ impl WorldRuntime {
     pub(super) fn command_summary(&self, command: &WorldCommand) -> String {
         match command {
             WorldCommand::SeedCanonicalSolarSystem => "seed canonical startup solar system".into(),
+            WorldCommand::SpawnSpacecraft { body, .. } => format!("spawn spacecraft {}",body.body_id.0),
+            WorldCommand::SetFlightControl { body_id, control } => format!("flight {} throttle={} translation={:?} rotation={:?} assist={:?}",body_id.0,control.throttle,control.translation_body,control.rotation_body,control.attitude_mode),
             WorldCommand::SpawnBody { body } => format!("spawn {}", body.body_id.0),
             WorldCommand::RemoveBody { body_id } => format!("remove {}", body_id.0),
             WorldCommand::SetBodyProperties { body_id, mass_kg, source_mass_kg, .. } =>

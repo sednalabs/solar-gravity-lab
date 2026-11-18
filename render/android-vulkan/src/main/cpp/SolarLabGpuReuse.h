@@ -37,7 +37,7 @@ struct ComputeCommandState {
 };
 
 struct SceneCommandState {
-    std::array<DrawCommandState, 5> draws{};
+    std::array<DrawCommandState, 8> draws{};
     ComputeCommandState medium;
     ComputeCommandState far;
     std::vector<uint32_t> trailStrips;

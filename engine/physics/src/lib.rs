@@ -1,3 +1,4 @@
+pub mod spacecraft;
 use std::collections::BTreeSet;
 use std::fs;
 use std::sync::OnceLock;

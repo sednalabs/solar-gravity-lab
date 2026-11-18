@@ -40,6 +40,9 @@ internal interface RuntimeBridge {
     /** Parse and validate in a temporary native session without binding it to the live renderer. */
     suspend fun validateSavedSession(bytes: ByteArray): String = error("Experiment validation is unavailable")
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
+    suspend fun startFlight(shipId: String): List<RuntimeSignal> = error("Spaceflight is unavailable")
+    suspend fun setFlightControl(shipId: String, control: FlightControl) { error("Spaceflight is unavailable") }
+    suspend fun flightState(shipId: String): FlightState? = null
     suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult = error("Probe preview is unavailable")
     suspend fun commitProbe(preview: ProbePreviewResult): Pair<ProbeCommitResult, List<RuntimeSignal>> = error("Probe placement is unavailable")
     suspend fun undoProbe(commit: ProbeCommitResult): List<RuntimeSignal> = error("Probe undo is unavailable")
@@ -494,6 +497,19 @@ internal class JniRuntimeBridge(
     override suspend fun inspectBody(bodyId: String): RuntimeBodyState? = withActiveSession { handle ->
         val values = transport.inspectBody(handle, bodyId) ?: return@withActiveSession null
         bodyStateFromNative(bodyId, values)
+    }
+
+    override suspend fun startFlight(shipId: String): List<RuntimeSignal> = withActiveSession { handle ->
+        transport.startFlight(handle, shipId, System.currentTimeMillis())
+        refreshSignalsForHandle(handle, includeSummary = true, traceLabel = "flight.start")
+    }
+
+    override suspend fun setFlightControl(shipId: String, control: FlightControl) = withActiveSession { handle ->
+        transport.setFlightControl(handle, shipId, control.toNativeValues(), System.currentTimeMillis())
+    }
+
+    override suspend fun flightState(shipId: String): FlightState? = withActiveSession { handle ->
+        transport.flightState(handle, shipId)?.let(::flightStateFromNative)
     }
 
     override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =
@@ -1062,7 +1078,7 @@ internal class JniRuntimeBridge(
 
     private companion object {
         private const val LOG_TAG = "SolarLabRuntimeBridge"
-        private const val ABI_VERSION = 12
+        private const val ABI_VERSION = 13
         private const val DEFAULT_ROOT_BRANCH_ID = "main"
         // Physics observations run independently of display refresh. The native renderer
         // interpolates committed snapshots while each authority tick remains work-bounded.
@@ -1394,6 +1410,9 @@ internal interface NativeRuntimeTransport {
     fun exportSavedSession(handle: Long): ByteArray = error("Experiment saving is unavailable")
     fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = error("Experiment loading is unavailable")
     fun inspectBody(handle: Long, bodyId: String): DoubleArray? = null
+    fun startFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) { error("Spaceflight is unavailable") }
+    fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) { error("Spaceflight is unavailable") }
+    fun flightState(handle: Long, shipId: String): DoubleArray? = null
     fun previewProbe(handle: Long, candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): NativeProbePreviewResult = error("Probe preview is unavailable")
     fun commitProbe(handle: Long, candidate: RuntimeBodyState, expectedRevision: Long, expectedEpochSeconds: Double, recordedAtUnixMs: Long): NativeProbeCommitResult = error("Probe placement is unavailable")
     fun undoProbe(handle: Long, checkpointId: String, committedRevision: Long, recordedAtUnixMs: Long) { error("Probe undo is unavailable") }
@@ -1605,6 +1624,17 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     override fun exportSavedSession(handle: Long): ByteArray = nativeExportSavedSession(handle)
     override fun importSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult = nativeImportSavedSession(templateHandle, bytes)
     override fun inspectBody(handle: Long, bodyId: String): DoubleArray? = nativeInspectBody(handle, bodyId.toByteArray(StandardCharsets.UTF_8))
+
+    override fun startFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) =
+        nativeStartFlight(handle, shipId.toByteArray(StandardCharsets.UTF_8), recordedAtUnixMs)
+    override fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) =
+        nativeSetFlightControl(handle, shipId.toByteArray(StandardCharsets.UTF_8), values, recordedAtUnixMs)
+    override fun flightState(handle: Long, shipId: String): DoubleArray? =
+        nativeFlightState(handle, shipId.toByteArray(StandardCharsets.UTF_8))
+
+    private external fun nativeStartFlight(handle: Long, shipId: ByteArray, recordedAtUnixMs: Long)
+    private external fun nativeSetFlightControl(handle: Long, shipId: ByteArray, values: DoubleArray, recordedAtUnixMs: Long)
+    private external fun nativeFlightState(handle: Long, shipId: ByteArray): DoubleArray?
 
     private external fun nativeExportSavedSession(handle: Long): ByteArray
     private external fun nativeImportSavedSession(templateHandle: Long, bytes: ByteArray): NativeCreateSessionResult

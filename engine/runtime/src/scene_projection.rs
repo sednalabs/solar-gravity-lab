@@ -28,6 +28,10 @@ pub fn extract_render_scene(snapshot: &WorldSnapshot) -> RenderScene {
                     .map(|focused| focused == &body.body_id)
                     .unwrap_or(false),
                 appearance: scene_celestial_appearance(body, star_position_m),
+                spacecraft: snapshot.spacecraft.iter().find(|s|s.body_id==body.body_id).map(|s| solarlab_scene::SceneSpacecraftAppearance {
+                    attitude_xyzw:[s.attitude.x,s.attitude.y,s.attitude.z,s.attitude.w],
+                    main_engine_throttle:if s.propellant_mass_kg>0.0{s.control.throttle}else{0.0},
+                }),
             }
         })
         .collect();
@@ -558,6 +562,7 @@ fn scene_revision_from_snapshot(
             body_scene.emissive_luminance,
             body_scene.appearance
         );
+        let _ = write!(&mut revision,"|spacecraft={:?}",body_scene.spacecraft);
     }
     if let Some(mounted_manifest) = &snapshot.mounted_manifest {
         use std::fmt::Write as _;
