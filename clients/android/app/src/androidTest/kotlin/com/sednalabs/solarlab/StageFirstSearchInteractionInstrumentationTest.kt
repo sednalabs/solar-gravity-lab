@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab
 
+import android.util.Log
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -128,28 +129,86 @@ class StageFirstSearchInteractionInstrumentationTest {
     @Test
     fun openSearchAndQuerySurviveActivityRecreation() {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-                .fetchSemanticsNodes().isNotEmpty()
+        val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        var phase = "waiting for Objects"
+        var lastObservationFailure: AssertionError? = null
+        fun step(value: String) {
+            phase = value
+            Log.i("SolarLabSearchProof", "Search recreation: $value")
         }
-        // Objects must respond even if the asynchronous Rust catalogue has not
-        // arrived yet; previously the visible button was disabled during startup.
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-            .assertIsEnabled().performScrollToIfPossible().performClick()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
-                .fetchSemanticsNodes().isNotEmpty()
+        fun awaitSearchState(condition: () -> Boolean) {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeBy(32)
+                condition()
+            }
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("earth")
-        composeRule.activityRule.scenario.recreate()
-        composeRule.waitUntil(timeoutMillis = 20_000) {
-            runCatching {
-                composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
-                    .assertTextContains("earth")
-            }.isSuccess
+        fun searchAssertionHolds(assertion: () -> Unit): Boolean = try {
+            assertion()
+            lastObservationFailure = null
+            true
+        } catch (error: AssertionError) {
+            lastObservationFailure = error
+            false
         }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
-            .assertIsDisplayed().assertTextContains("earth")
+        // Native viewport updates continue while the world is paused. As in the
+        // other search journeys, observe explicit UI frames instead of requiring
+        // global Compose idleness during focused text input and recreation.
+        composeRule.mainClock.autoAdvance = false
+        try {
+            step("waiting for Objects")
+            awaitSearchState {
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            // Objects must respond before the asynchronous Rust catalogue has
+            // arrived. The visible button must remain enabled during startup.
+            step("opening Objects")
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
+                .assertIsEnabled().assertIsDisplayed().performClick()
+            awaitSearchState {
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            step("focusing search")
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                .assertIsDisplayed().performClick()
+            awaitSearchState {
+                searchAssertionHolds {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                        .assertIsFocused()
+                }
+            }
+            step("entering query")
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("earth")
+            awaitSearchState {
+                searchAssertionHolds {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                        .assertIsDisplayed().assertIsFocused().assertTextContains("earth")
+                }
+            }
+            val originalActivity = composeRule.activity
+            step("recreating activity with focused query")
+            composeRule.activityRule.scenario.recreate()
+            step("waiting for restored query")
+            awaitSearchState {
+                composeRule.activity !== originalActivity && searchAssertionHolds {
+                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                        .assertIsDisplayed().assertTextContains("earth")
+                }
+            }
+            assertTrue("The activity must actually be recreated", composeRule.activity !== originalActivity)
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD)
+                .assertIsDisplayed().assertTextContains("earth")
+            step("restored query verified")
+        } catch (error: Throwable) {
+            // ActivityScenarioRule closes the activity after this body. Preserve
+            // the original failure if Compose disposal then throws separately.
+            lastObservationFailure?.takeIf { it !== error }?.let { error.addSuppressed(it) }
+            Log.e("SolarLabSearchProof", "Search recreation failed during $phase", error)
+            throw error
+        } finally {
+            composeRule.mainClock.autoAdvance = previousAutoAdvance
+        }
     }
 
 }

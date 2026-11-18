@@ -40,6 +40,8 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var runtimeSessionHandle: Long = 0L
     private var backendStatusListener: ((RenderBackendStatus) -> Unit)? = null
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
+    private var flightCameraMode = 0
+    private var flightTargetBodyId: String? = null
     private var labMapMode = false
     private var labMapPlane = LabPlane.XY
     private var labViewportChangedListener: ((LabViewportState?) -> Unit)? = null
@@ -114,6 +116,21 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.zoomBy(scaleFactor)
     }
 
+    /** 0: map; 1: ship orbit; 2: attitude chase; 3: ship/explicit-target encounter. */
+    fun setFlightCamera(mode: Int) {
+        val next = mode.coerceIn(0, 3)
+        if (flightCameraMode == next) return
+        flightCameraMode = next
+        activeSurface?.setFlightCamera(next)
+    }
+
+    /** Presentation target only; this never changes selection or physical state. */
+    fun setFlightTargetBodyId(bodyId: String?) {
+        if (flightTargetBodyId == bodyId) return
+        flightTargetBodyId = bodyId
+        activeSurface?.setFlightTargetBodyId(bodyId)
+    }
+
     fun setLabMapMode(enabled: Boolean) {
         if (labMapMode == enabled) return
         labMapMode = enabled
@@ -143,9 +160,10 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.focusAndFrameBody(bodyId, observerMode)
     }
 
-    fun frameBody(bodyId: String) {
-        selectedBodyId = bodyId
-        activeSurface?.frameBody(bodyId)
+    /** Frame a reference without replacing the flown/selected object when [selectBody] is false. */
+    fun frameBody(bodyId: String, selectBody: Boolean = true) {
+        if (selectBody) selectedBodyId = bodyId
+        activeSurface?.frameBody(bodyId, selectBody)
     }
 
     fun setCameraScaleBand(scaleBand: CameraScaleBand) {
@@ -304,6 +322,8 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setOnCameraScaleChangedListener(cameraScaleChangedListener)
         activeSurface?.setLabMapPlane(labMapPlane)
         activeSurface?.setLabMapMode(labMapMode)
+        activeSurface?.setFlightTargetBodyId(flightTargetBodyId)
+        activeSurface?.setFlightCamera(flightCameraMode)
         activeSurface?.setOnLabViewportChangedListener(labViewportChangedListener)
         addView(
             view,

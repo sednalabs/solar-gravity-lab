@@ -15,6 +15,7 @@ import androidx.test.espresso.IdlingPolicies
 import java.util.concurrent.TimeUnit
 import android.util.Log
 import org.junit.Before
+import org.junit.After
 import kotlinx.coroutines.runBlocking
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.RuntimeCommand
@@ -32,6 +33,10 @@ class StageFirstSearchFocusInstrumentationTest {
     @Before fun boundIdleDiagnostics() {
         IdlingPolicies.setMasterPolicyTimeout(45, TimeUnit.SECONDS)
         IdlingPolicies.setIdlingResourceTimeout(30, TimeUnit.SECONDS)
+    }
+
+    @After fun restoreFrameClock() {
+        composeRule.mainClock.autoAdvance = true
     }
 
     @Test
@@ -59,7 +64,9 @@ class StageFirstSearchFocusInstrumentationTest {
             // A scroll-clipped catalogue need not expose every offscreen result;
             // filtered inclusion and exclusion remain mandatory assertions.
             Log.i("SolarLabSearchProof", "Search field ready; entering comet filter")
-            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick().performTextInput("comet")
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick()
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("comet")
             Log.i("SolarLabSearchProof", "Comet filter entered")
             composeRule.waitUntil(timeoutMillis = 20_000) {
                 composeRule.mainClock.advanceTimeByFrame()
@@ -187,9 +194,13 @@ class StageFirstSearchFocusInstrumentationTest {
     }
     private fun loadCanonicalCatalogue() {
         val facade = composeRule.activity.runtimeFacadeForTesting
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             facade.uiState.value.connectionState == SessionConnectionState.Active
         }
+        // Native viewport presentation continues after physics pauses. Enter the
+        // explicit frame policy before loading the catalogue as well as while
+        // interacting with it. The @After guard restores the clock if setup fails.
+        composeRule.mainClock.autoAdvance = false
         // This fixture qualifies search/catalogue semantics, not moving playback.
         // Continuous clock recomposition prevents Compose's idle barrier;
         // real moving focus and pinch remain covered by LabCameraMotion.
@@ -197,9 +208,16 @@ class StageFirstSearchFocusInstrumentationTest {
             facade.loadScenario("sol-system")
             facade.applyCommand(RuntimeCommand.PausePlayback)
         }
-        composeRule.waitUntil(timeoutMillis = 20_000) {
+        awaitCondition(timeoutMillis = 20_000) {
             facade.uiState.value.snapshot?.paused == true &&
                 facade.uiState.value.renderFrame?.bodies?.any { it.bodyId == "halley" } == true
+        }
+    }
+
+    private fun awaitCondition(timeoutMillis: Long, condition: () -> Boolean) {
+        composeRule.waitUntil(timeoutMillis) {
+            if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeBy(32)
+            condition()
         }
     }
 

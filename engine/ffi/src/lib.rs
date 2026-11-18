@@ -43,10 +43,12 @@ mod persistence;
 #[cfg(target_os = "android")]
 mod benchmark_jni;
 #[cfg(any(target_os = "android", test))]
+mod flight;
+#[cfg(any(target_os = "android", test))]
 mod probe_authoring;
 pub use persistence::{sl_v2_session_export_save, sl_v2_session_import_save, SlSaveWriteResult};
 
-pub const SOLARLAB_V2_ABI_VERSION: u32 = 12;
+pub const SOLARLAB_V2_ABI_VERSION: u32 = 13;
 /// Byte capacity for inline UTF-8 IDs in ABI structs; payloads use `*_len` for
 /// exact string extent.
 pub const SL_V2_ID_CAPACITY: usize = 96;
@@ -361,6 +363,10 @@ pub struct SlVulkanBodyInstance {
     pub appearance: SlVulkanCelestialAppearance,
     pub body_id: [u8; SL_V2_ID_CAPACITY],
     pub body_id_len: u32,
+    pub mesh_kind: u32,
+    pub attitude_xyzw: [f32; 4],
+    pub engine_throttle: f32,
+    pub mesh_position_from_origin_m: [f64; 3],
 }
 
 impl Default for SlVulkanBodyInstance {
@@ -375,6 +381,10 @@ impl Default for SlVulkanBodyInstance {
             appearance: SlVulkanCelestialAppearance::default(),
             body_id: [0; SL_V2_ID_CAPACITY],
             body_id_len: 0,
+            mesh_kind: 0,
+            attitude_xyzw: [0.0, 0.0, 0.0, 1.0],
+            engine_throttle: 0.0,
+            mesh_position_from_origin_m: [0.0; 3],
         }
     }
 }
@@ -1639,6 +1649,10 @@ fn encode_body_instance(value: VulkanBodyInstance) -> SlVulkanBodyInstance {
         appearance: encode_celestial_appearance(value.appearance),
         body_id: encode_identifier(&value.body_id.0).expect("body id should fit into packet"),
         body_id_len: string_length_to_u32(&value.body_id.0),
+        mesh_kind: value.mesh_kind,
+        attitude_xyzw: value.attitude_xyzw,
+        engine_throttle: value.engine_throttle,
+        mesh_position_from_origin_m: value.mesh_position_from_origin_m,
     }
 }
 
@@ -1999,6 +2013,7 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
         | RuntimeError::InvalidEpochDelta(_)
         | RuntimeError::InvalidPlaybackRate(_)
         | RuntimeError::InvalidBodyProperties | RuntimeError::BodyEditRequiresPause
+        | RuntimeError::InvalidFlightState
         | RuntimeError::UnknownCheckpoint(_)
         | RuntimeError::DuplicateCheckpoint(_)
         | RuntimeError::DuplicateBranch(_)
@@ -2226,6 +2241,7 @@ fn jni_next_ordinal(ordinal: u64) -> i64 {
 // pointers and must treat every handle as invalid after its corresponding destroy/
 // release call.
 mod android_jni {
+    mod flight;
     mod persistence;
     mod probe_authoring;
     use super::{
@@ -3349,13 +3365,17 @@ mod tests {
             88
         );
 
-        assert_eq!(size_of::<SlVulkanBodyInstance>(), 244);
-        assert_eq!(align_of::<SlVulkanBodyInstance>(), 4);
+        assert_eq!(size_of::<SlVulkanBodyInstance>(), 296);
+        assert_eq!(align_of::<SlVulkanBodyInstance>(), 8);
         assert_eq!(offset_of!(SlVulkanBodyInstance, selected), 36);
         assert_eq!(offset_of!(SlVulkanBodyInstance, kind), 40);
         assert_eq!(offset_of!(SlVulkanBodyInstance, appearance), 44);
         assert_eq!(offset_of!(SlVulkanBodyInstance, body_id), 144);
         assert_eq!(offset_of!(SlVulkanBodyInstance, body_id_len), 240);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, mesh_kind), 244);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, attitude_xyzw), 248);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, engine_throttle), 264);
+        assert_eq!(offset_of!(SlVulkanBodyInstance, mesh_position_from_origin_m), 272);
     }
 
     #[test]

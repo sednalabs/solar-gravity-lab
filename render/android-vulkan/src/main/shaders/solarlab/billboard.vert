@@ -8,6 +8,9 @@ layout(set = 0, binding = 0, std140) uniform SceneUniforms {
     vec4 viewport;
     vec4 primaryLightPositionRelativeAndFlags;
     vec4 presentation;
+    vec4 trailPresentationTranslation;
+    vec4 cameraCenterLow;
+    vec4 flightProjection;
 } uScene;
 
 layout(location = 0) in vec3 inPositionM;
@@ -43,6 +46,7 @@ layout(location = 12) flat out vec3 vCometAntiSolarCamera;
 layout(location = 13) flat out vec3 vCometVelocityCamera;
 layout(location = 14) flat out vec3 vSurfaceMetrics;
 layout(location = 15) flat out vec3 vRingPlaneCamera;
+layout(location = 16) flat out vec4 vPerspectiveSphere;
 
 const uint KIND_STAR = 0u;
 const uint KIND_PLANET = 1u;
@@ -136,6 +140,16 @@ void main() {
     float bodyDepth = clipDepth01(relative);
     gl_Position = vec4(centerClip + cornerClipOffset, clamp(bodyDepth, 0.0, 1.0), 1.0);
 
+    vPerspectiveSphere=vec4(0.0);
+    if(uScene.flightProjection.x>0.5) {
+        // A fullscreen conservative proxy lets analytic sphere rays show a real
+        // planetary horizon even when its centre and tangent lie off screen.
+        // The original billboard projection remains unchanged for the laboratory.
+        gl_Position=vec4(corner,0.5,1.0);
+        vPerspectiveSphere=vec4(dot(relative,uScene.rightAndSpan.xyz),
+            dot(relative,uScene.upAndSpan.xyz),
+            dot(relative,uScene.forwardAndDepth.xyz)+uScene.flightProjection.y,inPhysicalRadiusM);
+    }
     vec4 color = unpackArgb(inColorArgb);
     color.a *= inAlpha;
     vColor = color;
@@ -165,6 +179,7 @@ void main() {
     vCometVelocityCamera = directionToCamera(inCometVelocityDirectionWs);
     vRingPlaneCamera = directionToCamera(inRingPlaneNormalWs);
     float physicalDiameterPx = (max(inPhysicalRadiusM, 0.0) / metersPerPixel) * 2.0;
+    if(uScene.flightProjection.x>0.5) physicalDiameterPx *= uScene.flightProjection.y/max(vPerspectiveSphere.z,1.0);
     vSurfaceMetrics = vec3(
         smoothstep(7.0, 72.0, physicalDiameterPx),
         bodyDepth,

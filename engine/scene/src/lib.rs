@@ -63,6 +63,17 @@ impl Default for SceneCelestialAppearance {
     }
 }
 
+/// One-way rendering facts for an authoritative spacecraft. Body axes are
+/// +X right, +Y up, +Z forward; xyzw rotates body coordinates into world axes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneSpacecraftAppearance {
+    /// Immutable mesh identity: 1 = Asteria tug, 2 = Relay station.
+    /// Physical identity and pose remain on the containing authoritative body.
+    pub mesh_kind: u32,
+    pub attitude_xyzw: [f64; 4],
+    pub main_engine_throttle: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneBody {
     pub body_id: BodyId,
@@ -74,6 +85,7 @@ pub struct SceneBody {
     pub emissive_luminance: f64,
     pub selected: bool,
     pub appearance: SceneCelestialAppearance,
+    pub spacecraft: Option<SceneSpacecraftAppearance>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -323,6 +335,7 @@ mod tests {
                 emissive_luminance: 0.0,
                 selected: false,
                 appearance: SceneCelestialAppearance::default(),
+                spacecraft: None,
             }],
             tracers: vec![SceneTracer {
                 tracer_id: "trace-1".to_owned(),

@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Android-local implementation of `RuntimeFacade`.
@@ -54,6 +55,8 @@ class BridgeBackedRuntimeFacade internal constructor(
         JniRuntimeBridge(performanceHints = androidRuntimePerformanceHints(context)),
         operationScope = operationScope, experimentStore = FileExperimentStore(experimentDirectory),
     )
+
+    private val flightInputGeneration = AtomicLong(0)
 
     private val manualLock = Any()
     private var manualJob: Job? = null
@@ -173,6 +176,124 @@ class BridgeBackedRuntimeFacade internal constructor(
         null
     }
 
+    override suspend fun startFlight(shipId: String) = withContext(NonCancellable + boundaryDispatcher) {
+        check(_uiState.value.manualAdvance == null) { "Finish or cancel time advance before entering flight" }
+        bridge.startFlight(shipId).forEach(::applySignal)
+    }
+
+    override suspend fun startLunarMission(shipId: String) = startSavedFlightMission("Lunar flight") {
+        bridge.startLunarFlight(shipId)
+    }
+
+    override suspend fun startRendezvousMission(shipId: String) = startSavedFlightMission("Station rendezvous") {
+        bridge.startRendezvousFlight(shipId)
+    }
+
+    private suspend fun startSavedFlightMission(
+        missionName: String,
+        start: suspend () -> List<RuntimeSignal>,
+    ) = experimentMutex.withLock {
+        val store = checkNotNull(experimentStore) { "Save storage is unavailable; your current world has not been replaced" }
+        val missionLabel = missionName.lowercase(Locale.getDefault())
+        _experimentStatus.value = ExperimentStatus(busyLabel = "Saving this experiment and preparing $missionLabel")
+        _uiState.update { it.copy(pendingActionLabel = "Preparing $missionLabel") }
+        try {
+            withContext(NonCancellable) {
+                check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance before starting a mission" }
+                flightInputGeneration.incrementAndGet()
+                val previous = withContext(boundaryDispatcher) {
+                    bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal)
+                    bridge.exportSavedSession()
+                }
+                val saved = withContext(Dispatchers.IO) {
+                    store.save("Before $missionLabel ${java.text.SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(java.util.Date())}", previous)
+                }
+                refreshSavedExperiments()
+                // Native construction is isolated until seeding, mission authoring and validation succeed.
+                withContext(boundaryDispatcher) { start().forEach(::applySignal) }
+                _lastProbeCommit.value = null
+                _experimentStatus.value = ExperimentStatus(notice = "$missionName ready. Previous world saved as ${saved.name}", tone = ShellNoticeTone.Positive)
+                _uiState.update { it.copy(pendingActionLabel = null, playbackMeasurement = null,
+                    manualAdvanceOutcome = null, noticeLine = "$missionName ready. Your previous experiment has been saved.",
+                    noticeTone = ShellNoticeTone.Positive) }
+            }
+        } catch (error: Throwable) {
+            _experimentStatus.value = ExperimentStatus(notice = "$missionName could not start: ${error.message}", tone = ShellNoticeTone.Caution)
+            _uiState.update { it.copy(pendingActionLabel = null, noticeLine = "$missionName could not start: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+            throw error
+        }
+    }
+
+    override suspend fun beginLunarDeparture(shipId: String, expectedSessionHandle: Long?) {
+        val session = expectedSessionHandle ?: _uiState.value.sessionHandle
+        if (session != _uiState.value.sessionHandle) return
+        val generation = flightInputGeneration.incrementAndGet()
+        withContext(NonCancellable + boundaryDispatcher) {
+            if (session != _uiState.value.sessionHandle || generation != flightInputGeneration.get()) return@withContext
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance first" }
+            bridge.beginLunarDeparture(shipId).forEach(::applySignal)
+            bridge.applyCommand(RuntimeCommand.ResumePlayback).forEach(::applySignal)
+        }
+    }
+
+    override suspend fun setRendezvousGuidance(guidance: RendezvousGuidance, shipId: String, expectedSessionHandle: Long?) {
+        val session = expectedSessionHandle ?: _uiState.value.sessionHandle
+        if (session != _uiState.value.sessionHandle) return
+        val generation = flightInputGeneration.incrementAndGet()
+        withContext(NonCancellable + boundaryDispatcher) {
+            if (session != _uiState.value.sessionHandle || generation != flightInputGeneration.get()) return@withContext
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel the current advance first" }
+            bridge.applyCommand(RuntimeCommand.SetPlaybackRate(1.0)).forEach(::applySignal)
+            bridge.setRendezvousGuidance(shipId, guidance).forEach(::applySignal)
+            // Approach/Match are explicit requests to fly; returning to manual
+            // leaves the user's current pause state intact.
+            if (guidance != RendezvousGuidance.Manual) bridge.applyCommand(RuntimeCommand.ResumePlayback).forEach(::applySignal)
+        }
+    }
+
+    override suspend fun setFlightControl(control: FlightControl, shipId: String, expectedSessionHandle: Long?) {
+        val generation = flightInputGeneration.get()
+        withContext(boundaryDispatcher) {
+            if (generation != flightInputGeneration.get()) return@withContext
+            if (expectedSessionHandle != null && expectedSessionHandle != _uiState.value.sessionHandle) return@withContext
+            check(_uiState.value.manualAdvance == null) { "Finish or cancel time advance before controlling flight" }
+            if (control.requiresRealTime && (_uiState.value.snapshot?.simSecondsPerRealSecond ?: 1.0) > 1.0) {
+                bridge.applyCommand(RuntimeCommand.SetPlaybackRate(1.0)).forEach(::applySignal)
+            }
+            bridge.setFlightControl(shipId, control)
+        }
+    }
+
+    override suspend fun flightState(shipId: String): FlightState? =
+        withContext(boundaryDispatcher) { bridge.flightState(shipId) }
+
+    override suspend fun lunarMissionState(shipId: String): LunarMissionState? =
+        withContext(boundaryDispatcher) { bridge.lunarMissionState(shipId) }
+
+    override suspend fun rendezvousState(shipId: String): RendezvousState? =
+        withContext(boundaryDispatcher) { bridge.rendezvousState(shipId) }
+
+    override fun suspendFlightControls(shipId: String, expectedSessionHandle: Long?) {
+        if (expectedSessionHandle != null && expectedSessionHandle != _uiState.value.sessionHandle) return
+        // Invalidate inputs queued by the old Activity before scheduling the retained stop.
+        flightInputGeneration.incrementAndGet()
+        val session = expectedSessionHandle ?: _uiState.value.sessionHandle
+        operationScope.launch(NonCancellable + boundaryDispatcher) {
+            if (session == null || session != _uiState.value.sessionHandle) return@launch
+            try {
+                bridge.setFlightControl(shipId, FlightControl.Cut)
+            } catch (error: Throwable) {
+                _uiState.update { it.copy(noticeLine = "Could not cut flight input: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+            } finally {
+                // A missing or removed ship must never prevent stopping simulation time.
+                try { bridge.applyCommand(RuntimeCommand.PausePlayback).forEach(::applySignal) }
+                catch (error: Throwable) {
+                    _uiState.update { it.copy(noticeLine = "Could not pause flight: ${error.message}", noticeTone = ShellNoticeTone.Caution) }
+                }
+            }
+        }
+    }
+
     override suspend fun previewProbe(candidate: RuntimeBodyState, referenceBodyId: String, horizonSeconds: Double): ProbePreviewResult =
         withContext(boundaryDispatcher) {
             check(_uiState.value.manualAdvance == null) { "Finish or cancel the current time advance first" }
@@ -240,6 +361,7 @@ class BridgeBackedRuntimeFacade internal constructor(
             // Import builds a new native session before replacing the live one. Ensure
             // its resulting signals are applied even if the originating sheet closes.
             withContext(NonCancellable + boundaryDispatcher) {
+                flightInputGeneration.incrementAndGet()
                 bridge.importSavedSession(saved.bytes).forEach(::applySignal)
                 _experimentStatus.value = ExperimentStatus(notice = "Opened ${saved.info.name} · paused",
                     tone = ShellNoticeTone.Positive, openedId = id)

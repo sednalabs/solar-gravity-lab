@@ -161,6 +161,8 @@ internal data class LabStageActions(
     val setViewMode: (LabViewMode) -> Unit = {},
     val toggleFollow: () -> Unit = {},
     val undo: () -> Unit = {},
+    val enterFlight: () -> Unit = {},
+    val enterLunarFlight: () -> Unit = {},
 )
 
 internal val LabInk = Color(0xFFF0F5FA)
@@ -286,6 +288,8 @@ private fun LabSceneHeader(
             if (landscape && navigation.canUndo) {
                 LabTextAction("Undo", actions.undo, tag = LabTags.UNDO, enabled = canEdit)
             }
+            LabTextAction("Fly", actions.enterFlight, tag = FlightTags.LAUNCH,
+                description = "Launch orbital flight", enabled = canEdit && "earth" in availableBodyIds)
             // Objects is useful during initial loading too: opening it must not
             // silently ignore a tap while Rust is filling the body catalogue.
             LabTextAction("Objects", actions.search, tag = SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
@@ -555,6 +559,8 @@ private fun LabMenuSheet(
                 LabTextAction("Done", actions.toggleTools, tag = LabTags.TOOLS_CLOSE,
                     description = "Close laboratory tools")
             }
+            LabMenuRow("Launch orbital flight", "Pilot Odyssey, change your orbit and explore", "flight.launch.menu", ready) { open(actions.enterFlight) }
+            LabMenuRow("Lunar flight", "Start in Earth orbit and attempt a lunar flyby", LunarFlightTags.BRIEF, ready) { open(actions.enterLunarFlight) }
             LabMenuRow("Saved experiments", "Save this moment or reopen an experiment", LabTags.SAVED, ready) { open(actions.saved) }
             LabMenuRow("Choose a scene", "Explore another starting system", SolarLabTestTags.STAGE_FIRST_SCENARIO_BUTTON) { open(actions.scenarios) }
             LabMenuRow("About this model", "Sources, epoch and scientific approximations", LabTags.SCIENCE) { open(actions.science) }

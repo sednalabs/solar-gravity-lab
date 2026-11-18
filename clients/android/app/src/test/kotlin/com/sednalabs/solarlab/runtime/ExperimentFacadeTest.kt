@@ -23,6 +23,20 @@ class ExperimentFacadeTest {
         private val refreshSignals: () -> List<RuntimeSignal> = { emptyList() },
     ) : RuntimeBridge {
         var failImport = false
+        var lunarStarts = 0
+        var onLunarStart: (() -> Unit)? = null
+        var rendezvousStarts = 0
+        var onRendezvousStart: (() -> Unit)? = null
+        override suspend fun startLunarFlight(shipId: String): List<RuntimeSignal> {
+            onLunarStart?.invoke()
+            lunarStarts++
+            return listOf(RuntimeSignal.Connected(3L))
+        }
+        override suspend fun startRendezvousFlight(shipId: String): List<RuntimeSignal> {
+            onRendezvousStart?.invoke()
+            rendezvousStarts++
+            return listOf(RuntimeSignal.Connected(4L))
+        }
         var imported: ByteArray? = null
         var validated: ByteArray? = null
         override suspend fun validateSavedSession(bytes: ByteArray): String {
@@ -53,6 +67,78 @@ class ExperimentFacadeTest {
             if (failList) throw IOException("Catalogue storage is temporarily unavailable")
             return backing.list()
         }
+    }
+
+    @Test fun rendezvousDurablySavesTheOldSessionBeforeAuthoringItsStation() = runBlocking {
+        val root = Files.createTempDirectory("rendezvous-safe-launch").toFile()
+        try {
+            val store = FileExperimentStore(root)
+            val bridge = Bridge()
+            bridge.onRendezvousStart = {
+                val backup = store.list().single()
+                assertTrue(backup.name.startsWith("Before station rendezvous"))
+                assertArrayEquals(byteArrayOf(1, 2, 3), store.read(backup.id).bytes)
+            }
+            val facade = facade(bridge, store)
+            facade.startSession()
+            facade.startRendezvousMission()
+            assertEquals(1, bridge.rendezvousStarts)
+            assertEquals(4L, facade.uiState.value.sessionHandle)
+            assertEquals(1, facade.savedExperiments.value.size)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun failedRendezvousBackupRetainsTheLiveWorld() = runBlocking {
+        val root = Files.createTempDirectory("rendezvous-failed-backup").toFile()
+        try {
+            val store = object : ExperimentStore by FileExperimentStore(root) {
+                override fun save(name: String, session: SavedRuntimeSession): SavedExperimentInfo = throw IOException("Disk full")
+            }
+            val bridge = Bridge()
+            val facade = facade(bridge, store)
+            facade.startSession()
+            assertTrue(runCatching { facade.startRendezvousMission() }.isFailure)
+            assertEquals(0, bridge.rendezvousStarts)
+            assertEquals(1L, facade.uiState.value.sessionHandle)
+            assertNull(facade.uiState.value.pendingActionLabel)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun lunarMissionSavesTheCompleteOldSessionBeforeOpeningItsNewWorld() = runBlocking {
+        val root = Files.createTempDirectory("lunar-safe-launch").toFile()
+        try {
+            val store = FileExperimentStore(root)
+            val bridge = Bridge()
+            bridge.onLunarStart = {
+                val backup = store.list().single()
+                assertTrue(backup.name.startsWith("Before lunar flight"))
+                assertArrayEquals(byteArrayOf(1, 2, 3), store.read(backup.id).bytes)
+            }
+            val facade = facade(bridge, store)
+            facade.startSession()
+            facade.startLunarMission()
+            assertEquals(1, bridge.lunarStarts)
+            assertEquals(3L, facade.uiState.value.sessionHandle)
+            assertEquals(1, facade.savedExperiments.value.size)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun failedBackupCannotReplaceTheLiveWorldWithALunarMission() = runBlocking {
+        val root = Files.createTempDirectory("lunar-failed-backup").toFile()
+        try {
+            val store = object : ExperimentStore by FileExperimentStore(root) {
+                override fun save(name: String, session: SavedRuntimeSession): SavedExperimentInfo = throw IOException("Disk full")
+            }
+            val bridge = Bridge()
+            val facade = facade(bridge, store)
+            facade.startSession()
+            var rejected = false
+            try { facade.startLunarMission() } catch (_: IOException) { rejected = true }
+            assertTrue(rejected)
+            assertEquals(0, bridge.lunarStarts)
+            assertEquals(1L, facade.uiState.value.sessionHandle)
+            assertNull(facade.uiState.value.pendingActionLabel)
+        } finally { root.deleteRecursively() }
     }
 
     @Test

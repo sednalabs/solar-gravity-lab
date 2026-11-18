@@ -1,3 +1,14 @@
+pub mod spacecraft;
+pub mod rendezvous;
+pub use rendezvous::{
+    RendezvousGuidance, RendezvousGuidanceMode, RendezvousStatus, SpacecraftRendezvousState,
+};
+pub use spacecraft::{
+    AttitudeMode, EngineControl, FlightControl, LocalReferenceFrame, Quaterniond,
+    SpacecraftAppearance, SpacecraftBurnProgram, SpacecraftEngine, SpacecraftMissionState,
+    SpacecraftState,
+};
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BodyId(pub String);
 

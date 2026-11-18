@@ -553,7 +553,14 @@ jobs:
           python3 render/android-vulkan/src/test/python/test_compute_contract.py
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/solarlab-presentation-test
           /tmp/solarlab-presentation-test
+          python3 tools/test_import_spacecraft_gltf.py
+          g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SpacecraftPresentationTest.cpp -o /tmp/spacecraft-presentation-test
+          /tmp/spacecraft-presentation-test
           cargo test --workspace
+          cargo run -p solarlab-runtime --example orbital_flight
+          cargo run -p solarlab-runtime --example lunar_flight -- 60
+          cargo run -p solarlab-runtime --example orbital_rendezvous
+          cargo run -p solarlab-runtime --example orbital_rendezvous -- match
 
       - name: Measure release physics throughput (x64)
         timeout-minutes: 10

@@ -64,6 +64,7 @@ impl WorldRuntime {
             epoch_seconds: active.world.epoch_seconds,
             timeline_semantics: self.config.timeline_semantics.clone(),
             bodies: active.world.bodies.clone(),
+            spacecraft: active.world.spacecraft.clone(),
             active_checkpoint: checkpoint,
             hardware_profile: self.hardware_profile.clone(),
             invariants: active.world.invariants,
@@ -82,13 +83,15 @@ impl WorldRuntime {
     /// This keeps trajectory, historical checkpoint orbit passes, and future
     /// prediction overlays in the Rust-owned history/runtime seam instead of
     /// leaving the client to infer them from one generic trail family.
+    /// Prediction archives are explicitly engine-off coast forecasts from the
+    /// current state; they do not extrapolate spacecraft control commands.
     #[must_use]
     pub fn orbit_archives(&self, query: &OrbitArchiveQuery) -> Vec<OrbitArchive> {
         let active = self.active_branch();
         build_orbit_archives(
             active,
             query,
-            &self.effective_physics_policy(),
+            &self.coast_physics_policy(),
             &self.hardware_profile.cpu_features,
         )
     }
@@ -136,8 +139,10 @@ impl WorldRuntime {
     /// scene export.
     #[must_use]
     pub fn render_scene(&self) -> RenderScene {
-        let snapshot = self
-            .snapshot_with_orbit_archives(self.orbit_archives(&self.render_scene_orbit_query()));
+        let query = self.render_scene_orbit_query();
+        let archives = flight_prediction::display_archives(self, &query)
+            .unwrap_or_else(|| self.orbit_archives(&query));
+        let snapshot = self.snapshot_with_orbit_archives(archives);
         extract_render_scene(&snapshot)
     }
 

@@ -5,8 +5,8 @@ use solarlab_domain::{
     Vector3d,
 };
 use solarlab_scene::{
-    CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody, SceneDetailBand,
-    SceneBodyKind, ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
+    CameraPose, ColorRgba, LightSource, RenderDiagnostics, RenderScene, SceneBody, SceneBodyKind,
+    SceneDetailBand, ScenePacketMetadata, SceneProvenanceRef, SceneTracer, SceneTrail,
     SceneTrailFamily,
 };
 use std::collections::HashSet;
@@ -87,6 +87,11 @@ pub struct VulkanBodyInstance {
     pub emissive_luminance: f32,
     pub selected: bool,
     pub appearance: VulkanCelestialAppearance,
+    pub mesh_kind: u32,
+    pub attitude_xyzw: [f32; 4],
+    pub engine_throttle: f32,
+    /// Derived immutable render position kept in f64 until native camera rebasing.
+    pub mesh_position_from_origin_m: [f64; 3],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -409,6 +414,18 @@ fn adapt_camera(camera: &CameraPose, frame_origin_m: Vector3d) -> VulkanCameraPa
 
 fn adapt_body(body: &SceneBody, frame_origin_m: Vector3d) -> VulkanBodyInstance {
     VulkanBodyInstance {
+        mesh_kind: body.spacecraft.map_or(0, |ship| ship.mesh_kind),
+        attitude_xyzw: body.spacecraft.map_or([0.0, 0.0, 0.0, 1.0], |ship| {
+            ship.attitude_xyzw.map(|v| v as f32)
+        }),
+        engine_throttle: body
+            .spacecraft
+            .map_or(0.0, |ship| ship.main_engine_throttle.clamp(0.0, 1.0) as f32),
+        mesh_position_from_origin_m: [
+            body.position_m.x - frame_origin_m.x,
+            body.position_m.y - frame_origin_m.y,
+            body.position_m.z - frame_origin_m.z,
+        ],
         body_id: body.body_id.clone(),
         display_name: body.display_name.clone(),
         kind: body.kind,
@@ -421,19 +438,18 @@ fn adapt_body(body: &SceneBody, frame_origin_m: Vector3d) -> VulkanBodyInstance 
             material: body.appearance.facts.material,
             provenance: body.appearance.facts.provenance,
             north_pole_ws: pack_vec3(body.appearance.facts.orientation.north_pole_ws),
-            reference_meridian_radians: body
+            reference_meridian_radians: body.appearance.facts.orientation.reference_meridian_radians
+                as f32,
+            ring_system: body
                 .appearance
                 .facts
-                .orientation
-                .reference_meridian_radians as f32,
-            ring_system: body.appearance.facts.ring_system.map(|ring| {
-                VulkanRingSystemAppearance {
+                .ring_system
+                .map(|ring| VulkanRingSystemAppearance {
                     inner_radius_m: ring.inner_radius_m as f32,
                     outer_radius_m: ring.outer_radius_m as f32,
                     plane_normal_ws: pack_vec3(ring.plane_normal_ws),
                     optical_depth: ring.optical_depth as f32,
-                }
-            }),
+                }),
             atmosphere: body.appearance.facts.atmosphere.map(|atmosphere| {
                 VulkanAtmosphereAppearance {
                     outer_radius_m: atmosphere.outer_radius_m as f32,
@@ -441,20 +457,21 @@ fn adapt_body(body: &SceneBody, frame_origin_m: Vector3d) -> VulkanBodyInstance 
                 }
             }),
             comet: body.appearance.facts.comet.map(|comet| {
-                let visual = body.appearance.comet_visual.unwrap_or(
-                    solarlab_scene::SceneCometVisualGuide {
-                        anti_solar_direction_ws: Vector3d {
-                            x: 1.0,
-                            y: 0.0,
-                            z: 0.0,
-                        },
-                        velocity_direction_ws: Vector3d {
-                            x: 0.0,
-                            y: 0.0,
-                            z: 1.0,
-                        },
-                    },
-                );
+                let visual =
+                    body.appearance
+                        .comet_visual
+                        .unwrap_or(solarlab_scene::SceneCometVisualGuide {
+                            anti_solar_direction_ws: Vector3d {
+                                x: 1.0,
+                                y: 0.0,
+                                z: 0.0,
+                            },
+                            velocity_direction_ws: Vector3d {
+                                x: 0.0,
+                                y: 0.0,
+                                z: 1.0,
+                            },
+                        });
                 VulkanCometAppearance {
                     nucleus_radius_m: comet.nucleus_radius_m as f32,
                     coma_radius_m: comet.coma_radius_m as f32,
@@ -706,6 +723,49 @@ mod tests {
     }
 
     #[test]
+    fn spacecraft_pose_and_precise_local_offset_survive_scene_adaptation() {
+        let mut scene = sample_scene();
+        scene.camera.target_m.x = 149_597_870_700.0;
+        scene.bodies[0].position_m.x = scene.camera.target_m.x + 6_800_000.125;
+        scene.bodies[0].kind = SceneBodyKind::Spacecraft;
+        scene.bodies[0].spacecraft = Some(solarlab_scene::SceneSpacecraftAppearance {
+            mesh_kind: 1,
+            attitude_xyzw: [0.0, 0.6, 0.0, 0.8],
+            main_engine_throttle: 0.42,
+        });
+        let before = scene.clone();
+        let packet = VulkanSceneAdapter::default().adapt(&scene);
+        let ship = &packet.body_instances[0];
+        assert_eq!(ship.mesh_kind, 1);
+        assert_eq!(ship.attitude_xyzw, [0.0, 0.6, 0.0, 0.8]);
+        assert!((ship.engine_throttle - 0.42).abs() < 1e-6);
+        assert_eq!(ship.mesh_position_from_origin_m[0], 6_800_000.125);
+        assert_ne!(
+            ship.mesh_position_from_origin_m[0],
+            f64::from(ship.position_from_origin_m.x)
+        );
+        assert_eq!(scene, before);
+    }
+
+    #[test]
+    fn station_mesh_identity_preserves_shared_authoritative_pose() {
+        let mut scene = sample_scene();
+        scene.bodies[0].body_id = BodyId("rendezvous.station".into());
+        scene.bodies[0].kind = SceneBodyKind::Spacecraft;
+        scene.bodies[0].spacecraft = Some(solarlab_scene::SceneSpacecraftAppearance {
+            mesh_kind: 2,
+            attitude_xyzw: [0.0, 0.0, 0.0, 1.0],
+            main_engine_throttle: 0.0,
+        });
+        let before = scene.clone();
+        let packet = VulkanSceneAdapter::default().adapt(&scene);
+        assert_eq!(packet.body_instances[0].mesh_kind, 2);
+        assert_eq!(packet.body_instances[0].body_id, scene.bodies[0].body_id);
+        assert_eq!(packet.body_instances[0].engine_throttle, 0.0);
+        assert_eq!(scene, before);
+    }
+
+    #[test]
     fn adapter_orders_tracers_and_trails_deterministically_by_tier_and_identity() {
         let mut scene = sample_scene();
         scene.bodies[0].selected = true;
@@ -728,6 +788,7 @@ mod tests {
             emissive_luminance: 0.0,
             selected: false,
             appearance: solarlab_scene::SceneCelestialAppearance::default(),
+            spacecraft: None,
         });
         scene.tracers = vec![
             SceneTracer {
@@ -972,6 +1033,7 @@ mod tests {
                 emissive_luminance: 0.0,
                 selected: true,
                 appearance: solarlab_scene::SceneCelestialAppearance::default(),
+                spacecraft: None,
             }],
             tracers: vec![SceneTracer {
                 tracer_id: "trace-1".to_owned(),

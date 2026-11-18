@@ -5,6 +5,17 @@
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
 mod lab_prediction;
+mod spacecraft;
+mod flight_mission;
+mod flight_prediction;
+pub use flight_prediction::LunarCoastForecastDiagnostics;
+pub use flight_mission::{LunarMissionOutcome,LUNAR_FLYBY_SUCCESS_ALTITUDE_M,LUNAR_APPROACH_ALTITUDE_M,LUNAR_MISSION_DEADLINE_SECONDS,LunarMissionPhase,LunarMissionTelemetry,LUNAR_FLIGHT_BODY_ID,LUNAR_FLIGHT_MODEL,LUNAR_DEPARTURE_BURN_SECONDS,LUNAR_INSERTION_PHASE_RADIANS,LUNAR_INSERTION_ALTITUDE_M,LUNAR_EXPECTED_FLYBY_WINDOW_SECONDS};
+mod flight_telemetry;
+mod rendezvous;
+pub use rendezvous::{RendezvousGuidance, RendezvousGuidanceMode, RendezvousScenario, RendezvousStatus, RendezvousTelemetry};
+mod rendezvous_flight;
+pub use rendezvous_flight::{RendezvousFlightTelemetry, RENDEZVOUS_STATION_BODY_ID};
+pub use flight_telemetry::FlightTelemetry;
 mod body_properties;
 mod lab_step;
 mod persistence;
@@ -54,7 +65,7 @@ use solarlab_data::{
 
 use solarlab_domain::{
     BodyClass, BodyId, BranchId, CheckpointId, ObserverMode, ScenarioId, TimelineSemantics,
-    Vector3d,
+    Vector3d, FlightControl, SpacecraftState, Quaterniond,
 };
 use solarlab_hardware::HardwareProfile;
 use solarlab_history::{
@@ -62,7 +73,7 @@ use solarlab_history::{
     HistoryEvent, OrbitArchive, OrbitArchiveFamily, OrbitArchiveQuery, OrbitSample,
 };
 use solarlab_physics::{
-    advance_authoritative_with_features, advance_fixed_steps, checked_substep_count,
+    advance_authoritative_with_features, checked_substep_count,
     compute_invariants, fixed_step_plan_with_source_count, solver_execution_report_for_backend_with_source_count,
     FixedStepPlan, MassiveBodyState, PhysicsInvariants, PhysicsPolicy, SolverExecutionReport,
     MAX_INCREMENTAL_STEPS,
@@ -189,6 +200,8 @@ pub struct WorldSnapshot {
     pub epoch_seconds: f64,
     pub timeline_semantics: TimelineSemantics,
     pub bodies: Vec<BodyState>,
+    /// Flight components keyed by BodyId; position/velocity remain in bodies.
+    pub spacecraft: Vec<SpacecraftState>,
     pub active_checkpoint: Option<CheckpointDescriptor>,
     pub hardware_profile: HardwareProfile,
     pub invariants: PhysicsInvariants,
@@ -241,6 +254,10 @@ pub struct RuntimeTelemetryReport {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorldCommand {
+    SpawnSpacecraft { body: BodyState, spacecraft: SpacecraftState },
+    SetFlightControl { body_id: BodyId, control: FlightControl },
+    StartGuidedBurn { body_id: BodyId, full_throttle_seconds: f64 },
+    SetRendezvousGuidance { body_id: BodyId, mode: RendezvousGuidanceMode },
     /// Seeds the canonical startup solar-system catalog into an empty world.
     /// Runtime owns the catalog truth; host clients only request this action.
     SeedCanonicalSolarSystem,
@@ -312,6 +329,7 @@ pub enum RuntimeError {
     InvalidEpochDelta(f64),
     InvalidPlaybackRate(f64),
     InvalidBodyProperties,
+    InvalidFlightState,
     BodyEditRequiresPause,
     AdvanceBusy,
     AdvanceStale,
@@ -354,6 +372,8 @@ pub struct ApplyUpdateManifestResult {
 struct BranchWorldState {
     epoch_seconds: f64,
     bodies: Vec<BodyState>,
+    #[serde(default)]
+    spacecraft: Vec<SpacecraftState>,
     observer: ObserverState,
     playback: PlaybackState,
     #[serde(skip)]
@@ -404,6 +424,7 @@ pub struct AdvanceOperation {
     pub total_steps: usize,
     plan: Option<FixedStepPlan>,
     bodies: Vec<MassiveBodyState>,
+    spacecraft: Vec<solarlab_physics::spacecraft::SpacecraftBinding>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -438,6 +459,7 @@ pub struct WorldRuntime {
     next_branch_ordinal: u64,
     advance_generation: u64,
     advance_operation: Option<AdvanceOperation>,
+    flight_prediction_cache: flight_prediction::FlightPredictionCache,
 }
 
 

@@ -1,3 +1,5 @@
+pub mod spacecraft;
+pub mod rendezvous;
 use std::collections::BTreeSet;
 use std::fs;
 use std::sync::OnceLock;
