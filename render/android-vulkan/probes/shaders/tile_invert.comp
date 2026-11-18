@@ -1,0 +1,19 @@
+#version 460
+#extension GL_QCOM_tile_shading : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, tile_attachmentQCOM, rgba8) uniform image2D attachment;
+
+// One fixed workgroup is dispatched PER TILE. No invocation ever touches a
+// neighbour tile or apron. Edge tiles may extend beyond the framebuffer, so
+// intersect the runtime tile extent with the complete image's dimensions.
+void main() {
+    uvec2 end = min(gl_TileOffsetQCOM + gl_TileDimensionQCOM.xy, uvec2(imageSize(attachment)));
+    for (uint y = gl_TileOffsetQCOM.y + gl_LocalInvocationID.y; y < end.y; y += 8u) {
+        for (uint x = gl_TileOffsetQCOM.x + gl_LocalInvocationID.x; x < end.x; x += 8u) {
+            ivec2 pixel = ivec2(x, y);
+            vec4 source = imageLoad(attachment, pixel);
+            imageStore(attachment, pixel, vec4(vec3(1.0) - source.rgb, source.a));
+        }
+    }
+}
