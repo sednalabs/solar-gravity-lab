@@ -66,8 +66,17 @@ impl Case {
             "different_force_model_cost" => {
                 "The timing control is Newtonian production scalar; the candidate uses a different force model and RK4. This measures added model/integrator cost, not an equivalent-physics speedup. Accuracy uses a converged same-model finer-step reference."
             }
+            "accuracy_cost_experiment" if matches!(self.force, ForceMode::NeonRsqrt(_)) => {
+                "The timing control is neon-block-4 with identical four-target packing, FP64 accumulation, fixture and KDK steps. The candidate additionally times its infinite-distance guard and hardware estimate/refinements. Independent accuracy uses production FP64 scalar at identical steps. Evaluate accuracy and cost together; this is not a correctly-rounded or bitwise-equivalent sqrt/div replacement."
+            }
             "accuracy_cost_experiment" => {
                 "The control uses Newtonian production scalar at the same simulated duration. Different integration, approximation or precision policies require joint accuracy/cost assessment; raw timing ratios do not establish an equivalent-kernel speedup."
+            }
+            "equivalent_kernel" if self.baseline == "production-selected" => {
+                "The timing control is production-selected, the current shipping dispatch for the same Newtonian fixture and fixed-step schedule. Independent accuracy still uses production FP64 scalar at identical steps. A candidate must improve on the selected production path, within its declared error budget and observed device conditions, before it is a further optimisation candidate."
+            }
+            "equivalent_kernel" if self.id == "production-selected" => {
+                "This admission/control comparison measures current production-selected dispatch against production-scalar at identical steps. It verifies the already-shipping path; a gain over scalar is not a new optimisation over current production. Independent accuracy uses production FP64 scalar."
             }
             _ => {
                 "Candidate and control use the same Newtonian model, fixture and fixed-step schedule. Timing comparisons remain conditional on the declared state-error budget and observed device conditions."
@@ -86,7 +95,7 @@ macro_rules! force_case {
             fixtures: $fixtures,
             algorithm: Algorithm::Leapfrog,
             force: $mode,
-            baseline: "production-scalar",
+            baseline: "production-selected",
             tolerance: 2.0e-11,
             note: $note,
         }
@@ -169,6 +178,12 @@ pub const CASES: &[Case] = &[
     Case { id:"rsqrt-refine-2", label:"FP32 seed + two FP64 reciprocal corrections", family:"approximate", recommendations:&[58], fixtures:ALL_FIXTURES,
         algorithm:Algorithm::Leapfrog, force:ForceMode::Rsqrt(2), baseline:"production-scalar", tolerance:2.0e-11,
         note:"FP32 sqrt/reciprocal seed then two FP64 Newton corrections." },
+    Case { id:"neon-rsqrt-refine-2", label:"NEON FP64 estimate + two reciprocal corrections", family:"approximate", recommendations:&[58], fixtures:ALL_FIXTURES,
+        algorithm:Algorithm::Leapfrog, force:ForceMode::NeonRsqrt(2), baseline:"neon-block-4", tolerance:2.0e-8,
+        note:"Actual FRSQRTE/FRSQRTS FP64 instructions; two fixed Newton steps. Same four-target packing/accumulation as NEON sqrt/div control; scalar independent oracle. Accuracy/cost experiment, no scalar estimate fallback." },
+    Case { id:"neon-rsqrt-refine-3", label:"NEON FP64 estimate + three reciprocal corrections", family:"approximate", recommendations:&[58], fixtures:ALL_FIXTURES,
+        algorithm:Algorithm::Leapfrog, force:ForceMode::NeonRsqrt(3), baseline:"neon-block-4", tolerance:2.0e-11,
+        note:"Actual FRSQRTE/FRSQRTS FP64 instructions; three fixed Newton steps. Same four-target packing/accumulation as NEON sqrt/div control; scalar independent oracle. Near-FP64 accuracy is measured, not bitwise-equivalence or correctly-roundedness." },
     Case { id:"passive-extrapolate-2", label:"Passive jerk extrapolation, interval 2", family:"approximate", recommendations:&[59], fixtures:SPARSE,
         algorithm:Algorithm::Extrapolate(2), force:ForceMode::Direct, baseline:"production-scalar", tolerance:1.0e-5,
         note:"Massive forces each kick; passive acceleration/jerk every two steps. FP64 checkpoint comparison each segment." },
@@ -183,7 +198,7 @@ pub const CASES: &[Case] = &[
 pub fn availability(case: &Case) -> (bool, &'static str) {
     if matches!(
         case.force,
-        ForceMode::NeonBlock(_) | ForceMode::NeonSources3
+        ForceMode::NeonBlock(_) | ForceMode::NeonSources3 | ForceMode::NeonRsqrt(_)
     ) && !crate::neon::available()
     {
         (false, "AArch64 process with actual NEON support required")

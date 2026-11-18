@@ -131,6 +131,37 @@ def bootstrap_interval(values: list[float]) -> list[float] | None:
     return [quantile(medians, .025), quantile(medians, .975)]
 
 
+def paired_metric_summary(blocks: list[list[dict[str, Any]]], metric: str) -> dict[str, Any]:
+    """Keep device-query, host-boundary and setup clocks as separate populations."""
+    baseline, candidate, changes = [], [], []
+    omitted = 0
+    for block in blocks:
+        values = []
+        for sample in block:
+            native = sample.get("native", {})
+            if metric == "gpu_timestamp":
+                value = native.get("gpu_elapsed_ns") if native.get("gpu_timestamp_valid") is True else None
+            elif metric == "native_setup":
+                value = native.get("setup_ns")
+            else:
+                value = sample.get(metric)
+            values.append(value)
+        if not all(finite_positive(value) for value in values):
+            omitted += 1
+            continue
+        baseline.extend([values[0], values[3]])
+        candidate.extend([values[1], values[2]])
+        changes.append((math.sqrt((values[1] / values[0]) * (values[2] / values[3])) - 1.0) * 100.0)
+    return {
+        "clean_blocks": len(changes), "blocks_without_valid_metric": omitted,
+        "baseline": timing_summary(baseline), "candidate": timing_summary(candidate),
+        "block_change_percent": changes,
+        "median_change_percent": statistics.median(changes) if changes else None,
+        "bootstrap_95_percent_interval": bootstrap_interval(changes),
+        "interpretation": "descriptive_same_ABBA_blocks_only; not_an_independent_production_promotion_test",
+    }
+
+
 def environmental_reasons(samples: list[dict[str, Any]]) -> list[str]:
     reasons = []
     environments = [sample.get(key, {}) for sample in samples for key in ("environment_before", "environment_after")]
@@ -158,6 +189,103 @@ def error_metrics(value: Any, path: str = "") -> dict[str, float]:
             elif isinstance(child, dict):
                 result.update(error_metrics(child, child_path))
     return result
+
+
+def runtime_observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Count observed work between coherent snapshots of the same bridge.
+
+    The first lifetime counter includes work before recording began. Never count
+    it as session work, bridge a missing observation, or subtract across a new
+    bridge instance. These are work counts, not a CPU-time or energy estimate.
+    """
+    fields = ("periodic_summary_polls", "paused_duplicate_suppressions",
+              "packet_export_attempts", "packet_export_failures")
+    totals = Counter({field: 0 for field in fields})
+    exclusions: Counter[str] = Counter()
+    scopes: set[str] = set()
+    observations = intervals = observed_ns = 0
+    previous: tuple[str, int, dict[str, int]] | None = None
+    for record in records:
+        if record.get("event") != "observatory_snapshot":
+            continue
+        data = record.get("data")
+        counters = data.get("runtime_observation") if isinstance(data, dict) else None
+        if not isinstance(counters, dict):
+            exclusions["counter_unavailable"] += 1
+            previous = None
+            continue
+        scope = counters.get("scope_id")
+        clock = record.get("source_monotonic_ns")
+        if (type(counters.get("schema_version")) is not int or counters["schema_version"] != 1
+                or not isinstance(scope, str) or not scope.strip()
+                or type(clock) is not int or clock < 0
+                or any(type(counters.get(field)) is not int or counters[field] < 0 for field in fields)):
+            exclusions["malformed_counter_observation"] += 1
+            previous = None
+            continue
+        values = {field: counters[field] for field in fields}
+        if (values["paused_duplicate_suppressions"] > values["periodic_summary_polls"]
+                or values["packet_export_failures"] > values["packet_export_attempts"]):
+            exclusions["inconsistent_counter_observation"] += 1
+            previous = None
+            continue
+        observations += 1
+        scopes.add(scope)
+        if previous is not None:
+            old_scope, old_clock, old_values = previous
+            delta = {field: values[field] - old_values[field] for field in fields}
+            if scope != old_scope:
+                exclusions["bridge_scope_changed"] += 1
+            elif clock <= old_clock:
+                exclusions["nonincreasing_observation_clock"] += 1
+                # An out-of-order sample must not become the next baseline.
+                previous = None
+                continue
+            elif any(value < 0 for value in delta.values()):
+                exclusions["counter_reset_or_regression"] += 1
+            elif (delta["paused_duplicate_suppressions"] > delta["periodic_summary_polls"]
+                    or delta["packet_export_failures"] > delta["packet_export_attempts"]):
+                exclusions["inconsistent_counter_delta"] += 1
+            else:
+                totals.update(delta)
+                intervals += 1
+                observed_ns += clock - old_clock
+        previous = (scope, clock, values)
+    polls = totals["periodic_summary_polls"]
+    return {
+        "available": intervals > 0,
+        "counter_observations": observations,
+        "bridge_scope_count": len(scopes),
+        "accepted_intervals": intervals,
+        "observed_interval_ns": observed_ns if intervals else None,
+        "observed_counter_deltas": dict(totals) if intervals else None,
+        "paused_exports_avoided_per_periodic_poll": (
+            totals["paused_duplicate_suppressions"] / polls if intervals and polls else None),
+        "excluded_intervals_or_observations": dict(exclusions),
+        "scope": "deltas_between_adjacent_valid_observations_of_the_same_bridge_instance",
+        "interpretation": (
+            "Counts cover only accepted observation intervals. The first lifetime values and "
+            "unobserved endpoints are excluded. A suppression is an avoided periodic scene export "
+            "and snapshot publication, not an avoided summary poll, GPU frame, or measured energy saving. "
+            "Explicit refreshes and commands can still export packets during an otherwise paused scene."),
+    }
+
+
+def pipeline_cache_summary(renderers: list[dict[str, Any]]) -> dict[str, Any]:
+    """A callback samples lifecycle counters; never sum repeated cache observations."""
+    states = [renderer["pipeline_cache_persistence"] for renderer in renderers
+              if isinstance(renderer.get("pipeline_cache_persistence"), dict)]
+    return {
+        "available": bool(states), "observations_with_fields": len(states),
+        "observed_sources": sorted({str(state["source"]) for state in states if "source" in state}),
+        "observed_load_statuses": sorted({str(state["load"]) for state in states if "load" in state}),
+        "observed_save_statuses": sorted({str(state["save"]) for state in states if "save" in state}),
+        "latest_observed_lifecycle_counters": states[-1] if states else None,
+        "interpretation": "Sampled cumulative device-lifecycle host counters, not per-callback operations. "
+                          "No sum or lifecycle count is inferred: callbacks can repeat or miss recreation. "
+                          "disk-supplied confirms compatible bytes were supplied, not a driver cache hit. "
+                          "Nanosecond fields are CPU host intervals, not GPU or frame time.",
+    }
 
 
 def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -211,6 +339,8 @@ def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
             "battery_plugged_values": sorted(plugged), "battery_energy": energy_result,
             "gpu_last_completed_sample": timing_summary(frames), "gpu_pregraphics_sample": timing_summary(pregraphics),
             "gpu_sample_counter_resets": resets, "ui_vsync_interval": timing_summary(ui_intervals),
+            "runtime_observation": runtime_observation_summary(records),
+            "pipeline_cache_persistence": pipeline_cache_summary(renderers),
             "timing_scope": "GPU callbacks sample the last completed timestamp query and may skip frames; UI callbacks are separate. Neither population is a complete presented-frame trace."}
 
 
@@ -228,16 +358,23 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
     }
     blocks: dict[tuple[str, int, int], list[dict[str, Any]]] = defaultdict(list)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    failed_admission: Counter[str] = Counter()
     for sample in samples:
+        pair = str(sample.get("pair", "unknown"))
+        if sample.get("status") == "FAIL" or sample.get("native", {}).get("status") == "FAIL":
+            failed_admission[pair] += 1
         if sample.get("warmup") or str(sample.get("order", "")).startswith("warmup"):
             continue
-        pair = str(sample.get("pair", "unknown"))
         groups[pair].append(sample)
         blocks[(pair, sample.get("round", 0), sample.get("block", 0))].append(sample)
+    # A failed pilot can retire its pair before any measured block exists.
+    for pair in failed_admission:
+        groups.setdefault(pair, [])
     comparisons = []
     for pair, pair_samples in sorted(groups.items()):
         changes = []
         raw_changes = []
+        clean_blocks = []
         exclusions: Counter[str] = Counter()
         for (block_pair, _round, _block), block_samples in blocks.items():
             if block_pair != pair:
@@ -261,6 +398,17 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
             if len({(sample.get("fixture_id"), sample.get("steps"), sample.get("backend")) for sample in block_samples}) != 1:
                 exclusions["workload_changed_within_block"] += 1
                 continue
+            repeats = [sample.get("repeats", 1) for sample in block_samples]
+            effective = [sample.get("effective_repeats", sample.get("native", {}).get(
+                "repeats", sample.get("native", {}).get("iterations", sample.get("repeats", 1))))
+                         for sample in block_samples]
+            if (any(type(value) is not int or value <= 0 for value in repeats + effective)
+                    or len(set(repeats)) != 1 or len(set(effective)) != 1):
+                exclusions["repeat_count_changed_or_invalid_within_block"] += 1
+                continue
+            if repeats != effective:
+                exclusions["requested_repeat_count_not_executed"] += 1
+                continue
             ratio = math.sqrt((times[1] / times[0]) * (times[2] / times[3]))
             change = (ratio - 1.0) * 100.0
             raw_changes.append(change)
@@ -271,6 +419,7 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
                 exclusions.update(reasons)
             else:
                 changes.append(change)
+                clean_blocks.append(block_samples)
         baseline = [s["elapsed_ns"] for s in pair_samples if s.get("role") == "A" and s.get("status") == "PASS" and finite_positive(s.get("elapsed_ns"))]
         candidate = [s["elapsed_ns"] for s in pair_samples if s.get("role") == "B" and s.get("status") == "PASS" and finite_positive(s.get("elapsed_ns"))]
         maximum_errors: dict[str, float] = {}
@@ -281,6 +430,10 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
             if sample.get("role") == "B":
                 if native.get("comparison_kind"):
                     comparison_kinds.add(str(native["comparison_kind"]))
+                elif sample.get("case_id") in {"gpu.visual-fp16", "gpu.passive-fp64", "opencl.passive-fp64"}:
+                    # Version-one exports predate explicit native precision
+                    # metadata. Known case contracts still change precision.
+                    comparison_kinds.add("accuracy_cost_experiment")
                 if native.get("numerical_policy"):
                     policies.add(str(native["numerical_policy"]))
                 for key, value in error_metrics(native).items():
@@ -289,7 +442,7 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
         median_change = statistics.median(changes) if changes else None
         statuses = Counter(str(sample.get("status", "INVALID")) for sample in pair_samples)
         self_control = {s.get("case_id") for s in pair_samples if s.get("role") == "A"} == {s.get("case_id") for s in pair_samples if s.get("role") == "B"}
-        if statuses.get("FAIL", 0) or any(s.get("native", {}).get("status") == "FAIL" for s in pair_samples):
+        if failed_admission[pair]:
             decision = "correctness_failure_requires_investigation"
         elif self_control:
             decision = "repeatability_control"
@@ -313,6 +466,16 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
             "median_change_percent": median_change, "bootstrap_95_percent_interval": interval,
             "maximum_reported_error_metrics": maximum_errors, "numerical_policies": sorted(policies),
             "comparison_kinds": sorted(comparison_kinds),
+            "legacy_precision_classification_inferred": any(
+                s.get("role") == "B" and not s.get("native", {}).get("comparison_kind")
+                and s.get("case_id") in {"gpu.visual-fp16", "gpu.passive-fp64", "opencl.passive-fp64"}
+                for s in pair_samples),
+            "failed_samples_including_calibration_and_warmup": failed_admission[pair],
+            "separate_timing_metrics": {metric: paired_metric_summary(clean_blocks, metric) for metric in (
+                "gpu_timestamp", "jni_wrapper_elapsed_ns", "thread_cpu_elapsed_ns", "native_setup")},
+            "declared_native_timing_scopes": {
+                role: sorted({str(s.get("native", {}).get("timing_scope", "unspecified"))
+                              for s in pair_samples if s.get("role") == role}) for role in ("A", "B")},
             "decision": decision,
         })
     admission = [r["data"] for r in records if r.get("event") == "case_admission"]
@@ -322,6 +485,7 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
             "comparisons": comparisons, "observations": observation_summary(records), "promotion": "none",
             "limitations": [
                 "Timing scope is whatever each native result declares; compare matched scopes only.",
+                "GPU timestamp, JNI wall time, calling-thread CPU time and native setup time are separate metrics. A host timing change does not establish a GPU execution change.",
                 "Bootstrap intervals resample ABBA blocks and do not remove systematic device drift.",
                 "Quick plans are exploratory; five or more clean blocks are needed for a candidate decision.",
                 "Battery counters cover the whole device, including validation/reporting/display work.",
@@ -342,12 +506,46 @@ def markdown(report: dict[str, Any]) -> str:
                   f"Runtime snapshots: **{observations['runtime_snapshot_count']}**; renderer callbacks: **{observations['renderer_callback_count']}**; dropped queue events: **{observations['queue_dropped_events']}**.", "",
                   f"Unique observed GPU timestamp samples: **{gpu['count']}**; median sampled GPU frame time: **{gpu_label}**.", "",
                   observations["timing_scope"], ""]
+        runtime = observations["runtime_observation"]
+        if runtime["available"]:
+            counts = runtime["observed_counter_deltas"]
+            lines += [
+                f"Across **{runtime['accepted_intervals']}** valid observation intervals: "
+                f"**{counts['periodic_summary_polls']}** periodic summary polls, "
+                f"**{counts['paused_duplicate_suppressions']}** paused duplicate exports avoided, "
+                f"**{counts['packet_export_attempts']}** packet export attempts and "
+                f"**{counts['packet_export_failures']}** export failures.", "",
+                runtime["interpretation"], "",
+            ]
+        else:
+            lines += ["Runtime work counters: unavailable or insufficient observations for a valid delta.", ""]
+        cache = observations["pipeline_cache_persistence"]
+        if cache["available"]:
+            latest = cache["latest_observed_lifecycle_counters"]
+            lines += [
+                f"Pipeline cache sources observed: **{', '.join(cache['observed_sources']) or 'unavailable'}**. "
+                f"Latest load status: **{latest.get('load', 'unavailable')}**; "
+                f"latest save status: **{latest.get('save', 'unavailable')}**.", "",
+                cache["interpretation"], "",
+            ]
     lines += ["", "| Matched workload | Clean blocks | Median time change | Decision |", "|---|---:|---:|---|"]
     for comparison in report["comparisons"]:
         change = comparison["median_change_percent"]
         label = comparison["pair"].replace("|", "\\|").replace("\n", " ")
         value = "unavailable" if change is None else f"{change:+.2f}%"
         lines.append(f"| {label} | {comparison['clean_blocks']} | {value} | {comparison['decision']} |")
+    gpu_comparisons = [comparison for comparison in report["comparisons"]
+                       if comparison["separate_timing_metrics"]["gpu_timestamp"]["clean_blocks"]]
+    if gpu_comparisons:
+        lines += ["", "## Native GPU query intervals", "",
+                  "These queries measure the native GPU interval independently of host submission/completion latency. They are not whole-frame or energy measurements.", "",
+                  "| Matched workload | Valid blocks | Baseline GPU interval | Candidate GPU interval | Paired GPU change |",
+                  "|---|---:|---:|---:|---:|"]
+        for comparison in gpu_comparisons:
+            metric = comparison["separate_timing_metrics"]["gpu_timestamp"]
+            label = comparison["pair"].replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {label} | {metric['clean_blocks']} | {metric['baseline']['median_ns'] / 1000:.3f} µs | "
+                         f"{metric['candidate']['median_ns'] / 1000:.3f} µs | {metric['median_change_percent']:+.2f}% |")
     lines += ["", "A negative change means the candidate took less time. Failed, skipped, incomplete and thermally confounded blocks remain in JSON and are excluded from clean comparisons.", "", "## Interpretation limits", ""]
     lines.extend(f"- {limitation}" for limitation in report["limitations"])
     return "\n".join(lines) + "\n"

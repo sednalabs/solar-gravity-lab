@@ -79,6 +79,7 @@ class BridgeBackedRuntimeFacade internal constructor(
     )
 
     override val uiState: StateFlow<ShellUiState> = _uiState.asStateFlow()
+    override fun observationCounters(): RuntimeObservationCounters? = bridge.observationCounters()
 
     private val experimentMutex = Mutex()
     private val _savedExperiments = MutableStateFlow<List<SavedExperimentInfo>>(emptyList())
@@ -956,7 +957,11 @@ class BridgeBackedRuntimeFacade internal constructor(
             is RuntimeSignal.RenderPacketReady -> {
                 val lease = signal.lease
                 val packet = lease.packet
+                var decoded = false
                 try {
+                    // Startup can queue several observations before collection. A newer
+                    // export may already have released this lease and its direct buffers.
+                    if (lease.isReleased) return
                     val renderFrame = VulkanPacketRenderFrameDecoder.decode(lease.packet)
                     val sceneRevisionLabel = lease.sceneRevision.toSceneRevisionLabel()
                     val packetRenderIssue = packet.diagnostics.toRenderIssue()
@@ -1013,6 +1018,8 @@ class BridgeBackedRuntimeFacade internal constructor(
                             renderFrame = renderFrame,
                         )
                     }
+                    decoded = hasRenderableScene && packetRenderIssue == null &&
+                        VulkanPacketRenderFrameDecoder.isCompleteForReuse(packet, renderFrame)
                 } catch (error: Throwable) {
                     updateWithTelemetry(
                         recordTelemetry(
@@ -1042,7 +1049,13 @@ class BridgeBackedRuntimeFacade internal constructor(
                         )
                     }
                 } finally {
-                    lease.close()
+                    var released = false
+                    try {
+                        lease.close()
+                        released = true
+                    } finally {
+                        bridge.acknowledgeRenderPacket(signal, decoded && released)
+                    }
                 }
             }
 

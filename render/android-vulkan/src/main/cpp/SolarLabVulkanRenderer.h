@@ -3,6 +3,7 @@
 #include "SolarLabGpuReuse.h"
 #include "SolarLabVulkanCapabilities.h"
 #include "QcomTileMemory.h"
+#include "PipelineCacheStore.h"
 #include "SpacecraftMeshBatches.h"
 
 #include <android/asset_manager.h>
@@ -60,6 +61,7 @@ public:
     static bool IsRuntimeAvailable();
 
     void SetAssetManager(AAssetManager* assetManager);
+    void SetPipelineCachePath(const std::string& path);
 
     // Takes ownership of one ANativeWindow reference on every call.
     bool Initialize(ANativeWindow* nativeWindow, int width, int height);
@@ -405,6 +407,7 @@ private:
     bool PickPhysicalDevice();
     bool CreateDevice();
     bool CreatePipelineCache();
+    void PersistPipelineCache();
     bool CreateSwapchain(int width, int height);
     bool CreateRenderPass();
     bool CreateDepthResources();
@@ -548,6 +551,25 @@ private:
     bool farSubgroupPipeline_ = false;
     VkDevice device_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
+    std::string pipelineCachePath_;
+    bool pipelineCacheDirty_ = false;
+    struct PipelineCacheDiagnostics {
+        const char* source = "empty";
+        const char* loadStatus = "not-attempted";
+        const char* writeStatus = "not-attempted";
+        size_t loadedBytes = 0;
+        size_t writtenBytes = 0;
+        uint64_t loadNs = 0;
+        uint64_t cacheCreateNs = 0;
+        uint64_t writeNs = 0;
+        uint64_t writeAttempts = 0;
+        uint64_t graphicsCalls = 0;
+        uint64_t graphicsCreateNs = 0;
+        uint64_t computeCalls = 0;
+        uint64_t computeCreateNs = 0;
+        VkResult seedResult = VK_SUCCESS;
+        bool emptyRetry = false;
+    } pipelineCacheDiagnostics_;
     uint32_t graphicsQueueFamilyIndex_ = UINT32_MAX;
     uint32_t presentQueueFamilyIndex_ = UINT32_MAX;
     bool graphicsQueueSupportsCompute_ = false;

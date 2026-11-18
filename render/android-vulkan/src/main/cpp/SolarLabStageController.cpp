@@ -548,6 +548,11 @@ void SolarLabStageController::SetAssetManager(AAssetManager* assetManager) {
     renderer_.SetAssetManager(assetManager);
 }
 
+void SolarLabStageController::SetPipelineCachePath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    renderer_.SetPipelineCachePath(path);
+}
+
 bool SolarLabStageController::Initialize(ANativeWindow* nativeWindow, int width, int height) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     surfaceWidthPx_ = std::max(width, 1);

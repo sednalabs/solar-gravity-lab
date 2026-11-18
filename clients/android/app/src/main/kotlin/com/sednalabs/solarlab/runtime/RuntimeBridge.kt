@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.UUID
 /**
  * Rust runtime boundary for Android.
  * 
@@ -28,6 +29,11 @@ import java.util.Locale
 internal interface RuntimeBridge {
     // Used to reject a queued signal from a session that has since been replaced.
     fun isCurrentSession(handle: Long): Boolean = true
+
+    fun observationCounters(): RuntimeObservationCounters? = null
+
+    /** Only a successfully consumed current packet may suppress later paused exports. */
+    fun acknowledgeRenderPacket(signal: RuntimeSignal.RenderPacketReady, decoded: Boolean) {}
 
     // Streamed connection events from the runtime host.
     fun connect(): Flow<RuntimeSignal>
@@ -79,6 +85,17 @@ internal class JniRuntimeBridge(
     private data class PlaybackSample(val handle: Long, val revision: Long, val epoch: Double, val atNanos: Long)
     private var playbackSample: PlaybackSample? = null
     private var lastObservation: Pair<Long, Long>? = null
+    // Guarded by operationLock. Neither a failed export nor a failed/stale decode
+    // can make the paused scene eligible for reuse.
+    private val observationScopeId = UUID.randomUUID().toString()
+    private var pendingPacketAcknowledgement: RuntimeSignal.RenderPacketReady? = null
+    private var lastDecodedSessionHandle = 0L
+    private var lastDecodedRevision: Long? = null
+    private var periodicSummaryPolls = 0L
+    private var pausedDuplicateSuppressions = 0L
+    private var packetExportAttempts = 0L
+    private var packetExportSuccesses = 0L
+    private var packetExportFailures = 0L
     // Only the most recent completed draft from this bridge may be committed.
     // The native boundary independently checks the world revision and paused state.
     private var latestProbePreview: ProbePreviewResult? = null
@@ -106,6 +123,28 @@ internal class JniRuntimeBridge(
     private var advanceIntent: AdvanceIntent? = null
 
     override fun isCurrentSession(handle: Long): Boolean = activeSessionHandle == handle
+
+    override fun observationCounters(): RuntimeObservationCounters = synchronized(operationLock) {
+        RuntimeObservationCounters(observationScopeId, periodicSummaryPolls, pausedDuplicateSuppressions,
+            packetExportAttempts, packetExportSuccesses, packetExportFailures)
+    }
+
+    override fun acknowledgeRenderPacket(signal: RuntimeSignal.RenderPacketReady, decoded: Boolean) {
+        synchronized(operationLock) {
+            if (pendingPacketAcknowledgement !== signal) return
+            pendingPacketAcknowledgement = null
+            if (decoded && signal.sessionHandle != null && signal.sessionHandle == activeSessionHandle && signal.revision != null) {
+                lastDecodedSessionHandle = signal.sessionHandle
+                lastDecodedRevision = signal.revision
+            }
+        }
+    }
+
+    private fun invalidatePausedPacketReuse() {
+        pendingPacketAcknowledgement = null
+        lastDecodedSessionHandle = 0L
+        lastDecodedRevision = null
+    }
 
     // Creates the native session and starts the periodic snapshot refresh loop.
     // Emitted signals are boundary-only; all rendering state remains host-owned.
@@ -286,18 +325,7 @@ internal class JniRuntimeBridge(
         val refreshJob = launch {
             while (isActive) {
                 delay(refreshIntervalMillis())
-                val signals = synchronized(operationLock) {
-                    val activeHandle = synchronized(stateLock) { activeSessionHandle }
-                    if (activeHandle == 0L) {
-                        return@synchronized emptyList()
-                    }
-                    refreshSignalsForHandle(
-                        handle = activeHandle,
-                        includeSummary = true,
-                        advancePlayback = !BuildConfig.HOSTED_DEBUG_LITE_MODE,
-                    )
-                }
-                signals.forEach { trySend(it) }
+                pollRuntime().forEach { trySend(it) }
             }
         }
 
@@ -307,6 +335,15 @@ internal class JniRuntimeBridge(
                 releaseCurrentSession()
             }
         }
+    }
+
+    /** One periodic observation, also exercised directly by deterministic boundary tests. */
+    internal fun pollRuntime(): List<RuntimeSignal> = synchronized(operationLock) {
+        val handle = activeSessionHandle
+        if (handle == 0L) return@synchronized emptyList()
+        periodicSummaryPolls++
+        refreshSignalsForHandle(handle, includeSummary = true,
+            advancePlayback = !BuildConfig.HOSTED_DEBUG_LITE_MODE, reuseUnchangedPausedPacket = true)
     }
 
     override suspend fun loadScenario(scenarioId: String): List<RuntimeSignal> {
@@ -747,6 +784,7 @@ internal class JniRuntimeBridge(
         advancePlayback: Boolean = false,
         traceLabel: String? = null,
         snapshotRevision: Long? = null,
+        reuseUnchangedPausedPacket: Boolean = false,
     ): List<RuntimeSignal> {
         val signals = mutableListOf<RuntimeSignal>()
         var renderRevision = snapshotRevision
@@ -763,6 +801,7 @@ internal class JniRuntimeBridge(
             var summary = runCatching {
                 transport.refreshSession(handle)
             }.getOrElse { error ->
+                invalidatePausedPacketReuse()
                 if (error is CancellationException) throw error
                 traceLabel?.let { label ->
                     logError(
@@ -809,13 +848,16 @@ internal class JniRuntimeBridge(
                         summary = try {
                             transport.refreshSession(handle)
                         } catch (error: CancellationException) {
+                            invalidatePausedPacketReuse()
                             throw error
                         } catch (error: Throwable) {
+                            invalidatePausedPacketReuse()
                             clearPlaybackMeasurement(handle, signals)
                             signals += RuntimeSignal.Notice("Playback snapshot unavailable: ${error.message ?: error::class.java.simpleName}", RuntimeNoticeLevel.Error)
                             return signals
                         }
                         if (!summary.result.isOk()) {
+                            invalidatePausedPacketReuse()
                             clearPlaybackMeasurement(handle, signals)
                             signals += RuntimeSignal.Notice("Playback snapshot unavailable: ${summary.result.describe()}", RuntimeNoticeLevel.Error)
                             return signals
@@ -834,9 +876,18 @@ internal class JniRuntimeBridge(
                     playbackSample = null
                     if (!advanceMayBeActive) performanceHints.close()
                 }
+                if (reuseUnchangedPausedPacket && summary.paused && !advanceMayBeActive &&
+                    lastDecodedSessionHandle == handle && lastDecodedRevision == summary.revision) {
+                    // The Rust command ordinal covers world, branch, observer and flight
+                    // mutations. Keep the cheap authoritative summary poll, but avoid
+                    // export/allocation/decode/UI publication for an unchanged paused world.
+                    pausedDuplicateSuppressions++
+                    return signals
+                }
                 renderRevision = summary.revision
                 signals += RuntimeSignal.SnapshotUpdated(summary, sessionHandle = handle)
             } else {
+                invalidatePausedPacketReuse()
                 clearPlaybackMeasurement(handle, signals)
                 signals += RuntimeSignal.Notice(
                     message = "Refresh failed: ${summary.result.describe()}",
@@ -860,9 +911,12 @@ internal class JniRuntimeBridge(
             traceLabel?.let { label ->
                 logInfo("$label.render.refresh.begin handle=$handle")
             }
+            invalidatePausedPacketReuse()
+            packetExportAttempts++
             val refreshResult = runCatching {
                 renderHostAdapter.refreshPacket()
             }.getOrElse { error ->
+                packetExportFailures++
                 if (error is CancellationException) throw error
                 traceLabel?.let { label ->
                     logError(
@@ -878,11 +932,15 @@ internal class JniRuntimeBridge(
                 return signals
             }
             if (refreshResult.lease != null) {
+                packetExportSuccesses++
                 traceLabel?.let { label ->
                     logInfo("$label.render.refresh.result handle=$handle lease=ready")
                 }
-                signals += RuntimeSignal.RenderPacketReady(refreshResult.lease, revision = renderRevision, sessionHandle = handle)
+                val signal = RuntimeSignal.RenderPacketReady(refreshResult.lease, revision = renderRevision, sessionHandle = handle)
+                pendingPacketAcknowledgement = signal
+                signals += signal
             } else {
+                packetExportFailures++
                 traceLabel?.let { label ->
                     logInfo(
                         "$label.render.refresh.result handle=$handle lease=missing reason=${refreshResult.unavailableReason ?: "unknown"}"
@@ -959,6 +1017,7 @@ internal class JniRuntimeBridge(
 
     private fun releaseCurrentSession() {
         synchronized(stateLock) {
+            invalidatePausedPacketReuse()
             performanceHints.close()
             val handle = activeSessionHandle
             if (handle == 0L) {

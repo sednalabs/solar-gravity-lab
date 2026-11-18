@@ -54,6 +54,7 @@ public:
     static bool IsVulkanRuntimeAvailable();
 
     void SetAssetManager(AAssetManager* assetManager);
+    void SetPipelineCachePath(const std::string& path);
 
     bool Initialize(ANativeWindow* nativeWindow, int width, int height);
     bool Resize(ANativeWindow* nativeWindow, int width, int height);

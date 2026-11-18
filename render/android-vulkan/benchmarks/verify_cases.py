@@ -21,8 +21,13 @@ def main() -> None:
     counts = {"PASS": 0, "SKIP": 0}
     for case in cases:
         assert case["enabled"] is False and case["executed"] is False, case
+        expected_comparison = ("accuracy_cost_experiment" if case["id"] in
+                               {"gpu.visual-fp16", "gpu.passive-fp64", "opencl.passive-fp64"}
+                               else "equivalent_kernel")
+        assert case["comparison_kind"] == expected_comparison, case
         result = run(binary, case["id"], "3")
         assert result["case_id"] == case["id"], result
+        assert result["comparison_kind"] == expected_comparison, result
         assert result["status"] in counts, result
         assert result["authoritative_world_modified"] is False, result
         if result["status"] == "PASS":

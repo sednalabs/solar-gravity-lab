@@ -128,9 +128,10 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeGetCpuCapab
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeCreateRenderer(
-    JNIEnv* env, jclass, jobject assetManager) {
+    JNIEnv* env, jclass, jobject assetManager, jstring pipelineCachePath) {
     auto* controller = new SolarLabStageController();
     controller->SetAssetManager(AAssetManager_fromJava(env, assetManager));
+    controller->SetPipelineCachePath(CopyUtf8String(env, pipelineCachePath));
     return reinterpret_cast<jlong>(controller);
 }
 

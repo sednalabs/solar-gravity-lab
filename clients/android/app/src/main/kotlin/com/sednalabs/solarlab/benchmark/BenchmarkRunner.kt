@@ -2,6 +2,7 @@ package com.sednalabs.solarlab.benchmark
 
 import android.content.Context
 import android.os.PerformanceHintManager
+import android.os.Debug
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -39,6 +40,14 @@ data class BenchmarkProgress(
     val fail: Int = 0,
     val skip: Int = 0,
     val elapsedSeconds: Long = 0,
+)
+
+private data class BenchmarkObservedSample(
+    val status: String,
+    val elapsedNs: Long?,
+    val effectiveRepeats: Int?,
+    val thermalEpoch: Int,
+    val nativeScope: String,
 )
 
 class BenchmarkRunner(private val context: Context, private val store: BenchmarkFileStore, private val frames: BenchmarkFrameProbe) {
@@ -89,6 +98,7 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
         val tasks = BenchmarkSchedule.pairs(discovery.cases, plan, options.selectedCaseKey).flatMap { pair ->
             (if (pair.candidate.backend == "cpu") placements else listOf("system")).map { pair to it }
         }
+        state.ledger = BenchmarkRoundLedger(tasks.map { (pair, placement) -> "${pair.key}/$placement" })
         state.progress = state.progress.copy(pairsPlanned = tasks.size)
         state.manifest.put("selected_case", discovery.cases.firstOrNull { it.key == options.selectedCaseKey }?.let {
             JSONObject().put("key", it.key).put("id", it.id).put("backend", it.backend)
@@ -111,15 +121,22 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             if (tasks.isEmpty()) { state.outcome = "unavailable"; state.reason = "no_runnable_cases_admitted" }
             var round = 0
             do {
-                for ((index, task) in tasks.withIndex()) {
+                var visitedThisRound = 0
+                for (index in BenchmarkProtocol.roundOrder(tasks.size, round)) {
                     currentCoroutineContext().ensureActive()
-                    if (state.expired()) break
+                    if (state.expired() || state.blockBudgetReached()) break
+                    val task = tasks[index]
+                    if (state.ledger.isRetired("${task.first.key}/${task.second}")) continue
                     state.runPair(task.first, task.second, round)
-                    state.progress = state.progress.copy(pairsCompleted = index + 1)
-                    state.publish("Comparing", "${task.first.candidate.label} recorded. Raw checks and timings are retained.")
+                    visitedThisRound++
+                    state.progress = state.progress.copy(pairsCompleted = state.ledger.visitedPairs)
+                    state.publish("Comparing", "Round ${round + 1} · ${task.first.candidate.label}. ${state.ledger.attemptedBlocks} ABBA blocks recorded.")
                 }
+                state.lastRoundVisited = visitedThisRound
                 round++
-            } while (plan == BenchmarkPlan.SUSTAINED && tasks.isNotEmpty() && !state.expired())
+                state.roundsVisited = round
+            } while (!state.expired() && !state.blockBudgetReached() &&
+                BenchmarkProtocol.needsAnotherRound(plan, state.activeObservationNs(), state.ledger.activeCompleteBlocks()))
             if (state.expired()) {
                 if (store.journalBudgetReached(session)) {
                     state.outcome = "storage_budget_exhausted"
@@ -128,6 +145,14 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                     state.outcome = if (plan == BenchmarkPlan.SUSTAINED) "completed" else "budget_exhausted"
                     state.reason = "elapsed_budget_reached; unrun_cases_are_not_execution_evidence"
                 }
+            } else if (state.blockBudgetReached()) {
+                state.outcome = "sample_budget_exhausted"
+                state.reason = "bounded_measured_block_budget_reached; target_shortfalls_retained"
+            } else if (tasks.isNotEmpty() && state.ledger.activePairCount == 0) {
+                state.outcome = if (state.progress.fail > 0) "failed" else "unavailable"
+                state.reason = "all_pairs_retired; see_raw_calibration_warmup_and_block_failures"
+            } else if (tasks.isNotEmpty()) {
+                state.reason = "duration_and_complete_block_targets_reached; offline_clean_block_qualification_required"
             }
         } catch (cancelled: CancellationException) {
             state.outcome = "cancelled"; state.reason = cancelled.message ?: "user_or_foreground_lifecycle_cancelled"
@@ -157,13 +182,18 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
         var progress = BenchmarkProgress(running = true, session = session.name, phase = "Preparing")
         val values = linkedMapOf<String, MutableList<Long>>()
         val counts = linkedMapOf("PASS" to 0, "FAIL" to 0, "SKIP" to 0)
-        val blockedCases = mutableSetOf<String>()
+        lateinit var ledger: BenchmarkRoundLedger
+        val fixedRepeats = mutableMapOf<String, Int>()
+        val warmupCounts = linkedMapOf("PASS" to 0, "FAIL" to 0, "SKIP" to 0)
+        var roundsVisited = 0
+        var lastRoundVisited = 0
         val thermal = ThermalPausePolicy()
         var outcome = "completed"
         var reason = "all_scheduled_comparisons_completed"
         var pausedNs = 0L
         var thermalEpoch = 0
         var hint: PerformanceHintManager.Session? = null
+        var lastUiPublishNs = 0L
         val manifest: JSONObject = JSONObject().put("schema_version", 1).put("session_id", session.name)
             .put("status", "running").put("plan", plan.name).put("started_utc", Instant.now().toString())
             .put("started_monotonic_ns", start).put("build_commit", BuildConfig.BUILD_COMMIT)
@@ -173,10 +203,21 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             .put("orientation_lock_requested", options.orientationLockRequested)
             .put("orientation_policy", "request_current_orientation_only_while_running; platform_may_ignore; onStop_cancels_and_retains_partial")
             .put("performance_hints_requested", options.performanceHints).put("benchmark_thread_tid", Process.myTid())
-            .put("protocol", "warmup A,B then ordered A1,B1,B2,A2; identical deterministic fixture and step count; bounded repeat count recorded per sample")
+            .put("protocol_version", 2)
+            .put("protocol", "retained one-repeat A/B pilots; shared batch calibrated then A/B warmup; one ordered A1,B1,B2,A2 block per pair per balanced round; fixture and steps unchanged")
+            .put("minimum_observation_seconds", plan.minimumObservationSeconds)
+            .put("minimum_observation_scope", "session elapsed minus thermal pauses; includes native work, setup, correctness checks and recording; no idle duration padding")
+            .put("minimum_complete_blocks_per_pair", plan.minimumCompleteBlocks)
+            .put("maximum_measured_blocks", plan.maximumMeasuredBlocks)
+            .put("complete_block_scope", "four positive PASS samples at fixed repeats and one thermal epoch; offline environmental checks may exclude further blocks")
+            .put("round_policy", "one block per active pair before another round; deterministic rotating start; unavailable/failed pair retirement never retires other pairs sharing its baseline")
             .put("timing_scope", "native elapsed_ns with native elapsed_scope; consult native timed-scope for scratch allocation/thread costs; Java telemetry and file IO excluded")
-            .put("native_repeats", if (plan == BenchmarkPlan.SUSTAINED) 11 else 1)
-            .put("hardware_iterations", if (plan == BenchmarkPlan.SUSTAINED) 16 else 1)
+            .put("native_repeats", "calibrated_and_frozen_per_pair; inspect_pair_calibration_and_each_sample")
+            .put("hardware_iterations", "calibrated_and_frozen_per_pair; native elapsed may be total-of-iterations")
+            .put("maximum_native_repeats", BenchmarkProtocol.MAXIMUM_CPU_REPEATS)
+            .put("maximum_hardware_iterations", BenchmarkProtocol.MAXIMUM_HARDWARE_ITERATIONS)
+            .put("target_native_batch_ns", BenchmarkProtocol.TARGET_NATIVE_BATCH_NS)
+            .put("thread_cpu_scope", "Debug.threadCpuTimeNanos around the JNI wrapper on the dedicated caller; includes JSON handling and native setup/oracle/checksum; excludes internal worker threads and GPU execution")
             .put("energy_scope", "whole-device observations include UI, telemetry and synchronous logging; no chip-power or joules-per-kernel claim")
             .put("sampling_interval_ms", 2000).put("thermal_headroom_interval_ms", 10000)
             .put("thermal_policy", "pause at SEVERE; resume after LIGHT or NONE for 30s; unchanged numerical settings")
@@ -186,9 +227,15 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             .put("data_export", "local-only; explicit document save or Android share")
 
         fun expired(): Boolean = SystemClock.elapsedRealtimeNanos() >= deadline || store.journalBudgetReached(session)
+        fun blockBudgetReached(): Boolean = ledger.attemptedBlocks >= plan.maximumMeasuredBlocks
+        fun activeObservationNs(): Long = (SystemClock.elapsedRealtimeNanos() - start - pausedNs).coerceAtLeast(0)
 
         suspend fun publish(phase: String, detail: String) {
-            progress = progress.copy(phase = phase, detail = detail, elapsedSeconds = (SystemClock.elapsedRealtimeNanos() - start) / 1_000_000_000L)
+            val now = SystemClock.elapsedRealtimeNanos()
+            val phaseChanged = phase != progress.phase
+            progress = progress.copy(phase = phase, detail = detail, elapsedSeconds = (now - start) / 1_000_000_000L)
+            if (progress.running && !phaseChanged && now - lastUiPublishNs < 250_000_000L) return
+            lastUiPublishNs = now
             withContext(Dispatchers.Main.immediate) { onProgress(progress) }
         }
 
@@ -209,78 +256,152 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
 
         suspend fun runPair(pair: BenchmarkPair, placementMode: String, round: Int) {
             val pairKey = "${pair.key}/$placementMode"
+            ledger.visit(pairKey)
             val placement = NativeHardwareBench.placement(placementMode)
             record(session, "placement", JSONObject().put("mode", placementMode).put("pair", pairKey).put("native", placement))
-            if (placementMode != "system" && placement.optString("status").uppercase() != "PASS") {
+            // Restoring "system" can fail too. Never label a retained restricted
+            // affinity as an unrestricted sample after a previous round.
+            if (placement.optString("status").uppercase() != "PASS") {
                 record(session, "case_admission", JSONObject().put("case_id", pair.candidate.id).put("pair", pairKey)
                     .put("status", "SKIP").put("reason", "requested_placement_unavailable"))
+                retire(pairKey, "requested_placement_unavailable")
                 return
             }
             publish("Comparing", "${pair.candidate.label} · ${pair.fixture} · ${pair.steps} steps · $placementMode")
-            val warming = if (round == 0) listOf("warmup-A", "warmup-B") else emptyList()
-            val orders = warming.map { -1 to it } + (0 until plan.blocks).flatMap { block -> BenchmarkSchedule.abba.map { block to it } }
-            val blockValues = mutableMapOf<Int, MutableMap<String, MutableList<Long>>>()
-            val blockThermalEpochs = mutableMapOf<Int, MutableSet<Int>>()
-            for ((block, order) in orders) {
-                currentCoroutineContext().ensureActive()
-                awaitThermalRecovery(pairKey)
-                if (expired()) break
-                val role = if (order.endsWith("A") || order.startsWith("A")) "A" else "B"
-                val case = if (role == "A") pair.baseline else pair.candidate
-                val admissionKey = "${case.key}/${pair.fixture}/${pair.steps}/$placementMode"
-                val before = probe.cachedSample()
-                if (options.performanceHints && hint == null && case.backend == "cpu") hint = createHint()
-                if (case.backend != "cpu") { runCatching { hint?.close() }; hint = null }
-                val tid = Process.myTid()
-                val repeats = if (plan == BenchmarkPlan.SUSTAINED) { if (case.backend == "cpu") 11 else 16 } else 1
-                val sampleId = "$pairKey/$round/$block/$order"
-                // Commit intent before entering native code so an interrupted process still identifies its in-flight case.
-                record(session, "sample_start", JSONObject().put("sample_id", sampleId).put("case_id", case.id)
-                    .put("backend", case.backend).put("fixture_id", pair.fixture).put("steps", pair.steps)
-                    .put("placement", placementMode).put("repeats", repeats).put("round", round).put("block", block)
-                    .put("order", order).put("thread_tid", tid).put("native_invocation_planned", admissionKey !in blockedCases))
-                val wrapperStart = SystemClock.elapsedRealtimeNanos()
-                val result = if (admissionKey in blockedCases) failure("SKIP", "case_skipped_after_unavailable_result", admissionKey)
-                    else if (case.backend == "cpu") NativeBridge.run(case.id, pair.fixture, pair.steps, repeats)
-                    else NativeHardwareBench.run(case.id, repeats)
-                val wrapperNs = SystemClock.elapsedRealtimeNanos() - wrapperStart
-                runCatching { hint?.reportActualWorkDuration(wrapperNs.coerceAtLeast(1)) }
-                val (status, elapsed) = validatedMeasurement(result)
-                if (status == "SKIP") blockedCases += admissionKey
-                if (status != result.optString("status").uppercase()) result.put("protocol_validation_error", "PASS requires a finite nonnegative native elapsed_ns; wrapper time is never substituted")
-                val warmup = block < 0
-                if (!warmup) {
-                    blockThermalEpochs.getOrPut(block) { mutableSetOf() } += thermalEpoch
-                    counts[status] = counts.getValue(status) + 1
-                    if (elapsed != null && status == "PASS") {
-                        values.getOrPut("$pairKey/$role") { mutableListOf() } += elapsed
-                        blockValues.getOrPut(block) { mutableMapOf() }.getOrPut(role) { mutableListOf() } += elapsed
-                    }
+            var repeats = fixedRepeats[pairKey]
+            if (repeats == null) {
+                val pilotA = sample(pair, placementMode, round, -2, "calibration-A", "calibration", 1) ?: return
+                val pilotB = sample(pair, placementMode, round, -2, "calibration-B", "calibration", 1) ?: return
+                if (pilotA.status != "PASS" || pilotB.status != "PASS") {
+                    retire(pairKey, if (pilotA.status == "FAIL" || pilotB.status == "FAIL")
+                        "calibration_failed; raw_failure_is_a_comparison_veto" else "calibration_unavailable")
+                    return
                 }
-                record(session, "sample", JSONObject().put("sample_id", sampleId).put("pair", pairKey).put("case_id", case.id).put("backend", case.backend)
-                    .put("fixture_id", pair.fixture).put("steps", pair.steps).put("repeats", repeats).put("round", round)
-                    .put("block", block).put("order", order).put("role", role).put("warmup", warmup).put("placement", placementMode)
-                    .put("status", status).put("elapsed_ns", elapsed ?: JSONObject.NULL)
-                    .put("jni_wrapper_elapsed_ns", wrapperNs).put("hint_session_created", hint != null)
-                    .put("hint_target_ns", if (hint != null) 100_000_000L else JSONObject.NULL).put("hint_thread_tid", tid)
-                    .put("hint_scope", "dedicated_boundary_thread_only; internal_native_workers_not_in_session")
-                    .put("elapsed_scope", result.optString("elapsed_scope", "native_declared_scope"))
-                    .put("kernel_total_ns", result.opt("kernel_total_ns") ?: JSONObject.NULL)
-                    .put("environment_before", before).put("environment_after", probe.cachedSample()).put("native", result))
-                progress = progress.copy(pass = counts.getValue("PASS"), fail = counts.getValue("FAIL"), skip = counts.getValue("SKIP"))
+                val requested = BenchmarkProtocol.calibratedRepeats(pair.candidate.backend, pilotA.elapsedNs, pilotB.elapsedNs,
+                    sustained = plan == BenchmarkPlan.SUSTAINED)
+                repeats = requested
+                var warmA = sample(pair, placementMode, round, -1, "warmup-A", "warmup", repeats) ?: return
+                var warmB = sample(pair, placementMode, round, -1, "warmup-B", "warmup", repeats) ?: return
+                if (warmA.status != "PASS" || warmB.status != "PASS") {
+                    retire(pairKey, if (warmA.status == "FAIL" || warmB.status == "FAIL")
+                        "warmup_failed; raw_failure_is_a_comparison_veto" else "warmup_unavailable")
+                    return
+                }
+                // Some hardware primitives deliberately clamp iterations. Admit only a
+                // common effective batch and rewarm BOTH roles if its size changes.
+                val effective = BenchmarkProtocol.commonEffectiveRepeats(requested, warmA.effectiveRepeats, warmB.effectiveRepeats)
+                if (effective == null) {
+                    retire(pairKey, "warmup_effective_repeat_count_out_of_requested_bounds")
+                    return
+                }
+                if (effective != requested) {
+                    repeats = effective
+                    warmA = sample(pair, placementMode, round, -3, "warmup-A", "warmup", repeats) ?: return
+                    warmB = sample(pair, placementMode, round, -3, "warmup-B", "warmup", repeats) ?: return
+                }
+                if (warmA.status != "PASS" || warmB.status != "PASS" ||
+                    warmA.effectiveRepeats != repeats || warmB.effectiveRepeats != repeats) {
+                    retire(pairKey, "warmup_or_effective_repeat_mismatch; no_measured_comparison_admitted")
+                    return
+                }
+                fixedRepeats[pairKey] = repeats
+                record(session, "pair_calibration", JSONObject().put("pair", pairKey).put("protocol_version", 2)
+                    .put("target_native_batch_ns", BenchmarkProtocol.TARGET_NATIVE_BATCH_NS)
+                    .put("pilot_baseline_elapsed_ns", pilotA.elapsedNs).put("pilot_candidate_elapsed_ns", pilotB.elapsedNs)
+                    .put("requested_repeats", requested).put("fixed_repeats", repeats)
+                    .put("max_repeats", if (pair.candidate.backend == "cpu") BenchmarkProtocol.MAXIMUM_CPU_REPEATS else BenchmarkProtocol.MAXIMUM_HARDWARE_ITERATIONS)
+                    .put("baseline_native_scope", pilotA.nativeScope).put("candidate_native_scope", pilotB.nativeScope)
+                    .put("clamp_rewarmup", requested != repeats)
+                    .put("calibration_policy", if (plan == BenchmarkPlan.SUSTAINED) "bounded_sustained_batch" else "slower_one_repeat_native_pilot")
+                    .put("qualification", "batch_target_is_an_estimate_not_a_guarantee; fixed_per_pair_across_rounds; native_elapsed_scope_preserved; no_timestep_change"))
             }
-            for ((block, roles) in blockValues) {
-                val a = roles["A"].orEmpty()
-                val b = roles["B"].orEmpty()
-                val crossedThermalPause = blockThermalEpochs[block].orEmpty().size > 1
-                val valid = a.size == 2 && b.size == 2 && a.sumOf(Long::toDouble) > 0.0 && !crossedThermalPause
-                record(session, "paired_block", JSONObject().put("pair", pairKey).put("round", round).put("block", block)
-                    .put("complete_abba", valid).put("baseline_case", pair.baseline.id).put("candidate_case", pair.candidate.id)
-                    .put("crossed_thermal_pause", crossedThermalPause)
-                    .put("comparison_kind", if (pair.baseline.id == pair.candidate.id) "repeatability_control" else "same_build_reference_comparison")
-                    .put("baseline_samples_ns", JSONArray(a)).put("candidate_samples_ns", JSONArray(b))
-                    .put("candidate_change_percent", if (valid) (b.average() / a.average() - 1.0) * 100.0 else JSONObject.NULL))
+            val batchRepeats = requireNotNull(repeats)
+            if (expired() || blockBudgetReached()) return
+            val observations = mutableListOf<BenchmarkObservedSample>()
+            for (order in BenchmarkSchedule.abba) {
+                observations += sample(pair, placementMode, round, 0, order, "measurement", batchRepeats) ?: break
             }
+            val complete = observations.size == 4 && observations.all {
+                it.status == "PASS" && it.elapsedNs != null && it.elapsedNs > 0 && it.effectiveRepeats == batchRepeats
+            } && observations.map { it.thermalEpoch }.distinct().size == 1
+            ledger.recordBlock(pairKey, complete)
+            val a = observations.filterIndexed { index, _ -> index == 0 || index == 3 }.map { it.elapsedNs }
+            val b = observations.filterIndexed { index, _ -> index == 1 || index == 2 }.map { it.elapsedNs }
+            record(session, "paired_block", JSONObject().put("pair", pairKey).put("round", round).put("block", 0)
+                .put("complete_abba", complete).put("baseline_case", pair.baseline.id).put("candidate_case", pair.candidate.id)
+                .put("repeats", batchRepeats).put("crossed_thermal_pause", observations.map { it.thermalEpoch }.distinct().size > 1)
+                .put("comparison_kind", if (pair.baseline.id == pair.candidate.id) "repeatability_control" else "same_build_reference_comparison")
+                .put("baseline_samples_ns", JSONArray(a.map { it ?: JSONObject.NULL })).put("candidate_samples_ns", JSONArray(b.map { it ?: JSONObject.NULL }))
+                .put("candidate_change_percent", if (complete)
+                    (kotlin.math.sqrt(b[0]!!.toDouble() / a[0]!! * (b[1]!!.toDouble() / a[1]!!)) - 1.0) * 100.0 else JSONObject.NULL))
+            if (observations.any { it.status != "PASS" }) {
+                retire(pairKey, if (observations.any { it.status == "FAIL" }) "measured_correctness_or_protocol_failure" else "measured_case_unavailable")
+            } else if (observations.size == 4 && observations.any { it.elapsedNs == null || it.elapsedNs <= 0 }) {
+                retire(pairKey, "nonpositive_native_timing_at_fixed_batch; comparison_unmeasurable")
+            }
+        }
+
+        private suspend fun retire(pair: String, reason: String) {
+            ledger.retire(pair, reason)
+            record(session, "pair_retired", JSONObject().put("pair", pair).put("reason", reason)
+                .put("scope", "this_fixture_steps_placement_pair_only; shared_baselines_are_not_globally_retired"))
+        }
+
+        private suspend fun sample(
+            pair: BenchmarkPair, placement: String, round: Int, block: Int, order: String, phase: String, repeats: Int,
+        ): BenchmarkObservedSample? {
+            currentCoroutineContext().ensureActive()
+            val pairKey = "${pair.key}/$placement"
+            awaitThermalRecovery(pairKey)
+            if (expired()) return null
+            val role = if (order.endsWith("A") || order.startsWith("A")) "A" else "B"
+            val case = if (role == "A") pair.baseline else pair.candidate
+            val warmup = phase != "measurement"
+            val before = probe.cachedSample()
+            if (options.performanceHints && hint == null && case.backend == "cpu") hint = createHint()
+            if (case.backend != "cpu") { runCatching { hint?.close() }; hint = null }
+            val tid = Process.myTid()
+            val sampleId = "$pairKey/$round/$block/$order"
+            record(session, "sample_start", JSONObject().put("sample_id", sampleId).put("pair", pairKey).put("case_id", case.id)
+                .put("backend", case.backend).put("fixture_id", pair.fixture).put("steps", pair.steps)
+                .put("placement", placement).put("repeats", repeats).put("round", round).put("block", block)
+                .put("phase", phase).put("warmup", warmup).put("order", order).put("thread_tid", tid).put("native_invocation_planned", true))
+            val wrapperStart = SystemClock.elapsedRealtimeNanos()
+            val cpuStart = runCatching { Debug.threadCpuTimeNanos() }.getOrNull()
+            val result = if (case.backend == "cpu") NativeBridge.run(case.id, pair.fixture, pair.steps, repeats)
+                else NativeHardwareBench.run(case.id, repeats)
+            val cpuEnd = runCatching { Debug.threadCpuTimeNanos() }.getOrNull()
+            val wrapperNs = SystemClock.elapsedRealtimeNanos() - wrapperStart
+            val threadCpuNs = if (cpuStart != null && cpuEnd != null && cpuStart >= 0 && cpuEnd >= cpuStart) cpuEnd - cpuStart else null
+            runCatching { hint?.reportActualWorkDuration(wrapperNs.coerceAtLeast(1)) }
+            val (nativeStatus, elapsed) = validatedMeasurement(result)
+            val effectiveValue = result.opt(if (case.backend == "cpu") "repeats" else "iterations") as? Number
+            val effectiveRepeats = effectiveValue?.toDouble()?.takeIf { it.isFinite() && it >= 1 && it <= 32 && it % 1.0 == 0.0 }?.toInt()
+            val status = if (nativeStatus == "PASS" && (effectiveRepeats == null ||
+                (phase == "calibration" && effectiveRepeats != 1) || (!warmup && effectiveRepeats != repeats))) {
+                result.put("protocol_validation_error", "effective native repeat count missing or differs from frozen measured batch")
+                "FAIL"
+            } else nativeStatus
+            if (nativeStatus != result.optString("status").uppercase()) {
+                result.put("protocol_validation_error", "PASS requires a finite nonnegative native elapsed_ns; wrapper time is never substituted")
+            }
+            val nativeScope = result.optString("elapsed_scope", result.optString("timing_scope", "native_declared_scope"))
+            val targetCounts = if (warmup) warmupCounts else counts
+            targetCounts[status] = targetCounts.getValue(status) + 1
+            if (!warmup && elapsed != null && status == "PASS") values.getOrPut("$pairKey/$role") { mutableListOf() } += elapsed
+            record(session, "sample", JSONObject().put("sample_id", sampleId).put("pair", pairKey).put("case_id", case.id).put("backend", case.backend)
+                .put("fixture_id", pair.fixture).put("steps", pair.steps).put("repeats", repeats).put("effective_repeats", effectiveRepeats ?: JSONObject.NULL)
+                .put("round", round).put("block", block).put("order", order).put("role", role).put("phase", phase).put("warmup", warmup).put("placement", placement)
+                .put("status", status).put("elapsed_ns", elapsed ?: JSONObject.NULL).put("jni_wrapper_elapsed_ns", wrapperNs)
+                .put("thread_cpu_elapsed_ns", threadCpuNs ?: JSONObject.NULL)
+                .put("thread_cpu_scope", "dedicated_calling_thread; JNI_wrapper_and_JSON_handling_including_native_setup_oracle_checksum; excludes_internal_worker_threads_and_GPU")
+                .put("hint_session_created", hint != null).put("hint_target_ns", if (hint != null) 100_000_000L else JSONObject.NULL).put("hint_thread_tid", tid)
+                .put("hint_scope", "dedicated_boundary_thread_only; internal_native_workers_not_in_session").put("elapsed_scope", nativeScope)
+                .put("kernel_total_ns", result.opt("kernel_total_ns") ?: JSONObject.NULL)
+                .put("environment_before", before).put("environment_after", probe.cachedSample()).put("native", result))
+            progress = progress.copy(pass = counts.getValue("PASS"), fail = counts.getValue("FAIL") + warmupCounts.getValue("FAIL"),
+                skip = counts.getValue("SKIP") + warmupCounts.getValue("SKIP"))
+            return BenchmarkObservedSample(status, elapsed, effectiveRepeats, thermalEpoch, nativeScope)
         }
 
         private suspend fun awaitThermalRecovery(pairKey: String) {
@@ -308,6 +429,11 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             runCatching { hint?.close() }; hint = null
             record(session, "placement_restore", NativeHardwareBench.placement("system"))
             val finalNs = SystemClock.elapsedRealtimeNanos()
+            val activeNs = (finalNs - start - pausedNs).coerceAtLeast(0)
+            val blocks = ledger.completedSnapshot()
+            val retired = ledger.retiredSnapshot()
+            val belowMinimum = blocks.filter { (pair, count) -> pair !in retired && count < plan.minimumCompleteBlocks }
+            val durationMet = activeNs >= plan.minimumObservationSeconds * 1_000_000_000L
             val summaries = JSONArray(values.mapNotNull { (key, times) ->
                 TimingSummary.from(times)?.let {
                     JSONObject().put("group", key).put("count", it.count).put("median_ns", it.median)
@@ -315,21 +441,35 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                 }
             })
             val summary = JSONObject().put("schema_version", 1).put("session_id", session.name).put("status", outcome)
-                .put("comparisons_planned", progress.pairsPlanned).put("comparisons_visited_last_round", progress.pairsCompleted)
+                .put("protocol_version", 2).put("comparisons_planned", progress.pairsPlanned)
+                .put("comparisons_visited", ledger.visitedPairs).put("comparisons_visited_last_round", lastRoundVisited)
+                .put("rounds_visited", roundsVisited).put("measured_blocks_attempted", ledger.attemptedBlocks)
+                .put("complete_abba_blocks_by_pair", JSONObject(blocks as Map<*, *>))
+                .put("retired_pairs", JSONObject(retired as Map<*, *>))
+                .put("active_pairs_below_minimum_blocks", JSONObject(belowMinimum as Map<*, *>))
+                .put("minimum_complete_blocks_per_pair", plan.minimumCompleteBlocks)
+                .put("minimum_block_target_met", ledger.activePairCount > 0 && belowMinimum.isEmpty())
+                .put("active_observation_ns", activeNs).put("minimum_observation_seconds", plan.minimumObservationSeconds)
+                .put("duration_target_met", durationMet)
                 .put("reason", reason).put("elapsed_ns", finalNs - start).put("thermal_paused_ns", pausedNs)
-                .put("counts", JSONObject(counts as Map<*, *>)).put("timings", summaries)
+                .put("counts", JSONObject(counts as Map<*, *>)).put("warmup_and_calibration_counts", JSONObject(warmupCounts as Map<*, *>))
+                .put("count_scope", "counts=measured_samples; warmup_and_calibration_counts=retained_premeasurement_samples; any_failure_vetoes_a_claim")
+                .put("timings", summaries)
                 .put("journal_writer", journalWriterSnapshot(store.journalIoStatistics(session)))
-                .put("interpretation", "PASS is case-local correctness, not speedup or hardware execution evidence; inspect native selected paths and complete ABBA blocks.")
+                .put("interpretation", "Complete blocks are not automatically clean independent samples; require offline environmental qualification and repeated sessions. Native repeats are subsamples, never independent ABBA blocks. PASS is case-local correctness, not speedup or hardware execution evidence.")
             withContext(Dispatchers.IO) {
                 store.writeAtomic(session, "summary.json", summary.toString(2))
                 manifest.put("status", outcome).put("reason", reason).put("finished_utc", Instant.now().toString())
                     .put("finished_monotonic_ns", finalNs).put("thermal_paused_ns", pausedNs)
+                    .put("duration_target_met", durationMet).put("active_observation_ns", activeNs)
+                    .put("minimum_block_target_met", ledger.activePairCount > 0 && belowMinimum.isEmpty())
+                    .put("measured_blocks_attempted", ledger.attemptedBlocks).put("rounds_visited", roundsVisited)
                 store.writeAtomic(session, "manifest.json", manifest.toString(2))
             }
             record(session, "session_end", summary)
             progress = progress.copy(running = false)
             publish(outcome.replace('_', ' ').replaceFirstChar(Char::uppercaseChar),
-                "${counts["PASS"]} passed, ${counts["FAIL"]} failed, ${counts["SKIP"]} skipped. Export includes all raw observations.")
+                "${counts["PASS"]} measured passes, ${progress.fail} failures, ${progress.skip} skips. Export includes calibration, warmup and target shortfalls.")
         }
     }
 

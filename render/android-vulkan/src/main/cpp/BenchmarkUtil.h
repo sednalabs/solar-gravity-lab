@@ -33,6 +33,17 @@ inline uint64_t Hash(const void *pointer, size_t bytes) {
         value = (value ^ data[i]) * 1099511628211ULL;
     return value;
 }
+inline bool ChangesPrecision(const std::string &id) {
+    return id == "gpu.visual-fp16" || id == "gpu.passive-fp64" || id == "opencl.passive-fp64";
+}
+inline const char *ComparisonKind(const std::string &id) {
+    return ChangesPrecision(id) ? "accuracy_cost_experiment" : "equivalent_kernel";
+}
+inline const char *ComparisonScope(const std::string &id) {
+    return ChangesPrecision(id)
+        ? "Candidate and timing control use different arithmetic precision; assess error and cost together. A faster sample does not establish an equivalent-accuracy production replacement."
+        : "Candidate and declared timing control retain the same workload. Check the recorded native scope, output oracle and device conditions; identical case IDs are repeatability controls.";
+}
 struct Sample {
     std::string status = "PASS", reason = "executed-and-cpu-oracle-matched";
     std::string scope = "kernel-only-excluding-allocation-oracle-and-hash", extra;
@@ -43,6 +54,8 @@ struct Sample {
     std::string Json(const std::string &id) const {
         std::ostringstream out;
         out << std::setprecision(17) << "{\"schema_version\":1,\"case_id\":" << Quote(id)
+            << ",\"comparison_kind\":" << Quote(ComparisonKind(id))
+            << ",\"control_scope_note\":" << Quote(ComparisonScope(id))
             << ",\"status\":" << Quote(status) << ",\"reason\":" << Quote(reason)
             << ",\"implemented\":" << (implemented ? "true" : "false")
             << ",\"enabled\":" << (enabled ? "true" : "false")
@@ -63,6 +76,8 @@ struct CaseInfo {
     bool supported = true, implemented = true;
     std::string Json() const {
         return "{\"id\":" + Quote(id) + ",\"label\":" + Quote(label) + ",\"family\":" + Quote(family) +
+               ",\"comparison_kind\":" + Quote(ComparisonKind(id)) +
+               ",\"control_scope_note\":" + Quote(ComparisonScope(id)) +
                ",\"status\":" +
                Quote(!implemented ? "not_implemented"
                      : supported  ? "runnable"

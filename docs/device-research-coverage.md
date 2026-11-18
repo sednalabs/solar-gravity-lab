@@ -42,7 +42,7 @@ See the [device recording guide](device-research-benchmark.md) for execution and
 | 34 | GPU-generated indirect work | partial | Real GPU-generated indirect compute dispatch. A complete indirect-draw renderer is not implemented. |
 | 35 | Persistent mapping and Vulkan synchronisation | implemented | Actual persistent/remapped uploads and sync2 controls, plus merged production lifetime fixes. |
 | 36 | Timeline semaphores and presentation retirement | partial | Actual isolated compute timeline completion. WSI remains binary; swapchain-maintenance retirement not implemented. |
-| 37 | Pipeline cache and binary reuse | implemented | Real serialised pipeline cache reuse. Driver internal cache flushing and pipeline-binary extension not claimed. |
+| 37 | Pipeline cache and binary reuse | implemented | Real serialised pipeline cache reuse plus bounded app-private renderer persistence across recreation, compatibility checks, atomic replacement and observed load/save host timings. Driver cache hits, internal cache flushing and pipeline-binary extension not claimed. |
 | 38 | GPU timestamps and calibration | implemented | Available GPU timestamps, host scopes and live-render calibrated timing fields preserved separately. |
 | 39 | Qualcomm tile memory heap | implemented | Bounded transient tile-heap counter, same-submission lifetime and CPU readback oracle. |
 | 40 | Qualcomm tile shading | implemented | Embedded pinned shaders execute ordinary/per-tile offscreen inversion. Whole-frame adoption remains unqualified. |
@@ -63,7 +63,7 @@ See the [device recording guide](device-research-benchmark.md) for execution and
 | 55 | High-order Gauss-Radau reference | partial | Actual eight-stage order-15 Radau IIA collocation with bounded solve. This is not an IAS15 port. |
 | 56 | 1PN, J2 and radiation force models | implemented | Synthetic fixed-primary force models, velocity-aware RK4 and same-law fine reference; explicit applicability limits. |
 | 57 | Barnes-Hut and FMM | partial | Actual bounded source octree and target-containing aggregate rejection, with error measurement. FMM not implemented. |
-| 58 | Reciprocal-square-root refinement | partial | FP32 seed plus FP64 Newton corrections; no unverified hardware-estimate instruction claim. |
+| 58 | Reciprocal-square-root refinement | implemented | Actual NEON FP64 FRSQRTE/FRSQRTS gravity with two or three refinements, matched four-target sqrt/divide control, domain and odd-tail tests, and explicit numerical budgets. Portable FP32-seed controls retained. No production dispatch promotion or S25 gain claimed. |
 | 59 | Passive acceleration/jerk extrapolation | implemented | Massive sources remain exact; passive acceleration/jerk predictions checked against FP64 segment checkpoints. |
 | 60 | Mixed-precision forecasts and checkpoints | partial | CPU FP32 forecast and separate actual GPU force probe, both FP64-checked. Live GPU forecast/checkpoint handoff absent. |
 | 61 | Hexagon/NPU surrogate experiments | partial | Explicit public NNAPI accelerator dense layer versus FP64, no CPU fallback. No trained orbit model or private QNN access. |

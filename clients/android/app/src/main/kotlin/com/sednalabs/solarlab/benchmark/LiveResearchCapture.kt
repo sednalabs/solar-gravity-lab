@@ -6,6 +6,7 @@ import android.util.Log
 import com.graciousgazelles.solarlab.render.core.RenderBackendStatus
 import com.sednalabs.solarlab.BuildConfig
 import com.sednalabs.solarlab.runtime.RuntimeFacade
+import com.sednalabs.solarlab.runtime.RuntimeObservationCounters
 import com.sednalabs.solarlab.runtime.ShellUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -99,7 +100,7 @@ object LiveResearchCapture {
             sampler = scope.launch {
                 while (isActive && accepting.get()) {
                     offer(Event("observatory_snapshot", SystemClock.elapsedRealtimeNanos(), Instant.now().toString(),
-                        data = runtimeSnapshot(runtime.uiState.value).put("environment", probe.sample())
+                        data = runtimeSnapshot(runtime.uiState.value, runtime.observationCounters()).put("environment", probe.sample())
                             .put("ui_frame_intervals_ns", frames.drain())
                             .put("frame_scope", "Android_UI_vsync_callbacks; not_Vulkan_GPU_or_present_duration")))
                     delay(1000)
@@ -147,6 +148,8 @@ object LiveResearchCapture {
                 .put("renderer_capture", "untruncated_backend_callback_message_and_hardware_summary; callback cadence is not frame cadence")
                 .put("timing_units", "gpuTiming.frameNs/preGraphicsNs and calibrated.hostNs/maxDeviationNs are ns; timestamp.periodNs is ns/tick; calibrated.deviceTicks is ticks; UI intervals are ns")
                 .put("measurement_scope", "interactive observatory, actual user-driven scenario and renderer; no isolated-kernel speedup inference")
+                .put("runtime_observation_counters", "coherent cumulative bridge-lifetime counts; compare only matching scope_id; paused suppression avoids export/decode/publication but retains summary polling")
+                .put("runtime_diagnostics_scope", "last published packet; repeated observations do not imply fresh extraction or GPU timing samples")
                 .put("energy_scope", "battery terminal for whole phone including screen, logger and other processes; not chip power")
                 .put("data_export", "local-only; records may contain scenario/checkpoint/body labels; no automatic upload")
             var outcome = "completed"
@@ -223,12 +226,14 @@ internal fun rendererSnapshot(status: RenderBackendStatus): JSONObject {
         .put("subgroup", group("subgroup") ?: JSONObject.NULL)
         .put("sync2", group("sync2") ?: JSONObject.NULL)
         .put("bda", group("bda") ?: JSONObject.NULL)
+        .put("pipeline_cache_persistence", group("pipelineCachePersistence") ?: JSONObject.NULL)
+        .put("pipeline_cache_scope", "sampled cumulative device-lifecycle host counters; repeated callbacks are not new loads or saves; disk-supplied does not prove a cache hit")
         .put("integer_representation", "signed_64_bit_JSON_integer; out_of_range_decimal_integer_preserved_as_string")
         .put("timing_scope", "last_completed_native_Vulkan_timestamp_sample; callback_is_not_every_presented_frame")
         .put("timing_units", "gpu_timing.frameNs/preGraphicsNs=ns; timestamp.periodNs=ns/tick; calibrated.hostNs/maxDeviationNs=ns; calibrated.deviceTicks=ticks")
 }
 
-private fun runtimeSnapshot(state: ShellUiState): JSONObject {
+private fun runtimeSnapshot(state: ShellUiState, counters: RuntimeObservationCounters?): JSONObject {
     fun number(value: Number?): Any = when (value) {
         null -> JSONObject.NULL
         is Double -> if (value.isFinite()) value else JSONObject.NULL
@@ -236,6 +241,14 @@ private fun runtimeSnapshot(state: ShellUiState): JSONObject {
         else -> value
     }
     val result = JSONObject().put("connection_state", state.connectionState.name)
+        .put("runtime_observation", counters?.let {
+            JSONObject().put("schema_version", 1).put("scope_id", it.scopeId)
+                .put("periodic_summary_polls", it.periodicSummaryPolls)
+                .put("paused_duplicate_suppressions", it.pausedDuplicateSuppressions)
+                .put("packet_export_attempts", it.packetExportAttempts)
+                .put("packet_export_successes", it.packetExportSuccesses)
+                .put("packet_export_failures", it.packetExportFailures)
+        } ?: JSONObject.NULL)
         .put("status_line", state.statusLine).put("detail_line", state.detailLine ?: JSONObject.NULL)
         .put("notice_line", state.noticeLine ?: JSONObject.NULL).put("pending_action", state.pendingActionLabel ?: JSONObject.NULL)
         .put("backend_summary", state.backendSummary ?: JSONObject.NULL)

@@ -464,9 +464,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            applicationIdSuffix = ".benchmark"
+            // Research releases deliberately install side by side. CI debug
+            // keys can differ, so a new version must not replace an old session
+            // store or require uninstalling the user's recorded baseline.
+            applicationIdSuffix = ".benchmark$solarlabVersionCode"
             signingConfig = signingConfigs.getByName("debug")
-            resValue("string", "app_name", "Solar Gravity Lab Research")
+            resValue("string", "app_name", "Solar Gravity Lab Research $solarlabVersionName")
             buildConfigField("boolean", "BENCHMARK_ENABLED", "true")
             buildConfigField("boolean", "STAGE_FIRST_CLIENT", "true")
         }

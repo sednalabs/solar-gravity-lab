@@ -3,8 +3,11 @@
 The **Solar Gravity Lab Research** APK is an isolated laboratory for the 61
 hardware and numerical opportunities in
 [`benchmark_catalogue.json`](../clients/android/app/src/main/assets/benchmark_catalogue.json).
-It uses application ID `com.sednalabs.solarlab.benchmark`, so it installs alongside
-the normal preview. It owns separate app storage. Its synthetic experiments have
+New research releases use a version-scoped application ID, such as
+`com.sednalabs.solarlab.benchmark2004002`, and a versioned launcher label. They
+install alongside the normal preview and the original benchmark.1 package
+(`com.sednalabs.solarlab.benchmark`), preserving earlier session stores despite
+CI preview signing-key changes. Each version owns separate app storage. Its synthetic experiments have
 no runtime/checkpoint handle and cannot overwrite a saved world in the normal app.
 
 This is research software. A case being present, runnable, or compiled is not
@@ -15,23 +18,30 @@ gaps. No benchmark result changes production dispatch automatically.
 
 The [61-row coverage table](device-research-coverage.md) provides a readable
 mapping from the original opportunity numbers to each implemented scope.
+The [first S25 result and resulting changes](device-research-s25-first-run.md)
+record the physical evidence that motivated protocol version 2 and cache persistence.
 
 ## First recording on a Galaxy S25 Ultra
 
 Install the research APK from its GitHub prerelease. Keep the release's build
 provenance and SHA-256 asset if you keep the APK separately. The app records its
 own installed APK hash, source commit, package, version, firmware and driver
-identity in every session, so results can be matched to the exact build.
+identity in every session, so results can be matched to the exact build. Keep
+the earlier app installed until its sessions are exported; no uninstall is needed
+to install a new version-scoped research release.
 
 Start with **Quick comparison** using system placement, the default display
-mode and ADPF hints off. This is a roughly three-minute admission and repeatability
-check. `SKIP` is useful evidence: it states which feature, datatype, driver or
+mode and ADPF hints off. Protocol version 2 seeks at least 30 seconds of active
+observation and five complete ABBA blocks per eligible pair, within a three-minute
+ceiling. `SKIP` is useful evidence: it states which feature, datatype, driver or
 public API was unavailable. A `FAIL` preserves the attempted result and error;
 it is never interpreted as a fast candidate.
 
-After the phone has cooled, run **Full investigation**. Its ten-minute budget
-spreads work across candidates before exploring additional fixtures and step
-counts. The declared schedule and completed records identify exactly what ran.
+After the phone has cooled, run **Full investigation**. It seeks at least two
+minutes of active observation and five complete blocks per eligible pair, with
+a ten-minute ceiling. One block per active pair per round spreads work across
+candidates, fixtures, step counts and placements; the first slot rotates between
+rounds. The declared schedule and completed records identify exactly what ran.
 Budget expiry is a partial result, not evidence for the unvisited cases. Use a
 targeted experiment run to investigate a particular case and its control.
 
@@ -55,6 +65,34 @@ Use the recording badge's Stop action or return to the research screen to finish
 Recording ends when the activity leaves the foreground and does not silently
 restart. A 30-minute budget and bounded queue keep the capture finite.
 
+The updated observatory also records `runtime_observation` counters once per
+second. These distinguish periodic summary polls, unchanged paused exports
+avoided, packet export attempts, successful exports and failed exports. Counts
+are cumulative within one bridge instance, identified by `scope_id`; they are
+not reset by reconnecting or switching scenarios. Unavailable counters are null.
+The analyser subtracts only adjacent valid observations with the same scope,
+excluding startup work before the first observation and recreation/reset gaps.
+
+To check paused-scene reuse, record a scene while paused, pan or zoom, play it,
+then pause again and stop recording. A periodic export is suppressed only after
+the current packet decoded and released successfully, while the native summary
+still reports the same paused revision. Commands and explicit refreshes still
+export; failed or stale decodes cannot authorise reuse. Summary polling and
+native rendering continue. An avoided export count does not establish CPU time,
+GPU-frame or energy savings by itself.
+
+The renderer now also retains a compatible Vulkan pipeline cache in app-private
+storage across renderer recreation. Record an observatory session, stop it, then
+reopen and record the same scene. `pipeline_cache_persistence` records whether
+compatible disk bytes were supplied, rejection/fallback reasons, byte counts,
+load/save intervals and cumulative graphics/compute creation-call intervals.
+Those intervals are CPU host time. They are neither GPU frame time nor a driver
+cache-hit count. Resize preserves the in-memory cache; disk I/O occurs only at
+initialisation, pipeline rebuild and teardown, never in steady-frame rendering.
+The complete stored file is bounded at 16 MiB and replaced atomically. Driver or
+device identity changes, invalid data and seed rejection fall back to an empty
+cache. Repeated status callbacks do not count as extra loads or saves.
+
 The **Sessions** tab offers Save ZIP through the Android document picker and
 Share ZIP through the system share sheet. Export the quick, full, sustained and
 observatory recordings separately and attach them for analysis. The app does
@@ -70,7 +108,7 @@ fixtures.
 | Phone and OS | Model/SoC, firmware fingerprint, Android/security patch, kernel page size, supported display modes |
 | CPU execution environment | App-process auxv, legal affinity, readable topology/cache/frequency observations, actual placement result and worker-thread scope |
 | GPU and accelerators | Vulkan driver/features/limits and activation reasons, public OpenCL availability, explicit NNAPI device qualification |
-| Controlled runs | Warmups, A1/B1/B2/A2 order, fixture/steps/repeats, native timer scope, JNI wall time, checksums, independent-oracle errors and invariants |
+| Controlled runs | Calibration, warmups, A1/B1/B2/A2 order, fixture/steps/requested and effective repeats, native timer scope, JNI wall and calling-thread CPU time, checksums, independent-oracle errors and invariants |
 | Environment | Thermal state, headroom, battery current/charge/energy/voltage/temperature, power-save mode and observed display refresh |
 | Live observatory | Runtime revision/scenario/body counts and playback observations; full native renderer message and hardware summary; Vulkan timing/calibration fields |
 | Capture quality | Queue drops, writer records/bytes/time, sampling cadence, interrupted runs, explicit storage/time budgets and finalisation status |
@@ -102,7 +140,17 @@ worlds, including sparse 3-source/1,024-body, 15-source/365-body, all-massive
 192/256-body, bounded close-encounter and analytic two-body cases. Details and
 method limitations are in the [Rust engine guide](../engine/benchmarks/README.md).
 
-Warmup A/B observations remain in the journal but are excluded from comparisons.
+One-repeat A/B calibration pilots choose a shared native batch targeting 5 ms,
+bounded at 11 CPU repeats or 16 hardware iterations. Both roles are warmed at
+the resulting batch size. Native clamps trigger a common downward adjustment
+and rewarm both roles. The final batch is frozen for that pair across all rounds;
+it never changes the fixture, timestep or scientific horizon. Calibration and
+warmup observations remain in the journal but are excluded from timing comparisons.
+Any failed pilot or warmup vetoes a subsequent performance claim. Unavailable or
+failed pairs retire individually, including placement failures; unrelated pairs
+that share a baseline still run. The summary retains target shortfalls and the
+hard limits of 4,096 Quick, 8,192 Full and 65,536 Sustained measured blocks.
+
 Measured blocks run A1, B1, B2, A2. The offline analyser uses the geometric paired
 ratio `sqrt((B1/A1) * (B2/A2))`; it never compares different step counts or fixtures
 as if they represented equal work. Both wrapper and native correctness results
@@ -119,9 +167,21 @@ Native CPU time includes the implemented integration work and its scratch,
 packing, tree and worker costs. It excludes fixture generation, JNI, reference
 calculation, invariant calculation and JSON. Rust `elapsed_ns` is the lower
 median of its retained repeat durations; `kernel_total_ns` is their sum. Native
-hardware cases declare their iteration and submission boundaries. The Android
-wrapper normalises multi-iteration totals before comparing matched cases and
-retains the original native result and whole-call duration.
+hardware cases declare their iteration and submission boundaries. Native elapsed
+values retain their declared scope, including hardware totals over iterations.
+Matched A/B samples must have the same requested and effective batch. Neither
+pooled results from different batches nor CPU medians and GPU totals represent
+equal work. Native repeats are subsamples, not independent ABBA observations.
+
+Most ordinary CPU candidates now use the production-selected solver as their
+timing control because the S25 export demonstrated that its existing NEON path
+was already running. Production-selected versus scalar remains a dispatch check;
+special algorithm, precision and matched-layout experiments retain their declared
+controls. The independent FP64 scalar oracle remains unchanged. The analyser
+reports GPU timestamp intervals, JNI wrapper wall time, calling-thread CPU time
+and native setup separately. Calling-thread CPU excludes internal workers and
+GPU execution; wrapper time includes native setup, oracle work and JSON handling,
+so it must not be labelled pure JNI overhead.
 
 The CPU/GPU scheduling experiment deliberately uses a different scope: complete
 cold end-to-end serial or concurrent jobs, including setup and validation. It
@@ -168,6 +228,28 @@ Use repeated sessions to assess thermal drift, confidence and accuracy across
 workloads. Select the next targeted experiment from the evidence. Promotion needs
 separate production integration, whole-frame checks, physical-device repeats and
 scientific acceptance over the intended domain.
+
+## Hardware reciprocal-square-root comparison
+
+Opportunity 58 includes `neon-rsqrt-refine-2` and `neon-rsqrt-refine-3`. These use
+actual Arm FP64 `FRSQRTE` estimates followed by two or three `FRSQRTS` refinement
+steps. Their timing control is `neon-block-4`, which uses the same four-target
+layout and accumulation with ordinary square root and division. Correctness is
+checked independently against the production FP64 scalar solver.
+
+Use Full investigation or select either case for a targeted comparison. The
+declared scaled-state error budgets are `2e-8` and `2e-11`, respectively. Raw
+errors, repeat checksums, instruction configuration and actual kernel identity
+remain in the native result. These are accuracy/cost experiments; a faster
+sample does not establish an equivalent-accuracy production replacement. The
+portable FP32-seed experiments remain separate cases. Unsupported processes
+report SKIP, with no scalar implementation presented as hardware execution.
+
+The remote Arm64 proof checks domain boundaries and odd target counts, inspects
+the exact executed release binary for the FP64 estimate/refinement and control
+instructions, and runs all six admitted fixtures at seven step counts with
+three repeats. Hosted Arm64 evidence qualifies that implementation and sampled
+domain; physical S25 performance and energy remain separate measurements.
 
 ## Implementation boundaries
 

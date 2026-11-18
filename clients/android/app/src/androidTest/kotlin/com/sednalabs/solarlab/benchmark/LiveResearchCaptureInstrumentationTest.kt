@@ -33,7 +33,8 @@ class LiveResearchCaptureInstrumentationTest {
             override suspend fun applyCommand(command: RuntimeCommand) = Unit
         }
         val message = "gpuTiming=[samples:7,frameNs:123456,preGraphicsNs:12000] " + "full-message-".repeat(600) + "END"
-        val hardware = "timestamp=[validBits:64,periodNs:19.2,queries:1] calibrated=[hostNs:9007199254740993,deviceTicks:18446744073709551615,maxDeviationNs:42]"
+        val hardware = "timestamp=[validBits:64,periodNs:19.2,queries:1] calibrated=[hostNs:9007199254740993,deviceTicks:18446744073709551615,maxDeviationNs:42] " +
+            "pipelineCachePersistence=[source:disk-supplied,load:loaded,save:saved,loadedBytes:4666,savedBytes:5000,loadNs:101,createNs:202,pipelineCreateNs:303,saveNs:404,saveAttempts:1,scope:device-lifecycle,timing:cpu-host,hits:unmeasured]"
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             assertTrue(LiveResearchCapture.start(context, runtime))
             LiveResearchCapture.rendererStatus(RenderBackendStatus(RenderBackend.VULKAN, RenderBackend.VULKAN, true, message, hardware))
@@ -53,6 +54,11 @@ class LiveResearchCaptureInstrumentationTest {
         assertEquals(9007199254740993L, calibrated.getLong("hostNs"))
         assertTrue(calibrated.get("deviceTicks") is String)
         assertEquals("18446744073709551615", calibrated.getString("deviceTicks"))
+        val cache = renderer.getJSONObject("pipeline_cache_persistence")
+        assertEquals("disk-supplied", cache.getString("source"))
+        assertEquals(4666L, cache.getLong("loadedBytes"))
+        assertEquals(303L, cache.getLong("pipelineCreateNs"))
+        assertEquals("unmeasured", cache.getString("hits"))
         assertEquals("completed", JSONObject(File(session, "manifest.json").readText()).getString("status"))
         val summary = JSONObject(File(session, "summary.json").readText())
         assertEquals(summary.getLong("events_offered"), summary.getLong("events_written") + summary.getLong("queue_dropped_events"))

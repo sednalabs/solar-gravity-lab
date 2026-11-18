@@ -107,7 +107,7 @@ Only the trace-controls helper changes. It saves the existing Compose clock poli
 
 Review of the initial helper at `e45bb169` identified a further readiness boundary: a Material bottom-sheet control can exist before its animated touch target is usable. The follow-up scrolls each target once, advances frames within a 10-second bound until its full nonzero bounds are visible and unchanged across consecutive frames, checks Android window visibility, and then performs one actual click. It does not retry clicks, add a wall-clock sleep or catch synchronization failures. [Run 44318154597](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44318154597) belongs to the superseded first helper and is not release qualification for this follow-up.
 
-## Current-main integration
+## Main integration checkpoint before the first research release
 
 A final repository refresh found main at `20c1ae79d15889fbf02e6fd376335eeed1810003`, two commits beyond the earlier `b2e3dbed` base: #250 documentation and the now-merged #246 runtime refactor. These integrate cleanly without conflict. Research kernels, Android packaging, logging and the corrected test interaction are unchanged. The new head must pass a fresh full remote qualification before its APK release. [Run 44318909597](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44318909597) compiled the settled-control helper and passed computational/JVM/lint lanes on `3f73c0a`, but that source is superseded by the main integration and is not acceptance for the merged head.
 
@@ -144,3 +144,54 @@ The follow-up invokes `ScrollByOffset` once for each control, including zero off
 The pinned [Compose 1.7.5 test sources](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-test-android/1.7.5/ui-test-android-1.7.5-sources.jar) document a distinction between advancing virtual time and publishing resulting state to Android composition. A bulk advance can leave a snapshot notification or recomposition pending, and semantics queries with automatic advancement disabled do not supply another frame. The implementation also normally flushes notifications through `ApplyingContinuationInterceptor`, so the artifact does not prove exactly when the delayed effect cleared its state. The evidence identifies an unguarded publication boundary, rather than establishing a production timer defect. The existing effect remains keyed by the incrementing request token and retains its 2200 ms delay. Caller review found that fresh-lab automatic focus does not renew the banner; three focus-command logs do not establish a third intent or banner reset.
 
 Both tests using the identical timer-check pattern now flush snapshot notifications on Main and deliver one explicit frame after each existing bulk advance. This applies to the still-visible checks as well as the final absence check, so stale semantics cannot make an early expiry or missing refresh pass. The 1200 ms advance, absolute first/second 2300 ms checkpoints, repeated-request bound, banner assertions and correlated request-ID assertions remain unchanged. The second absolute deadline compensates for the earlier publication frame; the final extra frame delivers the deadline's UI state. There is no polling loop, timeout extension, retry, product timer change or camera change. Exact-source remote qualification remains required.
+
+## Published first research baseline
+
+The timer-publication correction was qualified at source `3f4f0fccd08348986d7e98e42a4261d81de73f47` by [Validation Lab 44339853828](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44339853828): all 251 JVM tests and 27 connected tests passed, with zero failures/errors/skips. Computational, Arm64, runtime/FFI and static checks passed. [APK build 44342853950](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44342853950) passed JNI/R8, ELF/ZIP alignment, packaged emulator launch and Arm64 proof, then published [0.2.0-benchmark.1](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-benchmark.1). The downloaded APK SHA-256 `f93052ea901a5c6be99b9ebaa213729b88a670fe591a67d702e675173e58c77b` matched its checksum, provenance and release digest. All six packaged native-library hashes matched the alignment report. This is hosted and packaged-build evidence; physical S25 acceptance remains outstanding.
+
+## Continuation: merged flight and measurable paused-scene reuse
+
+At the continuation checkpoint on 19 November 2026 AEDT (18 November UTC), PR #249 still had all 40 review threads resolved, with no new issue comments, inline changes or submitted reviews since publication. Flight [#251](https://github.com/sednalabs/solar-gravity-lab/pull/251) had now merged with 17/17 threads resolved, and rendezvous [#252](https://github.com/sednalabs/solar-gravity-lab/pull/252) had merged with its one thread resolved. Main `dac95def8a6dda19736f1f41f3261fb19afc082d` is integrated as a coordinated ABI13/296-byte-body change, including native spacecraft and rendezvous, rather than importing isolated ABI consumers.
+
+Three Android instrumentation conflicts were reviewed individually. The camera test remains byte-identical to the validated research parent, preserving completion-bearing scrolling, endpoint acknowledgement, bounded PixelCopy ownership and the native projection/pixel/resource-reuse assertions. Search focus retains the research assertions and native request acknowledgement, while adopting main's setup clock ownership. Search recreation retains research timer-publication checks and main's actual activity replacement, query and focus checks. Main-immediate coroutine ownership, main-thread flow collection, research capture, flight UI, all instrumentation classes and the added importer/native/example checks remain present together.
+
+Opportunity 58 now has actual AArch64 FP64 reciprocal-square-root estimate/refinement gravity cases, with two or three refinements. Their timing control uses the same four-target NEON layout with square root/division; their independent accuracy oracle remains production scalar. Instruction configuration, refinement count, actual execution path and numerical errors are recorded. A new Arm64 lane slice verifies the executed release binary's instruction presence, domain/tail cases and all admitted fixture/step combinations. Approximate comparisons remain accuracy/cost experiments and cannot promote themselves into production dispatch.
+
+Paused-scene reuse now requires a successfully decoded and released current packet for the same native revision/session. Explicit commands and refreshes remain forced, and failed or stale packets remain retryable. Volatile extraction/upload timing is removed from the scene identity while the diagnostics remain available as fields. Per-bridge cumulative counters are sampled at the existing observatory cadence, and the offline analyser reports only valid within-instance deltas. These counts do not establish CPU, GPU or energy savings. This continuation requires its own exact-source remote qualification and published build; the preceding release's green checks do not qualify it.
+
+## Physical-evidence continuation checkpoint, 19 November 2026 AEDT
+
+The owner supplied a verified export from the published benchmark.1 APK. The
+[aggregate evidence](device-research-s25-first-run.md) retains its source/APK/ZIP
+hashes, paired timing results and limits without publishing raw device data.
+The 1.5-second run, two blocks per workload, existing production NEON execution,
+GPU/host timing difference and pipeline-construction result directly motivated
+protocol v2, current-dispatch controls and production renderer cache persistence.
+The scalar numerical oracle and production scientific dispatch are unchanged.
+
+Independent source review of the new protocol checked frozen shared batches,
+clamp rewarming, fairness, finite limits, partial records, pair-scoped retirement
+and clock boundaries. It found a failed system-affinity restoration could admit
+samples labelled system under the preceding restricted placement. All placement
+modes now require native PASS. Pilot/warmup failures veto a later speed claim;
+requested/effective batch mismatches cannot qualify a clean block.
+
+An independent cache review checked the Kotlin worker/JNI/native lifecycle seam,
+bounded little-endian header/driver/device/UUID validation, optional empty-cache
+fallback, private atomic replacement and cumulative-counter interpretation. Its
+separate host build and production-helper tests passed, including real partial
+write failure preserving the previous cache. Disk-supplied is explicitly not a
+cache-hit claim. Structured capture and offline reporting never sum repeated
+lifecycle-counter callbacks as independent loads or saves.
+
+The host analyser regressions cover separated GPU/wrapper/thread/setup timing,
+legacy precision classification, calibration failures, effective-batch admission,
+paused-work scope/reset gaps and repeated cache observations. Native FP16/FP64
+precision-changing cases now declare accuracy/cost classification in catalogue
+and samples; this is checked by the native oracle verifier. The existing live
+capture instrumentation also checks cache-group fields and integer preservation.
+
+At this source checkpoint, remote Android compilation, connected tests, native
+Arm64 instruction/domain proof and final APK qualification remain required.
+Subsequent exact-source run and release links belong in PR #249 and Ops; this
+checkpoint does not turn the earlier physical run into proof of the new changes.

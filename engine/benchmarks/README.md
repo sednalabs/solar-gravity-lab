@@ -31,6 +31,16 @@ Catalogue entries and known-case results also carry `comparison_kind`,
 `different_force_model_cost`: their Newtonian timing control measures the extra
 model/integrator cost, and cannot support an equivalent-physics speedup claim.
 
+Ordinary force-kernel candidates time against `production-selected`, the current
+shipping dispatch for their fixture. Their independent numerical oracle remains
+production FP64 scalar at identical steps. The separate `production-selected`
+versus `production-scalar` pair qualifies the already-shipping implementation;
+beating scalar alone is not evidence of a further improvement over it. The
+reciprocal candidates retain their matched `neon-block-4` timing control, and
+worker-pool, numerical and approximate experiments retain their explicitly
+declared controls. Catalogue and result metadata name these boundaries, including
+for rejected calls.
+
 `samples_ns` contains every native integration duration. `elapsed_ns` is the
 lower median per repeat, identified by `elapsed_scope=median_per_repeat`;
 `kernel_total_ns` is their sum. Timers include kernel scratch allocation, source
@@ -55,7 +65,7 @@ independent oracle. Export/archive integrity belongs to the outer SHA-256 bundle
 
 ## Implemented experiments
 
-The catalogue is the canonical list; it currently includes 46 executable cases:
+The catalogue is the canonical list; it currently includes 48 executable cases:
 
 - Production selected/scalar controls; source-count specialisation for 1..8;
   portable target blocks 2/4/6/8/16; independent FP64 dependency chains; source
@@ -73,6 +83,15 @@ The catalogue is the canonical list; it currently includes 46 executable cases:
 - Barnes-Hut monopole octrees; FP32 reciprocal seeds with one/two FP64 Newton
   corrections; passive acceleration/jerk extrapolation; CPU FP32 passive
   forecasts with FP64 massive sources and explicit FP64 acceptance checks.
+- Actual AArch64 FP64 `FRSQRTE` estimates with two or three `FRSQRTS` Newton
+  refinements. Both use the same four-target layout, source packing, FMA
+  accumulation and fixed KDK steps as `neon-block-4`, with that case as their
+  timing control and the production scalar solver as an independent oracle.
+  Per-result configuration names the instructions and refinement count. These
+  remain accuracy/cost experiments; there is no scalar estimate fallback.
+  Both NEON entry points retain equivalent non-inlined call boundaries for
+  disassembly attribution. The candidate's infinity guard is included in its
+  measured kernel cost.
 
 Packed source records refresh on each force sweep. The scratch world's source
 membership is fixed for one call; promotion/membership changes remain a production
@@ -90,9 +109,10 @@ unit-angular-speed circular passive orbit about a fixed primary. The four-body
 `close-encounter` fixture includes two massive sources and two passive probes.
 Its bounded window uses `dt=1/1024 s`, up to 0.0625 s per call.
 
-Performance-only force kernels compare against the unchanged production scalar
-solver at identical steps. That establishes kernel equivalence, not absolute
-trajectory accuracy. Numerical integrators compare the circular fixture against
+Performance-only force kernels validate accuracy against the unchanged
+production scalar solver at identical steps, independently of their selected
+timing control. That establishes kernel equivalence, not absolute trajectory
+accuracy. Numerical integrators compare the circular fixture against
 the analytic orbit. Modified-force and encounter cases use independent RK4 at
 128 times finer steps and report its disagreement with the 64-times-finer result.
 The oracle itself must converge below one tenth of the declared candidate budget
@@ -122,8 +142,16 @@ The algorithm limits are deliberate and visible:
 - The tree is Barnes-Hut monopole with theta 0.3, leaf size 4 and depth cap 24,
   rebuilt each sweep. It is not FMM. Cells containing a target are never accepted
   as aggregate self-forces.
-- Reciprocal seeds are explicitly FP32 sqrt/reciprocal calculations, not an
-  undocumented hardware estimate instruction. The FP32 forecast runs on the CPU;
+- The portable reciprocal seeds remain FP32 sqrt/reciprocal calculations. The
+  separate `neon-rsqrt-refine-2/3` cases execute real FP64 estimate/step
+  instructions only after process NEON detection. Their declared scaled-state
+  error limits are respectively `2e-8` and `2e-11`; a result that exceeds its limit
+  remains a failure. Three refinements do not imply bitwise equality or correctly
+  rounded reciprocal square roots. Both retain the `1e-12` squared-distance
+  floor; overflow of a finite displacement's squared norm yields inverse zero
+  as in the sqrt/div control. NaNs remain non-finite and cannot pass acceptance.
+  The iteration orders `(r²*y)*y` to avoid underflow of `y*y` at large radii.
+  The FP32 forecast runs on the CPU;
   it does not claim GPU/NPU execution. Successful acceptance never replaces a live
   authoritative world.
 
@@ -145,6 +173,18 @@ source clarity and the pointer boundary; it does not demonstrate a removed
 store-to-load forwarding bottleneck or a performance gain. Final APK assembly
 and physical-device measurements remain separate qualification.
 
+The research reciprocal qualification is independently retained by
+`.github/scripts/run_research_arm64_proof.sh`. On a native Arm64 runner it runs
+release-mode domain tests (odd tails, coincident sources, the force floor,
+squared-distance overflow and a broad finite exponent sweep), disassembles the
+exact release executable and requires FP64 `FRSQRTE`/`FRSQRTS` plus the existing
+sqrt/div control instructions in its NEON functions. It then runs both candidates
+and their matched control on every admitted fixture at step counts
+1/2/4/8/16/32/64 with three repeats. Any SKIP, failed oracle or inconsistent
+checksum fails that proof. Raw results, maximum observed errors, instruction
+counts and the executable hash are exported. This describes the proof contract;
+only a linked successful exact-source run establishes execution evidence.
+
 An exploratory close-encounter window of 0.25 s (`dt=1/256`, 64 steps) exposed
 real limitations: adaptive and encounter-refinement work budgets exhausted;
 fixed-step Yoshida missed its accuracy budget; and coarse/fine reference results
@@ -162,3 +202,7 @@ and its own workload/cancellation budget before being promoted into this suite.
 - [Rein and Spiegel, IAS15 (2015)](https://arxiv.org/abs/1409.4779), for the
   distinction between a general Gauss-Radau collocation experiment and the
   specialised IAS15 method. No IAS15 implementation was copied or claimed here.
+- [Arm Advanced SIMD intrinsic reference](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html),
+  for `vrsqrteq_f64` / `FRSQRTE .2D` and `vrsqrtsq_f64` / `FRSQRTS .2D`.
+- [Rust FP64 reciprocal estimate intrinsic](https://doc.rust-lang.org/core/arch/aarch64/fn.vrsqrteq_f64.html),
+  including its AArch64/NEON availability contract.

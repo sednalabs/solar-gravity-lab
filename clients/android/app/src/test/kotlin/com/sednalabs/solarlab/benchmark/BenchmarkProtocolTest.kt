@@ -7,6 +7,75 @@ class BenchmarkProtocolTest {
     private fun case(id: String, status: String = "runnable", baseline: String? = null, fixtures: List<String> = listOf("sparse3")) =
         BenchmarkCase(id, id, "cpu", status, "", "cpu", baseline, fixtures)
 
+    @Test fun calibrationUsesSlowerPilotAndHonoursBothNativeCapsWithoutOverflow() {
+        assertEquals(5, BenchmarkProtocol.calibratedRepeats("cpu", 10_000, 1_000_000))
+        assertEquals(5, BenchmarkProtocol.calibratedRepeats("cpu", 1_000_000, 10_000))
+        assertEquals(11, BenchmarkProtocol.calibratedRepeats("cpu", 1, 2))
+        assertEquals(16, BenchmarkProtocol.calibratedRepeats("hardware", 1, 2))
+        assertEquals(1, BenchmarkProtocol.calibratedRepeats("cpu", Long.MAX_VALUE, 1))
+        assertEquals(11, BenchmarkProtocol.calibratedRepeats("cpu", 0, 0))
+        assertEquals(1, BenchmarkProtocol.calibratedRepeats("cpu", null, 1))
+        assertEquals(1, BenchmarkProtocol.calibratedRepeats("hardware", -1, 1))
+        assertEquals(11, BenchmarkProtocol.calibratedRepeats("cpu", Long.MAX_VALUE, 1, sustained = true))
+    }
+
+    @Test fun commonBatchRequiresBothEffectiveCountsAndNeverExpandsAnAdmittedRequest() {
+        assertEquals(4, BenchmarkProtocol.commonEffectiveRepeats(16, 16, 4))
+        assertEquals(4, BenchmarkProtocol.commonEffectiveRepeats(16, 4, 16))
+        assertEquals(11, BenchmarkProtocol.commonEffectiveRepeats(11, 11, 11))
+        assertNull(BenchmarkProtocol.commonEffectiveRepeats(16, null, 4))
+        assertNull(BenchmarkProtocol.commonEffectiveRepeats(16, 4, 0))
+        assertNull(BenchmarkProtocol.commonEffectiveRepeats(11, 12, 11))
+    }
+
+    @Test fun durationAndCompleteBlockTargetsAreIndependentAndFinite() {
+        val second = 1_000_000_000L
+        assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 29 * second, listOf(5, 5)))
+        assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 31 * second, listOf(5, 4)))
+        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 30 * second, listOf(5, 5)))
+        assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.FULL, 119 * second, listOf(5)))
+        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.FULL, 120 * second, listOf(5)))
+        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.SUSTAINED, 900 * second, listOf(5)))
+        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 0, emptyList()))
+        assertTrue(BenchmarkPlan.QUICK.maximumMeasuredBlocks < BenchmarkPlan.SUSTAINED.maximumMeasuredBlocks)
+        assertEquals(180L, BenchmarkPlan.QUICK.budgetSeconds)
+        assertEquals(600L, BenchmarkPlan.FULL.budgetSeconds)
+    }
+
+    @Test fun roundsVisitEveryPairBeforeRepeatingAndRotateTheFirstSlot() {
+        assertEquals(listOf(0, 1, 2, 3, 4), BenchmarkProtocol.roundOrder(5, 0))
+        assertEquals(listOf(1, 2, 3, 4, 0), BenchmarkProtocol.roundOrder(5, 1))
+        repeat(20) { round -> assertEquals((0..4).toSet(), BenchmarkProtocol.roundOrder(5, round).toSet()) }
+        assertEquals((0..4).toSet(), BenchmarkProtocol.roundOrder(5, Int.MAX_VALUE).toSet())
+        assertEquals(emptyList<Int>(), BenchmarkProtocol.roundOrder(0, 0))
+    }
+
+    @Test fun failedWarmupRetiresOnlyItsPairAndCannotPoisonSharedReferenceControls() {
+        val failed = "cpu:candidate-a/sparse3/8/system"
+        val sibling = "cpu:candidate-b/sparse3/8/system"
+        val control = "cpu:reference/sparse3/8/system"
+        val ledger = BenchmarkRoundLedger(listOf(failed, sibling, control))
+        ledger.visit(failed)
+        ledger.retire(failed, "warmup_failed")
+        repeat(5) { ledger.recordBlock(sibling, true); ledger.recordBlock(control, true) }
+        ledger.recordBlock(sibling, false)
+        assertEquals(2, ledger.activePairCount)
+        assertEquals(listOf(5, 5), ledger.activeCompleteBlocks())
+        assertEquals(11, ledger.attemptedBlocks)
+        assertEquals(0, ledger.completedSnapshot()[failed])
+        assertEquals(mapOf(failed to "warmup_failed"), ledger.retiredSnapshot())
+        assertFalse(ledger.isRetired(control))
+        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 30_000_000_000L, ledger.activeCompleteBlocks()))
+    }
+
+    @Test fun quickPlanUsesRefinedReciprocalSqrtOnlyWhenRunnable() {
+        val base = listOf(case("scalar"), case("target-block-4", baseline = "scalar"))
+        val refined = case("neon-rsqrt-refine-3", baseline = "scalar")
+        assertTrue(BenchmarkSchedule.pairs(base + refined, BenchmarkPlan.QUICK).any { it.candidate.id == refined.id })
+        assertFalse(BenchmarkSchedule.pairs(base + refined, BenchmarkPlan.QUICK).any { it.candidate.id == "target-block-4" })
+        assertTrue(BenchmarkSchedule.pairs(base + refined.copy(status = "unsupported"), BenchmarkPlan.QUICK).any { it.candidate.id == "target-block-4" })
+    }
+
     @Test fun fullScheduleHonoursFixtureCompatibilityAndNeverRunsUnsupportedCases() {
         val cases = listOf(case("reference", fixtures = listOf("sparse3", "kepler")),
             case("candidate", baseline = "reference", fixtures = listOf("kepler", "close-encounter")),

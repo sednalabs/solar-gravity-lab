@@ -36,6 +36,7 @@ import com.graciousgazelles.solarlab.render.core.RenderSceneFrame
 import com.graciousgazelles.solarlab.render.core.SceneInteractionMath
 import com.graciousgazelles.solarlab.render.core.ScenePacketBuildPolicy
 import com.graciousgazelles.solarlab.render.core.withLayerOptions
+import java.io.File
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -97,7 +98,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     private val serializedRenderer = SerializedVulkanRenderer(
         backend = object : SerializedVulkanRenderer.LifecycleBackend {
-            override fun createRenderer(): Long = SolarLabVulkanBridge.createRenderer(context.assets)
+            override fun createRenderer(): Long {
+                // This callback runs on the serialized renderer worker. Android
+                // may evict cacheDir; native loading then starts an empty cache.
+                val cachePath = runCatching {
+                    File(context.cacheDir, "vulkan-pipeline-cache-v1.bin").absolutePath
+                }.getOrDefault("")
+                return SolarLabVulkanBridge.createRenderer(context.assets, cachePath)
+            }
 
             override fun destroyRenderer(handle: Long) {
                 SolarLabVulkanBridge.destroyRenderer(handle)

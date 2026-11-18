@@ -8,6 +8,7 @@ pub enum ForceMode {
     Block(usize),
     NeonBlock(usize),
     NeonSources3,
+    NeonRsqrt(u32),
     Pipeline4,
     Tile(usize),
     Soa,
@@ -55,6 +56,7 @@ impl ForceEvaluator {
             ForceMode::Block(_)
                 | ForceMode::NeonBlock(_)
                 | ForceMode::NeonSources3
+                | ForceMode::NeonRsqrt(_)
                 | ForceMode::Pipeline4
                 | ForceMode::Tile(_)
                 | ForceMode::Specialised
@@ -100,6 +102,13 @@ impl ForceEvaluator {
                 assert!(
                     crate::neon::evaluate(bodies, &self.packed, out, 4, true),
                     "fixed three-source NEON requirements not met"
+                );
+            }
+            ForceMode::NeonRsqrt(refinements) => {
+                self.refresh_packed(bodies);
+                assert!(
+                    crate::neon::evaluate_refined(bodies, &self.packed, out, refinements),
+                    "NEON reciprocal execution requires process support and two or three refinements"
                 );
             }
             ForceMode::Block(width) => {

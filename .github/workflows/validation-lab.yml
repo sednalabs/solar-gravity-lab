@@ -274,6 +274,9 @@ jobs:
       - name: Verify release version routing
         run: python3 .github/scripts/test_prerelease_apk_request.py
 
+      - name: Verify packaged research identity routing
+        run: python3 .github/scripts/test_prerelease_android_launch_smoke.py
+
       - name: Verify Rust JNI R8 keep-rule coverage
         run: python3 .github/scripts/test_prerelease_jni_r8_contract.py
 
@@ -556,6 +559,8 @@ jobs:
           python3 tools/test_import_spacecraft_gltf.py
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SpacecraftPresentationTest.cpp -o /tmp/spacecraft-presentation-test
           /tmp/spacecraft-presentation-test
+          g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/PipelineCacheStoreTest.cpp render/android-vulkan/src/main/cpp/PipelineCacheStore.cpp -o /tmp/solarlab-pipeline-cache-test
+          /tmp/solarlab-pipeline-cache-test
           cargo test --workspace
           cargo run -p solarlab-runtime --example orbital_flight
           cargo run -p solarlab-runtime --example lunar_flight -- 60
@@ -730,6 +735,10 @@ jobs:
         shell: bash
         run: bash .github/scripts/run_arm64_isa_proof.sh
 
+      - name: Qualify research FP64 reciprocal-square-root instructions
+        shell: bash
+        run: bash .github/scripts/run_research_arm64_proof.sh
+
       - name: Emit Arm64 ISA sccache stats
         if: always() && steps.arm64_isa_sccache.outputs.enabled == 'true'
         shell: bash
@@ -750,6 +759,7 @@ jobs:
           if-no-files-found: error
           path: |
             dist/arm64-isa-proof/**
+            dist/research-arm64-proof/**
             dist/sccache/arm64-isa-proof.txt
 
   arm64-capability-census:

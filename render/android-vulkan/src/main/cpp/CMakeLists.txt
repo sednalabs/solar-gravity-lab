@@ -7,6 +7,7 @@ add_library(
     SolarLabVulkanBridge.cpp
     SolarLabStageController.cpp
     SolarLabVulkanRenderer.cpp
+    PipelineCacheStore.cpp
     SolarLabVulkanCapabilities.cpp
     SolarLabVulkanDiagnostics.cpp
     QcomTileMemory.cpp

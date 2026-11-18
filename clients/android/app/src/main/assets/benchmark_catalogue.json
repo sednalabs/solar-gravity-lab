@@ -365,7 +365,7 @@
       "id": 37,
       "title": "Pipeline cache and binary reuse",
       "status": "implemented",
-      "reason": "Real serialised pipeline cache reuse. Driver internal cache flushing and pipeline-binary extension not claimed.",
+      "reason": "Real serialised pipeline cache reuse plus bounded app-private renderer persistence across recreation, compatibility checks, atomic replacement and observed load/save host timings. Driver cache hits, internal cache flushing and pipeline-binary extension not claimed.",
       "case_ids": [
         "gpu.pipeline-no-cache",
         "gpu.pipeline-cache"
@@ -562,11 +562,13 @@
     {
       "id": 58,
       "title": "Reciprocal-square-root refinement",
-      "status": "partial",
-      "reason": "FP32 seed plus FP64 Newton corrections; no unverified hardware-estimate instruction claim.",
+      "status": "implemented",
+      "reason": "Actual NEON FP64 FRSQRTE/FRSQRTS gravity with two or three refinements, matched four-target sqrt/divide control, domain and odd-tail tests, and explicit numerical budgets. Portable FP32-seed controls retained. No production dispatch promotion or S25 gain claimed.",
       "case_ids": [
         "rsqrt-refine-1",
-        "rsqrt-refine-2"
+        "rsqrt-refine-2",
+        "neon-rsqrt-refine-2",
+        "neon-rsqrt-refine-3"
       ]
     },
     {

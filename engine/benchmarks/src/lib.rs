@@ -34,7 +34,7 @@ pub fn catalogue_json() -> String {
         .iter()
         .map(|case| {
             let (available, reason) = catalogue::availability(case);
-            json!({
+            let mut entry = json!({
                 "id":case.id, "label":case.label, "family":case.family,
                 "status":if available {"runnable"} else {"unsupported"}, "available":available,
                 "implemented":true, "reason":reason, "baseline_case_id":case.baseline,
@@ -42,7 +42,9 @@ pub fn catalogue_json() -> String {
                 "scaled_state_error_limit":case.tolerance, "note":case.note,
                 "comparison_kind":case.comparison_kind(), "physics_model":case.physics_model(),
                 "baseline_physics_model":"Newtonian", "control_scope_note":case.control_scope_note(),
-            })
+            });
+            annotate_reciprocal_configuration(&mut entry, case);
+            entry
         })
         .collect();
     let fixtures: Vec<_> = catalogue::ALL_FIXTURES
@@ -85,10 +87,26 @@ fn rejected(case_id: &str, fixture_id: &str, status: &str, reason: &str) -> Valu
 }
 
 fn annotate_comparison(report: &mut Value, case: &Case) {
+    report["baseline_case_id"] = json!(case.baseline);
     report["comparison_kind"] = json!(case.comparison_kind());
     report["physics_model"] = json!(case.physics_model());
     report["baseline_physics_model"] = json!("Newtonian");
     report["control_scope_note"] = json!(case.control_scope_note());
+    annotate_reciprocal_configuration(report, case);
+}
+
+fn annotate_reciprocal_configuration(report: &mut Value, case: &Case) {
+    if let ForceMode::NeonRsqrt(refinements) = case.force {
+        report["reciprocal_sqrt_configuration"] = json!({
+            "scope":"declared kernel configuration; actual_kernel identifies execution",
+            "estimate_instruction":"FRSQRTE .2D", "refinement_instruction":"FRSQRTS .2D",
+            "refinement_iterations":refinements, "precision":"FP64", "vector_lanes":2,
+            "target_block_width":4, "squared_distance_floor":model::MIN_R2,
+            "positive_infinite_squared_distance":"zero inverse, matching sqrt/div control",
+            "non_finite_output":"fails independent state validation", "scalar_estimate_fallback":false,
+            "timing_control":"neon-block-4", "accuracy_oracle":"production FP64 scalar at identical fixed steps",
+        });
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -204,7 +222,7 @@ fn run_case(case_id: &str, fixture_id: &str, steps: u32, repeats: u32) -> Value 
         execution.path_id.clone()
     } else if matches!(
         case.force,
-        ForceMode::NeonBlock(_) | ForceMode::NeonSources3
+        ForceMode::NeonBlock(_) | ForceMode::NeonSources3 | ForceMode::NeonRsqrt(_)
     ) {
         format!("research.arm64.fp64.{}", case.id)
     } else {
@@ -383,6 +401,107 @@ mod tests {
             parsed["identity"]["cpu_features"],
             json!(detected_cpu_features())
         );
+    }
+
+    #[test]
+    fn force_kernel_timing_controls_follow_shipping_dispatch_without_changing_accuracy_oracles() {
+        let catalogue: Value = serde_json::from_str(&catalogue_json()).unwrap();
+        let entries = catalogue["cases"].as_array().unwrap();
+        for case in CASES
+            .iter()
+            .filter(|case| case.family == "cpu" && case.algorithm == Algorithm::Leapfrog)
+        {
+            let entry = entries.iter().find(|entry| entry["id"] == case.id).unwrap();
+            assert_eq!(
+                entry["baseline_case_id"], "production-selected",
+                "{}",
+                case.id
+            );
+            assert_eq!(entry["comparison_kind"], "equivalent_kernel");
+            assert!(entry["control_scope_note"]
+                .as_str()
+                .unwrap()
+                .contains("timing control is production-selected"));
+            // Rejected calls must not erase which control was actually intended.
+            let rejected = run_case(case.id, case.fixtures[0], 0, 1);
+            assert_eq!(rejected["status"], "FAIL");
+            assert_eq!(rejected["baseline_case_id"], entry["baseline_case_id"]);
+            assert_eq!(rejected["control_scope_note"], entry["control_scope_note"]);
+        }
+        let candidate = run_case("source-specialised", "sparse3", 8, 1);
+        assert_eq!(candidate["status"], "PASS");
+        assert_eq!(candidate["baseline_case_id"], "production-selected");
+        assert_eq!(
+            candidate["reference"],
+            "production FP64 scalar at identical fixed steps"
+        );
+
+        for (id, baseline) in [
+            ("production-selected", "production-scalar"),
+            ("persistent-workers-4", "workers-4"),
+            ("neon-rsqrt-refine-2", "neon-block-4"),
+            ("neon-rsqrt-refine-3", "neon-block-4"),
+            ("yoshida4", "production-scalar"),
+            ("fp32-forecast", "production-scalar"),
+        ] {
+            let entry = entries.iter().find(|entry| entry["id"] == id).unwrap();
+            assert_eq!(entry["baseline_case_id"], baseline, "{id}");
+        }
+    }
+
+    #[test]
+    fn hardware_reciprocal_cases_keep_matched_controls_and_explicit_instruction_contracts() {
+        let catalogue: Value = serde_json::from_str(&catalogue_json()).unwrap();
+        for refinements in [2, 3] {
+            let id = format!("neon-rsqrt-refine-{refinements}");
+            let entry = catalogue["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["id"] == id)
+                .unwrap();
+            assert_eq!(entry["baseline_case_id"], "neon-block-4");
+            assert_eq!(entry["comparison_kind"], "accuracy_cost_experiment");
+            assert!(entry["control_scope_note"]
+                .as_str()
+                .unwrap()
+                .contains("timing control is neon-block-4"));
+            assert_eq!(
+                entry["reciprocal_sqrt_configuration"]["refinement_iterations"],
+                refinements
+            );
+            assert_eq!(
+                entry["reciprocal_sqrt_configuration"]["scalar_estimate_fallback"],
+                false
+            );
+            assert_eq!(
+                entry["reciprocal_sqrt_configuration"]["estimate_instruction"],
+                "FRSQRTE .2D"
+            );
+            assert_eq!(
+                entry["reciprocal_sqrt_configuration"]["refinement_instruction"],
+                "FRSQRTS .2D"
+            );
+            for fixture in catalogue::ALL_FIXTURES {
+                let result = run_case(&id, fixture, 8, 2);
+                assert_eq!(
+                    result["reciprocal_sqrt_configuration"],
+                    entry["reciprocal_sqrt_configuration"]
+                );
+                if neon::available() {
+                    assert_eq!(result["status"], "PASS", "{result}");
+                    assert_eq!(result["actual_kernel"], format!("research.arm64.fp64.{id}"));
+                    assert_eq!(result["repeat_consistent"], true);
+                    assert_eq!(
+                        result["reference"],
+                        "production FP64 scalar at identical fixed steps"
+                    );
+                } else {
+                    assert_eq!(result["status"], "SKIP");
+                    assert_eq!(result["actual_kernel"], Value::Null);
+                }
+            }
+        }
     }
 
     #[test]
