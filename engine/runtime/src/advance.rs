@@ -37,7 +37,10 @@ impl WorldRuntime {
                     && op.requested_seconds.to_bits() == delta.to_bits()
                     && op.recorded_at_unix_ms == recorded_at_unix_ms
                 {
-                    return Ok(op);
+                    // Returning `op` directly holds its borrow across the later
+                    // `advance_operation` assignment (E0506). Reborrow only at
+                    // the return boundary, without an unnecessary panic path.
+                    return self.advance_operation.as_ref().ok_or(RuntimeError::AdvanceStale);
                 }
                 return Err(RuntimeError::AdvanceStale);
             }
