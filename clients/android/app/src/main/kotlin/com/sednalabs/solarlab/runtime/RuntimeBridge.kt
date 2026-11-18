@@ -59,6 +59,7 @@ internal interface RuntimeBridge {
 internal class JniRuntimeBridge(
     private val transport: NativeRuntimeTransport = JniNativeRuntimeTransport,
     private val renderHostAdapter: RenderHostAdapter = NativeRenderHostAdapter(transport),
+    private val performanceHints: RuntimePerformanceHints = RuntimePerformanceHints.disabled(),
 ) : RuntimeBridge {
     // Keep active-handle state and native operations serialized even when tests call the
     // bridge directly rather than through the facade's single-lane dispatcher.
@@ -81,6 +82,7 @@ internal class JniRuntimeBridge(
     }
 
     private fun clearPlaybackMeasurement(handle: Long, signals: MutableList<RuntimeSignal>) {
+        performanceHints.close()
         playbackSample = null
         lastObservation?.takeIf { it.first == handle }?.let { (_, revision) ->
             signals += RuntimeSignal.PlaybackMeasurementCleared(handle, revision)
@@ -554,12 +556,24 @@ internal class JniRuntimeBridge(
         }
 
     override suspend fun continueAdvance(generation: Long, expectedCompleted: Long): NativeAdvanceResult =
-        withActiveSession { handle -> transport.continueAdvance(handle, generation, expectedCompleted)
-            .also { if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) { advanceMayBeActive = false; advanceIntent = null } } }
+        withActiveSession { handle ->
+            performanceHints.measure(PHYSICS_TARGET_NANOS, { it: NativeAdvanceResult -> it.code == 0 }) {
+                transport.continueAdvance(handle, generation, expectedCompleted)
+            }.also {
+                if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) {
+                    advanceMayBeActive = false
+                    advanceIntent = null
+                    performanceHints.close()
+                }
+            }
+        }
 
     override suspend fun cancelAdvance(generation: Long): NativeAdvanceResult =
         withActiveSession { handle -> transport.cancelAdvance(handle, generation)
-            .also { if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) { advanceMayBeActive = false; advanceIntent = null } } }
+            .also {
+                performanceHints.close()
+                if (it.code == 0 && it.state in 2..3 && advanceIntent?.matches(it) == true) { advanceMayBeActive = false; advanceIntent = null }
+            } }
 
     // Explicit pull refresh for currently bound session; reuses handle snapshot guard.
     override suspend fun refresh(): List<RuntimeSignal> {
@@ -674,7 +688,9 @@ internal class JniRuntimeBridge(
                 rememberRevision(handle, summary.revision)
                 if (advancePlayback && !summary.paused) {
                     val tick = runCatching {
-                        transport.playbackTick(handle, REFRESH_INTERVAL_MS.toDouble() / 1_000.0, System.currentTimeMillis())
+                        performanceHints.measure(PHYSICS_TARGET_NANOS, { it: NativePlaybackTickResult -> it.code == 0 }) {
+                            transport.playbackTick(handle, REFRESH_INTERVAL_MS.toDouble() / 1_000.0, System.currentTimeMillis())
+                        }
                     }.getOrElse { error ->
                         if (error is CancellationException) throw error
                         clearPlaybackMeasurement(handle, signals)
@@ -717,6 +733,7 @@ internal class JniRuntimeBridge(
                     }
                 } else if (summary.paused) {
                     playbackSample = null
+                    if (!advanceMayBeActive) performanceHints.close()
                 }
                 renderRevision = summary.revision
                 signals += RuntimeSignal.SnapshotUpdated(summary, sessionHandle = handle)
@@ -843,6 +860,7 @@ internal class JniRuntimeBridge(
 
     private fun releaseCurrentSession() {
         synchronized(stateLock) {
+            performanceHints.close()
             val handle = activeSessionHandle
             if (handle == 0L) {
                 return
@@ -1045,6 +1063,8 @@ internal class JniRuntimeBridge(
         // Physics observations run independently of display refresh. The native renderer
         // interpolates committed snapshots while each authority tick remains work-bounded.
         private const val REFRESH_INTERVAL_MS = 100L
+        // The solver update cadence, not the display interval or simulation dt.
+        private const val PHYSICS_TARGET_NANOS = REFRESH_INTERVAL_MS * 1_000_000L
         private const val HOSTED_DEBUG_REFRESH_INTERVAL_MS = 5_000L
 
         private fun refreshIntervalMillis(): Long =
@@ -1440,6 +1460,14 @@ private const val CPU_FEATURE_DIT = 1L shl 31
 private const val CPU_FEATURE_SB = 1L shl 32
 private const val CPU_FEATURE_SSBS = 1L shl 33
 private const val CPU_FEATURE_SVE_I8MM = 1L shl 34
+private const val CPU_FEATURE_SME_F64F64 = 1L shl 35
+private const val CPU_FEATURE_SVE_F64MM = 1L shl 36
+private const val CPU_FEATURE_RPRFM = 1L shl 37
+private const val CPU_FEATURE_CSSC = 1L shl 38
+private const val CPU_FEATURE_RCPC = 1L shl 39
+private const val CPU_FEATURE_RCPC2 = 1L shl 40
+private const val CPU_FEATURE_WFXT = 1L shl 41
+private const val CPU_FEATURE_SVE_BITPERM = 1L shl 42
 
 /** Select an architecture request; native feature checks still decide actual execution. */
 internal fun preferredCpuBackendCode(processArchitecture: String): Int = when (processArchitecture.lowercase(Locale.US)) {
@@ -1802,6 +1830,14 @@ internal data class NativeRuntimeInfoResult(
         addIfPresent(CPU_FEATURE_SVE, "sve")
         addIfPresent(CPU_FEATURE_SVE2, "sve2")
         addIfPresent(CPU_FEATURE_SVE_I8MM, "sve-i8mm")
+        addIfPresent(CPU_FEATURE_SME_F64F64, "sme-f64f64")
+        addIfPresent(CPU_FEATURE_SVE_F64MM, "sve-f64mm")
+        addIfPresent(CPU_FEATURE_RPRFM, "rprfm")
+        addIfPresent(CPU_FEATURE_CSSC, "cssc")
+        addIfPresent(CPU_FEATURE_RCPC, "rcpc")
+        addIfPresent(CPU_FEATURE_RCPC2, "rcpc2")
+        addIfPresent(CPU_FEATURE_WFXT, "wfxt")
+        addIfPresent(CPU_FEATURE_SVE_BITPERM, "sve-bitperm")
         addIfPresent(CPU_FEATURE_SME, "sme")
         addIfPresent(CPU_FEATURE_SME2, "sme2")
         addIfPresent(CPU_FEATURE_LSE, "lse")

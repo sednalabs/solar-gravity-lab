@@ -159,3 +159,15 @@ ARM job `134284208622`. Detailed source/ISA audit:
 This is a **hosted CPU microbenchmark**, not a benchmark of the entire
 Android UI, GPU, thermal budget, battery, or actual Galaxy S25 Ultra.
 Physical device capability and activation evidence is separately required.
+
+## Cache and topology follow-through
+
+The next candidate packs force-only sources into aligned 32-byte records and
+keeps two independent NEON vectors (four passive targets) in flight per source
+scan. It reuses passive membership and source storage through the KDK segment,
+refreshing source coordinates every force sweep. A frozen PR #242 force kernel
+is the bitwise native Arm regression oracle. The cache layout, ADPF solver
+boundary, discovered CPU/cache topology and optional Arm datatype qualification
+are documented in [CPU cache and topology](../../../docs/cpu-cache-topology-20261118.md).
+This candidate requires a paired same-host release comparison before claiming
+a throughput improvement; it does not inherit PR #242's measured speedup.

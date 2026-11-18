@@ -1,5 +1,6 @@
 package com.sednalabs.solarlab.runtime
 
+import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -48,6 +49,10 @@ class BridgeBackedRuntimeFacade internal constructor(
     constructor(operationScope: CoroutineScope) : this(JniRuntimeBridge(), operationScope = operationScope)
     constructor(operationScope: CoroutineScope, experimentDirectory: File) : this(
         JniRuntimeBridge(), operationScope = operationScope, experimentStore = FileExperimentStore(experimentDirectory),
+    )
+    constructor(operationScope: CoroutineScope, experimentDirectory: File, context: Context) : this(
+        JniRuntimeBridge(performanceHints = androidRuntimePerformanceHints(context)),
+        operationScope = operationScope, experimentStore = FileExperimentStore(experimentDirectory),
     )
 
     private val manualLock = Any()

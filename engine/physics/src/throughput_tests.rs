@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn sme_fp64_eligibility_requires_the_optional_datatype_extension() {
+    for base in ["sme", "sme2"] {
+        let path = format!("simd.arm64.{base}-tiled-f64-candidate");
+        let missing = arm64_kernel_availability(&[base.to_owned()]);
+        assert!(missing.blocked_candidate_paths.contains(&path.as_str()));
+        let qualified = arm64_kernel_availability(&[base.to_owned(), "smef64".to_owned()]);
+        assert!(qualified.eligible_candidate_paths.contains(&path.as_str()));
+    }
+}
+
+#[test]
+fn arm64_auxv_decodes_optional_extensions_without_executing_them() {
+    let mut auxv = Vec::new();
+    for (kind, flags) in [
+        (16_u64, (1_u64 << 15) | (1 << 25) | (1 << 26)),
+        (26, (1 << 11) | (1 << 25) | (1 << 35) | (1 << 43)),
+        (0, 0),
+        (26, 1 << 37), // Entries after AT_NULL are not auxiliary-vector data.
+    ] {
+        auxv.extend_from_slice(&kind.to_ne_bytes());
+        auxv.extend_from_slice(&flags.to_ne_bytes());
+    }
+    auxv.extend_from_slice(&[1, 2, 3]); // A truncated trailing entry is ignored.
+    assert_eq!(
+        arm64_auxv_extension_names(&auxv),
+        ["rcpc", "lse2", "rcpc2", "sve-f64mm", "sme-f64f64", "rprfm", "mops"],
+    );
+    let flags = cpu_feature_flags(&[
+        "smef64".to_owned(), "svef64mm".to_owned(), "svebitperm".to_owned(),
+        "lrcpc".to_owned(), "ilrcpc".to_owned(), "uscat".to_owned(),
+    ]);
+    assert_eq!(flags, CPU_FEATURE_SME_F64F64 | CPU_FEATURE_SVE_F64MM |
+        CPU_FEATURE_SVE_BITPERM | CPU_FEATURE_RCPC | CPU_FEATURE_RCPC2 | CPU_FEATURE_LSE2);
+}
+
 /// Independently retain the pre-cache PR242 kernel as a bitwise oracle. This
 /// catches source packing, four-target register blocking and tail regressions
 /// that a loose scalar tolerance would conceal.

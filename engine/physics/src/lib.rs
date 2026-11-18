@@ -214,6 +214,14 @@ pub const CPU_FEATURE_DIT: u64 = 1 << 31;
 pub const CPU_FEATURE_SB: u64 = 1 << 32;
 pub const CPU_FEATURE_SSBS: u64 = 1 << 33;
 pub const CPU_FEATURE_SVE_I8MM: u64 = 1 << 34;
+pub const CPU_FEATURE_SME_F64F64: u64 = 1 << 35;
+pub const CPU_FEATURE_SVE_F64MM: u64 = 1 << 36;
+pub const CPU_FEATURE_RPRFM: u64 = 1 << 37;
+pub const CPU_FEATURE_CSSC: u64 = 1 << 38;
+pub const CPU_FEATURE_RCPC: u64 = 1 << 39;
+pub const CPU_FEATURE_RCPC2: u64 = 1 << 40;
+pub const CPU_FEATURE_WFXT: u64 = 1 << 41;
+pub const CPU_FEATURE_SVE_BITPERM: u64 = 1 << 42;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuFeatureUseStatus {
@@ -293,13 +301,13 @@ pub const ARM64_KERNEL_CATALOG: &[Arm64KernelCatalogEntry] = &[
     },
     Arm64KernelCatalogEntry {
         path_id: "simd.arm64.sme-tiled-f64-candidate",
-        required_features: &["sme"],
+        required_features: &["sme", "sme-f64f64"],
         readiness: Arm64KernelReadiness::Candidate,
         workload: "tile-oriented f64 gravity/tracer assist",
     },
     Arm64KernelCatalogEntry {
         path_id: "simd.arm64.sme2-tiled-f64-candidate",
-        required_features: &["sme2"],
+        required_features: &["sme2", "sme-f64f64"],
         readiness: Arm64KernelReadiness::Candidate,
         workload: "tile-oriented f64 gravity/tracer assist",
     },
@@ -564,6 +572,54 @@ pub const ARM64_CPU_FEATURE_CATALOG: &[CpuFeatureCatalogEntry] = &[
         flag: CPU_FEATURE_SSBS,
         status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
         current_workload: "speculative store bypass control capability",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sme-f64f64",
+        flag: CPU_FEATURE_SME_F64F64,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "optional FP64 SME matrix arithmetic; required for every FP64 SME candidate",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sve-f64mm",
+        flag: CPU_FEATURE_SVE_F64MM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "optional SVE FP64 matrix arithmetic; not required for ordinary SVE FP64 vectors",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rprfm",
+        flag: CPU_FEATURE_RPRFM,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "range prefetch hint; requires measured cache-miss benefit and OS feature gate",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "cssc",
+        flag: CPU_FEATURE_CSSC,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "common short scalar instructions; compiler-selected integer/control utility",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rcpc",
+        flag: CPU_FEATURE_RCPC,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "release-consistent acquire loads; no hand substitution for Rust atomics",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "rcpc2",
+        flag: CPU_FEATURE_RCPC2,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "extended release-consistent acquire addressing; runtime utility",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "wfxt",
+        flag: CPU_FEATURE_WFXT,
+        status: CpuFeatureUseStatus::RuntimeUtilityNoCurrentHotPath,
+        current_workload: "timed wait-for-event/interrupt; no busy-wait worker policy",
+    },
+    CpuFeatureCatalogEntry {
+        canonical_name: "sve-bitperm",
+        flag: CPU_FEATURE_SVE_BITPERM,
+        status: CpuFeatureUseStatus::ReservedUntilKernelExists,
+        current_workload: "SVE2 bit permutation for a future packed visibility workload",
     },
 ];
 
@@ -1014,6 +1070,44 @@ fn add_arm64_features(features: &mut BTreeSet<String>) {
     for token in cpuinfo_feature_tokens() {
         insert_normalized_cpu_feature(features, &token);
     }
+    // Stable Rust probes do not cover every newer Arm extension. Read the OS
+    // auxiliary vector without executing optional instructions. Kernels must
+    // retain an independent OS/runtime gate, regardless of feature overrides.
+    if let Ok(auxv) = fs::read("/proc/self/auxv") {
+        for feature in arm64_auxv_extension_names(&auxv) {
+            insert_normalized_cpu_feature(features, feature);
+        }
+    }
+}
+
+/// Linux AArch64 UAPI masks, independent of compiler target-feature support.
+/// Source: arch/arm64/include/uapi/asm/hwcap.h. Never interpret a host of a
+/// different architecture's auxv as Arm; the production caller is cfg-gated.
+#[cfg(any(target_arch = "aarch64", test))]
+fn arm64_auxv_extension_names(auxv: &[u8]) -> Vec<&'static str> {
+    let mut features = Vec::new();
+    for entry in auxv.chunks_exact(16) {
+        let kind = u64::from_ne_bytes(entry[..8].try_into().expect("eight bytes"));
+        let flags = u64::from_ne_bytes(entry[8..].try_into().expect("eight bytes"));
+        if kind == 0 { break; }
+        for &(word, mask, name) in &[
+            (16, 1_u64 << 15, "rcpc"),
+            (16, 1_u64 << 25, "lse2"),
+            (16, 1_u64 << 26, "rcpc2"),
+            (26, 1_u64 << 4, "sve-bitperm"),
+            (26, 1_u64 << 11, "sve-f64mm"),
+            (26, 1_u64 << 23, "sme"),
+            (26, 1_u64 << 25, "sme-f64f64"),
+            (26, 1_u64 << 31, "wfxt"),
+            (26, 1_u64 << 34, "cssc"),
+            (26, 1_u64 << 35, "rprfm"),
+            (26, 1_u64 << 37, "sme2"),
+            (26, 1_u64 << 43, "mops"),
+        ] {
+            if kind == word && flags & mask != 0 { features.push(name); }
+        }
+    }
+    features
 }
 
 #[cfg(not(target_arch = "aarch64"))]
@@ -2463,8 +2557,13 @@ fn insert_normalized_cpu_feature(features: &mut BTreeSet<String>, raw_feature: &
         "svei8mm" | "sve_i8mm" | "sve-i8mm" => "sve-i8mm",
         "sme" => "sme",
         "sme2" => "sme2",
+        "smef64" | "sme_f64f64" | "sme-f64f64" => "sme-f64f64",
+        "svef64mm" | "sve_f64mm" | "sve-f64mm" => "sve-f64mm",
+        "svebitperm" | "sve_bitperm" | "sve-bitperm" => "sve-bitperm",
+        "lrcpc" | "rcpc" => "rcpc",
+        "ilrcpc" | "rcpc2" => "rcpc2",
         "atomics" | "lse" => "lse",
-        "lse2" => "lse2",
+        "uscat" | "lse2" => "lse2",
         "crc32" | "crc" => "crc",
         "mops" => "mops",
         "aes" => "aes",
@@ -3173,7 +3272,7 @@ mod tests {
 
     #[test]
     fn arm64_kernel_availability_marks_feature_qualified_candidate_lanes() {
-        let features = ["asimd", "sve2", "sme2", "i8mm", "bf16"]
+        let features = ["asimd", "sve2", "sme2", "sme-f64f64", "i8mm", "bf16"]
             .iter()
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();
