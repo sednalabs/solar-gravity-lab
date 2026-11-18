@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.PixelCopy
@@ -17,6 +18,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -25,6 +27,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.graciousgazelles.solarlab.render.core.ObserverMode
@@ -45,8 +48,10 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.floor
@@ -111,8 +116,7 @@ class LabCameraMotionInstrumentationTest {
             assertEquals("Render stress and resize cannot advance the paused world", pausedEpoch, facade.uiState.value.snapshot!!.epochSeconds, 0.0)
             proof.put("scenario", "stress.trail-density").put("epochSeconds", pausedEpoch).put("passed", true)
         } catch (error: Throwable) {
-            proof.put("passed", false).put("failure", error.toString()).put("rendererAtFailure", rendererStatus())
-            runCatching { capture("compute-failure.png") }
+            recordFailure("compute", error)
             throw error
         } finally {
             if (proof.optBoolean("passed")) writeJson("compute-proof.json", proof)
@@ -219,8 +223,7 @@ class LabCameraMotionInstrumentationTest {
             capture("05-after-probe-removal.png")
             proof.put("passed", true)
         } catch (error: Throwable) {
-            proof.put("passed", false).put("failure", error.toString())
-            runCatching { capture("failure.png") }
+            recordFailure("camera", error)
             throw error
         } finally {
             if (proof.optBoolean("passed")) writeJson("camera-proof.json", proof)
@@ -330,12 +333,54 @@ class LabCameraMotionInstrumentationTest {
     }
 
     private fun scrollToSettledControl(tag: String): SemanticsNodeInteraction {
-        val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
+        val node = composeRule.onNodeWithTag(tag)
+        val panel = composeRule.onNodeWithTag(LabTags.TOOLS_PANEL)
+        var previousPanelBounds: Rect? = null
         var previousBounds: Rect? = null
+        var scrollIssued = false
         var lastObservation = "No visibility sample yet"
         try {
             composeRule.waitUntil(10_000) {
                 composeRule.mainClock.advanceTimeByFrame()
+                if (!scrollIssued) {
+                    if (!panel.isDisplayed()) {
+                        lastObservation = "Android reports the tools panel is not displayed"
+                        previousPanelBounds = null
+                        return@waitUntil false
+                    }
+                    val panelSemantics = panel.fetchSemanticsNode()
+                    val viewport = panelSemantics.boundsInWindow
+                    val panelSize = panelSemantics.size
+                    val panelFullyVisible = panelSize.width > 0 && panelSize.height > 0 &&
+                        abs(viewport.width - panelSize.width) <= 1f && abs(viewport.height - panelSize.height) <= 1f
+                    val panelSettled = panelFullyVisible && viewport == previousPanelBounds
+                    lastObservation = "panelWindowBounds=$viewport, panelSize=$panelSize, previousPanelBounds=$previousPanelBounds"
+                    previousPanelBounds = viewport.takeIf { panelFullyVisible }
+                    if (!panelSettled) return@waitUntil false
+
+                    val target = node.fetchSemanticsNode()
+                    val targetTop = target.positionInWindow.y
+                    val targetBottom = targetTop + target.size.height
+                    val delta = when {
+                        targetTop < viewport.top -> targetTop - viewport.top
+                        targetBottom > viewport.bottom -> targetBottom - viewport.bottom
+                        else -> 0f
+                    }
+                    val reverse = panelSemantics.config[SemanticsProperties.VerticalScrollAxisRange].reverseScrolling
+                    // Compose 1.7.5 performScrollTo has an unbounded internal loop.
+                    // Its ScrollBy action animates, so issue it once and let this
+                    // bounded loop advance the frames needed for completion.
+                    if (abs(delta) > 0.5f) {
+                        var accepted = false
+                        panel.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                            accepted = scroll(0f, if (reverse) -delta else delta)
+                        }
+                        assertTrue("The tools panel must accept its vertical scroll", accepted)
+                    }
+                    scrollIssued = true
+                    lastObservation = "Issued one scroll delta=$delta; viewport=$viewport, targetTop=$targetTop, targetBottom=$targetBottom"
+                    return@waitUntil false
+                }
                 // Compose 1.7.5 checks placement, Android root visibility and the
                 // visible screen rectangle here. Semantics presence is insufficient.
                 if (!node.isDisplayed()) {
@@ -579,19 +624,80 @@ class LabCameraMotionInstrumentationTest {
         writeImage(name, requireNotNull(instrumentation.uiAutomation.takeScreenshot()))
     }
 
-    private fun copyStageBitmap(): Bitmap {
-        instrumentation.waitForIdleSync()
-        val latch = CountDownLatch(1)
-        var result = PixelCopy.ERROR_UNKNOWN
-        lateinit var stage: Bitmap
-        composeRule.runOnUiThread {
-            val surface = requireNotNull(findSurface(composeRule.activity.window.decorView))
-            stage = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
-            PixelCopy.request(surface, stage, { code -> result = code; latch.countDown() }, Handler(Looper.getMainLooper()))
+    private fun recordFailure(prefix: String, error: Throwable) {
+        proof.put("passed", false).put("failure", error.toString())
+        Log.e("SolarLabCameraProof", "$prefix proof failed before optional capture", error)
+        // Persist the primary error before any UI query or screenshot can block.
+        runCatching { writeJson("$prefix-primary-failure.json", proof) }
+            .onFailure { error.addSuppressed(it) }
+        try {
+            val captured = copyStage()
+            proof.put("rendererAtFailure", captured.rendererStatus)
+            writeImage("$prefix-failure-stage.png", captured.bitmap)
+        } catch (captureError: Throwable) {
+            proof.put("captureFailure", captureError.toString())
+            error.addSuppressed(captureError)
+            Log.w("SolarLabCameraProof", "Optional native-stage capture failed", captureError)
         }
-        assertTrue("Native stage copy should complete", latch.await(10, TimeUnit.SECONDS))
-        assertEquals("Native surface should be capturable", PixelCopy.SUCCESS, result)
-        return stage
+        // The shell captures the complete failure screen under its own timeout.
+        // Do not call synchronous UiAutomation.takeScreenshot on this error path.
+    }
+
+    private data class CapturedStage(val bitmap: Bitmap, val rendererStatus: String)
+
+    private fun copyStageBitmap(): Bitmap = copyStage().bitmap
+
+    private fun copyStage(): CapturedStage {
+        val completion = CompletableFuture<CapturedStage>()
+        val handler = Handler(Looper.getMainLooper())
+        val request = Runnable {
+            if (completion.isDone) return@Runnable
+            try {
+                val root = composeRule.activity.window.decorView
+                val surface = requireNotNull(findSurface(root))
+                val status = findHost(root)?.currentBackendStatus()?.message.orEmpty()
+                val stage = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
+                try {
+                    PixelCopy.request(surface, stage, { code ->
+                        if (code == PixelCopy.SUCCESS) {
+                            // A timed-out caller no longer owns the eventual bitmap.
+                            if (!completion.complete(CapturedStage(stage, status))) stage.recycle()
+                        } else {
+                            stage.recycle()
+                            completion.completeExceptionally(AssertionError("Native surface copy failed with PixelCopy code $code"))
+                        }
+                    }, handler)
+                } catch (error: Throwable) {
+                    stage.recycle()
+                    completion.completeExceptionally(error)
+                }
+            } catch (error: Throwable) {
+                completion.completeExceptionally(error)
+            }
+        }
+        if (!handler.post(request)) completion.completeExceptionally(AssertionError("The UI queue rejected native-stage capture"))
+        fun abandon(reason: Throwable) {
+            handler.removeCallbacks(request)
+            if (!completion.completeExceptionally(reason)) {
+                // Handle completion racing the deadline without leaking its bitmap.
+                runCatching { completion.getNow(null) }.getOrNull()?.bitmap?.recycle()
+            }
+        }
+        return try {
+            // One budget covers posting to Main and the PixelCopy callback. There
+            // is no global UI-idle wait before this native surface fence.
+            completion.get(10, TimeUnit.SECONDS)
+        } catch (timeout: TimeoutException) {
+            val failure = AssertionError("Native stage copy exceeded 10 seconds including UI scheduling", timeout)
+            abandon(failure)
+            throw failure
+        } catch (interrupted: InterruptedException) {
+            abandon(interrupted)
+            Thread.currentThread().interrupt()
+            throw interrupted
+        } catch (failure: ExecutionException) {
+            throw (failure.cause ?: failure)
+        }
     }
 
     private fun writeImage(name: String, bitmap: Bitmap) {
