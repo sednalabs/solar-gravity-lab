@@ -19,11 +19,13 @@ import android.view.ViewGroup
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
@@ -60,6 +62,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 import kotlin.math.PI
 import kotlin.math.ceil
@@ -177,7 +180,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals(savedState.attitudeW.toBits(), restored.attitudeW.toBits())
         assertEquals(savedState.relativeVelocityY.toBits(), restored.relativeVelocityY.toBits())
         assertTrue(facade.uiState.value.snapshot?.paused == true)
-        androidx.test.espresso.Espresso.pressBack()
+        closeSavedExperimentsDialog()
         composeRule.activityRule.scenario.recreate()
         waitUntil { nodes(FlightTags.ROOT) }
         val retained = composeRule.activity.runtimeFacadeForTesting
@@ -317,6 +320,17 @@ class OrbitalFlightJourneyInstrumentationTest {
         advanceAndWait(facade, 1.0)
         assertEquals("Released manual RCS must not leave hidden thrust", releasedFuel, flight(facade).propellantMassKg, 1e-9)
 
+        val readyToApproach = encounter(facade)
+        assertEquals(RendezvousGuidance.Manual, readyToApproach.guidance)
+        assertTrue(readyToApproach.targetAvailable && readyToApproach.remainingPropellantKg > 0.0)
+        // Native commit is observable before Compose has consumed the terminal
+        // advance state. With the test clock paused, drive frames until the real
+        // control acknowledges readiness; a stuck/broken capability still fails.
+        waitUntil {
+            val approach = composeRule.onAllNodesWithTag(RendezvousTags.APPROACH).fetchSemanticsNodes().singleOrNull()
+            facade.uiState.value.manualAdvance == null && approach != null &&
+                !approach.config.contains(SemanticsProperties.Disabled)
+        }
         composeRule.onNodeWithTag(RendezvousTags.APPROACH).assertIsEnabled().performClick()
         waitUntil { encounter(facade).guidance == RendezvousGuidance.Approach }
         advanceAndWait(facade, 650.0)
@@ -360,7 +374,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         composeRule.onNodeWithTag(LabTags.SAVE_COMMIT).performClick()
         waitUntil { facade.savedExperiments.value.any { it.name == savedName } }
         val userSave = facade.savedExperiments.value.first { it.name == savedName }
-        androidx.test.espresso.Espresso.pressBack()
+        closeSavedExperimentsDialog()
         runBlocking { facade.loadExperiment(backupId) }
         assertEquals(oldEpoch.toBits(), flight(facade).epochSeconds.toBits())
         assertTrue(runBlocking { facade.rendezvousState() } == null)
@@ -377,6 +391,16 @@ class OrbitalFlightJourneyInstrumentationTest {
     }
 
     private fun encounter(facade: RuntimeFacade): RendezvousState = runBlocking { requireNotNull(facade.rendezvousState()) }
+
+    private fun closeSavedExperimentsDialog() {
+        // Back can dismiss only the name field's IME, leaving a saved dialog
+        // open across recreation. Use the visible user action and establish
+        // that the modal really closed before exercising the underlying flight.
+        val done = composeRule.onNodeWithText("Done")
+        waitUntil { done.isDisplayed() }
+        done.assertIsEnabled().performClick()
+        waitUntil { !nodes(LabTags.SAVED_DIALOG) }
+    }
 
     private fun launchOrbitalFlightWhenReady() {
         // The native scenario ID is published before Compose receives its body
@@ -517,7 +541,7 @@ class OrbitalFlightJourneyInstrumentationTest {
                     // Retain the same geometry and colour-match requirements.
                     val currentRadius = submitted?.camera?.viewRadiusM
                     matched = sampleCount >= 12 && matchCount * 4 >= sampleCount * 3 &&
-                        (!requireCloseShip || (currentRadius != null && currentRadius in 8.0..100.0))
+                        currentRadius != null && currentRadius in 8.0..100.0
                 } else matched = true
                 Log.i("SolarLabFlightEvidence", "$name pair=$attempt native=${native.width}x${native.height} " +
                     "submittedRadius=${submitted?.camera?.viewRadiusM} nativeMatches=$matchCount/$sampleCount " +
@@ -538,22 +562,23 @@ class OrbitalFlightJourneyInstrumentationTest {
     }
 
     private fun copyNativeImage(surface: SurfaceView, name: String, deadline: Long): Bitmap {
-        var status = PixelCopy.ERROR_SOURCE_NO_DATA
+        val result = AtomicInteger(PixelCopy.ERROR_SOURCE_NO_DATA)
         val attempts = mutableListOf<Int>()
         while (SystemClock.uptimeMillis() < deadline) {
             val image = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
             val completed = CountDownLatch(1)
-            PixelCopy.request(surface, image, { status = it; completed.countDown() }, Handler(Looper.getMainLooper()))
+            PixelCopy.request(surface, image, { result.set(it); completed.countDown() }, Handler(Looper.getMainLooper()))
             val remainingMs = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
             assertTrue("Native flight PixelCopy callback exceeded its bounded deadline: $name; statuses=$attempts",
                 completed.await(remainingMs, TimeUnit.MILLISECONDS))
+            val status = result.get()
             attempts += status
             if (status == PixelCopy.SUCCESS) return image
             image.recycle()
             if (status != PixelCopy.ERROR_SOURCE_NO_DATA && status != PixelCopy.ERROR_TIMEOUT) break
             SystemClock.sleep((deadline - SystemClock.uptimeMillis()).coerceIn(0, 80))
         }
-        throw AssertionError("An actual native stage buffer is required: $name; statuses=$attempts, last=$status")
+        throw AssertionError("An actual native stage buffer is required: $name; statuses=$attempts, last=${result.get()}")
     }
 
     private fun nativeWindowMatches(stage: Bitmap, window: Bitmap, origin: IntArray): Pair<Int, Int> {
@@ -706,14 +731,14 @@ class OrbitalFlightJourneyInstrumentationTest {
     }
 
     private fun writeImage(name: String, image: Bitmap) {
-        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
-        val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, name)
-            put(MediaStore.Downloads.MIME_TYPE, "image/png")
-            put(MediaStore.Downloads.RELATIVE_PATH, evidencePath)
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }))
         try {
+            val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+            val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, "image/png")
+                put(MediaStore.Downloads.RELATIVE_PATH, evidencePath)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }))
             resolver.openOutputStream(uri)?.use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
                 ?: error("Could not write flight evidence")
             resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)

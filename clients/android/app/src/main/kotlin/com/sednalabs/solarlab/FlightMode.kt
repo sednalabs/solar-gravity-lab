@@ -146,8 +146,8 @@ internal fun FlightModeChrome(
     var missionActionBusy by remember(facade, uiState.sessionHandle) { mutableStateOf(false) }
     var missionDetailsVisible by rememberSaveable { mutableStateOf(false) }
     var guidedCoast by rememberSaveable(uiState.sessionHandle) { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var controlError by remember { mutableStateOf<String?>(null) }
+    var message by remember(facade, uiState.sessionHandle) { mutableStateOf<String?>(null) }
+    var controlError by remember(facade, uiState.sessionHandle) { mutableStateOf<String?>(null) }
     var checkpoint by rememberSaveable { mutableStateOf<String?>(null) }
     var checkpointSession by rememberSaveable { mutableStateOf(0L) }
     LaunchedEffect(uiState.sessionHandle) {
