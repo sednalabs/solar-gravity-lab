@@ -37,7 +37,7 @@ impl WorldRuntime {
                     && op.requested_seconds.to_bits() == delta.to_bits()
                     && op.recorded_at_unix_ms == recorded_at_unix_ms
                 {
-                    return Ok(self.advance_operation.as_ref().expect("operation exists"));
+                    return Ok(op);
                 }
                 return Err(RuntimeError::AdvanceStale);
             }

@@ -49,10 +49,21 @@ fn orbit_archive_body_ids(query: &OrbitArchiveQuery, bodies: &[BodyState]) -> Ve
             .iter()
             .map(|body| body.body_id.clone())
             .collect::<Vec<_>>()
+    } else if bodies.len().saturating_mul(query.body_ids.len()) <= 256 {
+        // Most scene/archive selections are tiny. Avoid building a membership table
+        // when a bounded linear scan is cheaper to perform.
+        query
+            .body_ids
+            .iter()
+            .filter(|body_id| bodies.iter().any(|body| &body.body_id == *body_id))
+            .cloned()
+            .collect::<Vec<_>>()
     } else {
+        // Large catalogues and wide selections must not regress to quadratic
+        // membership checks. Borrow IDs rather than cloning each world ID.
         let available = bodies
             .iter()
-            .map(|body| body.body_id.clone())
+            .map(|body| &body.body_id)
             .collect::<HashSet<_>>();
         query
             .body_ids
@@ -257,7 +268,6 @@ pub(super) fn build_prediction_archives(
         return Vec::new();
     }
 
-    let tracked_body_ids = body_ids.iter().cloned().collect::<HashSet<_>>();
     let mut projected_bodies = bodies.to_vec();
     let mut solver_bodies = world_bodies_to_solver_state(&projected_bodies);
     let mut epoch_seconds = starting_epoch_seconds;
@@ -280,17 +290,13 @@ pub(super) fn build_prediction_archives(
         apply_solver_state_to_world_bodies(&mut projected_bodies, &solver_bodies);
         epoch_seconds = next_epoch_seconds;
 
-        for body in projected_bodies
-            .iter()
-            .filter(|body| tracked_body_ids.contains(&body.body_id))
-        {
-            samples_by_body
-                .entry(body.body_id.clone())
-                .or_default()
-                .push(OrbitSample {
+        for body in &projected_bodies {
+            if let Some(samples) = samples_by_body.get_mut(&body.body_id) {
+                samples.push(OrbitSample {
                     epoch_seconds,
                     position_m: body.position_m,
                 });
+            }
         }
     }
 
@@ -340,6 +346,52 @@ pub(super) fn record_trail_samples_from_bodies(
             &body.body_id,
             epoch_seconds,
             body.position_m,
+        );
+    }
+}
+
+#[cfg(test)]
+mod review_regression_tests {
+    use super::*;
+
+    #[test]
+    fn selection_preserves_missing_ids_duplicates_and_order_at_small_and_large_scales() {
+        let bodies = (0..48)
+            .map(|index| BodyState {
+                body_id: BodyId(format!("body-{index:03}")),
+                body_class: BodyClass::Tracer,
+                mass_kg: 0.0,
+                source_mass_kg: 0.0,
+                radius_m: 1.0,
+                position_m: Vector3d::default(),
+                velocity_mps: Vector3d::default(),
+            })
+            .collect::<Vec<_>>();
+        let mut query = OrbitArchiveQuery::default();
+        query.body_ids = vec![
+            BodyId("body-047".into()),
+            BodyId("missing".into()),
+            BodyId("body-001".into()),
+            BodyId("body-001".into()),
+        ];
+
+        // Exercise both membership strategies; preserve the original sorted,
+        // duplicate-preserving selection contract for explicitly requested IDs.
+        assert_eq!(
+            orbit_archive_body_ids(&query, &bodies[..4]),
+            vec![BodyId("body-001".into()), BodyId("body-001".into())]
+        );
+        assert_eq!(
+            orbit_archive_body_ids(&query, &bodies),
+            vec![
+                BodyId("body-001".into()),
+                BodyId("body-001".into()),
+                BodyId("body-047".into()),
+            ]
+        );
+        assert_eq!(
+            orbit_archive_body_ids(&OrbitArchiveQuery::default(), &bodies).len(),
+            bodies.len()
         );
     }
 }
