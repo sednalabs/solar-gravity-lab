@@ -236,6 +236,15 @@ impl WorldRuntime {
 
 pub(super) fn valid_ship_body(body: &BodyState, ship: &SpacecraftState) -> bool {
     ship.valid()
+        && ship.authored.as_ref().and_then(|assembly| assembly.visual_asset.as_ref()).is_none_or(|binding| {
+            solarlab_data::spacecraft_visual_asset(&binding.asset_id).is_some_and(|asset| {
+                asset.mesh_kind == binding.mesh_kind
+                    && asset.geometry_sha256 == binding.geometry_sha256
+                    && body.radius_m >= asset.framing_radius_m
+                    && (asset.contact_profile == Some(ship.appearance)
+                        || ship.authored.as_ref().is_some_and(|a| a.contact.is_some()))
+            })
+        })
         && ship.body_id == body.body_id
         && body.body_class == BodyClass::Spacecraft
         && !body.body_id.0.trim().is_empty()

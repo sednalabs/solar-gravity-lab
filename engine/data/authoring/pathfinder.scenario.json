@@ -1,0 +1,234 @@
+{
+  "format": "solarlab.scenario",
+  "version": 1,
+  "id": "authored.pathfinder",
+  "title": "Pathfinder: a new spacecraft and visual asset",
+  "base": "earth-moon",
+  "spacecraft_definitions": [
+    {
+      "id": "pathfinder-surveyor",
+      "display_name": "Pathfinder surveyor",
+      "visual_asset": "example:pathfinder",
+      "structure": {
+        "dry_mass_kg": 650,
+        "inertia_kg_m2": {
+          "x": 950,
+          "y": 1200,
+          "z": 600
+        },
+        "max_control_torque_nm": {
+          "x": 150,
+          "y": 150,
+          "z": 75
+        },
+        "radius_m": 5
+      },
+      "propellant": {
+        "capacity_kg": 45
+      },
+      "engines": [
+        {
+          "control": "main",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 0.45,
+          "specific_impulse_seconds": 2500
+        },
+        {
+          "control": "positive_x",
+          "direction_body": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_x",
+          "direction_body": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_y",
+          "direction_body": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_y",
+          "direction_body": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        }
+      ],
+      "contact": {
+        "hull": [
+          {
+            "position_body_m": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 0.95,
+                "y": 0.95,
+                "z": 0.8
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": 0,
+              "y": 0,
+              "z": 1.3
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 0.5,
+                "y": 0.5,
+                "z": 0.5
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": 3,
+              "y": 0,
+              "z": -0.3
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 0.9,
+                "y": 0.08,
+                "z": 1.2
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": -3,
+              "y": 0,
+              "z": -0.3
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 0.9,
+                "y": 0.08,
+                "z": 1.2
+              }
+            }
+          }
+        ],
+        "port": {
+          "position_body_m": {
+            "x": 0.6,
+            "y": 0,
+            "z": 1
+          },
+          "inner_radius_m": 0.2,
+          "outer_radius_m": 0.35,
+          "depth_m": 0.15
+        }
+      }
+    }
+  ],
+  "spacecraft": [
+    {
+      "body_id": "survey.pathfinder",
+      "definition_id": "pathfinder-surveyor",
+      "placement": {
+        "kind": "circular_orbit",
+        "host_body_id": "earth",
+        "altitude_m": 500000,
+        "radial_direction": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "orbit_normal": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        }
+      }
+    }
+  ],
+  "focus_body_id": "survey.pathfinder"
+}

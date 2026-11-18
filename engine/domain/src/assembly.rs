@@ -12,6 +12,9 @@ pub const MAX_CONTACT_RADIUS_M: f64 = 50.0;
 pub struct SpacecraftAssembly {
     pub definition_id: String,
     pub display_name: String,
+    /// Build-time catalog identity and payload digest, checked by the runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_asset: Option<SpacecraftVisualBinding>,
     /// None retains the selected built-in model's contact geometry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact: Option<SpacecraftContactGeometry>,
@@ -23,9 +26,33 @@ impl SpacecraftAssembly {
         valid_text(&self.definition_id, 96)
             && valid_text(&self.display_name, 128)
             && self
+                .visual_asset
+                .as_ref()
+                .is_none_or(SpacecraftVisualBinding::valid)
+            && self
                 .contact
                 .as_ref()
                 .is_none_or(SpacecraftContactGeometry::valid)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SpacecraftVisualBinding {
+    pub asset_id: String,
+    pub mesh_kind: u32,
+    pub geometry_sha256: String,
+}
+impl SpacecraftVisualBinding {
+    #[must_use]
+    pub fn valid(&self) -> bool {
+        valid_text(&self.asset_id, 96)
+            && (1..=65535).contains(&self.mesh_kind)
+            && self.geometry_sha256.len() == 64
+            && self
+                .geometry_sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     }
 }
 

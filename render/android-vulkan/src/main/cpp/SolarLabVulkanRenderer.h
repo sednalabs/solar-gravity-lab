@@ -368,13 +368,14 @@ private:
         uint32_t authoritativeInfluenceCount = 0;
         DrawStreamBuffers authoritative;
         DrawStreamBuffers spacecraft;
-        GpuBuffer referenceMesh;
-        GpuBuffer referenceExhaust;
-        GpuBuffer relayStationMesh;
-        bool referenceMeshUploaded = false;
-        bool referenceExhaustUploaded = false;
-        bool relayStationMeshUploaded = false;
-        std::array<solarlab::spacecraft::MeshInstanceRange, 2> meshRanges{};
+        struct MeshGeometryBuffers {
+            GpuBuffer solid;
+            GpuBuffer exhaust;
+            bool solidUploaded = false;
+            bool exhaustUploaded = false;
+        };
+        std::array<MeshGeometryBuffers, solarlab::spacecraft::kMeshKinds.size()> meshGeometry{};
+        std::array<solarlab::spacecraft::MeshInstanceRange, solarlab::spacecraft::kMeshKinds.size()> meshRanges{};
         DrawStreamBuffers tracerNear;
         DrawStreamBuffers tracerMedium;
         DrawStreamBuffers tracerFar;

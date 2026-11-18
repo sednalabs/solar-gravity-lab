@@ -1,6 +1,7 @@
 #include "../../main/cpp/SpacecraftPresentation.h"
 #include "../../main/cpp/ReferenceSpacecraftMesh.h"
 #include "../../main/cpp/RelayStationMesh.h"
+#include "../../main/cpp/SpacecraftAssetGeometry.h"
 #include "../../main/cpp/SpacecraftMeshBatches.h"
 #include "../../main/cpp/SolarLabPresentation.h"
 #include <cassert>
@@ -95,6 +96,17 @@ int main() {
     assert(stationOnly.ranges[0].instanceCount==0);
     assert(stationOnly.ranges[1].firstInstance==0 && stationOnly.ranges[1].instanceCount==1);
     assert(PlanMeshInstances(std::array<uint32_t,0>{}).sourceIndices.empty());
+    // A catalog-authored third mesh takes the same geometry and instance route.
+    assert(kRegisteredMeshes.size() == kMeshKinds.size());
+    const auto thirdPlan = PlanMeshInstances(std::array<uint32_t, 5>{3, 2, 3, 1, 99});
+    assert((thirdPlan.sourceIndices == std::vector<uint32_t>{3, 1, 0, 2}));
+    assert(thirdPlan.ranges[2].firstInstance == 2 && thirdPlan.ranges[2].instanceCount == 2);
+    assert(kRegisteredMeshes[2].kind == 3 && !kRegisteredMeshes[2].solid.empty());
+    assert(!kRegisteredMeshes[2].exhaust.empty());
+    for (const auto& vertex : kRegisteredMeshes[2].solid) {
+        assert(vertex.x*vertex.x + vertex.y*vertex.y + vertex.z*vertex.z <= 25.0f);
+        assert(std::isfinite(vertex.nx+vertex.ny+vertex.nz));
+    }
     // Both physical envelopes remain inside the perspective frustum through the
     // complete approach, at AU-scale origins and between submitted pose samples.
     for(double separation:{1000.0,250.0,75.0}) {
