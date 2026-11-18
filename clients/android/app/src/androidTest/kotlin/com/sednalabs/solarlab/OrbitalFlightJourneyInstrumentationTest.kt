@@ -16,6 +16,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
@@ -90,7 +91,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         composeRule.waitUntil(30_000) { facade.uiState.value.connectionState == SessionConnectionState.Active }
         runBlocking { facade.loadScenario("lab.earth-moon") }
         composeRule.waitUntil(30_000) { facade.uiState.value.snapshot?.scenarioId == "lab.earth-moon" }
-        composeRule.onNodeWithTag(FlightTags.LAUNCH).assertIsEnabled().performClick()
+        launchOrbitalFlightWhenReady()
         waitUntil { runBlocking { facade.flightState() } != null && nodes(FlightTags.ROOT) }
         val initial = flight(facade)
         assertTrue(initial.propellantMassKg > 0.0)
@@ -256,6 +257,17 @@ class OrbitalFlightJourneyInstrumentationTest {
     }
 
     private fun mission(facade: RuntimeFacade): LunarMissionState = runBlocking { requireNotNull(facade.lunarMissionState()) }
+    private fun launchOrbitalFlightWhenReady() {
+        // The native scenario ID is published before Compose receives its body
+        // catalogue. Wait for the actual user-facing capability, then retain the
+        // same enabled assertion and real launch click.
+        waitUntil(30_000) {
+            val launch = composeRule.onAllNodesWithTag(FlightTags.LAUNCH).fetchSemanticsNodes().singleOrNull()
+            launch != null && !launch.config.contains(SemanticsProperties.Disabled)
+        }
+        composeRule.onNodeWithTag(FlightTags.LAUNCH).assertIsEnabled().performClick()
+    }
+
     private fun flight(facade: RuntimeFacade): FlightState = runBlocking { requireNotNull(facade.flightState()) }
     private fun nodes(tag: String) = composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
     private fun waitUntil(timeoutMs: Long = 20_000, predicate: () -> Boolean) = composeRule.waitUntil(timeoutMs) {
