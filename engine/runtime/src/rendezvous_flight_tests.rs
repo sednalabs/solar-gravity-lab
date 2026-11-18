@@ -546,3 +546,21 @@ fn active_approach_rejects_a_standoff_inside_the_target_hull_on_import() {
     )
     .is_err());
 }
+
+#[test]
+fn manual_rotation_throttle_and_attitude_take_over_active_rendezvous() {
+    for control in [
+        FlightControl { throttle: 0.25, ..FlightControl::default() },
+        FlightControl { rotation_body: Vector3d { x: 0.0, y: 0.5, z: 0.0 }, ..FlightControl::default() },
+        FlightControl { attitude_mode: AttitudeMode::Prograde, ..FlightControl::default() },
+    ] {
+        let mut runtime = flight(0.05);
+        runtime.set_rendezvous_guidance(SHIP, RendezvousGuidanceMode::Approach, 0).unwrap();
+        manual(&mut runtime, control);
+        let ship = runtime.spacecraft_by_id(SHIP).unwrap();
+        assert_eq!(ship.control, control);
+        assert_eq!(ship.rendezvous.as_ref().unwrap().guidance_mode, RendezvousGuidanceMode::Manual);
+        assert!(ship.valid());
+        advance(&mut runtime, 0.1);
+    }
+}

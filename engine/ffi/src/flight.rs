@@ -62,7 +62,7 @@ pub(super) fn start(handle: SlRuntimeHandle, ship_id: &str, recorded: i64) -> Re
     Ok(())
 }
 
-fn configure_flight(staged: &mut WorldRuntime, ship_id: &str, recorded: i64) -> Result<(), String> {
+pub(super) fn configure_flight(staged: &mut WorldRuntime, ship_id: &str, recorded: i64) -> Result<(), String> {
     for command in [
         WorldCommand::PausePlayback,
         WorldCommand::SetPlaybackRate {

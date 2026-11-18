@@ -555,6 +555,7 @@ jobs:
           cargo run -p solarlab-runtime --example lunar_flight -- 60
           cargo run -p solarlab-runtime --example orbital_rendezvous
           cargo run -p solarlab-runtime --example orbital_rendezvous -- match
+          cargo run -p solarlab-runtime --example station_docking
 
       - name: Measure release physics throughput (x64)
         timeout-minutes: 10

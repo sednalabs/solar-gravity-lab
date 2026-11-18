@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include "SolarLabPresentation.h"
 
 namespace solarlab::spacecraft {
 struct SplitCoordinate { float high; float low; };
@@ -71,6 +72,43 @@ inline std::optional<EncounterCameraFrame> EncounterFrame(
     frame.yawRadians = std::atan2(delta[1], delta[0]);
     frame.pitchRadians = 0.55;
     return frame;
+}
+
+/**
+ * Fit physical envelopes into the measured HUD-free part of the viewport.
+ * Half widths are fractions of half the short viewport axis, so a landscape
+ * viewport can supply a width greater than one. No mesh scale or pose changes.
+ */
+inline double EncounterSafeViewRadius(const EncounterCameraFrame& frame,
+    const std::array<double, 3>& ship, const std::array<double, 3>& target,
+    const std::array<double, 3>& previousShip, const std::array<double, 3>& previousTarget,
+    double shipRadiusM, double targetRadiusM, double yaw, double pitch,
+    double safeHalfWidth, double safeHalfHeight) {
+    if (!std::isfinite(safeHalfWidth) || !std::isfinite(safeHalfHeight) ||
+        safeHalfWidth <= 0 || safeHalfHeight <= 0) return frame.viewRadiusM;
+    const auto basis = solarlab::presentation::MakeCameraBasis(yaw, pitch);
+    const double tangent = std::tan(3.14159265358979323846 / 6.0);
+    double eye = FlightEyeDistance(frame.viewRadiusM);
+    for (size_t body = 0; body < 2; ++body) {
+        const double radius = body ? targetRadiusM : shipRadiusM;
+        for (bool previous : {false, true}) {
+            const auto& position = previous ? (body ? previousTarget : previousShip) : (body ? target : ship);
+            std::array<double, 3> relative{};
+            for (size_t axis = 0; axis < 3; ++axis) relative[axis] = position[axis] - frame.center[axis] -
+                (previous ? frame.previousOffset[axis] : 0.0);
+            const auto dot = [&](const std::array<double, 3>& direction) {
+                return relative[0]*direction[0] + relative[1]*direction[1] + relative[2]*direction[2];
+            };
+            // A box enclosing each sphere bounds every projected hull point.
+            // Linear interpolation between pose samples stays inside this bound.
+            const double depth = dot(basis.forward);
+            eye = std::max({eye, radius + 0.1 - depth,
+                (std::abs(dot(basis.right)) + radius) / (tangent * safeHalfWidth) - depth + radius,
+                (std::abs(dot(basis.up)) + radius) / (tangent * safeHalfHeight) - depth + radius});
+        }
+    }
+    const double fitted = eye * tangent;
+    return std::isfinite(fitted) && fitted > frame.viewRadiusM ? fitted * 1.02 : frame.viewRadiusM;
 }
 
 inline std::array<double, 3> FlightCameraRay(double x, double y, int width, int height) {

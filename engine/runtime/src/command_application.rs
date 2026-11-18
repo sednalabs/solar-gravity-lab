@@ -96,6 +96,7 @@ impl WorldRuntime {
                 let branch = self.active_branch_mut();
                 branch.world.bodies.push(body.clone());
                 branch.world.spacecraft.push(spacecraft.clone());
+                if spacecraft.docking.is_some() { branch.world.playback.sim_seconds_per_real_second = branch.world.playback.sim_seconds_per_real_second.min(1.0); }
                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
                 push_trail_sample(&mut branch.world.trail_history_by_body, &body.body_id, branch.world.epoch_seconds, body.position_m);
             }
@@ -104,6 +105,10 @@ impl WorldRuntime {
                 let ship = world.spacecraft.iter_mut().find(|s|s.body_id==*body_id).expect("preflight checked flight identity");
                 ship.control = *control;
                 ship.burn_program = None;
+                if let Some(d) = &mut ship.docking {
+                    d.guidance_mode = DockingGuidanceMode::Manual;
+                    d.capture_armed = false;
+                }
                 if let Some(r) = &mut ship.rendezvous {
                     r.guidance_mode = RendezvousGuidanceMode::Manual;
                     r.status = RendezvousStatus::Manual;
@@ -138,6 +143,25 @@ impl WorldRuntime {
                 if rendezvous.guidance_mode.active() {
                     world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
                 }
+            }
+            WorldCommand::SetDockingGuidance { body_id, mode } => {
+                let world = &mut self.active_branch_mut().world;
+                let ship = world.spacecraft.iter_mut().find(|s| s.body_id == *body_id).expect("preflight checked docking identity");
+                ship.control = docking_flight::neutral_control();
+                ship.burn_program = None;
+                let d = ship.docking.as_mut().expect("preflight checked docking component");
+                d.guidance_mode = *mode;
+                d.capture_armed = *mode == DockingGuidanceMode::Approach;
+                if d.capture_armed { d.unsafe_contact = false; }
+                world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
+            }
+            WorldCommand::UndockSpacecraft { body_id } => {
+                let ship = self.active_branch_mut().world.spacecraft.iter_mut().find(|s| s.body_id == *body_id).expect("preflight checked attachment");
+                let d = ship.docking.as_mut().expect("preflight checked docking component");
+                d.attachment = None;
+                d.guidance_mode = DockingGuidanceMode::Manual;
+                d.capture_armed = false;
+                ship.control = docking_flight::neutral_control();
             }
             WorldCommand::SeedCanonicalSolarSystem => {
                 if self.active_branch().world.bodies.is_empty() {
@@ -221,6 +245,14 @@ impl WorldRuntime {
                 branch.world.trail_history_by_body.remove(body_id);
                 branch.world.spacecraft.retain(|s|s.body_id!=*body_id);
                 for ship in &mut branch.world.spacecraft {
+                    if let Some(d) = &mut ship.docking {
+                        if d.target_body_id == *body_id || ship.reference_body_id.as_ref() == Some(body_id) {
+                            d.guidance_mode = DockingGuidanceMode::Manual;
+                            d.capture_armed = false;
+                            if d.target_body_id == *body_id { d.attachment = None; }
+                            ship.control = docking_flight::neutral_control();
+                        }
+                    }
                     if ship.rendezvous.as_ref().is_some_and(|r| r.target_body_id == *body_id)
                         || (ship.rendezvous.is_some() && ship.reference_body_id.as_ref() == Some(body_id)) {
                         let r = ship.rendezvous.as_mut().expect("rendezvous checked");

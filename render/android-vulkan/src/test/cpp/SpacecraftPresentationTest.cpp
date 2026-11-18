@@ -65,13 +65,26 @@ int main() {
     assert(minZ < -4 && maxZ > 3.5 && maxZ-minZ < 8); // metres, nose +Z
     assert(maxX-minX > 13 && maxX-minX < 14);
     for(const auto& v:kReferenceExhaust) {assert(v.effect==1);assert(v.z <= -4.029f);}
+    size_t tugPortFaceVertices = 0;
+    for(const auto& v:kReferenceMesh) if(v.z > 3.39f) {
+        // The capture collar is annular, not a filled disc at the mating plane.
+        assert(std::hypot(v.x, v.y) >= .4299f);
+        if(std::abs(v.z-3.52f)<1e-5f) ++tugPortFaceVertices;
+    }
+    assert(tugPortFaceVertices >= 96);
     assert(kRelayStationMesh.size() > kReferenceMesh.size() && kRelayStationMesh.size() % 3 == 0);
     assert(kRelayStationExhaust.empty());
     for(const auto& v:kRelayStationMesh) {
         assert(v.x*v.x+v.y*v.y+v.z*v.z <= 12.0f*12.0f);
         assert(std::abs(v.nx*v.nx+v.ny*v.ny+v.nz*v.nz-1) < 1e-5);
         assert(v.effect==0);
+        if(v.y < -3.81f && std::hypot(v.x, v.z) < 1.06f)
+            assert(std::hypot(v.x, v.z) >= .6199f); // authored service-port opening matches native capture hull
     }
+    size_t stationPortFaceVertices = 0;
+    for(const auto& v:kRelayStationMesh) if(std::abs(v.y+4.04f)<1e-5f && std::hypot(v.x,v.z)<1.06f)
+        ++stationPortFaceVertices;
+    assert(stationPortFaceVertices >= 96);
     // Mixed scene order must not attach a station mesh or plume to the tug.
     const std::array<uint32_t,6> kinds{2,1,99,2,1,0};
     const auto plan=PlanMeshInstances(kinds);
@@ -120,5 +133,36 @@ int main() {
     assert(!EncounterFrame({0,0,0},{NAN,0,0},{0,0,0},{0,0,0},8,12));
     assert(!EncounterFrame({-1e308,0,0},{1e308,0,0},{-1e308,0,0},{1e308,0,0},8,12));
     assert(!EncounterFrame({0,0,0},{0,75,0},{0,0,0},{0,75,0},8,1.7e308));
+    // Close docking must fit the actual HUD-free rectangle, including a camera
+    // gesture away from the initial side view and interpolation at AU origins.
+    // The qualified landscape viewport was 1434 x 586 with 308 clear vertical
+    // pixels; a more restrictive portrait region is covered separately.
+    for(double separation:{30.0,7.56}) for(auto safe: {std::array<double,2>{1434./586.,308./586.},
+        std::array<double,2>{1.,.35}}) for(double yaw:{pi*.5,.7}) for(double pitch:{.55,-.4}) {
+        const std::array<double,3> ship{149597870700.,-separation,100.};
+        const std::array<double,3> target{149597870700.,0.,100.};
+        const std::array<double,3> previousShip{ship[0]-.125,ship[1]-.01,ship[2]};
+        const std::array<double,3> previousTarget{target[0]-.125,target[1]-.005,target[2]};
+        const auto frame=EncounterFrame(ship,target,previousShip,previousTarget,8,12);
+        assert(frame);
+        const double view=EncounterSafeViewRadius(*frame,ship,target,previousShip,previousTarget,8,12,
+            yaw,pitch,safe[0],safe[1]);
+        assert(view>=frame->viewRadiusM && view<100);
+        const auto basis=solarlab::presentation::MakeCameraBasis(yaw,pitch);
+        for(double fraction:{0.,.25,.5,.75,1.}) for(size_t body=0;body<2;++body) {
+            const auto& current=body?target:ship;
+            const auto& previous=body?previousTarget:previousShip;
+            const double radius=body?12.:8.;
+            std::array<double,3> relative{};
+            for(size_t axis=0;axis<3;++axis) relative[axis]=
+                (previous[axis]-frame->center[axis]-frame->previousOffset[axis])*(1-fraction)+
+                (current[axis]-frame->center[axis])*fraction;
+            const auto dot=[&](const std::array<double,3>& d){return relative[0]*d[0]+relative[1]*d[1]+relative[2]*d[2];};
+            const double depth=FlightEyeDistance(view)+dot(basis.forward);
+            assert(depth>radius+.1);
+            assert((std::abs(dot(basis.right))+radius)/(depth-radius)<safe[0]*std::tan(pi/6));
+            assert((std::abs(dot(basis.up))+radius)/(depth-radius)<safe[1]*std::tan(pi/6));
+        }
+    }
     std::cout << "PASS spacecraft/station meshes, draw ranges, attitude, astronomical precision, perspective horizon, encounter framing and shared depth\n";
 }

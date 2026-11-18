@@ -13,6 +13,7 @@ const FLIGHT_VERSION: u32 = 2;
 const FLIGHT_MODEL: &str = "six-dof-strang-rocket-v1";
 const FLIGHT_PROGRAM_MODEL: &str = "six-dof-strang-rocket-v2";
 const RENDEZVOUS_FLIGHT_MODEL: &str = "six-dof-strang-rocket-rendezvous-v3";
+const DOCKING_FLIGHT_MODEL: &str = "six-dof-strang-rocket-docking-v4";
 const MAX_BRANCHES: usize = 64;
 const MAX_BODIES: usize = 4096;
 const MAX_CHECKPOINTS: usize = 256;
@@ -90,7 +91,8 @@ impl WorldRuntime {
             format: FORMAT.into(),
             version: if has_flight { FLIGHT_VERSION } else { VERSION },
             flight_model: has_flight.then(|| {
-                if branches_have_rendezvous(&branches) { RENDEZVOUS_FLIGHT_MODEL }
+                if branches_have_docking(&branches) { DOCKING_FLIGHT_MODEL }
+                else if branches_have_rendezvous(&branches) { RENDEZVOUS_FLIGHT_MODEL }
                 else if branches_have_flight_program(&branches) { FLIGHT_PROGRAM_MODEL }
                 else { FLIGHT_MODEL }.into()
             }),
@@ -235,9 +237,10 @@ impl SavedSession {
         use SessionPersistenceError::InvalidState as invalid;
         let has_flight = self.branches.iter().any(|b|!b.world.spacecraft.is_empty()||b.checkpoints.iter().any(|c|!c.state.spacecraft.is_empty()));
         let compatible_flight_model = match self.flight_model.as_deref() {
-            Some(RENDEZVOUS_FLIGHT_MODEL) => true,
-            Some(FLIGHT_PROGRAM_MODEL) => !branches_have_rendezvous(&self.branches),
-            Some(FLIGHT_MODEL) => !branches_have_rendezvous(&self.branches)
+            Some(DOCKING_FLIGHT_MODEL) => true,
+            Some(RENDEZVOUS_FLIGHT_MODEL) => !branches_have_docking(&self.branches),
+            Some(FLIGHT_PROGRAM_MODEL) => !branches_have_docking(&self.branches) && !branches_have_rendezvous(&self.branches),
+            Some(FLIGHT_MODEL) => !branches_have_docking(&self.branches) && !branches_have_rendezvous(&self.branches)
                 && !branches_have_flight_program(&self.branches),
             _ => false,
         };
@@ -368,6 +371,11 @@ fn branches_have_flight_program(branches: &[BranchState]) -> bool {
         .flat_map(|w| &w.spacecraft).any(|s| s.burn_program.is_some() || s.mission.is_some())
 }
 
+fn branches_have_docking(branches: &[BranchState]) -> bool {
+    branches.iter().flat_map(|b| std::iter::once(&b.world).chain(b.checkpoints.iter().map(|c| &c.state)))
+        .flat_map(|w| &w.spacecraft).any(|s| s.docking.is_some())
+}
+
 fn branches_have_rendezvous(branches: &[BranchState]) -> bool {
     branches.iter().flat_map(|b| std::iter::once(&b.world).chain(b.checkpoints.iter().map(|c| &c.state)))
         .flat_map(|w| &w.spacecraft).any(|s| s.rendezvous.is_some() || s.appearance != solarlab_domain::SpacecraftAppearance::Asteria)
@@ -380,6 +388,7 @@ fn validate_world(world: &BranchWorldState) -> Result<(), SessionPersistenceErro
         || !world.playback.sim_seconds_per_real_second.is_finite()
         || world.playback.sim_seconds_per_real_second <= 0.0
         || world.bodies.len() > MAX_BODIES
+        || (world.spacecraft.iter().any(|s| s.docking.is_some()) && world.playback.sim_seconds_per_real_second > 1.0)
     {
         return Err(invalid("invalid time, playback rate or body count"));
     }

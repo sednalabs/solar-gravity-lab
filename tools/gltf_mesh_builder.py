@@ -75,3 +75,22 @@ def cylinder(r0,r1,z0,z1,n=16,cap=True):
         out.extend([(p,q,r),(p,r,s)])
         if cap:out.extend([((0,0,z0),q,p),((0,0,z1),s,r)])
     return out
+
+
+def annulus(inner, outer, z0, z1, n=32):
+    """Closed annular sleeve with outward normals and a real open centre."""
+    if not 0 < inner < outer or not z0 < z1 or n < 3:
+        raise ValueError('Invalid annular sleeve dimensions')
+    out = []
+    for i in range(n):
+        a = 2*math.pi*i/n
+        b = 2*math.pi*(i+1)/n
+        def point(radius, angle, z):
+            return (radius*math.cos(angle), radius*math.sin(angle), z)
+        p, q = point(outer, a, z0), point(outer, b, z0)
+        r, s = point(outer, b, z1), point(outer, a, z1)
+        u, v = point(inner, a, z0), point(inner, b, z0)
+        w, x = point(inner, b, z1), point(inner, a, z1)
+        out.extend([(p,q,r), (p,r,s), (u,w,v), (u,x,w),
+                    (u,q,p), (u,v,q), (x,s,r), (x,r,w)])
+    return out
