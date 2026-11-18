@@ -510,6 +510,12 @@ bool SolarLabVulkanRenderer::Render() {
     }
 
     gpuTimingPending_ = timestampQueryPool_ != VK_NULL_HANDLE;
+    const bool mediumDispatched = sceneGpuStreams_.tracerMediumCompute.enabled && sceneGpuStreams_.tracerMediumCompute.dispatchGroupCountX != 0;
+    const bool farDispatched = sceneGpuStreams_.tracerFarCompute.enabled && sceneGpuStreams_.tracerFarCompute.dispatchGroupCountX != 0;
+    pendingAccelerationPaths_ =
+        ((mediumDispatched && mediumSubgroupPipeline_) || (farDispatched && farSubgroupPipeline_) ? 1U : 0U) |
+        (mediumDispatched && mediumBufferAddressPipeline_ ? 2U : 0U) |
+        (farDispatched && sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.isTileMemory ? 4U : 0U);
 
     const VkPresentInfoKHR presentInfo{
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -582,11 +588,15 @@ std::string SolarLabVulkanRenderer::HardwareSummary() const {
         << ",stages:" << capabilities_.subgroup.supportedStages
         << ",ops:" << capabilities_.subgroup.supportedOperations
         << ",supported:" << capabilities_.SupportsSubgroupCompaction()
-        << ",medium:" << mediumSubgroupPipeline_ << ",far:" << farSubgroupPipeline_ << ']'
+        << ",medium:" << mediumSubgroupPipeline_ << ",far:" << farSubgroupPipeline_
+        << ",completedFrames:" << subgroupCompletedFrames_ << ']'
         << " sync2=[supported:" << capabilities_.synchronization2
         << ",enabled:" << (optionalFeatures_.synchronization2.synchronization2 == VK_TRUE)
         << ",submissions:" << synchronization2Submissions_ << ']'
-        << " bda=[supported:" << capabilities_.bufferDeviceAddress << ",enabled:0,active:0]"
+        << " bda=[supported:" << capabilities_.bufferDeviceAddress
+        << ",enabled:" << (optionalFeatures_.bufferAddress.bufferDeviceAddress == VK_TRUE)
+        << ",pipeline:" << mediumBufferAddressPipeline_
+        << ",completedFrames:" << bufferAddressCompletedFrames_ << ']'
         << " timeline=[supported:" << capabilities_.timelineSemaphore << ",enabled:0,active:0]"
         << " executable=[supported:" << capabilities_.pipelineExecutableInfo
         << ",enabled:" << (optionalFeatures_.executable.pipelineExecutableInfo == VK_TRUE)
@@ -595,7 +605,10 @@ std::string SolarLabVulkanRenderer::HardwareSummary() const {
         << ",monotonic:" << capabilities_.monotonicCalibration
         << ",enabled:" << optionalFeatures_.calibratedTimestamps
         << ",hostNs:" << calibratedHostNs_ << ",deviceTicks:" << calibratedDeviceTicks_
-        << ",maxDeviationNs:" << calibratedMaxDeviationNs_ << ']';
+        << ",maxDeviationNs:" << calibratedMaxDeviationNs_ << ']'
+        << ' ' << qcomTileMemory_.Summary()
+        << " qcomTileCounters=" << sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.isTileMemory
+        << " qcomTileCompletedFrames=" << tileMemoryCompletedFrames_;
     return out.str();
 }
 
@@ -753,7 +766,21 @@ bool SolarLabVulkanRenderer::CreateDevice() {
 #else
     constexpr bool captureStatistics = false;
 #endif
-    optionalFeatures_.Prepare(capabilities_, captureStatistics);
+#ifdef SOLARLAB_BUFFER_ADDRESS_COMPACTION
+    constexpr bool addressCompaction = true;
+#else
+    constexpr bool addressCompaction = false;
+#endif
+    optionalFeatures_.Prepare(capabilities_, captureStatistics, addressCompaction);
+    enabledFeatures_.shaderInt64 = optionalFeatures_.bufferAddress.bufferDeviceAddress;
+    std::vector<VkExtensionProperties> advertisedExtensions;
+    for (const auto& name : capabilities_.extensions) {
+        VkExtensionProperties extension{};
+        std::strncpy(extension.extensionName, name.c_str(), VK_MAX_EXTENSION_NAME_SIZE - 1U);
+        advertisedExtensions.push_back(extension);
+    }
+    qcomTileMemory_.Probe(physicalDevice_, advertisedExtensions);
+    qcomTileMemory_.AppendDeviceFeature(optionalFeatures_.extensions, optionalFeatures_.chain);
     VkDeviceCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = optionalFeatures_.chain,
@@ -771,6 +798,8 @@ bool SolarLabVulkanRenderer::CreateDevice() {
     if (createResult != VK_SUCCESS && (optionalFeatures_.chain != nullptr || optionalFeatures_.extensions.size() > 1U)) {
         LogInfo("Optional Vulkan feature negotiation failed; retrying the portable device.");
         optionalFeatures_.DisableOptional();
+        enabledFeatures_.shaderInt64 = VK_FALSE;
+        qcomTileMemory_.ResetDevice();
         createInfo.pNext = nullptr;
         createInfo.enabledExtensionCount = static_cast<uint32_t>(optionalFeatures_.extensions.size());
         createInfo.ppEnabledExtensionNames = optionalFeatures_.extensions.data();
@@ -788,6 +817,11 @@ bool SolarLabVulkanRenderer::CreateDevice() {
         cmdPipelineBarrier2_ = reinterpret_cast<PFN_vkCmdPipelineBarrier2KHR>(vkGetDeviceProcAddr(device_, core ? "vkCmdPipelineBarrier2" : "vkCmdPipelineBarrier2KHR"));
         queueSubmit2_ = reinterpret_cast<PFN_vkQueueSubmit2KHR>(vkGetDeviceProcAddr(device_, core ? "vkQueueSubmit2" : "vkQueueSubmit2KHR"));
     }
+    if (optionalFeatures_.bufferAddress.bufferDeviceAddress == VK_TRUE) {
+        getBufferDeviceAddress_ = reinterpret_cast<PFN_vkGetBufferDeviceAddressKHR>(vkGetDeviceProcAddr(device_,
+            capabilities_.apiVersion >= VK_API_VERSION_1_2 ? "vkGetBufferDeviceAddress" : "vkGetBufferDeviceAddressKHR"));
+    }
+    qcomTileMemory_.LoadDevice(device_);
     InitialiseGpuProfiling();
     return true;
 }
@@ -1633,7 +1667,12 @@ bool SolarLabVulkanRenderer::CreateComputePipelines() {
     if (!graphicsQueueSupportsCompute_ || computePipelineLayout_ == VK_NULL_HANDLE) return true;
     DestroyComputePipelines();
     const bool subgroups = capabilities_.SupportsSubgroupCompaction();
-    if (subgroups) {
+    if (getBufferDeviceAddress_ != nullptr && subgroups) {
+        mediumBufferAddressPipeline_ = CreateComputePipeline("compact-medium-bda", "shaders/solarlab/compact_medium_bda.comp.spv", mediumComputePipeline_);
+        mediumSubgroupPipeline_ = mediumBufferAddressPipeline_;
+        if (!mediumBufferAddressPipeline_) { LogInfo("Address compaction unavailable; using descriptor-backed compute."); lastError_.clear(); }
+    }
+    if (subgroups && !mediumBufferAddressPipeline_) {
         mediumSubgroupPipeline_ = CreateComputePipeline("compact-medium-subgroup", "shaders/solarlab/compact_medium_subgroup.comp.spv", mediumComputePipeline_);
         if (!mediumSubgroupPipeline_) { LogInfo("Medium subgroup pipeline unavailable; using portable atomics."); lastError_.clear(); }
     }
@@ -1695,6 +1734,12 @@ bool SolarLabVulkanRenderer::AllocateAndRecordCommandBuffers() {
             return false;
         }
 
+        const auto& farCounters = sceneGpuStreams_.tracerFarCompute.tileCounterBuffer;
+        if (sceneGpuStreams_.tracerFarCompute.enabled && farCounters.isTileMemory &&
+            !qcomTileMemory_.BindForCommands(commandBuffers_[index], farCounters.memory)) {
+            SetError("QCOM tile counter memory could not be bound before command actions.");
+            return false;
+        }
         if (timestampQueryPool_ != VK_NULL_HANDLE) {
             vkCmdResetQueryPool(commandBuffers_[index], timestampQueryPool_, 0, 3);
             vkCmdWriteTimestamp(commandBuffers_[index], VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampQueryPool_, 0);
@@ -1874,15 +1919,19 @@ void SolarLabVulkanRenderer::Cleanup() {
     pipelineCache_ = VK_NULL_HANDLE;
     cmdPipelineBarrier2_ = nullptr;
     queueSubmit2_ = nullptr;
+    getBufferDeviceAddress_ = nullptr;
     getCalibratedTimestamps_ = nullptr;
     getPipelineExecutableProperties_ = nullptr;
     getPipelineExecutableStatistics_ = nullptr;
     gpuTimingPending_ = false;
+    pendingAccelerationPaths_ = 0;
+    subgroupCompletedFrames_ = bufferAddressCompletedFrames_ = tileMemoryCompletedFrames_ = 0;
     gpuTimingSamples_ = 0;
     gpuFrameNs_ = gpuPreGraphicsNs_ = 0.0;
     calibratedDeviceTicks_ = calibratedHostNs_ = calibratedMaxDeviationNs_ = 0;
     pipelineStatisticCount_ = synchronization2Submissions_ = persistentMappingCount_ = 0;
     optionalFeatures_.DisableOptional();
+    qcomTileMemory_.ResetDevice();
     capabilities_ = {};
 
     if (instance_ != VK_NULL_HANDLE) {
@@ -2434,10 +2483,8 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         } else {
             sceneGpuStreams_.tracerFarCompute.tileCounterCount = farTileCounterCount;
             sceneGpuStreams_.tracerFarCompute.outputVertexCapacity = farOutputVertexCapacity;
-            if (!ensureDeviceLocalComputeBuffer(
+            if (!EnsureFarCounterBuffer(
                     static_cast<VkDeviceSize>(sceneGpuStreams_.tracerFarCompute.tileCounterCount + 1U) * sizeof(uint32_t),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                    "tracer-far-tile-counters",
                     sceneGpuStreams_.tracerFarCompute.tileCounterBuffer)) {
                 disableComputeStream(sceneGpuStreams_.tracerFarCompute, "tracer-far-compute", "tile counter buffer allocation failed");
             } else if (!EnsureHostVisibleBuffer(
@@ -2622,8 +2669,10 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
     // output, indirect draw command, and auxiliary counters.
     auto updateSet = [this](VkDescriptorSet set, ComputeDrawStreamBuffers& stream,
         const GpuBuffer& source, const GpuBuffer& output, const GpuBuffer& indirect, const GpuBuffer& aux) {
+        const bool addressOnly = mediumBufferAddressPipeline_ && &stream == &sceneGpuStreams_.tracerMediumCompute;
         const std::array<uint64_t, 5> generations = {sceneUniformBuffer_.allocationGeneration,
-            source.allocationGeneration, output.allocationGeneration, indirect.allocationGeneration, aux.allocationGeneration};
+            addressOnly ? 0U : source.allocationGeneration, addressOnly ? 0U : output.allocationGeneration,
+            addressOnly ? 0U : indirect.allocationGeneration, addressOnly ? 0U : aux.allocationGeneration};
         if (stream.descriptorBufferGenerations == generations) return;
         const VkDescriptorBufferInfo uniformInfo{
             .buffer = sceneUniformBuffer_.buffer,
@@ -2712,7 +2761,7 @@ bool SolarLabVulkanRenderer::UpdateComputeDescriptorSetsLocked() {
                 .pTexelBufferView = nullptr,
             },
         }};
-        vkUpdateDescriptorSets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        vkUpdateDescriptorSets(device_, addressOnly ? 1U : static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         stream.descriptorBufferGenerations = generations;
         // Ordinary descriptor updates invalidate commands that bind the set, even if
         // buffer handles happen to be recycled. Do not update stable bindings per packet.
@@ -2899,7 +2948,18 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
     }
 
     if (runMedium) {
-        const ComputePushConstants pushConstants{.sourceCount = sceneGpuStreams_.tracerMediumCompute.sourceVertexCount};
+        const auto& stream = sceneGpuStreams_.tracerMediumCompute;
+        const ComputePushConstants pushConstants{
+            .sourceCount = stream.sourceVertexCount,
+            .sourceAddress = stream.sourceStateBuffer.deviceAddress,
+            .outputAddress = stream.outputVertexBuffer.deviceAddress,
+            .drawAddress = stream.indirectCommandBuffer.deviceAddress,
+        };
+        if (mediumBufferAddressPipeline_ && (pushConstants.sourceAddress == 0 ||
+            pushConstants.outputAddress == 0 || pushConstants.drawAddress == 0)) {
+            SetError("Address compaction requires three live nonzero device addresses.");
+            return false;
+        }
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, mediumComputePipeline_);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_, 0, 1, &tracerMediumComputeDescriptorSet_, 0, nullptr);
         vkCmdPushConstants(commandBuffer, computePipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
@@ -2918,11 +2978,11 @@ bool SolarLabVulkanRenderer::RecordComputePassLocked(VkCommandBuffer commandBuff
 
     /**
      * --- Compute-to-Graphics Synchronization ---
-     * 
+     *
      * The compute shaders above write to output vertex buffers and an indirect draw
      * command buffer. We must ensure these writes are globally visible before the
      * graphics pipeline attempts to read them as vertex data or indirect parameters.
-     * 
+     *
      * Pipeline Barrier:
      * - srcStage: COMPUTE_SHADER and TRANSFER (empty-slot clears)
      * - dstStage: DRAW_INDIRECT (for the command buffer) and VERTEX_INPUT (for the vertex data)
@@ -3342,6 +3402,7 @@ void SolarLabVulkanRenderer::DestroyGraphicsPipelines() {
 void SolarLabVulkanRenderer::DestroyComputePipelines() {
     computeCompactionEnabled_ = false;
     mediumSubgroupPipeline_ = false;
+    mediumBufferAddressPipeline_ = false;
     farSubgroupPipeline_ = false;
     if (device_ == VK_NULL_HANDLE) {
         mediumComputePipeline_ = VK_NULL_HANDLE;
@@ -3417,6 +3478,13 @@ bool SolarLabVulkanRenderer::EnsureBufferWithMemoryProperties(
     const char* label,
     bool reportErrors,
     GpuBuffer& buffer) {
+    // Only the actual BDA consumer's three storage buffers need addressable
+    // allocations. Tile counters and staging/readback allocations stay ordinary.
+    const bool needsAddress = mediumBufferAddressPipeline_ && label != nullptr &&
+        (std::strcmp(label, "tracer-medium-state") == 0 ||
+         std::strcmp(label, "tracer-medium-compute") == 0 ||
+         std::strcmp(label, "tracer-medium-indirect") == 0);
+    if (needsAddress) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR;
     if (buffer.buffer != VK_NULL_HANDLE && solarlab::rendering::CanReuseBuffer(
             buffer.sizeBytes, sizeBytes, buffer.usage, usage, buffer.memoryProperties, memoryProperties)) {
         return true;
@@ -3454,9 +3522,13 @@ bool SolarLabVulkanRenderer::EnsureBufferWithMemoryProperties(
         return false;
     }
 
+    const VkMemoryAllocateFlagsInfo addressFlags{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+        .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR,
+    };
     const VkMemoryAllocateInfo allocateInfo{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .pNext = nullptr,
+        .pNext = needsAddress ? &addressFlags : nullptr,
         .allocationSize = memoryRequirements.size,
         .memoryTypeIndex = memoryTypeIndex,
     };
@@ -3476,6 +3548,15 @@ bool SolarLabVulkanRenderer::EnsureBufferWithMemoryProperties(
         return false;
     }
 
+    if (needsAddress) {
+        const VkBufferDeviceAddressInfoKHR addressInfo{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR, .buffer = buffer.buffer};
+        buffer.deviceAddress = getBufferDeviceAddress_(device_, &addressInfo);
+        if (buffer.deviceAddress == 0) {
+            if (reportErrors) SetError("Vulkan returned a null buffer device address.");
+            DestroyGpuBuffer(buffer);
+            return false;
+        }
+    }
     if ((memoryProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0U) {
         if (vkMapMemory(device_, buffer.memory, 0, VK_WHOLE_SIZE, 0, &buffer.mapped) != VK_SUCCESS || buffer.mapped == nullptr) {
             if (reportErrors) SetError("Persistent mapping failed for host-visible Vulkan buffer.");
@@ -3512,6 +3593,27 @@ bool SolarLabVulkanRenderer::EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkB
         label,
         reportErrors,
         buffer);
+}
+
+bool SolarLabVulkanRenderer::EnsureFarCounterBuffer(VkDeviceSize sizeBytes, GpuBuffer& buffer) {
+    if (buffer.buffer != VK_NULL_HANDLE && buffer.sizeBytes >= sizeBytes) return true;
+    DestroyGpuBuffer(buffer);
+    solarlab::rendering::QcomTileBuffer tile;
+    if (qcomTileMemory_.TryCreateCounterBuffer(sizeBytes, tile)) {
+        buffer.buffer = tile.buffer;
+        buffer.memory = tile.memory;
+        buffer.sizeBytes = tile.sizeBytes;
+        buffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TILE_MEMORY_BIT_QCOM;
+        buffer.memoryProperties = tile.memoryProperties;
+        buffer.isTileMemory = true;
+        buffer.allocationGeneration = ++bufferAllocationCount_;
+        buffer.debugLabel = "tracer-far-tile-counters";
+        return true;
+    }
+    return EnsureDeviceLocalBuffer(sizeBytes,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        "tracer-far-tile-counters", false, buffer);
 }
 
 SolarLabVulkanRenderer::StagingUploadSlot* SolarLabVulkanRenderer::AcquireStagingUploadSlot(bool reportErrors) {
@@ -3646,7 +3748,8 @@ bool SolarLabVulkanRenderer::SubmitStagingCopy(
     CmdPipelineBarrier(
         slot.commandBuffer,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+            (graphicsQueueSupportsCompute_ ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0U),
         0,
         0,
         nullptr,
@@ -3792,7 +3895,9 @@ uint32_t SolarLabVulkanRenderer::FindMemoryType(uint32_t typeFilter, VkMemoryPro
     for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
         const bool matchesType = (typeFilter & (1U << index)) != 0U;
         const bool matchesProperties = (memoryProperties.memoryTypes[index].propertyFlags & properties) == properties;
-        if (matchesType && matchesProperties) {
+        const bool ordinaryHeap = (memoryProperties.memoryHeaps[memoryProperties.memoryTypes[index].heapIndex].flags &
+            VK_MEMORY_HEAP_TILE_MEMORY_BIT_QCOM) == 0U;
+        if (matchesType && matchesProperties && ordinaryHeap) {
             return index;
         }
     }

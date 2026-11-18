@@ -7,6 +7,11 @@ import json
 import statistics
 from pathlib import Path
 
+EXPECTED_WORKLOADS = {
+    "canonical-mixed-365", "sparse-1024", "lab-3", "lab-probe-4",
+    "dense-128", "dense-192", "dense-256",
+}
+
 
 def read_measurements(path: Path) -> tuple[dict, dict]:
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
@@ -23,8 +28,20 @@ def read_measurements(path: Path) -> tuple[dict, dict]:
         for metric in ("median_us", "p90_us"):
             if not 0 < float(row[metric]) < float("inf"):
                 raise ValueError(f"{path}: invalid {metric} for {key}")
-        if not 0 <= row["max_relative_oracle_error"] <= 1.0e-10:
+        if row["p90_us"] < row["median_us"]:
+            raise ValueError(f"{path}: p90 below median for {key}")
+        if not (0 <= row["max_relative_oracle_error"] <= 1.0e-10
+                and 0 <= row["max_abs_oracle_error"] <= 0.02):
             raise ValueError(f"{path}: scalar oracle failure for {key}")
+        if not all(isinstance(row[field], int) and not isinstance(row[field], bool)
+                   for field in ("bodies", "sources", "active_workers")):
+            raise ValueError(f"{path}: noninteger workload/worker counts for {key}")
+        if not 0 <= row["sources"] <= row["bodies"] or row["active_workers"] < 1:
+            raise ValueError(f"{path}: invalid workload/worker counts for {key}")
+        if row["requested"] == "SimdArm64" and not row["path"].startswith("simd.arm64."):
+            raise ValueError(f"{path}: requested native Arm path fell back for {key}")
+        if row["requested"] == "ReferenceScalar" and row["path"] != "scalar.reference":
+            raise ValueError(f"{path}: scalar control did not execute scalar for {key}")
         measurements[key] = row
     if not measurements:
         raise ValueError(f"{path}: no measurements")
@@ -33,6 +50,7 @@ def read_measurements(path: Path) -> tuple[dict, dict]:
 
 def compare(directory: Path) -> dict:
     comparisons = []
+    fixture_identity = None
     for affinity in ("full", "one-cpu"):
         runs = {}
         reference_environment = None
@@ -42,6 +60,16 @@ def compare(directory: Path) -> dict:
             for repetition in (0, 1):
                 env, rows = read_measurements(directory / f"{affinity}-{variant}-{repetition}.ndjson")
                 signature = {key: env[key] for key in ("arch", "available_workers", "steps", "samples")}
+                host_backend = {"aarch64": "SimdArm64", "x86_64": "SimdX64"}.get(env["arch"])
+                expected_keys = {(workload, backend) for workload in EXPECTED_WORKLOADS
+                                 for backend in ("ReferenceScalar", host_backend)}
+                if host_backend is None or set(rows) != expected_keys:
+                    raise ValueError(f"{affinity}: incomplete or unexpected workload/backend matrix")
+                identity = {key: (row["bodies"], row["sources"]) for key, row in rows.items()}
+                if fixture_identity is None:
+                    fixture_identity = identity
+                if identity != fixture_identity:
+                    raise ValueError(f"{affinity}: body/source counts changed between measurements")
                 if reference_environment is None:
                     reference_environment, reference_keys = signature, set(rows)
                 if signature != reference_environment or set(rows) != reference_keys:
@@ -57,9 +85,12 @@ def compare(directory: Path) -> dict:
                     "median_of_p90_us": statistics.median(run[key]["p90_us"] for run in variant_runs),
                     "run_medians_us": [run[key]["median_us"] for run in variant_runs],
                     "paths": sorted({run[key]["path"] for run in variant_runs}),
+                    "active_workers": sorted({run[key]["active_workers"] for run in variant_runs}),
+                    "max_abs_oracle_error": max(run[key]["max_abs_oracle_error"] for run in variant_runs),
                     "max_relative_oracle_error": max(run[key]["max_relative_oracle_error"] for run in variant_runs),
                 }
             result["candidate_over_baseline"] = result["candidate"]["median_us"] / result["baseline"]["median_us"]
+            result["candidate_p90_over_baseline"] = result["candidate"]["median_of_p90_us"] / result["baseline"]["median_of_p90_us"]
             comparisons.append(result)
     index = {(row["affinity"], row["workload"], row["backend"]): row for row in comparisons}
     for row in comparisons:

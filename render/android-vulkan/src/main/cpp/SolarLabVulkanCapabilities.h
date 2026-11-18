@@ -39,12 +39,14 @@ struct VulkanDeviceFeatures {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR};
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR executable{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
+    VkPhysicalDeviceBufferDeviceAddressFeaturesKHR bufferAddress{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR};
     void* chain = nullptr;
     std::vector<const char*> extensions;
     bool calibratedTimestamps = false;
     bool calibratedTimestampsKhr = false;
 
-    void Prepare(const VulkanCapabilities& supported, bool capturePipelineStatistics);
+    void Prepare(const VulkanCapabilities& supported, bool capturePipelineStatistics, bool addressCompaction = false);
     void DisableOptional();
 };
 

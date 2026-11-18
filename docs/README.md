@@ -41,6 +41,7 @@ at `32e24274bca41c4398a0f979d312b7c6aae395ab` (17 November 2026).
   [laboratory timestep profiles](../engine/physics/benchmarks/lab-step-policy.md).
 - [CPU performance evidence](../engine/physics/benchmarks/README.md),
   [CPU/GPU hardware programme after PR242](hardware-maximisation-20261118.md),
+  [Cache engine, topology and Arm qualification](cpu-cache-topology-20261118.md),
   [new passive FP64 NEON batch and measured improvements](aarch64-extension-assessment-20261118.md),
   [Arm64 activation truth](android-acceleration-truth.md),
   [device capability programme](device-native-acceleration.md) and
@@ -48,6 +49,9 @@ at `32e24274bca41c4398a0f979d312b7c6aae395ab` (17 November 2026).
 
 ## Build, validation and operational reference
 
+- [Vulkan runtime acceleration qualification](vulkan-runtime-qualification-20261118.md)
+  records optional workload gates, profiling switches and the separate device
+  acceptance requirements for the post-#242 implementation.
 - [Validation Lab](validation-lab.md),
   [rapid Android iteration](rapid-android-iteration.md),
   [hosted AI development](hosted-ai-development.md) and

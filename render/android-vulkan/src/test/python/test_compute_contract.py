@@ -69,6 +69,7 @@ class ComputeContractTest(unittest.TestCase):
         for source_name, output_name, shader_name in (
             ("MediumTracerState", "CheapPointVertex", "compact_medium.comp"),
             ("MediumTracerState", "CheapPointVertex", "compact_medium_subgroup.comp"),
+            ("MediumTracerState", "CheapPointVertex", "compact_medium_bda.comp"),
             ("FarTracerState", "DensityPointVertex", "compact_far.comp"),
             ("FarTracerState", "DensityPointVertex", "compact_far_subgroup.comp"),
         ):
@@ -98,7 +99,7 @@ class ComputeContractTest(unittest.TestCase):
     def test_uniform_prefix_matches_native_and_graphics(self):
         native = re.findall(r"std::array<float, 4>\s+(\w+)", block(HEADER, "struct alignas(16) SceneUniformData"))
         for name in ("compact_medium.comp", "compact_far.comp", "compact_medium_subgroup.comp",
-                     "compact_far_subgroup.comp", "cheap_point.vert", "density_point.vert"):
+                     "compact_far_subgroup.comp", "compact_medium_bda.comp", "cheap_point.vert", "density_point.vert"):
             with self.subTest(shader=name):
                 shader = (SHADERS / name).read_text()
                 uniforms = re.findall(r"vec4\s+(\w+)\s*;", block(shader, "uniform SceneUniforms"))
@@ -109,7 +110,7 @@ class ComputeContractTest(unittest.TestCase):
         far = (SHADERS / "compact_far.comp").read_text()
         window_y = re.search(r"vec2\(relative.x,\s*(-?)relative.y\) / span", far)
         self.assertIsNotNone(window_y)
-        for name in ("compact_medium.comp", "compact_far.comp", "compact_medium_subgroup.comp", "compact_far_subgroup.comp"):
+        for name in ("compact_medium.comp", "compact_far.comp", "compact_medium_subgroup.comp", "compact_far_subgroup.comp", "compact_medium_bda.comp"):
             shader = (SHADERS / name).read_text()
             function = block(shader, "vec2 cameraPlanePosition")
             self.assertIn("positionM - uScene.centerRelativeAndMetrics.xyz", function)

@@ -102,6 +102,7 @@ class CanonicalAndroidRendererModuleTest(unittest.TestCase):
             "compact_far_subgroup.comp",
             "compact_medium.comp",
             "compact_medium_subgroup.comp",
+            "compact_medium_bda.comp",
             "density_point.frag",
             "density_point.vert",
             "trail.frag",

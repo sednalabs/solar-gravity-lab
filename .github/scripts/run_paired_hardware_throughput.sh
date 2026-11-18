@@ -22,6 +22,15 @@ python3 - <<'PY' > "$output/affinity.json"
 import json, os
 print(json.dumps({"allowed_cpus": sorted(os.sched_getaffinity(0)), "surface": "hosted-cpu"}))
 PY
+for source_root in "$workspace/baseline" "$candidate_root"; do
+  cargo generate-lockfile --manifest-path "$source_root/Cargo.toml"
+done
+cp "$workspace/baseline/Cargo.lock" "$output/baseline-Cargo.lock"
+cp "$candidate_root/Cargo.lock" "$output/candidate-Cargo.lock"
+if ! cmp -s "$output/baseline-Cargo.lock" "$output/candidate-Cargo.lock"; then
+  echo "Baseline and candidate resolved different dependencies; review before attributing timing to the kernel." >&2
+  exit 1
+fi
 for variant in baseline candidate; do
   source_root="$candidate_root"
   if [[ "$variant" == baseline ]]; then source_root="$workspace/baseline"; fi
