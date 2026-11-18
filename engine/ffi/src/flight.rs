@@ -1,8 +1,9 @@
 //! Bounded flight requests. Runtime owns forces and state transitions.
 use super::*;
-use solarlab_domain::{AttitudeMode, FlightControl};
+use solarlab_domain::{AttitudeMode, FlightControl, RendezvousGuidanceMode, RendezvousStatus};
 pub(super) const FLIGHT_SAMPLE_LEN: usize = 44;
 pub(super) const LUNAR_SAMPLE_LEN: usize = 21;
+pub(super) const RENDEZVOUS_SAMPLE_LEN: usize = 27;
 
 pub(super) fn control_from_values(v: &[f64]) -> Result<FlightControl, String> {
     if v.len() != 8 || v.iter().any(|x| !x.is_finite()) {
@@ -135,6 +136,136 @@ pub(super) fn begin_lunar_departure(
         .start_lunar_departure(ship_id, recorded)
         .map_err(|e| format!("Could not start the guided departure: {e:?}"))?;
     Ok(())
+}
+
+pub(super) fn start_rendezvous(
+    handle: SlRuntimeHandle,
+    ship_id: &str,
+    recorded: i64,
+) -> Result<(), String> {
+    if ship_id.is_empty() || ship_id.len() > SL_V2_ID_CAPACITY {
+        return Err("Invalid spacecraft identifier".into());
+    }
+    let mut registry = registry()
+        .lock()
+        .map_err(|_| "Runtime lock is unavailable")?;
+    let session = registry
+        .get_mut(handle)
+        .ok_or("The experiment is no longer open")?;
+    let mut staged = session.runtime.clone();
+    staged
+        .apply_command(WorldCommand::PausePlayback, recorded)
+        .map_err(|e| format!("Could not pause rendezvous flight: {e:?}"))?;
+    staged
+        .spawn_rendezvous_flight(ship_id, recorded)
+        .map_err(|e| format!("Could not prepare station rendezvous: {e:?}"))?;
+    configure_flight(&mut staged, ship_id, recorded)?;
+    session.runtime = staged;
+    Ok(())
+}
+
+pub(super) fn set_rendezvous_guidance(
+    handle: SlRuntimeHandle,
+    ship_id: &str,
+    mode: i32,
+    recorded: i64,
+) -> Result<(), String> {
+    let mode = match mode {
+        0 => RendezvousGuidanceMode::Manual,
+        1 => RendezvousGuidanceMode::Approach,
+        2 => RendezvousGuidanceMode::MatchVelocity,
+        _ => return Err("Unknown rendezvous guidance mode".into()),
+    };
+    let mut registry = registry()
+        .lock()
+        .map_err(|_| "Runtime lock is unavailable")?;
+    registry
+        .get_mut(handle)
+        .ok_or("The experiment is no longer open")?
+        .runtime
+        .set_rendezvous_guidance(ship_id, mode, recorded)
+        .map_err(|e| format!("Could not change rendezvous guidance: {e:?}"))?;
+    Ok(())
+}
+
+pub(super) fn rendezvous_target_id(
+    handle: SlRuntimeHandle,
+    ship_id: &str,
+) -> Result<Option<String>, String> {
+    let registry = registry()
+        .lock()
+        .map_err(|_| "Runtime lock is unavailable")?;
+    let runtime = &registry
+        .get(handle)
+        .ok_or("The experiment is no longer open")?
+        .runtime;
+    Ok(runtime
+        .rendezvous_flight_telemetry(ship_id)
+        .map(|telemetry| telemetry.target_body_id))
+}
+
+pub(super) fn rendezvous_sample(
+    handle: SlRuntimeHandle,
+    ship_id: &str,
+) -> Result<Option<[f64; RENDEZVOUS_SAMPLE_LEN]>, String> {
+    let registry = registry()
+        .lock()
+        .map_err(|_| "Runtime lock is unavailable")?;
+    let runtime = &registry
+        .get(handle)
+        .ok_or("The experiment is no longer open")?
+        .runtime;
+    let Some(t) = runtime.rendezvous_flight_telemetry(ship_id) else {
+        return Ok(None);
+    };
+    let mode = match t.guidance_mode {
+        RendezvousGuidanceMode::Manual => 0.0,
+        RendezvousGuidanceMode::Approach => 1.0,
+        RendezvousGuidanceMode::MatchVelocity => 2.0,
+    };
+    let status = match t.status {
+        RendezvousStatus::Manual => 0.0,
+        RendezvousStatus::Approaching => 1.0,
+        RendezvousStatus::VelocityMatching => 2.0,
+        RendezvousStatus::Holding => 3.0,
+        RendezvousStatus::KeepOut => 4.0,
+        RendezvousStatus::OutOfFuel => 5.0,
+        RendezvousStatus::OutOfRange => 6.0,
+        RendezvousStatus::TargetUnavailable => 7.0,
+    };
+    let values = [
+        1.0,
+        t.epoch_seconds,
+        t.elapsed_seconds,
+        mode,
+        status,
+        if t.target_available { 1.0 } else { 0.0 },
+        t.range_m,
+        t.closing_speed_mps,
+        t.relative_speed_mps,
+        t.position_target_m.x,
+        t.position_target_m.y,
+        t.position_target_m.z,
+        t.velocity_target_mps.x,
+        t.velocity_target_mps.y,
+        t.velocity_target_mps.z,
+        t.target_direction_body.x,
+        t.target_direction_body.y,
+        t.target_direction_body.z,
+        t.keep_out_distance_m,
+        t.stand_off_distance_m,
+        t.stand_off_error_m,
+        t.closest_observed_range_m,
+        t.closest_observed_epoch_seconds,
+        t.propellant_used_kg,
+        t.remaining_propellant_kg,
+        if t.stand_off_achieved { 1.0 } else { 0.0 },
+        if t.keep_out_entered { 1.0 } else { 0.0 },
+    ];
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err("Non-finite rendezvous telemetry".into());
+    }
+    Ok(Some(values))
 }
 
 pub(super) fn set_control(
@@ -333,6 +464,300 @@ pub(super) fn lunar_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_rendezvous_commit_publishes_current_mesh_poses_through_cached_scene_ffi() {
+        struct EncounterScene {
+            revision: String,
+            epoch: f64,
+            frame: u64,
+            origin: SlVector3d,
+            bodies: [SlVulkanBodyInstance; 2],
+        }
+        fn export(handle: SlRuntimeHandle) -> EncounterScene {
+            let packet = sl_v2_session_export_vulkan_scene(handle);
+            assert_eq!(packet.result.code, SlStatusCode::Ok);
+            let view =
+                sl_v2_vulkan_scene_packet_buffer(packet.handle, SlVulkanSceneBufferKind::BodyInstances);
+            assert_eq!(view.result.code, SlStatusCode::Ok);
+            assert_eq!(
+                view.view.stride_bytes as usize,
+                size_of::<SlVulkanBodyInstance>()
+            );
+            // Both views remain owned by the live packet until release below.
+            let bodies = unsafe {
+                std::slice::from_raw_parts(
+                    view.view.data.cast::<SlVulkanBodyInstance>(),
+                    view.view.element_count as usize,
+                )
+            };
+            let revision = unsafe {
+                std::slice::from_raw_parts(
+                    packet.info.scene_revision.data,
+                    packet.info.scene_revision.length as usize,
+                )
+            };
+            let result = EncounterScene {
+                revision: std::str::from_utf8(revision).unwrap().to_owned(),
+                epoch: packet.info.epoch_seconds,
+                frame: packet.info.diagnostics.frame_number,
+                origin: packet.info.camera.frame_origin_m,
+                bodies: ["flight.odyssey", "rendezvous.station"].map(|id| {
+                    *bodies
+                        .iter()
+                        .find(|body| decode_identifier(&body.body_id, body.body_id_len).unwrap() == id)
+                        .unwrap()
+                }),
+            };
+            assert_eq!(
+                sl_v2_vulkan_scene_packet_release(packet.handle).code,
+                SlStatusCode::Ok
+            );
+            result
+        }
+        fn stable_revision(scene: &EncounterScene) -> &str {
+            scene.revision.split("|diag:").next().unwrap()
+        }
+
+        let created = sl_v2_session_create(super::super::tests::new_params(
+            "lab.earth-moon",
+            "rendezvous-scene-boundary",
+        ));
+        assert_eq!(created.result.code, SlStatusCode::Ok);
+        let handle = created.handle;
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0)
+            .unwrap();
+        start_rendezvous(handle, "flight.odyssey", 1).unwrap();
+        set_rendezvous_guidance(handle, "flight.odyssey", 1, 2).unwrap();
+        let before = export(handle); // Warm the production adapter cache before integrating.
+        let initial = rendezvous_sample(handle, "flight.odyssey")
+            .unwrap()
+            .unwrap();
+        assert!((initial[6] - 1_000.0).abs() < 0.01);
+
+        let query = sl_v2_session_query_advance(handle);
+        let mut operation = sl_v2_session_begin_advance(
+            handle,
+            17,
+            23,
+            query.generation,
+            query.current_next_ordinal,
+            650.0,
+            3,
+        );
+        assert_eq!(operation.result.code, SlStatusCode::Ok);
+        operation = sl_v2_session_continue_advance(handle, operation.generation, 0);
+        assert_eq!(operation.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            operation.state, 1,
+            "One bounded continuation cannot commit 650 s of guidance"
+        );
+        let staged = export(handle);
+        assert_eq!(staged.epoch, before.epoch);
+        assert_eq!(
+            staged.bodies, before.bodies,
+            "Uncommitted solver poses cannot leak into a scene"
+        );
+        assert_eq!(stable_revision(&staged), stable_revision(&before));
+        while operation.state == 1 {
+            operation =
+                sl_v2_session_continue_advance(handle, operation.generation, operation.completed_steps);
+            assert_eq!(operation.result.code, SlStatusCode::Ok);
+        }
+        assert_eq!(operation.state, 2);
+        let after = export(handle);
+        let telemetry = rendezvous_sample(handle, "flight.odyssey")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.epoch, 650.0);
+        assert_eq!(after.epoch, telemetry[1]);
+        assert_eq!(after.frame, 39_000);
+        assert_ne!(stable_revision(&before), stable_revision(&after));
+        assert_eq!(after.bodies[0].mesh_kind, 1);
+        assert_eq!(after.bodies[1].mesh_kind, 2);
+        {
+            let registry = registry().lock().unwrap();
+            let runtime = &registry.get(handle).unwrap().runtime;
+            for (id, packed) in ["flight.odyssey", "rendezvous.station"]
+                .iter()
+                .zip(after.bodies.iter())
+            {
+                let truth = runtime.body_by_id(id).unwrap().position_m;
+                assert_eq!(
+                    packed.mesh_position_from_origin_m,
+                    [
+                        truth.x - after.origin.x,
+                        truth.y - after.origin.y,
+                        truth.z - after.origin.z,
+                    ],
+                    "Scene f64 mesh coordinates must equal authoritative current {id} position"
+                );
+            }
+        }
+        let range = after.bodies[0]
+            .mesh_position_from_origin_m
+            .iter()
+            .zip(after.bodies[1].mesh_position_from_origin_m.iter())
+            .map(|(ship, station)| (ship - station).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!((range - telemetry[6]).abs() < 1e-4);
+        assert!(
+            (range - 75.0).abs() < 1.0,
+            "Exported encounter range is {range}"
+        );
+
+        // Playback state comes from snapshot_summary, not a fabricated motion
+        // endpoint: pausing an unchanged physical scene must not rewrite its poses.
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::ResumePlayback, 4)
+            .unwrap();
+        let playing = export(handle);
+        assert_eq!(sl_v2_session_snapshot_summary(handle).summary.paused, 0);
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::PausePlayback, 5)
+            .unwrap();
+        let paused = export(handle);
+        assert_eq!(sl_v2_session_snapshot_summary(handle).summary.paused, 1);
+        assert_eq!(playing.bodies, after.bodies);
+        assert_eq!(paused.bodies, after.bodies);
+        assert_eq!(stable_revision(&playing), stable_revision(&paused));
+        assert_eq!(paused.epoch, after.epoch);
+        println!(
+            "Rendezvous committed mesh range={range:.9} m telemetry={:.9} m epoch={}",
+            telemetry[6], after.epoch
+        );
+        assert_eq!(sl_v2_session_destroy(handle).code, SlStatusCode::Ok);
+    }
+
+    #[test]
+    fn rendezvous_boundary_preserves_guidance_target_and_future_motion() {
+        let created = sl_v2_session_create(super::super::tests::new_params(
+            "lab.earth-moon",
+            "rendezvous-boundary",
+        ));
+        assert_eq!(created.result.code, SlStatusCode::Ok);
+        let handle = created.handle;
+        registry()
+            .lock()
+            .unwrap()
+            .get_mut(handle)
+            .unwrap()
+            .runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0)
+            .unwrap();
+        start_rendezvous(handle, "flight.odyssey", 1).unwrap();
+        let ready = rendezvous_sample(handle, "flight.odyssey")
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready[0], 1.0);
+        assert_eq!(ready[3], 0.0);
+        assert_eq!(ready[5], 1.0);
+        assert!((ready[6] - 1_000.0).abs() < 0.01);
+        assert_eq!(ready[19], 75.0);
+        assert_eq!(
+            rendezvous_target_id(handle, "flight.odyssey")
+                .unwrap()
+                .as_deref(),
+            Some("rendezvous.station")
+        );
+        let before_invalid = super::super::persistence::export_save(handle).unwrap();
+        assert!(set_rendezvous_guidance(handle, "flight.odyssey", 3, 2).is_err());
+        assert_eq!(
+            before_invalid,
+            super::super::persistence::export_save(handle).unwrap()
+        );
+        set_rendezvous_guidance(handle, "flight.odyssey", 1, 3).unwrap();
+        advance_rendezvous_boundary(handle, 15.0, 4);
+        let active = rendezvous_sample(handle, "flight.odyssey")
+            .unwrap()
+            .unwrap();
+        assert_eq!(active[3], 1.0);
+        assert!(
+            active[24] < ready[24],
+            "Guidance must consume real propellant"
+        );
+        let saved = super::super::persistence::export_save(handle).unwrap();
+        assert!(start_rendezvous(handle, "second-chaser", 5).is_err());
+        assert_eq!(
+            saved,
+            super::super::persistence::export_save(handle).unwrap()
+        );
+        let restored = super::super::persistence::import_save(handle, &saved);
+        assert_eq!(restored.result.code, SlStatusCode::Ok);
+        assert_eq!(
+            active,
+            rendezvous_sample(restored.handle, "flight.odyssey")
+                .unwrap()
+                .unwrap()
+        );
+        assert_eq!(
+            rendezvous_target_id(handle, "flight.odyssey").unwrap(),
+            rendezvous_target_id(restored.handle, "flight.odyssey").unwrap()
+        );
+        for session in [handle, restored.handle] {
+            advance_rendezvous_boundary(session, 30.0, 6);
+        }
+        assert_eq!(
+            rendezvous_sample(handle, "flight.odyssey").unwrap(),
+            rendezvous_sample(restored.handle, "flight.odyssey").unwrap()
+        );
+        set_control(restored.handle, "flight.odyssey", &[0.0; 8], 7).unwrap();
+        assert_eq!(
+            rendezvous_sample(restored.handle, "flight.odyssey")
+                .unwrap()
+                .unwrap()[3],
+            0.0
+        );
+        assert_eq!(
+            sample(restored.handle, "flight.odyssey").unwrap().unwrap()[7],
+            0.0
+        );
+        sl_v2_session_destroy(restored.handle);
+        sl_v2_session_destroy(handle);
+    }
+
+    fn advance_rendezvous_boundary(handle: SlRuntimeHandle, seconds: f64, recorded: i64) {
+        let mut registry = registry().lock().unwrap();
+        let runtime = &mut registry.get_mut(handle).unwrap().runtime;
+        let ordinal = runtime.next_command_ordinal();
+        let expected_generation = runtime.query_advance().map_or(0, |op| op.generation);
+        let generation = runtime
+            .begin_advance(
+                [ordinal, ordinal + 1],
+                expected_generation,
+                ordinal,
+                seconds,
+                recorded,
+            )
+            .unwrap()
+            .generation;
+        let mut completed = 0;
+        loop {
+            let (operation, _) = runtime.continue_advance(generation, completed).unwrap();
+            completed = operation.completed_steps;
+            if operation.state == solarlab_runtime::AdvanceState::Committed {
+                break;
+            }
+        }
+    }
+
     #[test]
     fn lunar_boundary_preserves_mission_and_native_cutoff_across_save() {
         let created =

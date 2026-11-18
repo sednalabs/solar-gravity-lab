@@ -12,13 +12,14 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('import_spacecraft_gltf',ROOT/'tools/import_spacecraft_gltf.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 ASSET=ROOT/'render/android-vulkan/assets-src/asteria.gltf'
+STATION=ROOT/'render/android-vulkan/assets-src/relay-station.gltf'
 
 class SpacecraftAssetTests(unittest.TestCase):
     def load_modified(self, change):
         doc=json.loads(ASSET.read_text());change(doc)
         with tempfile.TemporaryDirectory() as directory:
             source=Path(directory)/'test.gltf';source.write_text(json.dumps(doc))
-            return module.import_gltf(source, asset_root=directory)
+            return module.import_gltf(source,asset_root=directory)
 
     def test_original_asset_import_and_deterministic_header(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -32,6 +33,29 @@ class SpacecraftAssetTests(unittest.TestCase):
         for a,b in zip(baseline,changed):
             for axis,offset in enumerate([13,-5,9]):self.assertAlmostEqual(b[axis]-a[axis],offset)
             self.assertEqual(a[3:],b[3:])
+
+    def test_station_uses_shared_importer_with_distinct_native_symbols(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'station.h'
+            self.assertEqual(module.write_header(STATION,target,'RelayStation',asset_root=ROOT,output_root=directory),15480)
+            self.assertEqual(target.read_bytes(),(ROOT/'render/android-vulkan/src/main/cpp/RelayStationMesh.h').read_bytes())
+            self.assertIn('kRelayStationMesh',target.read_text())
+            self.assertNotIn('kReferenceMesh',target.read_text())
+
+    def test_station_rigid_hull_materials_and_no_engine_exhaust(self):
+        vertices=module.import_gltf(STATION,asset_root=ROOT)
+        # The simulation's keep-out radius is based on a 12 m station hull.
+        self.assertLessEqual(max(math.sqrt(sum(x*x for x in v[:3])) for v in vertices),12)
+        self.assertGreater(max(v[0] for v in vertices)-min(v[0] for v in vertices),19)
+        self.assertGreater(len(set(v[6:12] for v in vertices)),6)
+        for v in vertices:
+            self.assertAlmostEqual(sum(x*x for x in v[3:6]),1)
+            self.assertEqual(v[-1],0)
+
+    def test_symbol_prefix_rejects_invalid_cpp_identifiers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError,'identifier'):
+                module.write_header(STATION,Path(directory)/'station.h','station-name',asset_root=ROOT,output_root=directory)
 
     def test_nonuniform_scale_normals_remain_unit(self):
         vertices=self.load_modified(lambda d:d['nodes'][-1].update(scale=[2,3,4]))

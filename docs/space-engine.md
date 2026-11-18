@@ -60,10 +60,11 @@ cargo check -p solarlab-ffi --target aarch64-linux-android
 python3 tools/test_import_spacecraft_gltf.py
 ```
 
-Flight saves use version2 and flight_model `six-dof-strang-rocket-v2`; ordinary
-lab saves retain v1. The reader retains compatibility with the first flight
-model. Older flight clients reject the new mission/burn model rather than
-silently discarding a pending engine cutoff. Scene ABI13/body stride296
+Flight saves use format version2. Mission/burn saves declare flight_model
+`six-dof-strang-rocket-v2`; persistent rendezvous or station appearance declares
+`six-dof-strang-rocket-rendezvous-v3`. Ordinary lab saves retain v1. The reader
+retains both earlier flight models, while older clients reject unsupported
+programmes instead of silently discarding their controls. Scene ABI13/body stride296
 transports mesh facts and precise offsets.
 The original glTF asset includes documented provenance under
 [assets-src](../render/android-vulkan/assets-src/).
@@ -95,6 +96,8 @@ Full trajectory prediction and native observed encounter distances must not be
 confused. A strict forecast work budget can shorten its horizon.
 
 [Orbital rendezvous](orbital-rendezvous.md) demonstrates native reuse with a
-passive station and an RCS chaser, including approach and velocity matching.
-It has executable examples and analytical/convergence/persistence tests, but
-does not yet provide a dedicated Android station interaction or docking.
+passive station and an RCS chaser, including persistent approach and velocity
+matching inside native integration. It has executable examples and analytical,
+convergence and persistence tests. Android station interaction consumes these
+same commands and observations; visual and interaction acceptance require its
+exact-source hosted journey evidence. Contact response and docking are not modelled.

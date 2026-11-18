@@ -1,11 +1,11 @@
 //! Nearby orbital approach using the existing flight components, without contact.
 //! Observations are derived from BodyState; guidance emits ordinary RCS controls.
 use super::*;
-use solarlab_domain::spacecraft::{add, cross, dot, finite, magnitude, scale, sub};
-use solarlab_domain::{AttitudeMode, EngineControl, LocalReferenceFrame};
+use solarlab_domain::spacecraft::{add, magnitude, sub};
+use solarlab_domain::LocalReferenceFrame;
+pub use solarlab_domain::{RendezvousGuidance, RendezvousGuidanceMode, RendezvousStatus};
 
 const G: f64 = 6.67430e-11;
-const MAX_GUIDANCE_RANGE_M: f64 = 20_000.0;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct RendezvousScenario {
@@ -45,76 +45,6 @@ pub struct RendezvousTelemetry {
     pub keep_out_distance_m: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RendezvousStatus {
-    Approaching,
-    VelocityMatching,
-    Holding,
-    KeepOut,
-    OutOfFuel,
-    OutOfRange,
-    TargetUnavailable,
-}
-
-/// Stateless local guidance. Keep this explicit configuration with the caller's
-/// scenario; spacecraft, fuel and actual controls use the existing session save.
-/// The controller supports balanced, axis-aligned RCS banks, not arbitrary jets.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
-pub struct RendezvousGuidance {
-    pub approach: bool,
-    pub stand_off_target_m: Vector3d,
-    pub max_approach_speed_mps: f64,
-    pub position_gain_per_second: f64,
-    pub velocity_response_seconds: f64,
-    pub arrival_distance_m: f64,
-    pub arrival_speed_mps: f64,
-}
-
-impl Default for RendezvousGuidance {
-    fn default() -> Self {
-        Self {
-            approach: true,
-            stand_off_target_m: Vector3d {
-                x: 0.0,
-                y: -75.0,
-                z: 0.0,
-            },
-            max_approach_speed_mps: 2.0,
-            position_gain_per_second: 0.04,
-            velocity_response_seconds: 8.0,
-            arrival_distance_m: 2.0,
-            arrival_speed_mps: 0.05,
-        }
-    }
-}
-
-impl RendezvousGuidance {
-    #[must_use]
-    pub fn velocity_match() -> Self {
-        Self {
-            approach: false,
-            ..Self::default()
-        }
-    }
-
-    fn valid(self) -> bool {
-        finite(self.stand_off_target_m)
-            && magnitude(self.stand_off_target_m) < MAX_GUIDANCE_RANGE_M
-            && self.max_approach_speed_mps.is_finite()
-            && (0.0..=10.0).contains(&self.max_approach_speed_mps)
-            && self.max_approach_speed_mps > 0.0
-            && self.position_gain_per_second.is_finite()
-            && (0.0..=0.2).contains(&self.position_gain_per_second)
-            && self.position_gain_per_second > 0.0
-            && self.velocity_response_seconds.is_finite()
-            && (1.0..=120.0).contains(&self.velocity_response_seconds)
-            && self.arrival_distance_m.is_finite()
-            && self.arrival_distance_m > 0.0
-            && self.arrival_speed_mps.is_finite()
-            && self.arrival_speed_mps > 0.0
-    }
-}
-
 impl WorldRuntime {
     /// Author two initial conditions in the current host's ICRF-XY circular orbit.
     /// The station is an engine-less spacecraft component, not a gravity source.
@@ -123,6 +53,15 @@ impl WorldRuntime {
         &mut self,
         scenario: &RendezvousScenario,
         recorded_at_unix_ms: i64,
+    ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
+        self.spawn_rendezvous_scenario_impl(scenario, recorded_at_unix_ms, false)
+    }
+
+    pub(super) fn spawn_rendezvous_scenario_impl(
+        &mut self,
+        scenario: &RendezvousScenario,
+        recorded_at_unix_ms: i64,
+        persistent_guidance: bool,
     ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
         if !self.active_branch().world.playback.paused {
             return Err(RuntimeError::BodyEditRequiresPause);
@@ -151,6 +90,7 @@ impl WorldRuntime {
         let circular_speed = (G * host.source_mass_kg / radius).sqrt();
         let mut station =
             SpacecraftState::reference(scenario.target_body_id.clone(), Some(host.body_id.clone()));
+        station.appearance = solarlab_domain::SpacecraftAppearance::RelayStation;
         station.dry_mass_kg = 20_000.0;
         station.propellant_mass_kg = 0.0;
         station.engines.clear();
@@ -160,7 +100,7 @@ impl WorldRuntime {
             y: 800_000.0,
             z: 800_000.0,
         };
-        let chaser =
+        let mut chaser =
             SpacecraftState::reference(scenario.chaser_body_id.clone(), Some(host.body_id.clone()));
         let make_body = |ship: &SpacecraftState, angle: f64, hull_radius: f64| BodyState {
             body_id: ship.body_id.clone(),
@@ -187,6 +127,22 @@ impl WorldRuntime {
         };
         let station_body = make_body(&station, 0.0, 12.0);
         let chaser_body = make_body(&chaser, -scenario.initial_separation_m / radius, 8.0);
+        if persistent_guidance {
+            let displacement = sub(station_body.position_m, chaser_body.position_m);
+            chaser.attitude =
+                Quaterniond::pointing(displacement).ok_or(RuntimeError::InvalidFlightState)?;
+            chaser.rendezvous = Some(solarlab_domain::SpacecraftRendezvousState {
+                target_body_id: scenario.target_body_id.clone(),
+                guidance_mode: RendezvousGuidanceMode::Manual,
+                status: RendezvousStatus::Manual,
+                launch_epoch_seconds: self.active_branch().world.epoch_seconds,
+                initial_propellant_mass_kg: chaser.propellant_mass_kg,
+                closest_observed_range_m: magnitude(displacement),
+                closest_observed_epoch_seconds: self.active_branch().world.epoch_seconds,
+                stand_off_achieved: false,
+                keep_out_entered: false,
+            });
+        }
         let mut staged = self.clone();
         let mut events = staged.apply_command(
             WorldCommand::SpawnSpacecraft {
@@ -220,34 +176,24 @@ impl WorldRuntime {
             .ok_or_else(|| RuntimeError::UnknownBody(scenario.chaser_body_id.clone()))?;
         self.spacecraft_by_id(&scenario.chaser_body_id.0)
             .ok_or(RuntimeError::InvalidFlightState)?;
-        let (position, velocity) = frame.to_local(chaser.position_m, chaser.velocity_mps);
-        let relative_velocity = sub(chaser.velocity_mps, target.velocity_mps);
-        let displacement = sub(chaser.position_m, target.position_m);
-        let range = magnitude(displacement);
-        let relative_speed = magnitude(relative_velocity);
-        let keep_out = target.radius_m + chaser.radius_m + 5.0;
-        if !finite(position)
-            || !finite(velocity)
-            || !range.is_finite()
-            || !relative_speed.is_finite()
-            || !keep_out.is_finite()
-        {
-            return Err(RuntimeError::InvalidFlightState);
-        }
+        let t = solarlab_physics::rendezvous::observe(
+            chaser.position_m,
+            chaser.velocity_mps,
+            chaser.radius_m,
+            frame,
+            target.radius_m,
+        )
+        .map_err(|()| RuntimeError::InvalidFlightState)?;
         Ok(RendezvousTelemetry {
             epoch_seconds: self.active_branch().world.epoch_seconds,
             revision: self.snapshot_revision(),
-            position_target_m: position,
-            velocity_target_mps: velocity,
-            relative_velocity_inertial_mps: relative_velocity,
-            range_m: range,
-            closing_speed_mps: if range > 0.0 {
-                -dot(displacement, relative_velocity) / range
-            } else {
-                0.0
-            },
-            relative_speed_mps: relative_speed,
-            keep_out_distance_m: keep_out,
+            position_target_m: t.position_target_m,
+            velocity_target_mps: t.velocity_target_mps,
+            relative_velocity_inertial_mps: t.relative_velocity_inertial_mps,
+            range_m: t.range_m,
+            closing_speed_mps: t.closing_speed_mps,
+            relative_speed_mps: t.relative_speed_mps,
+            keep_out_distance_m: t.keep_out_distance_m,
         })
     }
 
@@ -288,105 +234,28 @@ impl WorldRuntime {
         let ship = self
             .spacecraft_by_id(&scenario.chaser_body_id.0)
             .ok_or_else(|| RuntimeError::UnknownBody(scenario.chaser_body_id.clone()))?;
-        let neutral = FlightControl {
-            attitude_mode: AttitudeMode::Hold,
-            ..FlightControl::default()
+        let (target, frame) = match self.rendezvous_target_frame(&scenario.target_body_id) {
+            Ok(target) => target,
+            Err(_) => {
+                return Ok((
+                    solarlab_physics::rendezvous::neutral_control(),
+                    RendezvousStatus::TargetUnavailable,
+                ))
+            }
         };
-        if self
-            .rendezvous_target_frame(&scenario.target_body_id)
-            .is_err()
-        {
-            return Ok((neutral, RendezvousStatus::TargetUnavailable));
-        }
-        let t = self.rendezvous_telemetry(scenario)?;
-        if guidance.approach
-            && magnitude(guidance.stand_off_target_m)
-                <= t.keep_out_distance_m + guidance.arrival_distance_m
-        {
-            return Err(RuntimeError::InvalidFlightState);
-        }
-        if t.range_m > MAX_GUIDANCE_RANGE_M {
-            return Ok((neutral, RendezvousStatus::OutOfRange));
-        }
-        if ship.propellant_mass_kg <= 0.0 {
-            return Ok((neutral, RendezvousStatus::OutOfFuel));
-        }
-        let (_, frame) = self.rendezvous_target_frame(&scenario.target_body_id)?;
         let chaser = self
             .body_by_id(&scenario.chaser_body_id.0)
             .ok_or(RuntimeError::InvalidFlightState)?;
-        let error = sub(t.position_target_m, guidance.stand_off_target_m);
-        let (target_position, desired_local_velocity, status) = if t.range_m < t.keep_out_distance_m
-        {
-            let outward = if t.range_m > 1e-9 {
-                scale(
-                    t.position_target_m,
-                    guidance.max_approach_speed_mps / t.range_m,
-                )
-            } else {
-                Vector3d {
-                    x: guidance.max_approach_speed_mps,
-                    y: 0.0,
-                    z: 0.0,
-                }
-            };
-            (t.position_target_m, outward, RendezvousStatus::KeepOut)
-        } else if guidance.approach
-            && segment_clearance_m(t.position_target_m, guidance.stand_off_target_m)
-                <= t.keep_out_distance_m + guidance.arrival_distance_m
-        {
-            // Brake rather than approach through the station. A clear waypoint
-            // is required; this controller does not plan collision-free paths.
-            (
-                t.position_target_m,
-                Vector3d::default(),
-                RendezvousStatus::KeepOut,
-            )
-        } else if guidance.approach {
-            let desired = bounded_magnitude(
-                scale(error, -guidance.position_gain_per_second),
-                guidance.max_approach_speed_mps,
-            );
-            let status = if magnitude(error) <= guidance.arrival_distance_m
-                && magnitude(t.velocity_target_mps) <= guidance.arrival_speed_mps
-            {
-                RendezvousStatus::Holding
-            } else {
-                RendezvousStatus::Approaching
-            };
-            (guidance.stand_off_target_m, desired, status)
-        } else {
-            (
-                t.position_target_m,
-                Vector3d::default(),
-                RendezvousStatus::VelocityMatching,
-            )
-        };
-        let (_, desired_world_velocity) = frame.to_world(target_position, desired_local_velocity);
-        let acceleration = scale(
-            sub(desired_world_velocity, chaser.velocity_mps),
-            1.0 / guidance.velocity_response_seconds,
-        );
-        let force = scale(
-            ship.attitude.conjugate().rotate(acceleration),
-            ship.mass_kg(),
-        );
-        let capacities = axis_rcs_capacities(ship)?;
-        let axis = |f: f64, positive: usize, negative: usize| {
-            (f / capacities[if f >= 0.0 { positive } else { negative }]).clamp(-1.0, 1.0)
-        };
-        let control = FlightControl {
-            translation_body: Vector3d {
-                x: axis(force.x, 0, 1),
-                y: axis(force.y, 2, 3),
-                z: axis(force.z, 4, 5),
-            },
-            ..neutral
-        };
-        if !control.valid() {
-            return Err(RuntimeError::InvalidFlightState);
-        }
-        Ok((control, status))
+        let t = solarlab_physics::rendezvous::observe(
+            chaser.position_m,
+            chaser.velocity_mps,
+            chaser.radius_m,
+            frame,
+            target.radius_m,
+        )
+        .map_err(|()| RuntimeError::InvalidFlightState)?;
+        solarlab_physics::rendezvous::control(ship, chaser.velocity_mps, frame, &t, guidance)
+            .map_err(|()| RuntimeError::InvalidFlightState)
     }
 
     /// Apply the same public flight command used by manual controls. Call at a
@@ -409,106 +278,10 @@ impl WorldRuntime {
     }
 }
 
-fn bounded_magnitude(v: Vector3d, limit: f64) -> Vector3d {
-    let m = magnitude(v);
-    if m > limit {
-        scale(v, limit / m)
-    } else {
-        v
-    }
-}
-
-fn segment_clearance_m(start: Vector3d, end: Vector3d) -> f64 {
-    let direction = sub(end, start);
-    let squared = dot(direction, direction);
-    let fraction = if squared > 0.0 {
-        (-dot(start, direction) / squared).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    magnitude(add(start, scale(direction, fraction)))
-}
-
-fn axis_rcs_capacities(ship: &SpacecraftState) -> Result<[f64; 6], RuntimeError> {
-    let mut capacity = [0.0; 6];
-    let mut torque = [Vector3d::default(); 6];
-    for engine in &ship.engines {
-        let (index, direction) = match engine.control {
-            EngineControl::Main => continue,
-            EngineControl::PositiveX => (
-                0,
-                Vector3d {
-                    x: 1.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-            ),
-            EngineControl::NegativeX => (
-                1,
-                Vector3d {
-                    x: -1.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-            ),
-            EngineControl::PositiveY => (
-                2,
-                Vector3d {
-                    x: 0.0,
-                    y: 1.0,
-                    z: 0.0,
-                },
-            ),
-            EngineControl::NegativeY => (
-                3,
-                Vector3d {
-                    x: 0.0,
-                    y: -1.0,
-                    z: 0.0,
-                },
-            ),
-            EngineControl::PositiveZ => (
-                4,
-                Vector3d {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 1.0,
-                },
-            ),
-            EngineControl::NegativeZ => (
-                5,
-                Vector3d {
-                    x: 0.0,
-                    y: 0.0,
-                    z: -1.0,
-                },
-            ),
-        };
-        if magnitude(sub(engine.direction_body, direction)) > 1e-8 {
-            return Err(RuntimeError::InvalidFlightState);
-        }
-        capacity[index] += engine.max_thrust_n;
-        torque[index] = add(
-            torque[index],
-            cross(
-                engine.position_body_m,
-                scale(direction, engine.max_thrust_n),
-            ),
-        );
-    }
-    if capacity
-        .iter()
-        .enumerate()
-        .any(|(i, f)| !f.is_finite() || *f <= 0.0 || magnitude(torque[i]) > f * 1e-8)
-    {
-        return Err(RuntimeError::InvalidFlightState);
-    }
-    Ok(capacity)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solarlab_domain::EngineControl;
     use solarlab_physics::{CollisionModel, IntegratorKind, SolverBackend};
 
     const EARTH_MASS: f64 = 5.97219e24;

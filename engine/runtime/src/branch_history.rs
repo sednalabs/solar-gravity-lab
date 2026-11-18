@@ -23,6 +23,7 @@ impl WorldRuntime {
             WorldCommand::SpawnSpacecraft { .. } => "spacecraft.spawn",
             WorldCommand::SetFlightControl { .. } => "spacecraft.control",
             WorldCommand::StartGuidedBurn { .. } => "spacecraft.guided_burn",
+            WorldCommand::SetRendezvousGuidance { .. } => "spacecraft.rendezvous_guidance",
             WorldCommand::SpawnBody { .. } => "body.spawn",
             WorldCommand::RemoveBody { .. } => "body.remove",
             WorldCommand::SetBodyKinematics { .. } => "body.set_kinematics",
@@ -47,6 +48,7 @@ impl WorldRuntime {
             WorldCommand::SpawnSpacecraft { body, .. } => format!("spawn spacecraft {}",body.body_id.0),
             WorldCommand::SetFlightControl { body_id, control } => format!("flight {} throttle={} translation={:?} rotation={:?} assist={:?}",body_id.0,control.throttle,control.translation_body,control.rotation_body,control.attitude_mode),
             WorldCommand::StartGuidedBurn { body_id, full_throttle_seconds } => format!("guided prograde burn {} duration={}s", body_id.0, full_throttle_seconds),
+            WorldCommand::SetRendezvousGuidance { body_id, mode } => format!("rendezvous guidance {} mode={mode:?}", body_id.0),
             WorldCommand::SpawnBody { body } => format!("spawn {}", body.body_id.0),
             WorldCommand::RemoveBody { body_id } => format!("remove {}", body_id.0),
             WorldCommand::SetBodyProperties { body_id, mass_kg, source_mass_kg, .. } =>

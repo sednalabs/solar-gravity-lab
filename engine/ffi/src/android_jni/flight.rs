@@ -2,7 +2,7 @@
 use super::super::flight as transport;
 use super::*;
 use jni::objects::JDoubleArray;
-use jni::sys::jdoubleArray;
+use jni::sys::{jdoubleArray, jstring};
 
 fn request(
     env: &JNIEnv,
@@ -73,6 +73,78 @@ pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTrans
         .and_then(|(h, id)| transport::begin_lunar_departure(h, &id, recorded));
     if let Err(message) = result {
         fail(&mut env, &message);
+    }
+}
+
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeStartRendezvousFlight(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    ship_id: JByteArray,
+    recorded: jlong,
+) {
+    let result = request(&env, handle, &ship_id)
+        .and_then(|(h, id)| transport::start_rendezvous(h, &id, recorded));
+    if let Err(message) = result {
+        fail(&mut env, &message);
+    }
+}
+
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeSetRendezvousGuidance(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    ship_id: JByteArray,
+    mode: jint,
+    recorded: jlong,
+) {
+    let result = request(&env, handle, &ship_id)
+        .and_then(|(h, id)| transport::set_rendezvous_guidance(h, &id, mode, recorded));
+    if let Err(message) = result {
+        fail(&mut env, &message);
+    }
+}
+
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeRendezvousState(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    ship_id: JByteArray,
+) -> jdoubleArray {
+    let result =
+        request(&env, handle, &ship_id).and_then(|(h, id)| transport::rendezvous_sample(h, &id));
+    export_sample(&mut env, result)
+}
+
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sednalabs_solarlab_runtime_JniNativeRuntimeTransport_nativeRendezvousTargetId(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    ship_id: JByteArray,
+) -> jstring {
+    let result =
+        request(&env, handle, &ship_id).and_then(|(h, id)| transport::rendezvous_target_id(h, &id));
+    match result {
+        Ok(Some(id)) => match env.new_string(id) {
+            Ok(value) => value.into_raw(),
+            Err(_) => {
+                fail(&mut env, "Could not return rendezvous target identity");
+                std::ptr::null_mut()
+            }
+        },
+        Ok(None) => std::ptr::null_mut(),
+        Err(message) => {
+            fail(&mut env, &message);
+            std::ptr::null_mut()
+        }
     }
 }
 

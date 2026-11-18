@@ -12,7 +12,9 @@ pub use flight_prediction::LunarCoastForecastDiagnostics;
 pub use flight_mission::{LunarMissionOutcome,LUNAR_FLYBY_SUCCESS_ALTITUDE_M,LUNAR_APPROACH_ALTITUDE_M,LUNAR_MISSION_DEADLINE_SECONDS,LunarMissionPhase,LunarMissionTelemetry,LUNAR_FLIGHT_BODY_ID,LUNAR_FLIGHT_MODEL,LUNAR_DEPARTURE_BURN_SECONDS,LUNAR_INSERTION_PHASE_RADIANS,LUNAR_INSERTION_ALTITUDE_M,LUNAR_EXPECTED_FLYBY_WINDOW_SECONDS};
 mod flight_telemetry;
 mod rendezvous;
-pub use rendezvous::{RendezvousGuidance, RendezvousScenario, RendezvousStatus, RendezvousTelemetry};
+pub use rendezvous::{RendezvousGuidance, RendezvousGuidanceMode, RendezvousScenario, RendezvousStatus, RendezvousTelemetry};
+mod rendezvous_flight;
+pub use rendezvous_flight::{RendezvousFlightTelemetry, RENDEZVOUS_STATION_BODY_ID};
 pub use flight_telemetry::FlightTelemetry;
 mod body_properties;
 mod lab_step;
@@ -255,6 +257,7 @@ pub enum WorldCommand {
     SpawnSpacecraft { body: BodyState, spacecraft: SpacecraftState },
     SetFlightControl { body_id: BodyId, control: FlightControl },
     StartGuidedBurn { body_id: BodyId, full_throttle_seconds: f64 },
+    SetRendezvousGuidance { body_id: BodyId, mode: RendezvousGuidanceMode },
     /// Seeds the canonical startup solar-system catalog into an empty world.
     /// Runtime owns the catalog truth; host clients only request this action.
     SeedCanonicalSolarSystem,

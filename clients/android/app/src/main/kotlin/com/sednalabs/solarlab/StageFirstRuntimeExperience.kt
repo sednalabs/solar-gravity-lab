@@ -313,6 +313,9 @@ internal fun StageFirstRuntimeExperience(
         var lunarBriefVisible by rememberSaveable { mutableStateOf(false) }
         var lunarStarting by remember { mutableStateOf(false) }
         var lunarStartError by remember { mutableStateOf<String?>(null) }
+        var rendezvousBriefVisible by rememberSaveable { mutableStateOf(false) }
+        var rendezvousStarting by remember { mutableStateOf(false) }
+        var rendezvousStartError by remember { mutableStateOf<String?>(null) }
         var flightCameraMode by rememberSaveable { mutableStateOf(1) }
         var selectedBodyId by rememberSaveable { mutableStateOf<String?>(null) }
         var observerMode by remember { mutableStateOf(ObserverMode.FREE) }
@@ -750,6 +753,7 @@ internal fun StageFirstRuntimeExperience(
         fun exitFlight() {
             runtimeFacade.suspendFlightControls()
             flightActive = false
+            renderHostView?.setFlightTargetBodyId(null)
             renderHostView?.setFlightCamera(0)
             changeLabView(labViewMode)
             resetRuntimeCamera()
@@ -798,12 +802,40 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
+        fun launchRendezvousMission() {
+            if (rendezvousStarting || !canSendCommands) return
+            rendezvousStarting = true
+            rendezvousStartError = null
+            coroutineScope.launch {
+                try {
+                    runtimeFacade.startRendezvousMission()
+                    labInteraction.clearDraft()
+                    labInteraction.lastCommit = null
+                    selectedBodyId = REFERENCE_SPACECRAFT_ID
+                    observerMode = ObserverMode.FOLLOW_SELECTED
+                    flightCameraMode = 3
+                    flightActive = true
+                    rendezvousBriefVisible = false
+                    chromeModeName = StageChromeMode.COLLAPSED.name
+                } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                catch (error: Throwable) { rendezvousStartError = error.message ?: "The station encounter could not start" }
+                finally { rendezvousStarting = false }
+            }
+        }
+
         LaunchedEffect(flightActive, flightCameraMode, renderHostView, runtimeSessionHandle) {
             val host = renderHostView ?: return@LaunchedEffect
             if (flightActive) {
                 selectedBodyId = REFERENCE_SPACECRAFT_ID
                 host.setSelectedBodyId(REFERENCE_SPACECRAFT_ID)
-                host.setFlightCamera(flightCameraMode)
+                if (flightCameraMode == 3) {
+                    val encounter = runtimeFacade.rendezvousState()
+                    host.setFlightTargetBodyId(encounter?.targetBodyId)
+                    host.setFlightCamera(if (encounter != null) 3 else 1)
+                } else {
+                    host.setFlightTargetBodyId(null)
+                    host.setFlightCamera(flightCameraMode)
+                }
                 if (flightCameraMode == 0) {
                     observerMode = ObserverMode.FREE
                     host.setObserverMode(ObserverMode.FREE)
@@ -1052,8 +1084,8 @@ internal fun StageFirstRuntimeExperience(
         }
 
         LaunchedEffect(runtimeSessionHandle, uiState.snapshot?.scenarioId, renderHostView, searchableBodies,
-            pendingScenarioFrame, openingSavedExperiment, flightActive, lunarStarting) {
-            if (!openingSavedExperiment && !flightActive && !lunarStarting && pendingScenarioFrame == null &&
+            pendingScenarioFrame, openingSavedExperiment, flightActive, lunarStarting, rendezvousStarting) {
+            if (!openingSavedExperiment && !flightActive && !lunarStarting && !rendezvousStarting && pendingScenarioFrame == null &&
                 runtimeSessionHandle != 0L && framedLabSession != runtimeSessionHandle &&
                 uiState.snapshot?.scenarioId == "lab.earth-moon" && renderHostView != null &&
                 searchableBodies.any { it.id == "earth" } && searchableBodies.any { it.id == "moon" }) {
@@ -1340,6 +1372,7 @@ internal fun StageFirstRuntimeExperience(
                 onCamera = { flightCameraMode = it }, onExit = ::exitFlight,
                 onSaved = { savedVisible = true },
                 onLunarMission = { lunarStartError = null; lunarBriefVisible = true },
+                onRendezvousMission = { rendezvousStartError = null; rendezvousBriefVisible = true },
             )
             if (!placing && !flightActive) EarthMoonLabChrome(
                 uiState = uiState,
@@ -1480,6 +1513,10 @@ internal fun StageFirstRuntimeExperience(
         if (lunarBriefVisible) LunarFlightBriefDialog(
             busy = lunarStarting, error = lunarStartError, onStart = ::launchLunarMission,
             onDismiss = { if (!lunarStarting) lunarBriefVisible = false },
+        )
+        if (rendezvousBriefVisible) RendezvousBriefDialog(
+            busy = rendezvousStarting, error = rendezvousStartError, onStart = ::launchRendezvousMission,
+            onDismiss = { if (!rendezvousStarting) rendezvousBriefVisible = false },
         )
         if (inspectorVisible) {
             LabBodyInspectorDialog(

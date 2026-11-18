@@ -104,6 +104,10 @@ impl WorldRuntime {
                 let ship = world.spacecraft.iter_mut().find(|s|s.body_id==*body_id).expect("preflight checked flight identity");
                 ship.control = *control;
                 ship.burn_program = None;
+                if let Some(r) = &mut ship.rendezvous {
+                    r.guidance_mode = RendezvousGuidanceMode::Manual;
+                    r.status = RendezvousStatus::Manual;
+                }
                 if ship.has_powered_input() || solarlab_domain::spacecraft::magnitude(control.rotation_body)>0.0 {
                     world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
                 }
@@ -113,7 +117,27 @@ impl WorldRuntime {
                 let ship = world.spacecraft.iter_mut().find(|s|s.body_id == *body_id).expect("preflight checked flight identity");
                 ship.control = FlightControl { throttle: 1.0, attitude_mode: solarlab_domain::AttitudeMode::Prograde, ..FlightControl::default() };
                 ship.burn_program = Some(solarlab_domain::SpacecraftBurnProgram { remaining_full_throttle_seconds: *full_throttle_seconds });
+                if let Some(r) = &mut ship.rendezvous {
+                    r.guidance_mode = RendezvousGuidanceMode::Manual;
+                    r.status = RendezvousStatus::Manual;
+                }
                 world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
+            }
+            WorldCommand::SetRendezvousGuidance { body_id, mode } => {
+                let (control, status) = self.rendezvous_command_control(body_id, *mode)
+                    .expect("preflight checked rendezvous identity and RCS configuration");
+                let world = &mut self.active_branch_mut().world;
+                let ship = world.spacecraft.iter_mut().find(|s| s.body_id == *body_id).expect("preflight checked flight identity");
+                ship.control = control;
+                ship.burn_program = None;
+                let rendezvous = ship.rendezvous.as_mut().expect("preflight checked rendezvous component");
+                rendezvous.guidance_mode = if matches!(status, RendezvousStatus::TargetUnavailable | RendezvousStatus::OutOfRange | RendezvousStatus::OutOfFuel) {
+                    RendezvousGuidanceMode::Manual
+                } else { *mode };
+                rendezvous.status = status;
+                if rendezvous.guidance_mode.active() {
+                    world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
+                }
             }
             WorldCommand::SeedCanonicalSolarSystem => {
                 if self.active_branch().world.bodies.is_empty() {
@@ -197,6 +221,14 @@ impl WorldRuntime {
                 branch.world.trail_history_by_body.remove(body_id);
                 branch.world.spacecraft.retain(|s|s.body_id!=*body_id);
                 for ship in &mut branch.world.spacecraft {
+                    if ship.rendezvous.as_ref().is_some_and(|r| r.target_body_id == *body_id)
+                        || (ship.rendezvous.is_some() && ship.reference_body_id.as_ref() == Some(body_id)) {
+                        let r = ship.rendezvous.as_mut().expect("rendezvous checked");
+                        r.guidance_mode = RendezvousGuidanceMode::Manual;
+                        r.status = if r.target_body_id == *body_id { RendezvousStatus::TargetUnavailable } else { RendezvousStatus::Manual };
+                        ship.burn_program = None;
+                        ship.control = solarlab_physics::rendezvous::neutral_control();
+                    }
                     if ship.reference_body_id.as_ref()==Some(body_id) {
                         ship.reference_body_id=None;
                         ship.burn_program=None;

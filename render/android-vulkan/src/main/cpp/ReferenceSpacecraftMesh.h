@@ -2,8 +2,8 @@
 // Source SHA-256: 2c4980fa3cc709b466e329b5502ac88925e9df6902ca9af12a81328899677511
 #pragma once
 #include <array>
+#include "SpacecraftMeshVertex.h"
 namespace solarlab::spacecraft {
-struct MeshVertex { float x,y,z,nx,ny,nz,r,g,b,metallic,roughness,emissive,effect; };
 inline constexpr std::array<MeshVertex, 5544> kReferenceMesh = {{
     {1.14999998f,0.0f,-0.600000024f,0.980785279f,0.195090329f,0.0f,0.78f,0.84f,0.89f,0.18f,0.36f,0.0f,0.0f},
     {1.0624615f,0.440085948f,-0.600000024f,0.980785279f,0.195090329f,0.0f,0.78f,0.84f,0.89f,0.18f,0.36f,0.0f,0.0f},

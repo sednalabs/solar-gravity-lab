@@ -56,6 +56,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     private var packetDirty: Boolean = true
     private var cameraState: CameraState = CameraState()
     private var flightCameraMode = 0
+    private var flightTargetBodyId: String? = null
     private var labMapMode = false
     private var labMapPlane = LabPlane.XY
     private var labViewportState: LabViewportState? = null
@@ -451,11 +452,19 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
     }
 
     override fun setFlightCamera(mode: Int) {
-        val next = mode.coerceIn(0, 2)
+        val next = mode.coerceIn(0, 3)
         if (flightCameraMode == next) return
         cancelCameraTransition()
         flightCameraMode = next
         serializedRenderer.execute { handle -> SolarLabVulkanBridge.setFlightCamera(handle, next) }
+        renderLatestScene()
+    }
+
+    override fun setFlightTargetBodyId(bodyId: String?) {
+        if (flightTargetBodyId == bodyId) return
+        if (flightCameraMode == 3) cancelCameraTransition()
+        flightTargetBodyId = bodyId
+        serializedRenderer.execute { handle -> SolarLabVulkanBridge.setFlightTargetBodyId(handle, bodyId) }
         renderLatestScene()
     }
 
@@ -1085,6 +1094,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
         val nextTraceLayerMode = renderLayerOptions.traceLayerMode
         val nextCamera = cameraState
         val nextFlightMode = flightCameraMode
+        val nextFlightTarget = flightTargetBodyId
         val nextMapMode = labMapMode
         val nextMapPlane = labMapPlane
         val density = resources.displayMetrics.density.toDouble()
@@ -1097,6 +1107,7 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
                 SolarLabVulkanBridge.setRuntimeObserverMode(handle, nextObserverMode)
                 SolarLabVulkanBridge.setRuntimeSelectedBodyId(handle, nextSelectedBodyId)
                 SolarLabVulkanBridge.setRuntimeTraceLayerMode(handle, nextTraceLayerMode)
+                SolarLabVulkanBridge.setFlightTargetBodyId(handle, nextFlightTarget)
                 SolarLabVulkanBridge.setFlightCamera(handle, nextFlightMode)
             } else {
                 SolarLabVulkanBridge.unbindRuntimeSession(handle)

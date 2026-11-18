@@ -839,7 +839,7 @@ void SolarLabStageController::ClearCameraPresentationLocked() {
 
 void SolarLabStageController::SetFlightCamera(int mode) {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    const int next = std::clamp(mode, 0, 2);
+    const int next = std::clamp(mode, 0, 3);
     if (flightCameraMode_ == next) return;
     flightCameraMode_ = next;
     flightFramePending_ = next != 0;
@@ -851,6 +851,14 @@ void SolarLabStageController::SetFlightCamera(int mode) {
         followTargetValid_ = false;
         cameraViewRadiusM_ = 16.0;
     }
+    ++cameraRevisionCounter_;
+}
+
+void SolarLabStageController::SetFlightTargetBodyId(const std::string& bodyId) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    if (flightTargetBodyId_ == bodyId) return;
+    flightTargetBodyId_ = bodyId;
+    if (flightCameraMode_ == 3) flightFramePending_ = true;
     ++cameraRevisionCounter_;
 }
 
@@ -1881,9 +1889,10 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
             // A first/rebound packet may still carry the laboratory's bootstrap
             // radius until flight framing below. Always upload the real mesh in
             // flight mode, including that first paused frame.
-            if (body->mesh_kind == 1 && (flightCameraMode_ != 0 || cameraViewRadiusM_ <= 1200.0)) {
+            if (solarlab::spacecraft::IsSupportedMesh(body->mesh_kind) && (flightCameraMode_ != 0 || cameraViewRadiusM_ <= 1200.0)) {
                 spacecraft.push_back(SolarLabVulkanRenderer::SpacecraftInput{
                     .authoritativeIndex = static_cast<uint32_t>(authoritativeRadiiM.size()),
+                    .meshKind = body->mesh_kind,
                     .positionM = {BodyPosition(*body).x, BodyPosition(*body).y, BodyPosition(*body).z},
                     .previousPositionM = {previousPosition.x, previousPosition.y, previousPosition.z},
                     .attitudeXyzw = {body->attitude_xyzw[0], body->attitude_xyzw[1], body->attitude_xyzw[2], body->attitude_xyzw[3]},
@@ -2152,7 +2161,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         const auto ship = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
             [&](const RuntimeBodyProxy& body) { return body.meshKind != 0 && LowercaseAscii(body.bodyId) == normalizedSelectedBodyId; });
         if (ship != runtimeScene_.pickBodies.end()) {
-            if (flightFramePending_) {
+            bool encounterFramed = false;
+            if (flightFramePending_ || flightCameraMode_ == 3) {
                 cameraCenterX_ = runtimeScene_.sceneOriginX + ship->positionRelativeX;
                 cameraCenterY_ = runtimeScene_.sceneOriginY + ship->positionRelativeY;
                 cameraCenterZ_ = runtimeScene_.sceneOriginZ + ship->positionRelativeZ;
@@ -2170,13 +2180,44 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
                 runtimeScene_.cameraPreviousOffsetY = ship->previousRelativeY - ship->positionRelativeY;
                 runtimeScene_.cameraPreviousOffsetZ = ship->previousRelativeZ - ship->positionRelativeZ;
             }
+            if (flightCameraMode_ == 3 && !flightTargetBodyId_.empty()) {
+                const auto target = std::find_if(runtimeScene_.pickBodies.begin(), runtimeScene_.pickBodies.end(),
+                    [&](const RuntimeBodyProxy& body) { return body.bodyId == flightTargetBodyId_ && body.bodyId != ship->bodyId; });
+                if (target != runtimeScene_.pickBodies.end()) {
+                    const auto frame = solarlab::spacecraft::EncounterFrame(
+                        {ship->positionRelativeX, ship->positionRelativeY, ship->positionRelativeZ},
+                        {target->positionRelativeX, target->positionRelativeY, target->positionRelativeZ},
+                        {ship->previousRelativeX, ship->previousRelativeY, ship->previousRelativeZ},
+                        {target->previousRelativeX, target->previousRelativeY, target->previousRelativeZ},
+                        ship->radiusM, target->radiusM);
+                    if (frame) {
+                        encounterFramed = true;
+                        cameraCenterX_ = runtimeScene_.sceneOriginX + frame->center[0];
+                        cameraCenterY_ = runtimeScene_.sceneOriginY + frame->center[1];
+                        cameraCenterZ_ = runtimeScene_.sceneOriginZ + frame->center[2];
+                        cameraViewRadiusM_ = frame->viewRadiusM;
+                        runtimeScene_.cameraPreviousOffsetX = frame->previousOffset[0];
+                        runtimeScene_.cameraPreviousOffsetY = frame->previousOffset[1];
+                        runtimeScene_.cameraPreviousOffsetZ = frame->previousOffset[2];
+                        followOffsetX_ = cameraCenterX_ - followTargetX_;
+                        followOffsetY_ = cameraCenterY_ - followTargetY_;
+                        followOffsetZ_ = cameraCenterZ_ - followTargetZ_;
+                        if (flightFramePending_) {
+                            cameraYawRadians_ = frame->yawRadians;
+                            cameraPitchRadians_ = frame->pitchRadians;
+                        }
+                    }
+                }
+            }
             if (flightCameraMode_ == 2) {
                 const auto angles = solarlab::spacecraft::ChaseAngles(ship->attitude);
                 const double blend = flightFramePending_ ? 1.0 : 1.0 - std::exp(-std::clamp(sampleInterval, 0.0, 0.5) / 0.20);
                 cameraYawRadians_ = solarlab::spacecraft::SmoothAngle(cameraYawRadians_, angles[0], blend);
                 cameraPitchRadians_ += (angles[1] - cameraPitchRadians_) * blend;
             }
-            flightFramePending_ = false;
+            // If a target temporarily disappears, keep the close ship fallback
+            // and recover the encounter's initial orientation when it returns.
+            flightFramePending_ = flightCameraMode_ == 3 && !encounterFramed;
         }
     }
 

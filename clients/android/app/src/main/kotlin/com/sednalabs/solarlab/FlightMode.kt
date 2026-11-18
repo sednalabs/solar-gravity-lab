@@ -70,6 +70,8 @@ import com.sednalabs.solarlab.runtime.FlightControl
 import com.sednalabs.solarlab.runtime.FlightState
 import com.sednalabs.solarlab.runtime.LunarMissionPhase
 import com.sednalabs.solarlab.runtime.LunarMissionState
+import com.sednalabs.solarlab.runtime.RendezvousGuidance
+import com.sednalabs.solarlab.runtime.RendezvousState
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.ShellUiState
@@ -97,6 +99,7 @@ internal object FlightTags {
     const val CHECKPOINT = "flight.checkpoint"
     const val RESET = "flight.reset"
     const val SAVE = "flight.save"
+    const val CONTROL_MODE = "flight.control_mode"
     fun assist(value: FlightAssist) = "flight.assist.${value.name}"
     fun camera(mode: Int) = "flight.camera.$mode"
     fun axis(name: String) = "flight.axis.$name"
@@ -128,6 +131,7 @@ internal fun FlightModeChrome(
     onExit: () -> Unit,
     onSaved: () -> Unit,
     onLunarMission: () -> Unit,
+    onRendezvousMission: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -137,6 +141,8 @@ internal fun FlightModeChrome(
     var pendingControl by remember(facade, uiState.sessionHandle) { mutableStateOf<FlightControl?>(null) }
     var state by remember(facade, uiState.sessionHandle) { mutableStateOf<FlightState?>(null) }
     var lunarMission by remember(facade, uiState.sessionHandle) { mutableStateOf<LunarMissionState?>(null) }
+    var rendezvous by remember(facade, uiState.sessionHandle) { mutableStateOf<RendezvousState?>(null) }
+    var manualRendezvousInputOwned by remember(facade, uiState.sessionHandle) { mutableStateOf(false) }
     var missionActionBusy by remember(facade, uiState.sessionHandle) { mutableStateOf(false) }
     var missionDetailsVisible by rememberSaveable { mutableStateOf(false) }
     var guidedCoast by rememberSaveable(uiState.sessionHandle) { mutableStateOf(false) }
@@ -152,14 +158,20 @@ internal fun FlightModeChrome(
     }
     var translationMode by rememberSaveable { mutableStateOf(false) }
     var missionHelp by rememberSaveable { mutableStateOf(true) }
+    LaunchedEffect(uiState.sessionHandle, rendezvous != null) {
+        if (rendezvous != null) translationMode = true
+    }
 
     fun send(value: FlightControl) {
         guidedCoast = false
+        if (rendezvous != null) manualRendezvousInputOwned = true
         pendingControl = value
         control = value
         commands.trySend(value)
     }
-    fun cut() { send(control.copy(throttle = 0.0, translationX = 0.0, translationY = 0.0,
+    fun manualBase() = manualFlightControlBase(control,
+        rendezvous?.guidance?.let { it != RendezvousGuidance.Manual } == true, manualRendezvousInputOwned)
+    fun cut() { send(manualBase().copy(throttle = 0.0, translationX = 0.0, translationY = 0.0,
         translationZ = 0.0, rotationX = 0.0, rotationY = 0.0, rotationZ = 0.0)) }
     fun action(block: suspend () -> Unit) {
         scope.launch {
@@ -169,17 +181,23 @@ internal fun FlightModeChrome(
     }
 
     LaunchedEffect(facade, uiState.sessionHandle, lifecycle) {
+        val inputSession = uiState.sessionHandle
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             launch {
                 while (isActive) {
                     try {
                         val sampledFlight = facade.flightState()
                         val sampledMission = facade.lunarMissionState()
+                        val sampledRendezvous = facade.rendezvousState()
                         state = sampledFlight
                         lunarMission = sampledMission
+                        rendezvous = sampledRendezvous
                         // Native guidance can cut the engine without a touch event.
                         // Do not overwrite a still-pending manual slider/axis input.
-                        if (pendingControl == null && !missionActionBusy && sampledFlight != null) control = sampledFlight.control
+                        if (pendingControl == null && !missionActionBusy && sampledFlight != null && !manualRendezvousInputOwned) {
+                            control = manualFlightControlBase(sampledFlight.control,
+                                sampledRendezvous?.guidance?.let { it != RendezvousGuidance.Manual } == true, false)
+                        }
                         if (state == null) controlError = "Odyssey is not in this saved world. Return to the lab to launch."
                     } catch (error: CancellationException) { throw error }
                     catch (error: Throwable) { controlError = error.message ?: "Flight telemetry unavailable" }
@@ -189,13 +207,14 @@ internal fun FlightModeChrome(
             launch {
                 for (next in commands) {
                     try {
-                        facade.setFlightControl(next)
+                        facade.setFlightControl(next, expectedSessionHandle = inputSession)
                         if (pendingControl == next) pendingControl = null
                         controlError = null
                     }
                     catch (error: CancellationException) { throw error }
                     catch (error: Throwable) {
                         if (pendingControl == next) pendingControl = null
+                        manualRendezvousInputOwned = false
                         controlError = error.message ?: "Flight control unavailable"
                     }
                 }
@@ -203,19 +222,21 @@ internal fun FlightModeChrome(
         }
     }
     DisposableEffect(facade, uiState.sessionHandle, lifecycle) {
+        val inputSession = uiState.sessionHandle
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 control = FlightControl.Cut
                 pendingControl = null
+                manualRendezvousInputOwned = false
                 commands.trySend(FlightControl.Cut)
-                facade.suspendFlightControls()
+                facade.suspendFlightControls(expectedSessionHandle = inputSession)
             }
         }
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)
             commands.close()
-            facade.suspendFlightControls()
+            facade.suspendFlightControls(expectedSessionHandle = inputSession)
         }
     }
     BackHandler(onBack = onExit)
@@ -226,7 +247,7 @@ internal fun FlightModeChrome(
     val rate = uiState.snapshot?.simSecondsPerRealSecond ?: 1.0
     val fuel = sample?.propellantMassKg ?: 0.0
     val burning = !paused && (sample?.massFlowKgPerSecond ?: 0.0) > 0.0
-    val coasting = !control.requiresRealTime && (sample?.commandedThrottle ?: 0.0) == 0.0 &&
+    val coasting = rendezvous == null && !control.requiresRealTime && (sample?.commandedThrottle ?: 0.0) == 0.0 &&
         (sample?.massFlowKgPerSecond ?: 0.0) == 0.0
 
     LaunchedEffect(guidedCoast, lunarMission?.phase, lunarMission?.outcome, uiState.manualAdvance) {
@@ -246,27 +267,12 @@ internal fun FlightModeChrome(
     }
 
     val actions = FlightUiActions(
-        assist = { send(control.copy(assist = it)) },
+        assist = { send(manualBase().copy(assist = it)) },
         axis = { index, held ->
-            val value = if (held) 1.0 else 0.0
-            send(if (translationMode) when (index) {
-                0 -> control.copy(translationX = -value)
-                1 -> control.copy(translationY = value)
-                2 -> control.copy(translationZ = value)
-                3 -> control.copy(translationX = value)
-                4 -> control.copy(translationY = -value)
-                else -> control.copy(translationZ = -value)
-            } else when (index) {
-                0 -> control.copy(rotationY = -value, assist = FlightAssist.Manual)
-                1 -> control.copy(rotationX = -value, assist = FlightAssist.Manual)
-                2 -> control.copy(rotationZ = -value, assist = FlightAssist.Manual)
-                3 -> control.copy(rotationY = value, assist = FlightAssist.Manual)
-                4 -> control.copy(rotationX = value, assist = FlightAssist.Manual)
-                else -> control.copy(rotationZ = value, assist = FlightAssist.Manual)
-            })
+            send(flightAxisIntent(manualBase(), translationMode, index, held))
         },
         toggleRcs = { cut(); translationMode = !translationMode },
-        throttle = { send(control.copy(throttle = it.toDouble())) },
+        throttle = { send(manualBase().copy(throttle = it.toDouble())) },
         cut = ::cut,
         playPause = { action { facade.applyCommand(if (paused) RuntimeCommand.ResumePlayback else RuntimeCommand.PausePlayback) } },
         warp = { value -> guidedCoast = false; action { facade.applyCommand(RuntimeCommand.SetPlaybackRate(value.toDouble())) } },
@@ -294,6 +300,7 @@ internal fun FlightModeChrome(
     )
     val notice = controlError ?: message ?: when {
         fuel <= 0.0 && ready -> "Propellant depleted. You can still coast and orient the spacecraft."
+        rendezvous != null -> "RCS acts along the ship’s axes. Manual input or CUT releases guidance; nearby operations stay at 1×."
         !coasting -> "Time acceleration is available while coasting."
         control.assist == FlightAssist.Prograde -> "Prograde points along your motion. Thrust raises the opposite side of your orbit."
         control.assist == FlightAssist.Retrograde -> "Retrograde points against your motion. Thrust lowers the opposite side of your orbit."
@@ -304,6 +311,7 @@ internal fun FlightModeChrome(
         !ready -> "Establishing flight link"
         paused -> "Flight paused"
         burning -> "Engine firing"
+        rendezvous != null -> "Station rendezvous"
         rate > 1.0 -> "Coasting at ${rate.toInt()}×"
         else -> "Earth orbital flight"
     }
@@ -316,7 +324,7 @@ internal fun FlightModeChrome(
         pendingControl = null
         action {
             try {
-                facade.beginLunarDeparture()
+                facade.beginLunarDeparture(expectedSessionHandle = uiState.sessionHandle)
                 state = facade.flightState()
                 state?.let { control = it.control }
                 lunarMission = facade.lunarMissionState()
@@ -333,6 +341,26 @@ internal fun FlightModeChrome(
             facade.applyCommand(RuntimeCommand.SetPlaybackRate(coastRate))
             facade.applyCommand(RuntimeCommand.ResumePlayback)
             message = "Coasting towards the Moon. Approach slows automatically; an observed outcome pauses flight."
+        }
+    }
+
+    fun setEncounterGuidance(guidance: RendezvousGuidance) {
+        if (!ready || missionActionBusy) return
+        missionActionBusy = true
+        guidedCoast = false
+        while (commands.tryReceive().isSuccess) { /* Native guidance supersedes queued touch input. */ }
+        pendingControl = null
+        manualRendezvousInputOwned = false
+        action {
+            try {
+                facade.setRendezvousGuidance(guidance, expectedSessionHandle = uiState.sessionHandle)
+                state = facade.flightState()
+                if (!manualRendezvousInputOwned && pendingControl == null) {
+                    state?.let { control = manualFlightControlBase(it.control, guidance != RendezvousGuidance.Manual, false) }
+                }
+                rendezvous = facade.rendezvousState()
+                message = null
+            } finally { missionActionBusy = false }
         }
     }
 
@@ -354,11 +382,11 @@ internal fun FlightModeChrome(
                     Text("ODYSSEY", color = FlightInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 3.sp)
                     Text(status, color = if (burning) FlightAmber else FlightTeal, fontSize = 11.sp, maxLines = 1)
                 }
-                if (landscape) FlightOrbitInstruments(sample, Modifier.weight(1f))
+                if (landscape) FlightOrbitInstruments(sample, Modifier.weight(1f), rendezvous)
                 FlightAction("Saves", { cut(); facade.suspendFlightControls(); onSaved() }, FlightTags.SAVE, enabled = ready)
                 FlightAction("Lab", onExit, FlightTags.EXIT)
             }
-            if (!landscape) FlightOrbitInstruments(sample, Modifier.fillMaxWidth().height(62.dp))
+            if (!landscape) FlightOrbitInstruments(sample, Modifier.fillMaxWidth().height(62.dp), rendezvous)
         }
 
         Column(Modifier.align(Alignment.TopCenter).statusBarsPadding()
@@ -366,12 +394,17 @@ internal fun FlightModeChrome(
                 end = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp)
             .widthIn(max = 600.dp)) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (rendezvous != null) FlightAction("Encounter", { onCamera(3) }, FlightTags.camera(3), active = cameraMode == 3)
                 listOf(1 to "Orbit camera", 2 to "Chase", 0 to "Coast prediction").forEach { (mode, label) ->
                     FlightAction(label, { onCamera(mode) }, FlightTags.camera(mode), active = cameraMode == mode)
                 }
                 FlightAction("Moon mission", { cut(); facade.suspendFlightControls(); onLunarMission() }, LunarFlightTags.BRIEF)
+                FlightAction("Station mission", { cut(); facade.suspendFlightControls(); onRendezvousMission() }, RendezvousTags.BRIEF)
             }
-            if (lunarMission != null) {
+            if (rendezvous != null) {
+                if (!landscape) RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
+                    onGuidance = ::setEncounterGuidance)
+            } else if (lunarMission != null) {
                 LunarMissionPanel(requireNotNull(lunarMission), landscape, paused, ready, missionActionBusy, coasting,
                     onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
                     onDetails = { action { facade.applyCommand(RuntimeCommand.PausePlayback); missionDetailsVisible = true } })
@@ -406,6 +439,16 @@ internal fun FlightModeChrome(
                         FlightEnginePanel(control, sample, ready, paused, actions)
                         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = FlightLine)
                         FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—", "lowest altitude")
+                    }
+                }
+                if (rendezvous != null) {
+                    // Keep the encounter's centre clear between the camera row
+                    // and guidance controls without shrinking either touch area.
+                    Box(Modifier.align(Alignment.BottomCenter)
+                        .padding(horizontal = FlightChromeMetrics.LandscapeSide)
+                        .widthIn(max = 600.dp)) {
+                        RendezvousPanel(requireNotNull(rendezvous), true, paused, ready, missionActionBusy,
+                            onGuidance = ::setEncounterGuidance)
                     }
                 }
             }
@@ -456,8 +499,17 @@ private data class FlightUiActions(
 )
 
 @Composable
-private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Modifier) {
+private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Modifier, encounter: RendezvousState? = null) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (encounter != null) {
+            FlightInstrument("STATION RANGE", if (encounter.targetAvailable) rendezvousDistance(encounter.rangeM) else "—",
+                "centre to centre", RendezvousTags.RANGE, Modifier.weight(1f))
+            FlightInstrument("RELATIVE SPEED", if (encounter.targetAvailable) rendezvousSpeed(encounter.relativeSpeedMps) else "—",
+                "inertial difference", RendezvousTags.RELATIVE_SPEED, Modifier.weight(1f))
+            FlightInstrument(if (encounter.closingSpeedMps >= 0.0) "CLOSING" else "RECEDING",
+                if (encounter.targetAvailable) rendezvousSpeed(abs(encounter.closingSpeedMps)) else "—",
+                "along line of sight", RendezvousTags.CLOSING, Modifier.weight(1f))
+        } else {
         FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above Earth", FlightTags.ALTITUDE,
             Modifier.weight(1f))
         FlightInstrument("ORBITAL SPEED", sample?.speedMps?.let { "%.2f km/s".format(Locale.US, it / 1_000) } ?: "—", "relative to Earth",
@@ -465,6 +517,7 @@ private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Mo
         FlightInstrument("APOAPSIS", sample?.apoapsisAltitudeM?.let(::flightDistance)
             ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—", "highest altitude", FlightTags.APOAPSIS,
             Modifier.weight(1f))
+        }
     }
 }
 
@@ -483,7 +536,7 @@ private fun FlightAttitudePad(translation: Boolean, enabled: Boolean, actions: F
     Column {
         Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(if (translation) "Translate" else "Rotate", color = FlightMuted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-            TextButton(onClick = actions.toggleRcs, contentPadding = PaddingValues(2.dp)) {
+            TextButton(onClick = actions.toggleRcs, modifier = Modifier.testTag(FlightTags.CONTROL_MODE), contentPadding = PaddingValues(2.dp)) {
                 Text(if (translation) "Attitude" else "RCS", color = FlightTeal, fontSize = 11.sp)
             }
         }

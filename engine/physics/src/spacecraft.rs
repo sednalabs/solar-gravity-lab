@@ -12,6 +12,9 @@ pub struct SpacecraftBinding {
     pub body_index: usize,
     pub reference_body_index: Option<usize>,
     pub mission_target_index: Option<usize>,
+    pub rendezvous_target_body_index: Option<usize>,
+    pub rendezvous_target_spacecraft_index: Option<usize>,
+    pub rendezvous_target_radius_m: f64,
     pub reference_radius_m: f64,
     pub target_radius_m: f64,
     pub body_radius_m: f64,
@@ -25,12 +28,22 @@ pub struct SpacecraftBinding {
 pub fn max_substep_seconds(states: &[SpacecraftState], coast_step: f64) -> f64 {
     let mut step = coast_step;
     for s in states {
-        if s.has_powered_input() || s.needs_attitude_steps() {
+        if s.has_powered_input()
+            || s.needs_attitude_steps()
+            || s.rendezvous
+                .as_ref()
+                .is_some_and(|r| r.guidance_mode.active())
+        {
             step = step.min(MAX_FLIGHT_SUBSTEP_SECONDS);
             let spin = magnitude(s.angular_velocity_body_radps);
             if spin > 0.0 {
                 step = step.min(0.05 / spin);
             }
+        }
+        // Nearby physical observations remain bounded while a pilot coasts.
+        // This is not continuous collision detection or a contact response.
+        if s.rendezvous.is_some() {
+            step = step.min(0.5);
         }
     }
     step
@@ -50,12 +63,19 @@ pub fn advance_spacecraft_steps(
                 || s.reference_body_index.is_some_and(|i| i >= bodies.len())
                 || s.mission_target_index.is_some_and(|i| i >= bodies.len())
                 || (s.state.mission.is_some() && s.mission_target_index.is_none())
+                || s.rendezvous_target_body_index
+                    .is_some_and(|i| i >= bodies.len())
+                || s.rendezvous_target_spacecraft_index
+                    .is_some_and(|i| i >= ships.len())
         })
     {
         return Err(());
     }
     if ships.iter().all(|s| {
-        !s.state.has_powered_input() && !s.state.needs_attitude_steps() && s.state.mission.is_none()
+        !s.state.has_powered_input()
+            && !s.state.needs_attitude_steps()
+            && s.state.mission.is_none()
+            && s.state.rendezvous.is_none()
     }) {
         advance_fixed_steps(plan, bodies, count)?;
     } else {
@@ -63,6 +83,7 @@ pub fn advance_spacecraft_steps(
             let mut remaining = plan.dt_seconds;
             // Split exactly at depletion so no thrust is applied beyond the last fuel.
             while remaining > 0.0 {
+                crate::rendezvous::update_guidance(bodies, ships)?;
                 let mut dt = remaining;
                 for ship in ships.iter() {
                     let (_, _, flow) = engine_wrench(&ship.state);
@@ -95,6 +116,7 @@ pub fn advance_spacecraft_steps(
                     ship.epoch_seconds = next_epoch;
                     record_mission_observation(bodies, ship);
                 }
+                crate::rendezvous::record_observations(bodies, ships)?;
                 let next = remaining - dt;
                 remaining = if next < remaining {
                     next

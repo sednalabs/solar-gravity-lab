@@ -5,6 +5,7 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.RectF
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -28,6 +29,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.FlightAssist
@@ -36,17 +38,22 @@ import com.sednalabs.solarlab.runtime.FlightState
 import com.sednalabs.solarlab.runtime.LunarMissionOutcome
 import com.sednalabs.solarlab.runtime.LunarMissionPhase
 import com.sednalabs.solarlab.runtime.LunarMissionState
+import com.sednalabs.solarlab.runtime.RendezvousGuidance
+import com.sednalabs.solarlab.runtime.RendezvousState
+import com.sednalabs.solarlab.runtime.RendezvousStatus
 import com.sednalabs.solarlab.runtime.REFERENCE_SPACECRAFT_ID
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RuntimeFacade
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.render.vulkan.LabViewportState
+import com.sednalabs.solarlab.render.vulkan.LabBodyAnchor
 import com.sednalabs.solarlab.render.vulkan.SolarSystemRenderHostView
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -57,6 +64,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
+import kotlin.math.PI
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /** Actual JNI/world/Vulkan journey. No shell physics or mocked spacecraft transport. */
 @RunWith(AndroidJUnit4::class)
@@ -253,13 +266,133 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals(0.0, flight(facade).commandedThrottle, 0.0)
     }
 
-    private fun advanceAndWait(facade: RuntimeFacade, seconds: Double) {
-        val target = requireNotNull(facade.uiState.value.snapshot).epochSeconds + seconds
-        runBlocking { facade.applyCommand(RuntimeCommand.PausePlayback); facade.applyCommand(RuntimeCommand.AdvanceEpoch(seconds)) }
-        waitUntil(120_000) { facade.uiState.value.let { it.manualAdvance == null && (it.snapshot?.epochSeconds ?: -1.0) >= target - 1e-6 } }
+    @Test fun stationEncounterReusesFlightControlsAndPersistsNativeGuidance() {
+        assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && !BuildConfig.HOSTED_DEBUG_LITE_MODE)
+        val facade = composeRule.activity.runtimeFacadeForTesting
+        waitUntil(30_000) { facade.uiState.value.connectionState == SessionConnectionState.Active }
+        runBlocking { facade.loadScenario("lab.earth-moon") }
+        advanceAndWait(facade, 42.0)
+        launchOrbitalFlightWhenReady()
+        waitUntil { nodes(FlightTags.ROOT) && runBlocking { facade.flightState() } != null }
+        val oldEpoch = flight(facade).epochSeconds
+        val previousSaves = facade.savedExperiments.value.map { it.id }.toSet()
+        composeRule.onNodeWithTag(RendezvousTags.BRIEF).performScrollToIfPossible().performClick()
+        composeRule.onNodeWithTag(RendezvousTags.START).assertIsEnabled().performClick()
+        waitUntil(30_000) { runBlocking { facade.rendezvousState() } != null && nodes(RendezvousTags.PANEL) }
+        val backup = facade.savedExperiments.value.single { it.id !in previousSaves }
+        val initial = encounter(facade)
+        assertEquals(0.0, initial.epochSeconds, 0.0)
+        assertEquals(RendezvousGuidance.Manual, initial.guidance)
+        assertTrue(initial.targetAvailable)
+        assertTrue(initial.rangeM in 990.0..1_010.0)
+        assertEquals(0.0, requireNotNull(runBlocking { facade.inspectBody(initial.targetBodyId) }).sourceMassKg, 0.0)
+        assertEncounterView(initial.targetBodyId)
+        composeRule.onNodeWithTag(RendezvousTags.RANGE).assertIsDisplayed()
+        composeRule.onNodeWithTag(RendezvousTags.DIRECTION).assertIsDisplayed()
+        capture("rendezvous-departure.png", encounterTargetId = initial.targetBodyId)
+
+        composeRule.mainClock.autoAdvance = false
+        composeRule.onNodeWithTag(RendezvousTags.MATCH).assertIsEnabled().performClick()
+        waitUntil { encounter(facade).guidance == RendezvousGuidance.MatchVelocity && facade.uiState.value.snapshot?.paused == false }
+        assertEquals(1.0, requireNotNull(facade.uiState.value.snapshot).simSecondsPerRealSecond, 0.0)
+        advanceAndWait(facade, 90.0)
+        val matched = encounter(facade)
+        assertTrue("Native RCS must remove relative velocity", matched.relativeSpeedMps < .03)
+        assertTrue(matched.rangeM > 900.0)
+        assertTrue(matched.remainingPropellantKg < initial.remainingPropellantKg)
+
+        // Actual held input during real playback exercises force and release;
+        // advancing a Compose clock cannot substitute for spacecraft dynamics.
+        composeRule.onNodeWithTag(FlightTags.PLAY_PAUSE).performClick()
+        waitUntil { facade.uiState.value.snapshot?.paused == false }
+        val right = composeRule.onNodeWithTag(FlightTags.axis("Right")).assertIsDisplayed()
+        right.performTouchInput { down(center) }
+        try {
+            waitUntil { flight(facade).control.translationX > .99 && encounter(facade).guidance == RendezvousGuidance.Manual }
+            val held = flight(facade)
+            assertEquals("Taking over one axis must clear autonomous Y demand", 0.0, held.control.translationY, 0.0)
+            assertEquals("Taking over one axis must clear autonomous Z demand", 0.0, held.control.translationZ, 0.0)
+            waitUntil(15_000) { flight(facade).epochSeconds >= held.epochSeconds + 2.0 }
+        } finally { right.performTouchInput { up() } }
+        waitUntil { !flight(facade).control.hasManualInput && flight(facade).commandedThrottle == 0.0 }
+        runBlocking { facade.applyCommand(RuntimeCommand.PausePlayback) }
+        val releasedFuel = flight(facade).propellantMassKg
+        advanceAndWait(facade, 1.0)
+        assertEquals("Released manual RCS must not leave hidden thrust", releasedFuel, flight(facade).propellantMassKg, 1e-9)
+
+        val readyToApproach = encounter(facade)
+        assertEquals(RendezvousGuidance.Manual, readyToApproach.guidance)
+        assertTrue(readyToApproach.targetAvailable && readyToApproach.remainingPropellantKg > 0.0)
+        // Native commit is observable before Compose has consumed the terminal
+        // advance state. With the test clock paused, drive frames until the real
+        // control acknowledges readiness; a stuck/broken capability still fails.
+        waitUntil {
+            val approach = composeRule.onAllNodesWithTag(RendezvousTags.APPROACH).fetchSemanticsNodes().singleOrNull()
+            facade.uiState.value.manualAdvance == null && approach != null &&
+                !approach.config.contains(SemanticsProperties.Disabled)
+        }
+        composeRule.onNodeWithTag(RendezvousTags.APPROACH).assertIsEnabled().performClick()
+        waitUntil { encounter(facade).guidance == RendezvousGuidance.Approach }
+        advanceAndWait(facade, 650.0)
+        val arrived = encounter(facade)
+        assertTrue(arrived.standOffAchieved)
+        assertEquals(RendezvousStatus.Holding, arrived.status)
+        assertTrue(arrived.standOffErrorM < 1.0)
+        assertTrue(arrived.relativeSpeedMps < .02)
+        assertFalse(arrived.keepOutEntered)
+        assertTrue(arrived.closestObservedRangeM > arrived.keepOutDistanceM)
+        assertEncounterView(arrived.targetBodyId)
+        capture("rendezvous-stand-off.png", encounterTargetId = arrived.targetBodyId, requireEncounterDetail = true)
+
+        // Import paused active guidance through the production save boundary;
+        // old-session UI disposal must not cut the newly imported control state.
+        val guidedName = "Guided station hold ${System.currentTimeMillis()}"
+        runBlocking { facade.saveExperiment(guidedName) }
+        val guidedSave = facade.savedExperiments.value.first { it.name == guidedName }
+        advanceAndWait(facade, 10.0)
+        runBlocking { facade.loadExperiment(guidedSave.id) }
+        waitUntil { encounter(facade).epochSeconds == arrived.epochSeconds && nodes(RendezvousTags.PANEL) }
+        assertEncounterView(arrived.targetBodyId)
+        val restored = encounter(facade)
+        assertEquals(RendezvousGuidance.Approach, restored.guidance)
+        assertEquals(arrived.targetBodyId, restored.targetBodyId)
+        assertEquals(arrived.closestObservedRangeM.toBits(), restored.closestObservedRangeM.toBits())
+        assertEquals(arrived.remainingPropellantKg.toBits(), restored.remainingPropellantKg.toBits())
+        assertTrue(facade.uiState.value.snapshot?.paused == true)
+        advanceAndWait(facade, 10.0)
+        assertTrue(encounter(facade).standOffErrorM < 1.0)
+        assertEquals("Old-session disposal must not silently cancel restored guidance", RendezvousGuidance.Approach, encounter(facade).guidance)
+        saveAndReopenEncounterThroughUi(facade, backup.id, oldEpoch, initial.targetBodyId)
     }
 
-    private fun mission(facade: RuntimeFacade): LunarMissionState = runBlocking { requireNotNull(facade.lunarMissionState()) }
+    private fun saveAndReopenEncounterThroughUi(facade: RuntimeFacade, backupId: String, oldEpoch: Double, targetId: String) {
+        // The user-facing Saves flow intentionally cuts guidance before opening.
+        composeRule.onNodeWithTag(FlightTags.SAVE).performClick()
+        waitUntil { nodes(LabTags.SAVED_DIALOG) && encounter(facade).guidance == RendezvousGuidance.Manual }
+        val savedName = "Station rendezvous ${System.currentTimeMillis()}"
+        composeRule.onNodeWithTag(LabTags.SAVE_NAME).performTextReplacement(savedName)
+        composeRule.onNodeWithTag(LabTags.SAVE_COMMIT).performClick()
+        waitUntil { facade.savedExperiments.value.any { it.name == savedName } }
+        val userSave = facade.savedExperiments.value.first { it.name == savedName }
+        closeSavedExperimentsDialog()
+        runBlocking { facade.loadExperiment(backupId) }
+        assertEquals(oldEpoch.toBits(), flight(facade).epochSeconds.toBits())
+        assertTrue(runBlocking { facade.rendezvousState() } == null)
+        assertTrue(runBlocking { facade.inspectBody(targetId) } == null)
+        runBlocking { facade.loadExperiment(userSave.id) }
+        waitUntil { encounter(facade).standOffAchieved && nodes(RendezvousTags.PANEL) }
+        assertEquals(targetId, encounter(facade).targetBodyId)
+        assertEquals(RendezvousGuidance.Manual, encounter(facade).guidance)
+        composeRule.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        waitUntil { composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && nodes(RendezvousTags.PANEL) }
+        assertEncounterView(targetId)
+        composeRule.onNodeWithTag(RendezvousTags.APPROACH).assertIsDisplayed()
+        capture("rendezvous-restored-landscape.png", encounterTargetId = targetId, requireEncounterDetail = true,
+            requireUnobscuredEncounter = true)
+    }
+
+    private fun encounter(facade: RuntimeFacade): RendezvousState = runBlocking { requireNotNull(facade.rendezvousState()) }
+
     private fun closeSavedExperimentsDialog() {
         // Back can dismiss only the name field's IME, leaving a saved dialog
         // open across recreation. Use the visible user action and establish
@@ -281,6 +414,46 @@ class OrbitalFlightJourneyInstrumentationTest {
         composeRule.onNodeWithTag(FlightTags.LAUNCH).assertIsEnabled().performClick()
     }
 
+    private fun assertEncounterView(targetId: String) {
+        var stableSince = 0L
+        var diagnostic = "No submitted encounter view"
+        try {
+            waitUntil {
+                val authoritative = encounter(composeRule.activity.runtimeFacadeForTesting)
+                var framed = false
+                composeRule.runOnUiThread {
+                    val host = findHost(composeRule.activity.window.decorView)
+                    val frame = host?.currentLabViewportState()
+                    val ship = frame?.bodies?.firstOrNull { it.bodyId == REFERENCE_SPACECRAFT_ID }
+                    val target = frame?.bodies?.firstOrNull { it.bodyId == targetId }
+                    if (host != null && frame != null && ship != null && target != null) {
+                        val midpoint = (ship.worldPositionM + target.worldPositionM) * .5
+                        val range = labLength(ship.worldPositionM - target.worldPositionM)
+                        diagnostic = "radius=${frame.camera.viewRadiusM} renderedRange=$range nativeRange=${authoritative.rangeM} " +
+                            "shipRadius=${ship.radiusPx} targetRadius=${target.radiusPx}"
+                        framed = host.selectedBodyId() == REFERENCE_SPACECRAFT_ID &&
+                            authoritative.targetAvailable && authoritative.targetBodyId == targetId &&
+                            abs(range - authoritative.rangeM) < 1.0 &&
+                            frame.camera.viewRadiusM >= 20.0 && frame.camera.viewRadiusM < 2 * range.coerceAtLeast(50.0) &&
+                            labLength(frame.camera.centerM - midpoint) < 10.0 && listOf(ship, target).all {
+                                !it.occluded && it.radiusPx >= 1f && it.xPx in 0f..frame.widthPx.toFloat() &&
+                                    it.yPx in 0f..frame.heightPx.toFloat()
+                            }
+                    }
+                }
+                if (!framed) stableSince = 0L else if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
+                framed && SystemClock.uptimeMillis() - stableSince >= 500L
+            }
+        } catch (error: Throwable) { throw AssertionError("Both native encounter meshes must be framed: $diagnostic", error) }
+    }
+
+    private fun advanceAndWait(facade: RuntimeFacade, seconds: Double) {
+        val target = requireNotNull(facade.uiState.value.snapshot).epochSeconds + seconds
+        runBlocking { facade.applyCommand(RuntimeCommand.PausePlayback); facade.applyCommand(RuntimeCommand.AdvanceEpoch(seconds)) }
+        waitUntil(120_000) { facade.uiState.value.let { it.manualAdvance == null && (it.snapshot?.epochSeconds ?: -1.0) >= target - 1e-6 } }
+    }
+
+    private fun mission(facade: RuntimeFacade): LunarMissionState = runBlocking { requireNotNull(facade.lunarMissionState()) }
     private fun flight(facade: RuntimeFacade): FlightState = runBlocking { requireNotNull(facade.flightState()) }
     private fun nodes(tag: String) = composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
     private fun waitUntil(timeoutMs: Long = 20_000, predicate: () -> Boolean) = composeRule.waitUntil(timeoutMs) {
@@ -288,7 +461,9 @@ class OrbitalFlightJourneyInstrumentationTest {
         predicate()
     }
 
-    private fun capture(name: String, requireCloseShip: Boolean = false) {
+    private fun capture(name: String, requireCloseShip: Boolean = false,
+        encounterTargetId: String? = null, requireEncounterDetail: Boolean = false,
+        requireUnobscuredEncounter: Boolean = false) {
         if (requireCloseShip) assertCloseFlightView(name)
         var surface: SurfaceView? = null
         var submitted: LabViewportState? = null
@@ -311,26 +486,65 @@ class OrbitalFlightJourneyInstrumentationTest {
         var matchCount = 0
         var sampleCount = 0
         var attempt = 0
+        var meshDiagnostic = ""
+        var encounterEnvelopesClear = !requireUnobscuredEncounter
         try {
             while (SystemClock.uptimeMillis() < deadline) {
-                stage?.recycle()
-                stage = null
-                window?.recycle()
-                window = null
                 // Both acquisitions must be fresh. PixelCopy may initially return
                 // the preceding Orbit buffer while the window already shows Chase;
                 // retrying only the window would compare against that stale buffer forever.
                 val nativeImage = copyNativeImage(native, name, deadline)
-                stage = nativeImage
                 val origin = IntArray(2)
                 composeRule.runOnUiThread {
                     native.getLocationOnScreen(origin)
                     submitted = findHost(composeRule.activity.window.decorView)?.currentLabViewportState()
                 }
-                val windowImage = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+                val windowImage = try {
+                    requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+                } catch (error: Throwable) {
+                    nativeImage.recycle()
+                    throw error
+                }
+                // Retain the last complete, genuine pair until its replacement
+                // arrives. A final PixelCopy can exhaust the shared deadline;
+                // it must not erase earlier mismatching buffers that explain
+                // the failure.
+                stage?.recycle()
+                window?.recycle()
+                stage = nativeImage
                 window = windowImage
                 attempt += 1
-                if (requireCloseShip) {
+                if (encounterTargetId != null) {
+                    val frame = submitted
+                    val ids = listOf(REFERENCE_SPACECRAFT_ID, encounterTargetId)
+                    val anchors = ids.mapNotNull { id -> frame?.bodies?.firstOrNull { it.bodyId == id } }
+                    val overlays = encounterOverlayBoundsOnScreen()
+                    val evidence = anchors.map { encounterMeshMatches(nativeImage, windowImage, origin, it, overlays) }
+                    val envelopes = if (requireUnobscuredEncounter) anchors.map {
+                        encounterEnvelope(nativeImage, windowImage, origin, it, overlays)
+                    } else emptyList()
+                    encounterEnvelopesClear = !requireUnobscuredEncounter ||
+                        (envelopes.size == 2 && envelopes.all { it.clear } && frame != null &&
+                            frame.widthPx == nativeImage.width && frame.heightPx == nativeImage.height)
+                    matchCount = evidence.sumOf { it.matches }
+                    sampleCount = evidence.sumOf { it.samples }
+                    val authoritative = encounter(composeRule.activity.runtimeFacadeForTesting)
+                    val renderedRange = anchors.takeIf { it.size == 2 }?.let {
+                        labLength(it[0].worldPositionM - it[1].worldPositionM)
+                    }
+                    // A distant, true-scale hull may cover fewer than twelve
+                    // material pixels. It must still contribute matching pixels;
+                    // the readable arrival/reopened views prove each mesh alone.
+                    matched = encounterEnvelopesClear && evidence.size == 2 && sampleCount >= 12 && matchCount * 4 >= sampleCount * 3 &&
+                        evidence.all { it.samples > 0 && it.matches * 4 >= it.samples * 3 &&
+                            (!requireEncounterDetail || it.samples >= 12) } &&
+                        authoritative.targetAvailable && authoritative.targetBodyId == encounterTargetId &&
+                        renderedRange != null && abs(renderedRange - authoritative.rangeM) < 1.0
+                    meshDiagnostic = " renderedRange=$renderedRange nativeRange=${authoritative.rangeM} " +
+                        evidence.joinToString { "${it.bodyId}@${it.x},${it.y},r=${it.radius}:" +
+                            "${it.matches}/${it.samples},hudExcluded=${it.hudExcluded}" } +
+                        if (requireUnobscuredEncounter) " envelopes=" + envelopes.joinToString { it.diagnostic } else ""
+                } else if (requireCloseShip) {
                     val matches = nativeWindowMatches(nativeImage, windowImage, origin)
                     matchCount = matches.first
                     sampleCount = matches.second
@@ -341,14 +555,17 @@ class OrbitalFlightJourneyInstrumentationTest {
                 } else matched = true
                 Log.i("SolarLabFlightEvidence", "$name pair=$attempt native=${native.width}x${native.height} " +
                     "submittedRadius=${submitted?.camera?.viewRadiusM} nativeMatches=$matchCount/$sampleCount " +
-                    "surfaceOrigin=${origin[0]},${origin[1]}")
+                    "surfaceOrigin=${origin[0]},${origin[1]}$meshDiagnostic")
                 if (matched) break
                 composeRule.runOnUiThread { composeRule.activity.window.decorView.postInvalidateOnAnimation() }
                 if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeByFrame()
                 SystemClock.sleep((deadline - SystemClock.uptimeMillis()).coerceIn(0, 80))
             }
+            if (requireUnobscuredEncounter) assertTrue(
+                "Both encounter hull envelopes must be fully visible outside the actual HUD: $name;$meshDiagnostic",
+                encounterEnvelopesClear)
             assertTrue("Native stage and window did not converge: $name; matched=$matchCount/$sampleCount, " +
-                "pairs=$attempt, currentRadius=${submitted?.camera?.viewRadiusM}", matched)
+                "pairs=$attempt, currentRadius=${submitted?.camera?.viewRadiusM}$meshDiagnostic", matched)
         } finally {
             // Keep the actual pair on failure as well as success. Never paste a
             // native buffer into window evidence or substitute a previous capture.
@@ -396,6 +613,99 @@ class OrbitalFlightJourneyInstrumentationTest {
             }
         }
         return matched to samples
+    }
+
+    private data class EncounterMeshEvidence(val bodyId: String, val x: Float, val y: Float, val radius: Float,
+        val matches: Int, val samples: Int, val hudExcluded: Int)
+
+    private data class EncounterEnvelopeEvidence(val clear: Boolean, val diagnostic: String)
+
+    private fun encounterEnvelope(stage: Bitmap, window: Bitmap, origin: IntArray,
+        anchor: LabBodyAnchor, overlays: List<RectF>): EncounterEnvelopeEvidence {
+        if (!anchor.xPx.isFinite() || !anchor.yPx.isFinite() || !anchor.radiusPx.isFinite() || anchor.radiusPx <= 0f) {
+            return EncounterEnvelopeEvidence(false, "${anchor.bodyId}:invalid projected hull")
+        }
+        // The native radius encloses the physical hull, including unlit material.
+        // Enough matching pixels below an overlay cannot prove an unobscured ship.
+        // The landscape cockpit must leave the whole projected envelope clear,
+        // with a two-pixel raster margin against surface/window edges and the HUD.
+        val radius = anchor.radiusPx + 2f
+        val x = origin[0] + anchor.xPx
+        val y = origin[1] + anchor.yPx
+        val envelope = RectF(x - radius, y - radius, x + radius, y + radius)
+        val surfaceBounds = RectF(origin[0].toFloat(), origin[1].toFloat(),
+            origin[0] + stage.width.toFloat(), origin[1] + stage.height.toFloat())
+        val inSurface = surfaceBounds.contains(envelope)
+        val inWindow = RectF(0f, 0f, window.width.toFloat(), window.height.toFloat()).contains(envelope)
+        val intersections = overlays.filter { RectF.intersects(envelope, it) }
+        val clear = !anchor.occluded && inSurface && inWindow && intersections.isEmpty()
+        return EncounterEnvelopeEvidence(clear,
+            "${anchor.bodyId}:clear=$clear,hull=$envelope,inSurface=$inSurface,inWindow=$inWindow," +
+                "occluded=${anchor.occluded},hud=$intersections")
+    }
+
+    private fun encounterOverlayBoundsOnScreen(): List<RectF> {
+        val screen = IntArray(2)
+        val inWindow = IntArray(2)
+        composeRule.runOnUiThread {
+            composeRule.activity.window.decorView.getLocationOnScreen(screen)
+            composeRule.activity.window.decorView.getLocationInWindow(inWindow)
+        }
+        val tags = listOf(RendezvousTags.PANEL, RendezvousTags.BRIEF, LunarFlightTags.BRIEF) +
+            (0..3).map(FlightTags::camera)
+        return tags.flatMap { composeRule.onAllNodesWithTag(it).fetchSemanticsNodes() }.mapNotNull {
+            val bounds = it.boundsInWindow
+            if (bounds.width <= 0f || bounds.height <= 0f) null else RectF(
+                bounds.left + screen[0] - inWindow[0] - 2f, bounds.top + screen[1] - inWindow[1] - 2f,
+                bounds.right + screen[0] - inWindow[0] + 2f, bounds.bottom + screen[1] - inWindow[1] + 2f)
+        }
+    }
+
+    private fun encounterMeshMatches(stage: Bitmap, window: Bitmap, origin: IntArray,
+        anchor: LabBodyAnchor, overlays: List<RectF>): EncounterMeshEvidence {
+        val radius = anchor.radiusPx.coerceAtLeast(1f)
+        // Native anchors enclose the physical hulls. The annulus uses the native
+        // image, which contains no Compose overlays, to estimate the background.
+        // Matching smooth Earth/sky pixels cannot stand in for visible material.
+        val background = (0 until 32).mapNotNull { index ->
+            val angle = 2.0 * PI * index / 32
+            val x = (anchor.xPx + cos(angle) * (radius * 1.35f + 2f)).roundToInt()
+            val y = (anchor.yPx + sin(angle) * (radius * 1.35f + 2f)).roundToInt()
+            if (x in 0 until stage.width && y in 0 until stage.height) stage.getPixel(x, y) else null
+        }
+        if (background.isEmpty()) return EncounterMeshEvidence(anchor.bodyId, anchor.xPx, anchor.yPx, radius, 0, 0, 0)
+        val red = background.map(Color::red).sorted()[background.size / 2]
+        val green = background.map(Color::green).sorted()[background.size / 2]
+        val blue = background.map(Color::blue).sorted()[background.size / 2]
+        var matched = 0
+        var samples = 0
+        var hudExcluded = 0
+        val step = (radius / 24f).toInt().coerceAtLeast(1)
+        for (y in floor(anchor.yPx - radius).toInt().coerceAtLeast(0)..
+            ceil(anchor.yPx + radius).toInt().coerceAtMost(stage.height - 1) step step) {
+            for (x in floor(anchor.xPx - radius).toInt().coerceAtLeast(0)..
+                ceil(anchor.xPx + radius).toInt().coerceAtMost(stage.width - 1) step step) {
+                val dx = x + .5f - anchor.xPx
+                val dy = y + .5f - anchor.yPx
+                if (dx * dx + dy * dy > radius * radius) continue
+                val screenX = origin[0] + x
+                val screenY = origin[1] + y
+                if (overlays.any { it.contains(screenX + .5f, screenY + .5f) }) {
+                    hudExcluded += 1
+                    continue
+                }
+                val expected = stage.getPixel(x, y)
+                if (maxOf(Color.red(expected), Color.green(expected), Color.blue(expected)) < 40 ||
+                    maxOf(abs(Color.red(expected) - red), abs(Color.green(expected) - green),
+                        abs(Color.blue(expected) - blue)) <= 20) continue
+                samples += 1
+                if (screenX !in 0 until window.width || screenY !in 0 until window.height) continue
+                val actual = window.getPixel(screenX, screenY)
+                if (maxOf(abs(Color.red(actual) - Color.red(expected)), abs(Color.green(actual) - Color.green(expected)),
+                        abs(Color.blue(actual) - Color.blue(expected))) <= 20) matched += 1
+            }
+        }
+        return EncounterMeshEvidence(anchor.bodyId, anchor.xPx, anchor.yPx, radius, matched, samples, hudExcluded)
     }
 
     private fun findSurface(view: View): SurfaceView? {

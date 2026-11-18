@@ -114,6 +114,7 @@ public:
     void SetLabMapView(bool enabled, double normalX, double normalY, double normalZ);
     void SetTouchDensity(double density);
     void SetFlightCamera(int mode);
+    void SetFlightTargetBodyId(const std::string& bodyId);
     std::optional<CameraSnapshot> ResolveRuntimeHomeCamera() const;
     std::optional<CameraSnapshot> ResolveRuntimeBodyFrame(const std::string& bodyId) const;
     std::optional<CameraTransitionFrame> ResolveRuntimeCameraTransition(const std::string& bodyId) const;
@@ -204,6 +205,7 @@ private:
     std::string runtimeSelectedBodyId_;
 
     int flightCameraMode_ = 0;
+    std::string flightTargetBodyId_;
     bool flightFramePending_ = false;
     bool labMapMode_ = false;
     double labMapYawRadians_ = 0.0;
