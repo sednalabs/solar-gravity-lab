@@ -14,8 +14,9 @@ inline uint64_t SceneContentIdentity(std::string_view sceneRevision) {
     // Match the Rust packet cache: extraction timings and dropped-frame counters
     // describe the renderer, not changed geometry. Re-uploading on those values
     // also clears completed compute readbacks before the UI can observe them.
+    // The final delimiter follows all content; an authored ID can contain it too.
     return static_cast<uint64_t>(std::hash<std::string_view>{}(
-        sceneRevision.substr(0, sceneRevision.find("|diag:"))));
+        sceneRevision.substr(0, sceneRevision.rfind("|diag:"))));
 }
 
 inline uint64_t SceneUploadRevision(uint64_t sceneIdentity, uint64_t cameraRevisionCounter,

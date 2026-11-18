@@ -170,6 +170,14 @@ void TestGpuBufferAndCommandReuse() {
         "scenario|epoch=0|body:earth@(4,2,3)|appearance:earth|diag:frame=0:cpu=0.131:gpu=0.000:drop=0"));
     assert(contentIdentity != SceneContentIdentity(
         "scenario|epoch=0|body:earth@(1,2,3)|appearance:moon|diag:frame=0:cpu=0.131:gpu=0.000:drop=0"));
+    // Authored names may contain the same marker. Only the final diagnostic
+    // suffix is volatile; content after an earlier literal marker still matters.
+    const auto authoredIdentity = SceneContentIdentity(
+        "scenario|body:probe|diag:first|position=(1,2,3)|diag:frame=0:cpu=0.131");
+    assert(authoredIdentity == SceneContentIdentity(
+        "scenario|body:probe|diag:first|position=(1,2,3)|diag:frame=0:cpu=0.947"));
+    assert(authoredIdentity != SceneContentIdentity(
+        "scenario|body:probe|diag:second|position=(1,2,3)|diag:frame=0:cpu=0.131"));
     // The explicit native frame term still invalidates an otherwise equal packet.
     assert(SceneUploadRevision(contentIdentity, 17, 0, 1, 0) !=
         SceneUploadRevision(contentIdentity ^ 60, 17, 0, 1, 0));
