@@ -5,6 +5,7 @@ pub use assembly::{
 };
 pub mod docking;
 pub mod rendezvous;
+pub mod science;
 pub use docking::{DockingAttachment, DockingGuidanceMode, DockingStatus, SpacecraftDockingState};
 pub use rendezvous::{
     RendezvousGuidance, RendezvousGuidanceMode, RendezvousStatus, SpacecraftRendezvousState,

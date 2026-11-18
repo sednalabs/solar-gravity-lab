@@ -2014,6 +2014,7 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
         | RuntimeError::InvalidPlaybackRate(_)
         | RuntimeError::InvalidBodyProperties | RuntimeError::BodyEditRequiresPause
         | RuntimeError::InvalidFlightState
+        | RuntimeError::ScientificFailure(_)
         | RuntimeError::UnknownCheckpoint(_)
         | RuntimeError::DuplicateCheckpoint(_)
         | RuntimeError::DuplicateBranch(_)

@@ -3,7 +3,7 @@ use super::*;
 use solarlab_domain::spacecraft::{add, magnitude, sub};
 use solarlab_domain::{AttitudeMode, SpacecraftAppearance, SpacecraftDockingState};
 use solarlab_physics::docking::{
-    desired_mating_attitude, observe, supports_guidance, DockingObservation,
+    desired_mating_attitude, observe, ports_compatible, supports_guidance, DockingObservation,
 };
 
 pub const DOCKING_STATION_BODY_ID: &str = "docking.station";
@@ -240,7 +240,6 @@ pub(super) fn valid_docking(
         return true;
     };
     if body.source_mass_kg != 0.0
-        || ship.appearance != SpacecraftAppearance::Asteria
         || ship.mission.is_some()
         || ship.rendezvous.is_some()
         || ship.burn_program.is_some()
@@ -325,7 +324,7 @@ pub(super) fn valid_docking(
     });
     valid_attachment_pose
         && target.source_mass_kg == 0.0
-        && target_ship.appearance == SpacecraftAppearance::RelayStation
+        && ports_compatible(ship, target_ship)
         && target_ship.docking.is_none()
         && target_ship.mission.is_none()
         && target_ship.rendezvous.is_none()

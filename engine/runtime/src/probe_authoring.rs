@@ -77,6 +77,7 @@ pub struct ProbePreviewPlan {
     candidate_radius_m: f64,
     bodies: Vec<BodyState>,
     configured_policy: PhysicsPolicy,
+    scientific_settings: ScientificSettings,
     lab_policy: Option<lab_step::LabStepPolicy>,
     cpu_features: Vec<String>,
     requested_horizon_seconds: f64,
@@ -150,6 +151,7 @@ impl WorldRuntime {
             candidate_radius_m,
             bodies,
             configured_policy: self.config.physics.clone(),
+            scientific_settings: world.scientific_settings.clone(),
             lab_policy,
             cpu_features: self.hardware_profile.cpu_features.clone(),
             requested_horizon_seconds: horizon_seconds,
@@ -310,7 +312,8 @@ impl WorldRuntime {
         }
         let mut bodies = self.active_branch().world.bodies.clone();
         bodies.push(candidate.clone());
-        if !finite_invariants(compute_world_invariants(&bodies)) {
+        if !scientific_flight::world_invariants(&bodies, self.scientific_settings())
+            .is_ok_and(finite_invariants) {
             return Err(ProbeAuthoringError::NumericalRange);
         }
         Ok(())
@@ -339,12 +342,13 @@ impl ProbePreviewPlan {
             }
             let next = next_epoch(epoch, self.interval_seconds)
                 .ok_or(ProbeAuthoringError::NumericalRange)?;
-            let (invariants, _) = advance_authoritative_with_features(
-                &policy,
+            let (invariants, _, _) = solarlab_physics::science::advance_authoritative_scientific(
+                &policy, &self.scientific_settings,
+                &self.bodies.iter().map(|b| b.body_id.clone()).collect::<Vec<_>>(),
                 &mut solver_bodies,
                 self.interval_seconds,
                 &self.cpu_features,
-            );
+            ).map_err(|_| ProbeAuthoringError::NumericalRange)?;
             if !finite_invariants(invariants)
                 || solver_bodies.iter().any(|body| {
                     !finite_vector(body.position_m) || !finite_vector(body.velocity_mps)
