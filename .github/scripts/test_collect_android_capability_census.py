@@ -9,6 +9,16 @@ import collect_android_capability_census as census
 
 
 class CensusInputBoundaryTests(unittest.TestCase):
+    def test_cpuinfo_report_does_not_claim_os_auxv_instruction_qualification(self) -> None:
+        rows = census.build_matrix([
+            census.Evidence("cpuinfo", "sme2"),
+            census.Evidence("auxv.AT_HWCAP2", "smef64"),
+        ])
+        by_name = {row["feature"]: row for row in rows}
+        self.assertTrue(by_name["sme2"]["detected"])
+        self.assertFalse(by_name["sme2"]["os_auxv_qualified"])
+        self.assertTrue(by_name["sme-f64f64"]["os_auxv_qualified"])
+
     def test_device_serial_does_not_become_a_shell_argument(self) -> None:
         serial = "192.0.2.1:5555"
         with patch.object(census.subprocess, "run") as run:

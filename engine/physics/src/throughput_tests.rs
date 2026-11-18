@@ -1,5 +1,97 @@
 use super::*;
 
+#[test]
+fn sme_fp64_eligibility_requires_the_optional_datatype_extension() {
+    for base in ["sme", "sme2"] {
+        let path = format!("simd.arm64.{base}-tiled-f64-candidate");
+        let missing = arm64_kernel_availability(&[base.to_owned()]);
+        assert!(missing.blocked_candidate_paths.contains(&path.as_str()));
+        let qualified = arm64_kernel_availability(&[base.to_owned(), "smef64".to_owned()]);
+        assert!(qualified.eligible_candidate_paths.contains(&path.as_str()));
+    }
+}
+
+#[test]
+fn arm64_auxv_decodes_optional_extensions_without_executing_them() {
+    let mut auxv = Vec::new();
+    for (kind, flags) in [
+        (16_u64, (1_u64 << 15) | (1 << 25) | (1 << 26)),
+        (26, (1 << 11) | (1 << 25) | (1 << 35) | (1 << 43)),
+        (0, 0),
+        (26, 1 << 37), // Entries after AT_NULL are not auxiliary-vector data.
+    ] {
+        auxv.extend_from_slice(&kind.to_ne_bytes());
+        auxv.extend_from_slice(&flags.to_ne_bytes());
+    }
+    auxv.extend_from_slice(&[1, 2, 3]); // A truncated trailing entry is ignored.
+    assert_eq!(
+        arm64_auxv_extension_names(&auxv),
+        ["rcpc", "lse2", "rcpc2", "sve-f64mm", "sme-f64f64", "rprfm", "mops"],
+    );
+    let flags = cpu_feature_flags(&[
+        "smef64".to_owned(), "svef64mm".to_owned(), "svebitperm".to_owned(),
+        "lrcpc".to_owned(), "ilrcpc".to_owned(), "uscat".to_owned(),
+    ]);
+    assert_eq!(flags, CPU_FEATURE_SME_F64F64 | CPU_FEATURE_SVE_F64MM |
+        CPU_FEATURE_SVE_BITPERM | CPU_FEATURE_RCPC | CPU_FEATURE_RCPC2 | CPU_FEATURE_LSE2);
+}
+
+/// Independently retain the pre-cache PR242 kernel as a bitwise oracle. This
+/// catches source packing, four-target register blocking and tail regressions
+/// that a loose scalar tolerance would conceal.
+#[cfg(target_arch = "aarch64")]
+#[test]
+#[allow(unsafe_code)]
+fn cached_passive_neon_is_bitwise_equal_to_pr242_for_every_tail_and_refresh() {
+    assert!(arm64_neon_runtime_available());
+    for count in (0..20).chain([256, 365, 1024]) {
+        for pattern in 0..4 {
+            let mut bodies = fixture(count, false);
+            for (index, body) in bodies.iter_mut().enumerate() {
+                if match pattern {
+                    0 => true,
+                    1 => index % 7 != 2,
+                    2 => index >= 3,
+                    _ => index + 3 < count,
+                } {
+                    body.mass_kg = 0.0;
+                }
+            }
+            let mut scratch = GravityScratch::default();
+            for sweep in 0..4 {
+                let sources = source_indices(&bodies);
+                let mut expected = vec![Vector3d::default(); count];
+                let mut actual = expected.clone();
+                // SAFETY: native AArch64 test checks the same runtime NEON
+                // precondition as production; all slices remain borrowed.
+                unsafe {
+                    arm64_neon::pairwise_gravity_accelerations_passive_streaming(
+                        &bodies, &sources, &mut expected,
+                    );
+                }
+                pairwise_gravity_accelerations_arm64_neon_passive_batch(
+                    &bodies, &sources, &mut actual, &mut scratch,
+                );
+                for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+                    assert_eq!(
+                        [actual.x.to_bits(), actual.y.to_bits(), actual.z.to_bits()],
+                        [expected.x.to_bits(), expected.y.to_bits(), expected.z.to_bits()],
+                        "count={count} pattern={pattern} sweep={sweep} body={index}",
+                    );
+                }
+                for body in &mut bodies {
+                    body.position_m.x += 123.5;
+                    body.position_m.y *= 0.875;
+                }
+                // Also reuse the scratch after source membership changes.
+                if let Some(body) = bodies.get_mut(sweep) {
+                    body.mass_kg = if body.mass_kg == 0.0 { 7.0e20 } else { 0.0 };
+                }
+            }
+        }
+    }
+}
+
 fn fixture(count: usize, sparse: bool) -> Vec<MassiveBodyState> {
     (0..count)
         .map(|index| MassiveBodyState {
@@ -465,9 +557,19 @@ fn neon_passive_batch_matches_symmetric_neon_for_sources_and_scalar_for_passives
                 &policy, 25.0, size, sources.len(), &features,
             ).expect("fixed source-aware plan");
             assert_eq!(plan.report().path_id, report.path_id);
-            advance_fixed_steps(&plan, &mut chunked, 9).unwrap();
-            advance_fixed_steps(&plan, &mut chunked, 16).unwrap();
+            // Cross the streaming/cache boundary without changing state bits.
+            advance_fixed_steps(&plan, &mut chunked, 7).unwrap();
+            advance_fixed_steps(&plan, &mut chunked, 8).unwrap();
+            advance_fixed_steps(&plan, &mut chunked, 10).unwrap();
             assert_eq!(chunked, batched, "staged/bulk must agree bitwise");
+            // One-step segments use the original allocation-free target
+            // traversal; a bulk segment uses the packed four-target cache.
+            // Switching that preparation policy must not alter any state bit.
+            let mut single_steps = initial.clone();
+            for _ in 0..25 {
+                advance_fixed_steps(&plan, &mut single_steps, 1).unwrap();
+            }
+            assert_eq!(single_steps, batched, "streaming/cached segments must agree bitwise");
         }
     }
 }

@@ -1,0 +1,11 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba8) uniform image2D attachment;
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(attachment)))) {
+        return;
+    }
+    vec4 source = imageLoad(attachment, pixel);
+    imageStore(attachment, pixel, vec4(vec3(1.0) - source.rgb, source.a));
+}

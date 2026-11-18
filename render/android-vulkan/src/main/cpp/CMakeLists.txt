@@ -7,10 +7,23 @@ add_library(
     SolarLabVulkanBridge.cpp
     SolarLabStageController.cpp
     SolarLabVulkanRenderer.cpp
+    SolarLabVulkanCapabilities.cpp
+    SolarLabVulkanDiagnostics.cpp
+    QcomTileMemory.cpp
 )
 
 target_compile_features(solarlab_vulkan PRIVATE cxx_std_20)
 target_compile_options(solarlab_vulkan PRIVATE -Wall -Wextra)
+
+option(SOLARLAB_CAPTURE_PIPELINE_STATISTICS "Capture driver compiler statistics for profiling" OFF)
+if(SOLARLAB_CAPTURE_PIPELINE_STATISTICS)
+    target_compile_definitions(solarlab_vulkan PRIVATE SOLARLAB_CAPTURE_PIPELINE_STATISTICS=1)
+endif()
+
+option(SOLARLAB_BUFFER_ADDRESS_COMPACTION "Use address-based medium compaction for device A/B qualification" OFF)
+if(SOLARLAB_BUFFER_ADDRESS_COMPACTION)
+    target_compile_definitions(solarlab_vulkan PRIVATE SOLARLAB_BUFFER_ADDRESS_COMPACTION=1)
+endif()
 
 # Limit the capability probe to configurations that can consume IPO. Android's
 # Debug configuration uses a cross-linker that cannot execute CMake's generic

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "SolarLabGpuReuse.h"
+#include "SolarLabVulkanCapabilities.h"
+#include "QcomTileMemory.h"
 
 #include <android/asset_manager.h>
 #include <android/native_window.h>
@@ -262,7 +264,12 @@ private:
         uint32_t tileCounterCount = 0;
         uint32_t reserved1 = 0;
         uint32_t reserved2 = 0;
+        VkDeviceAddress sourceAddress = 0;
+        VkDeviceAddress outputAddress = 0;
+        VkDeviceAddress drawAddress = 0;
     };
+    static_assert(sizeof(ComputePushConstants) == 40 && offsetof(ComputePushConstants, sourceAddress) == 16 &&
+        offsetof(ComputePushConstants, outputAddress) == 24 && offsetof(ComputePushConstants, drawAddress) == 32);
 
     struct GpuBuffer {
         VkBuffer buffer = VK_NULL_HANDLE;
@@ -270,6 +277,9 @@ private:
         VkDeviceSize sizeBytes = 0;
         VkBufferUsageFlags usage = 0;
         VkMemoryPropertyFlags memoryProperties = 0;
+        void* mapped = nullptr;
+        bool isTileMemory = false;
+        VkDeviceAddress deviceAddress = 0;
         uint64_t allocationGeneration = 0;
         const char* debugLabel = nullptr;
     };
@@ -372,6 +382,16 @@ private:
     bool CreateComputePipelines();
     bool AllocateAndRecordCommandBuffers();
     bool CreateSyncObjects();
+    void CmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags sourceStages,
+        VkPipelineStageFlags destinationStages, VkDependencyFlags flags,
+        uint32_t memoryCount, const VkMemoryBarrier* memory,
+        uint32_t bufferCount, const VkBufferMemoryBarrier* buffers,
+        uint32_t imageCount, const VkImageMemoryBarrier* images);
+    VkResult SubmitWithSynchronization2(VkCommandBuffer commandBuffer, VkFence fence,
+        VkSemaphore waitSemaphore = VK_NULL_HANDLE, VkSemaphore signalSemaphore = VK_NULL_HANDLE);
+    void InitialiseGpuProfiling();
+    void RefreshGpuTimingsLocked();
+    void CapturePipelineStatistics(VkPipeline pipeline, const char* label);
     void DestroySurfaceResources();
     void DestroyDepthResources();
     void Cleanup();
@@ -405,6 +425,7 @@ private:
         GpuBuffer& buffer);
     bool EnsureHostVisibleBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, GpuBuffer& buffer);
     bool EnsureDeviceLocalBuffer(VkDeviceSize sizeBytes, VkBufferUsageFlags usage, const char* label, bool reportErrors, GpuBuffer& buffer);
+    bool EnsureFarCounterBuffer(VkDeviceSize sizeBytes, GpuBuffer& buffer);
     StagingUploadSlot* AcquireStagingUploadSlot(bool reportErrors);
     bool SubmitStagingCopy(StagingUploadSlot& slot, const GpuBuffer& target, VkDeviceSize sizeBytes, bool reportErrors);
     void DestroyStagingUploadRing();
@@ -457,11 +478,39 @@ private:
     ANativeWindow* nativeWindow_ = nullptr;
 
     VkInstance instance_ = VK_NULL_HANDLE;
+    uint32_t instanceApiVersion_ = VK_API_VERSION_1_1;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkPhysicalDeviceFeatures supportedFeatures_{};
     VkPhysicalDeviceFeatures enabledFeatures_{};
     VkPhysicalDeviceProperties physicalDeviceProperties_{};
+    solarlab::rendering::VulkanCapabilities capabilities_;
+    solarlab::rendering::VulkanDeviceFeatures optionalFeatures_;
+    solarlab::rendering::QcomTileMemory qcomTileMemory_;
+    PFN_vkCmdPipelineBarrier2KHR cmdPipelineBarrier2_ = nullptr;
+    PFN_vkQueueSubmit2KHR queueSubmit2_ = nullptr;
+    PFN_vkGetBufferDeviceAddressKHR getBufferDeviceAddress_ = nullptr;
+    PFN_vkGetCalibratedTimestampsEXT getCalibratedTimestamps_ = nullptr;
+    PFN_vkGetPipelineExecutablePropertiesKHR getPipelineExecutableProperties_ = nullptr;
+    PFN_vkGetPipelineExecutableStatisticsKHR getPipelineExecutableStatistics_ = nullptr;
+    VkQueryPool timestampQueryPool_ = VK_NULL_HANDLE;
+    bool gpuTimingPending_ = false;
+    uint64_t gpuTimingSamples_ = 0;
+    double gpuFrameNs_ = 0.0;
+    double gpuPreGraphicsNs_ = 0.0;
+    uint64_t calibratedDeviceTicks_ = 0;
+    uint64_t calibratedHostNs_ = 0;
+    uint64_t calibratedMaxDeviationNs_ = 0;
+    uint64_t pipelineStatisticCount_ = 0;
+    uint64_t synchronization2Submissions_ = 0;
+    uint64_t persistentMappingCount_ = 0;
+    uint32_t pendingAccelerationPaths_ = 0;
+    uint64_t subgroupCompletedFrames_ = 0;
+    uint64_t bufferAddressCompletedFrames_ = 0;
+    uint64_t tileMemoryCompletedFrames_ = 0;
+    bool mediumSubgroupPipeline_ = false;
+    bool mediumBufferAddressPipeline_ = false;
+    bool farSubgroupPipeline_ = false;
     VkDevice device_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     uint32_t graphicsQueueFamilyIndex_ = UINT32_MAX;
@@ -515,6 +564,8 @@ private:
     size_t nextStagingUploadSlot_ = 0U;
 
     VkSemaphore imageAvailableSemaphore_ = VK_NULL_HANDLE;
-    VkSemaphore renderFinishedSemaphore_ = VK_NULL_HANDLE;
+    // Presentation completion is not implied by a rendering fence. Reacquiring
+    // each swapchain image makes its own presentation-wait semaphore reusable.
+    std::vector<VkSemaphore> renderFinishedSemaphores_;
     VkFence inFlightFence_ = VK_NULL_HANDLE;
 };
