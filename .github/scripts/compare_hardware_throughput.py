@@ -49,7 +49,8 @@ def read_measurements(path: Path) -> tuple[dict, dict]:
     return environments[0], measurements
 
 
-def compare(directory: Path) -> dict:
+def compare(directory: Path, workloads: set[str] | None = None) -> dict:
+    workloads = EXPECTED_WORKLOADS if workloads is None else workloads
     comparisons = []
     fixture_identity = None
     measurement_policy = None
@@ -68,7 +69,7 @@ def compare(directory: Path) -> dict:
                 if policy != measurement_policy or env["steps"] not in EXPECTED_SEGMENT_STEPS or env["samples"] != 11:
                     raise ValueError(f"{affinity}: inconsistent or unexpected measurement policy")
                 host_backend = {"aarch64": "SimdArm64", "x86_64": "SimdX64"}.get(env["arch"])
-                expected_keys = {(workload, backend) for workload in EXPECTED_WORKLOADS
+                expected_keys = {(workload, backend) for workload in workloads
                                  for backend in ("ReferenceScalar", host_backend)}
                 if host_backend is None or set(rows) != expected_keys:
                     raise ValueError(f"{affinity}: incomplete or unexpected workload/backend matrix")
@@ -91,6 +92,7 @@ def compare(directory: Path) -> dict:
                     "median_us": statistics.median(run[key]["median_us"] for run in variant_runs),
                     "median_of_p90_us": statistics.median(run[key]["p90_us"] for run in variant_runs),
                     "run_medians_us": [run[key]["median_us"] for run in variant_runs],
+                    "run_p90_us": [run[key]["p90_us"] for run in variant_runs],
                     "paths": sorted({run[key]["path"] for run in variant_runs}),
                     "active_workers": sorted({run[key]["active_workers"] for run in variant_runs}),
                     "max_abs_oracle_error": max(run[key]["max_abs_oracle_error"] for run in variant_runs),
@@ -110,6 +112,7 @@ def compare(directory: Path) -> dict:
         "method": "Same host/compiler, baseline-candidate-candidate-baseline; median of two run medians; eleven samples and warmup per run. Ratios below one mean less elapsed time.",
         "scope": "Hosted CPU throughput and scalar-oracle agreement only. No Galaxy, GPU, frame, energy or thermal acceptance.",
         "measurement_policy": measurement_policy,
+        "expected_workloads": sorted(workloads),
         "baseline_sha": (directory / "baseline-sha.txt").read_text().strip(),
         "candidate_sha": (directory / "candidate-sha.txt").read_text().strip(),
         "comparisons": comparisons,

@@ -9,7 +9,8 @@ from compare_hardware_throughput import EXPECTED_SEGMENT_STEPS, EXPECTED_WORKLOA
 
 
 class PairedThroughputTests(unittest.TestCase):
-    def fixture(self, directory: Path) -> None:
+    def fixture(self, directory: Path, workloads: set[str] | None = None) -> None:
+        workloads = EXPECTED_WORKLOADS if workloads is None else workloads
         (directory / "baseline-sha.txt").write_text("a" * 40)
         (directory / "candidate-sha.txt").write_text("b" * 40)
         for affinity in ("full", "one-cpu"):
@@ -19,7 +20,7 @@ class PairedThroughputTests(unittest.TestCase):
                                    "available_workers": 4 if affinity == "full" else 1,
                                    "samples": 11, "steps": 64}
                     rows = [environment]
-                    for workload in sorted(EXPECTED_WORKLOADS):
+                    for workload in sorted(workloads):
                         for backend in ("ReferenceScalar", "SimdArm64"):
                             rows.append({
                                 "kind": "measurement", "workload": workload, "requested": backend,
@@ -46,6 +47,22 @@ class PairedThroughputTests(unittest.TestCase):
             self.assertEqual(row["candidate_p90_over_baseline"], 0.75)
             self.assertEqual(row["scalar_control_ratio"], 0.8)
             self.assertEqual(row["normalised_ratio"], 1.0)
+
+    def test_explicit_dense_matrix_does_not_relax_the_default_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            dense = {"dense-192", "dense-256"}
+            self.fixture(directory, workloads=dense)
+            result = compare(directory, workloads=dense)
+            self.assertEqual(len(result["comparisons"]), 8)
+            self.assertEqual(result["expected_workloads"], sorted(dense))
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                compare(directory)
+            path = directory / "one-cpu-candidate-1.ndjson"
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
+            self.write_rows(path, rows[:-1])
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                compare(directory, workloads=dense)
 
     def test_rejects_absolute_error_fallback_wrong_fixture_and_invalid_tail(self) -> None:
         for mutation in (
