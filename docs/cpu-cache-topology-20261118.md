@@ -24,7 +24,12 @@ target still accumulates sources in ascending original order. Source/source
 forces and the odd scalar tail retain the original symmetric kernel. No
 reciprocal estimate, low-precision force arithmetic or horizontal source
 reduction has been introduced. The public path identifier remains
-`simd.arm64.neon-f64-passive-batch`, with the existing conservative dispatch.
+`simd.arm64.neon-f64-passive-batch`, with the existing conservative workload
+eligibility. Within that path, a **single-step segment** retains PR #242's
+allocation-free two-target traversal; longer segments use the packed four-target
+cache. This is a **provisional** segment policy: the one-step exception follows
+the measured preparation regression below, but counts 2/4/8/16/32 still require
+the expanded paired proof to establish the crossover. They are not yet qualified.
 
 The native Arm regression freezes the PR #242 kernel as an independent oracle
 and requires **bitwise** force agreement over all four-target tail sizes,
@@ -52,8 +57,13 @@ compares base `54b8d203` with candidate `2ca05d3a`: canonical/sparse medians
 improve 2.32%/1.84% under full affinity and 2.39%/1.89% on one CPU, with unchanged
 oracle errors and stable scalar controls. The dense-256 four-worker median is
 1.76% slower with substantial between-run variance; that limitation is retained.
-The final candidate also requires the one-step `short-segment` comparison, which
-uses the same binaries and reveals preparation costs hidden by 64-step amortisation.
+The [expanded paired result](../engine/physics/benchmarks/README.md#short-segment-qualification-run-44275712028)
+uses the same binaries at one and 64 steps. It reproduces the longer-segment gains
+but identifies a 1.87%/2.12% single-step sparse regression under full/one-CPU
+affinity. The single-step streaming exception addresses that concrete gap;
+exact-head paired proof must confirm its effect before qualification is claimed.
+The same proof measures cached candidates at 2/4/8/16/32 steps so the final
+amortisation threshold can follow evidence rather than assume count 2 is faster.
 
 ## Use actual topology and the Android scheduler
 

@@ -65,7 +65,9 @@ fn cached_passive_neon_is_bitwise_equal_to_pr242_for_every_tail_and_refresh() {
                 // SAFETY: native AArch64 test checks the same runtime NEON
                 // precondition as production; all slices remain borrowed.
                 unsafe {
-                    arm64_neon::passive_batch_uncached_reference(&bodies, &sources, &mut expected);
+                    arm64_neon::pairwise_gravity_accelerations_passive_streaming(
+                        &bodies, &sources, &mut expected,
+                    );
                 }
                 pairwise_gravity_accelerations_arm64_neon_passive_batch(
                     &bodies, &sources, &mut actual, &mut scratch,
@@ -558,6 +560,14 @@ fn neon_passive_batch_matches_symmetric_neon_for_sources_and_scalar_for_passives
             advance_fixed_steps(&plan, &mut chunked, 9).unwrap();
             advance_fixed_steps(&plan, &mut chunked, 16).unwrap();
             assert_eq!(chunked, batched, "staged/bulk must agree bitwise");
+            // One-step segments use the original allocation-free target
+            // traversal; a bulk segment uses the packed four-target cache.
+            // Switching that preparation policy must not alter any state bit.
+            let mut single_steps = initial.clone();
+            for _ in 0..25 {
+                advance_fixed_steps(&plan, &mut single_steps, 1).unwrap();
+            }
+            assert_eq!(single_steps, batched, "streaming/cached segments must agree bitwise");
         }
     }
 }

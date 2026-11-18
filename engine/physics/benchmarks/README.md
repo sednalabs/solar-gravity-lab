@@ -218,3 +218,44 @@ The uploaded artifact SHA256 is
 It retains immutable source IDs, binary hashes, compiler/CPU/affinity metadata,
 eight raw NDJSON runs and the comparison JSON/Markdown. This dated result is
 not a substitute for final-head validation or physical Oryon acceptance.
+
+### Short-segment qualification, run 44275712028
+
+Candidate `a6251811f5dc5d47c02ebb5d4ff50a5bdeddd7e8` was compared with the same
+baseline `54b8d2036b9a03cc4b9587be0b86113db5bbbe6a` using the paired protocol
+above. Each executable was reused for 64-step and one-step segments. The longer
+segments reproduce the gain: canonical medians fall 2.36%/2.37% under full/one-CPU
+affinity; sparse medians fall 1.80%/1.90%. The shorter segment exposes a cost:
+
+| Affinity | One-step workload | Baseline µs | Candidate µs | Median change | Scalar control change |
+| --- | --- | ---: | ---: | ---: | ---: |
+| All four allowed CPUs | Canonical 365 / 15 | 46.688 | 46.476 | −0.46% | −0.02% |
+| One allowed CPU | Canonical 365 / 15 | 46.707 | 46.517 | −0.41% | +0.05% |
+| All four allowed CPUs | Sparse 1,024 / 3 | 34.122 | 34.760 | +1.87% | +0.18% |
+| One allowed CPU | Sparse 1,024 / 3 | 34.108 | 34.831 | +2.12% | +0.13% |
+
+Both candidate repeats regress for the one-step sparse workload. The original
+allocation-free two-target traversal is therefore retained for **count == 1**;
+multi-step segments provisionally keep the packed four-target kernel. Bitwise
+force parity and one-step-versus-bulk state parity guard this dispatch change.
+Counts 2/4/8/16/32 remain unqualified; the expanded paired harness retains raw
+cached results there to establish the amortisation crossover before selecting
+the final threshold. These measurements precede that correction: its final
+source must be requalified with the same paired harness.
+
+Unchanged dense-256 medians increase 1.00% for 64 steps and 1.05% for one step
+with four workers, versus 0.19%/0.14% on one CPU. The 64-step full-affinity
+run medians span 8,881.633–9,015.558 µs at baseline and
+8,994.508–9,081.057 µs for the candidate. This parallel-path variability remains
+a limitation. Small one-CPU one-step scenes move approximately 1.2–1.5%, alongside
+scalar controls moving 1.4–1.5%; those figures do not demonstrate a changed
+NEON arithmetic cost. Every scalar-oracle check passes. The sparse maximum
+absolute discrepancy is 1.4551915228366852e−11 for 64 steps and
+1.1368683772161603e−13 for one step.
+
+Evidence: [native Arm job 134703167131](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44275712028/job/134703167131),
+[raw artifact 14414631616](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44275712028/artifacts/14414631616).
+Artifact SHA256: `f968034574fd13f0a2120398c4a0085ae43bbf2d65786fd22dcb4fb8c3b244c2`.
+The artifact contains both reports and all 16 raw ABBA executions with immutable
+source, binary, compiler and affinity metadata. It establishes hosted Arm
+behaviour, not Galaxy/Oryon, frame, energy or thermal acceptance.

@@ -1532,6 +1532,13 @@ fn integrate_fixed_steps_with_kernel(
     let sources = source_indices(bodies);
     let mut accelerations = vec![Vector3d::default(); bodies.len()];
     let mut scratch = GravityScratch::default();
+    #[cfg(target_arch = "aarch64")]
+    {
+        // One step has only two force sweeps. Keep the allocation-free PR242
+        // traversal here; paired native Arm proof found that preparing the
+        // packed cache costs more than it saves for the sparse 1024/3 scene.
+        scratch.stream_passive_targets = count == 1;
+    }
     gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
     let half_dt = 0.5 * dt_seconds;
     for _ in 0..count {
@@ -1669,6 +1676,8 @@ fn interaction_partners(
 
 #[derive(Default)]
 struct GravityScratch {
+    #[cfg(target_arch = "aarch64")]
+    stream_passive_targets: bool,
     #[cfg(target_arch = "aarch64")]
     passive_cache: passive_cache::PassiveCache,
     #[cfg(target_arch = "aarch64")]
@@ -1847,6 +1856,16 @@ fn pairwise_gravity_accelerations_arm64_neon_passive_batch(
     scratch: &mut GravityScratch,
 ) {
     assert!(arm64_neon_runtime_available(), "passive NEON path without CPU support");
+    if scratch.stream_passive_targets {
+        // SAFETY: the same checked NEON precondition applies to this original
+        // two-target kernel, and all slices stay borrowed through the sweep.
+        unsafe {
+            arm64_neon::pairwise_gravity_accelerations_passive_streaming(
+                bodies, sources, accelerations,
+            )
+        }
+        return;
+    }
     scratch.passive_cache.refresh(bodies, sources);
     // SAFETY: the checked NEON runtime feature is the sole ISA precondition.
     // All slices are owned by the caller for the full acceleration sweep.
@@ -2106,9 +2125,8 @@ mod arm64_neon {
     /// backreaction identically zero, uses full-precision sqrt/div/FMA and
     /// avoids the scatter of the ordinary source/passive pair path.
     /// No reciprocal estimate, FP32, FP16 or reordered source reduction.
-    #[cfg(test)]
     #[target_feature(enable = "neon")]
-    pub unsafe fn passive_batch_uncached_reference(
+    pub unsafe fn pairwise_gravity_accelerations_passive_streaming(
         bodies: &[MassiveBodyState],
         sources: &[usize],
         accelerations: &mut [Vector3d],
