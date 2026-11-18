@@ -58,6 +58,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -456,11 +457,14 @@ private data class FlightUiActions(
 
 @Composable
 private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above Earth", FlightTags.ALTITUDE)
-        FlightInstrument("ORBITAL SPEED", sample?.speedMps?.let { "%.2f km/s".format(Locale.US, it / 1_000) } ?: "—", "relative to Earth")
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above Earth", FlightTags.ALTITUDE,
+            Modifier.weight(1f))
+        FlightInstrument("ORBITAL SPEED", sample?.speedMps?.let { "%.2f km/s".format(Locale.US, it / 1_000) } ?: "—", "relative to Earth",
+            modifier = Modifier.weight(1f))
         FlightInstrument("APOAPSIS", sample?.apoapsisAltitudeM?.let(::flightDistance)
-            ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—", "highest altitude", FlightTags.APOAPSIS)
+            ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—", "highest altitude", FlightTags.APOAPSIS,
+            Modifier.weight(1f))
     }
 }
 
@@ -539,11 +543,22 @@ private fun FlightTimeBar(ready: Boolean, paused: Boolean, rate: Double, coastin
 }
 
 @Composable
-private fun FlightInstrument(label: String, value: String, detail: String, tag: String? = null) {
-    Column(Modifier.then(if (tag == null) Modifier else Modifier.testTag(tag))) {
-        Text(label, color = FlightMuted, fontSize = 8.sp, lineHeight = 10.sp, letterSpacing = .8.sp)
-        Text(value, color = FlightInk, fontSize = 19.sp, lineHeight = 23.sp, fontWeight = FontWeight.Light, fontFamily = FontFamily.SansSerif, maxLines = 1)
-        Text(detail, color = FlightMuted, fontSize = 9.sp, lineHeight = 11.sp, maxLines = 1)
+private fun FlightInstrument(label: String, value: String, detail: String, tag: String? = null, modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier.then(if (tag == null) Modifier else Modifier.testTag(tag))) {
+        // Lunar distances must remain readable alongside the other instruments.
+        // Fixed column widths also prevent a long apoapsis from pushing altitude
+        // outside the screen. Size from constraints, never a layout-state loop.
+        val valueSize = when {
+            maxWidth < 110.dp -> 14.sp
+            maxWidth < 150.dp -> 16.sp
+            else -> 19.sp
+        }
+        Column {
+            Text(label, color = FlightMuted, fontSize = 8.sp, lineHeight = 10.sp, letterSpacing = .8.sp, maxLines = 1)
+            Text(value, color = FlightInk, fontSize = valueSize, lineHeight = 23.sp, fontWeight = FontWeight.Light,
+                fontFamily = FontFamily.SansSerif, maxLines = 1)
+            Text(detail, color = FlightMuted, fontSize = 9.sp, lineHeight = 11.sp, maxLines = 1)
+        }
     }
 }
 
@@ -581,7 +596,8 @@ private fun FlightHoldButton(label: String, tag: String, modifier: Modifier, ena
         }, color = if (pressed) Color(0xFF2C6265) else Color(0xFF152B39),
         shape = RoundedCornerShape(9.dp), border = BorderStroke(1.dp, FlightLine)) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, color = if (enabled) FlightInk else FlightMuted.copy(alpha = .4f), fontSize = 10.sp, maxLines = 1)
+            Text(label, Modifier.padding(horizontal = 2.dp), color = if (enabled) FlightInk else FlightMuted.copy(alpha = .4f),
+                fontSize = 10.sp, lineHeight = 12.sp, textAlign = TextAlign.Center, maxLines = 2)
         }
     }
 }

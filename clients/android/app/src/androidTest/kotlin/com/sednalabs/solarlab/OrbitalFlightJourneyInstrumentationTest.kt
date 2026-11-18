@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -51,6 +52,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 /** Actual JNI/world/Vulkan journey. No shell physics or mocked spacecraft transport. */
 @RunWith(AndroidJUnit4::class)
@@ -98,10 +100,18 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals(initial.totalMassKg, body.massKg, 1e-9)
         composeRule.onNodeWithTag(FlightTags.ALTITUDE).assertIsDisplayed()
         composeRule.onNodeWithTag(FlightTags.THROTTLE).assertIsDisplayed()
-        capture("flight-portrait-orbit.png")
+        capture("flight-portrait-orbit.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
-        capture("flight-initial-chase.png")
+        capture("flight-initial-chase.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(1)).performClick()
+        capture("flight-orbit-after-chase.png", requireCloseShip = true)
+        try {
+            assertTrue(SolarLabSemanticActionBridge.submit(SolarLabSemanticAction.ResetCamera))
+            composeRule.mainClock.advanceTimeByFrame()
+            capture("flight-camera-reset.png", requireCloseShip = true)
+        } finally {
+            SolarLabSemanticActionBridge.clearPendingReplay()
+        }
         composeRule.onNodeWithTag(FlightTags.CHECKPOINT).performClick()
         waitUntil { facade.uiState.value.activeCheckpointId?.startsWith("flight.mark.") == true }
         val marked = flight(facade)
@@ -122,7 +132,7 @@ class OrbitalFlightJourneyInstrumentationTest {
             assertTrue("Prograde thrust must raise apoapsis", requireNotNull(burned.apoapsisAltitudeM) > requireNotNull(marked.apoapsisAltitudeM) + 1.0)
             composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
             composeRule.mainClock.advanceTimeBy(300)
-            capture("flight-chase-after-burn.png")
+            capture("flight-chase-after-burn.png", requireCloseShip = true)
             composeRule.onNodeWithTag(FlightTags.camera(0)).performClick()
             composeRule.mainClock.advanceTimeBy(300)
             assertFlightMap(minimumRadiusM = 10_000_000.0, anchorIds = listOf("earth"))
@@ -159,7 +169,10 @@ class OrbitalFlightJourneyInstrumentationTest {
         val retained = composeRule.activity.runtimeFacadeForTesting
         assertEquals(0.0, flight(retained).commandedThrottle, 0.0)
         composeRule.onNodeWithTag(FlightTags.camera(1)).performClick()
-        capture("flight-resumed.png")
+        capture("flight-resumed.png", requireCloseShip = true)
+        composeRule.activityRule.scenario.recreate()
+        waitUntil { nodes(FlightTags.ROOT) }
+        capture("flight-recreated-orbit.png", requireCloseShip = true)
         composeRule.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
         waitUntil { composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && nodes(FlightTags.ROOT) }
         composeRule.onNodeWithTag(FlightTags.THROTTLE).assertIsDisplayed()
@@ -167,7 +180,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         val viewport = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInRoot
         val density = composeRule.activity.resources.displayMetrics.density
         assertTrue("Landscape flight must leave a usable central scene", viewport.height > 120 * density && viewport.width > 200 * density)
-        capture("flight-landscape.png")
+        capture("flight-landscape.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.EXIT).performClick()
         waitUntil { nodes(LabTags.ROOT) && !nodes(FlightTags.ROOT) }
         assertTrue(composeRule.activity.runtimeFacadeForTesting.uiState.value.snapshot?.paused == true)
@@ -192,7 +205,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals(0.0, initial.elapsedSeconds, 0.0)
         assertEquals(300.0, initial.plannedBurnSeconds, 0.0)
         assertEquals(0.0, requireNotNull(runBlocking { facade.inspectBody(REFERENCE_SPACECRAFT_ID) }).sourceMassKg, 0.0)
-        capture("lunar-departure-ready.png")
+        capture("lunar-departure-ready.png", requireCloseShip = true)
         composeRule.mainClock.autoAdvance = false
         composeRule.onNodeWithTag(LunarFlightTags.BURN).assertIsEnabled().performClick()
         waitUntil { mission(facade).guidedBurnActive }
@@ -250,7 +263,8 @@ class OrbitalFlightJourneyInstrumentationTest {
         predicate()
     }
 
-    private fun capture(name: String) {
+    private fun capture(name: String, requireCloseShip: Boolean = false) {
+        if (requireCloseShip) assertCloseFlightView(name)
         var surface: SurfaceView? = null
         var submitted: LabViewportState? = null
         waitUntil {
@@ -290,8 +304,62 @@ class OrbitalFlightJourneyInstrumentationTest {
             }
         }
         assertEquals("An actual native stage buffer is required: $name; statuses=$attempts", PixelCopy.SUCCESS, status)
-        writeImage(name.removeSuffix(".png") + "-stage.png", requireNotNull(stage))
-        writeImage(name, requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()))
+        val nativeImage = requireNotNull(stage)
+        try {
+            val windowImage = if (requireCloseShip) captureMatchingWindow(name, native, nativeImage)
+                else requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            writeImage(name, windowImage)
+        } finally {
+            // Preserve the genuine native buffer even if compositor synchronisation
+            // fails, so a stale window capture cannot conceal a correct/incorrect stage.
+            writeImage(name.removeSuffix(".png") + "-stage.png", nativeImage)
+        }
+    }
+
+    private fun captureMatchingWindow(name: String, surface: SurfaceView, stage: Bitmap): Bitmap {
+        val origin = IntArray(2)
+        composeRule.runOnUiThread { surface.getLocationOnScreen(origin) }
+        // Sample lit native pixels below the camera/mission overlays. Matching the
+        // entire image would also compare Compose chrome absent from PixelCopy.
+        val samples = buildList {
+            for (y in stage.height * 52 / 100 until stage.height * 9 / 10 step (stage.height / 64).coerceAtLeast(1)) {
+                for (x in stage.width / 10 until stage.width * 9 / 10 step (stage.width / 64).coerceAtLeast(1)) {
+                    val colour = stage.getPixel(x, y)
+                    if (maxOf(Color.red(colour), Color.green(colour), Color.blue(colour)) >= 40) add(Triple(x, y, colour))
+                }
+            }
+        }
+        assertTrue("Close flight must render measurable native geometry: $name; lit samples=${samples.size}", samples.size >= 12)
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        var lastImage: Bitmap? = null
+        var matched = 0
+        var attempt = 0
+        while (SystemClock.uptimeMillis() < deadline) {
+            lastImage?.recycle()
+            val candidate = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            lastImage = candidate
+            matched = samples.count { (x, y, expected) ->
+                val screenX = origin[0] + x
+                val screenY = origin[1] + y
+                if (screenX !in 0 until candidate.width || screenY !in 0 until candidate.height) false else {
+                    val actual = candidate.getPixel(screenX, screenY)
+                    maxOf(abs(Color.red(actual) - Color.red(expected)), abs(Color.green(actual) - Color.green(expected)),
+                        abs(Color.blue(actual) - Color.blue(expected))) <= 20
+                }
+            }
+            attempt += 1
+            Log.i("SolarLabFlightEvidence", "$name window attempt=$attempt nativeMatches=$matched/${samples.size} " +
+                "surfaceOrigin=${origin[0]},${origin[1]}")
+            // Permit colour-space rounding and a minority of overlay/edge pixels,
+            // but reject a previous distant/map frame presented by the compositor.
+            if (matched * 4 >= samples.size * 3) return candidate
+            composeRule.runOnUiThread { composeRule.activity.window.decorView.postInvalidateOnAnimation() }
+            if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeByFrame()
+            SystemClock.sleep((deadline - SystemClock.uptimeMillis()).coerceIn(0, 80))
+        }
+        lastImage?.let { writeImage(name.removeSuffix(".png") + "-window-unsynchronised.png", it) }
+        throw AssertionError("Window compositor did not present the current native flight view: $name; " +
+            "matched=$matched/${samples.size}, attempts=$attempt")
     }
 
     private fun findSurface(view: View): SurfaceView? {
@@ -323,6 +391,36 @@ class OrbitalFlightJourneyInstrumentationTest {
             }
         }
         assertEquals("Framing the host world must retain the controlled spacecraft", REFERENCE_SPACECRAFT_ID, selected)
+    }
+
+    private fun assertCloseFlightView(label: String) {
+        var stableSince = 0L
+        var diagnostic = "No submitted viewport"
+        try {
+            waitUntil {
+                var framed = false
+                composeRule.runOnUiThread {
+                    val host = findHost(composeRule.activity.window.decorView)
+                    val frame = host?.currentLabViewportState()
+                    val ship = frame?.bodies?.firstOrNull { it.bodyId == REFERENCE_SPACECRAFT_ID }
+                    if (host != null && frame != null && ship != null) {
+                        val centreDistance = labLength(frame.camera.centerM - ship.worldPositionM)
+                        diagnostic = "radius=${frame.camera.viewRadiusM}m centreDistance=${centreDistance}m " +
+                            "ship=(${ship.xPx},${ship.yPx}) radiusPx=${ship.radiusPx} occluded=${ship.occluded} " +
+                            "viewport=${frame.widthPx}x${frame.heightPx} selection=${host.selectedBodyId()}"
+                        framed = host.selectedBodyId() == REFERENCE_SPACECRAFT_ID &&
+                            frame.camera.viewRadiusM in 8.0..100.0 && centreDistance < 100.0 &&
+                            !ship.occluded && ship.radiusPx >= 12f &&
+                            ship.xPx >= 0f && ship.xPx <= frame.widthPx && ship.yPx >= 0f && ship.yPx <= frame.heightPx
+                    }
+                }
+                if (!framed) stableSince = 0L
+                else if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
+                framed && SystemClock.uptimeMillis() - stableSince >= 500L
+            }
+        } catch (failure: Throwable) {
+            throw AssertionError("$label must keep a visible, close, spacecraft-centred native view: $diagnostic", failure)
+        }
     }
 
     private fun writeImage(name: String, image: Bitmap) {

@@ -162,7 +162,7 @@ internal fun LunarMissionDetailsDialog(mission: LunarMissionState, onDismiss: ()
             Text("Moon-relative speed: %.1f m/s\n%s".format(Locale.US, mission.moonRelativeSpeedMps, lunarRangeRate(mission.moonRangeRateMps)))
             Text("Closest observed: ${flightDistance(mission.closestObservedMoonAltitudeM)}\nAt flight +${lunarElapsedTime(mission.closestObservedEpochSeconds - mission.launchEpochSeconds)}")
             Text("Reference flyby window: +${lunarElapsedTime(mission.expectedFlybyWindowStartSeconds)} to +${lunarElapsedTime(mission.expectedFlybyWindowEndSeconds)}", fontSize = 12.sp)
-            Text("The guided departure uses real thrust and propellant. Manual engine or attitude input cancels it; Resume burn uses the native remaining engine time. Coast slows near the Moon and pauses when an outcome is observed.", fontSize = 12.sp, lineHeight = 18.sp)
+            Text("The guided departure uses real thrust and propellant. Manual engine or attitude input cancels it; Resume burn uses the remaining engine time. Coast slows near the Moon and pauses when an outcome is observed.", fontSize = 12.sp, lineHeight = 18.sp)
             Text("A flyby succeeds after passing the Moon between 8 m and 1,000 km above its surface. Surface crossings are mission failures; contact, landing and terrain response are not simulated.", fontSize = 12.sp, lineHeight = 18.sp)
         } }, confirmButton = { TextButton(onClick = onDismiss) { Text("Return to flight") } })
 }
@@ -173,7 +173,7 @@ private fun lunarMissionGuidance(mission: LunarMissionState): String = when (mis
     LunarMissionOutcome.EarthSurfaceCrossing -> "The trajectory crossed Earth’s surface. Reset a checkpoint or start a new mission."
     LunarMissionOutcome.Missed -> "The four-day flight window ended without the target flyby. Review the flight or try a fresh departure."
     LunarMissionOutcome.InProgress -> when {
-        mission.guidedBurnActive -> "Prograde departure under native guidance. CUT always takes control back."
+        mission.guidedBurnActive -> "Guided prograde departure. CUT always takes control back."
         mission.departureRemainingSeconds > 0.001 -> "Start the guided prograde burn to depart Earth. Keep the engine off while coasting."
         mission.phase == LunarMissionPhase.LunarApproach -> "Approaching the Moon. Coast at 100× to watch the flyby unfold."
         else -> "Departure complete. Coast towards the Moon; time slows automatically on approach."

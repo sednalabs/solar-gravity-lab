@@ -276,6 +276,14 @@ internal class SolarSystemVulkanSurfaceView @JvmOverloads constructor(
 
     override fun resetCamera() {
         cancelCameraTransition()
+        if (isRuntimeBound() && flightCameraMode != 0) {
+            // Close flight owns its ship frame. The ordinary animated Home query
+            // resolves a laboratory overview and would bypass the native flight
+            // reset guard by applying each animation sample through setCamera.
+            serializedRenderer.execute { handle -> SolarLabVulkanBridge.resetRuntimeCamera(handle) }
+            renderLatestScene()
+            return
+        }
         val request = cameraTransitionGeneration
         switchToFreeCameraForManualNavigation()
         if (isRuntimeBound()) {

@@ -294,14 +294,32 @@ class LabCameraMotionInstrumentationTest {
         point.x > 6f && point.y > 6f && point.x < view.widthPx - 6 && point.y < view.heightPx - 6
 
     private fun setAllTracesVisible(visible: Boolean) {
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
-        val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
-        repeat(2) {
-            val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
-            if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) node.performClick()
+        val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        // The stress scene continues submitting native frames while this menu is
+        // open. Qualify each control state on explicit Compose frames instead of
+        // requiring the entire renderer and sheet to become globally idle.
+        composeRule.mainClock.autoAdvance = false
+        try {
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
+            composeRule.mainClock.advanceTimeBy(400)
+            val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
+            repeat(2) {
+                val node = composeRule.onNodeWithTag(tag).performScrollToIfPossible()
+                composeRule.mainClock.advanceTimeBy(400)
+                if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) node.performClick()
+                composeRule.mainClock.advanceTimeBy(64)
+            }
+            composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible()
+            composeRule.mainClock.advanceTimeBy(400)
+            composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeBy(32)
+                composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            composeRule.mainClock.autoAdvance = previousAutoAdvance
         }
-        composeRule.onNodeWithTag(LabTags.TOOLS_CLOSE).performScrollToIfPossible().performClick()
-        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty() }
     }
 
     private fun computeFields(status: String, stream: String): Map<String, String> {
