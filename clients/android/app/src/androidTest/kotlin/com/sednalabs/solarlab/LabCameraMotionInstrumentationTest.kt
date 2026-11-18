@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.PixelCopy
@@ -98,16 +99,21 @@ class LabCameraMotionInstrumentationTest {
                     abs(it.camera.pitchRadians - camera.pitchRadians) < 1e-6 } == true
             }
             proveComputeProjectionAndReuse("compute-portrait")
+            Log.i("SolarLabCameraEvidence", "Portrait compute and native pixel proof passed; rotating")
 
             composeRule.runOnUiThread { composeRule.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             composeRule.waitUntil(25_000) {
                 viewport()?.let { it.widthPx > it.heightPx && abs(it.camera.viewRadiusM - COMPUTE_RADIUS_M) < 1.0 } == true
             }
+            Log.i("SolarLabCameraEvidence", "Landscape viewport retained the compute camera")
             proveComputeProjectionAndReuse("compute-landscape")
             assertEquals("Render stress and resize cannot advance the paused world", pausedEpoch, facade.uiState.value.snapshot!!.epochSeconds, 0.0)
             proof.put("scenario", "stress.trail-density").put("epochSeconds", pausedEpoch).put("passed", true)
         } catch (error: Throwable) {
             proof.put("passed", false).put("failure", error.toString()).put("rendererAtFailure", rendererStatus())
+            Log.e("SolarLabCameraEvidence", "Native compute journey failed before diagnostic capture", error)
+            // Record the original failure before any best-effort image capture.
+            runCatching { writeJson("compute-proof.json", proof) }
             runCatching { capture("compute-failure.png") }
             throw error
         } finally {
@@ -294,6 +300,7 @@ class LabCameraMotionInstrumentationTest {
         point.x > 6f && point.y > 6f && point.x < view.widthPx - 6 && point.y < view.heightPx - 6
 
     private fun setAllTracesVisible(visible: Boolean) {
+        Log.i("SolarLabCameraEvidence", "Setting trace visibility=$visible")
         val previousAutoAdvance = composeRule.mainClock.autoAdvance
         // The stress scene continues submitting native frames while this menu is
         // open. Qualify each control state on explicit Compose frames instead of
@@ -317,6 +324,7 @@ class LabCameraMotionInstrumentationTest {
                 composeRule.mainClock.advanceTimeBy(32)
                 composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
             }
+            Log.i("SolarLabCameraEvidence", "Trace visibility=$visible; tools dismissed")
         } finally {
             composeRule.mainClock.autoAdvance = previousAutoAdvance
         }
@@ -540,7 +548,21 @@ class LabCameraMotionInstrumentationTest {
     }
 
     private fun copyStageBitmap(): Bitmap {
-        instrumentation.waitForIdleSync()
+        // The stress renderer is deliberately live. Waiting for the entire main
+        // Looper to become idle can block forever even though a native frame is
+        // ready. Qualify the actual surface and submitted viewport instead.
+        Log.i("SolarLabCameraEvidence", "Waiting for submitted native surface before PixelCopy")
+        composeRule.waitUntil(15_000) {
+            var submitted = false
+            composeRule.runOnUiThread {
+                val surface = findSurface(composeRule.activity.window.decorView)
+                val frame = findHost(composeRule.activity.window.decorView)?.currentLabViewportState()
+                submitted = surface != null && surface.isShown && surface.holder.surface.isValid &&
+                    surface.width > 0 && surface.height > 0 && frame != null &&
+                    frame.widthPx == surface.width && frame.heightPx == surface.height
+            }
+            submitted && facade.uiState.value.renderStatus.readiness == RenderHostReadiness.Ready
+        }
         val latch = CountDownLatch(1)
         var result = PixelCopy.ERROR_UNKNOWN
         lateinit var stage: Bitmap
@@ -551,6 +573,7 @@ class LabCameraMotionInstrumentationTest {
         }
         assertTrue("Native stage copy should complete", latch.await(10, TimeUnit.SECONDS))
         assertEquals("Native surface should be capturable", PixelCopy.SUCCESS, result)
+        Log.i("SolarLabCameraEvidence", "Native PixelCopy completed: ${stage.width}x${stage.height}")
         return stage
     }
 

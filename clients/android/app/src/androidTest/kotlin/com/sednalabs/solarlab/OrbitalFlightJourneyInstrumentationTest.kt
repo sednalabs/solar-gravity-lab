@@ -279,91 +279,95 @@ class OrbitalFlightJourneyInstrumentationTest {
                 frame.bodies.any { it.bodyId == REFERENCE_SPACECRAFT_ID }
         }
         val native = requireNotNull(surface)
-        // Decoded scene readiness is earlier than presentation. A submitted native
-        // viewport qualifies the current surface; its buffer may still be waiting
-        // on the compositor fence. Retry only those two transient acquisition errors.
         val deadline = SystemClock.uptimeMillis() + 8_000
         var stage: Bitmap? = null
-        var status = PixelCopy.ERROR_SOURCE_NO_DATA
-        val attempts = mutableListOf<Int>()
-        while (stage == null && SystemClock.uptimeMillis() < deadline) {
-            val image = Bitmap.createBitmap(native.width, native.height, Bitmap.Config.ARGB_8888)
-            val completed = CountDownLatch(1)
-            PixelCopy.request(native, image, { status = it; completed.countDown() }, Handler(Looper.getMainLooper()))
-            val remainingMs = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
-            assertTrue("Native flight PixelCopy callback exceeded its bounded deadline: $name; previous statuses=$attempts",
-                completed.await(remainingMs, TimeUnit.MILLISECONDS))
-            attempts += status
-            Log.i("SolarLabFlightEvidence", "$name native=${native.width}x${native.height} " +
-                "submittedRadius=${submitted?.camera?.viewRadiusM} PixelCopy=$status attempts=${attempts.size}")
-            if (status == PixelCopy.SUCCESS) stage = image else {
-                image.recycle()
-                if (status != PixelCopy.ERROR_SOURCE_NO_DATA && status != PixelCopy.ERROR_TIMEOUT) break
-                val retryDelay = (deadline - SystemClock.uptimeMillis()).coerceIn(0, 80)
-                if (retryDelay > 0) SystemClock.sleep(retryDelay)
-            }
-        }
-        assertEquals("An actual native stage buffer is required: $name; statuses=$attempts", PixelCopy.SUCCESS, status)
-        val nativeImage = requireNotNull(stage)
+        var window: Bitmap? = null
+        var matched = false
+        var matchCount = 0
+        var sampleCount = 0
+        var attempt = 0
         try {
-            val windowImage = if (requireCloseShip) captureMatchingWindow(name, native, nativeImage)
-                else requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
-            writeImage(name, windowImage)
+            while (SystemClock.uptimeMillis() < deadline) {
+                stage?.recycle()
+                stage = null
+                window?.recycle()
+                window = null
+                // Both acquisitions must be fresh. PixelCopy may initially return
+                // the preceding Orbit buffer while the window already shows Chase;
+                // retrying only the window would compare against that stale buffer forever.
+                val nativeImage = copyNativeImage(native, name, deadline)
+                stage = nativeImage
+                val origin = IntArray(2)
+                composeRule.runOnUiThread { native.getLocationOnScreen(origin) }
+                val windowImage = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+                window = windowImage
+                attempt += 1
+                if (requireCloseShip) {
+                    val matches = nativeWindowMatches(nativeImage, windowImage, origin)
+                    matchCount = matches.first
+                    sampleCount = matches.second
+                    // Retain the same geometry and colour-match requirements.
+                    matched = sampleCount >= 12 && matchCount * 4 >= sampleCount * 3
+                } else matched = true
+                Log.i("SolarLabFlightEvidence", "$name pair=$attempt native=${native.width}x${native.height} " +
+                    "submittedRadius=${submitted?.camera?.viewRadiusM} nativeMatches=$matchCount/$sampleCount " +
+                    "surfaceOrigin=${origin[0]},${origin[1]}")
+                if (matched) break
+                composeRule.runOnUiThread { composeRule.activity.window.decorView.postInvalidateOnAnimation() }
+                if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeByFrame()
+                SystemClock.sleep((deadline - SystemClock.uptimeMillis()).coerceIn(0, 80))
+            }
+            assertTrue("Native stage and window did not converge: $name; matched=$matchCount/$sampleCount, pairs=$attempt", matched)
         } finally {
-            // Preserve the genuine native buffer even if compositor synchronisation
-            // fails, so a stale window capture cannot conceal a correct/incorrect stage.
-            writeImage(name.removeSuffix(".png") + "-stage.png", nativeImage)
+            // Keep the actual pair on failure as well as success. Never paste a
+            // native buffer into window evidence or substitute a previous capture.
+            stage?.let { writeImage(name.removeSuffix(".png") + "-stage.png", it) }
+            window?.let { writeImage(if (matched) name else name.removeSuffix(".png") + "-window-unsynchronised.png", it) }
         }
     }
 
-    private fun captureMatchingWindow(name: String, surface: SurfaceView, stage: Bitmap): Bitmap {
-        val origin = IntArray(2)
-        composeRule.runOnUiThread { surface.getLocationOnScreen(origin) }
-        // Sample lit native pixels below the camera/mission overlays. Matching the
-        // entire image would also compare Compose chrome absent from PixelCopy.
-        val samples = buildList {
-            for (y in stage.height * 52 / 100 until stage.height * 9 / 10 step (stage.height / 64).coerceAtLeast(1)) {
-                for (x in stage.width / 10 until stage.width * 9 / 10 step (stage.width / 64).coerceAtLeast(1)) {
-                    val colour = stage.getPixel(x, y)
-                    if (maxOf(Color.red(colour), Color.green(colour), Color.blue(colour)) >= 40) add(Triple(x, y, colour))
-                }
-            }
-        }
-        assertTrue("Close flight must render measurable native geometry: $name; lit samples=${samples.size}", samples.size >= 12)
-        val deadline = SystemClock.uptimeMillis() + 8_000
-        var lastImage: Bitmap? = null
-        var matched = 0
-        var attempt = 0
+    private fun copyNativeImage(surface: SurfaceView, name: String, deadline: Long): Bitmap {
+        var status = PixelCopy.ERROR_SOURCE_NO_DATA
+        val attempts = mutableListOf<Int>()
         while (SystemClock.uptimeMillis() < deadline) {
-            lastImage?.recycle()
-            val candidate = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
-            lastImage = candidate
-            matched = samples.count { (x, y, expected) ->
-                val screenX = origin[0] + x
-                val screenY = origin[1] + y
-                if (screenX !in 0 until candidate.width || screenY !in 0 until candidate.height) false else {
-                    val actual = candidate.getPixel(screenX, screenY)
-                    maxOf(abs(Color.red(actual) - Color.red(expected)), abs(Color.green(actual) - Color.green(expected)),
-                        abs(Color.blue(actual) - Color.blue(expected))) <= 20
-                }
-            }
-            attempt += 1
-            Log.i("SolarLabFlightEvidence", "$name window attempt=$attempt nativeMatches=$matched/${samples.size} " +
-                "surfaceOrigin=${origin[0]},${origin[1]}")
-            // Permit colour-space rounding and a minority of overlay/edge pixels,
-            // but reject a previous distant/map frame presented by the compositor.
-            if (matched * 4 >= samples.size * 3) return candidate
-            composeRule.runOnUiThread { composeRule.activity.window.decorView.postInvalidateOnAnimation() }
-            if (!composeRule.mainClock.autoAdvance) composeRule.mainClock.advanceTimeByFrame()
+            val image = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
+            val completed = CountDownLatch(1)
+            PixelCopy.request(surface, image, { status = it; completed.countDown() }, Handler(Looper.getMainLooper()))
+            val remainingMs = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
+            assertTrue("Native flight PixelCopy callback exceeded its bounded deadline: $name; statuses=$attempts",
+                completed.await(remainingMs, TimeUnit.MILLISECONDS))
+            attempts += status
+            if (status == PixelCopy.SUCCESS) return image
+            image.recycle()
+            if (status != PixelCopy.ERROR_SOURCE_NO_DATA && status != PixelCopy.ERROR_TIMEOUT) break
             SystemClock.sleep((deadline - SystemClock.uptimeMillis()).coerceIn(0, 80))
         }
-        lastImage?.let { writeImage(name.removeSuffix(".png") + "-window-unsynchronised.png", it) }
-        throw AssertionError("Window compositor did not present the current native flight view: $name; " +
-            "matched=$matched/${samples.size}, attempts=$attempt")
+        throw AssertionError("An actual native stage buffer is required: $name; statuses=$attempts, last=$status")
+    }
+
+    private fun nativeWindowMatches(stage: Bitmap, window: Bitmap, origin: IntArray): Pair<Int, Int> {
+        var matched = 0
+        var samples = 0
+        // Sample lit native pixels below the camera/mission overlays. Matching the
+        // entire image would also compare Compose chrome absent from PixelCopy.
+        for (y in stage.height * 52 / 100 until stage.height * 9 / 10 step (stage.height / 64).coerceAtLeast(1)) {
+            for (x in stage.width / 10 until stage.width * 9 / 10 step (stage.width / 64).coerceAtLeast(1)) {
+                val expected = stage.getPixel(x, y)
+                if (maxOf(Color.red(expected), Color.green(expected), Color.blue(expected)) < 40) continue
+                samples += 1
+                val screenX = origin[0] + x
+                val screenY = origin[1] + y
+                if (screenX !in 0 until window.width || screenY !in 0 until window.height) continue
+                val actual = window.getPixel(screenX, screenY)
+                if (maxOf(abs(Color.red(actual) - Color.red(expected)), abs(Color.green(actual) - Color.green(expected)),
+                        abs(Color.blue(actual) - Color.blue(expected))) <= 20) matched += 1
+            }
+        }
+        return matched to samples
     }
 
     private fun findSurface(view: View): SurfaceView? {
-        if (view is SurfaceView) return view
+        if (view is SurfaceView) return view.takeIf { it.isShown && it.holder.surface.isValid }
         if (view is ViewGroup) for (index in 0 until view.childCount) findSurface(view.getChildAt(index))?.let { return it }
         return null
     }
