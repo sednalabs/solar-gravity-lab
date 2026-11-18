@@ -29,13 +29,15 @@ pub use scene_projection::extract_render_scene;
 
 use orbit_archives::{
     build_orbit_archives, build_prediction_archives, next_epoch,
-    record_trail_samples_from_bodies, render_scene_orbit_body_ids, representable_epoch_within,
-    vec_magnitude,
+    push_trail_sample, record_trail_samples_from_bodies, render_scene_orbit_body_ids,
+    representable_epoch_within, vec_magnitude,
 };
-use scene_projection::{mounted_manifest_telemetry_from_state, runtime_trail_history_counts};
+use scene_projection::{
+    format_manifest_digest, mounted_manifest_telemetry_from_state, runtime_trail_history_counts,
+};
 use world_support::{
     apply_solver_state_to_world_bodies, compute_world_invariants, mounted_manifest_from_state,
-    world_bodies_to_solver_state,
+    package_provenance_digest, world_bodies_to_solver_state,
 };
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
