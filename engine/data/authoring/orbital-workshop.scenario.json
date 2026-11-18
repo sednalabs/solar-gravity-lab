@@ -1,0 +1,308 @@
+{
+  "format": "solarlab.scenario",
+  "version": 1,
+  "id": "authored.orbital-workshop",
+  "title": "Orbital workshop: two engines, one universe",
+  "base": "earth-moon",
+  "spacecraft_definitions": [
+    {
+      "id": "iris-electric",
+      "display_name": "Iris electric courier",
+      "visual_asset": "builtin:asteria",
+      "structure": {
+        "dry_mass_kg": 1400,
+        "inertia_kg_m2": {
+          "x": 6000,
+          "y": 6000,
+          "z": 3000
+        },
+        "max_control_torque_nm": {
+          "x": 800,
+          "y": 800,
+          "z": 400
+        },
+        "radius_m": 8
+      },
+      "propellant": {
+        "capacity_kg": 90
+      },
+      "engines": [
+        {
+          "control": "main",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 0.8,
+          "specific_impulse_seconds": 2500
+        },
+        {
+          "control": "positive_x",
+          "direction_body": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_x",
+          "direction_body": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_y",
+          "direction_body": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_y",
+          "direction_body": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4,
+          "specific_impulse_seconds": 280
+        }
+      ]
+    },
+    {
+      "id": "sable-chemical",
+      "display_name": "Sable chemical tug",
+      "visual_asset": "builtin:asteria",
+      "structure": {
+        "dry_mass_kg": 900,
+        "inertia_kg_m2": {
+          "x": 6000,
+          "y": 6000,
+          "z": 3000
+        },
+        "max_control_torque_nm": {
+          "x": 800,
+          "y": 800,
+          "z": 400
+        },
+        "radius_m": 8
+      },
+      "propellant": {
+        "capacity_kg": 600
+      },
+      "engines": [
+        {
+          "control": "main",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4000,
+          "specific_impulse_seconds": 315
+        },
+        {
+          "control": "positive_x",
+          "direction_body": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_x",
+          "direction_body": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_y",
+          "direction_body": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_y",
+          "direction_body": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        }
+      ]
+    }
+  ],
+  "spacecraft": [
+    {
+      "body_id": "workshop.iris",
+      "definition_id": "iris-electric",
+      "placement": {
+        "kind": "circular_orbit",
+        "host_body_id": "earth",
+        "altitude_m": 500000,
+        "radial_direction": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "orbit_normal": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        }
+      }
+    },
+    {
+      "body_id": "workshop.sable",
+      "definition_id": "sable-chemical",
+      "placement": {
+        "kind": "circular_orbit",
+        "host_body_id": "earth",
+        "altitude_m": 500000,
+        "radial_direction": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "orbit_normal": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        }
+      }
+    }
+  ],
+  "focus_body_id": "workshop.sable"
+}

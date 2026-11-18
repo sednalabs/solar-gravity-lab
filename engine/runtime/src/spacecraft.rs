@@ -87,9 +87,16 @@ impl WorldRuntime {
                 if world.bodies.iter().any(|b| b.body_id == body.body_id) {
                     return Err(RuntimeError::DuplicateBody(body.body_id.clone()));
                 }
-                if world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == body.body_id))
-                    || spacecraft.docking.as_ref().is_some_and(|d| !world.spacecraft.iter().any(|s| s.body_id == d.target_body_id))
-                    || !valid_ship_body(body, spacecraft)
+                if world.spacecraft.iter().any(|s| {
+                    s.docking
+                        .as_ref()
+                        .is_some_and(|d| d.target_body_id == body.body_id)
+                }) || spacecraft.docking.as_ref().is_some_and(|d| {
+                    !world
+                        .spacecraft
+                        .iter()
+                        .any(|s| s.body_id == d.target_body_id)
+                }) || !valid_ship_body(body, spacecraft)
                     || !valid_mission(world, body, spacecraft)
                     || spacecraft.reference_body_id.as_ref().is_some_and(|id| {
                         *id == body.body_id || !world.bodies.iter().any(|b| b.body_id == *id)
@@ -99,7 +106,12 @@ impl WorldRuntime {
                 }
             }
             WorldCommand::SpawnBody { body }
-                if world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == body.body_id)) => {
+                if world.spacecraft.iter().any(|s| {
+                    s.docking
+                        .as_ref()
+                        .is_some_and(|d| d.target_body_id == body.body_id)
+                }) =>
+            {
                 return Err(RuntimeError::InvalidFlightState);
             }
             WorldCommand::SetFlightControl { body_id, control } => {
@@ -120,9 +132,19 @@ impl WorldRuntime {
                     d.guidance_mode = DockingGuidanceMode::Manual;
                     d.capture_armed = false;
                 }
-                if !proposed.valid() || (world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == *body_id))
-                    && (proposed.has_powered_input() || solarlab_domain::spacecraft::magnitude(control.rotation_body) > 0.0
-                        || !matches!(control.attitude_mode, solarlab_domain::AttitudeMode::Manual | solarlab_domain::AttitudeMode::Hold))) {
+                if !proposed.valid()
+                    || (world.spacecraft.iter().any(|s| {
+                        s.docking
+                            .as_ref()
+                            .is_some_and(|d| d.target_body_id == *body_id)
+                    }) && (proposed.has_powered_input()
+                        || solarlab_domain::spacecraft::magnitude(control.rotation_body) > 0.0
+                        || !matches!(
+                            control.attitude_mode,
+                            solarlab_domain::AttitudeMode::Manual
+                                | solarlab_domain::AttitudeMode::Hold
+                        )))
+                {
                     return Err(RuntimeError::InvalidFlightState);
                 }
                 if !matches!(
@@ -140,7 +162,12 @@ impl WorldRuntime {
                 let ship = self
                     .spacecraft_by_id(&body_id.0)
                     .ok_or_else(|| RuntimeError::UnknownBody(body_id.clone()))?;
-                if ship.docking.is_some() || world.spacecraft.iter().any(|s| s.docking.as_ref().is_some_and(|d| d.target_body_id == *body_id))
+                if ship.docking.is_some()
+                    || world.spacecraft.iter().any(|s| {
+                        s.docking
+                            .as_ref()
+                            .is_some_and(|d| d.target_body_id == *body_id)
+                    })
                     || !full_throttle_seconds.is_finite()
                     || *full_throttle_seconds <= 0.0
                     || *full_throttle_seconds > 86_400.0
@@ -161,19 +188,31 @@ impl WorldRuntime {
                 self.validate_docking_guidance(body_id, *mode)?;
             }
             WorldCommand::UndockSpacecraft { body_id } => {
-                if self.spacecraft_by_id(&body_id.0).and_then(|s| s.docking.as_ref()).and_then(|d| d.attachment).is_none() {
+                if self
+                    .spacecraft_by_id(&body_id.0)
+                    .and_then(|s| s.docking.as_ref())
+                    .and_then(|d| d.attachment)
+                    .is_none()
+                {
                     return Err(RuntimeError::InvalidFlightState);
                 }
             }
             WorldCommand::SetBodyKinematics { body_id, .. }
-                if world.spacecraft.iter().any(|s| (s.body_id == *body_id && s.docking.is_some()) || s.docking.as_ref().is_some_and(|d| d.target_body_id == *body_id)) => {
+                if world.spacecraft.iter().any(|s| {
+                    (s.body_id == *body_id && s.docking.is_some())
+                        || s.docking
+                            .as_ref()
+                            .is_some_and(|d| d.target_body_id == *body_id)
+                }) =>
+            {
                 return Err(RuntimeError::InvalidFlightState);
             }
             WorldCommand::SetPlaybackRate {
                 sim_seconds_per_real_second,
             } if *sim_seconds_per_real_second > 1.0
                 && world.spacecraft.iter().any(|s| {
-                    s.docking.is_some() || s.has_powered_input()
+                    s.docking.is_some()
+                        || s.has_powered_input()
                         || s.rendezvous
                             .as_ref()
                             .is_some_and(|r| r.guidance_mode.active())
@@ -207,6 +246,11 @@ pub(super) fn valid_ship_body(body: &BodyState, ship: &SpacecraftState) -> bool 
         && body.source_mass_kg >= 0.0
         && body.radius_m.is_finite()
         && body.radius_m > 0.0
+        && ship
+            .authored
+            .as_ref()
+            .and_then(|a| a.contact.as_ref())
+            .is_none_or(|geometry| geometry.bounding_radius_m() <= body.radius_m)
         && finite(body.position_m)
         && finite(body.velocity_mps)
 }

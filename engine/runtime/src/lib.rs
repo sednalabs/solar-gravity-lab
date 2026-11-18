@@ -5,6 +5,8 @@
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
 mod lab_prediction;
+pub mod authoring;
+pub use authoring::{AuthoringError, ScenarioDefinition, SpacecraftDefinition, SpacecraftDocument};
 mod spacecraft;
 mod flight_mission;
 mod flight_prediction;
@@ -439,6 +441,7 @@ pub struct AdvanceOperation {
     pub completed_steps: usize,
     pub total_steps: usize,
     plan: Option<FixedStepPlan>,
+    scientific_report: Option<solarlab_physics::science::ScientificStepReport>,
     bodies: Vec<MassiveBodyState>,
     spacecraft: Vec<solarlab_physics::spacecraft::SpacecraftBinding>,
 }

@@ -16,6 +16,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeFacade
+import com.sednalabs.solarlab.runtime.RuntimeScenarioPacks
 import com.sednalabs.solarlab.runtime.SessionConnectionState
 import com.sednalabs.solarlab.runtime.ShellUiState
 import java.io.File
@@ -75,10 +76,13 @@ class StartupSmokeInstrumentationTest {
         val renderTrailCount = state.renderStatus.renderedTrailCount
         val totalRenderableElements = renderBodyCount + renderTracerCount + renderTrailCount
 
-        return snapshotBodyCount >= 10 &&
-            frameBodyCount >= 10 &&
-            renderBodyCount >= 10 &&
-            totalRenderableElements >= 10 &&
+        val expectedBodies = setOf("sun", "earth", "moon")
+        return state.snapshot?.scenarioId == RuntimeScenarioPacks.DEFAULT_SCENARIO_ID &&
+            state.renderFrame?.bodies?.map { it.bodyId }?.toSet() == expectedBodies &&
+            snapshotBodyCount == expectedBodies.size &&
+            frameBodyCount == expectedBodies.size &&
+            renderBodyCount == expectedBodies.size &&
+            totalRenderableElements >= expectedBodies.size &&
             totalRenderableElements >= renderBodyCount &&
             state.renderStatus.issue == null
     }

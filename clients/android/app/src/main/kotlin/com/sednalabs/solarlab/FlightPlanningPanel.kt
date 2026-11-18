@@ -93,7 +93,7 @@ internal fun FlightPlanningDialog(
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Compare an engine burn from this moment. The preview includes the time spent turning towards the selected direction; your current attitude matters.",
+                Text("Compare an engine burn from this moment. Thrust begins immediately while the ship turns towards the selected direction; your current attitude matters.",
                     color = FlightMuted, fontSize = 13.sp, lineHeight = 18.sp)
                 if (!paused) {
                     Text("Pause flight to calculate from a stable starting point.", color = FlightAmber, fontSize = 13.sp)

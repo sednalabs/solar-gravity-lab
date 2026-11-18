@@ -1,8 +1,8 @@
 //! Symmetric force splitting around the canonical gravity drift/kick integrator.
 //! Propulsion integrates changing inertial mass analytically for each midpoint
 //! direction; the gravity solver continues to see only gravitational source mass.
-use crate::{FixedStepPlan, MassiveBodyState, MAX_INCREMENTAL_STEPS};
 use crate::science::{advance_selected_steps, ScientificStepReport};
+use crate::{FixedStepPlan, MassiveBodyState, MAX_INCREMENTAL_STEPS};
 use solarlab_domain::spacecraft::{add, cross, finite, magnitude, scale, sub, unit};
 use solarlab_domain::{AttitudeMode, EngineControl, Quaterniond, SpacecraftState, Vector3d};
 
@@ -95,8 +95,11 @@ pub fn advance_spacecraft_steps_reported(
             && s.state.rendezvous.is_none()
             && s.state.docking.is_none()
     }) {
-        report.accumulate(&advance_selected_steps(plan, bodies, count, plan.kernel()).map_err(|_| ())?);
+        report.accumulate(
+            &advance_selected_steps(plan, bodies, count, plan.kernel()).map_err(|_| ())?,
+        );
     } else {
+        let contact_geometry = crate::docking::ContactGeometryCache::compile(ships)?;
         for _ in 0..count {
             let mut remaining = plan.dt_seconds;
             // Split exactly at depletion so no thrust is applied beyond the last fuel.
@@ -134,22 +137,32 @@ pub fn advance_spacecraft_steps_reported(
                 // forward-time operators. A signed Yoshida composition or an
                 // adaptive gravity trial must not run those operators backward
                 // or imply high-order accuracy for the coupled powered flow.
-                let mut segment = if contacts || ships.iter().any(|ship| {
-                    ship.state.has_powered_input() || ship.state.needs_attitude_steps()
-                }) {
+                let mut segment = if contacts
+                    || ships.iter().any(|ship| {
+                        ship.state.has_powered_input() || ship.state.needs_attitude_steps()
+                    }) {
                     plan.for_nonconservative_split()
                 } else {
                     plan.clone()
                 };
                 segment.dt_seconds = dt;
                 if contacts {
-                    crate::docking::advance_contact_step(&segment, bodies, ships, dt)?;
+                    crate::docking::advance_contact_step(
+                        &segment,
+                        bodies,
+                        ships,
+                        &contact_geometry,
+                        dt,
+                    )?;
                     let mut contact_report = segment.empty_scientific_report();
                     contact_report.accepted(dt);
                     contact_report.force_evaluations = 2;
                     report.accumulate(&contact_report);
                 } else {
-                    report.accumulate(&advance_selected_steps(&segment, bodies, 1, segment.kernel()).map_err(|_| ())?);
+                    report.accumulate(
+                        &advance_selected_steps(&segment, bodies, 1, segment.kernel())
+                            .map_err(|_| ())?,
+                    );
                 }
                 for (index, ship) in ships.iter_mut().enumerate() {
                     if contact_members[index] {
@@ -342,7 +355,14 @@ fn propulsion_rotation_halfstep(
     {
         s.angular_velocity_body_radps = Vector3d::default();
     }
-    propulsion_impulse(&mut bodies[ship.body_index], s, force, flow, mid_attitude, dt);
+    propulsion_impulse(
+        &mut bodies[ship.body_index],
+        s,
+        force,
+        flow,
+        mid_attitude,
+        dt,
+    );
 }
 
 /// External actuator kick at fixed attitude. The contact drift owns free rigid

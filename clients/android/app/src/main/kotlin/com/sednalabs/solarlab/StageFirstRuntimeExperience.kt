@@ -1397,7 +1397,10 @@ internal fun StageFirstRuntimeExperience(
                 onCamera = { flightCameraMode = it }, onExit = ::exitFlight,
                 onRecenter = {
                     if (flightCameraMode == 0) {
-                        renderHostView?.frameBody("earth", selectBody = false)
+                        coroutineScope.launch {
+                            if (runtimeFacade.lunarMissionState() != null) renderHostView?.resetCamera()
+                            else renderHostView?.frameBody("earth", selectBody = false)
+                        }
                     } else renderHostView?.resetCamera()
                 },
                 onSaved = { savedVisible = true },

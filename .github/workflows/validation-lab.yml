@@ -544,6 +544,7 @@ jobs:
           set -euo pipefail
           python3 tools/generate_earth_moon_reference.py --check
           python3 render/android-vulkan/src/test/python/test_surface_frame.py
+          python3 render/android-vulkan/src/test/python/test_flight_atmosphere.py
           python3 render/android-vulkan/src/test/python/test_compute_contract.py
           g++ -std=c++20 -Wall -Wextra -Werror render/android-vulkan/src/test/cpp/SolarLabPresentationTest.cpp -o /tmp/solarlab-presentation-test
           /tmp/solarlab-presentation-test

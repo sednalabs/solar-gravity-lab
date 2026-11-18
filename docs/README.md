@@ -57,12 +57,16 @@ for the commit-by-commit scope and which checkpoints remain historical.
 
 ## Canonical contracts and implementation
 
+- [Scientific flight dynamics](scientific-dynamics.md): selectable numerical
+  methods, oriented J2 gravity, independent trajectory comparisons and their limits.
 - [Architecture](architecture.md): Rust world, FFI, Android, native Vulkan
   and hardware ownership.
 - [Space-engine foundation](space-engine.md),
   [orbital rendezvous](orbital-rendezvous.md) and
   [physical station docking](station-docking.md): shared world authority,
   native guidance and opt-in local contacts.
+- [Flight direction, burn planning and planetary light](v2/flight-experience-2026-11.md):
+  November experience-branch source and explicit validation limits.
 - [Renderer current state](rendering-architecture-current-state.md),
   [camera and interactions](camera-and-interaction-model.md),
   [scene/world contract](scene-world-model-contract.md) and

@@ -319,7 +319,7 @@ internal fun FlightModeChrome(
         toggleRcs = { cut(); translationMode = !translationMode },
         togglePrecision = {
             precision = !precision
-            send(flightHeldAxisIntent(manualBase(), translationMode, heldButtons, precision))
+            if (heldButtons.isNotEmpty()) send(flightHeldAxisIntent(manualBase(), translationMode, heldButtons, precision))
         },
         throttle = { send(manualBase().copy(throttle = it.toDouble())) },
         cut = ::cut,
@@ -505,9 +505,15 @@ internal fun FlightModeChrome(
                     if (rendezvous == null && docking == null) {
                         FlightDirectorReadout(sample, control.assist, Modifier.weight(1f))
                     } else Spacer(Modifier.weight(1f))
-                    FlightAction("Guide", { guideVisible = true }, FlightTags.GUIDE)
-                    FlightAction("Plan", { planVisible = true }, FlightTags.PLAN, enabled = ready)
-                    FlightAction("Missions", { missionsVisible = true }, FlightTags.MISSIONS)
+                    FlightAction("Guide", { action {
+                        facade.applyCommand(RuntimeCommand.PausePlayback)
+                        guideVisible = true
+                    } }, FlightTags.GUIDE)
+                    FlightAction("Plan", { planVisible = true }, FlightTags.PLAN, enabled = ready && docking == null,
+                        modifier = Modifier.semantics {
+                            contentDescription = if (docking != null) "Burn planning is unavailable during docking" else "Plan a finite engine burn"
+                        })
+                    FlightAction("Missions", { cut(); facade.suspendFlightControls(); missionsVisible = true }, FlightTags.MISSIONS)
                 }
             }
             if (rendezvous != null || docking != null) {

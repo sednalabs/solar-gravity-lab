@@ -466,6 +466,30 @@ fn evaluate_accelerations(
     Ok(())
 }
 
+fn validate_harmonic_domain(
+    bodies: &[MassiveBodyState],
+    science: &ScientificPlan,
+) -> Result<(), ScientificError> {
+    for harmonic in &science.harmonics {
+        let source = &bodies[harmonic.index];
+        if source.mass_kg <= 0.0 {
+            return Err(ScientificError::HarmonicRequiresMassiveSource);
+        }
+        if harmonic.model.j2 == 0.0 {
+            continue;
+        }
+        for (index, body) in bodies.iter().enumerate() {
+            if index != harmonic.index
+                && magnitude(sub(body.position_m, source.position_m))
+                    < harmonic.model.reference_radius_m
+            {
+                return Err(ScientificError::InsideHarmonicReferenceRadius);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn advance_selected_steps(
     plan: &crate::FixedStepPlan,
     bodies: &mut [MassiveBodyState],
@@ -491,6 +515,9 @@ pub(crate) fn advance_selected_steps(
     // private segment copy so a failed adaptive/J2 segment is never half-applied.
     let mut staged = bodies.to_vec();
     validate_state(&staged)?;
+    // Invalid input is distinct from a valid orbit whose *trial* overshoots a
+    // boundary. Only the latter is eligible for adaptive step subdivision.
+    validate_harmonic_domain(&staged, &plan.science)?;
     let sources = crate::source_indices(&staged);
     let mut scratch = GravityScratch::default();
     for _ in 0..count {

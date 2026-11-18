@@ -15,6 +15,7 @@ const FLIGHT_PROGRAM_MODEL: &str = "six-dof-strang-rocket-v2";
 const RENDEZVOUS_FLIGHT_MODEL: &str = "six-dof-strang-rocket-rendezvous-v3";
 const DOCKING_FLIGHT_MODEL: &str = "six-dof-strang-rocket-docking-v4";
 const SCIENTIFIC_MODEL: &str = "explicit-coast-j2-v1";
+const AUTHORED_FLIGHT_MODEL: &str = "six-dof-strang-rocket-authored-v5";
 const MAX_BRANCHES: usize = 64;
 const MAX_BODIES: usize = 4096;
 const MAX_CHECKPOINTS: usize = 256;
@@ -95,7 +96,8 @@ impl WorldRuntime {
             format: FORMAT.into(),
             version: if has_flight { FLIGHT_VERSION } else { VERSION },
             flight_model: has_flight.then(|| {
-                if branches_have_docking(&branches) { DOCKING_FLIGHT_MODEL }
+                if branches_have_authored(&branches) { AUTHORED_FLIGHT_MODEL }
+                else if branches_have_docking(&branches) { DOCKING_FLIGHT_MODEL }
                 else if branches_have_rendezvous(&branches) { RENDEZVOUS_FLIGHT_MODEL }
                 else if branches_have_flight_program(&branches) { FLIGHT_PROGRAM_MODEL }
                 else { FLIGHT_MODEL }.into()
@@ -166,7 +168,7 @@ impl WorldRuntime {
 
 impl SavedConfig {
     fn from_runtime(config: &RuntimeConfig) -> Result<Self, SessionPersistenceError> {
-        if config.physics.integrator != IntegratorKind::LeapfrogKickDriftKick
+        if !config.physics.integrator.implemented()
             || config.physics.collision_model != CollisionModel::None
         {
             return Err(SessionPersistenceError::UnsupportedVersion);
@@ -178,7 +180,12 @@ impl SavedConfig {
                 SolverBackend::SimdX64 => "x64",
             }
             .into(),
-            integrator: "leapfrog-kdk".into(),
+            integrator: match config.physics.integrator {
+                IntegratorKind::LeapfrogKickDriftKick => "leapfrog-kdk",
+                IntegratorKind::YoshidaFourthOrder => "yoshida-fourth-order",
+                IntegratorKind::DormandPrince54 => "dormand-prince54",
+                _ => return Err(SessionPersistenceError::UnsupportedVersion),
+            }.into(),
             collision_model: "none".into(),
             max_substep_seconds: config.physics.max_substep_seconds,
             timeline_semantics: config.timeline_semantics.clone(),
@@ -186,7 +193,7 @@ impl SavedConfig {
         })
     }
     fn to_runtime(&self) -> Result<RuntimeConfig, SessionPersistenceError> {
-        if self.integrator != "leapfrog-kdk" || self.collision_model != "none" {
+        if self.collision_model != "none" {
             return Err(SessionPersistenceError::UnsupportedVersion);
         }
         if !self.max_substep_seconds.is_finite() || self.max_substep_seconds <= 0.0 {
@@ -202,7 +209,12 @@ impl SavedConfig {
                     "x64" => SolverBackend::SimdX64,
                     _ => return Err(SessionPersistenceError::UnsupportedVersion),
                 },
-                integrator: IntegratorKind::LeapfrogKickDriftKick,
+                integrator: match self.integrator.as_str() {
+                    "leapfrog-kdk" => IntegratorKind::LeapfrogKickDriftKick,
+                    "yoshida-fourth-order" => IntegratorKind::YoshidaFourthOrder,
+                    "dormand-prince54" => IntegratorKind::DormandPrince54,
+                    _ => return Err(SessionPersistenceError::UnsupportedVersion),
+                },
                 collision_model: CollisionModel::None,
                 max_substep_seconds: self.max_substep_seconds,
             },
@@ -245,10 +257,11 @@ impl SavedSession {
         }
         let has_flight = self.branches.iter().any(|b|!b.world.spacecraft.is_empty()||b.checkpoints.iter().any(|c|!c.state.spacecraft.is_empty()));
         let compatible_flight_model = match self.flight_model.as_deref() {
-            Some(DOCKING_FLIGHT_MODEL) => true,
-            Some(RENDEZVOUS_FLIGHT_MODEL) => !branches_have_docking(&self.branches),
-            Some(FLIGHT_PROGRAM_MODEL) => !branches_have_docking(&self.branches) && !branches_have_rendezvous(&self.branches),
-            Some(FLIGHT_MODEL) => !branches_have_docking(&self.branches) && !branches_have_rendezvous(&self.branches)
+            Some(AUTHORED_FLIGHT_MODEL) => true,
+            Some(DOCKING_FLIGHT_MODEL) => !branches_have_authored(&self.branches),
+            Some(RENDEZVOUS_FLIGHT_MODEL) => !branches_have_authored(&self.branches) && !branches_have_docking(&self.branches),
+            Some(FLIGHT_PROGRAM_MODEL) => !branches_have_authored(&self.branches) && !branches_have_docking(&self.branches) && !branches_have_rendezvous(&self.branches),
+            Some(FLIGHT_MODEL) => !branches_have_authored(&self.branches) && !branches_have_docking(&self.branches) && !branches_have_rendezvous(&self.branches)
                 && !branches_have_flight_program(&self.branches),
             _ => false,
         };
@@ -372,6 +385,11 @@ impl SavedSession {
         }
         Ok(())
     }
+}
+
+fn branches_have_authored(branches: &[BranchState]) -> bool {
+    branches.iter().flat_map(|b| std::iter::once(&b.world).chain(b.checkpoints.iter().map(|c| &c.state)))
+        .flat_map(|w| &w.spacecraft).any(|s| s.authored.is_some())
 }
 
 fn branches_have_flight_program(branches: &[BranchState]) -> bool {
@@ -518,12 +536,9 @@ fn restore_computed_state(
             "physical values overflow invariant calculation",
         ));
     }
-    world.solver_execution = solver_execution_report_for_backend_with_source_count(
-        &config.physics.solver_backend,
-        &hardware.cpu_features,
-        world.bodies.len(),
-        world.bodies.iter().filter(|body| body.source_mass_kg != 0.0).count(),
-    );
+    world.solver_execution = scientific_flight::bind_plan(&config.physics,
+        &world.scientific_settings, &world.bodies, &world.spacecraft, 1.0,
+        &hardware.cpu_features).map_err(|_| SessionPersistenceError::InvalidState("invalid scientific plan"))?.report();
     Ok(())
 }
 
