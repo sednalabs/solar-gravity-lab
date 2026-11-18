@@ -317,25 +317,6 @@ ProjectedBody ProjectBody(
     return result;
 }
 
-uint64_t MakeSyntheticRevision(
-    int64_t packetRevision,
-    uint64_t cameraRevisionCounter,
-    int processingModeCode,
-    int observerModeCode,
-    int traceLayerModeCode) {
-    uint64_t revision = static_cast<uint64_t>(packetRevision < 0 ? 0 : packetRevision);
-    revision ^= (cameraRevisionCounter + 0x9E3779B97F4A7C15ULL + (revision << 6U) + (revision >> 2U));
-    revision ^= (static_cast<uint64_t>(processingModeCode & 0xFFFF) << 16U);
-    revision ^= (static_cast<uint64_t>(observerModeCode & 0xFFFF) << 32U);
-    revision ^= (static_cast<uint64_t>(traceLayerModeCode & 0xFFFF) << 48U);
-    // -1 is the upload sentinel; keep hashed revisions in the non-negative range.
-    revision &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
-    if (revision == 0) {
-        revision = 1;
-    }
-    return revision;
-}
-
 struct SimplificationPolicy {
     double nearExtentFactor = 1.5;
     double mediumExtentFactor = 6.0;
@@ -1641,7 +1622,7 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         ? DecodeInlineUtf8(snapshot.summary.active_branch_id, snapshot.summary.active_branch_id_len) : std::string{};
     // Packet frame numbers derive from the packet's own epoch, so a concurrent runtime tick
     // cannot mismatch the two positions used for interpolation.
-    const int64_t packetRevision = static_cast<int64_t>(packetResult.info.diagnostics.frame_number);
+    const uint64_t packetRevision = packetResult.info.diagnostics.frame_number;
     const bool sameSession = snapshotValid && runtimeScene_.snapshotValid &&
         scenarioId == runtimeScene_.scenarioId && branchId == runtimeScene_.branchId;
     const bool initialLabHome = flightCameraMode_ == 0 && !runtimeScene_.snapshotValid &&
@@ -2082,8 +2063,8 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
     // The synthetic revision changes when runtime data, camera, or visualization modes change.
     const std::string sceneRevision = DecodeBytesView(packetResult.info.scene_revision);
     const uint64_t revisionSeed = static_cast<uint64_t>(std::hash<std::string>{}(sceneRevision));
-    const uint64_t syntheticRevision = MakeSyntheticRevision(
-        static_cast<int64_t>(revisionSeed ^ static_cast<uint64_t>(packetResult.info.diagnostics.frame_number)),
+    const uint64_t syntheticRevision = solarlab::rendering::SceneUploadRevision(
+        revisionSeed ^ packetResult.info.diagnostics.frame_number,
         cameraRevisionCounter_,
         runtimeProcessingModeCode_,
         runtimeObserverModeCode_,
