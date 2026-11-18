@@ -2,7 +2,7 @@
 //! Propulsion integrates changing inertial mass analytically for each midpoint
 //! direction; the gravity solver continues to see only gravitational source mass.
 use crate::{FixedStepPlan, MassiveBodyState, MAX_INCREMENTAL_STEPS};
-use crate::science::{advance_selected_steps, ScientificStepReport};
+use crate::science::{advance_selected_steps, ScientificError, ScientificStepReport};
 use solarlab_domain::spacecraft::{add, cross, finite, magnitude, scale, sub, unit};
 use solarlab_domain::{AttitudeMode, EngineControl, Quaterniond, SpacecraftState, Vector3d};
 
@@ -72,8 +72,19 @@ pub fn advance_spacecraft_steps_reported(
     ships: &mut [SpacecraftBinding],
     count: usize,
 ) -> Result<ScientificStepReport, ()> {
-    if count > MAX_INCREMENTAL_STEPS
-        || bodies.len() != plan.body_count
+    advance_spacecraft_steps_checked(plan, bodies, ships, count).map_err(|_| ())
+}
+
+/// Preserve numerical rejection reasons for runtime commands and previews.
+/// Buffers are caller-owned staged state and must be discarded after failure.
+pub fn advance_spacecraft_steps_checked(
+    plan: &FixedStepPlan,
+    bodies: &mut [MassiveBodyState],
+    ships: &mut [SpacecraftBinding],
+    count: usize,
+) -> Result<ScientificStepReport, ScientificError> {
+    if count > MAX_INCREMENTAL_STEPS { return Err(ScientificError::WorkLimit); }
+    if bodies.len() != plan.body_count
         || ships.iter().any(|s| {
             s.body_index >= bodies.len()
                 || s.reference_body_index.is_some_and(|i| i >= bodies.len())
@@ -85,7 +96,7 @@ pub fn advance_spacecraft_steps_reported(
                     .is_some_and(|i| i >= ships.len())
         })
     {
-        return Err(());
+        return Err(ScientificError::InvalidFlightState);
     }
     let mut report = plan.empty_scientific_report();
     if ships.iter().all(|s| {
@@ -95,7 +106,7 @@ pub fn advance_spacecraft_steps_reported(
             && s.state.rendezvous.is_none()
             && s.state.docking.is_none()
     }) {
-        report.accumulate(&advance_selected_steps(plan, bodies, count, plan.kernel()).map_err(|_| ())?);
+        report.accumulate(&advance_selected_steps(plan, bodies, count, plan.kernel())?);
     } else {
         for _ in 0..count {
             let mut remaining = plan.dt_seconds;
@@ -121,7 +132,7 @@ pub fn advance_spacecraft_steps_reported(
                     }
                 }
                 if !dt.is_finite() || dt <= 0.0 {
-                    return Err(());
+                    return Err(ScientificError::InvalidFlightState);
                 }
                 for (index, ship) in ships.iter_mut().enumerate() {
                     if contact_members[index] {
@@ -149,7 +160,7 @@ pub fn advance_spacecraft_steps_reported(
                     contact_report.force_evaluations = 2;
                     report.accumulate(&contact_report);
                 } else {
-                    report.accumulate(&advance_selected_steps(&segment, bodies, 1, segment.kernel()).map_err(|_| ())?);
+                    report.accumulate(&advance_selected_steps(&segment, bodies, 1, segment.kernel())?);
                 }
                 for (index, ship) in ships.iter_mut().enumerate() {
                     if contact_members[index] {
@@ -172,7 +183,7 @@ pub fn advance_spacecraft_steps_reported(
                 remaining = if next < remaining {
                     next
                 } else {
-                    return Err(());
+                    return Err(ScientificError::StepTooSmall);
                 };
             }
         }
@@ -180,10 +191,10 @@ pub fn advance_spacecraft_steps_reported(
     if bodies
         .iter()
         .any(|b| !finite(b.position_m) || !finite(b.velocity_mps))
-        || ships.iter().any(|s| !s.state.valid())
     {
-        return Err(());
+        return Err(ScientificError::NonFinite);
     }
+    if ships.iter().any(|s| !s.state.valid()) { return Err(ScientificError::InvalidFlightState); }
     Ok(report)
 }
 

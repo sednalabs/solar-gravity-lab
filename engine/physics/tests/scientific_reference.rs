@@ -720,3 +720,54 @@ fn radial_assists_align_to_host_relative_direction_in_a_translated_orbit() {
         assert_eq!(ships[0].state.propellant_mass_kg, fuel);
     }
 }
+
+#[test]
+fn checked_spacecraft_flow_preserves_adaptive_and_model_rejection_reasons() {
+    use solarlab_domain::{AttitudeMode, SpacecraftState};
+    use solarlab_physics::spacecraft::{advance_spacecraft_steps_checked, SpacecraftBinding};
+    let mut craft = SpacecraftState::reference(
+        BodyId("reference-1".into()),
+        Some(BodyId("reference-0".into())),
+    );
+    craft.control.attitude_mode = AttitudeMode::Manual;
+    let original = craft.clone();
+    let mut ships = vec![SpacecraftBinding {
+        body_index: 1,
+        reference_body_index: Some(0),
+        mission_target_index: None,
+        rendezvous_target_body_index: None,
+        rendezvous_target_spacecraft_index: None,
+        rendezvous_target_radius_m: 0.0,
+        reference_radius_m: 6.4e6,
+        target_radius_m: 0.0,
+        body_radius_m: 1.0,
+        epoch_seconds: 0.0,
+        epoch_compensation_seconds: 0.0,
+        state: craft,
+    }];
+    let initial = elliptic_pair(EARTH_MU, 8e6, 0.2, 0.0);
+    let mut bodies = initial.clone();
+    let mut config = settings(IntegratorKind::DormandPrince54);
+    config.adaptive.max_attempts_per_interval = 1;
+    let plan =
+        fixed_step_plan_with_source_count(&policy(config.integrator, 6000.0), 6000.0, 2, 2, &[])
+            .unwrap()
+            .with_scientific_settings(&config, &ids(2))
+            .unwrap();
+    assert_eq!(
+        advance_spacecraft_steps_checked(&plan, &mut bodies, &mut ships, 1),
+        Err(ScientificError::WorkLimit)
+    );
+    assert_eq!(bodies, initial);
+    assert_eq!(ships[0].state, original);
+    assert_eq!(ships[0].epoch_seconds, 0.0);
+    config.harmonics.push(harmonic(vector(0.0, 0.0, 1.0)));
+    config.harmonics[0].reference_radius_m = 1e7;
+    let plan = plan.with_scientific_settings(&config, &ids(2)).unwrap();
+    assert_eq!(
+        advance_spacecraft_steps_checked(&plan, &mut bodies, &mut ships, 1),
+        Err(ScientificError::InsideHarmonicReferenceRadius)
+    );
+    assert_eq!(bodies, initial);
+    assert_eq!(ships[0].state, original);
+}
