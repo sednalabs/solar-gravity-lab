@@ -176,6 +176,12 @@ class ValidationLabPlanTests(unittest.TestCase):
             ".github/scripts/render_release_notes.py",
             ".github/workflows/security-sarif.yml",
             ".github/workflows/gradle-cache-service.yml",
+            ".github/workflows/hardware-optimisation.yml",
+            ".github/scripts/run_paired_hardware_throughput.sh",
+            ".github/scripts/compare_hardware_throughput.py",
+            ".github/scripts/test_compare_hardware_throughput.py",
+            ".github/scripts/run_vulkan_hardware_proof.sh",
+            ".github/scripts/run_qcom_offscreen_proof.sh",
             ".github/scripts/download_interactive_build_artifact.py",
             "infra/gradle-cache-service/Cargo.lock",
         ):
@@ -209,7 +215,7 @@ class ValidationLabPlanTests(unittest.TestCase):
                 outputs = run_plan([helper, path])
                 self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
 
-        for options in ({"lane_set": "full"}, {"profile": "full"}, {"event_name": "push"}):
+        for options in ({"lane_set": "full"}, {"profile": "full"}, {"event_name": "merge_group"}):
             with self.subTest(options=options):
                 outputs = run_plan([helper], **options)
                 self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
@@ -360,14 +366,39 @@ class ValidationLabPlanTests(unittest.TestCase):
         self.assertEqual(outputs["rust_workspace"], "true")
         self.assertEqual(outputs["android_shell"], "false")
 
-    def test_push_checkpoint_forces_full(self) -> None:
-        outputs = run_plan(["docs/ci-cache-rollout.md"], event_name="push")
+    def test_push_of_unrelated_consumer_and_docs_skips_runtime_lanes(self) -> None:
+        for paths in (
+            ["docs/ci-cache-rollout.md"],
+            [".github/workflows/hardware-optimisation.yml"],
+            [".github/scripts/run_qcom_offscreen_proof.sh"],
+            ["docs/ci-cache-rollout.md", ".github/workflows/hardware-optimisation.yml"],
+            [".github/scripts/capture_interactive_baseline.py"],
+        ):
+            with self.subTest(paths=paths):
+                outputs = run_plan(paths, event_name="push")
+                self.assertEqual(outputs["profile"], "targeted")
+                self.assertEqual(outputs["lane_set"], "auto")
+                self.assertEqual(outputs["effective_changed_files_source"], "push_consumer_only")
+                self.assertTrue(all(outputs[lane] == "false" for lane in self.RUNTIME_LANES))
 
+    def test_push_product_shared_or_unknown_still_forces_full_checkpoint(self) -> None:
+        for paths in (
+            ["engine/physics/src/lib.rs"],
+            [".github/workflows/validation-lab.yml"],
+            ["docs/readme.md", ".github/workflows/hardware-optimisation.yml", "engine/physics/src/lib.rs"],
+            [],
+        ):
+            with self.subTest(paths=paths):
+                outputs = run_plan(paths, event_name="push")
+                self.assertEqual(outputs["profile"], "full")
+                self.assertEqual(outputs["lane_set"], "full")
+                self.assertEqual(outputs["effective_changed_files_source"], "checkpoint_event")
+                self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
+
+    def test_merge_group_remains_full_even_for_other_consumer(self) -> None:
+        outputs = run_plan([".github/workflows/hardware-optimisation.yml"], event_name="merge_group")
         self.assertEqual(outputs["profile"], "full")
-        self.assertEqual(outputs["lane_set"], "full")
-        self.assertEqual(outputs["effective_changed_files_source"], "checkpoint_event")
-        self.assertEqual(outputs["rust_workspace"], "true")
-        self.assertEqual(outputs["android_shell"], "true")
+        self.assertTrue(all(outputs[lane] == "true" for lane in self.RUNTIME_LANES))
 
     def test_workflow_opts_into_ready_for_review_exact_proof(self) -> None:
         workflow = Path(__file__).parents[1] / "workflows" / "validation-lab.yml"
