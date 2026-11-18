@@ -1,7 +1,8 @@
 //! Symmetric force splitting around the canonical gravity drift/kick integrator.
 //! Propulsion integrates changing inertial mass analytically for each midpoint
 //! direction; the gravity solver continues to see only gravitational source mass.
-use crate::{advance_fixed_steps, FixedStepPlan, MassiveBodyState, MAX_INCREMENTAL_STEPS};
+use crate::{FixedStepPlan, MassiveBodyState, MAX_INCREMENTAL_STEPS};
+use crate::science::{advance_selected_steps, ScientificStepReport};
 use solarlab_domain::spacecraft::{add, cross, finite, magnitude, scale, sub, unit};
 use solarlab_domain::{AttitudeMode, EngineControl, Quaterniond, SpacecraftState, Vector3d};
 
@@ -60,6 +61,17 @@ pub fn advance_spacecraft_steps(
     ships: &mut [SpacecraftBinding],
     count: usize,
 ) -> Result<(), ()> {
+    advance_spacecraft_steps_reported(plan, bodies, ships, count).map(|_| ())
+}
+
+/// Same staged flow with actual numerical-method telemetry. A powered/contact
+/// split is reported even if a burn completes before the operation ends.
+pub fn advance_spacecraft_steps_reported(
+    plan: &FixedStepPlan,
+    bodies: &mut [MassiveBodyState],
+    ships: &mut [SpacecraftBinding],
+    count: usize,
+) -> Result<ScientificStepReport, ()> {
     if count > MAX_INCREMENTAL_STEPS
         || bodies.len() != plan.body_count
         || ships.iter().any(|s| {
@@ -75,6 +87,7 @@ pub fn advance_spacecraft_steps(
     {
         return Err(());
     }
+    let mut report = plan.empty_scientific_report();
     if ships.iter().all(|s| {
         !s.state.has_powered_input()
             && !s.state.needs_attitude_steps()
@@ -82,7 +95,7 @@ pub fn advance_spacecraft_steps(
             && s.state.rendezvous.is_none()
             && s.state.docking.is_none()
     }) {
-        advance_fixed_steps(plan, bodies, count)?;
+        report.accumulate(&advance_selected_steps(plan, bodies, count, plan.kernel()).map_err(|_| ())?);
     } else {
         for _ in 0..count {
             let mut remaining = plan.dt_seconds;
@@ -117,12 +130,26 @@ pub fn advance_spacecraft_steps(
                         propulsion_rotation_halfstep(bodies, ship, dt * 0.5);
                     }
                 }
-                let mut segment = plan.clone();
+                // Fuel consumption, attitude control and contact impulses are
+                // forward-time operators. A signed Yoshida composition or an
+                // adaptive gravity trial must not run those operators backward
+                // or imply high-order accuracy for the coupled powered flow.
+                let mut segment = if contacts || ships.iter().any(|ship| {
+                    ship.state.has_powered_input() || ship.state.needs_attitude_steps()
+                }) {
+                    plan.for_nonconservative_split()
+                } else {
+                    plan.clone()
+                };
                 segment.dt_seconds = dt;
                 if contacts {
                     crate::docking::advance_contact_step(&segment, bodies, ships, dt)?;
+                    let mut contact_report = segment.empty_scientific_report();
+                    contact_report.accepted(dt);
+                    contact_report.force_evaluations = 2;
+                    report.accumulate(&contact_report);
                 } else {
-                    advance_fixed_steps(&segment, bodies, 1)?;
+                    report.accumulate(&advance_selected_steps(&segment, bodies, 1, segment.kernel()).map_err(|_| ())?);
                 }
                 for (index, ship) in ships.iter_mut().enumerate() {
                     if contact_members[index] {
@@ -157,7 +184,7 @@ pub fn advance_spacecraft_steps(
     {
         return Err(());
     }
-    Ok(())
+    Ok(report)
 }
 
 /// Observe actual solver states at every integration boundary, including warp.
@@ -222,6 +249,8 @@ fn assist_error(bodies: &[MassiveBodyState], ship: &SpacecraftBinding) -> Vector
         AttitudeMode::Retrograde => scale(velocity, -1.0),
         AttitudeMode::Normal => normal,
         AttitudeMode::AntiNormal => scale(normal, -1.0),
+        AttitudeMode::RadialOut => sub(body.position_m, host.position_m),
+        AttitudeMode::RadialIn => sub(host.position_m, body.position_m),
         _ => return Vector3d::default(),
     };
     let Some(target) = unit(s.attitude.conjugate().rotate(desired)) else {
