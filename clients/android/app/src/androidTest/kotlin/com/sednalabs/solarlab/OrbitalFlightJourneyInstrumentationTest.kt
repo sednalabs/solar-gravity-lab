@@ -293,7 +293,8 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEncounterView(initial.targetBodyId)
         composeRule.onNodeWithTag(RendezvousTags.RANGE).assertIsDisplayed()
         composeRule.onNodeWithTag(RendezvousTags.DIRECTION).assertIsDisplayed()
-        capture("rendezvous-departure.png", encounterTargetId = initial.targetBodyId)
+        capture("rendezvous-departure.png", encounterTargetId = initial.targetBodyId,
+            requireUnobscuredEncounter = true)
 
         composeRule.mainClock.autoAdvance = false
         composeRule.onNodeWithTag(RendezvousTags.MATCH).assertIsEnabled().performClick()
@@ -346,7 +347,8 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertFalse(arrived.keepOutEntered)
         assertTrue(arrived.closestObservedRangeM > arrived.keepOutDistanceM)
         assertEncounterView(arrived.targetBodyId)
-        capture("rendezvous-stand-off.png", encounterTargetId = arrived.targetBodyId, requireEncounterDetail = true)
+        capture("rendezvous-stand-off.png", encounterTargetId = arrived.targetBodyId, requireEncounterDetail = true,
+            requireUnobscuredEncounter = true)
 
         // Import paused active guidance through the production save boundary;
         // old-session UI disposal must not cut the newly imported control state.

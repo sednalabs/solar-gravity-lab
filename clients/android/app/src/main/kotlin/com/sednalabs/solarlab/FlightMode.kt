@@ -406,20 +406,18 @@ internal fun FlightModeChrome(
 
     var chromeBounds by remember { mutableStateOf<Rect?>(null) }
     var cameraBounds by remember { mutableStateOf<Rect?>(null) }
-    var topPanelBounds by remember { mutableStateOf<Rect?>(null) }
     var bottomPanelBounds by remember { mutableStateOf<Rect?>(null) }
     var dockBounds by remember { mutableStateOf<Rect?>(null) }
     val clearMargin = with(LocalDensity.current) { 8.dp.toPx() }
     val currentClearAreaCallback by rememberUpdatedState(onSceneClearArea)
-    LaunchedEffect(chromeBounds, cameraBounds, topPanelBounds, bottomPanelBounds, dockBounds,
+    LaunchedEffect(chromeBounds, cameraBounds, bottomPanelBounds, dockBounds,
         rendezvous != null, docking != null, cameraMode) {
         val root = chromeBounds
         val camera = cameraBounds
         val dock = dockBounds
         val clear = if (root != null && camera != null && dock != null && cameraMode == 3) {
-            val topPanel = topPanelBounds.takeIf { rendezvous != null && root.width <= root.height }
-            val bottomPanel = bottomPanelBounds.takeIf { docking != null || (rendezvous != null && root.width > root.height) }
-            val top = maxOf(camera.bottom, topPanel?.bottom ?: camera.bottom) + clearMargin
+            val bottomPanel = bottomPanelBounds.takeIf { docking != null || rendezvous != null }
+            val top = camera.bottom + clearMargin
             val bottom = minOf(dock.top, bottomPanel?.top ?: dock.top) - clearMargin
             if (bottom > top) Rect(root.left + clearMargin, top, root.right - clearMargin, bottom) else null
         } else null
@@ -467,13 +465,8 @@ internal fun FlightModeChrome(
                 FlightAction("Station mission", { cut(); facade.suspendFlightControls(); onRendezvousMission() }, RendezvousTags.BRIEF)
                 FlightAction("Docking mission", { cut(); facade.suspendFlightControls(); onDockingMission() }, DockingTags.BRIEF)
             }
-            if (rendezvous != null) {
-                if (!landscape) Box(Modifier.onGloballyPositioned { topPanelBounds = it.boundsInWindow() }) {
-                    RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
-                        onGuidance = ::setEncounterGuidance)
-                }
-            } else if (docking != null) {
-                // Port guidance sits below the clear scene in both orientations.
+            if (rendezvous != null || docking != null) {
+                // Encounter guidance sits below the clear scene in both orientations.
             } else if (lunarMission != null) {
                 LunarMissionPanel(requireNotNull(lunarMission), landscape, paused, ready, missionActionBusy, coasting,
                     onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
@@ -535,12 +528,16 @@ internal fun FlightModeChrome(
                 }
             }
         } else {
-            if (docking != null) Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+            if (rendezvous != null || docking != null) Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
                 .padding(bottom = FlightChromeMetrics.PortraitDock, start = 12.dp, end = 12.dp)
-                .widthIn(max = 600.dp)) {
-                DockingPanel(requireNotNull(docking), true, paused, ready, missionActionBusy,
-                    onGuidance = { dockingAction(it) }, onUndock = { dockingAction() },
-                    modifier = Modifier.onGloballyPositioned { bottomPanelBounds = it.boundsInWindow() })
+                .widthIn(max = 600.dp)
+                .onGloballyPositioned { bottomPanelBounds = it.boundsInWindow() }) {
+                // A full portrait rendezvous panel retains its bearing, guidance
+                // actions and explanation without crowding the scene's centre.
+                if (docking != null) DockingPanel(requireNotNull(docking), true, paused, ready, missionActionBusy,
+                    onGuidance = { dockingAction(it) }, onUndock = { dockingAction() })
+                else RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
+                    onGuidance = ::setEncounterGuidance)
             }
             Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
                 .height(FlightChromeMetrics.PortraitDock)
