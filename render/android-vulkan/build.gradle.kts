@@ -16,10 +16,14 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-fexceptions", "-frtti")
+                arguments += "-DSOLARLAB_CAPTURE_PIPELINE_STATISTICS=" +
+                    if (providers.gradleProperty("solarLabCapturePipelineStatistics").orNull == "true") "ON" else "OFF"
+                arguments += "-DSOLARLAB_BUFFER_ADDRESS_COMPACTION=" +
+                    if (providers.gradleProperty("solarLabBufferAddressCompaction").orNull == "true") "ON" else "OFF"
             }
         }
         shaders {
-            glslcArgs += listOf("-c", "-O")
+            glslcArgs += listOf("-c", "-O", "--target-env=vulkan1.1")
         }
     }
 

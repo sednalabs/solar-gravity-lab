@@ -21,14 +21,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from cpu_topology import ANDROID_TOPOLOGY_COMMAND, host_snapshot, parse_snapshot, topology_report
 
-SCHEMA_VERSION = "2026-04-27.1"
+
+SCHEMA_VERSION = "2026-11-18.1"
 AT_HWCAP = 16
 ADB_SERIAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 AT_HWCAP2 = 26
 ADB_SHELL_COMMANDS = {
     "cat_cpuinfo": ("cat", "/proc/cpuinfo"),
     "getprop": ("getprop",),
+    "cpu_topology": (ANDROID_TOPOLOGY_COMMAND,),
 }
 
 FEATURE_ALIASES = {
@@ -49,6 +52,15 @@ FEATURE_ALIASES = {
     "sve2": "sve2",
     "sme": "sme",
     "sme2": "sme2",
+    "smef64": "sme-f64f64",
+    "sme_f64f64": "sme-f64f64",
+    "svef64mm": "sve-f64mm",
+    "sve_f64mm": "sve-f64mm",
+    "svebitperm": "sve-bitperm",
+    "sve_bitperm": "sve-bitperm",
+    "lrcpc": "rcpc",
+    "ilrcpc": "rcpc2",
+    "uscat": "lse2",
     "atomics": "lse",
     "lse": "lse",
     "lse2": "lse2",
@@ -114,6 +126,14 @@ FEATURE_ORDER = (
     "dit",
     "sb",
     "ssbs",
+    "sme-f64f64",
+    "sve-f64mm",
+    "rprfm",
+    "cssc",
+    "rcpc",
+    "rcpc2",
+    "wfxt",
+    "sve-bitperm",
 )
 
 FEATURE_WORKLOADS = {
@@ -152,14 +172,22 @@ FEATURE_WORKLOADS = {
     "dit": "constant-time execution support capability; no current SGL hot path claims it",
     "sb": "speculation barrier capability; not a solver path",
     "ssbs": "speculative-store-bypass control capability; not a solver path",
+    "sme-f64f64": "optional FP64 SME matrix arithmetic; required for every FP64 SME candidate",
+    "sve-f64mm": "optional SVE FP64 matrix arithmetic; not required for ordinary SVE FP64 vectors",
+    "rprfm": "range prefetch hint; requires measured cache-miss benefit and OS feature gate",
+    "cssc": "common short scalar instructions; compiler-selected integer/control utility",
+    "rcpc": "release-consistent acquire loads; no hand substitution for Rust atomics",
+    "rcpc2": "extended release-consistent acquire addressing; runtime utility",
+    "wfxt": "timed wait-for-event/interrupt; no busy-wait worker policy",
+    "sve-bitperm": "SVE2 bit permutation for a future packed visibility workload",
 }
 
 CANDIDATE_KERNEL_REQUIREMENTS = {
     "simd.arm64.sve-f64-batch-candidate": ("sve",),
     "simd.arm64.sve2-f64-batch-candidate": ("sve2",),
     "simd.arm64.sve-i8mm-packed-assist-candidate": ("sve-i8mm",),
-    "simd.arm64.sme-tiled-f64-candidate": ("sme",),
-    "simd.arm64.sme2-tiled-f64-candidate": ("sme2",),
+    "simd.arm64.sme-tiled-f64-candidate": ("sme", "sme-f64f64"),
+    "simd.arm64.sme2-tiled-f64-candidate": ("sme2", "sme-f64f64"),
     "simd.arm64.dotprod-packed-assist-candidate": ("dotprod",),
     "simd.arm64.i8mm-packed-assist-candidate": ("i8mm",),
     "simd.arm64.bf16-forecast-assist-candidate": ("bf16",),
@@ -183,6 +211,9 @@ RESERVED_FEATURES = {
     "bf16",
     "rdm",
     "fcma",
+    "sme-f64f64",
+    "sve-f64mm",
+    "sve-bitperm",
 }
 
 UTILITY_FEATURES = set(FEATURE_ORDER) - {"neon", "fp"} - RESERVED_FEATURES
@@ -212,6 +243,9 @@ HWCAP_BITS = {
     "flagm": 1 << 27,
     "ssbs": 1 << 28,
     "sb": 1 << 29,
+    "lrcpc": 1 << 15,
+    "uscat": 1 << 25,
+    "ilrcpc": 1 << 26,
 }
 
 HWCAP2_BITS = {
@@ -226,6 +260,12 @@ HWCAP2_BITS = {
     "sme": 1 << 23,
     "sme2": 1 << 37,
     "mops": 1 << 43,
+    "svebitperm": 1 << 4,
+    "svef64mm": 1 << 11,
+    "smef64": 1 << 25,
+    "wfxt": 1 << 31,
+    "cssc": 1 << 34,
+    "rprfm": 1 << 35,
 }
 
 
@@ -412,6 +452,7 @@ def build_matrix(evidence: Iterable[Evidence]) -> list[dict[str, object]]:
             {
                 "feature": feature,
                 "detected": detected,
+                "os_auxv_qualified": any(source.startswith("auxv.") for source in sources),
                 "state": feature_state(feature, detected),
                 "current_workload": FEATURE_WORKLOADS.get(
                     feature, "no workload classification registered"
@@ -426,10 +467,14 @@ def collect_census(args: argparse.Namespace) -> dict[str, object]:
     serial = validate_adb_serial(args.adb_serial) if args.adb_serial else None
     if serial:
         cpuinfo = adb_command(serial, "cat_cpuinfo", required=True)
+        topology = topology_report(
+            parse_snapshot(adb_command(serial, "cpu_topology")), affinity_scope="adb-shell",
+        )
         auxv_values: dict[str, int | None] = {"AT_HWCAP": None, "AT_HWCAP2": None}
         auxv_items: list[Evidence] = []
     else:
         cpuinfo = read_host_cpuinfo()
+        topology = topology_report(host_snapshot(), affinity_scope="collector-process")
         auxv_values, auxv_items = auxv_evidence()
 
     cpuinfo_tokens = parse_cpuinfo_tokens(cpuinfo)
@@ -468,6 +513,7 @@ def collect_census(args: argparse.Namespace) -> dict[str, object]:
             "normalized_tokens": normalized_tokens,
             "uncataloged_detected_tokens": uncataloged_tokens,
             "auxv": auxv_values,
+            "topology": topology,
             "features": matrix,
             "detected_features": detected,
         },

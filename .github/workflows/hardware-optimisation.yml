@@ -1,0 +1,138 @@
+name: Hardware optimisation proof
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "engine/physics/**"
+      - "render/android-vulkan/**"
+      - ".github/workflows/hardware-optimisation.yml"
+      - ".github/scripts/*hardware_throughput*"
+      - ".github/scripts/run_vulkan_hardware_proof.sh"
+      - ".github/scripts/run_qcom_offscreen_proof.sh"
+  workflow_dispatch:
+    inputs:
+      baseline_sha:
+        description: Immutable baseline commit
+        required: true
+        default: "54b8d2036b9a03cc4b9587be0b86113db5bbbe6a"
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: hardware-optimisation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  qcom-offscreen-qualification:
+    name: QCOM shaders and offscreen controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/glslang
+          ref: e1b562a8bed273a02f30b59b66a5d499793cede5 # 16.6.0
+          path: .hardware/glslang
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: 88487f687f3100ebe1d3559a8a34d971ee85b977 # v1.4.368
+          path: .hardware/vulkan-headers
+          persist-credentials: false
+      - name: Install software Vulkan and validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers ninja-build
+      - name: Build the pinned compiler with QCOM language support
+        run: |
+          cmake -S .hardware/glslang -B .hardware/glslang-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_OPT=OFF -DENABLE_HLSL=OFF \
+            -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=ON
+          cmake --build .hardware/glslang-build --target glslang-standalone --parallel 4
+      - name: Compile probes and execute validated controls
+        run: bash .github/scripts/run_qcom_offscreen_proof.sh "$GITHUB_WORKSPACE/.hardware/glslang-build/StandAlone/glslang" "$GITHUB_WORKSPACE/.hardware/vulkan-headers/include"
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          ndk-version: "27.3.13750724"
+      - name: Cross-compile the standalone device probe
+        run: |
+          bash .github/scripts/ensure_android_sdk_packages.sh "ndk;27.3.13750724"
+          cmake -S render/android-vulkan/probes -B dist/qcom-offscreen-proof/android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.3.13750724/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-35 -DANDROID_STL=c++_static \
+            -DGLSLANG_VALIDATOR="$GITHUB_WORKSPACE/.hardware/glslang-build/StandAlone/glslang"
+          cmake --build dist/qcom-offscreen-proof/android --parallel 4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: qcom-offscreen-proof-${{ github.run_id }}
+          path: |
+            dist/qcom-offscreen-proof/*.json
+            dist/qcom-offscreen-proof/*.txt
+            dist/qcom-offscreen-proof/*.md
+            dist/qcom-offscreen-proof/host/shaders
+            dist/qcom-offscreen-proof/android/shaders
+            dist/qcom-offscreen-proof/android/solarlab-qcom-offscreen-probe
+  optional-vulkan-build:
+    name: Optional Vulkan paths and contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-android-sdk
+        with:
+          ndk-version: "27.3.13750724"
+      - name: Ensure the production NDK is available
+        run: bash .github/scripts/ensure_android_sdk_packages.sh "ndk;27.3.13750724"
+      - name: Exercise capability policy and compile optional Vulkan consumers
+        run: bash .github/scripts/run_vulkan_hardware_proof.sh "$ANDROID_SDK_ROOT/ndk/27.3.13750724"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: vulkan-hardware-proof-${{ github.run_id }}
+          path: |
+            dist/vulkan-hardware-proof/*.txt
+            dist/vulkan-hardware-proof/*.json
+            dist/vulkan-hardware-proof/*.properties
+            dist/vulkan-hardware-proof/shaders
+  paired-arm-throughput:
+    name: Paired native Arm throughput
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Validate measurement comparison contracts
+        run: python3 .github/scripts/test_compare_hardware_throughput.py
+      - name: Compare immutable baseline and candidate on the same host
+        env:
+          BASELINE_SHA: ${{ inputs.baseline_sha || github.event.pull_request.base.sha }}
+        run: bash .github/scripts/run_paired_hardware_throughput.sh "$BASELINE_SHA"
+      - name: Publish comparison summary
+        if: always()
+        run: |
+          if [[ -f dist/hardware-throughput/comparison.md ]]; then
+            cat dist/hardware-throughput/comparison.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for cohort in short-segment segment-2 segment-4 segment-8 segment-16 segment-32; do
+            report="dist/hardware-throughput/$cohort/comparison.md"
+            if [[ -f "$report" ]]; then
+              cat "$report" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: paired-arm-throughput-${{ github.run_id }}
+          path: dist/hardware-throughput
