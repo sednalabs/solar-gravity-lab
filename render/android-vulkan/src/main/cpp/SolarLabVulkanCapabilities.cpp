@@ -104,7 +104,9 @@ void VulkanDeviceFeatures::Prepare(const VulkanCapabilities& supported, bool cap
         executable.pNext = chain; chain = &executable;
         extensions.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
     }
-    if (addressCompaction && supported.bufferDeviceAddress && supported.shaderInt64 && supported.SupportsSubgroupCompaction()) {
+    // Typed physical-storage pointers do not use 64-bit integer arithmetic.
+    // The compiled shader contract checks that OpCapability Int64 is absent.
+    if (addressCompaction && supported.bufferDeviceAddress && supported.SupportsSubgroupCompaction()) {
         bufferAddress.bufferDeviceAddress = VK_TRUE;
         bufferAddress.pNext = chain; chain = &bufferAddress;
         if (supported.apiVersion < VK_API_VERSION_1_2) extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);

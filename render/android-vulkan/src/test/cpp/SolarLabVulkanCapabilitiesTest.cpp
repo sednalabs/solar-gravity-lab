@@ -13,6 +13,7 @@ struct Driver {
     uint32_t apiVersion = VK_API_VERSION_1_1;
     std::vector<const char*> extensions;
     bool features = false;
+    bool shaderInt64 = false;
     bool monotonic = true;
     bool domainFunction = true;
     bool computeSubgroups = true;
@@ -61,7 +62,7 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties(VkPhysicalDe
     properties[0].timestampValidBits = 36;
 }
 VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2(VkPhysicalDevice, VkPhysicalDeviceFeatures2* features) {
-    features->features.shaderInt64 = driver.features;
+    features->features.shaderInt64 = driver.shaderInt64;
     for (auto* entry = static_cast<VkBaseOutStructure*>(features->pNext); entry != nullptr; entry = entry->pNext) {
         ++driver.featureQueries;
         switch (entry->sType) {
@@ -111,6 +112,9 @@ int main() {
     assert(!enabled.bufferAddress.bufferDeviceAddress && Has(enabled, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME));
     enabled.Prepare(capabilities, true, true);
     assert(enabled.executable.pipelineExecutableInfo && enabled.bufferAddress.bufferDeviceAddress);
+    // Adreno may expose physical-storage addresses without integer64 shaders.
+    // Typed pointer compaction must remain eligible in that configuration.
+    assert(!capabilities.shaderInt64 && enabled.bufferAddress.bufferDeviceAddress);
     assert(Has(enabled, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME));
     unsigned chainLength = 0;
     for (auto* node = static_cast<VkBaseOutStructure*>(enabled.chain); node; node = node->pNext) {

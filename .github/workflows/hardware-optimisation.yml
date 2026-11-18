@@ -99,6 +99,7 @@ jobs:
           name: vulkan-hardware-proof-${{ github.run_id }}
           path: |
             dist/vulkan-hardware-proof/*.txt
+            dist/vulkan-hardware-proof/*.json
             dist/vulkan-hardware-proof/*.properties
             dist/vulkan-hardware-proof/shaders
   paired-arm-throughput:

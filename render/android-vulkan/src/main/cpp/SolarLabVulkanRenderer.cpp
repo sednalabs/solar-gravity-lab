@@ -782,7 +782,6 @@ bool SolarLabVulkanRenderer::CreateDevice() {
     constexpr bool addressCompaction = false;
 #endif
     optionalFeatures_.Prepare(capabilities_, captureStatistics, addressCompaction);
-    enabledFeatures_.shaderInt64 = optionalFeatures_.bufferAddress.bufferDeviceAddress;
     std::vector<VkExtensionProperties> advertisedExtensions;
     for (const auto& name : capabilities_.extensions) {
         VkExtensionProperties extension{};
@@ -808,7 +807,6 @@ bool SolarLabVulkanRenderer::CreateDevice() {
     if (createResult != VK_SUCCESS && (optionalFeatures_.chain != nullptr || optionalFeatures_.extensions.size() > 1U)) {
         LogInfo("Optional Vulkan feature negotiation failed; retrying the portable device.");
         optionalFeatures_.DisableOptional();
-        enabledFeatures_.shaderInt64 = VK_FALSE;
         qcomTileMemory_.ResetDevice();
         createInfo.pNext = nullptr;
         createInfo.enabledExtensionCount = static_cast<uint32_t>(optionalFeatures_.extensions.size());

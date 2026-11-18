@@ -24,6 +24,8 @@ for shader in render/android-vulkan/src/main/shaders/solarlab/*; do
   "$ndk_root/shader-tools/linux-x86_64/glslc" --target-env=vulkan1.1 -O \
     "$shader" -o "$output/shaders/$(basename "$shader").spv"
 done
+python3 render/android-vulkan/src/test/python/verify_medium_bda_spirv.py \
+  "$output/shaders/compact_medium_bda.comp.spv" > "$output/bda-spirv-contract.json"
 minimum_api="$(python3 -c 'import tomllib; print(tomllib.load(open("gradle/libs.versions.toml", "rb"))["versions"]["minSdk"])')"
 cmake -S "$cpp" -B "$output/native" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$ndk_root/build/cmake/android.toolchain.cmake" \

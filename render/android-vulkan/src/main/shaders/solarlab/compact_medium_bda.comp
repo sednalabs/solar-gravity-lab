@@ -1,6 +1,5 @@
 #version 450
 #extension GL_EXT_buffer_reference2 : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_ballot : require
 
@@ -53,6 +52,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer DrawCommandB
 };
 
 // Native push ABI: four u32 fields, then three 64-bit device addresses.
+// Typed pointers require PhysicalStorageBufferAddresses, not shaderInt64.
 // The caller owns lifetimes and checks every address before recording dispatch.
 layout(push_constant, std430) uniform PushConstants {
     uint sourceCount;

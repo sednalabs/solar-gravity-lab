@@ -12,7 +12,7 @@ availability is established by the implementation or host tests below.
 | Subgroup compaction | Vulkan 1.1 compute-stage `BASIC` and `BALLOT` subgroup operations | Medium visibility reserves one output range per nonempty subgroup. Far visibility retains per-tile admission and aggregates accepted/drop counters across each subgroup. | Existing scalar-atomic shader if capability or pipeline creation fails. Subgroup width is queried, never fixed to 32/64. |
 | QCOM tile memory | Advertised `VK_QCOM_tile_memory_heap`, `tileMemoryHeap`, `tileBufferTransfers`, compatible tile heap and callable bind command | Far tile counters, cleared, incremented and copied to ordinary readback memory in one submission batch | Ordinary device-local counters on any failed gate/allocation. Never put vertex/indirect buffers, authoritative state or persistent scene data in the tile heap. |
 | Synchronization2 | Vulkan 1.3 core or advertised KHR extension, queried/enabled feature and callable commands | Actual buffer/memory barriers and frame/upload queue submissions | Existing Vulkan 1.1 barriers/submissions. Per-resource stage scopes remain compatible with their access masks. |
-| Buffer device address | Queried/enabled BDA, `shaderInt64`, compute subgroup operations, nonzero buffer addresses; explicit experiment build flag | Medium subgroup compaction receives source/output/draw addresses in a 40-byte push block, updating only the uniform descriptor | Descriptor-backed subgroup compaction. The experiment remains off by default until device A/B evidence justifies promotion. |
+| Buffer device address | Queried/enabled BDA, compute subgroup operations, nonzero buffer addresses; explicit experiment build flag | Medium subgroup compaction receives source/output/draw addresses in a 40-byte push block, updating only the uniform descriptor | Descriptor-backed subgroup compaction. The experiment remains off by default until device A/B evidence justifies promotion. |
 | Pipeline executable properties | Advertised extension, queried/enabled feature and both query functions; explicit profiling build flag | Pipeline creation captures statistics, then logs driver-supplied statistic names/values and executable subgroup sizes | Ordinary pipeline creation without capture. Driver statistics are not assumed to include any particular register/spill counter. |
 | Calibrated timestamps | KHR or EXT extension, both device and `CLOCK_MONOTONIC` domains and callable device command | Paired GPU ticks/CPU monotonic nanoseconds with maximum deviation, at first timing sample and every 120 samples | GPU duration queries still work independently. Missing domains/functions leave calibration inactive. |
 
@@ -28,6 +28,19 @@ address usage bit and address allocation flag. Addresses are queried after bindi
 checked before dispatch and retained only for the allocation's lifetime. Buffer
 generation changes force command re-recording, which replaces the pushed addresses.
 No address is exposed through JNI or substituted for the Rust FP64 world.
+
+The shader uses typed physical-storage pointers, so it does not require the
+separate `shaderInt64` feature. The NDK-compiled shader from
+[run 44273135829](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44273135829)
+at source `2ca05d3aabecf6521d96397cdb4668d914b64cc0` declares `Shader`,
+`GroupNonUniform`, `GroupNonUniformBallot` and `PhysicalStorageBufferAddresses`,
+with no `Int64` capability or 64-bit integer types. Its SHA-256 is
+`d5504bfab698d068017644c04dd7f5f336a5baac4332a9c7cad90deaeee06e14`.
+The same run's later C++ build failed because its proof command selected Android
+API 26; the shader evidence does not establish a successful Android build.
+`verify_medium_bda_spirv.py` checks the actual compiled artifact's capability
+requirements, push offsets, address types and source/output strides, so a future
+shader change cannot silently introduce an unrequested integer64 requirement.
 
 ## Synchronisation and ownership
 
@@ -85,7 +98,7 @@ Host tests compile production probe/feature-chain/allocation code with mock Vulk
 entrypoints. `SolarLabVulkanCapabilitiesTest.cpp` covers advertised-but-false
 features, extension/core promotion, missing calibration functions/domains, repeated
 chain preparation and fallback reset, subgroup stage/operation gates and timestamp
-wraparound. `QcomTileMemoryTest.cpp` covers unavailable features, transfers, entrypoints,
+wraparound, including BDA eligibility without `shaderInt64`. `QcomTileMemoryTest.cpp` covers unavailable features, transfers, entrypoints,
 budgets, memory-type masks, protected memory, dedicated requirements and cleanup
 after allocation/bind failures. These tests do not execute GPU instructions.
 
@@ -103,6 +116,9 @@ g++ -std=c++20 -Wall -Wextra -Werror \
   render/android-vulkan/src/main/cpp/QcomTileMemory.cpp \
   -o /tmp/solar-qcom-tile-test
 /tmp/solar-qcom-tile-test
+
+python3 render/android-vulkan/src/test/python/verify_medium_bda_spirv.py \
+  /path/to/compiled/compact_medium_bda.comp.spv
 ```
 
 Physical qualification must use the exact remotely validated APK, capture the
