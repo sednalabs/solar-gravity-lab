@@ -162,6 +162,34 @@ physical state. Contact still uses the configured gravity law; conservative
 higher-order coast methods do not claim to raise the whole powered/contact split
 above second order.
 
+The local solver has a tested motion-resolution envelope, not a guarantee for
+arbitrary collision geometry or arbitrarily fast motion. Island grouping includes
+the full translational and rotational kinetic energy, so an impact can transfer
+energy between different craft and unequal masses. Each candidate union is
+rechecked after a merge. Far-apart physical shapes take bounded free drifts;
+near contact, the solver limits point motion to one eighth of the smallest
+primitive thickness or diameter in the island. Boxes, spheres and the actual
+24-pad flanges supply that scale. All refinement stays in one translating,
+inertially oriented frame and returns to astronomical coordinates once.
+
+There are at most 2,048 Rapier solves, including rejected retries, per island per
+0.01-second contact drift. Motion and final velocities are checked before a solve
+is accepted, and accumulated motion must remain inside the original island's
+envelope. The explicitly configured 3 m/s stabilization speed, scaled by island
+membership, is a checked numerical allowance; it is not a rigorous bound on an
+arbitrary coupled iterative solver. Attachment rest-pose residuals have a separate
+allowance. Exceeding a motion or work bound rejects the staged operation. Reducing
+the requested step, moderating relative speed/spin, or simplifying extremely thin
+geometry can bring a scenario inside the supported envelope.
+
+The solver uses ordinary dynamic contact with this bounded refinement. It does
+not depend on Rapier's bullet-versus-bullet exclusion or its endpoint approximation
+for moving CCD targets. Speculative contact is disabled so docking faces must
+actually meet before restitution or capture. Tests cover fast two-body impacts,
+physical restitution and momentum, rotating structures, island independence and
+rejected-work rollback. Simultaneous multi-body rigid impacts are resolved by
+Rapier's contact model; they are not a uniquely validated material-impact law.
+
 ## Add a new visual asset without application-source edits
 
 The asset catalog is an **offline build input**. Its output is compiled into the

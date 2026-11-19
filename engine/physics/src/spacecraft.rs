@@ -153,7 +153,8 @@ pub fn advance_spacecraft_steps_reported(
                         ships,
                         &contact_geometry,
                         dt,
-                    )?;
+                    )
+                    .map_err(|_| ())?;
                     let mut contact_report = segment.empty_scientific_report();
                     contact_report.accepted(dt);
                     contact_report.force_evaluations = 2;
