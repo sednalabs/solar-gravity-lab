@@ -10,14 +10,44 @@ use rapier3d_f64::prelude::*;
 use solarlab_domain::docking::*;
 use solarlab_domain::spacecraft::{add, cross, finite, magnitude, scale, sub};
 use solarlab_domain::{
-    AttitudeMode, DockingAttachment, DockingGuidanceMode, DockingStatus, FlightControl,
-    LocalReferenceFrame, Quaterniond, SpacecraftAppearance, SpacecraftState, Vector3d,
+    AttitudeMode, ContactShape, DockingAttachment, DockingGuidanceMode, DockingStatus,
+    FlightControl, LocalReferenceFrame, Quaterniond, SpacecraftAppearance, SpacecraftState,
+    Vector3d,
 };
 use std::sync::{Mutex, OnceLock};
 
 pub const MAX_CONTACT_SUBSTEP_SECONDS: f64 = 0.01;
 const CONTACT_RESTITUTION: f64 = 0.1;
 const CONTACT_FRICTION: f64 = 0.4;
+// Explicit, checked numerical resolution limits, not a universal CCD proof.
+const MAX_CONTACT_ISLAND_SUBSTEPS: usize = 2048;
+const CONTACT_CORRECTIVE_SPEED_MPS: f64 = 3.0;
+const CONTACT_FEATURE_MOTION_FRACTION: f64 = 0.125;
+const CONTACT_NUMERICAL_TOLERANCE_M: f64 = 1e-8;
+
+#[path = "docking_motion.rs"]
+mod motion;
+use motion::{island_order, MotionEnvelope};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContactStepError {
+    InvalidState,
+    ResolutionLimit,
+    MotionEnvelope,
+    Gravity(crate::science::ScientificError),
+}
+
+impl From<()> for ContactStepError {
+    fn from(_: ()) -> Self {
+        Self::InvalidState
+    }
+}
+
+impl From<crate::science::ScientificError> for ContactStepError {
+    fn from(error: crate::science::ScientificError) -> Self {
+        Self::Gravity(error)
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ContactSample {
@@ -27,7 +57,7 @@ struct ContactSample {
     signed_distance_m: f64,
 }
 
-/// CCD may resolve and separate a pair inside one Rapier call. The final
+/// Contact may resolve and separate a pair inside one Rapier call. The final
 /// manifold set alone loses that impact, so retain force evidence per substep.
 #[derive(Default)]
 struct ContactEvidence(Mutex<Vec<ContactSample>>);
@@ -109,6 +139,56 @@ pub fn port_pose(appearance: SpacecraftAppearance) -> (Vector3d, Quaterniond) {
     }
 }
 
+/// The flight component supplies the physical frame; a mesh is only its default.
+#[must_use]
+pub fn spacecraft_port_pose(ship: &SpacecraftState) -> (Vector3d, Quaterniond) {
+    ship.authored
+        .as_ref()
+        .and_then(|a| a.contact.as_ref())
+        .map_or_else(
+            || port_pose(ship.appearance),
+            |c| (c.port.position_body_m, c.port.attitude_body),
+        )
+}
+
+/// Both annular faces must overlap. Geometry, rather than a spacecraft name or
+/// visual mesh, decides whether the two active ports can physically mate.
+#[must_use]
+pub fn ports_compatible(ship: &SpacecraftState, target: &SpacecraftState) -> bool {
+    let radii = |s: &SpacecraftState| {
+        s.authored
+            .as_ref()
+            .and_then(|a| a.contact.as_ref())
+            .map_or_else(
+                || match s.appearance {
+                    SpacecraftAppearance::Asteria => (0.43_f64, 0.72_f64),
+                    SpacecraftAppearance::RelayStation => (0.64_f64, 0.94_f64),
+                },
+                |c| (c.port.inner_radius_m, c.port.outer_radius_m),
+            )
+    };
+    let (a0, a1) = radii(ship);
+    let (b0, b1) = radii(target);
+    a1.min(b1) - a0.max(b0) >= 0.001
+}
+
+#[must_use]
+pub fn desired_spacecraft_mating_attitude(
+    ship: &SpacecraftState,
+    target: &SpacecraftState,
+) -> Quaterniond {
+    target
+        .attitude
+        .multiply(spacecraft_port_pose(target).1)
+        .multiply(Quaterniond::from_rotation_vector(Vector3d {
+            x: 0.0,
+            y: std::f64::consts::PI,
+            z: 0.0,
+        }))
+        .multiply(spacecraft_port_pose(ship).1.conjugate())
+        .normalized()
+}
+
 #[must_use]
 pub fn desired_mating_attitude(
     ship_appearance: SpacecraftAppearance,
@@ -149,8 +229,8 @@ pub fn observe(
     target_velocity: Vector3d,
     target: &SpacecraftState,
 ) -> Result<DockingObservation, ()> {
-    let ship_offset = ship.attitude.rotate(port_pose(ship.appearance).0);
-    let target_offset = target.attitude.rotate(port_pose(target.appearance).0);
+    let ship_offset = ship.attitude.rotate(spacecraft_port_pose(ship).0);
+    let target_offset = target.attitude.rotate(spacecraft_port_pose(target).0);
     let ship_omega = ship.attitude.rotate(ship.angular_velocity_body_radps);
     let target_omega = target.attitude.rotate(target.angular_velocity_body_radps);
     let port_velocity = add(ship_velocity, cross(ship_omega, ship_offset));
@@ -160,7 +240,7 @@ pub fn observe(
         velocity_mps: target_port_velocity,
         attitude: target
             .attitude
-            .multiply(port_pose(target.appearance).1)
+            .multiply(spacecraft_port_pose(target).1)
             .normalized(),
         angular_velocity_world_radps: target_omega,
     };
@@ -176,15 +256,15 @@ pub fn observe(
         .attitude
         .conjugate()
         .rotate(sub(relative_velocity, cross(target_omega, delta)));
-    let desired = desired_mating_attitude(ship.appearance, target.appearance, target.attitude);
+    let desired = desired_spacecraft_mating_attitude(ship, target);
     let alignment_error_rad =
         magnitude(rotation_vector(ship.attitude.conjugate().multiply(desired)));
     let relative_speed_mps = magnitude(relative_velocity);
     let relative_angular_speed_radps = magnitude(sub(ship_omega, target_omega));
     let port_distance_m = magnitude(position_port_m);
     let lateral = position_port_m.x.hypot(position_port_m.y);
-    let capture_ready = (-DOCKING_CONTACT_PENETRATION_M..=DOCKING_CAPTURE_GAP_M)
-        .contains(&position_port_m.z)
+    let capture_ready = ports_compatible(ship, target)
+        && (-DOCKING_CONTACT_PENETRATION_M..=DOCKING_CAPTURE_GAP_M).contains(&position_port_m.z)
         && lateral <= DOCKING_CAPTURE_LATERAL_M
         && alignment_error_rad <= DOCKING_CAPTURE_ALIGNMENT_RAD
         && relative_speed_mps <= DOCKING_CAPTURE_SPEED_MPS
@@ -269,7 +349,7 @@ fn guidance_control(
         },
     };
     let acceleration_port = scale(sub(desired_port_velocity, t.velocity_port_mps), 0.5);
-    let port_attitude = target.attitude.multiply(port_pose(target.appearance).1);
+    let port_attitude = target.attitude.multiply(spacecraft_port_pose(target).1);
     let force = scale(
         ship.attitude
             .conjugate()
@@ -279,7 +359,7 @@ fn guidance_control(
     let axis = |force: f64, positive: usize, negative: usize| {
         (force / capacities[if force >= 0.0 { positive } else { negative }]).clamp(-1.0, 1.0)
     };
-    let desired = desired_mating_attitude(ship.appearance, target.appearance, target.attitude);
+    let desired = desired_spacecraft_mating_attitude(ship, target);
     let error = rotation_vector(ship.attitude.conjugate().multiply(desired));
     let relative_omega = sub(
         ship.angular_velocity_body_radps,
@@ -472,16 +552,19 @@ pub(crate) fn advance_contact_step(
     plan: &FixedStepPlan,
     bodies: &mut [MassiveBodyState],
     ships: &mut [SpacecraftBinding],
+    geometry: &ContactGeometryCache,
     dt: f64,
-) -> Result<(), ()> {
+) -> Result<(), ContactStepError> {
     if !dt.is_finite() || dt <= 0.0 || dt > MAX_CONTACT_SUBSTEP_SECONDS * (1.0 + 1e-12) {
-        return Err(());
+        return Err(ContactStepError::InvalidState);
     }
     let pairs = contact_pairs(bodies, ships)?;
     if pairs.is_empty() {
         let mut segment = plan.clone();
         segment.dt_seconds = dt;
-        return crate::advance_fixed_steps(&segment, bodies, 1);
+        return crate::science::advance_fixed_steps_checked(&segment, bodies, 1)
+            .map(|_| ())
+            .map_err(Into::into);
     }
     let kernel = if plan.decision.effective_backend == crate::SolverBackend::SimdArm64 {
         crate::GravityKernel::Arm64(
@@ -497,7 +580,7 @@ pub(crate) fn advance_contact_step(
     let sources = crate::source_indices(bodies);
     let mut accelerations = vec![Vector3d::default(); bodies.len()];
     let mut scratch = crate::GravityScratch::default();
-    crate::gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
+    plan.gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch)?;
     gravity_kick(bodies, &accelerations, 0.5 * dt, kernel);
     let members = contact_members(bodies, ships)?;
     let mut contact_bodies = vec![false; bodies.len()];
@@ -517,8 +600,8 @@ pub(crate) fn advance_contact_step(
             }
         }
     }
-    local_drift(bodies, ships, &pairs, &members, dt)?;
-    crate::gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch);
+    local_drift(bodies, ships, &pairs, geometry, dt)?;
+    plan.gravity_accelerations_into(bodies, &sources, &mut accelerations, kernel, &mut scratch)?;
     gravity_kick(bodies, &accelerations, 0.5 * dt, kernel);
     Ok(())
 }
@@ -544,74 +627,223 @@ fn local_drift(
     bodies: &mut [MassiveBodyState],
     ships: &mut [SpacecraftBinding],
     pairs: &[(usize, usize)],
-    members: &[bool],
+    geometry: &ContactGeometryCache,
     dt: f64,
-) -> Result<(), ()> {
-    let mut order: Vec<usize> = members
+) -> Result<(), ContactStepError> {
+    // Recompute candidate union energy after every merge. Contact impulses can
+    // transfer any member's kinetic energy into a light member's translation.
+    let mut groups: Vec<Vec<(usize, usize)>> = Vec::new();
+    for &pair in pairs {
+        let mut group = vec![pair];
+        let mut index = 0;
+        while index < groups.len() {
+            let left = island_order(&group, ships);
+            let right = island_order(&groups[index], ships);
+            let mut union = group.clone();
+            union.extend(&groups[index]);
+            let order = island_order(&union, ships);
+            let envelope = MotionEnvelope::new(bodies, ships, &union, &order, geometry)?;
+            let near = left.iter().any(|&a| {
+                right
+                    .iter()
+                    .any(|&b| envelope.can_touch(bodies, ships, geometry, a, b, dt))
+            });
+            if near {
+                group.extend(groups.remove(index));
+                index = 0;
+            } else {
+                index += 1;
+            }
+        }
+        groups.push(group);
+    }
+    for group in groups {
+        drift_island(bodies, ships, &group, geometry, dt)?;
+    }
+    Ok(())
+}
+
+fn drift_island(
+    bodies: &mut [MassiveBodyState],
+    ships: &mut [SpacecraftBinding],
+    pairs: &[(usize, usize)],
+    geometry: &ContactGeometryCache,
+    dt: f64,
+) -> Result<(), ContactStepError> {
+    let mut sorted_pairs = pairs.to_vec();
+    sorted_pairs
+        .sort_by(|&(a, _), &(b, _)| ships[a].state.body_id.0.cmp(&ships[b].state.body_id.0));
+    let pairs = sorted_pairs.as_slice();
+    let order = island_order(pairs, ships);
+    let frame = MotionEnvelope::new(bodies, ships, pairs, &order, geometry)?;
+    let before: Vec<_> = order
         .iter()
-        .enumerate()
-        .filter_map(|(i, m)| m.then_some(i))
+        .map(|&i| (bodies[ships[i].body_index], ships[i].state.clone()))
         .collect();
-    order.sort_by(|&a, &b| ships[a].state.body_id.0.cmp(&ships[b].state.body_id.0));
-    let reference = bodies[ships[*order.first().ok_or(())?].body_index];
-    let mut total_mass = 0.0;
-    let mut weighted_position = Vector3d::default();
-    let mut weighted_velocity = Vector3d::default();
+    // Keep all refinement in one local translating frame. Repeatedly adding
+    // metre offsets to an astronomical origin loses precision. Return to the
+    // authoritative frame only once, after the complete drift is accepted.
     for &index in &order {
-        let mass = ships[index].state.mass_kg();
-        let body = bodies[ships[index].body_index];
-        total_mass += mass;
-        weighted_position = add(
-            weighted_position,
-            scale(sub(body.position_m, reference.position_m), mass),
-        );
-        weighted_velocity = add(
-            weighted_velocity,
-            scale(sub(body.velocity_mps, reference.velocity_mps), mass),
-        );
+        let body = &mut bodies[ships[index].body_index];
+        body.position_m = sub(body.position_m, frame.origin);
+        body.velocity_mps = sub(body.velocity_mps, frame.bulk_velocity);
     }
-    let origin = add(
-        reference.position_m,
-        scale(weighted_position, 1.0 / total_mass),
-    );
-    let bulk_velocity = add(
-        reference.velocity_mps,
-        scale(weighted_velocity, 1.0 / total_mass),
-    );
-    if !finite(origin) || !finite(bulk_velocity) {
-        return Err(());
+    let result = drift_island_bounded(bodies, ships, pairs, &order, geometry, dt);
+    if result.is_err() {
+        // Accept the entire island or restore it, including capture/guidance.
+        // The runtime also stages the larger gravity/propulsion operation.
+        for (&i, (body, state)) in order.iter().zip(before) {
+            bodies[ships[i].body_index] = body;
+            ships[i].state = state;
+        }
+    } else {
+        let origin = add(frame.origin, scale(frame.bulk_velocity, dt));
+        for &index in &order {
+            let body = &mut bodies[ships[index].body_index];
+            body.position_m = add(origin, body.position_m);
+            body.velocity_mps = add(frame.bulk_velocity, body.velocity_mps);
+        }
     }
-    let mut bullets = vec![false; ships.len()];
-    for &(chaser, target) in pairs {
-        let swept_speed = |index: usize| {
-            let ship = &ships[index];
-            magnitude(sub(bodies[ship.body_index].velocity_mps, bulk_velocity))
-                + magnitude(ship.state.angular_velocity_body_radps)
-                    * authored_sweep_radius_m(ship.state.appearance)
-        };
-        // Rapier 0.36 excludes bullet-vs-bullet sweeps. Choose the body with
-        // greater bounded point motion, including target rotation, not a fixed
-        // gameplay role. The other remains fully dynamic and receives impulses.
-        bullets[if swept_speed(target) > swept_speed(chaser) {
-            target
+    result
+}
+
+fn drift_island_bounded(
+    bodies: &mut [MassiveBodyState],
+    ships: &mut [SpacecraftBinding],
+    pairs: &[(usize, usize)],
+    order: &[usize],
+    geometry: &ContactGeometryCache,
+    dt: f64,
+) -> Result<(), ContactStepError> {
+    let initial = MotionEnvelope::new(bodies, ships, pairs, order, geometry)?;
+    let initial_attitudes: Vec<_> = order.iter().map(|&i| ships[i].state.attitude).collect();
+    // Relative motion must resolve the smaller participant's feature, even if
+    // only a large body's collider moves. Use the whole island's minimum.
+    let min_feature_m = order
+        .iter()
+        .map(|&i| geometry.0[i].min_feature_m)
+        .fold(f64::INFINITY, f64::min);
+    let mut displacement = vec![Vector3d::default(); order.len()];
+    let mut elapsed = 0.0;
+    let mut attempt_cap = dt;
+    for _ in 0..MAX_CONTACT_ISLAND_SUBSTEPS {
+        let remaining = dt - elapsed;
+        if remaining <= 0.0 {
+            return Ok(());
+        }
+        let envelope = MotionEnvelope::new(bodies, ships, pairs, order, geometry)?;
+        let free_step = envelope.free_drift_seconds(bodies, ships, order, geometry);
+        let resolved_step = envelope.resolved_step_seconds(order, min_feature_m);
+        let resolve_features = free_step <= resolved_step;
+        let step = remaining.min(attempt_cap).min(if resolve_features {
+            resolved_step
         } else {
-            chaser
-        }] = true;
+            free_step
+        });
+        if !step.is_finite() || step <= 0.0 || elapsed + step == elapsed {
+            return Err(ContactStepError::ResolutionLimit);
+        }
+        let local_motion = match drift_island_once(
+            bodies,
+            ships,
+            pairs,
+            order,
+            geometry,
+            &envelope,
+            resolve_features.then_some(min_feature_m),
+            step,
+        ) {
+            Ok(motion) => motion,
+            Err(ContactStepError::ResolutionLimit) => {
+                // Solver correction exceeded the feature-resolution budget.
+                // Nothing was copied back; retry within the same work limit.
+                attempt_cap = step * 0.5;
+                if elapsed + attempt_cap == elapsed {
+                    return Err(ContactStepError::ResolutionLimit);
+                }
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let next_elapsed = if step == remaining {
+            dt
+        } else {
+            elapsed + step
+        };
+        for (slot, &index) in order.iter().enumerate() {
+            displacement[slot] = add(
+                displacement[slot],
+                add(
+                    local_motion[slot],
+                    scale(sub(envelope.bulk_velocity, initial.bulk_velocity), step),
+                ),
+            );
+            let distance = magnitude(displacement[slot]);
+            let angle = magnitude(rotation_vector(
+                initial_attitudes[slot]
+                    .conjugate()
+                    .multiply(ships[index].state.attitude),
+            ));
+            // Grouping used this whole-drift envelope. Substeps alone could
+            // accumulate corrections and reach an un-simulated other island.
+            if !distance.is_finite()
+                || !angle.is_finite()
+                || distance > initial.center_budget(index, next_elapsed)
+                || distance + angle * geometry.0[index].radius_m
+                    > initial.point_budget(index, next_elapsed)
+            {
+                return Err(ContactStepError::MotionEnvelope);
+            }
+        }
+        elapsed = next_elapsed;
+        attempt_cap = dt - elapsed;
     }
+    if elapsed == dt {
+        Ok(())
+    } else {
+        Err(ContactStepError::ResolutionLimit)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drift_island_once(
+    bodies: &mut [MassiveBodyState],
+    ships: &mut [SpacecraftBinding],
+    pairs: &[(usize, usize)],
+    order: &[usize],
+    geometry: &ContactGeometryCache,
+    envelope: &MotionEnvelope,
+    resolution_feature_m: Option<f64>,
+    dt: f64,
+) -> Result<Vec<Vector3d>, ContactStepError> {
+    let origin = envelope.origin;
+    let bulk_velocity = envelope.bulk_velocity;
     let mut world = PhysicsWorld::new();
     world.gravity = Vector::ZERO;
     world.integration_parameters.dt = dt;
     world.integration_parameters.normalized_max_linear_velocity = f64::MAX;
+    world
+        .integration_parameters
+        .normalized_max_corrective_velocity = CONTACT_CORRECTIVE_SPEED_MPS;
     world.integration_parameters.normalized_allowed_linear_error = 0.0005;
-    world.integration_parameters.normalized_prediction_distance = 0.005;
+    // Feature-bounded stepping resolves actual contact. Speculative impulses
+    // at a positive collar gap can bounce a safe arrival before its faces touch
+    // and do not reproduce the intended physical restitution on refinement.
+    world.integration_parameters.normalized_prediction_distance = 0.0;
     world.integration_parameters.num_solver_iterations = 12;
+    world.integration_parameters.num_internal_pgs_iterations = 1;
+    world.integration_parameters.contact_clustering = true;
+    world.integration_parameters.contact_recycling = false;
     world.integration_parameters.friction_model = FrictionModel::Coulomb;
-    world.integration_parameters.max_ccd_substeps = 4;
+    // Rapier 0.36 bullet sweeps exclude other bullets and sample moving
+    // targets at an endpoint, shifting COM or missing crossings. All contact
+    // participants are dynamic, so bounded ordinary steps resolve them here.
+    world.integration_parameters.max_ccd_substeps = 1;
     world.integration_parameters.warmstart_coefficient = 0.0;
     world.integration_parameters.warmstart_joints = false;
     let mut handles = vec![None; ships.len()];
     let mut port_handles = vec![None; ships.len()];
-    for &index in &order {
+    for &index in order {
         let ship = &ships[index].state;
         let body = bodies[ships[index].body_index];
         let rigid = RigidBodyBuilder::dynamic()
@@ -629,9 +861,9 @@ fn local_drift(
                 vector(ship.inertia_kg_m2),
             ))
             .can_sleep(false)
-            .ccd_enabled(bullets[index])
+            .ccd_enabled(false)
             .gyroscopic_forces_enabled(true);
-        let collider = ColliderBuilder::new(hull_shape(ship.appearance))
+        let collider = ColliderBuilder::new(geometry.0[index].hull.clone())
             .density(0.0)
             .restitution(CONTACT_RESTITUTION)
             .friction(CONTACT_FRICTION)
@@ -639,7 +871,7 @@ fn local_drift(
             .contact_force_event_threshold(0.0);
         let (handle, _) = world.insert(rigid, collider);
         let port_handle = world.insert_collider(
-            ColliderBuilder::new(port_shape(ship.appearance))
+            ColliderBuilder::new(geometry.0[index].port.clone())
                 .density(0.0)
                 .restitution(CONTACT_RESTITUTION)
                 .friction(CONTACT_FRICTION)
@@ -688,15 +920,69 @@ fn local_drift(
     world.step_with_events(&(), &evidence);
     let contacts = evidence.0.into_inner().map_err(|_| ())?;
     let advanced_origin = add(origin, scale(bulk_velocity, dt));
-    for &index in &order {
+    let mut solved = Vec::with_capacity(order.len());
+    let mut local_motion = Vec::with_capacity(order.len());
+    for &index in order {
         let rigid = &world.bodies[handles[index].ok_or(())?];
+        let raw_rotation = *rigid.rotation();
+        if ![
+            raw_rotation.x,
+            raw_rotation.y,
+            raw_rotation.z,
+            raw_rotation.w,
+        ]
+        .into_iter()
+        .all(f64::is_finite)
+        {
+            return Err(ContactStepError::MotionEnvelope);
+        }
         let attitude = domain_rotation(*rigid.rotation());
+        let previous = &ships[index].state;
+        let delta = sub(
+            domain_vector(rigid.translation()),
+            sub(bodies[ships[index].body_index].position_m, origin),
+        );
+        let distance = magnitude(delta);
+        let angle = magnitude(rotation_vector(
+            previous.attitude.conjugate().multiply(attitude),
+        ));
+        let position = add(advanced_origin, domain_vector(rigid.translation()));
+        let velocity = add(bulk_velocity, domain_vector(rigid.linvel()));
+        let omega = attitude.conjugate().rotate(domain_vector(rigid.angvel()));
+        let com_velocity = domain_vector(rigid.linvel());
+        let point_speed = magnitude(com_velocity) + magnitude(omega) * geometry.0[index].radius_m;
+        if !finite(position)
+            || !finite(velocity)
+            || !finite(omega)
+            || !distance.is_finite()
+            || !angle.is_finite()
+            || !point_speed.is_finite()
+            || distance > envelope.center_budget(index, dt)
+            || magnitude(com_velocity) * dt > envelope.center_budget(index, dt)
+            || distance + angle * geometry.0[index].radius_m > envelope.point_budget(index, dt)
+            || point_speed * dt > envelope.point_budget(index, dt)
+        {
+            return Err(ContactStepError::MotionEnvelope);
+        }
+        if let Some(feature_m) = resolution_feature_m {
+            let budget = CONTACT_FEATURE_MOTION_FRACTION * feature_m;
+            if distance + angle * geometry.0[index].radius_m
+                > budget + CONTACT_NUMERICAL_TOLERANCE_M
+                || point_speed * dt > budget + CONTACT_NUMERICAL_TOLERANCE_M
+            {
+                return Err(ContactStepError::ResolutionLimit);
+            }
+        }
+        solved.push((position, velocity, attitude, omega));
+        local_motion.push(delta);
+    }
+    // Validate every solved body before copying any result back.
+    for (&index, (position, velocity, attitude, omega)) in order.iter().zip(solved) {
         let body = &mut bodies[ships[index].body_index];
-        body.position_m = add(advanced_origin, domain_vector(rigid.translation()));
-        body.velocity_mps = add(bulk_velocity, domain_vector(rigid.linvel()));
+        body.position_m = position;
+        body.velocity_mps = velocity;
         ships[index].state.attitude = attitude;
-        ships[index].state.angular_velocity_body_radps =
-            attitude.conjugate().rotate(domain_vector(rigid.angvel()));
+        ships[index].state.angular_velocity_body_radps = omega;
     }
     for (&(index, target_index), safe_arrival) in pairs.iter().zip(eligible) {
         if ships[index]
@@ -718,7 +1004,7 @@ fn local_drift(
             ships[target_index]
                 .state
                 .attitude
-                .multiply(port_pose(ships[target_index].state.appearance).1)
+                .multiply(spacecraft_port_pose(&ships[target_index].state).1)
                 .rotate(Vector3d {
                     x: 0.0,
                     y: 0.0,
@@ -731,6 +1017,13 @@ fn local_drift(
             let is_pair = (parent1 == Some(own) && parent2 == Some(target_handle))
                 || (parent1 == Some(target_handle) && parent2 == Some(own));
             if !is_pair {
+                if [parent1, parent2]
+                    .into_iter()
+                    .any(|p| p == Some(own) || p == Some(target_handle))
+                {
+                    impact = true;
+                    other_contact = true;
+                }
                 continue;
             }
             impact = true;
@@ -784,7 +1077,110 @@ fn local_drift(
             }
         }
     }
-    Ok(())
+    Ok(local_motion)
+}
+
+/// Immutable shape compilation is shared by every bounded drift in one
+/// operation. No Rapier pose, contact impulse or warm-start state is retained.
+pub(crate) struct ContactGeometryCache(Vec<ContactGeometry>);
+
+struct ContactGeometry {
+    hull: SharedShape,
+    port: SharedShape,
+    radius_m: f64,
+    min_feature_m: f64,
+}
+
+impl ContactGeometryCache {
+    pub(crate) fn compile(ships: &[SpacecraftBinding]) -> Result<Self, ()> {
+        ships
+            .iter()
+            .map(|binding| {
+                let ship = &binding.state;
+                let Some(authored) = ship.authored.as_ref().and_then(|a| a.contact.as_ref()) else {
+                    return Ok(ContactGeometry {
+                        hull: hull_shape(ship.appearance),
+                        port: port_shape(ship.appearance),
+                        radius_m: authored_sweep_radius_m(ship.appearance),
+                        min_feature_m: 0.05,
+                    });
+                };
+                if !authored.valid() {
+                    return Err(());
+                }
+                let hull = SharedShape::compound(
+                    authored
+                        .hull
+                        .iter()
+                        .map(|part| {
+                            let shape = match &part.shape {
+                                ContactShape::Box { half_extents_m: h } => {
+                                    SharedShape::cuboid(h.x, h.y, h.z)
+                                }
+                                ContactShape::Sphere { radius_m } => SharedShape::ball(*radius_m),
+                            };
+                            (
+                                Pose::from_parts(
+                                    vector(part.position_body_m),
+                                    rotation(part.attitude_body),
+                                ),
+                                shape,
+                            )
+                        })
+                        .collect(),
+                );
+                let port = &authored.port;
+                // A bounded 24-pad flange keeps the aperture open. Primitive
+                // face contacts also avoid degenerate convex-sector manifolds
+                // when two equal, rotated annuli meet exactly coplanar.
+                let middle = (port.inner_radius_m + port.outer_radius_m) * 0.5;
+                let radial_half = (port.outer_radius_m - port.inner_radius_m) * 0.5;
+                let tangential_half = middle * (std::f64::consts::PI / 24.0).tan();
+                let mut sectors = Vec::with_capacity(24);
+                for sector in 0..24 {
+                    let angle = std::f64::consts::TAU * f64::from(sector) / 24.0;
+                    let local = Vector3d {
+                        x: middle * angle.cos(),
+                        y: middle * angle.sin(),
+                        z: -0.5 * port.depth_m,
+                    };
+                    let orientation =
+                        port.attitude_body
+                            .multiply(Quaterniond::from_rotation_vector(Vector3d {
+                                x: 0.0,
+                                y: 0.0,
+                                z: angle,
+                            }));
+                    sectors.push((
+                        Pose::from_parts(
+                            vector(add(port.position_body_m, port.attitude_body.rotate(local))),
+                            rotation(orientation),
+                        ),
+                        SharedShape::cuboid(radial_half, tangential_half, 0.5 * port.depth_m),
+                    ));
+                }
+                Ok(ContactGeometry {
+                    hull,
+                    port: SharedShape::compound(sectors),
+                    radius_m: authored.bounding_radius_m(),
+                    min_feature_m: authored.hull.iter().fold(
+                        (2.0 * radial_half)
+                            .min(2.0 * tangential_half)
+                            .min(port.depth_m),
+                        |smallest, part| {
+                            smallest.min(match part.shape {
+                                ContactShape::Box { half_extents_m: h } => {
+                                    2.0 * h.x.min(h.y).min(h.z)
+                                }
+                                ContactShape::Sphere { radius_m } => 2.0 * radius_m,
+                            })
+                        },
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>, ()>>()
+            .map(Self)
+    }
 }
 
 fn hull_shape(appearance: SpacecraftAppearance) -> SharedShape {
@@ -913,21 +1309,20 @@ fn asteria_hull() -> SharedShape {
 }
 
 fn annulus_y(parts: &mut Vec<(Pose, SharedShape)>, inner: f64, outer: f64, y0: f64, y1: f64) {
-    // Separate convex sectors leave the actual docking aperture open.
+    // The same bounded 24-pad approximation as externally authored ports.
+    // Primitive opposing faces avoid degenerate coplanar convex-sector contact
+    // manifolds while preserving the physical open aperture and front plane.
+    let middle = 0.5 * (inner + outer);
+    let radial_half = 0.5 * (outer - inner);
+    let tangential_half = middle * (std::f64::consts::PI / 24.0).tan();
     for i in 0..24 {
-        let a0 = std::f64::consts::TAU * f64::from(i) / 24.0;
-        let a1 = std::f64::consts::TAU * f64::from(i + 1) / 24.0;
-        let mut points = Vec::with_capacity(8);
-        for y in [y0, y1] {
-            for r in [inner, outer] {
-                for a in [a0, a1] {
-                    points.push(Vector::new(r * a.cos(), y, r * a.sin()));
-                }
-            }
-        }
+        let angle = std::f64::consts::TAU * f64::from(i) / 24.0;
         parts.push((
-            Pose::IDENTITY,
-            SharedShape::convex_hull(&points).expect("authored ring sector"),
+            Pose::from_parts(
+                Vector::new(middle * angle.cos(), 0.5 * (y0 + y1), middle * angle.sin()),
+                Rotation::from_rotation_y(-angle),
+            ),
+            SharedShape::cuboid(radial_half, 0.5 * (y1 - y0), tangential_half),
         ));
     }
 }

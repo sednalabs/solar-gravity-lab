@@ -3,6 +3,170 @@ use crate::spacecraft::advance_spacecraft_steps;
 use crate::{fixed_step_plan, CollisionModel, IntegratorKind, PhysicsPolicy, SolverBackend};
 use solarlab_domain::{BodyId, SpacecraftDockingState};
 
+fn sphere_encounters(
+    states: &[(Vector3d, Vector3d)],
+) -> (Vec<MassiveBodyState>, Vec<SpacecraftBinding>) {
+    use solarlab_domain::{
+        ContactPart, DockingPortGeometry, SpacecraftAssembly, SpacecraftContactGeometry,
+    };
+    let mut bodies = Vec::new();
+    let mut ships = Vec::new();
+    for (index, &(position_m, velocity_mps)) in states.iter().enumerate() {
+        let target_id = BodyId(format!("target-{index}"));
+        let mut craft = SpacecraftState::reference(BodyId(format!("ship-{index}")), None);
+        craft.dry_mass_kg = 1000.0;
+        craft.propellant_mass_kg = 0.0;
+        craft.engines.clear();
+        craft.control = neutral();
+        craft.max_control_torque_nm = Vector3d::default();
+        craft.inertia_kg_m2 = Vector3d {
+            x: 400.0,
+            y: 400.0,
+            z: 400.0,
+        };
+        craft.authored = Some(SpacecraftAssembly {
+            definition_id: "contact-sphere".into(),
+            display_name: "Contact sphere".into(),
+            visual_asset: None,
+            contact: Some(SpacecraftContactGeometry {
+                hull: vec![ContactPart {
+                    position_body_m: Vector3d::default(),
+                    attitude_body: Quaterniond::IDENTITY,
+                    shape: ContactShape::Sphere { radius_m: 1.0 },
+                }],
+                port: DockingPortGeometry {
+                    position_body_m: Vector3d {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 2.0,
+                    },
+                    attitude_body: Quaterniond::IDENTITY,
+                    inner_radius_m: 0.3,
+                    outer_radius_m: 0.4,
+                    depth_m: 0.2,
+                },
+            }),
+        });
+        let mut target = craft.clone();
+        target.body_id = target_id.clone();
+        craft.docking = Some(SpacecraftDockingState::new(target_id));
+        ships.push(binding(bodies.len(), craft));
+        bodies.push(MassiveBodyState {
+            mass_kg: 0.0,
+            position_m,
+            velocity_mps,
+        });
+        ships.push(binding(bodies.len(), target));
+        bodies.push(MassiveBodyState {
+            mass_kg: 0.0,
+            position_m: Vector3d {
+                x: 1000.0,
+                y: 1000.0 * (index + 1) as f64,
+                z: 0.0,
+            },
+            velocity_mps: Vector3d::default(),
+        });
+    }
+    (bodies, ships)
+}
+
+#[test]
+fn merged_island_resolves_cross_pair_head_on_contact() {
+    let (mut bodies, mut ships) = sphere_encounters(&[
+        (
+            Vector3d {
+                x: -20.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Vector3d {
+                x: 4000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        ),
+        (
+            Vector3d {
+                x: 20.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Vector3d {
+                x: -4000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        ),
+    ]);
+    let initial_momentum = momentum(&bodies, &ships);
+    let pairs = contact_pairs(&bodies, &ships).unwrap();
+    let geometry = ContactGeometryCache::compile(&ships).unwrap();
+    let order = island_order(&pairs, &ships);
+    let envelope = MotionEnvelope::new(&bodies, &ships, &pairs, &order, &geometry).unwrap();
+    assert!(envelope.free_drift_seconds(&bodies, &ships, &order, &geometry) < 0.01);
+    advance(&mut bodies, &mut ships, 0.01, 1);
+    assert!(bodies[0].position_m.x < bodies[2].position_m.x);
+    assert!(bodies[2].position_m.x - bodies[0].position_m.x > 1.99);
+    assert!((bodies[0].velocity_mps.x + 400.0).abs() < 0.02);
+    assert!((bodies[2].velocity_mps.x - 400.0).abs() < 0.02);
+    // Collision at4.75ms followed by5.25ms at400m/s gives exact endpoints±3.1m.
+    assert!((bodies[0].position_m.x + 3.1).abs() < 0.001);
+    assert!((bodies[2].position_m.x - 3.1).abs() < 0.001);
+    assert!(magnitude(sub(momentum(&bodies, &ships), initial_momentum)) < 1e-6);
+    assert!(ships[0].state.docking.as_ref().unwrap().unsafe_contact);
+    assert!(ships[2].state.docking.as_ref().unwrap().unsafe_contact);
+}
+
+#[test]
+fn odd_cycle_contact_resolution_has_a_finite_work_budget_and_rolls_back_island() {
+    let states: Vec<_> = (0..3)
+        .map(|i| {
+            let angle = f64::from(i) * std::f64::consts::TAU / 3.0;
+            (
+                Vector3d {
+                    x: (2.0 / 3.0_f64.sqrt()) * angle.cos(),
+                    y: (2.0 / 3.0_f64.sqrt()) * angle.sin(),
+                    z: 0.0,
+                },
+                Vector3d::default(),
+            )
+        })
+        .collect();
+    let (mut bodies, mut ships) = sphere_encounters(&states);
+    for ship in &mut ships {
+        let geometry = ship
+            .state
+            .authored
+            .as_mut()
+            .unwrap()
+            .contact
+            .as_mut()
+            .unwrap();
+        geometry.port.inner_radius_m = 0.3989;
+        geometry.port.depth_m = 0.005;
+        ship.state.angular_velocity_body_radps.z = 100.0;
+    }
+    let pairs = contact_pairs(&bodies, &ships).unwrap();
+    let geometry = ContactGeometryCache::compile(&ships).unwrap();
+    let order = island_order(&pairs, &ships);
+    let envelope = MotionEnvelope::new(&bodies, &ships, &pairs, &order, &geometry).unwrap();
+    assert_eq!(
+        envelope.free_drift_seconds(&bodies, &ships, &order, &geometry),
+        0.0
+    );
+    let before_bodies = bodies.clone();
+    let before_ships: Vec<_> = ships.iter().map(|s| s.state.clone()).collect();
+    assert_eq!(
+        drift_island(&mut bodies, &mut ships, &pairs, &geometry, 0.01),
+        Err(ContactStepError::ResolutionLimit)
+    );
+    assert_eq!(bodies, before_bodies);
+    assert_eq!(
+        ships.iter().map(|s| s.state.clone()).collect::<Vec<_>>(),
+        before_ships
+    );
+}
+
 fn binding(index: usize, state: SpacecraftState) -> SpacecraftBinding {
     SpacecraftBinding {
         body_index: index,
@@ -500,4 +664,146 @@ fn rotating_target_spar_cannot_sweep_through_stationary_ship_wing() {
         .unwrap()
         .attachment
         .is_none());
+}
+
+#[test]
+fn externally_composed_ports_capture_independently_of_visual_asset_identity() {
+    use solarlab_domain::{
+        ContactPart, ContactShape, DockingPortGeometry, SpacecraftAssembly,
+        SpacecraftContactGeometry,
+    };
+    let (mut bodies, mut ships) = pair(0.0);
+    for (index, ship) in ships.iter_mut().enumerate() {
+        // Both use Asteria's mesh. Their physical +X ports and compact box hulls
+        // come exclusively from the authored components.
+        ship.state.appearance = SpacecraftAppearance::Asteria;
+        ship.state.authored = Some(SpacecraftAssembly {
+            definition_id: format!("external.{index}"),
+            display_name: "External utility craft".into(),
+            visual_asset: None,
+            contact: Some(SpacecraftContactGeometry {
+                hull: vec![ContactPart {
+                    position_body_m: Vector3d::default(),
+                    attitude_body: Quaterniond::IDENTITY,
+                    shape: ContactShape::Box {
+                        half_extents_m: Vector3d {
+                            x: 1.5,
+                            y: 0.5,
+                            z: 0.5,
+                        },
+                    },
+                }],
+                port: DockingPortGeometry {
+                    position_body_m: Vector3d {
+                        x: 2.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    attitude_body: Quaterniond::from_rotation_vector(Vector3d {
+                        x: 0.0,
+                        y: std::f64::consts::FRAC_PI_2,
+                        z: 0.0,
+                    }),
+                    inner_radius_m: 0.4,
+                    outer_radius_m: 0.7,
+                    depth_m: 0.1,
+                },
+            }),
+        });
+    }
+    ships[0].state.attitude = desired_spacecraft_mating_attitude(&ships[0].state, &ships[1].state);
+    ships[0].state.docking.as_mut().unwrap().capture_armed = true;
+    bodies[0].position_m = Vector3d {
+        x: 4.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    bodies[0].velocity_mps = Vector3d {
+        x: -0.05,
+        y: 0.0,
+        z: 0.0,
+    };
+    let initial_momentum = momentum(&bodies, &ships);
+    let initial_observation = observation(&bodies, &ships);
+    assert!(initial_observation.position_port_m.z.abs() < 1e-12);
+    assert!(initial_observation.capture_ready);
+    advance(&mut bodies, &mut ships, 0.01, 100);
+    assert!(
+        ships[0]
+            .state
+            .docking
+            .as_ref()
+            .unwrap()
+            .attachment
+            .is_some(),
+        "{:?}; bodies={bodies:?}",
+        observation(&bodies, &ships)
+    );
+    assert!(!ships[0].state.docking.as_ref().unwrap().unsafe_contact);
+    assert!(magnitude(sub(momentum(&bodies, &ships), initial_momentum)) < 1e-7);
+}
+
+#[test]
+fn distant_encounter_does_not_change_local_contact_trajectory() {
+    let (mut local_bodies, mut local_ships) = pair(0.04);
+    local_bodies[0].velocity_mps.y = 0.08;
+    local_ships[0].state.docking.as_mut().unwrap().capture_armed = true;
+    let mut all_bodies = local_bodies.clone();
+    let mut all_ships = local_ships.clone();
+    let (mut far_bodies, mut far_ships) = pair(0.04);
+    for body in &mut far_bodies {
+        body.position_m.x = 1.0e15;
+        body.velocity_mps.z = 1.0e7;
+    }
+    for (index, ship) in far_ships.iter_mut().enumerate() {
+        ship.body_index += 2;
+        ship.state.body_id = BodyId(format!("far.{index}"));
+    }
+    far_ships[0].state.docking.as_mut().unwrap().target_body_id =
+        far_ships[1].state.body_id.clone();
+    all_bodies.extend(far_bodies);
+    all_ships.extend(far_ships);
+    advance(&mut local_bodies, &mut local_ships, 0.01, 100);
+    advance(&mut all_bodies, &mut all_ships, 0.01, 100);
+    assert_eq!(&all_bodies[..2], local_bodies);
+    for (local, together) in local_ships.iter().zip(&all_ships) {
+        assert_eq!(local.state, together.state);
+    }
+    assert!(local_ships[0]
+        .state
+        .docking
+        .as_ref()
+        .unwrap()
+        .attachment
+        .is_some());
+}
+
+#[test]
+fn nonoverlapping_authored_annular_faces_cannot_report_capture_ready() {
+    use solarlab_domain::{
+        ContactPart, ContactShape, DockingPortGeometry, SpacecraftAssembly,
+        SpacecraftContactGeometry,
+    };
+    let (bodies, mut ships) = pair(0.01);
+    ships[0].state.authored = Some(SpacecraftAssembly {
+        definition_id: "narrow-port".into(),
+        display_name: "Narrow port".into(),
+        visual_asset: None,
+        contact: Some(SpacecraftContactGeometry {
+            hull: vec![ContactPart {
+                position_body_m: Vector3d::default(),
+                attitude_body: Quaterniond::IDENTITY,
+                shape: ContactShape::Sphere { radius_m: 1.0 },
+            }],
+            port: DockingPortGeometry {
+                position_body_m: port_pose(SpacecraftAppearance::Asteria).0,
+                attitude_body: Quaterniond::IDENTITY,
+                inner_radius_m: 0.2,
+                outer_radius_m: 0.4,
+                depth_m: 0.1,
+            },
+        }),
+    });
+    assert!(!ports_compatible(&ships[0].state, &ships[1].state));
+    assert!(!observation(&bodies, &ships).capture_ready);
 }

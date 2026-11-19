@@ -210,7 +210,8 @@ vec3 litSurface(vec3 normal, vec3 color, float sphereZ) {
         shaded = pow(clamp(shaded, vec3(0.0), vec3(1.0)), vec3(0.72));
         // An illustrative thin blue limb follows the actual Sun. It must not turn
         // the night-side edge into an equally illuminated ring.
-        shaded += vec3(0.08, 0.24, 0.42) * rim * smoothstep(-0.08, 0.18, sunFacing) * 0.35;
+        if (uScene.flightProjection.x <= 0.5)
+            shaded += vec3(0.08, 0.24, 0.42) * rim * smoothstep(-0.08, 0.18, sunFacing) * 0.35;
     } else {
         shaded += min(color + vec3(0.18), vec3(1.0)) * rim * 0.15;
     }
@@ -229,6 +230,71 @@ bool sphereRay(vec3 ray,vec3 center,float radius,out float distance) {
     return distance>=uScene.flightProjection.z;
 }
 
+// Bounded single-scattering display for mapped Earth in close flight: six view
+// samples and three Sun samples. Distances use planet radii, optical depth is
+// dimensionless. The authored 100 km shell gives 8 km / 1.2 km scale heights.
+// See docs/v2/flight-experience-2026-11.md for references, scope and validation.
+vec3 flightAtmosphere(vec3 ray, vec3 center, float radius, float atmosphereRadius,
+    float maximumDistance, out vec3 transmittance) {
+    transmittance = vec3(1.0);
+    vec3 centreInRadii = center / radius;
+    float outer = atmosphereRadius / radius;
+    float along = dot(ray, centreInRadii);
+    vec3 perpendicular = centreInRadii - ray * along;
+    float discriminant = outer * outer - dot(perpendicular, perpendicular);
+    if (discriminant <= 0.0 || outer <= 1.0) return vec3(0.0);
+    float root = sqrt(discriminant);
+    float start = max(along - root, 0.0);
+    float end = min(along + root, maximumDistance / radius);
+    if (end <= start) return vec3(0.0);
+    vec2 scaleHeight = max(vec2(outer - 1.0) * vec2(0.08, 0.012), vec2(1e-7));
+    float density = clamp(vAtmosphereRatioAndDensity.y, 0.0, 2.0);
+    vec3 betaRayleigh = vec3(0.046, 0.109, 0.265) * density / scaleHeight.x;
+    float betaMie = 0.006 * density / scaleHeight.y;
+    vec3 sun = normalize(vec3(vLightDirection.x, vLightDirection.y, -vLightDirection.z));
+    float mu = clamp(dot(ray, sun), -1.0, 1.0);
+    float phaseRayleigh = 0.0596831037 * (1.0 + mu * mu);
+    const float g = 0.76;
+    float phaseMie = (1.0 - g * g) /
+        (12.5663706144 * pow(max(1.0 + g * g - 2.0 * g * mu, 1e-3), 1.5));
+    float stepLength = (end - start) / 6.0;
+    vec2 viewDepth = vec2(0.0);
+    vec3 sumRayleigh = vec3(0.0);
+    vec3 sumMie = vec3(0.0);
+    for (int i = 0; i < 6; ++i) {
+        vec3 point = ray * (start + (float(i) + 0.5) * stepLength) - centreInRadii;
+        float height = max(length(point) - 1.0, 0.0);
+        vec2 segmentDepth = exp(-height / scaleHeight) * stepLength;
+        float sunAlong = dot(point, sun);
+        vec3 sunPerpendicular = point - sun * sunAlong;
+        // The planet occludes sunlight, preventing a luminous night-side ring.
+        bool shadowed = sunAlong < 0.0 && dot(sunPerpendicular, sunPerpendicular) < 1.0;
+        if (!shadowed) {
+            float sunDistance = max(0.0, -sunAlong + sqrt(max(0.0,
+                sunAlong * sunAlong + outer * outer - dot(point, point))));
+            vec2 sunDepth = vec2(0.0);
+            for (int j = 0; j < 3; ++j) {
+                // Quadratic intervals spend the budget near dense air while
+                // retaining the actual curved atmosphere at the horizon.
+                float a = float(j) / 3.0;
+                float b = float(j + 1) / 3.0;
+                float lightStep = (b * b - a * a) * sunDistance;
+                vec3 lightPoint = point + sun * ((a * a + b * b) * 0.5 * sunDistance);
+                sunDepth += exp(-max(length(lightPoint) - 1.0, 0.0) / scaleHeight) * lightStep;
+            }
+            vec2 depth = viewDepth + segmentDepth * 0.5 + sunDepth;
+            vec3 attenuation = exp(-(betaRayleigh * depth.x + vec3(betaMie * depth.y)));
+            sumRayleigh += attenuation * segmentDepth.x;
+            sumMie += attenuation * segmentDepth.y;
+        }
+        viewDepth += segmentDepth;
+    }
+    transmittance = exp(-(betaRayleigh * viewDepth.x + vec3(betaMie * viewDepth.y)));
+    vec3 radiance = 20.0 * (sumRayleigh * betaRayleigh * phaseRayleigh + sumMie * betaMie * phaseMie);
+    // Illustrative exposure, bounded per channel; not a calibrated sky spectrum.
+    return vec3(1.0) - exp(-max(radiance, vec3(0.0)));
+}
+
 void perspectiveBody() {
     vec2 ndc=2.0*gl_FragCoord.xy/uScene.viewport.xy-1.0;
     vec2 tangents=vec2(uScene.rightAndSpan.w,uScene.upAndSpan.w)/uScene.flightProjection.y;
@@ -236,6 +302,9 @@ void perspectiveBody() {
     float radius=max(vPerspectiveSphere.w,0.0);
     if(radius<=0.0) discard;
     vec3 center=vPerspectiveSphere.xyz;
+    float atmosphereRadius=radius*vAtmosphereRatioAndDensity.x/max(vBodyRadiusUv,1e-9);
+    bool earthAtmosphere=(vAppearanceFlags & (HAS_ATMOSPHERE | HAS_EARTH_MAP)) == (HAS_ATMOSPHERE | HAS_EARTH_MAP) &&
+        atmosphereRadius>radius;
     float distance;
     if(sphereRay(ray,center,radius,distance)) {
         if(distance*ray.z>uScene.flightProjection.w) discard;
@@ -243,9 +312,22 @@ void perspectiveBody() {
         // Surface appearance uses right/up/toward-viewer, unlike +Z camera depth.
         vec3 normal=vec3(outward.xy,-outward.z);
         float facing=max(dot(-ray,outward),0.0);
+        vec3 albedo=surfaceColor(normal,facing);
         vec3 color=(vKind==KIND_STAR || vMaterial==MATERIAL_STELLAR)
-            ? vec3(1.0,0.83,0.54) : litSurface(normal,surfaceColor(normal,facing),facing);
-        if((vAppearanceFlags & HAS_ATMOSPHERE)!=0u) {
+            ? vec3(1.0,0.83,0.54) : litSurface(normal,albedo,facing);
+        if(earthAtmosphere) {
+            vec3 sun=normalize(vec3(vLightDirection.xy,-vLightDirection.z));
+            vec3 halfVector=sun-ray;
+            float ocean=smoothstep(0.03,0.15,albedo.b-max(albedo.r,albedo.g)) *
+                (1.0-smoothstep(0.35,0.70,dot(albedo,vec3(0.2126,0.7152,0.0722))));
+            if(dot(halfVector,halfVector)>1e-8) {
+                float glint=pow(max(dot(outward,normalize(halfVector)),0.0),96.0) * max(dot(outward,sun),0.0);
+                color+=vec3(1.0,0.93,0.79)*glint*ocean*0.45;
+            }
+            vec3 transmission;
+            vec3 sky=flightAtmosphere(ray,center,radius,atmosphereRadius,distance,transmission);
+            color=color*transmission+sky;
+        } else if((vAppearanceFlags & HAS_ATMOSPHERE)!=0u) {
             float sunlight=smoothstep(-0.16,0.28,dot(normal,normalize(vLightDirection)));
             color+=vec3(0.10,0.34,0.68)*pow(1.0-facing,4.0)*sunlight*0.45;
         }
@@ -253,10 +335,21 @@ void perspectiveBody() {
         gl_FragDepth=log2(1.0+distance*ray.z)/log2(uScene.flightProjection.w);
         return;
     }
-    float atmosphereRadius=radius*vAtmosphereRatioAndDensity.x/max(vBodyRadiusUv,1e-9);
     if((vAppearanceFlags & HAS_ATMOSPHERE)!=0u && atmosphereRadius>radius &&
        sphereRay(ray,center,atmosphereRadius,distance)) {
         if(distance*ray.z>uScene.flightProjection.w) discard;
+        if(earthAtmosphere) {
+            vec3 transmission;
+            // A sky ray crosses the whole shell. Its first outer-sphere hit is
+            // only the depth boundary, not the end of the scattering segment.
+            vec3 sky=flightAtmosphere(ray,center,radius,atmosphereRadius,
+                uScene.flightProjection.w/max(ray.z,1e-6),transmission);
+            float alpha=max(1.0-min(transmission.r,min(transmission.g,transmission.b)),max(sky.r,max(sky.g,sky.b)));
+            if(alpha<1e-5) discard;
+            outColor=vec4(clamp(sky/alpha,vec3(0.0),vec3(1.0)),clamp(alpha,0.0,1.0));
+            gl_FragDepth=log2(1.0+distance*ray.z)/log2(uScene.flightProjection.w);
+            return;
+        }
         float closest=length(center-ray*dot(center,ray));
         float shell=1.0-smoothstep(radius,atmosphereRadius,closest);
         vec3 outward=normalize(ray*distance-center);

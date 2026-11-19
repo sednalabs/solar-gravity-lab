@@ -122,3 +122,21 @@ object. Native presentation tests cover the measured 1434 × 586 landscape view,
 its 308-pixel clear band, a narrower portrait band, and astronomical origins.
 Only analytically rendered celestial spheres take part in spherical anchor
 occlusion; a mesh's enclosing radius is never treated as an opaque hull.
+
+## Declarative catalog and externally authored vehicles
+
+`engine/data/authoring/spacecraft-assets.catalog.json` now registers the two
+original assets and the original Pathfinder survey vehicle. Run
+`python3 tools/build_spacecraft_catalog.py` to regenerate the portable Rust asset
+lookup, native catalog, geometry registry and per-asset headers. Native upload,
+draw ranges, command reuse and cleanup iterate this catalog; adding a supported
+mesh does not require editing renderer application branches.
+
+Pathfinder's source lives in `engine/data/authoring/assets/pathfinder.gltf` and is
+reproducible with `tools/generate_pathfinder_spacecraft.py`. It is an original
+fictional SednaLabs design under AGPL-3.0-or-later, with 3,348 triangle vertices,
+a hexagonal instrument bus, survey aperture, twin photovoltaic arrays, service
+collar and illustrative electric exhaust. Its physical definition and contact
+approximation are explicit in `pathfinder.scenario.json`. Visual meshes do not
+supply physical properties. See [the spacecraft authoring guide](../../../docs/spacecraft-authoring.md)
+for the complete external workflow and current limits.

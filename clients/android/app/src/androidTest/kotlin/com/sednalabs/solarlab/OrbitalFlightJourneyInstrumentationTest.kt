@@ -16,6 +16,8 @@ import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
@@ -23,6 +25,7 @@ import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -31,6 +34,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.toSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.DockingGuidance
@@ -120,12 +124,34 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals(0.0, body.sourceMassKg, 0.0)
         assertEquals(initial.totalMassKg, body.massKg, 1e-9)
         composeRule.onNodeWithTag(FlightTags.ALTITUDE).assertIsDisplayed()
+        composeRule.onNodeWithTag(FlightTags.PERIAPSIS).assertIsDisplayed()
+        composeRule.onNodeWithTag(FlightTags.DIRECTOR).assertIsDisplayed()
         composeRule.onNodeWithTag(FlightTags.THROTTLE).assertIsDisplayed()
+        composeRule.onNodeWithTag(FlightTags.GUIDE).performClick()
+        composeRule.onNodeWithText("Fly with intent").assertIsDisplayed()
+        composeRule.onNodeWithText("Back to flight").performClick()
+        composeRule.onNodeWithTag(FlightTags.PLAN).performClick()
+        composeRule.onNodeWithTag(FlightPlanningTags.assist(FlightAssist.Prograde)).performScrollToIfPossible().performClick()
+        composeRule.onNodeWithTag(FlightPlanningTags.PREVIEW).performScrollToIfPossible().performClick()
+        waitUntil(30_000) { nodes(FlightPlanningTags.RESULT) }
+        composeRule.onNodeWithTag(FlightPlanningTags.RESULT).performScrollToIfPossible().assertIsDisplayed()
+        composeRule.onNodeWithText("Current orbit → after burn").assertIsDisplayed()
+        composeRule.onNodeWithText("Periapsis  ", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Apoapsis  ", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Fuel ", substring = true).assertIsDisplayed()
+        val afterPreview = flight(facade)
+        assertEquals("Planning must not advance the world", initial.epochSeconds.toBits(), afterPreview.epochSeconds.toBits())
+        assertEquals("Planning must not spend live fuel", initial.propellantMassKg.toBits(), afterPreview.propellantMassKg.toBits())
+        assertEquals("Planning must not change live controls", initial.control, afterPreview.control)
+        captureDialog("flight-burn-preview-dialog-portrait.png", FlightPlanningTags.ROOT)
+        composeRule.onNodeWithText("Back to flight").performClick()
         capture("flight-portrait-orbit.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
         capture("flight-initial-chase.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(1)).performClick()
         capture("flight-orbit-after-chase.png", requireCloseShip = true)
+        composeRule.onNodeWithTag(FlightTags.RECENTER).performClick()
+        capture("flight-centre-control.png", requireCloseShip = true)
         try {
             assertTrue(SolarLabSemanticActionBridge.submit(SolarLabSemanticAction.ResetCamera))
             composeRule.mainClock.advanceTimeByFrame()
@@ -201,6 +227,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         val viewport = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInRoot
         val density = composeRule.activity.resources.displayMetrics.density
         assertTrue("Landscape flight must leave a usable central scene", viewport.height > 120 * density && viewport.width > 200 * density)
+        assertAllLandscapeSteeringTargetsVisible(density)
         capture("flight-landscape.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.EXIT).performClick()
         waitUntil { nodes(LabTags.ROOT) && !nodes(FlightTags.ROOT) }
@@ -255,6 +282,8 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertTrue("The observed flyby must be past closest approach", flyby.moonRangeRateMps > 0.0)
         waitUntil { facade.uiState.value.snapshot?.paused == true }
         waitUntil { runCatching { composeRule.onNodeWithTag(LunarFlightTags.STATUS).assertTextContains("Lunar flyby") }.isSuccess }
+        assertFlightMap(minimumRadiusM = 100_000_000.0, anchorIds = listOf("earth", "moon", REFERENCE_SPACECRAFT_ID))
+        assertPortraitTransport(1000)
         capture("lunar-flyby-outcome.png")
         val missionSaveName = "Lunar flyby proof ${System.currentTimeMillis()}"
         runBlocking { facade.saveExperiment(missionSaveName) }
@@ -280,6 +309,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         waitUntil { nodes(FlightTags.ROOT) && runBlocking { facade.flightState() } != null }
         val oldEpoch = flight(facade).epochSeconds
         val previousSaves = facade.savedExperiments.value.map { it.id }.toSet()
+        composeRule.onNodeWithTag(FlightTags.MISSIONS).performClick()
         composeRule.onNodeWithTag(RendezvousTags.BRIEF).performScrollToIfPossible().performClick()
         composeRule.onNodeWithTag(RendezvousTags.START).assertIsEnabled().performClick()
         waitUntil(30_000) { runBlocking { facade.rendezvousState() } != null && nodes(RendezvousTags.PANEL) }
@@ -381,6 +411,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         waitUntil { nodes(FlightTags.ROOT) && runBlocking { facade.flightState() } != null }
         val oldEpoch = flight(facade).epochSeconds
         val previousSaves = facade.savedExperiments.value.map { it.id }.toSet()
+        composeRule.onNodeWithTag(FlightTags.MISSIONS).performClick()
         composeRule.onNodeWithTag(DockingTags.BRIEF).performScrollToIfPossible().performClick()
         clickReadyFlightAction(DockingTags.START)
         waitUntil(30_000) { runBlocking { facade.dockingState() } != null && nodes(DockingTags.PANEL) }
@@ -492,6 +523,61 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertTrue("Back must physically separate the ports", docking(facade).positionPortZM > releasedGap + .1)
         capture("docking-departed-landscape.png", encounterTargetId = restored.targetBodyId,
             requireEncounterDetail = true, requireUnobscuredEncounter = true)
+    }
+
+    private fun assertAllLandscapeSteeringTargetsVisible(density: Float) {
+        val panel = composeRule.onNodeWithTag(FlightTags.ATTITUDE_PANEL).fetchSemanticsNode().boundsInRoot
+        val timeline = composeRule.onNodeWithTag(FlightTags.TIMELINE).fetchSemanticsNode().boundsInRoot
+        for (label in listOf("Yaw left", "Pitch up", "Roll left", "Yaw right", "Pitch down", "Roll right")) {
+            val target = composeRule.onNodeWithTag(FlightTags.axis(label)).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            // Semantics bounds are clipped by ancestors: require the complete
+            // 48dp target as well as containment, not a partially visible sliver.
+            assertTrue("$label must retain its full 48dp touch target: $target",
+                target.width >= 48 * density - 1 && target.height >= 48 * density - 1)
+            assertTrue("$label must be wholly inside the steering panel and above time controls: $target / $panel / $timeline",
+                target.left >= panel.left && target.right <= panel.right && target.top >= panel.top &&
+                    target.bottom <= panel.bottom && target.bottom <= timeline.top)
+        }
+    }
+
+    private fun assertPortraitTransport(selectedWarp: Int) {
+        assertEquals(Configuration.ORIENTATION_PORTRAIT, composeRule.activity.resources.configuration.orientation)
+        assertEquals(selectedWarp.toDouble(), requireNotNull(composeRule.activity.runtimeFacadeForTesting
+            .uiState.value.snapshot).simSecondsPerRealSecond, 0.0)
+        fun fullBounds(tag: String): Rect = composeRule.onNodeWithTag(tag).fetchSemanticsNode().let {
+            // boundsInRoot/boundsInWindow can already be clipped by the strip.
+            // Check the entire laid-out target, including any hidden portion.
+            Rect(it.positionInRoot, it.size.toSize())
+        }
+        fun Rect.containsEntire(target: Rect) = target.left >= left && target.right <= right &&
+            target.top >= top && target.bottom <= bottom
+        val controls = listOf(FlightTags.PLAY_PAUSE, FlightTags.CHECKPOINT, FlightTags.RESET,
+            FlightTags.warp(selectedWarp))
+        val density = composeRule.activity.resources.displayMetrics.density
+        var diagnostic = "Transport not laid out"
+        try {
+            waitUntil {
+                val transport = fullBounds(FlightTags.TRANSPORT)
+                val strip = fullBounds(FlightTags.WARP_CHOICES)
+                val bounds = controls.associateWith(::fullBounds)
+                diagnostic = "transport=$transport strip=$strip controls=$bounds"
+                bounds.all { (tag, target) ->
+                    composeRule.onNodeWithTag(tag).isDisplayed() && target.height >= 44f * density - 1f &&
+                        transport.containsEntire(target)
+                } && strip.containsEntire(requireNotNull(bounds[FlightTags.warp(selectedWarp)]))
+            }
+        } catch (failure: Throwable) {
+            throw AssertionError("The selected warp and Run/Mark/Reset must be fully visible: $diagnostic", failure)
+        }
+    }
+
+    private fun captureDialog(name: String, dialogTag: String) {
+        composeRule.waitForIdle()
+        // Semantics/layout can lead the device compositor after scrolling.
+        // Capture the actual dialog window through Compose's redraw + PixelCopy
+        // path, so the result image contains the currently asserted result.
+        val dialog = composeRule.onNodeWithTag(dialogTag).captureToImage().asAndroidBitmap()
+        try { writeImage(name, dialog) } finally { dialog.recycle() }
     }
 
     private fun saveAndReopenEncounterThroughUi(facade: RuntimeFacade, backupId: String, oldEpoch: Double, targetId: String) {
@@ -795,7 +881,8 @@ class OrbitalFlightJourneyInstrumentationTest {
             composeRule.activity.window.decorView.getLocationOnScreen(screen)
             composeRule.activity.window.decorView.getLocationInWindow(inWindow)
         }
-        val tags = listOf(RendezvousTags.PANEL, RendezvousTags.BRIEF, LunarFlightTags.BRIEF, DockingTags.PANEL, DockingTags.BRIEF) +
+        val tags = listOf(RendezvousTags.PANEL, RendezvousTags.BRIEF, LunarFlightTags.BRIEF, DockingTags.PANEL, DockingTags.BRIEF,
+            FlightTags.RECENTER, FlightTags.GUIDE, FlightTags.DIRECTOR, FlightTags.PLAN, FlightTags.MISSIONS) +
             (0..3).map(FlightTags::camera)
         return tags.flatMap { composeRule.onAllNodesWithTag(it).fetchSemanticsNodes() }.mapNotNull {
             val bounds = it.boundsInWindow
@@ -867,20 +954,78 @@ class OrbitalFlightJourneyInstrumentationTest {
     private fun assertFlightMap(minimumRadiusM: Double, anchorIds: List<String>) {
         var viewport: LabViewportState? = null
         var selected: String? = null
-        waitUntil {
-            composeRule.runOnUiThread {
-                findHost(composeRule.activity.window.decorView)?.let {
-                    viewport = it.currentLabViewportState()
-                    selected = it.selectedBodyId()
+        val density = composeRule.activity.resources.displayMetrics.density
+        val hudTags = listOf(LunarFlightTags.MISSION, RendezvousTags.PANEL, DockingTags.PANEL,
+            FlightTags.RECENTER, FlightTags.GUIDE, FlightTags.DIRECTOR, FlightTags.PLAN, FlightTags.MISSIONS) +
+            (0..3).map(FlightTags::camera)
+        var diagnostic = "No submitted Map viewport"
+        try {
+            waitUntil {
+                composeRule.runOnUiThread {
+                    findHost(composeRule.activity.window.decorView)?.let {
+                        viewport = it.currentLabViewportState()
+                        selected = it.selectedBodyId()
+                    }
+                }
+                val frame = viewport
+                val scene = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInWindow
+                val nativeReady = frame != null && abs(frame.widthPx - scene.width) <= 1f &&
+                    abs(frame.heightPx - scene.height) <= 1f && frame.camera.viewRadiusM > minimumRadiusM &&
+                    anchorIds.all { id ->
+                        frame.bodies.any { body ->
+                            // Map markers include an extra selected ring. Check its
+                            // whole envelope, not just a centre hidden by the HUD.
+                            val radius = maxOf(body.radiusPx, 3.5f * density) +
+                                (if (id == REFERENCE_SPACECRAFT_ID) 5f * density else 0f) + 2f
+                            body.bodyId == id && body.xPx >= radius && body.xPx <= frame.widthPx - radius &&
+                                body.yPx >= radius && body.yPx <= frame.heightPx - radius
+                        }
+                    }
+                val obstructingHud = hudTags.filter { tag ->
+                    composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes()
+                        .map { it.boundsInWindow }.any { it.width > 0f && it.height > 0f && scene.overlaps(it) }
+                }
+                val labelDiagnostics = mutableListOf<String>()
+                val labelsReady = anchorIds.map { id ->
+                    val tag = LabSpatialTags.label(id)
+                    val labels = composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes()
+                    val bounds = labels.singleOrNull()?.boundsInWindow
+                    val displayed = labels.size == 1 && composeRule.onNodeWithTag(tag).isDisplayed()
+                    val contained = bounds != null && bounds.left >= scene.left && bounds.top >= scene.top &&
+                        bounds.right <= scene.right && bounds.bottom <= scene.bottom
+                    labelDiagnostics += "$id(count=${labels.size}, displayed=$displayed, bounds=$bounds)"
+                    displayed && contained
+                }.all { it }
+                diagnostic = "nativeReady=$nativeReady selected=$selected scene=$scene " +
+                    "native=${frame?.widthPx}x${frame?.heightPx} radius=${frame?.camera?.viewRadiusM} " +
+                    "anchors=${frame?.bodies?.filter { it.bodyId in anchorIds }?.map {
+                        "${it.bodyId}(${it.xPx},${it.yPx},r=${it.radiusPx},occluded=${it.occluded})"
+                    }} labels=$labelDiagnostics obstructingHud=$obstructingHud"
+                // Native frame publication updates Compose state before the next
+                // recomposition lays out the overlay. With a frozen test clock,
+                // keep advancing frames within the same deadline until both agree.
+                nativeReady && labelsReady && obstructingHud.isEmpty()
+            }
+        } catch (failure: Throwable) {
+            runCatching {
+                InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let {
+                    writeImage("flight-map-label-failure.png", it)
                 }
             }
-            val frame = viewport
-            frame != null && frame.camera.viewRadiusM > minimumRadiusM && anchorIds.all { id ->
-                frame.bodies.any { body -> body.bodyId == id && body.xPx >= 0 && body.xPx <= frame.widthPx &&
-                    body.yPx >= 0 && body.yPx <= frame.heightPx }
-            }
+            throw AssertionError("Flight Map markers and labels must share the unobstructed scene: $diagnostic", failure)
         }
         assertEquals("Framing the host world must retain the controlled spacecraft", REFERENCE_SPACECRAFT_ID, selected)
+        val scene = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInWindow
+        val hud = hudTags.flatMap { composeRule.onAllNodesWithTag(it).fetchSemanticsNodes() }
+            .map { it.boundsInWindow }.filter { it.width > 0f && it.height > 0f }
+        assertTrue("The flight Map scene must clear the camera controls and mission card", hud.none(scene::overlaps))
+        anchorIds.forEach { id ->
+            val label = composeRule.onNodeWithTag(LabSpatialTags.label(id)).assertIsDisplayed()
+                .fetchSemanticsNode().boundsInWindow
+            assertTrue("The $id Map label must stay inside the unobstructed scene",
+                label.left >= scene.left && label.top >= scene.top &&
+                    label.right <= scene.right && label.bottom <= scene.bottom)
+        }
     }
 
     private fun assertCloseFlightView(label: String) {

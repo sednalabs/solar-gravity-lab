@@ -65,6 +65,64 @@ fn same_physics(a: &WorldRuntime, b: &WorldRuntime) {
 }
 
 #[test]
+fn contact_model_guard_is_exported_only_when_contact_state_exists() {
+    let seeded_document: serde_json::Value =
+        serde_json::from_slice(&seeded().export_saved_session().unwrap()).unwrap();
+    assert!(seeded_document.get("contact_model").is_none());
+    let docking_document: serde_json::Value =
+        serde_json::from_slice(&flight().export_saved_session().unwrap()).unwrap();
+    assert_eq!(
+        docking_document["contact_model"],
+        "bounded-feature-contact-v1"
+    );
+    assert_eq!(
+        docking_document["flight_model"],
+        "six-dof-strang-rocket-docking-v4"
+    );
+}
+
+#[test]
+fn contact_model_guard_rejects_unknown_solver_tags() {
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&flight().export_saved_session().unwrap()).unwrap();
+    document["contact_model"] = serde_json::json!("unknown-contact-model");
+    assert!(matches!(
+        WorldRuntime::import_saved_session(
+            &serde_json::to_vec(&document).unwrap(),
+            HardwareProfile::offline_reference()
+        ),
+        Err(SessionPersistenceError::UnsupportedVersion)
+    ));
+}
+
+#[test]
+fn contact_model_guard_migrates_legacy_v4_state_and_guards_reexport() {
+    let mut original = flight();
+    let guarded: serde_json::Value =
+        serde_json::from_slice(&original.export_saved_session().unwrap()).unwrap();
+    let mut legacy = guarded.clone();
+    legacy.as_object_mut().unwrap().remove("contact_model");
+    assert_eq!(legacy["flight_model"], "six-dof-strang-rocket-docking-v4");
+    let mut migrated = WorldRuntime::import_saved_session(
+        &serde_json::to_vec(&legacy).unwrap(),
+        HardwareProfile::offline_reference(),
+    )
+    .unwrap();
+    same_physics(&original, &migrated);
+    assert_eq!(
+        original.snapshot().epoch_seconds,
+        migrated.snapshot().epoch_seconds
+    );
+    let exported: serde_json::Value =
+        serde_json::from_slice(&migrated.export_saved_session().unwrap()).unwrap();
+    assert_eq!(exported, guarded);
+    // Migration preserves state and uses the current solver for its future.
+    tick(&mut original, 0.01);
+    tick(&mut migrated, 0.01);
+    same_physics(&original, &migrated);
+}
+
+#[test]
 fn docking_scenario_is_atomic_fresh_and_keeps_scientific_bodies() {
     let mut r = seeded();
     let original = r.snapshot();
@@ -351,6 +409,7 @@ fn checkpoint_only_docking_still_requires_the_contact_model() {
     let saved = r.export_saved_session().unwrap();
     let doc: serde_json::Value = serde_json::from_slice(&saved).unwrap();
     assert_eq!(doc["flight_model"], "six-dof-strang-rocket-docking-v4");
+    assert_eq!(doc["contact_model"], "bounded-feature-contact-v1");
     let mut reopened =
         WorldRuntime::import_saved_session(&saved, HardwareProfile::offline_reference()).unwrap();
     reopened

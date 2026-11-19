@@ -39,6 +39,7 @@ internal interface RuntimeBridge {
     suspend fun importSavedSession(bytes: ByteArray): List<RuntimeSignal> = error("Experiment loading is unavailable")
     /** Parse and validate in a temporary native session without binding it to the live renderer. */
     suspend fun validateSavedSession(bytes: ByteArray): String = error("Experiment validation is unavailable")
+    suspend fun materializeExternalSession(bytes: ByteArray): SavedRuntimeSession = error("Authoring import is unavailable")
     suspend fun inspectBody(bodyId: String): RuntimeBodyState? = null
     suspend fun startFlight(shipId: String): List<RuntimeSignal> = error("Spaceflight is unavailable")
     suspend fun startLunarFlight(shipId: String): List<RuntimeSignal> = error("Lunar flight is unavailable")
@@ -50,6 +51,9 @@ internal interface RuntimeBridge {
     suspend fun undock(shipId: String): List<RuntimeSignal> = error("Docking release is unavailable")
     suspend fun dockingState(shipId: String): DockingState? = null
     suspend fun setFlightControl(shipId: String, control: FlightControl) { error("Spaceflight is unavailable") }
+    suspend fun flightDynamicsSettings(): FlightDynamicsSettings = error("Flight dynamics are unavailable")
+    suspend fun setFlightDynamicsSettings(value: FlightDynamicsSettings): List<RuntimeSignal> = error("Flight dynamics are unavailable")
+    suspend fun previewFlightBurn(shipId: String, duration: Double, throttle: Double, assist: FlightAssist): FlightBurnPreview = error("Burn planning is unavailable")
     suspend fun flightState(shipId: String): FlightState? = null
     suspend fun lunarMissionState(shipId: String): LunarMissionState? = null
     suspend fun rendezvousState(shipId: String): RendezvousState? = null
@@ -504,6 +508,21 @@ internal class JniRuntimeBridge(
         }
     }
 
+    override suspend fun materializeExternalSession(bytes: ByteArray): SavedRuntimeSession = withActiveSession { liveHandle ->
+        val created = transport.importSavedSession(liveHandle, bytes)
+        try {
+            check(created.result.isOk() && created.handle != 0L && created.abiVersion == ABI_VERSION) {
+                "The authored spacecraft or scenario is invalid or unsupported: ${created.result.describe()}"
+            }
+            check(created.handle != liveHandle) { "Authoring import did not create a separate session" }
+            val summary = transport.snapshotSummary(created.handle)
+            check(summary.result.isOk() && summary.scenarioId.isNotBlank()) { "Authored world could not be validated" }
+            SavedRuntimeSession(summary.scenarioId, transport.exportSavedSession(created.handle))
+        } finally {
+            if (created.handle != 0L && created.handle != liveHandle) transport.destroySession(created.handle)
+        }
+    }
+
     override suspend fun inspectBody(bodyId: String): RuntimeBodyState? = withActiveSession { handle ->
         val values = transport.inspectBody(handle, bodyId) ?: return@withActiveSession null
         bodyStateFromNative(bodyId, values)
@@ -602,6 +621,17 @@ internal class JniRuntimeBridge(
 
     override suspend fun setFlightControl(shipId: String, control: FlightControl) = withActiveSession { handle ->
         transport.setFlightControl(handle, shipId, control.toNativeValues(), System.currentTimeMillis())
+    }
+
+    override suspend fun flightDynamicsSettings(): FlightDynamicsSettings = withActiveSession { handle ->
+        flightDynamicsFromNative(transport.flightDynamics(handle))
+    }
+    override suspend fun setFlightDynamicsSettings(value: FlightDynamicsSettings): List<RuntimeSignal> = withActiveSession { handle ->
+        transport.setFlightDynamics(handle, value.integrator.nativeCode, System.currentTimeMillis())
+        refreshSignalsForHandle(handle, includeSummary = true)
+    }
+    override suspend fun previewFlightBurn(shipId: String, duration: Double, throttle: Double, assist: FlightAssist): FlightBurnPreview = withActiveSession { handle ->
+        flightBurnPreviewFromNative(transport.previewFlightBurn(handle, shipId, duration, throttle, assist.nativeCode))
     }
 
     override suspend fun flightState(shipId: String): FlightState? = withActiveSession { handle ->
@@ -1529,6 +1559,9 @@ internal interface NativeRuntimeTransport {
     fun dockingState(handle: Long, shipId: String): DoubleArray? = null
     fun dockingTargetId(handle: Long, shipId: String): String? = null
     fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) { error("Spaceflight is unavailable") }
+    fun flightDynamics(handle: Long): DoubleArray = error("Flight dynamics are unavailable")
+    fun setFlightDynamics(handle: Long, method: Int, recordedAtUnixMs: Long) { error("Flight dynamics are unavailable") }
+    fun previewFlightBurn(handle: Long, shipId: String, duration: Double, throttle: Double, assist: Int): ByteArray = error("Burn planning is unavailable")
     fun flightState(handle: Long, shipId: String): DoubleArray? = null
     fun lunarMissionState(handle: Long, shipId: String): DoubleArray? = null
     fun rendezvousState(handle: Long, shipId: String): DoubleArray? = null
@@ -1767,6 +1800,10 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
         nativeDockingTargetId(handle, shipId.toByteArray(StandardCharsets.UTF_8))
     override fun setFlightControl(handle: Long, shipId: String, values: DoubleArray, recordedAtUnixMs: Long) =
         nativeSetFlightControl(handle, shipId.toByteArray(StandardCharsets.UTF_8), values, recordedAtUnixMs)
+    override fun flightDynamics(handle: Long): DoubleArray = nativeFlightDynamics(handle)
+    override fun setFlightDynamics(handle: Long, method: Int, recordedAtUnixMs: Long) = nativeSetFlightDynamics(handle, method, recordedAtUnixMs)
+    override fun previewFlightBurn(handle: Long, shipId: String, duration: Double, throttle: Double, assist: Int): ByteArray =
+        nativePreviewFlightBurn(handle, shipId.toByteArray(StandardCharsets.UTF_8), duration, throttle, assist)
     override fun flightState(handle: Long, shipId: String): DoubleArray? =
         nativeFlightState(handle, shipId.toByteArray(StandardCharsets.UTF_8))
     override fun lunarMissionState(handle: Long, shipId: String): DoubleArray? =
@@ -1787,6 +1824,9 @@ internal object JniNativeRuntimeTransport : NativeRuntimeTransport {
     private external fun nativeDockingState(handle: Long, shipId: ByteArray): DoubleArray?
     private external fun nativeDockingTargetId(handle: Long, shipId: ByteArray): String?
     private external fun nativeSetFlightControl(handle: Long, shipId: ByteArray, values: DoubleArray, recordedAtUnixMs: Long)
+    private external fun nativeFlightDynamics(handle: Long): DoubleArray
+    private external fun nativeSetFlightDynamics(handle: Long, method: Int, recordedAtUnixMs: Long)
+    private external fun nativePreviewFlightBurn(handle: Long, shipId: ByteArray, duration: Double, throttle: Double, assist: Int): ByteArray
     private external fun nativeFlightState(handle: Long, shipId: ByteArray): DoubleArray?
     private external fun nativeLunarMissionState(handle: Long, shipId: ByteArray): DoubleArray?
     private external fun nativeRendezvousState(handle: Long, shipId: ByteArray): DoubleArray?

@@ -1,11 +1,23 @@
 #pragma once
 
+#include "SpacecraftMeshCatalog.h"
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 namespace solarlab::rendering {
+
+inline uint64_t SceneContentIdentity(std::string_view sceneRevision) {
+    // Match the Rust packet cache: extraction timings and dropped-frame counters
+    // describe the renderer, not changed geometry. Re-uploading on those values
+    // also clears completed compute readbacks before the UI can observe them.
+    // The final delimiter follows all content; an authored ID can contain it too.
+    return static_cast<uint64_t>(std::hash<std::string_view>{}(
+        sceneRevision.substr(0, sceneRevision.rfind("|diag:"))));
+}
 
 inline uint64_t SceneUploadRevision(uint64_t sceneIdentity, uint64_t cameraRevisionCounter,
     int processingModeCode, int observerModeCode, int traceLayerModeCode) {
@@ -53,8 +65,8 @@ struct ComputeCommandState {
 
 struct SceneCommandState {
     bool flightPerspective = false;
-    std::array<DrawCommandState, 9> draws{};
-    std::array<uint32_t, 2> meshInstanceCounts{};
+    std::array<DrawCommandState, 6 + 2 * solarlab::spacecraft::kMeshKinds.size()> draws{};
+    std::array<uint32_t, solarlab::spacecraft::kMeshKinds.size()> meshInstanceCounts{};
     ComputeCommandState medium;
     ComputeCommandState far;
     std::vector<uint32_t> trailStrips;

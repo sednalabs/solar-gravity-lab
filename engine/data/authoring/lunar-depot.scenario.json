@@ -1,0 +1,364 @@
+{
+  "format": "solarlab.scenario",
+  "version": 1,
+  "id": "authored.lunar-depot",
+  "title": "Lunar depot: components and local contact",
+  "base": "earth-moon",
+  "spacecraft_definitions": [
+    {
+      "id": "sable-lunar",
+      "display_name": "Sable lunar tender",
+      "visual_asset": "builtin:asteria",
+      "structure": {
+        "dry_mass_kg": 2200,
+        "inertia_kg_m2": {
+          "x": 6000,
+          "y": 6000,
+          "z": 3000
+        },
+        "max_control_torque_nm": {
+          "x": 800,
+          "y": 800,
+          "z": 400
+        },
+        "radius_m": 8
+      },
+      "propellant": {
+        "capacity_kg": 450
+      },
+      "engines": [
+        {
+          "control": "main",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 1200,
+          "specific_impulse_seconds": 325
+        },
+        {
+          "control": "positive_x",
+          "direction_body": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_x",
+          "direction_body": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_y",
+          "direction_body": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_y",
+          "direction_body": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        }
+      ],
+      "contact": {
+        "hull": [
+          {
+            "position_body_m": {
+              "x": 0,
+              "y": 0,
+              "z": -0.3
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 1.3,
+                "y": 1.3,
+                "z": 2.7
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": 4.7,
+              "y": 0,
+              "z": -1.7
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 2.05,
+                "y": 0.1,
+                "z": 1.25
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": -4.7,
+              "y": 0,
+              "z": -1.7
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 2.05,
+                "y": 0.1,
+                "z": 1.25
+              }
+            }
+          }
+        ],
+        "port": {
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 3.52
+          },
+          "inner_radius_m": 0.43,
+          "outer_radius_m": 0.72,
+          "depth_m": 0.14
+        }
+      }
+    },
+    {
+      "id": "keel-depot",
+      "display_name": "Keel lunar depot",
+      "visual_asset": "builtin:relay-station",
+      "structure": {
+        "dry_mass_kg": 18000,
+        "inertia_kg_m2": {
+          "x": 700000,
+          "y": 700000,
+          "z": 700000
+        },
+        "max_control_torque_nm": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "radius_m": 13
+      },
+      "propellant": {
+        "capacity_kg": 0
+      },
+      "engines": [],
+      "contact": {
+        "hull": [
+          {
+            "position_body_m": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 1.8,
+                "y": 1.8,
+                "z": 3.4
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": 3.25,
+              "y": 0,
+              "z": 0
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 1,
+                "y": 1,
+                "z": 3.4
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": -3.25,
+              "y": 0,
+              "z": 0
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 1,
+                "y": 1,
+                "z": 3.4
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": 7.3,
+              "y": 0,
+              "z": -0.5
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 2.475,
+                "y": 4.7,
+                "z": 0.06
+              }
+            }
+          },
+          {
+            "position_body_m": {
+              "x": -7.3,
+              "y": 0,
+              "z": -0.5
+            },
+            "shape": {
+              "kind": "box",
+              "half_extents_m": {
+                "x": 2.475,
+                "y": 4.7,
+                "z": 0.06
+              }
+            }
+          }
+        ],
+        "port": {
+          "position_body_m": {
+            "x": 0,
+            "y": -4.04,
+            "z": 0
+          },
+          "attitude_body": {
+            "w": 0.7071067811865476,
+            "x": 0.7071067811865476,
+            "y": 0,
+            "z": 0
+          },
+          "inner_radius_m": 0.64,
+          "outer_radius_m": 0.94,
+          "depth_m": 0.05
+        }
+      }
+    }
+  ],
+  "spacecraft": [
+    {
+      "body_id": "depot.tender",
+      "definition_id": "sable-lunar",
+      "reference_body_id": "moon",
+      "placement": {
+        "kind": "relative_state",
+        "host_body_id": "depot.keel",
+        "position_m": {
+          "x": 0,
+          "y": -30,
+          "z": 0
+        },
+        "velocity_mps": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      },
+      "docking_target_body_id": "depot.keel",
+      "align_to_docking_target": true
+    },
+    {
+      "body_id": "depot.keel",
+      "definition_id": "keel-depot",
+      "placement": {
+        "kind": "circular_orbit",
+        "host_body_id": "moon",
+        "altitude_m": 100000,
+        "radial_direction": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "orbit_normal": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        }
+      },
+      "attitude": {
+        "w": 1,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  ],
+  "focus_body_id": "depot.tender"
+}

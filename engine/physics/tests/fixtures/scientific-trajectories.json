@@ -1,0 +1,35 @@
+{
+  "oracle": "SciPy DOP853",
+  "scipy_version": "1.17.0",
+  "numpy_version": "2.3.5",
+  "gravitational_constant": 6.6743e-11,
+  "reference": {
+    "rtol": 3e-14,
+    "position_atol_m": 1e-07,
+    "velocity_atol_mps": 1e-10,
+    "maximum_step_seconds": 60.0
+  },
+  "refinement_check": {
+    "rtol": 1e-13,
+    "position_atol_m": 1e-06,
+    "velocity_atol_mps": 1e-09,
+    "maximum_step_seconds": 120.0
+  },
+  "convergence": {
+    "three-source": {
+      "position_refinement_difference_m": 9.155273922563828e-05,
+      "velocity_refinement_difference_mps": 8.176256251521992e-09,
+      "reference_rhs_calls": 2948,
+      "check_rhs_calls": 1508
+    },
+    "tilted-j2": {
+      "position_refinement_difference_m": 9.15527355876596e-05,
+      "velocity_refinement_difference_mps": 7.881187701255514e-09,
+      "reference_rhs_calls": 2948,
+      "check_rhs_calls": 1508
+    }
+  },
+  "fixture_sha256": "5e6d8de09b7d9c3942aa51baa0f7402f8214fb6a177150bcebc31a949143fa2a",
+  "generator_sha256": "fe95be1e2de93704580f6f77634883b0e53c90b657d743c9dc5a24ad00611d4f",
+  "scope": "Independent integrator/coordinate-form comparison of synthetic Newtonian+J2 trajectories; not a Horizons ephemeris fit."
+}

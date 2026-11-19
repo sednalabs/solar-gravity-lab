@@ -55,16 +55,20 @@ impl WorldRuntime {
         }
 
         self.validate_flight_command(&command)?;
+        let scientific_invariants = self.scientific_command_invariants(&command)?;
         // Flight integration is transactional, including fuel/attitude. Numeric failure
         // leaves command ordinals and the committed world unchanged.
         if let WorldCommand::AdvanceEpoch { delta_seconds } = &command {
-            if staged.is_none() && !self.active_branch().world.spacecraft.is_empty() {
+            if staged.is_none() && !self.active_branch().world.bodies.is_empty() {
                 let world = &self.active_branch().world;
                 let mut bodies = world_bodies_to_solver_state(&world.bodies);
                 let mut ships = spacecraft::bindings(world);
-                let plan = fixed_step_plan_with_source_count(&self.effective_physics_policy(), *delta_seconds, bodies.len(), bodies.iter().filter(|b|b.mass_kg!=0.0).count(), &self.hardware_profile.cpu_features).ok_or(RuntimeError::InvalidFlightState)?;
-                solarlab_physics::spacecraft::advance_spacecraft_steps(&plan, &mut bodies, &mut ships, plan.total_steps).map_err(|()|RuntimeError::InvalidFlightState)?;
-                staged = Some((bodies, plan.report(), ships));
+                let plan = scientific_flight::bind_plan(&self.effective_physics_policy(), &world.scientific_settings, &world.bodies, &world.spacecraft, *delta_seconds, &self.hardware_profile.cpu_features)?;
+                let science = solarlab_physics::spacecraft::advance_spacecraft_steps_checked(&plan, &mut bodies, &mut ships, plan.total_steps).map_err(RuntimeError::ScientificFailure)?;
+                plan.compute_invariants(&bodies).map_err(RuntimeError::ScientificFailure)?;
+                let mut report = plan.report();
+                science.apply_to_solver_report(&mut report);
+                staged = Some((bodies, report, ships));
             }
         }
 
@@ -88,10 +92,17 @@ impl WorldRuntime {
         let is_branch_creation =
             matches!(&command, WorldCommand::CreateBranchFromCheckpoint { .. });
         let refresh_solver_execution_after_command =
-            !matches!(&command, WorldCommand::AdvanceEpoch { .. });
+            matches!(&command, WorldCommand::SetScientificSettings { .. }
+                | WorldCommand::SeedCanonicalSolarSystem | WorldCommand::SpawnSpacecraft { .. }
+                | WorldCommand::SpawnBody { .. } | WorldCommand::RemoveBody { .. }
+                | WorldCommand::SetBodyKinematics { .. } | WorldCommand::SetBodyProperties { .. }
+                | WorldCommand::CreateBranchFromCheckpoint { .. });
         self.next_command_ordinal += 1;
 
         match &command {
+            WorldCommand::SetScientificSettings { settings } => {
+                self.active_branch_mut().world.scientific_settings = settings.clone();
+            }
             WorldCommand::SpawnSpacecraft { body, spacecraft } => {
                 let branch = self.active_branch_mut();
                 branch.world.bodies.push(body.clone());
@@ -322,7 +333,10 @@ impl WorldRuntime {
                 let (solver_bodies, invariants, solver_execution) =
                     if let Some((solver_bodies, report, ships)) = staged {
                         spacecraft::apply_bindings(&mut branch.world, ships);
-                        let invariants = compute_invariants(&solver_bodies);
+                        let mut projected = branch.world.bodies.clone();
+                        apply_solver_state_to_world_bodies(&mut projected, &solver_bodies);
+                        let invariants = scientific_flight::world_invariants(&projected, &branch.world.scientific_settings)
+                            .expect("staged numerical state validated before publication");
                         (solver_bodies, invariants, report)
                     } else {
                         let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
@@ -448,6 +462,9 @@ impl WorldRuntime {
             }
         }
 
+        if let Some(invariants) = scientific_invariants {
+            self.active_branch_mut().world.invariants = invariants;
+        }
         self.flight_prediction_cache.invalidate_for(&command);
         if refresh_solver_execution_after_command {
             self.refresh_active_solver_execution_report();

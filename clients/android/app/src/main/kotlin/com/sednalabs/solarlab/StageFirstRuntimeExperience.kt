@@ -55,6 +55,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -309,6 +312,8 @@ internal fun StageFirstRuntimeExperience(
         val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
 
         var flightActive by rememberSaveable { mutableStateOf(false) }
+        var flightSceneClearArea by remember { mutableStateOf<Rect?>(null) }
+        var stageWindowBounds by remember { mutableStateOf<Rect?>(null) }
         var flightStarting by remember { mutableStateOf(false) }
         var lunarBriefVisible by rememberSaveable { mutableStateOf(false) }
         var lunarStarting by remember { mutableStateOf(false) }
@@ -1215,7 +1220,8 @@ internal fun StageFirstRuntimeExperience(
             }
         }
 
-        BoxWithConstraints(Modifier.fillMaxSize().imePadding().background(Color(0xFF030A12))) {
+        BoxWithConstraints(Modifier.fillMaxSize().imePadding().background(Color(0xFF030A12))
+            .onGloballyPositioned { stageWindowBounds = it.boundsInWindow() }) {
             val density = LocalDensity.current
             val landscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && maxHeight < 600.dp
             val statusInset = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
@@ -1230,8 +1236,21 @@ internal fun StageFirstRuntimeExperience(
             val bottomInset = navigationInset + if (placing) { if (landscape) 8.dp else placementHeight + 8.dp }
                 else if (chromeMode == StageChromeMode.MINIMAL && !flightActive) 0.dp else dockHeight
             val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing && !flightActive) 0.dp else headerHeight
+            // Every flight camera, including Map and its labels, renders into
+            // the measured unobstructed rectangle. The laboratory retains its
+            // own full-stage layout because it never consumes flight bounds.
+            // Merely shrinking an envelope around the full stage's old midpoint
+            // cannot recover a midpoint covered by camera or mission controls.
+            val measuredClear = flightSceneClearArea.takeIf { flightActive }
+            val stageBounds = stageWindowBounds
+            val flightTop = if (measuredClear != null && stageBounds != null) with(density) {
+                (measuredClear.top - stageBounds.top).coerceAtLeast(0f).toDp()
+            } else topInset
+            val flightBottom = if (measuredClear != null && stageBounds != null) with(density) {
+                (stageBounds.bottom - measuredClear.bottom).coerceAtLeast(0f).toDp()
+            } else bottomInset
             Box(Modifier.fillMaxSize()
-                .padding(top = topInset, bottom = bottomInset,
+                .padding(top = maxOf(topInset, flightTop), bottom = maxOf(bottomInset, flightBottom),
                     start = if (flightActive && landscape) FlightChromeMetrics.LandscapeSide else 0.dp,
                     end = if (placing && landscape) placementWidth + 12.dp
                         else if (flightActive && landscape) FlightChromeMetrics.LandscapeSide else 0.dp)
@@ -1395,12 +1414,23 @@ internal fun StageFirstRuntimeExperience(
             if (flightActive) FlightModeChrome(
                 facade = runtimeFacade, uiState = uiState, cameraMode = flightCameraMode,
                 onCamera = { flightCameraMode = it }, onExit = ::exitFlight,
+                onRecenter = {
+                    if (flightCameraMode == 0) {
+                        coroutineScope.launch {
+                            if (runtimeFacade.lunarMissionState() != null) renderHostView?.resetCamera()
+                            else renderHostView?.frameBody("earth", selectBody = false)
+                        }
+                    } else renderHostView?.resetCamera()
+                },
                 onSaved = { savedVisible = true },
                 onLunarMission = { lunarStartError = null; lunarBriefVisible = true },
                 onRendezvousMission = { rendezvousStartError = null; rendezvousBriefVisible = true },
                 onDockingMission = { dockingStartError = null; dockingBriefVisible = true },
-                onSceneClearArea = { area -> renderHostView?.setFlightSceneClearAreaInWindow(
-                    area?.let { android.graphics.RectF(it.left, it.top, it.right, it.bottom) }) },
+                onSceneClearArea = { area ->
+                    flightSceneClearArea = area
+                    renderHostView?.setFlightSceneClearAreaInWindow(
+                        area?.let { android.graphics.RectF(it.left, it.top, it.right, it.bottom) })
+                },
             )
             if (!placing && !flightActive) EarthMoonLabChrome(
                 uiState = uiState,

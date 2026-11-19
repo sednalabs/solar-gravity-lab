@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "clients/desktop",
     "labs/conformance",
     "engine/data",
     "engine/domain",

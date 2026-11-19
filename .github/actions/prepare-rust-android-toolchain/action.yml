@@ -41,6 +41,8 @@ outputs:
 runs:
   using: composite
   steps:
+    # Only a main-branch push may populate shared caches. Other source
+    # validation runs restore them without registering an automatic save.
     - name: Compute Android Rust toolchain cache keys
       id: cache_keys
       shell: bash
@@ -55,7 +57,18 @@ runs:
 
     - name: Restore Android Rust target cache
       id: target_cache
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.cache_keys.outputs.cache-paths }}
+        key: ${{ steps.cache_keys.outputs.primary-key }}
+        restore-keys: |
+          ${{ steps.cache_keys.outputs.restore-key-1 }}
+
+    - name: Restore read-only Android Rust target cache
+      id: target_cache_readonly
+      if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.cache_keys.outputs.cache-paths }}
         key: ${{ steps.cache_keys.outputs.primary-key }}
@@ -67,7 +80,7 @@ runs:
       shell: bash
       env:
         INPUT_SHARED_CACHE_HIT: ${{ inputs.shared-cache-hit }}
-        TARGET_CACHE_HIT: ${{ steps.target_cache.outputs.cache-hit }}
+        TARGET_CACHE_HIT: ${{ (steps.target_cache.outputs.cache-hit || steps.target_cache_readonly.outputs.cache-hit) }}
         TARGETS_CSV: ${{ steps.cache_keys.outputs.target-list }}
       run: |
         set -euo pipefail

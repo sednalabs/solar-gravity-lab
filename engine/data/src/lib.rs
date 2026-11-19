@@ -1,3 +1,5 @@
+mod spacecraft_assets;
+pub use spacecraft_assets::{spacecraft_visual_asset, SpacecraftVisualAssetRecord, SPACECRAFT_VISUAL_ASSETS};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -211,6 +211,16 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+          output: codeql-results
+
+      - name: Preserve CodeQL findings for review
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-${{ matrix.language }}-${{ github.run_id }}
+          path: codeql-results/*.sarif
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Save Rust dependency cache for CodeQL
         if: ${{ always() && !cancelled() && matrix.language == 'rust' && steps.cache_codeql_rust_cargo_home_restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}

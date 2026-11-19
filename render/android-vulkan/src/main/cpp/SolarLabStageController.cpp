@@ -2086,9 +2086,10 @@ bool SolarLabStageController::RefreshRuntimeSceneLocked() {
         }
     }
 
-    // The synthetic revision changes when runtime data, camera, or visualization modes change.
+    // Scene content, frame, camera and visualization modes invalidate uploads;
+    // diagnostic timing changes alone must retain geometry and compute readbacks.
     const std::string sceneRevision = DecodeBytesView(packetResult.info.scene_revision);
-    const uint64_t revisionSeed = static_cast<uint64_t>(std::hash<std::string>{}(sceneRevision));
+    const uint64_t revisionSeed = solarlab::rendering::SceneContentIdentity(sceneRevision);
     const uint64_t syntheticRevision = solarlab::rendering::SceneUploadRevision(
         revisionSeed ^ packetResult.info.diagnostics.frame_number,
         cameraRevisionCounter_,

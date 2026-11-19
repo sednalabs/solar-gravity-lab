@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -103,40 +104,43 @@ internal fun RendezvousPanel(
     val bearing = rendezvousBearing(state)
     Surface(Modifier.fillMaxWidth().testTag(RendezvousTags.PANEL), color = Color(0xEB0B1724),
         shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF294451))) {
-        Row(Modifier.padding(horizontal = 10.dp, vertical = if (compact) 3.dp else 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 0.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!compact) TargetBearing(state, Modifier.size(38.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(when {
-                            state.keepOutEntered -> "KEEP-OUT EVENT RECORDED"
-                            state.standOffAchieved -> "STAND-OFF ACHIEVED"
-                            else -> "RELAY STATION · ${rendezvousDistance(state.standOffDistanceM)} STAND-OFF"
-                        }, color = accent, fontSize = 9.sp, lineHeight = 12.sp, letterSpacing = .8.sp, maxLines = 1)
-                        Text((if (paused) "Paused · " else "") + state.status.label,
-                            Modifier.testTag(RendezvousTags.STATUS), color = RendezvousInk, fontSize = if (compact) 12.sp else 14.sp,
-                            lineHeight = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (compact) Text(bearing, Modifier.testTag(RendezvousTags.DIRECTION), color = RendezvousMuted,
-                            fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BoxWithConstraints {
+            // A narrow portrait card keeps the complete guidance labels on their
+            // own row; a wide landscape card leaves more height for the encounter.
+            val inlineActions = compact && maxWidth >= 480.dp
+            Row(Modifier.padding(horizontal = 10.dp, vertical = if (compact) 3.dp else 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(if (inlineActions) 8.dp else 0.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!compact) TargetBearing(state, Modifier.size(38.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(when {
+                                state.keepOutEntered -> "KEEP-OUT EVENT RECORDED"
+                                state.standOffAchieved -> "STAND-OFF ACHIEVED"
+                                else -> "RELAY STATION · ${rendezvousDistance(state.standOffDistanceM)} STAND-OFF"
+                            }, color = accent, fontSize = 9.sp, lineHeight = 12.sp, letterSpacing = .8.sp, maxLines = 1)
+                            Text((if (paused) "Paused · " else "") + state.status.label,
+                                Modifier.testTag(RendezvousTags.STATUS), color = RendezvousInk, fontSize = if (compact) 12.sp else 14.sp,
+                                lineHeight = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (compact) Text(bearing, Modifier.testTag(RendezvousTags.DIRECTION), color = RendezvousMuted,
+                                fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
+                    if (!compact) Text(bearing, Modifier.testTag(RendezvousTags.DIRECTION), color = RendezvousMuted,
+                        fontSize = 11.sp, lineHeight = 15.sp, maxLines = 1)
+                    if (!inlineActions) RendezvousGuidanceActions(state, ready, busy, onGuidance)
+                    if (!compact) Text(when {
+                        !state.targetAvailable -> "The saved target is unavailable. Guidance is off; return to the lab or start a fresh encounter."
+                        state.keepOutEntered -> "The ${rendezvousDistance(state.keepOutDistanceM)} boundary was crossed. No contact response is modelled; recover to a safe separation."
+                        state.status == RendezvousStatus.Holding -> "Holding with real thrusters. Small corrections counter the different gravitational acceleration at each vehicle."
+                        state.guidance == RendezvousGuidance.MatchVelocity -> "Matching motion relative to the station. Use Approach to settle at the stand-off point."
+                        else -> "Keep out: ${rendezvousDistance(state.keepOutDistanceM)} · Propellant used: ${"%.2f".format(Locale.US, state.propellantUsedKg)} kg · Touch a manual control to take over."
+                    }, color = if (warning) RendezvousAmber else RendezvousMuted, fontSize = 10.sp, lineHeight = 14.sp,
+                        maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
-                if (!compact) Text(bearing, Modifier.testTag(RendezvousTags.DIRECTION), color = RendezvousMuted,
-                    fontSize = 11.sp, lineHeight = 15.sp, maxLines = 1)
-                if (!compact) RendezvousGuidanceActions(state, ready, busy, onGuidance)
-                if (!compact) Text(when {
-                    !state.targetAvailable -> "The saved target is unavailable. Guidance is off; return to the lab or start a fresh encounter."
-                    state.keepOutEntered -> "The ${rendezvousDistance(state.keepOutDistanceM)} boundary was crossed. No contact response is modelled; recover to a safe separation."
-                    state.status == RendezvousStatus.Holding -> "Holding with real thrusters. Small corrections counter the different gravitational acceleration at each vehicle."
-                    state.guidance == RendezvousGuidance.MatchVelocity -> "Matching motion relative to the station. Use Approach to settle at the stand-off point."
-                    else -> "Keep out: ${rendezvousDistance(state.keepOutDistanceM)} · Propellant used: ${"%.2f".format(Locale.US, state.propellantUsedKg)} kg · Touch a manual control to take over."
-                }, color = if (warning) RendezvousAmber else RendezvousMuted, fontSize = 10.sp, lineHeight = 14.sp,
-                    maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (inlineActions) RendezvousGuidanceActions(state, ready, busy, onGuidance, Modifier.weight(1.45f))
             }
-            // Keep landscape guidance on one row of full-size touch controls
-            // so it clears the spacecraft at the centre of the native viewport.
-            if (compact) RendezvousGuidanceActions(state, ready, busy, onGuidance, Modifier.weight(1.45f))
         }
     }
 }

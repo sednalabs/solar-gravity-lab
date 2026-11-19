@@ -116,6 +116,42 @@ Optional R2 backing:
 - `configure_sccache.sh` also exports `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` so AGP-driven CMake builds can reuse the same R2-backed `sccache` backend without module-specific workflow branching
 - Android/native jobs use the in-repo `.github/actions/rust-shared-cache` action so cargo registry, cargo git, cargo binaries, and workspace `target/` contents can be reused without carrying the upstream `punycode` deprecation warning
 
+## Source and cache write policy
+
+The 2026-11-19 workflow hardening limits cache writes in `validation-lab`,
+`prerelease-apk` and `interactive-android-build` to `push` events on
+`refs/heads/main`. Main push checkouts use the event commit. Manual builds,
+pull-request validation and release branch builds remain available, with
+restore-only GitHub cache actions. The three shared Rust/toolchain/sccache
+actions apply the same write condition. The interactive build currently has
+only a manual trigger, so it always uses the restore-only path.
+
+Restore-only configuration does not revoke a runner's implicit GitHub cache
+authority. These workflows also bind executed source to their event context:
+validation checks out the PR head or event SHA directly, rather than trusting
+a plan output to select source. Manual release and interactive builds check
+out the event SHA and reject an optional source ref that resolves elsewhere
+before any build actions run. Choose the intended branch or tag when
+dispatching the workflow; the separate ref input only checks commit identity.
+Release ISA, publication and failed-request summaries also check out the event
+SHA, and the first two verify it against the actual packaged build's SHA.
+
+These workflows withhold shared remote-cache credentials and the encrypted
+configuration-cache key outside that condition. Their current credentials
+authorize writes as well as reads; a client-side `push=false` flag is not a
+credential boundary. Until separate read-only credentials are provided, those
+runs use restored GitHub dependency caches and local compilation. This may
+increase manual build time; the historical warm-cache measurements below do
+not quantify that cost.
+
+All checkouts in these three workflows disable credential persistence. The
+optional wrapper writeback keeps its explicit manual input and authenticates
+only in its final write step. Release proof still uses the built commit's SHA,
+and artifact publication still requires the existing successful proof jobs.
+
+These are source-level controls. They neither attest previously created cache
+entries nor establish that every repository workflow follows this policy.
+
 ## Current measured result
 
 The first two green targeted `validation-lab` runs on `validation/cache-acceleration-20260412` already showed the hosted-runner gains were real:
