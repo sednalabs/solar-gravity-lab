@@ -77,6 +77,9 @@ headers/bodies and concurrency, checks the exact local Host/Origin, and requires
 an unpredictable per-launch request token for native APIs. It never accepts a
 server filesystem path. Commands are tied to the current flight generation and
 manual control sequence. Native failures are shown in the cockpit.
+An out-of-date heartbeat returns the current state without renewing contact;
+only a heartbeat for the current generation renews the lease. Reconnecting never
+restores held inputs or resumes the flight automatically.
 
 The visual adapter reuses the source meshes and maps, with a lightweight
 perspective planet/atmosphere display. It is not the Android Vulkan renderer and

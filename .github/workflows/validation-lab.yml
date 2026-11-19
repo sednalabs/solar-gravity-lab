@@ -157,13 +157,14 @@ env:
   ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
   ANDROID_NDK_VERSION: "27.3.13750724"
   ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  # Shared cache write credentials are available only to trusted main pushes.
   SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
   SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
   SCCACHE_REGION: auto
   SCCACHE_S3_USE_SSL: "true"
   SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
-  SCCACHE_AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID }}
-  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+  SCCACHE_AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
   SCCACHE_CREDENTIAL_SOURCE: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && 'dedicated-sccache-secrets' || 'shared-r2-secrets' }}
 
 jobs:
@@ -224,6 +225,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Collect changed files
         id: files
@@ -271,6 +273,9 @@ jobs:
 
       - name: Verify Android Rust cache key isolation
         run: python3 .github/scripts/test_rust_android_toolchain_cache_key.py
+
+      - name: Verify source and cache credential boundaries
+        run: python3 .github/scripts/test_workflow_cache_policy.py
 
       - name: Verify bounded Android SDK setup
         run: python3 .github/scripts/test_ensure_android_sdk_packages.py
@@ -431,6 +436,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.metadata.outputs.checkout_ref }}
+          persist-credentials: false
 
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
@@ -438,7 +444,8 @@ jobs:
           java-version: "17"
 
       - name: Restore standalone Gradle cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: standalone-gradle-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
           key: standalone-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
@@ -465,12 +472,20 @@ jobs:
             gradle/wrapper/gradle-wrapper.properties
             gradle/wrapper/gradle-wrapper.jar
 
+      - name: Save standalone Gradle cache from trusted main push
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.standalone-gradle-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.STANDALONE_GRADLE_CACHE_DIR }}
+          key: ${{ steps.standalone-gradle-cache.outputs.cache-primary-key }}
+
       - name: Commit wrapper files back to branch
-        if: ${{ inputs.write_wrapper }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.write_wrapper }}
         shell: bash
         env:
           EVENT_REF: ${{ github.ref }}
           EVENT_REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -496,6 +511,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Generate Gradle wrapper jar"
+          # Authenticate only this explicitly requested write step.
+          gh auth setup-git --hostname github.com
           git push origin "HEAD:${branch_name}"
 
   parity-matrix:
@@ -521,8 +538,8 @@ jobs:
     if: ${{ needs.metadata.outputs.rust_workspace == 'true' }}
     runs-on: ubuntu-24.04
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -669,8 +686,8 @@ jobs:
     if: ${{ needs.metadata.outputs.rust_workspace_arm64 == 'true' }}
     runs-on: ubuntu-24.04-arm
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -773,8 +790,8 @@ jobs:
     if: ${{ needs.metadata.outputs.arm64_isa_proof == 'true' }}
     runs-on: ubuntu-24.04-arm
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -865,8 +882,8 @@ jobs:
     if: ${{ needs.metadata.outputs.ffi_abi == 'true' }}
     runs-on: ubuntu-24.04
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -930,8 +947,8 @@ jobs:
     if: ${{ needs.metadata.outputs.runtime_scene_telemetry == 'true' }}
     runs-on: ubuntu-24.04
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -984,14 +1001,14 @@ jobs:
         include:
           - gradle_configuration_cache: ${{ needs.metadata.outputs.gradle_configuration_cache }}
     env:
-      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
-      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
-      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_REMOTE_CACHE_URL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_URL) || '' }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_USERNAME) || '' }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_REMOTE_CACHE_PASSWORD) || '' }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'true' || 'false' }}
       GRADLE_CONFIGURATION_CACHE_MODE: ${{ needs.metadata.outputs.gradle_configuration_cache }}
-      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1013,10 +1030,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
           cache-cleanup: on-success
           add-job-summary: on-failure
-          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
+          cache-encryption-key: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_CONFIGURATION_CACHE_KEY) || '' }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -1173,14 +1190,14 @@ jobs:
         include:
           - gradle_configuration_cache: ${{ needs.metadata.outputs.gradle_configuration_cache }}
     env:
-      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
-      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
-      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_REMOTE_CACHE_URL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_URL) || '' }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_USERNAME) || '' }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_REMOTE_CACHE_PASSWORD) || '' }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'true' || 'false' }}
       GRADLE_CONFIGURATION_CACHE_MODE: ${{ needs.metadata.outputs.gradle_configuration_cache }}
-      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1202,10 +1219,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
           cache-cleanup: on-success
           add-job-summary: on-failure
-          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
+          cache-encryption-key: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_CONFIGURATION_CACHE_KEY) || '' }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -1347,14 +1364,14 @@ jobs:
     if: ${{ needs.metadata.outputs.android_shell == 'true' }}
     runs-on: ubuntu-24.04
     env:
-      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
-      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
-      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_REMOTE_CACHE_URL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_URL) || '' }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_USERNAME) || '' }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_REMOTE_CACHE_PASSWORD) || '' }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'true' || 'false' }}
       GRADLE_CONFIGURATION_CACHE_MODE: ${{ needs.metadata.outputs.gradle_configuration_cache }}
-      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -1380,10 +1397,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
           cache-cleanup: on-success
           add-job-summary: on-failure
-          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
+          cache-encryption-key: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_CONFIGURATION_CACHE_KEY) || '' }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -1404,7 +1421,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.android/avd/*
@@ -1413,7 +1430,7 @@ jobs:
 
       - name: Restore Android SDK emulator packages cache
         id: android-sdk-components-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
@@ -1618,6 +1635,24 @@ jobs:
             echo "## android-shell sccache"
             cat dist/sccache/android-shell-${{ matrix.validation_mode }}.txt
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save Android emulator AVD cache from trusted main push
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.metadata.outputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: ${{ steps.avd-cache.outputs.cache-primary-key }}
+
+      - name: Save Android SDK emulator packages cache from trusted main push
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.android-sdk-components-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /usr/local/lib/android/sdk/emulator
+            /usr/local/lib/android/sdk/system-images/android-35/google_apis
+          key: ${{ steps.android-sdk-components-cache.outputs.cache-primary-key }}
 
       - name: Upload Android shell artifacts
         if: always()
