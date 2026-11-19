@@ -106,3 +106,11 @@ selected mesh identity and core control reachability are checked at both sizes. 
 The managed command sandbox can deny Chromium's local sockets. An automatically
 rejected escalation is not browser evidence: use a permitted hosted runner.
 Software WebGL proof establishes functionality/appearance, not GPU performance.
+
+## Source and credits
+
+Solar Gravity Lab is by Sedna Labs and distributed under AGPL-3.0-or-later,
+without warranty. The full licence is in `LICENSE`. Complete source and build
+instructions are at <https://github.com/sednalabs/solar-gravity-lab>; the packaged
+`source.txt` identifies the exact commit used for this executable.
+`ASSET_CREDITS.md` records the bundled planetary imagery sources.

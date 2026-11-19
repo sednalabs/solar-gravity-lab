@@ -625,7 +625,7 @@ jobs:
           cargo build --locked --release -p solarlab-desktop
           mkdir -p dist/desktop-flight
           git rev-parse HEAD > dist/desktop-flight/source.txt
-          cp target/release/solarlab-desktop clients/desktop/README.md dist/desktop-flight/
+          cp target/release/solarlab-desktop clients/desktop/README.md clients/desktop/ASSET_CREDITS.md LICENSE dist/desktop-flight/
           (cd dist/desktop-flight && sha256sum solarlab-desktop > SHA256SUMS)
 
       - name: Exercise the native cockpit in Chromium
@@ -658,6 +658,8 @@ jobs:
           path: |
             dist/desktop-flight/solarlab-desktop
             dist/desktop-flight/README.md
+            dist/desktop-flight/LICENSE
+            dist/desktop-flight/ASSET_CREDITS.md
             dist/desktop-flight/source.txt
             dist/desktop-flight/SHA256SUMS
 

@@ -25,6 +25,8 @@ class DesktopPackageTests(unittest.TestCase):
         self.binary = bytes(header) + b"qualified executable fixture"
         (self.source / "solarlab-desktop").write_bytes(self.binary)
         (self.source / "README.md").write_text("Run ./solarlab-desktop\n")
+        (self.source / "LICENSE").write_text("Licence fixture\n")
+        (self.source / "ASSET_CREDITS.md").write_text("Asset credit fixture\n")
         (self.source / "source.txt").write_text(self.sha + "\n")
         self.record_checksum()
 
@@ -39,7 +41,7 @@ class DesktopPackageTests(unittest.TestCase):
         receipt = self.build()
         archive = self.output / receipt["artifact_name"]
         with tarfile.open(archive) as bundle:
-            self.assertEqual(set(bundle.getnames()), {"solarlab-desktop", "README.md", "source.txt", "SHA256SUMS"})
+            self.assertEqual(set(bundle.getnames()), {"solarlab-desktop", "README.md", "LICENSE", "ASSET_CREDITS.md", "source.txt", "SHA256SUMS"})
             self.assertEqual(bundle.getmember("solarlab-desktop").mode, 0o755)
             self.assertEqual(bundle.extractfile("solarlab-desktop").read(), self.binary)
             self.assertEqual(bundle.extractfile("source.txt").read().decode().strip(), self.sha)

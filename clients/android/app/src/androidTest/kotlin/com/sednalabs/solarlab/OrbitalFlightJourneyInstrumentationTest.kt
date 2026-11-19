@@ -135,6 +135,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals("Planning must not advance the world", initial.epochSeconds.toBits(), afterPreview.epochSeconds.toBits())
         assertEquals("Planning must not spend live fuel", initial.propellantMassKg.toBits(), afterPreview.propellantMassKg.toBits())
         assertEquals("Planning must not change live controls", initial.control, afterPreview.control)
+        captureWindow("flight-burn-preview-portrait.png")
         composeRule.onNodeWithText("Back to flight").performClick()
         capture("flight-portrait-orbit.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
@@ -218,6 +219,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         val viewport = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInRoot
         val density = composeRule.activity.resources.displayMetrics.density
         assertTrue("Landscape flight must leave a usable central scene", viewport.height > 120 * density && viewport.width > 200 * density)
+        assertAllLandscapeSteeringTargetsVisible(density)
         capture("flight-landscape.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.EXIT).performClick()
         waitUntil { nodes(LabTags.ROOT) && !nodes(FlightTags.ROOT) }
@@ -511,6 +513,27 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertTrue("Back must physically separate the ports", docking(facade).positionPortZM > releasedGap + .1)
         capture("docking-departed-landscape.png", encounterTargetId = restored.targetBodyId,
             requireEncounterDetail = true, requireUnobscuredEncounter = true)
+    }
+
+    private fun assertAllLandscapeSteeringTargetsVisible(density: Float) {
+        val panel = composeRule.onNodeWithTag(FlightTags.ATTITUDE_PANEL).fetchSemanticsNode().boundsInRoot
+        val timeline = composeRule.onNodeWithTag(FlightTags.TIMELINE).fetchSemanticsNode().boundsInRoot
+        for (label in listOf("Yaw left", "Pitch up", "Roll left", "Yaw right", "Pitch down", "Roll right")) {
+            val target = composeRule.onNodeWithTag(FlightTags.axis(label)).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            // Semantics bounds are clipped by ancestors: require the complete
+            // 48dp target as well as containment, not a partially visible sliver.
+            assertTrue("$label must retain its full 48dp touch target: $target",
+                target.width >= 48 * density - 1 && target.height >= 48 * density - 1)
+            assertTrue("$label must be wholly inside the steering panel and above time controls: $target / $panel / $timeline",
+                target.left >= panel.left && target.right <= panel.right && target.top >= panel.top &&
+                    target.bottom <= panel.bottom && target.bottom <= timeline.top)
+        }
+    }
+
+    private fun captureWindow(name: String) {
+        composeRule.waitForIdle()
+        val window = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        try { writeImage(name, window) } finally { window.recycle() }
     }
 
     private fun saveAndReopenEncounterThroughUi(facade: RuntimeFacade, backupId: String, oldEpoch: Double, targetId: String) {

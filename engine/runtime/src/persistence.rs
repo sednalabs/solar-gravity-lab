@@ -14,6 +14,7 @@ const FLIGHT_MODEL: &str = "six-dof-strang-rocket-v1";
 const FLIGHT_PROGRAM_MODEL: &str = "six-dof-strang-rocket-v2";
 const RENDEZVOUS_FLIGHT_MODEL: &str = "six-dof-strang-rocket-rendezvous-v3";
 const DOCKING_FLIGHT_MODEL: &str = "six-dof-strang-rocket-docking-v4";
+const CONTACT_MODEL: &str = "bounded-feature-contact-v1";
 const SCIENTIFIC_MODEL: &str = "explicit-coast-j2-v1";
 const AUTHORED_FLIGHT_MODEL: &str = "six-dof-strang-rocket-authored-v5";
 const MAX_BRANCHES: usize = 64;
@@ -58,6 +59,8 @@ struct SavedSession {
     flight_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scientific_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contact_model: Option<String>,
     runtime_version: String,
     source_revision: String,
     scenario_id: String,
@@ -93,6 +96,7 @@ impl WorldRuntime {
         let has_flight = branches.iter().any(|b|!b.world.spacecraft.is_empty()||b.checkpoints.iter().any(|c|!c.state.spacecraft.is_empty()));
         let mut saved = SavedSession {
             scientific_model: branches_have_science(&branches).then(|| SCIENTIFIC_MODEL.into()),
+            contact_model: branches_have_docking(&branches).then(|| CONTACT_MODEL.into()),
             format: FORMAT.into(),
             version: if has_flight { FLIGHT_VERSION } else { VERSION },
             flight_model: has_flight.then(|| {
@@ -251,6 +255,11 @@ impl SavedSession {
 
     fn validate(&self) -> Result<(), SessionPersistenceError> {
         use SessionPersistenceError::InvalidState as invalid;
+        // Missing guard is a legacy state migration, not a request to replay
+        // the old CCD solver. New exports always identify bounded contact.
+        if !matches!(self.contact_model.as_deref(), None | Some(CONTACT_MODEL)) {
+            return Err(SessionPersistenceError::UnsupportedVersion);
+        }
         if !matches!(self.scientific_model.as_deref(), None | Some(SCIENTIFIC_MODEL))
             || (branches_have_science(&self.branches) && self.scientific_model.as_deref() != Some(SCIENTIFIC_MODEL)) {
             return Err(SessionPersistenceError::UnsupportedVersion);

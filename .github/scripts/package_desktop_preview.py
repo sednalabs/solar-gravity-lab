@@ -17,7 +17,7 @@ def package(source_dir: Path, output_dir: Path, source: str, version: str, run_i
         raise ValueError("An ordinary release version is required")
     if not re.fullmatch(r"[1-9][0-9]*", run_id):
         raise ValueError("A validation run ID is required")
-    names = ("solarlab-desktop", "README.md", "source.txt", "SHA256SUMS")
+    names = ("solarlab-desktop", "README.md", "LICENSE", "ASSET_CREDITS.md", "source.txt", "SHA256SUMS")
     for name in names:
         path = source_dir / name
         if path.is_symlink() or not path.is_file():

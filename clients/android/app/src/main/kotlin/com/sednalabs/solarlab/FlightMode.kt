@@ -111,6 +111,8 @@ internal object FlightTags {
     const val RESET = "flight.reset"
     const val SAVE = "flight.save"
     const val CONTROL_MODE = "flight.control_mode"
+    const val ATTITUDE_PANEL = "flight.attitude_panel"
+    const val TIMELINE = "flight.timeline"
     const val PRECISION = "flight.precision"
     const val ASSIST_MORE = "flight.assist_more"
     const val RECENTER = "flight.camera.recenter"
@@ -448,12 +450,12 @@ internal fun FlightModeChrome(
     val clearMargin = with(LocalDensity.current) { 8.dp.toPx() }
     val currentClearAreaCallback by rememberUpdatedState(onSceneClearArea)
     LaunchedEffect(chromeBounds, cameraBounds, bottomPanelBounds, dockBounds,
-        rendezvous != null, docking != null, cameraMode) {
+        rendezvous != null, docking != null, lunarMission != null, cameraMode) {
         val root = chromeBounds
         val camera = cameraBounds
         val dock = dockBounds
-        val clear = if (root != null && camera != null && dock != null && cameraMode == 3) {
-            val bottomPanel = bottomPanelBounds.takeIf { docking != null || rendezvous != null }
+        val clear = if (root != null && camera != null && dock != null && cameraMode != 0) {
+            val bottomPanel = bottomPanelBounds.takeIf { docking != null || rendezvous != null || lunarMission != null }
             val top = camera.bottom + clearMargin
             val bottom = minOf(dock.top, bottomPanel?.top ?: dock.top) - clearMargin
             if (bottom > top) Rect(root.left + clearMargin, top, root.right - clearMargin, bottom) else null
@@ -493,35 +495,27 @@ internal fun FlightModeChrome(
                 end = if (landscape) FlightChromeMetrics.LandscapeSide else 12.dp)
             .widthIn(max = 600.dp)) {
             Column(Modifier.onGloballyPositioned { cameraBounds = it.boundsInWindow() }) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (landscape && rendezvous == null && docking == null) {
+                        FlightDirectorReadout(sample, control.assist, Modifier.width(116.dp))
+                    }
                     if (rendezvous != null || docking != null) FlightAction("Encounter", { onCamera(3) }, FlightTags.camera(3), active = cameraMode == 3)
                     listOf(1 to "Orbit", 2 to "Chase", 0 to "Map").forEach { (mode, label) ->
                         FlightAction(label, { onCamera(mode) }, FlightTags.camera(mode), active = cameraMode == mode)
                     }
                     FlightAction("Centre", onRecenter, FlightTags.RECENTER)
                 }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                if (!landscape) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (rendezvous == null && docking == null) {
                         FlightDirectorReadout(sample, control.assist, Modifier.weight(1f))
                     } else Spacer(Modifier.weight(1f))
-                    FlightAction("Guide", { action {
-                        facade.applyCommand(RuntimeCommand.PausePlayback)
-                        guideVisible = true
-                    } }, FlightTags.GUIDE)
-                    FlightAction("Plan", { planVisible = true }, FlightTags.PLAN, enabled = ready && docking == null,
-                        modifier = Modifier.semantics {
-                            contentDescription = if (docking != null) "Burn planning is unavailable during docking" else "Plan a finite engine burn"
-                        })
-                    FlightAction("Missions", { cut(); facade.suspendFlightControls(); missionsVisible = true }, FlightTags.MISSIONS)
+                    FlightTools(ready, docking != null,
+                        onGuide = { action { facade.applyCommand(RuntimeCommand.PausePlayback); guideVisible = true } },
+                        onPlan = { planVisible = true },
+                        onMissions = { cut(); facade.suspendFlightControls(); missionsVisible = true })
                 }
-            }
-            if (rendezvous != null || docking != null) {
-                // Encounter guidance sits below the clear scene in both orientations.
-            } else if (lunarMission != null) {
-                LunarMissionPanel(requireNotNull(lunarMission), landscape, paused, ready, missionActionBusy, coasting,
-                    onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
-                    onDetails = { action { facade.applyCommand(RuntimeCommand.PausePlayback); missionDetailsVisible = true } })
             }
         }
 
@@ -530,11 +524,10 @@ internal fun FlightModeChrome(
             Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
                 .padding(top = header, bottom = FlightChromeMetrics.LandscapeDock)) {
                 Surface(Modifier.align(Alignment.CenterStart).padding(start = 8.dp)
-                    .width(FlightChromeMetrics.LandscapeSide - 16.dp),
+                    .width(FlightChromeMetrics.LandscapeSide - 16.dp).testTag(FlightTags.ATTITUDE_PANEL),
                     color = FlightPanel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, FlightLine)) {
-                    Column(Modifier.verticalScroll(rememberScrollState()).padding(8.dp)) {
-                        Text("ORIENTATION", color = FlightMuted, fontSize = 9.sp, letterSpacing = 1.sp)
-                        FlightAssistStrip(control.assist, controlsReady, actions.assist)
+                    Column(Modifier.padding(8.dp)) {
+                        FlightAssistStrip(control.assist, controlsReady, actions.assist, compact = true)
                         FlightAttitudePad(translationMode, precision, inputGeneration, controlsReady && (!translationMode || fuel > 0.0), actions)
                     }
                 }
@@ -547,8 +540,8 @@ internal fun FlightModeChrome(
                         FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—", "lowest altitude")
                     }
                 }
-                if (rendezvous != null || docking != null) {
-                    // Keep the encounter's centre clear between the camera row
+                if (rendezvous != null || docking != null || lunarMission != null) {
+                    // Keep the flight's centre clear between the camera row
                     // and guidance controls without shrinking either touch area.
                     Box(Modifier.align(Alignment.BottomCenter)
                         .padding(horizontal = FlightChromeMetrics.LandscapeSide)
@@ -556,22 +549,32 @@ internal fun FlightModeChrome(
                         .onGloballyPositioned { bottomPanelBounds = it.boundsInWindow() }) {
                         if (docking != null) DockingPanel(requireNotNull(docking), true, paused, ready, missionActionBusy,
                             onGuidance = { dockingAction(it) }, onUndock = { dockingAction() })
-                        else RendezvousPanel(requireNotNull(rendezvous), true, paused, ready, missionActionBusy,
+                        else if (rendezvous != null) RendezvousPanel(requireNotNull(rendezvous), true, paused, ready, missionActionBusy,
                             onGuidance = ::setEncounterGuidance)
+                        else LunarMissionPanel(requireNotNull(lunarMission), true, paused, ready, missionActionBusy, coasting,
+                            onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
+                            onDetails = { action { facade.applyCommand(RuntimeCommand.PausePlayback); missionDetailsVisible = true } })
                     }
                 }
             }
             Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
-                .height(FlightChromeMetrics.LandscapeDock)
+                .height(FlightChromeMetrics.LandscapeDock).testTag(FlightTags.TIMELINE)
                 .onGloballyPositioned { dockBounds = it.boundsInWindow() }, color = FlightPanel, border = BorderStroke(1.dp, FlightLine)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f)) { FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions) }
+                        FlightTools(ready, docking != null,
+                            onGuide = { action { facade.applyCommand(RuntimeCommand.PausePlayback); guideVisible = true } },
+                            onPlan = { planVisible = true },
+                            onMissions = { cut(); facade.suspendFlightControls(); missionsVisible = true })
+                    }
                     Text(notice, color = if (controlError == null) FlightMuted else FlightAmber, fontSize = 10.sp,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         } else {
-            if (rendezvous != null || docking != null) Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+            if (rendezvous != null || docking != null || lunarMission != null) Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
                 .padding(bottom = FlightChromeMetrics.PortraitDock, start = 12.dp, end = 12.dp)
                 .widthIn(max = 600.dp)
                 .onGloballyPositioned { bottomPanelBounds = it.boundsInWindow() }) {
@@ -579,8 +582,11 @@ internal fun FlightModeChrome(
                 // actions and explanation without crowding the scene's centre.
                 if (docking != null) DockingPanel(requireNotNull(docking), true, paused, ready, missionActionBusy,
                     onGuidance = { dockingAction(it) }, onUndock = { dockingAction() })
-                else RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
+                else if (rendezvous != null) RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
                     onGuidance = ::setEncounterGuidance)
+                else LunarMissionPanel(requireNotNull(lunarMission), true, paused, ready, missionActionBusy, coasting,
+                    onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,
+                    onDetails = { action { facade.applyCommand(RuntimeCommand.PausePlayback); missionDetailsVisible = true } })
             }
             Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth()
                 .height(FlightChromeMetrics.PortraitDock)
@@ -669,7 +675,7 @@ private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Mo
 }
 
 @Composable
-private fun FlightAssistStrip(assist: FlightAssist, ready: Boolean, onAssist: (FlightAssist) -> Unit) {
+private fun FlightAssistStrip(assist: FlightAssist, ready: Boolean, onAssist: (FlightAssist) -> Unit, compact: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
     val primary = listOf(FlightAssist.Hold, FlightAssist.Prograde, FlightAssist.Retrograde)
     @Composable fun Choice(index: Int, modifier: Modifier) {
@@ -679,7 +685,12 @@ private fun FlightAssistStrip(assist: FlightAssist, ready: Boolean, onAssist: (F
         else FlightAction(if (assist in primary) "More" else assist.label, { expanded = true }, FlightTags.ASSIST_MORE,
             active = assist !in primary, enabled = ready, modifier = modifier)
     }
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    if (compact) {
+        FlightAction("${assist.label} ▾", { expanded = true }, FlightTags.ASSIST_MORE,
+            active = true, enabled = ready, modifier = Modifier.fillMaxWidth().semantics {
+                contentDescription = "Attitude assist: ${assist.label}. Choose direction"
+            })
+    } else BoxWithConstraints(Modifier.fillMaxWidth()) {
         if (maxWidth < 280.dp) Column {
             repeat(2) { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -791,6 +802,18 @@ private fun FlightInstrument(label: String, value: String, detail: String, tag: 
                 fontFamily = FontFamily.SansSerif, maxLines = 1)
             Text(detail, color = FlightMuted, fontSize = 9.sp, lineHeight = 11.sp, maxLines = 1)
         }
+    }
+}
+
+@Composable
+private fun FlightTools(ready: Boolean, docking: Boolean, onGuide: () -> Unit, onPlan: () -> Unit, onMissions: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FlightAction("Guide", onGuide, FlightTags.GUIDE)
+        FlightAction("Plan", onPlan, FlightTags.PLAN, enabled = ready && !docking,
+            modifier = Modifier.semantics {
+                contentDescription = if (docking) "Burn planning is unavailable during docking" else "Plan a finite engine burn"
+            })
+        FlightAction("Missions", onMissions, FlightTags.MISSIONS)
     }
 }
 

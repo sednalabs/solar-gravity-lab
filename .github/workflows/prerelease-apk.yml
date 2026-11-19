@@ -625,7 +625,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
+          ref: ${{ needs.build-prerelease-apk.outputs.head_sha }}
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -982,7 +982,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
+          ref: ${{ needs.build-prerelease-apk.outputs.head_sha || needs.route.outputs.checkout_ref || github.sha }}
 
       - name: Build prerelease summary payload
         shell: bash
@@ -995,7 +995,7 @@ jobs:
             --run-attempt "${{ github.run_attempt }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
-            --checkout-ref "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}" \
+            --checkout-ref "${{ needs.build-prerelease-apk.outputs.head_sha || needs.route.outputs.checkout_ref || github.sha }}" \
             --profile "prerelease" \
             --profile-intent "checkpoint" \
             --profile-notes "Packages installable artifacts and launch-smoke evidence for remote validation." \

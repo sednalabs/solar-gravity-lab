@@ -24,6 +24,8 @@ pub enum ScientificError {
     InsideHarmonicReferenceRadius,
     WorkLimit,
     StepTooSmall,
+    ContactResolutionLimit,
+    ContactMotionEnvelope,
     NonFinite,
 }
 
@@ -47,6 +49,12 @@ impl std::fmt::Display for ScientificError {
             Self::StepTooSmall => {
                 "requested local accuracy or encounter bound needs a smaller step"
             }
+            Self::ContactResolutionLimit => {
+                "local contact needs finer time resolution than the bounded solve permits"
+            }
+            Self::ContactMotionEnvelope => {
+                "local contact motion exceeded its validated interaction envelope"
+            }
             Self::NonFinite => "integration produced a nonfinite intermediate state",
         })
     }
@@ -59,6 +67,17 @@ impl std::error::Error for ScientificError {}
 impl From<()> for ScientificError {
     fn from(_: ()) -> Self {
         Self::InvalidFlightState
+    }
+}
+
+impl From<crate::docking::ContactStepError> for ScientificError {
+    fn from(error: crate::docking::ContactStepError) -> Self {
+        match error {
+            crate::docking::ContactStepError::InvalidState => Self::InvalidFlightState,
+            crate::docking::ContactStepError::ResolutionLimit => Self::ContactResolutionLimit,
+            crate::docking::ContactStepError::MotionEnvelope => Self::ContactMotionEnvelope,
+            crate::docking::ContactStepError::Gravity(error) => error,
+        }
     }
 }
 
@@ -237,7 +256,7 @@ impl crate::FixedStepPlan {
         accelerations: &mut [Vector3d],
         kernel: GravityKernel,
         scratch: &mut GravityScratch,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ScientificError> {
         evaluate_accelerations(
             bodies,
             sources,
@@ -246,7 +265,6 @@ impl crate::FixedStepPlan {
             scratch,
             &self.science,
         )
-        .map_err(|_| ())
     }
 
     /// Energy includes J2 potential, unlike the historical point-mass diagnostic.

@@ -56,6 +56,15 @@ entry point also keeps the full requested advance atomic. Runtime spacecraft
 flow operates on caller-owned staged state, which must be discarded on failure.
 An error does not silently disable J2 or retry using another integration method.
 
+The contact split also preserves the reason for rejection. A
+`ContactResolutionLimit` means the local contact solve cannot resolve the
+encounter within its bounded subdivision budget; `ContactMotionEnvelope` means
+the solved motion exceeded the supported interaction bound. Neither is treated
+as an invalid spacecraft definition. Gravity-domain errors, including entry
+below a J2 reference radius, keep their original scientific classification even
+when they arise during contact flow. Runtime rejection leaves the committed
+world and exported saved session unchanged.
+
 The fixed outer schedule still determines caller observation/commit boundaries.
 Adaptive trial times are internal to that schedule. This implementation has no
 dense-output event locator. Surface-crossing and closest-approach observations
@@ -196,6 +205,45 @@ JPL Horizons. Fixture uncertainty, floating-point frame transformations and
 global accumulation remain separate from the local adaptive tolerance. The
 hosted validation gate and physical Galaxy build acceptance are separate
 release evidence, recorded by the integration campaign.
+
+### Independent contact references
+
+The contact suite uses analytical impact events separately from the orbital
+integrator oracles. Run it and the runtime failure checks with:
+
+```sh
+cargo test -p solarlab-physics --test contact_reference_cases
+cargo test -p solarlab-runtime --test contact_rejection
+```
+
+Local x86_64 review on 19 November 2026 used contact source `d4375c1`, with
+the checked scientific error path. All reference spheres have radius 1 m,
+inertial mass 1000 kg and restitution 0.1. Their designated docking targets
+remain distant, so these cases also exercise contacts across different pairs.
+
+| Reference | Measured result |
+| --- | --- |
+| Two spheres start at x = -20, +20 m with velocities +4000, -4000 m/s; advance 0.01 s | Analytical impact at 0.00475 s, final x = -3.1, +3.1 m and velocities -400, +400 m/s. Across outer steps 0.01, 0.005, 0.0025 and 0.00125 s: maximum endpoint error 0.727 mm, inferred impact-time error 0.166 microseconds, rebound velocities agree to floating-point precision |
+| Same crossing with common velocity (30000, -5000, 2000) m/s and x-origin 1.5e11 m | Relative trajectories and impulses pass the 0.1 mm / 0.0001 m/s agreement bounds; reversing the spacecraft input order gives identical results |
+| Three spheres at x = -6, 0, +6 m with velocities +200, 0, 0 m/s; advance 0.06 s | Two separated analytical impacts at 0.02 and 0.056363636… s give final x = 1.6, 4.18, 6.22 m and velocities 90, 49.5, 60.5 m/s. Four outer-step sizes give maximum position error 1.932 mm and rebound velocities agree to floating-point precision |
+| Simultaneous collinear and equilateral three-body encounters | Finite separated final states, conserved momentum, no increase in total translational plus rotational energy, and identical outcomes under input-order reversal; finer-step endpoint differences stay within the explicit 3 cm test bound |
+| Exhausted contact-resolution budget and entry below a J2 reference radius during contact flow | Distinct scientific errors survive both blocking and incremental runtime APIs; committed snapshots and exported save bytes remain unchanged |
+
+Exactly simultaneous rigid impacts are a separate modelling limit: a binary
+restitution coefficient alone does not specify a unique physical multi-impact
+law. The simultaneous tests check deterministic conservation and bounded
+motion; they do not certify a uniquely correct impulse distribution. The
+nondegenerate sequential case is the independent accuracy oracle for ordinary
+multiple-body encounters.
+
+These are measured examples within a finite contact-resolution envelope. The
+solver limits contact-near point motion to one eighth of the smallest primitive
+feature and permits at most 2048 solves, including retries, per local island
+drift of at most 0.01 s. It checks physical motion and separate numerical
+correction allowances before accepting the drift. Very fine geometry, extreme
+motion disparity within an island, or excessive constraint correction can
+produce an explicit rejection. This is not a universal continuous-collision
+guarantee for arbitrary grazing geometry, nor a phone-performance claim.
 
 ## Principia and numerical references
 
