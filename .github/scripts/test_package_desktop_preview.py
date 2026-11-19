@@ -77,5 +77,17 @@ class DesktopPackageTests(unittest.TestCase):
             self.build()
 
 
+    def test_invalid_or_oversized_version_cannot_create_release_files(self) -> None:
+        for version in (
+            "0.2.0/other", "0.2.0\\other", "0.2.0\n", "0.2.0-",
+            "0.2.0-alpha..3", "0.2.0-alpha.03", "00.2.0", "０.2.0",
+            "0.2.0-" + "a" * 128,
+        ):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(ValueError, "ordinary release version"):
+                    package(self.source, self.output, self.sha, version, "123")
+                self.assertFalse(self.output.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,10 +10,37 @@ import re
 import tarfile
 
 
+def is_release_version(value: str) -> bool:
+    # Bound validation work and the resulting filesystem component. Match the
+    # release router's ordinary SemVer grammar without regex backtracking.
+    if not 1 <= len(value) <= 128 or not value.isascii():
+        return False
+    core, separator, prerelease = value.partition("-")
+    parts = core.split(".")
+    if len(parts) != 3 or any(
+        not part.isdigit() or (len(part) > 1 and part.startswith("0"))
+        for part in parts
+    ):
+        return False
+    if not separator:
+        return True
+    return all(
+        part and all(character.isalnum() or character == "-" for character in part)
+        and not (part.isdigit() and len(part) > 1 and part.startswith("0"))
+        for part in prerelease.split(".")
+    )
+
+
 def package(source_dir: Path, output_dir: Path, source: str, version: str, run_id: str) -> dict:
+    """Use operator-selected local directories and fixed artifact member names.
+
+    CLI paths are deliberate filesystem inputs, never paths supplied by the
+    downloaded artifact. Publication passes fixed input and output directories
+    after verifying the qualified run's immutable source.
+    """
     if not re.fullmatch(r"[0-9a-f]{40}", source):
         raise ValueError("A complete qualified source SHA is required")
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version):
+    if not is_release_version(version):
         raise ValueError("An ordinary release version is required")
     if not re.fullmatch(r"[1-9][0-9]*", run_id):
         raise ValueError("A validation run ID is required")
