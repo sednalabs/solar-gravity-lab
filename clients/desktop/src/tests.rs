@@ -173,6 +173,67 @@ fn watchdog_also_clears_staged_thrust_and_invalidates_the_old_generation() {
 }
 
 #[test]
+fn stale_heartbeat_resynchronizes_without_renewing_contact_or_rearming_input() {
+    let mut session = FlightSession::new().unwrap();
+    let generation = session.generation;
+    let powered = FlightControl {
+        throttle: 0.4,
+        rotation_body: solarlab_domain::Vector3d {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        ..FlightControl::default()
+    };
+    session
+        .handle(Action::Control {
+            sequence: 1,
+            control: powered,
+        })
+        .unwrap();
+    session.handle(Action::Resume).unwrap();
+    session.last_heartbeat = Instant::now() - Duration::from_secs(2);
+    session.tick(0.02);
+    let expired = session.last_heartbeat;
+    let saved = session.world.export_saved_session().unwrap();
+    let response = CommandRequest {
+        generation,
+        command: Action::Heartbeat,
+    }
+    .apply(&mut session)
+    .unwrap();
+    assert_eq!(response["heartbeatAccepted"], false);
+    assert_eq!(response["generation"], session.generation);
+    assert_eq!(session.last_heartbeat, expired);
+    assert_eq!(session.world.export_saved_session().unwrap(), saved);
+    assert!(response["paused"].as_bool().unwrap());
+    assert_eq!(response["ship"]["control"]["throttle"], 0.0);
+    assert_eq!(response["ship"]["control"]["rotation_body"]["x"], 0.0);
+
+    assert!(CommandRequest {
+        generation,
+        command: Action::Control {
+            sequence: 2,
+            control: powered,
+        },
+    }
+    .apply(&mut session)
+    .is_err());
+    assert_eq!(session.world.export_saved_session().unwrap(), saved);
+
+    let response = CommandRequest {
+        generation: session.generation,
+        command: Action::Heartbeat,
+    }
+    .apply(&mut session)
+    .unwrap();
+    assert_eq!(response["heartbeatAccepted"], true);
+    assert!(session.last_heartbeat > expired);
+    assert_eq!(session.world.export_saved_session().unwrap(), saved);
+    assert!(response["paused"].as_bool().unwrap());
+}
+
+#[test]
 fn bridge_requests_require_local_origin_host_and_session_token() {
     let mut request = Request {
         method: "POST".into(),

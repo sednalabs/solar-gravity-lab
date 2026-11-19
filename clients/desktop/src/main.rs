@@ -29,6 +29,28 @@ struct CommandRequest {
     command: Action,
 }
 
+impl CommandRequest {
+    fn apply(self, flight: &mut FlightSession) -> Result<serde_json::Value, String> {
+        if matches!(&self.command, Action::Heartbeat) {
+            // The watchdog can revoke a generation after the browser sends its
+            // heartbeat. Return the new state, but only a matching heartbeat
+            // may renew contact. Stale input never gains authority this way.
+            let accepted = self.generation == flight.generation;
+            let mut state = if accepted {
+                flight.handle(self.command)?
+            } else {
+                flight.state()?
+            };
+            state["heartbeatAccepted"] = json!(accepted);
+            return Ok(state);
+        }
+        if self.generation != flight.generation {
+            return Err("Flight changed; refresh its controls".into());
+        }
+        flight.handle(self.command)
+    }
+}
+
 impl Request {
     fn read(stream: &mut TcpStream) -> Result<Self, String> {
         let mut buffer = Vec::new();
@@ -258,12 +280,7 @@ fn serve(mut stream: TcpStream, session: &Arc<Mutex<FlightSession>>, host: &str,
         ("GET", "/api/state") => flight.state(),
         ("POST", "/api/command") => serde_json::from_slice::<CommandRequest>(&request.body)
             .map_err(|e| e.to_string())
-            .and_then(|request| {
-                if request.generation != flight.generation {
-                    return Err("Flight changed; refresh its controls".into());
-                }
-                flight.handle(request.command)
-            }),
+            .and_then(|request| request.apply(&mut flight)),
         ("POST", "/api/import") => flight.import(&request.body).and_then(|()| flight.state()),
         _ => {
             respond(&mut stream, 404, "text/plain", b"Route unavailable", false);
