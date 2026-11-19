@@ -3,6 +3,7 @@ package com.sednalabs.solarlab
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +25,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +48,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -113,6 +117,8 @@ internal object FlightTags {
     const val CONTROL_MODE = "flight.control_mode"
     const val ATTITUDE_PANEL = "flight.attitude_panel"
     const val TIMELINE = "flight.timeline"
+    const val TRANSPORT = "flight.transport"
+    const val WARP_CHOICES = "flight.warp_choices"
     const val PRECISION = "flight.precision"
     const val ASSIST_MORE = "flight.assist_more"
     const val RECENTER = "flight.camera.recenter"
@@ -602,7 +608,7 @@ internal fun FlightModeChrome(
                         Box(Modifier.weight(1f)) { FlightEnginePanel(control, sample, controlsReady, paused, actions) }
                     }
                     HorizontalDivider(color = FlightLine)
-                    FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions)
+                    FlightTimeBar(ready, paused, rate, coasting, checkpoint != null, actions, revealSelectedWarp = true)
                     Text(notice, Modifier.fillMaxWidth().padding(top = 3.dp), color = if (controlError == null) FlightMuted else FlightAmber,
                         fontSize = 10.sp, maxLines = 2, lineHeight = 13.sp, overflow = TextOverflow.Ellipsis)
                 }
@@ -767,17 +773,37 @@ private fun FlightEnginePanel(control: FlightControl, sample: FlightState?, read
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FlightTimeBar(ready: Boolean, paused: Boolean, rate: Double, coasting: Boolean, canReset: Boolean, actions: FlightUiActions) {
-    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+private fun FlightTimeBar(ready: Boolean, paused: Boolean, rate: Double, coasting: Boolean, canReset: Boolean,
+    actions: FlightUiActions, revealSelectedWarp: Boolean = false) {
+    val warpScroll = rememberScrollState()
+    val selectedWarp = remember { BringIntoViewRequester() }
+    var warpViewportWidth by remember { mutableStateOf(0) }
+    LaunchedEffect(revealSelectedWarp, rate, warpViewportWidth) {
+        if (revealSelectedWarp && warpViewportWidth > 0) {
+            // Let the newly selected chip finish layout before requesting its
+            // full bounds. Manual swipes do not change these effect keys.
+            withFrameNanos { }
+            selectedWarp.bringIntoView()
+        }
+    }
+    Row(Modifier.fillMaxWidth().height(48.dp).testTag(FlightTags.TRANSPORT),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Button(onClick = actions.playPause, enabled = ready, modifier = Modifier.height(44.dp).testTag(FlightTags.PLAY_PAUSE),
             colors = ButtonDefaults.buttonColors(containerColor = FlightTeal, contentColor = Color(0xFF102D31)),
             shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
             Text(if (paused) "Run" else "Pause", fontSize = 12.sp)
         }
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            listOf(1, 10, 100, 1000).forEach { warp ->
-                FlightAction("${warp}×", { actions.warp(warp) }, FlightTags.warp(warp), active = rate == warp.toDouble(), enabled = ready && (warp == 1 || coasting))
+        Box(Modifier.weight(1f).testTag(FlightTags.WARP_CHOICES)
+            .onGloballyPositioned { warpViewportWidth = it.size.width }) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(warpScroll), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                listOf(1, 10, 100, 1000).forEach { warp ->
+                    val active = rate == warp.toDouble()
+                    FlightAction("${warp}×", { actions.warp(warp) }, FlightTags.warp(warp), active = active,
+                        enabled = ready && (warp == 1 || coasting),
+                        modifier = if (revealSelectedWarp && active) Modifier.bringIntoViewRequester(selectedWarp) else Modifier)
+                }
             }
         }
         FlightAction("Mark", actions.mark, FlightTags.CHECKPOINT, enabled = ready)

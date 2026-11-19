@@ -16,6 +16,7 @@ import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -33,6 +34,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.toSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sednalabs.solarlab.runtime.DockingGuidance
@@ -281,6 +283,7 @@ class OrbitalFlightJourneyInstrumentationTest {
         waitUntil { facade.uiState.value.snapshot?.paused == true }
         waitUntil { runCatching { composeRule.onNodeWithTag(LunarFlightTags.STATUS).assertTextContains("Lunar flyby") }.isSuccess }
         assertFlightMap(minimumRadiusM = 100_000_000.0, anchorIds = listOf("earth", "moon", REFERENCE_SPACECRAFT_ID))
+        assertPortraitTransport(1000)
         capture("lunar-flyby-outcome.png")
         val missionSaveName = "Lunar flyby proof ${System.currentTimeMillis()}"
         runBlocking { facade.saveExperiment(missionSaveName) }
@@ -534,6 +537,37 @@ class OrbitalFlightJourneyInstrumentationTest {
             assertTrue("$label must be wholly inside the steering panel and above time controls: $target / $panel / $timeline",
                 target.left >= panel.left && target.right <= panel.right && target.top >= panel.top &&
                     target.bottom <= panel.bottom && target.bottom <= timeline.top)
+        }
+    }
+
+    private fun assertPortraitTransport(selectedWarp: Int) {
+        assertEquals(Configuration.ORIENTATION_PORTRAIT, composeRule.activity.resources.configuration.orientation)
+        assertEquals(selectedWarp.toDouble(), requireNotNull(composeRule.activity.runtimeFacadeForTesting
+            .uiState.value.snapshot).simSecondsPerRealSecond, 0.0)
+        fun fullBounds(tag: String): Rect = composeRule.onNodeWithTag(tag).fetchSemanticsNode().let {
+            // boundsInRoot/boundsInWindow can already be clipped by the strip.
+            // Check the entire laid-out target, including any hidden portion.
+            Rect(it.positionInRoot, it.size.toSize())
+        }
+        fun Rect.containsEntire(target: Rect) = target.left >= left && target.right <= right &&
+            target.top >= top && target.bottom <= bottom
+        val controls = listOf(FlightTags.PLAY_PAUSE, FlightTags.CHECKPOINT, FlightTags.RESET,
+            FlightTags.warp(selectedWarp))
+        val density = composeRule.activity.resources.displayMetrics.density
+        var diagnostic = "Transport not laid out"
+        try {
+            waitUntil {
+                val transport = fullBounds(FlightTags.TRANSPORT)
+                val strip = fullBounds(FlightTags.WARP_CHOICES)
+                val bounds = controls.associateWith(::fullBounds)
+                diagnostic = "transport=$transport strip=$strip controls=$bounds"
+                bounds.all { (tag, target) ->
+                    composeRule.onNodeWithTag(tag).isDisplayed() && target.height >= 44f * density - 1f &&
+                        transport.containsEntire(target)
+                } && strip.containsEntire(requireNotNull(bounds[FlightTags.warp(selectedWarp)]))
+            }
+        } catch (failure: Throwable) {
+            throw AssertionError("The selected warp and Run/Mark/Reset must be fully visible: $diagnostic", failure)
         }
     }
 
