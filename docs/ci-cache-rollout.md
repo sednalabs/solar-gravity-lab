@@ -120,11 +120,21 @@ Optional R2 backing:
 
 The 2026-11-19 workflow hardening limits cache writes in `validation-lab`,
 `prerelease-apk` and `interactive-android-build` to `push` events on
-`refs/heads/main`. Main push checkouts use the event commit. Manual source
-selection, pull-request validation and release branch builds remain available,
-with restore-only GitHub caches. The three shared Rust/toolchain/sccache
+`refs/heads/main`. Main push checkouts use the event commit. Manual builds,
+pull-request validation and release branch builds remain available, with
+restore-only GitHub cache actions. The three shared Rust/toolchain/sccache
 actions apply the same write condition. The interactive build currently has
 only a manual trigger, so it always uses the restore-only path.
+
+Restore-only configuration does not revoke a runner's implicit GitHub cache
+authority. These workflows also bind executed source to their event context:
+validation checks out the PR head or event SHA directly, rather than trusting
+a plan output to select source. Manual release and interactive builds check
+out the event SHA and reject an optional source ref that resolves elsewhere
+before any build actions run. Choose the intended branch or tag when
+dispatching the workflow; the separate ref input only checks commit identity.
+Release ISA, publication and failed-request summaries also check out the event
+SHA, and the first two verify it against the actual packaged build's SHA.
 
 These workflows withhold shared remote-cache credentials and the encrypted
 configuration-cache key outside that condition. Their current credentials

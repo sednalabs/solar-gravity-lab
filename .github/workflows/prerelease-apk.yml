@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag, or commit to package
+        description: Optional branch, tag, or SHA that must match the workflow run's commit
         required: false
         type: string
       version_name:
@@ -120,6 +120,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Verify release note body bounds
@@ -155,11 +156,22 @@ jobs:
             --input-build-variant "${INPUT_BUILD_VARIANT}" \
             --input-publish-release "${INPUT_PUBLISH_RELEASE}" >> "${GITHUB_OUTPUT}"
 
+      - name: Verify requested source matches workflow commit
+        id: source
+        if: ${{ steps.route.outputs.release_requested == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SOURCE: ${{ steps.route.outputs.checkout_ref }}
+          WORKFLOW_SOURCE: ${{ github.sha }}
+        run: python3 .github/scripts/verify_workflow_source.py --ref="$REQUESTED_SOURCE" --workflow-sha="$WORKFLOW_SOURCE"
+
       - name: Summarize release gate
         if: ${{ always() }}
         shell: bash
         env:
           RELEASE_REQUESTED: ${{ steps.route.outputs.release_requested }}
+          ROUTE_OUTCOME: ${{ steps.route.outcome }}
+          SOURCE_OUTCOME: ${{ steps.source.outcome }}
           ROUTE_REASON: ${{ steps.route.outputs.reason }}
           CHECKOUT_REF: ${{ steps.route.outputs.checkout_ref }}
           VERSION_NAME: ${{ steps.route.outputs.version_name }}
@@ -169,9 +181,13 @@ jobs:
           PUBLISH_RELEASE: ${{ steps.route.outputs.publish_release }}
         run: |
           set -euo pipefail
-          if [[ "${RELEASE_REQUESTED:-false}" == "true" ]]; then
+          if [[ "${RELEASE_REQUESTED:-false}" == "true" && "${SOURCE_OUTCOME}" == "success" ]]; then
             decision="package"
             package_job="will run"
+          elif [[ "${ROUTE_OUTCOME}" == "failure" || "${SOURCE_OUTCOME}" == "failure" ]]; then
+            decision="reject"
+            package_job="skipped"
+            ROUTE_REASON="release_request_or_source_verification_failed"
           else
             decision="skip"
             package_job="skipped"
@@ -196,7 +212,7 @@ jobs:
   build-prerelease-apk:
     name: Build internal dev preview APK
     needs: route
-    if: ${{ needs.route.outputs.release_requested == 'true' }}
+    if: ${{ needs.route.result == 'success' && needs.route.outputs.release_requested == 'true' }}
     outputs:
       head_sha: ${{ steps.git_meta.outputs.head_sha }}
       version_name: ${{ steps.meta.outputs.version_name }}
@@ -230,7 +246,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ github.event_name == 'push' && github.sha || needs.route.outputs.checkout_ref || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Initialize prerelease timing
@@ -240,12 +256,19 @@ jobs:
           set -euo pipefail
           echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve checkout metadata
+      - name: Verify checkout and record build source
         id: git_meta
         shell: bash
+        env:
+          WORKFLOW_SOURCE: ${{ github.sha }}
         run: |
           set -euo pipefail
-          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          head_sha="$(git rev-parse HEAD)"
+          if [[ "$head_sha" != "$WORKFLOW_SOURCE" ]]; then
+            echo "Checkout differs from the workflow source; refusing to build." >&2
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
@@ -514,10 +537,12 @@ jobs:
 
       - name: Generate build provenance
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json
+          import json, os
           from datetime import datetime, timezone
           from pathlib import Path
 
@@ -531,7 +556,7 @@ jobs:
               "workflow": "${{ github.workflow }}",
               "run_id": "${{ github.run_id }}",
               "run_attempt": "${{ github.run_attempt }}",
-              "checkout_ref": "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}",
+              "checkout_ref": os.environ["CHECKOUT_REF"],
               "commit_sha": "${{ steps.git_meta.outputs.head_sha }}",
               "version_name": "${{ steps.meta.outputs.version_name }}",
               "version_code": "${{ steps.meta.outputs.version_code }}",
@@ -646,8 +671,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Verify proof source matches packaged source
+        env:
+          BUILT_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          WORKFLOW_SOURCE: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BUILT_SOURCE" != "$WORKFLOW_SOURCE" || "$(git rev-parse HEAD)" != "$BUILT_SOURCE" ]]; then
+            echo "ISA proof source differs from the packaged workflow source." >&2
+            exit 1
+          fi
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -711,8 +748,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-          ref: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Verify publication source matches packaged source
+        env:
+          BUILT_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          WORKFLOW_SOURCE: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BUILT_SOURCE" != "$WORKFLOW_SOURCE" || "$(git rev-parse HEAD)" != "$BUILT_SOURCE" ]]; then
+            echo "Publication source differs from the packaged workflow source." >&2
+            exit 1
+          fi
 
       - name: Resolve desktop proof from the identical source
         id: desktop_proof
@@ -832,6 +881,7 @@ jobs:
       - name: Generate release provenance
         shell: bash
         env:
+          CHECKOUT_REF: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
           RELEASE_NOTES_PATH: ${{ steps.release_artifacts.outputs.release_notes_md }}
         run: |
           set -euo pipefail
@@ -857,7 +907,7 @@ jobs:
               "run_attempt": "${{ github.run_attempt }}",
               "release_tag": "${{ needs.build-prerelease-apk.outputs.tag_name }}",
               "release_target": "${{ needs.build-prerelease-apk.outputs.head_sha }}",
-              "checkout_ref": "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}",
+              "checkout_ref": os.environ["CHECKOUT_REF"],
               "version_name": "${{ needs.build-prerelease-apk.outputs.version_name }}",
               "version_code": "${{ needs.build-prerelease-apk.outputs.version_code }}",
               "build_variant": "${{ needs.build-prerelease-apk.outputs.build_variant }}",
@@ -964,11 +1014,13 @@ jobs:
       - name: Emit release summary
         if: always()
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
         run: |
           {
             echo "## prerelease-apk"
             echo
-            echo "- ref: \`${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}\`"
+            echo "- ref: \`${CHECKOUT_REF}\`"
             echo "- git head: \`${{ needs.build-prerelease-apk.outputs.head_sha }}\`"
             echo "- version: \`${{ needs.build-prerelease-apk.outputs.version_name }}\`"
             echo "- versionCode: \`${{ needs.build-prerelease-apk.outputs.version_code }}\`"
@@ -1004,11 +1056,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-          ref: ${{ needs.build-prerelease-apk.outputs.head_sha || needs.route.outputs.checkout_ref || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Build prerelease summary payload
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ needs.build-prerelease-apk.outputs.head_sha || needs.route.outputs.checkout_ref || github.sha }}
         run: |
           set -euo pipefail
           mkdir -p dist/prerelease-summary
@@ -1018,7 +1072,7 @@ jobs:
             --run-attempt "${{ github.run_attempt }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
-            --checkout-ref "${{ needs.build-prerelease-apk.outputs.head_sha || needs.route.outputs.checkout_ref || github.sha }}" \
+            --checkout-ref="$CHECKOUT_REF" \
             --profile "prerelease" \
             --profile-intent "checkpoint" \
             --profile-notes "Packages installable artifacts and launch-smoke evidence for remote validation." \
@@ -1029,6 +1083,7 @@ jobs:
             --android-artifact-mode "${{ inputs.android_artifact_mode }}" \
             --emulator-boot-strategy "${{ inputs.emulator_boot_strategy }}" \
             --gradle-configuration-cache "${{ inputs.gradle_configuration_cache }}" \
+            --job route=${{ needs.route.result }} \
             --job build-prerelease-apk=${{ needs.build-prerelease-apk.result }} \
             --job isa-prerelease-proof=${{ needs.isa-prerelease-proof.result }} \
             --job publish-prerelease-apk=${{ needs.publish-prerelease-apk.result }} \

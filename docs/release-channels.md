@@ -60,7 +60,7 @@ The manual path for the same identity is:
 ```bash
 gh workflow run prerelease-apk.yml \
   --repo sednalabs/solar-gravity-lab \
-  --ref main \
+  --ref release/0.2.0-alpha.3 \
   -f ref=<validated-commit-sha> \
   -f version_name=0.2.0-alpha.3 \
   -f release_channel=prerelease \
@@ -71,9 +71,22 @@ gh workflow run prerelease-apk.yml \
   -f gradle_configuration_cache=disabled
 ```
 
+The workflow branch or tag supplied by `--ref` must already point to the
+qualified commit. The optional `-f ref` is a consistency check: a full SHA must
+equal the workflow event SHA, and a branch or tag must resolve to that SHA.
+Dispatching on `main` with a different feature commit in `-f ref` is rejected
+before building. To package another source, dispatch on its branch or tag.
+If an alias moves after dispatch, the check rejects it; supplying the qualified
+full SHA avoids resolving a moving alias.
+
 That workflow builds the APK, runs the packaged launch smoke, runs the ARM64 ISA
 proof, uploads the workflow artifact, and publishes or updates the GitHub
 Release only after both proof jobs pass.
+
+APK, ISA and publication jobs check out the immutable workflow event SHA. The
+build records the actual checkout SHA, which ISA and publication compare with
+their own checkout and the event SHA. Desktop artifact selection retains that
+same built SHA. Even a rejected request's summary runs from the event source.
 
 Manual dispatch requires `version_name` unless its selected ref is a versioned
 release branch. Existing-release replacement remains an explicit manual-only

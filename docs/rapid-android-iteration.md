@@ -54,6 +54,12 @@ gh workflow run interactive-android-build.yml \
   -f interactive_debug_profile=hosted-debug-lite
 ```
 
+Select the intended source with the workflow's `--ref` branch or tag. The
+optional `-f ref` must resolve to that run's immutable event commit; it cannot
+redirect a workflow dispatched on `main` to another source. Omit `-f ref` or
+use the intended full SHA to avoid a moving branch alias being rejected between
+dispatch and verification. The source check runs before local build actions.
+
 For higher-fidelity visual proof, use `interactive_debug_profile=full-fidelity`.
 
 Start or reuse the hosted session:

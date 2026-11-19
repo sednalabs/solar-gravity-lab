@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag, or commit to build for interactive reuse
+        description: Optional branch, tag, or SHA that must match the workflow run's commit
         required: false
         type: string
       android_validation_mode:
@@ -72,8 +72,15 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Verify requested source matches workflow commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SOURCE: ${{ inputs.ref }}
+          WORKFLOW_SOURCE: ${{ github.sha }}
+        run: python3 .github/scripts/verify_workflow_source.py --ref="$REQUESTED_SOURCE" --workflow-sha="$WORKFLOW_SOURCE"
 
       - name: Resolve interactive build plan
         id: plan
@@ -198,6 +205,8 @@ jobs:
       - name: Stage canonical interactive build bundle
         id: bundle
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ steps.plan.outputs.checkout_ref }}
         run: |
           set -euo pipefail
           python3 .github/scripts/stage_interactive_build_bundle.py \
@@ -208,7 +217,7 @@ jobs:
             --workflow "interactive-android-build" \
             --run-id "${{ github.run_id }}" \
             --run-attempt "${{ github.run_attempt }}" \
-            --checkout-ref "${{ steps.plan.outputs.checkout_ref }}" \
+            --checkout-ref="$CHECKOUT_REF" \
             --commit-sha "${{ steps.plan.outputs.commit_sha }}" \
             --android-validation-mode "${{ inputs.android_validation_mode }}" \
             --interactive-debug-profile "${{ inputs.interactive_debug_profile }}" \
@@ -220,10 +229,12 @@ jobs:
 
       - name: Emit interactive build summary
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ steps.plan.outputs.checkout_ref }}
         run: |
           {
             echo "## interactive-android-build"
-            echo "- ref: \`${{ steps.plan.outputs.checkout_ref }}\`"
+            echo "- ref: \`${CHECKOUT_REF}\`"
             echo "- commit: \`${{ steps.plan.outputs.commit_sha }}\`"
             echo "- artifact: \`${{ steps.plan.outputs.artifact_name }}\`"
             echo "- validation mode: \`${{ inputs.android_validation_mode }}\`"
