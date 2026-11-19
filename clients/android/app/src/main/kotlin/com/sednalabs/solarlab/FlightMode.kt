@@ -578,11 +578,11 @@ internal fun FlightModeChrome(
                 .padding(bottom = FlightChromeMetrics.PortraitDock, start = 12.dp, end = 12.dp)
                 .widthIn(max = 600.dp)
                 .onGloballyPositioned { bottomPanelBounds = it.boundsInWindow() }) {
-                // A full portrait rendezvous panel retains its bearing, guidance
-                // actions and explanation without crowding the scene's centre.
+                // Mission status and touch controls sit below the measured
+                // viewport; keep the card compact so distant vehicles remain visible.
                 if (docking != null) DockingPanel(requireNotNull(docking), true, paused, ready, missionActionBusy,
                     onGuidance = { dockingAction(it) }, onUndock = { dockingAction() })
-                else if (rendezvous != null) RendezvousPanel(requireNotNull(rendezvous), false, paused, ready, missionActionBusy,
+                else if (rendezvous != null) RendezvousPanel(requireNotNull(rendezvous), true, paused, ready, missionActionBusy,
                     onGuidance = ::setEncounterGuidance)
                 else LunarMissionPanel(requireNotNull(lunarMission), true, paused, ready, missionActionBusy, coasting,
                     onBeginBurn = ::beginMissionBurn, onCoast = ::beginMissionCoast,

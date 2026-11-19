@@ -16,6 +16,7 @@ import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
@@ -23,6 +24,7 @@ import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -131,11 +133,15 @@ class OrbitalFlightJourneyInstrumentationTest {
         composeRule.onNodeWithTag(FlightPlanningTags.PREVIEW).performScrollToIfPossible().performClick()
         waitUntil(30_000) { nodes(FlightPlanningTags.RESULT) }
         composeRule.onNodeWithTag(FlightPlanningTags.RESULT).performScrollToIfPossible().assertIsDisplayed()
+        composeRule.onNodeWithText("Current orbit → after burn").assertIsDisplayed()
+        composeRule.onNodeWithText("Periapsis  ", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Apoapsis  ", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Fuel ", substring = true).assertIsDisplayed()
         val afterPreview = flight(facade)
         assertEquals("Planning must not advance the world", initial.epochSeconds.toBits(), afterPreview.epochSeconds.toBits())
         assertEquals("Planning must not spend live fuel", initial.propellantMassKg.toBits(), afterPreview.propellantMassKg.toBits())
         assertEquals("Planning must not change live controls", initial.control, afterPreview.control)
-        captureWindow("flight-burn-preview-portrait.png")
+        captureDialog("flight-burn-preview-dialog-portrait.png", FlightPlanningTags.ROOT)
         composeRule.onNodeWithText("Back to flight").performClick()
         capture("flight-portrait-orbit.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
@@ -530,10 +536,13 @@ class OrbitalFlightJourneyInstrumentationTest {
         }
     }
 
-    private fun captureWindow(name: String) {
+    private fun captureDialog(name: String, dialogTag: String) {
         composeRule.waitForIdle()
-        val window = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
-        try { writeImage(name, window) } finally { window.recycle() }
+        // Semantics/layout can lead the device compositor after scrolling.
+        // Capture the actual dialog window through Compose's redraw + PixelCopy
+        // path, so the result image contains the currently asserted result.
+        val dialog = composeRule.onNodeWithTag(dialogTag).captureToImage().asAndroidBitmap()
+        try { writeImage(name, dialog) } finally { dialog.recycle() }
     }
 
     private fun saveAndReopenEncounterThroughUi(facade: RuntimeFacade, backupId: String, oldEpoch: Double, targetId: String) {
