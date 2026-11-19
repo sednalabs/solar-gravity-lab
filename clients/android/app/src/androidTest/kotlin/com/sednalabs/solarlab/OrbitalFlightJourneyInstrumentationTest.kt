@@ -921,32 +921,67 @@ class OrbitalFlightJourneyInstrumentationTest {
         var viewport: LabViewportState? = null
         var selected: String? = null
         val density = composeRule.activity.resources.displayMetrics.density
-        waitUntil {
-            composeRule.runOnUiThread {
-                findHost(composeRule.activity.window.decorView)?.let {
-                    viewport = it.currentLabViewportState()
-                    selected = it.selectedBodyId()
-                }
-            }
-            val frame = viewport
-            val scene = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInWindow
-            frame != null && abs(frame.widthPx - scene.width) <= 1f && abs(frame.heightPx - scene.height) <= 1f &&
-                frame.camera.viewRadiusM > minimumRadiusM && anchorIds.all { id ->
-                    frame.bodies.any { body ->
-                        // Map markers include an extra selected ring. Check its
-                        // whole envelope, not just a centre hidden by the HUD.
-                        val radius = maxOf(body.radiusPx, 3.5f * density) +
-                            (if (id == REFERENCE_SPACECRAFT_ID) 5f * density else 0f) + 2f
-                        body.bodyId == id && body.xPx >= radius && body.xPx <= frame.widthPx - radius &&
-                            body.yPx >= radius && body.yPx <= frame.heightPx - radius
-                    }
-                }
-        }
-        assertEquals("Framing the host world must retain the controlled spacecraft", REFERENCE_SPACECRAFT_ID, selected)
-        val scene = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInWindow
         val hudTags = listOf(LunarFlightTags.MISSION, RendezvousTags.PANEL, DockingTags.PANEL,
             FlightTags.RECENTER, FlightTags.GUIDE, FlightTags.DIRECTOR, FlightTags.PLAN, FlightTags.MISSIONS) +
             (0..3).map(FlightTags::camera)
+        var diagnostic = "No submitted Map viewport"
+        try {
+            waitUntil {
+                composeRule.runOnUiThread {
+                    findHost(composeRule.activity.window.decorView)?.let {
+                        viewport = it.currentLabViewportState()
+                        selected = it.selectedBodyId()
+                    }
+                }
+                val frame = viewport
+                val scene = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInWindow
+                val nativeReady = frame != null && abs(frame.widthPx - scene.width) <= 1f &&
+                    abs(frame.heightPx - scene.height) <= 1f && frame.camera.viewRadiusM > minimumRadiusM &&
+                    anchorIds.all { id ->
+                        frame.bodies.any { body ->
+                            // Map markers include an extra selected ring. Check its
+                            // whole envelope, not just a centre hidden by the HUD.
+                            val radius = maxOf(body.radiusPx, 3.5f * density) +
+                                (if (id == REFERENCE_SPACECRAFT_ID) 5f * density else 0f) + 2f
+                            body.bodyId == id && body.xPx >= radius && body.xPx <= frame.widthPx - radius &&
+                                body.yPx >= radius && body.yPx <= frame.heightPx - radius
+                        }
+                    }
+                val obstructingHud = hudTags.filter { tag ->
+                    composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes()
+                        .map { it.boundsInWindow }.any { it.width > 0f && it.height > 0f && scene.overlaps(it) }
+                }
+                val labelDiagnostics = mutableListOf<String>()
+                val labelsReady = anchorIds.map { id ->
+                    val tag = LabSpatialTags.label(id)
+                    val labels = composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes()
+                    val bounds = labels.singleOrNull()?.boundsInWindow
+                    val displayed = labels.size == 1 && composeRule.onNodeWithTag(tag).isDisplayed()
+                    val contained = bounds != null && bounds.left >= scene.left && bounds.top >= scene.top &&
+                        bounds.right <= scene.right && bounds.bottom <= scene.bottom
+                    labelDiagnostics += "$id(count=${labels.size}, displayed=$displayed, bounds=$bounds)"
+                    displayed && contained
+                }.all { it }
+                diagnostic = "nativeReady=$nativeReady selected=$selected scene=$scene " +
+                    "native=${frame?.widthPx}x${frame?.heightPx} radius=${frame?.camera?.viewRadiusM} " +
+                    "anchors=${frame?.bodies?.filter { it.bodyId in anchorIds }?.map {
+                        "${it.bodyId}(${it.xPx},${it.yPx},r=${it.radiusPx},occluded=${it.occluded})"
+                    }} labels=$labelDiagnostics obstructingHud=$obstructingHud"
+                // Native frame publication updates Compose state before the next
+                // recomposition lays out the overlay. With a frozen test clock,
+                // keep advancing frames within the same deadline until both agree.
+                nativeReady && labelsReady && obstructingHud.isEmpty()
+            }
+        } catch (failure: Throwable) {
+            runCatching {
+                InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let {
+                    writeImage("flight-map-label-failure.png", it)
+                }
+            }
+            throw AssertionError("Flight Map markers and labels must share the unobstructed scene: $diagnostic", failure)
+        }
+        assertEquals("Framing the host world must retain the controlled spacecraft", REFERENCE_SPACECRAFT_ID, selected)
+        val scene = composeRule.onNodeWithTag(LabSpatialTags.VIEWPORT).fetchSemanticsNode().boundsInWindow
         val hud = hudTags.flatMap { composeRule.onAllNodesWithTag(it).fetchSemanticsNodes() }
             .map { it.boundsInWindow }.filter { it.width > 0f && it.height > 0f }
         assertTrue("The flight Map scene must clear the camera controls and mission card", hud.none(scene::overlaps))
