@@ -159,8 +159,8 @@ class WorkflowCachePolicyTests(unittest.TestCase):
         self.assertIn('if [[ "$head_sha" != "$WORKFLOW_SOURCE" ]]', metadata)
         self.assertLess(metadata.index("exit 1"), metadata.index('echo "head_sha=$head_sha"'))
         for name, guard_name in (
-            ("isa-prerelease-proof", "Verify proof source matches packaged source"),
-            ("publish-prerelease-apk", "Verify publication source matches packaged source"),
+            ("isa-prerelease-proof", "Require proof source to equal packaged commit"),
+            ("publish-prerelease-apk", "Require publication source to equal packaged commit"),
         ):
             body = job(WORKFLOWS[1], name)
             guard = next(s for s in release_steps if field(s, "name") == guard_name)
@@ -191,7 +191,7 @@ class WorkflowCachePolicyTests(unittest.TestCase):
 
     def test_source_aliases_remain_data_in_bundle_provenance_and_summaries(self) -> None:
         # A same-commit alias is not shell or Python source. Keep it in env,
-        # even after verification, and let the reporting tools encode it.
+        # even after source identity matches, and let the reporting tools encode it.
         for path in WORKFLOWS[1:]:
             for step in steps(path, 6):
                 run = step.partition("        run:")[2]

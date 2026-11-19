@@ -75,7 +75,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Verify requested source matches workflow commit
+      - name: Require requested source to equal workflow commit
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_SOURCE: ${{ inputs.ref }}

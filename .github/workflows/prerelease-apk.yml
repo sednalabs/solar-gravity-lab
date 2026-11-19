@@ -674,7 +674,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Verify proof source matches packaged source
+      - name: Require proof source to equal packaged commit
         env:
           BUILT_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
           WORKFLOW_SOURCE: ${{ github.sha }}
@@ -751,7 +751,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Verify publication source matches packaged source
+      - name: Require publication source to equal packaged commit
         env:
           BUILT_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
           WORKFLOW_SOURCE: ${{ github.sha }}
