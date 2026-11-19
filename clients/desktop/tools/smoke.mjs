@@ -19,7 +19,30 @@ let browser,token;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(test,description,timeout=15000){const start=Date.now();while(Date.now()-start<timeout){if(await test())return;await wait(100);}throw Error(`Timed out: ${description}`);}
 async function native(){const r=await fetch(base+'/api/state',{headers:{'X-SGL-Token':token}});assert.equal(r.status,200);return r.json();}
-const errors=[],httpErrors=[];
+const errors=[],httpErrors=[],captures={};
+async function capture(page,name,expectedCamera){
+ // Node timers do not advance the browser's presentation clock under software
+ // WebGL. Finish finite UI transitions and observe two browser frames before
+ // acquiring genuine pixels; do not change camera classes or product styles.
+ await page.evaluate(async()=>{
+  for(const animation of document.getAnimations()){
+   if(Number.isFinite(animation.effect?.getComputedTiming().endTime))animation.finish();
+  }
+  await new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>reject(Error('Screenshot presentation frames did not complete')),15000);
+   requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));
+  });
+ });
+ const cameras=await page.locator('[data-camera]').evaluateAll(buttons=>buttons.map(button=>{
+  const style=getComputedStyle(button);
+  return {mode:button.dataset.camera,active:button.classList.contains('active'),background:style.backgroundColor,border:style.borderTopColor};
+ }));
+ captures[name]={expectedCamera,cameras};
+ assert.deepEqual(cameras.filter(button=>button.active).map(button=>button.mode),[expectedCamera],'Exactly the requested camera must be active');
+ assert.deepEqual(cameras.filter(button=>button.background!=='rgba(0, 0, 0, 0)').map(button=>button.mode),[expectedCamera],'Only the active camera may retain its presented background');
+ assert.deepEqual(cameras.filter(button=>button.border!=='rgba(0, 0, 0, 0)').map(button=>button.mode),[expectedCamera],'Only the active camera may retain its presented border');
+ await page.screenshot({path:path.join(output,name),animations:'disabled',timeout:15000});
+}
 async function visibleControls(page){
  const selectors=['#playButton','#cutButton','#throttle','#craftSelect','#centreButton','#fineButton','[data-axis="4"]'];
  const result=await page.evaluate(selectors=>Object.fromEntries(selectors.map(selector=>{const e=document.querySelector(selector),r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,top=document.elementFromPoint(x,y);return [selector,r.width>0&&r.height>0&&r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight&&(top===e||e.contains(top))];})),selectors);
@@ -38,7 +61,7 @@ try{
  await page.goto(base,{waitUntil:'domcontentloaded'});await page.bringToFront();
  await page.waitForFunction(()=>document.querySelector('#altitude').textContent!=='—');
  await page.waitForFunction(()=>document.querySelector('#universe').dataset.rendered==='true');
- await wait(400);const controlsLarge=await visibleControls(page);const initialPixels=await scenePixels(page);assert.ok(initialPixels.coloredSamples>1000&&initialPixels.shades>24,`Visible spacecraft and planetary scene required: ${JSON.stringify(initialPixels)}`);assert.equal(initialPixels.exhaustVertices,0,'Paused idle spacecraft must not draw exhaust');await page.screenshot({path:path.join(output,'desktop-orbit.png')});
+ await wait(400);const controlsLarge=await visibleControls(page);const initialPixels=await scenePixels(page);assert.ok(initialPixels.coloredSamples>1000&&initialPixels.shades>24,`Visible spacecraft and planetary scene required: ${JSON.stringify(initialPixels)}`);assert.equal(initialPixels.exhaustVertices,0,'Paused idle spacecraft must not draw exhaust');await capture(page,'desktop-orbit.png','orbit');
  await page.locator('#universe').click({position:{x:720,y:450}});
  await page.keyboard.down('KeyW');await until(async()=>(await native()).ship.control.rotation_body.x===-1,'keyboard pitch reaches native control');
  await page.keyboard.down('KeyS');await until(async()=>(await native()).ship.control.rotation_body.x===0,'opposing held keys cancel');
@@ -50,7 +73,7 @@ try{
  await page.click('#planButton');await page.selectOption('#burnAssist','Prograde');await page.fill('#burnSeconds','30');await page.fill('#burnThrottle','40');await page.click('#previewButton');
  await page.waitForFunction(()=>document.querySelector('#previewResult').textContent.includes('Native source'));
  const afterPreview=await native();assert.equal(afterPreview.epoch,initial.epoch);assert.equal(afterPreview.ship.fuel,initial.ship.fuel);assert.deepEqual(afterPreview.ship.control,initial.ship.control);
- await page.screenshot({path:path.join(output,'desktop-burn-preview.png')});await page.click('#closePlanner');
+ await capture(page,'desktop-burn-preview.png','orbit');await page.click('#closePlanner');
  await page.click('#markButton');await until(async()=>(await native()).checkpoint,'native checkpoint');const marked=await native();
  await page.click('[data-assist="Prograde"]');await until(async()=>(await native()).ship.control.attitude_mode==='Prograde','prograde input');
  const slider=await page.locator('#throttle').boundingBox();await page.mouse.click(slider.x+slider.width*.4,slider.y+slider.height*.5);
@@ -60,13 +83,13 @@ try{
  // Native advance, HTTP polling and GPU presentation are separate clocks.
  // Wait for a completed frame of the observed burn, not an arbitrary delay.
  await page.waitForFunction(epoch=>Number(document.querySelector('#universe').dataset.flightEpoch)>=epoch&&Number(document.querySelector('#universe').dataset.exhaustVertices)>0&&document.querySelector('#engineStatus').textContent==='FIRING',burning.epoch,{timeout:15000});
- assert.ok((await scenePixels(page)).exhaustVertices>0,'Powered native spacecraft must draw its authored exhaust');await page.screenshot({path:path.join(output,'desktop-powered-flight.png')});
+ assert.ok((await scenePixels(page)).exhaustVertices>0,'Powered native spacecraft must draw its authored exhaust');await capture(page,'desktop-powered-flight.png','orbit');
  await page.click('#cutButton');await until(async()=>(await native()).ship.control.throttle===0,'engine cut');
  await page.locator('#universe').click({position:{x:720,y:450}});await page.keyboard.press('Space');await until(async()=>(await native()).paused,'pause shortcut');
  const burned=await native();assert.ok(burned.ship.fuel<marked.ship.fuel);assert.ok(burned.ship.orbit.apoapsis>marked.ship.orbit.apoapsis);
  await page.click('#resetButton');await until(async()=>(await native()).epoch===marked.epoch,'checkpoint restore');assert.equal((await native()).ship.fuel,marked.ship.fuel);
  await page.click('[data-camera="map"]');await page.waitForFunction(()=>document.querySelector('#predictionLabel').textContent.includes('native t'));
- assert.equal(await page.locator('[data-camera].active').count(),1);assert.equal(await page.locator('[data-camera].active').getAttribute('data-camera'),'map');await wait(200);await page.screenshot({path:path.join(output,'desktop-native-map.png')});
+ await capture(page,'desktop-native-map.png','map');
  const definition=JSON.parse(await readFile(path.join(root,'engine/data/authoring/pathfinder.scenario.json'),'utf8'));
  definition.id='authored.desktop-proof';definition.title='Ariadne desktop visual proof';definition.spacecraft_definitions[0].id='ariadne-electric';definition.spacecraft_definitions[0].display_name='Ariadne electric courier';definition.spacecraft_definitions[0].engines[0].max_thrust_n=2.4;definition.spacecraft[0].body_id='proof.ariadne';definition.spacecraft[0].definition_id='ariadne-electric';definition.focus_body_id='proof.ariadne';
  const downloadPromise=page.waitForEvent('download');await page.setInputFiles('#importFile',{name:'ariadne.scenario.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(definition))});
@@ -74,11 +97,11 @@ try{
  await until(async()=>(await native()).scenario==='authored.desktop-proof','data-only scenario import');
  await page.selectOption('#craftSelect','proof.ariadne');await until(async()=>(await native()).ship.id==='proof.ariadne','new spacecraft selection');
  const authored=await native();assert.equal(authored.ship.name,'Ariadne electric courier');assert.equal(authored.ship.maxThrust,2.4);assert.equal(authored.crafts.length,1);assert.equal(authored.ship.visual.meshKind,3);assert.equal(authored.ship.visual.assetId,'example:pathfinder');await page.waitForFunction(()=>document.querySelector('#universe').dataset.meshKind==='3');
- await page.click('[data-camera="orbit"]');await wait(300);await page.screenshot({path:path.join(output,'desktop-authored-spacecraft.png')});
+ await page.click('[data-camera="orbit"]');await capture(page,'desktop-authored-spacecraft.png','orbit');
  const authoredPixels=await scenePixels(page);assert.equal(authoredPixels.assetId,'example:pathfinder');assert.ok(authoredPixels.solidVertices>3000);assert.equal(authoredPixels.exhaustVertices,0);
- await page.setViewportSize({width:1100,height:760});await wait(200);const controlsCompact=await visibleControls(page);await page.screenshot({path:path.join(output,'desktop-compact-window.png')});
+ await page.setViewportSize({width:1100,height:760});await wait(200);const controlsCompact=await visibleControls(page);await capture(page,'desktop-compact-window.png','orbit');
  assert.deepEqual(httpErrors,[],'Every requested resource and native command must succeed');assert.deepEqual(errors,[],'Browser must not report JS or graphics failures');
- const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact},httpErrors,browserErrors:errors};
+ const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,captures},httpErrors,browserErrors:errors};
  await writeFile(path.join(output,'result.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));console.log(`Evidence: ${output}`);
-}catch(e){await writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(e),httpErrors,browserErrors:errors,serverOutput},null,2));if(browser){const pages=browser.contexts().flatMap(c=>c.pages());if(pages[0]){await pages[0].screenshot({path:path.join(output,'failure.png')}).catch(()=>{});console.error(await pages[0].locator('body').innerText().catch(()=>''));}}console.error(serverOutput);throw e;
+}catch(e){await writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(e),httpErrors,browserErrors:errors,captures,serverOutput},null,2));if(browser){const pages=browser.contexts().flatMap(c=>c.pages());if(pages[0]){await pages[0].screenshot({path:path.join(output,'failure.png')}).catch(()=>{});console.error(await pages[0].locator('body').innerText().catch(()=>''));}}console.error(serverOutput);throw e;
 }finally{if(browser)await browser.close();server.kill('SIGTERM');}
