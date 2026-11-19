@@ -1236,10 +1236,12 @@ internal fun StageFirstRuntimeExperience(
             val bottomInset = navigationInset + if (placing) { if (landscape) 8.dp else placementHeight + 8.dp }
                 else if (chromeMode == StageChromeMode.MINIMAL && !flightActive) 0.dp else dockHeight
             val topInset = statusInset + if (chromeMode == StageChromeMode.MINIMAL && !placing && !flightActive) 0.dp else headerHeight
-            // Close flight renders into the measured unobstructed rectangle.
+            // Every flight camera, including Map and its labels, renders into
+            // the measured unobstructed rectangle. The laboratory retains its
+            // own full-stage layout because it never consumes flight bounds.
             // Merely shrinking an envelope around the full stage's old midpoint
             // cannot recover a midpoint covered by camera or mission controls.
-            val measuredClear = flightSceneClearArea.takeIf { flightActive && flightCameraMode != 0 }
+            val measuredClear = flightSceneClearArea.takeIf { flightActive }
             val stageBounds = stageWindowBounds
             val flightTop = if (measuredClear != null && stageBounds != null) with(density) {
                 (measuredClear.top - stageBounds.top).coerceAtLeast(0f).toDp()

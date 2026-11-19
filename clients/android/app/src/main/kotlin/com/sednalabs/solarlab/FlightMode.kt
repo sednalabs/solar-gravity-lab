@@ -454,7 +454,7 @@ internal fun FlightModeChrome(
         val root = chromeBounds
         val camera = cameraBounds
         val dock = dockBounds
-        val clear = if (root != null && camera != null && dock != null && cameraMode != 0) {
+        val clear = if (root != null && camera != null && dock != null) {
             val bottomPanel = bottomPanelBounds.takeIf { docking != null || rendezvous != null || lunarMission != null }
             val top = camera.bottom + clearMargin
             val bottom = minOf(dock.top, bottomPanel?.top ?: dock.top) - clearMargin
