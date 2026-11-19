@@ -64,7 +64,7 @@ experiment without introducing a desktop-specific format.
 
 ## Scope and validation
 
-This is the first desktop flight preview. Seven focused Rust tests cover
+This is the first desktop flight preview. Eight focused Rust tests cover
 preview immutability, CUT ordering and
 lost-contact pause, general authored vehicles, and the loopback request boundary:
 
