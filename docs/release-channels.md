@@ -5,21 +5,20 @@ to stay honest about what is actually being shipped.
 
 ## Semver release identity
 
-Use ordinary SemVer for release identity. **As of 17 November 2026**, the
-latest published installable preview is
-[`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2):
+Use ordinary SemVer for release identity. The
+[GitHub Releases list](https://github.com/sednalabs/solar-gravity-lab/releases)
+records published builds. Check the selected release's APK, metadata, checksums
+and provenance for its version and exact source. A branch or passing source CI
+alone does not establish that an installable build has been published.
+
+For historical reference,
+[`v0.2.0-alpha.2`](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-alpha.2)
+was published with:
 
 - Android `versionName`: `0.2.0-alpha.2`; version code `2001002`.
 - GitHub tag: `v0.2.0-alpha.2` (prerelease).
 - Artifact: `solar-gravity-lab-0.2.0-alpha.2-internal-dev-preview.apk`.
 - Installed package: `com.sednalabs.solarlab.internal`.
-
-**Code on `main` is newer than this APK.** Probe-mass editing,
-portable `.sglexp` documents and the later renderer improvements were
-merged in [PR #237](https://github.com/sednalabs/solar-gravity-lab/pull/237)
-and [validated as source](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44008781943),
-but there is **no published alpha.3**. Passing source CI is not the same
-as packaging, signing, installing and validating a later APK.
 
 Phone-installable previews use the `prerelease` Android build type. That
 variant uses debug signing for sideloading and keeps the `.internal` package
@@ -44,7 +43,7 @@ For each new public release, use a new SemVer number rather than reusing a tag.
 ## Cutting a new release
 
 Always cut an installable release from the exact commit that passed the hosted
-proof lane. A future branch named `release/0.2.0-alpha.3` would request that version
+proof lane. A versioned branch such as `release/0.2.0-alpha.3` requests that version
 directly **after** proof and signing readiness:
 the gate pins checkout to the push's commit SHA, selects the prerelease channel
 and Android variant, and derives a monotonic Android version code. The branch
@@ -107,7 +106,7 @@ suffixes or larger fields require an explicit `version_code` input or
 1–2100000000 range and must exceed any installed build being replaced.
 
 For example, the published `0.2.0-alpha.1` is code `2001001` and
-`0.2.0-alpha.2` is `2001002`; a future `alpha.3` would use `2001003`.
+`0.2.0-alpha.2` is `2001002`; `0.2.0-alpha.3` maps to `2001003`.
 Stable `0.2.0` would use `2009000`. The earlier published `0.1.1-alpha.8`
 [package metadata](https://github.com/sednalabs/solar-gravity-lab/releases/download/v0.1.1-alpha.8/output-metadata.json)
 records code `9`, so the new release line has a higher version code.
@@ -157,7 +156,8 @@ the gate job instead of starting the heavy APK lane.
 - Package id suffix: `.internal`
 - Installed package id: `com.sednalabs.solarlab.internal`
 - Signing: runner/debug key, **not** a persistent release identity
-- Latest published build: `v0.2.0-alpha.2`; `main` is newer
+- Published builds: the [release list](https://github.com/sednalabs/solar-gravity-lab/releases),
+  with per-build metadata and provenance
 - Intended use: sideloaded device testing and internal review
 - Caveat: different preview certificates cannot upgrade in place; preserve
   the older APK's private files until a safe transition is proven
