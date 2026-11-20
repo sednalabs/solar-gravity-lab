@@ -111,10 +111,33 @@ try{
  await page.click('#guide .close-guide');
  await page.click('[data-assist="Hold"]');await until(async()=>(await native()).ship.control.attitude_mode==='Hold','stabilise restore');
  const initial=await native();assert.equal(initial.paused,true);assert.equal(initial.ship.altitude,400000);
- await page.click('#planButton');await page.selectOption('#burnAssist','Prograde');await page.fill('#burnSeconds','30');await page.fill('#burnThrottle','40');await page.click('#previewButton');
+ await page.click('#planButton');await page.selectOption('#burnAssist','Prograde');await page.fill('#burnSeconds','30');await page.fill('#burnThrottle','40');
+ assert.ok((await page.locator('#planNavigation').innerText()).length>0);assert.ok((await page.locator('#burnAttitude').innerText()).includes('aligned'));
+ // Hold only the actual native response. State polls remain real and active;
+ // the test never substitutes a simulated burn result.
+ let heldPreview=false,pendingStatePolls=0,releasePreview;
+ const previewReleased=new Promise(resolve=>{releasePreview=resolve;});
+ const countPendingPolls=response=>{if(heldPreview&&new URL(response.url()).pathname==='/api/state')pendingStatePolls++;};
+ page.on('response',countPendingPolls);
+ const holdNativePreview=async route=>{if(route.request().postDataJSON()?.command?.action!=='preview'){await route.continue();return;}const response=await route.fetch();heldPreview=true;await previewReleased;await route.fulfill({response});};
+ await page.route('**/api/command',holdNativePreview);
+ try{
+  await page.click('#previewButton');await until(()=>heldPreview&&pendingStatePolls>=2,'state polls during native burn preview');
+  for(const selector of ['#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),true,`${selector} must stay disabled through pending native response and state polling`);
+ }finally{releasePreview();page.off('response',countPendingPolls);}
  await page.waitForFunction(()=>document.querySelector('#previewResult').textContent.includes('Native source'));
+ await page.unroute('**/api/command',holdNativePreview);
+ assert.equal(await page.locator('#previewResult .orbit-shape ellipse').count(),2,'Native before/after bound orbits both need a size curve');
+ assert.ok((await page.locator('#previewResult .burn-effect').innerText()).includes('Apoapsis rises'));
+ for(const selector of ['#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),false);
  const afterPreview=await native();assert.equal(afterPreview.epoch,initial.epoch);assert.equal(afterPreview.ship.fuel,initial.ship.fuel);assert.deepEqual(afterPreview.ship.control,initial.ship.control);
- await capture(page,'desktop-burn-preview.png','orbit');await page.click('#closePlanner');
+ await capture(page,'desktop-burn-preview.png','orbit');
+ await page.click('details.science > summary');
+ await page.selectOption('#integrator','yoshida-fourth-order');await until(async()=>(await native()).settings.integrator==='yoshida-fourth-order','native coast setting change');
+ await page.waitForFunction(()=>document.querySelector('#previewResult').classList.contains('preview-stale'));
+ assert.equal(await page.locator('#previewResult .preview-heading').innerText(),'Flight changed. Calculate again.');
+ await page.selectOption('#integrator',initial.settings.integrator);await until(async()=>(await native()).settings.integrator===initial.settings.integrator,'restore original coast method');
+ await page.click('#closePlanner');
  await page.click('#markButton');await until(async()=>(await native()).checkpoint,'native checkpoint');const marked=await native();
  await page.click('[data-assist="Prograde"]');await until(async()=>(await native()).ship.control.attitude_mode==='Prograde','prograde input');
  const slider=await page.locator('#throttle').boundingBox();await page.mouse.click(slider.x+slider.width*.4,slider.y+slider.height*.5);
@@ -138,7 +161,7 @@ try{
  const authoredPixels=await scenePixels(page);assert.equal(authoredPixels.assetId,'example:pathfinder');assert.ok(authoredPixels.solidVertices>3000);assert.equal(authoredPixels.exhaustVertices,0);
  await page.setViewportSize({width:1100,height:760});await wait(200);const controlsCompact=await visibleControls(page);await capture(page,'desktop-compact-window.png','orbit');
  assert.deepEqual(httpErrors,[],'Every requested resource and native command must succeed');assert.deepEqual(errors,[],'Browser must not report JS or graphics failures');
- const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,captures,poweredCaptures},httpErrors,browserErrors:errors};
+ const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,previewInputsLockedDuringNativeResponse:true,previewRemainsLockedAcrossStatePolls:true,nativeOrbitShapeComparison:true,stalePreviewMarked:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,captures,poweredCaptures},httpErrors,browserErrors:errors};
  await writeFile(path.join(output,'result.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));console.log(`Evidence: ${output}`);
 }catch(e){await writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(e),httpErrors,browserErrors:errors,captures,poweredCaptures,serverOutput},null,2));if(browser){const pages=browser.contexts().flatMap(c=>c.pages());if(pages[0]){await pages[0].screenshot({path:path.join(output,'failure.png')}).catch(()=>{});console.error(await pages[0].locator('body').innerText().catch(()=>''));}}console.error(serverOutput);throw e;
 }finally{if(browser)await browser.close();server.kill('SIGTERM');}

@@ -28,7 +28,10 @@ Drag the scene to orbit the camera and scroll to zoom. Orbit, Chase, Map and
 Centre change presentation independently of the spacecraft's attitude.
 
 Choose Prograde, run time until aligned, then ease up the throttle. Periapsis and
-apoapsis are native instantaneous orbital estimates. Map requests a native
+apoapsis are native instantaneous orbital estimates. Their countdowns come from
+the native osculating two-body model, not a propagated event forecast. A nearly
+circular orbit has no distinguished apsis; unavailable or ill-conditioned timing
+is shown explicitly. Burns and nearby bodies can change the estimates. Map requests a native
 engine-off forecast, labelled with its source epoch. It does not extrapolate a
 burn in JavaScript.
 
@@ -41,8 +44,19 @@ pauses after 1.5 seconds without its visible flight deck heartbeat.
 Mark cuts/pauses and stores a native checkpoint. Reset branches from it. Preview
 a burn pauses and asks Rust for a read-only finite burn from the actual attitude;
 thrust starts while the controller turns. The result reports native warnings,
-fuel, orbit altitudes and source revision. Docking craft are outside this first
-burn-preview scope.
+fuel, orbit altitudes and source revision, with explicit rise/fall amounts and a
+common-scale size comparison. Both schematic ellipses put periapsis to the right;
+the diagram does not show orbital plane, apsidal rotation or a propagated path.
+Open trajectories are not drawn as closed ellipses. Changes below one metre are
+labelled instead of rounded to a zero change.
+
+The starting-attitude cue refers to the spacecraft nose. Authored engine layouts
+can point thrust elsewhere; the native finite-burn result uses that real layout.
+Guide also shows the ideal instantaneous circularisation impulse, including
+radial-velocity cancellation. This is not a finite burn duration or a command to
+burn prograde. Pending previews lock their inputs across native polling; changed
+world revisions, epochs or generations mark the result stale. Reopening the
+planner starts a fresh comparison. Docking craft are outside this burn-preview scope.
 
 ## Build from data
 
@@ -70,7 +84,12 @@ lost-contact pause, general authored vehicles, and the loopback request boundary
 
 ```sh
 cargo test -p solarlab-desktop
+node --test clients/desktop/tools/planning.test.mjs
 ```
+
+Seven presentation tests cover common-scale geometry, missing/open/surface-crossing
+orbits, extreme radii, timing regimes, change wording and actual nose alignment.
+They exercise presentation of native values, not another physical model.
 
 The server binds only `127.0.0.1`, serves fixed embedded asset routes, bounds
 headers/bodies and concurrency, checks the exact local Host/Origin, and requires
@@ -100,7 +119,9 @@ SGL_CHROMIUM=/usr/bin/chromium node clients/desktop/tools/smoke.mjs
 selects a built host, and `SGL_DESKTOP_EVIDENCE` selects output (default
 `out/desktop-proof`). The script launches its own loopback host and isolated
 Chromium with software WebGL, then shuts them down. It checks preview
-immutability, real fuel consumption, CUT, keyboard pause, checkpoint restore,
+immutability, form locking while an actual native response is held across state
+polls, native orbit-size comparison, stale preview marking, real fuel consumption,
+CUT, keyboard pause, checkpoint restore,
 native coast prediction, download preservation and a new data-authored Ariadne
 spacecraft using the distinct Pathfinder visual. Keyboard pitch, opposing held keys,
 release and 20% fine control must reach native state. Actual WebGL pixel diversity,

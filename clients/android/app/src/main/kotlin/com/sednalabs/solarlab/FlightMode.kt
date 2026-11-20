@@ -669,12 +669,14 @@ private fun FlightOrbitInstruments(sample: FlightState?, modifier: Modifier = Mo
                 if (encounter.targetAvailable) rendezvousSpeed(abs(encounter.closingSpeedMps)) else "—",
                 "along line of sight", RendezvousTags.CLOSING, Modifier.weight(1f))
         } else {
-        FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above Earth", FlightTags.ALTITUDE,
+        FlightInstrument("ALTITUDE", sample?.altitudeM?.let(::flightDistance) ?: "—", "above host surface", FlightTags.ALTITUDE,
             Modifier.weight(1f))
-        FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—", "lowest altitude", FlightTags.PERIAPSIS,
+        FlightInstrument("PERIAPSIS", sample?.periapsisAltitudeM?.let(::flightDistance) ?: "—",
+            flightApsisTiming(sample?.navigation, true) ?: "lowest altitude", FlightTags.PERIAPSIS,
             modifier = Modifier.weight(1f))
         FlightInstrument("APOAPSIS", sample?.apoapsisAltitudeM?.let(::flightDistance)
-            ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—", "highest altitude", FlightTags.APOAPSIS,
+            ?: if (sample?.hasValidOrbit == true && !sample.hasBoundOrbit) "Escape" else "—",
+            flightApsisTiming(sample?.navigation, false) ?: "highest altitude", FlightTags.APOAPSIS,
             Modifier.weight(1f))
         }
     }

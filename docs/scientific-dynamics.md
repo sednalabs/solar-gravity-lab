@@ -151,6 +151,80 @@ callers must use checked APIs and the world's complete `ScientificSettings`.
 The old scalar-only signature cannot return a numerical error and should not
 be used for user-selected scientific forecasts.
 
+## Native orbit navigation
+
+`OrbitGuidance::from_relative` supplies the same navigation to native telemetry
+and the before/after ends of a finite-burn receipt. It uses a primary-relative
+position and velocity in inertial axes and the same gravitational parameter as
+`OrbitalElements`. Clients display these values rather than reconstructing
+orbital physics in Kotlin or JavaScript.
+
+For an elliptic orbit, native guidance converts the state to eccentric anomaly
+and Kepler mean anomaly to find the next periapsis and apoapsis. A current apsis
+has a zero countdown; immediately after that passage, its countdown is to the
+next orbit. A hyperbolic approach has a future periapsis but no apoapsis; after
+periapsis there is no future periapsis countdown. Apsides are also provided as
+host-relative vectors in the input inertial axes, so direction is preserved for
+inclined and retrograde orbits.
+
+The availability contract is deliberate:
+
+* Eccentricity below `1e-6` is `nearCircular`: a numerical direction is not a
+  useful distinguished apsis, so both countdowns and markers are absent.
+* `abs(e - 1) <= 1e-8` is `nearParabolic`: geometric periapsis remains useful,
+  but a finite-period anomaly conversion is too ill-conditioned for a countdown.
+* Zero/nonfinite inputs, invalid gravitational parameters, and an effectively
+  radial state (transverse speed at most `1e-10` of total speed) have no guidance.
+* Optional numbers are either finite or absent; unavailable events never become
+  zero-valued placeholders or infinite periods.
+
+The ideal circularisation impulse at the current radius is
+`delta_v = sqrt(mu / r) * transverse_unit - relative_velocity`. It preserves the
+orbital plane and sense while cancelling radial speed. Subtracting the current
+scalar speed from circular speed is insufficient away from an apsis. For
+example, at 7000 km radius with radial speed 3000 m/s and transverse speed
+7000 m/s, the scalar speed difference is under 100 m/s, but the required vector
+impulse exceeds 3000 m/s. The result does not certify that the ship has enough
+fuel, can turn in time, or can achieve the impulse with a finite burn. Use the
+native finite-burn preview to inspect actual attitude, thrust and fuel flow.
+
+These are instantaneous osculating two-body estimates. They do not propagate
+other bodies, J2, current thrust, atmosphere, or terrain to an exact future
+event. A finite burn still uses the full configured gravity model; its attached
+end-point navigation remains a local conic estimate. NAIF's
+[osculating-element contract](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/oscelt_c.html)
+explains the inertial-state requirement and the circular, radial and
+near-parabolic singularities. It is a reference for the validity boundaries,
+not a claim that SGL uses CSPICE or has matched a planetary ephemeris.
+
+The independent reference generator
+`engine/runtime/benchmarks/generate_navigation_reference.py` integrates
+Cartesian point-mass motion with SciPy DOP853 and locates zeroes of radial
+velocity. It does not import SGL or compute event times from Kepler anomalies.
+Eleven checked-in cases cover inclined bound motion in both senses, a strongly
+eccentric orbit on each side of apoapsis, inbound/outbound lunar hyperbolas,
+a small but resolved eccentricity, and periapsis approaches immediately outside
+the near-parabolic boundary on both sides of escape. Small inbound anomalies
+use stable series and signed phase calculations: an angular roundoff threshold
+would otherwise erase seconds of travel when the period is enormous. A second tighter integration with a
+halved maximum step checks fixture uncertainty. Rust repeats the comparisons
+after an independent spatial rotation, checks impulse reconstruction, current
+and next passages, unavailable domains, common position/velocity offsets and
+read-only finite-burn receipt consistency.
+
+```sh
+cargo test -p solarlab-runtime --test navigation_guidance
+cargo test -p solarlab-runtime --lib flight_telemetry
+cargo test -p solarlab-runtime --lib scientific_flight
+```
+
+Initial local comparison across both orientations gave a maximum event-time
+difference of `4.08e-8 s` and apsis-position difference of `9.22e-5 m`. The
+fixture's own refinement differed by at most `1.51e-7 s` and `0.00114 m`.
+These are synthetic point-mass checks, not an error bound for perturbations,
+long forecasts or real flight. Hosted exact-source qualification and physical
+Galaxy acceptance remain separate evidence.
+
 ## Independent validation
 
 Run the Rust suite without Python or network access:

@@ -43,6 +43,10 @@ internal object FlightPlanningTags {
     const val PAUSE = "flight.planning.pause"
     const val PREVIEW = "flight.planning.preview"
     const val RESULT = "flight.planning.result"
+    const val SUMMARY = "flight.planning.summary"
+    const val SHAPE = "flight.planning.shape"
+    const val ATTITUDE = "flight.planning.attitude"
+    const val NAVIGATION = "flight.planning.navigation"
     const val DURATION = "flight.planning.duration"
     const val THROTTLE = "flight.planning.throttle"
     fun method(value: CoastIntegrator) = "flight.planning.method.${value.name}"
@@ -99,6 +103,10 @@ internal fun FlightPlanningDialog(
                     Text("Pause flight to calculate from a stable starting point.", color = FlightAmber, fontSize = 13.sp)
                     FlightAction("Pause to plan", onPause, FlightPlanningTags.PAUSE, enabled = ready && !busy)
                 }
+                Text(flightNavigationHeading(sample?.navigation), Modifier.testTag(FlightPlanningTags.NAVIGATION),
+                    color = FlightTeal, fontSize = 12.sp)
+                Text("Apsis times are instantaneous two-body estimates. Thrust and other bodies can change them.",
+                    color = FlightMuted, fontSize = 11.sp, lineHeight = 15.sp)
                 Text("${duration.roundToInt()} seconds · ${(throttle * 100f).roundToInt()}% throttle", color = FlightInk,
                     fontWeight = FontWeight.Medium)
                 Slider(value = duration, onValueChange = { duration = it.roundToInt().toFloat(); edit() },
@@ -116,22 +124,33 @@ internal fun FlightPlanningDialog(
                     }
                 }
                 Text(flightManoeuvreDescription(assist), color = FlightMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(flightBurnAttitude(sample, assist, throttle.toDouble()), Modifier.testTag(FlightPlanningTags.ATTITUDE),
+                    color = FlightAmber, fontSize = 12.sp, lineHeight = 17.sp)
                 FlightAction(if (busy) "Calculating…" else "Preview this burn", {
                     runRequest {
-                        preview = facade.previewFlightBurn(duration.roundToInt().toDouble(), throttle.toDouble(), assist,
+                        val calculated = facade.previewFlightBurn(duration.roundToInt().toDouble(), throttle.toDouble(), assist,
                             expectedSessionHandle = sessionHandle)
+                        preview = calculated
                     }
                 }, FlightPlanningTags.PREVIEW, enabled = paused && ready && !busy, modifier = Modifier.fillMaxWidth())
                 if (result != null) Column(Modifier.testTag(FlightPlanningTags.RESULT), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     HorizontalDivider(color = FlightLine)
-                    Text(if (stale) "Flight changed. Preview again." else "Current orbit → after burn", color = if (stale) FlightAmber else FlightTeal,
-                        fontWeight = FontWeight.Medium)
-                    Text("Periapsis  ${result.beforePeriapsisM?.let(::flightDistance) ?: "—"} → ${result.afterPeriapsisM?.let(::flightDistance) ?: "—"}",
-                        color = FlightInk, fontSize = 13.sp)
-                    Text("Apoapsis  ${result.beforeApoapsisM?.let(::flightDistance) ?: "Unbound / unavailable"} → ${result.afterApoapsisM?.let(::flightDistance) ?: "Unbound / unavailable"}",
-                        color = FlightInk, fontSize = 13.sp)
-                    Text("Fuel ${"%.2f".format(Locale.US, result.fuelUsedKg)} kg · elapsed ${"%.1f".format(Locale.US, result.elapsedSeconds)} s",
-                        color = FlightTeal, fontSize = 13.sp)
+                    Column(Modifier.testTag(FlightPlanningTags.SUMMARY), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(if (stale) "Flight changed. Preview again." else "Current orbit → after burn", color = if (stale) FlightAmber else FlightTeal,
+                            fontWeight = FontWeight.Medium)
+                        Text("Periapsis  ${result.beforePeriapsisM?.let(::flightDistance) ?: "—"} → ${result.afterPeriapsisM?.let(::flightDistance) ?: "—"}",
+                            color = FlightInk, fontSize = 13.sp)
+                        Text("Apoapsis  ${result.beforeApoapsisM?.let(::flightDistance) ?: "Unbound / unavailable"} → ${result.afterApoapsisM?.let(::flightDistance) ?: "Unbound / unavailable"}",
+                            color = FlightInk, fontSize = 13.sp)
+                        Text("Fuel ${"%.2f".format(Locale.US, result.fuelUsedKg)} kg · elapsed ${"%.1f".format(Locale.US, result.elapsedSeconds)} s",
+                            color = FlightTeal, fontSize = 13.sp)
+                    }
+                    Text(flightApsisChange("Periapsis", result.beforePeriapsisM, result.afterPeriapsisM) + ". " +
+                        flightApsisChange("Apoapsis", result.beforeApoapsisM, result.afterApoapsisM) + ".",
+                        color = if (stale) FlightMuted else FlightTeal, fontSize = 12.sp, lineHeight = 17.sp)
+                    result.referenceRadiusM?.let { FlightOrbitShapeReadout(it, result, stale) }
+                    result.afterGuidance?.let { Text("After burn: ${flightNavigationHeading(it)}",
+                        color = FlightMuted, fontSize = 12.sp, lineHeight = 17.sp) }
                     result.warnings.forEach { Text(it, color = FlightAmber, fontSize = 12.sp, lineHeight = 17.sp) }
                     Text("Calculated at t = ${"%.1f".format(Locale.US, result.epochSeconds)} s · revision ${result.revision}",
                         color = FlightMuted, fontSize = 10.sp)

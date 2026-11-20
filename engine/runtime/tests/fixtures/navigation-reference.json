@@ -1,0 +1,332 @@
+{
+  "schema_version": 1,
+  "method": "independent Cartesian DOP853 with radial-velocity event roots",
+  "numpy_version": "2.3.5",
+  "scipy_version": "1.17.0",
+  "generator_sha256": "5fcc488cad92b575649c083fdc14cc3afb0c219f902900b64aba52dc46c05f99",
+  "refinement_max_time_difference_seconds": 1.5066052583279088e-07,
+  "refinement_max_position_difference_m": 0.0011367027651265585,
+  "cases": [
+    {
+      "name": "earth-departing-tilted",
+      "mu": 398600441800000.0,
+      "position_m": [
+        8000000.0,
+        -2000000.0,
+        3000000.0
+      ],
+      "velocity_mps": [
+        1800,
+        6500,
+        900
+      ],
+      "periapsis": {
+        "seconds": 6775.886796012902,
+        "position_m": [
+          -110474.53555975691,
+          -8302795.635444549,
+          -311117.6214248746
+        ]
+      },
+      "apoapsis": {
+        "seconds": 2564.5128786394375,
+        "position_m": [
+          127439.4501901007,
+          9577806.373706639,
+          358894.09643383475
+        ]
+      },
+      "checked_events": [
+        "periapsis",
+        "apoapsis"
+      ]
+    },
+    {
+      "name": "earth-incoming-retrograde",
+      "mu": 398600441800000.0,
+      "position_m": [
+        8000000.0,
+        -2000000.0,
+        3000000.0
+      ],
+      "velocity_mps": [
+        -1800,
+        -6500,
+        -900
+      ],
+      "periapsis": {
+        "seconds": 1646.8610387339368,
+        "position_m": [
+          -110474.53556010942,
+          -8302795.635444632,
+          -311117.62142501376
+        ]
+      },
+      "apoapsis": {
+        "seconds": 5858.234956107321,
+        "position_m": [
+          127439.45018963791,
+          9577806.37370668,
+          358894.09643366095
+        ]
+      },
+      "checked_events": [
+        "periapsis",
+        "apoapsis"
+      ]
+    },
+    {
+      "name": "earth-high-eccentricity-before-apoapsis",
+      "mu": 398600441800000.0,
+      "position_m": [
+        78000000.0,
+        1000000.0,
+        0
+      ],
+      "velocity_mps": [
+        30,
+        400,
+        0
+      ],
+      "periapsis": {
+        "seconds": 39806.294465414525,
+        "position_m": [
+          -1237913.9905005135,
+          -19381.311867002896,
+          0.0
+        ]
+      },
+      "apoapsis": {
+        "seconds": 553.6061825131964,
+        "position_m": [
+          78006572.34631178,
+          1221304.3215645854,
+          0.0
+        ]
+      },
+      "checked_events": [
+        "periapsis",
+        "apoapsis"
+      ]
+    },
+    {
+      "name": "earth-high-eccentricity-after-apoapsis",
+      "mu": 398600441800000.0,
+      "position_m": [
+        78000000.0,
+        1000000.0,
+        0
+      ],
+      "velocity_mps": [
+        -30,
+        -400,
+        0
+      ],
+      "periapsis": {
+        "seconds": 38699.082100388136,
+        "position_m": [
+          -1237913.9905005032,
+          -19381.311867116874,
+          0.0
+        ]
+      },
+      "apoapsis": {
+        "seconds": 77951.7703832493,
+        "position_m": [
+          78006572.34625784,
+          1221304.3215630143,
+          0.0
+        ]
+      },
+      "checked_events": [
+        "periapsis",
+        "apoapsis"
+      ]
+    },
+    {
+      "name": "lunar-hyperbolic-approach",
+      "mu": 4904869500000.0,
+      "position_m": [
+        -8000000.0,
+        2100000.0,
+        500000.0
+      ],
+      "velocity_mps": [
+        2200,
+        -100,
+        50
+      ],
+      "periapsis": {
+        "seconds": 3442.987416529378,
+        "position_m": [
+          647237.7169912496,
+          920147.6273587053,
+          387576.77674651943
+        ]
+      },
+      "apoapsis": null,
+      "checked_events": [
+        "periapsis",
+        "apoapsis"
+      ]
+    },
+    {
+      "name": "lunar-hyperbolic-departure",
+      "mu": 4904869500000.0,
+      "position_m": [
+        -8000000.0,
+        2100000.0,
+        500000.0
+      ],
+      "velocity_mps": [
+        -2200,
+        100,
+        -50
+      ],
+      "periapsis": null,
+      "apoapsis": null,
+      "checked_events": [
+        "periapsis",
+        "apoapsis"
+      ]
+    },
+    {
+      "name": "earth-near-circular-distinct-apsides",
+      "mu": 398600441800000.0,
+      "position_m": [
+        7000000.0,
+        0,
+        0
+      ],
+      "velocity_mps": [
+        0.02,
+        7546.1,
+        1
+      ],
+      "periapsis": {
+        "seconds": 5633.252575282283,
+        "position_m": [
+          6845316.684084448,
+          -1463424.7514941774,
+          -193.9312693304095
+        ]
+      },
+      "apoapsis": {
+        "seconds": 2718.940061054999,
+        "position_m": [
+          -6845490.251963765,
+          1463461.8577238973,
+          193.93618660286987
+        ]
+      },
+      "checked_events": [
+        "periapsis",
+        "apoapsis"
+      ]
+    },
+    {
+      "name": "near-escape-0.99999998--0.005",
+      "mu": 398600441800000.0,
+      "position_m": [
+        6999956.249817271,
+        -35000.07291684677,
+        0.0
+      ],
+      "velocity_mps": [
+        26.67921623282194,
+        10671.664153722008,
+        0.0
+      ],
+      "periapsis": {
+        "seconds": 3.2797065742839075,
+        "position_m": [
+          7000000.0,
+          -1.4551915228366852e-11,
+          0.0
+        ]
+      },
+      "apoapsis": null,
+      "checked_events": [
+        "periapsis"
+      ]
+    },
+    {
+      "name": "near-escape-0.99999998--0.9",
+      "mu": 398600441800000.0,
+      "position_m": [
+        5366604.612552589,
+        -6762770.9028517,
+        0.0
+      ],
+      "velocity_mps": [
+        4179.727016095424,
+        8652.692543882185,
+        0.0
+      ],
+      "periapsis": {
+        "seconds": 682.9992511178831,
+        "position_m": [
+          7000000.000000001,
+          -1.808757588150911e-09,
+          0.0
+        ]
+      },
+      "apoapsis": null,
+      "checked_events": [
+        "periapsis"
+      ]
+    },
+    {
+      "name": "near-escape-1.00000002--0.005",
+      "mu": 398600441800000.0,
+      "position_m": [
+        6999956.249818144,
+        -35000.07291685114,
+        0.0
+      ],
+      "velocity_mps": [
+        26.679215966029783,
+        10671.664260439988,
+        0.0
+      ],
+      "periapsis": {
+        "seconds": 3.2797065414871263,
+        "position_m": [
+          7000000.0,
+          2.546585164964199e-11,
+          0.0
+        ]
+      },
+      "apoapsis": null,
+      "checked_events": [
+        "periapsis"
+      ]
+    },
+    {
+      "name": "near-escape-1.00000002--0.9",
+      "mu": 398600441800000.0,
+      "position_m": [
+        5366604.637597695,
+        -6762770.934412495,
+        0.0
+      ],
+      "velocity_mps": [
+        4179.726974298155,
+        8652.692670789878,
+        0.0
+      ],
+      "periapsis": {
+        "seconds": 682.9992465355404,
+        "position_m": [
+          6999999.999999999,
+          -3.196248599124374e-09,
+          0.0
+        ]
+      },
+      "apoapsis": null,
+      "checked_events": [
+        "periapsis"
+      ]
+    }
+  ]
+}

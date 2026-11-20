@@ -44,10 +44,14 @@ impl OrbitalElements {
             speed_mps: v2.sqrt(),
             radial_speed_mps: rv / r,
             periapsis_radius_m: h2 / (mu * (1.0 + eccentricity)),
-            apoapsis_radius_m: bound.then_some(a * (1.0 + eccentricity)),
+            apoapsis_radius_m: bound
+                .then_some(a * (1.0 + eccentricity))
+                .filter(|r| r.is_finite()),
             eccentricity,
             inclination_radians: (h.z / h2.sqrt()).clamp(-1.0, 1.0).acos(),
-            period_seconds: bound.then_some(std::f64::consts::TAU * (a.powi(3) / mu).sqrt()),
+            period_seconds: bound
+                .then_some(std::f64::consts::TAU * a * (a / mu).sqrt())
+                .filter(|t| t.is_finite() && *t > 0.0),
         };
         (result.eccentricity.is_finite() && result.periapsis_radius_m.is_finite()).then_some(result)
     }
@@ -64,6 +68,7 @@ pub struct FlightTelemetry {
     pub speed_mps: f64,
     pub radial_speed_mps: f64,
     pub orbit: Option<OrbitalElements>,
+    pub guidance: Option<crate::OrbitGuidance>,
     pub moon_distance_m: Option<f64>,
     pub relative_position_m: Vector3d,
     pub relative_velocity_mps: Vector3d,
@@ -115,6 +120,11 @@ impl super::WorldRuntime {
                 0.0
             },
             orbit: OrbitalElements::from_relative(
+                position,
+                velocity,
+                G * (host.source_mass_kg + body.source_mass_kg),
+            ),
+            guidance: crate::OrbitGuidance::from_relative(
                 position,
                 velocity,
                 G * (host.source_mass_kg + body.source_mass_kg),
@@ -188,6 +198,82 @@ mod tests {
         assert!((e.eccentricity - 0.5).abs() < 1e-14);
         assert!((e.apoapsis_radius_m.unwrap() - apo).abs() < 1e-6);
     }
+    #[test]
+    fn guidance_is_read_only_and_uses_the_primary_relative_inertial_state() {
+        use crate::WorldCommand;
+        use solarlab_domain::BodyId;
+        let mut runtime = crate::tests::new_runtime_with_scenario(solarlab_data::EARTH_MOON_LAB_ID);
+        runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0)
+            .unwrap();
+        runtime
+            .spawn_reference_spacecraft("earth", "pilot", 400_000.0, 1)
+            .unwrap();
+        let earth = runtime.body_by_id("earth").unwrap().clone();
+        runtime
+            .apply_command(
+                WorldCommand::SetBodyKinematics {
+                    body_id: BodyId("pilot".into()),
+                    position_m: v(
+                        earth.position_m.x + 7e6,
+                        earth.position_m.y,
+                        earth.position_m.z,
+                    ),
+                    velocity_mps: v(
+                        earth.velocity_mps.x + 400.0,
+                        earth.velocity_mps.y + 7400.0,
+                        earth.velocity_mps.z + 700.0,
+                    ),
+                },
+                2,
+            )
+            .unwrap();
+        let bytes = runtime.export_saved_session().unwrap();
+        let first = runtime.flight_telemetry("pilot").unwrap().guidance.unwrap();
+        assert_eq!(runtime.export_saved_session().unwrap(), bytes);
+        for (ordinal, id) in [(3, "earth"), (4, "pilot")] {
+            let body = runtime.body_by_id(id).unwrap().clone();
+            runtime
+                .apply_command(
+                    WorldCommand::SetBodyKinematics {
+                        body_id: BodyId(id.into()),
+                        position_m: v(
+                            body.position_m.x + 1.5e11,
+                            body.position_m.y - 3e10,
+                            body.position_m.z + 1e10,
+                        ),
+                        velocity_mps: v(
+                            body.velocity_mps.x + 30_000.0,
+                            body.velocity_mps.y - 5000.0,
+                            body.velocity_mps.z + 2000.0,
+                        ),
+                    },
+                    ordinal,
+                )
+                .unwrap();
+        }
+        let bytes = runtime.export_saved_session().unwrap();
+        let shifted = runtime.flight_telemetry("pilot").unwrap().guidance.unwrap();
+        assert_eq!(runtime.export_saved_session().unwrap(), bytes);
+        assert_eq!(first.regime, shifted.regime);
+        assert!(
+            (first.time_to_periapsis_seconds.unwrap() - shifted.time_to_periapsis_seconds.unwrap())
+                .abs()
+                < 1e-4
+        );
+        assert!(
+            (first.time_to_apoapsis_seconds.unwrap() - shifted.time_to_apoapsis_seconds.unwrap())
+                .abs()
+                < 1e-4
+        );
+        assert!(
+            (first.circularisation_delta_v_mps - shifted.circularisation_delta_v_mps).abs() < 1e-6
+        );
+        let p = first.periapsis_position_m.unwrap();
+        let q = shifted.periapsis_position_m.unwrap();
+        assert!(length(sub(p, q)) < 0.01);
+    }
+
     #[test]
     fn escape_polar_and_degenerate_states_are_explicit() {
         let p = v(7_000_000.0, 0.0, 0.0);

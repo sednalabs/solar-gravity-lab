@@ -13,6 +13,11 @@ mod flight_prediction;
 pub use flight_prediction::LunarCoastForecastDiagnostics;
 pub use flight_mission::{LunarMissionOutcome,LUNAR_FLYBY_SUCCESS_ALTITUDE_M,LUNAR_APPROACH_ALTITUDE_M,LUNAR_MISSION_DEADLINE_SECONDS,LunarMissionPhase,LunarMissionTelemetry,LUNAR_FLIGHT_BODY_ID,LUNAR_FLIGHT_MODEL,LUNAR_DEPARTURE_BURN_SECONDS,LUNAR_INSERTION_PHASE_RADIANS,LUNAR_INSERTION_ALTITUDE_M,LUNAR_EXPECTED_FLYBY_WINDOW_SECONDS};
 mod flight_telemetry;
+mod orbit_guidance;
+pub use orbit_guidance::{
+    OrbitGuidance, OrbitRegime, NEAR_CIRCULAR_ECCENTRICITY,
+    NEAR_PARABOLIC_ECCENTRICITY_MARGIN,
+};
 mod scientific_flight;
 pub use scientific_flight::{FlightBurnPreview, FlightBurnRequest};
 pub use solarlab_domain::science::ScientificSettings;
@@ -23,7 +28,7 @@ pub use rendezvous_flight::{RendezvousFlightTelemetry, RENDEZVOUS_STATION_BODY_I
 mod docking_flight;
 pub use docking_flight::{DockingFlightTelemetry, DOCKING_STATION_BODY_ID};
 pub use solarlab_domain::{DockingGuidanceMode, DockingStatus};
-pub use flight_telemetry::FlightTelemetry;
+pub use flight_telemetry::{FlightTelemetry, OrbitalElements};
 mod body_properties;
 mod lab_step;
 mod persistence;

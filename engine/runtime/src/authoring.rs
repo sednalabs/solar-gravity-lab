@@ -1,6 +1,9 @@
 //! Versioned data-only construction through the authoritative runtime.
 //! Documents are initial conditions, never executable plugins or shadow worlds.
 use super::*;
+#[path = "authoring_conic.rs"]
+mod conic;
+pub use conic::ConicOrbitPlacement;
 use serde::{Deserialize, Serialize};
 use solarlab_domain::science::ScientificSettings;
 use solarlab_domain::spacecraft::{add, cross, dot, finite, magnitude, scale, unit};
@@ -297,6 +300,8 @@ pub enum SpacecraftPlacement {
         radial_direction: Vector3d,
         orbit_normal: Vector3d,
     },
+    /// True anomaly specifies an initial state, not a propagated ephemeris.
+    ConicOrbit(ConicOrbitPlacement),
 }
 impl SpacecraftPlacement {
     fn host(&self) -> Option<&str> {
@@ -305,6 +310,7 @@ impl SpacecraftPlacement {
             Self::RelativeState { host_body_id, .. } | Self::CircularOrbit { host_body_id, .. } => {
                 Some(host_body_id)
             }
+            Self::ConicOrbit(elements) => Some(&elements.host_body_id),
         }
     }
     fn resolve(
@@ -364,6 +370,15 @@ impl SpacecraftPlacement {
                     Some(tangent),
                 )
             }
+            Self::ConicOrbit(elements) => {
+                let host = host.ok_or(AuthoringError::InvalidScenario("missing orbital host"))?;
+                let (position, velocity) = elements.relative_state(host)?;
+                (
+                    add(host.position_m, position),
+                    add(host.velocity_mps, velocity),
+                    Some(velocity),
+                )
+            }
         };
         if !valid_position(position) || !valid_velocity(velocity) {
             return Err(AuthoringError::InvalidScenario(
@@ -388,7 +403,7 @@ pub struct SpacecraftInstance {
     #[serde(default)]
     pub reference_body_id: Option<String>,
     pub placement: SpacecraftPlacement,
-    /// Omission points along circular-insertion velocity, otherwise identity.
+    /// Omission points along orbital-insertion velocity, otherwise identity.
     #[serde(default)]
     pub attitude: Option<Quaterniond>,
     #[serde(default)]

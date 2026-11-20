@@ -12,6 +12,7 @@ The complete examples are in `engine/data/authoring/`:
 | `orbital-workshop.scenario.json` | Iris electric courier and Sable chemical tug, with different masses, engines, propellant and orbital placements |
 | `lunar-depot.scenario.json` | A lunar tender and passive depot with explicitly composed hulls and mating ports; the tender can precede its target in the file |
 | `pathfinder.scenario.json` | A third spacecraft with its own original glTF visual asset, generated registry binding and physical components |
+| `conic-flight-school.scenario.json` | One reusable tug instantiated in an inclined eccentric Earth orbit, an incoming lunar hyperbola and a retrograde orbit |
 | `iris.spacecraft.json` | Adding a reusable design to an existing paused Earth–Moon experiment |
 | `spacecraft-assets.catalog.json` | The build-time visual asset catalog shared by the runtime and native renderer |
 
@@ -32,6 +33,10 @@ cargo run -p solarlab-runtime --example authoring_lab -- \
   engine/data/authoring/pathfinder.scenario.json --burn 10 --coast 60
 
 cargo run -p solarlab-runtime --example authoring_lab -- \
+  engine/data/authoring/conic-flight-school.scenario.json \
+  --ship school.lunar-arrival --burn 20 --throttle 0.4 --attitude retrograde --coast 300
+
+cargo run -p solarlab-runtime --example authoring_lab -- \
   engine/data/authoring/orbital-workshop.scenario.json \
   --add engine/data/authoring/iris.spacecraft.json
 ```
@@ -43,6 +48,17 @@ reloads and compares the coast future against the uninterrupted world. `--state`
 writes a clearly labelled observation; `--save` writes a resumable experiment.
 The CLI is a native validation/demo host, not a desktop graphics application.
 Use the desktop cockpit for interactive presentation and controls.
+
+The versioned `solarlab.authoring-report` JSON describes the actual constructed
+and simulated craft: dry/total mass, reference body, relative state, thrust,
+mass flow, remaining ideal main-engine delta-v and full-throttle propellant time.
+Its orbit section gives eccentricity, inclination, periapsis/apoapsis altitudes
+and period from native telemetry. These are instantaneous two-body observations;
+open trajectories have no apoapsis or period. An unavailable observation is
+`null`. Thrust and delta-v describe the net main-engine force, not an automatic
+arrival or capture guarantee. Without `--ship`, flight options select the
+scenario's focused spacecraft, falling back to its first spacecraft. An unknown
+explicit `--ship` is rejected even during validation-only runs.
 
 A new design can start as a copy of a supplied definition. Change its `id`,
 `display_name`, structure, tank and engines; give its instance a fresh `body_id`.
@@ -111,13 +127,71 @@ Each instance chooses one `placement`:
 | `inertial` | `position_m`, `velocity_mps` in the world's inertial axes |
 | `relative_state` | `host_body_id`, plus inertial-axis position and velocity offsets added to that host |
 | `circular_orbit` | `host_body_id`, positive `altitude_m`, perpendicular nonzero `radial_direction` and `orbit_normal` |
+| `conic_orbit` | `host_body_id`, positive `periapsis_altitude_m`, non-negative `eccentricity`, and the four angles below |
 
 Circular placement is a two-body circular initial estimate. The complete world
 force law immediately acts on it, including other sources and selected
 harmonics. It does not continuously force a circular path. The two input axes
 are normalized. With no explicit attitude, circular placement points +Z along
-its inserted tangential velocity; other placements use identity orientation.
-An explicit `attitude` must already be a unit quaternion.
+its inserted tangential velocity. Conic placement points +Z along the complete
+inserted relative velocity, including radial motion. Inertial and relative-state
+placements use identity orientation. An explicit `attitude` must already be a
+unit quaternion.
+
+### Specify an inclined orbit or an incoming encounter
+
+Conic placement avoids calculating Cartesian state vectors outside SGL. For
+example, this places a spacecraft on the incoming branch of a lunar hyperbola:
+
+```json
+{
+  "kind": "conic_orbit",
+  "host_body_id": "moon",
+  "periapsis_altitude_m": 150000,
+  "eccentricity": 1.4,
+  "true_anomaly_rad": -1.8,
+  "inclination_rad": 1.3089969389957472,
+  "ascending_node_longitude_rad": 2.007128639793479,
+  "argument_of_periapsis_rad": 0.5235987755982988
+}
+```
+
+All angles are **radians in the fixed inertial world frame**. The reference plane
+is XY and its positive normal is +Z. This is not automatically a planet's equator,
+surface longitude or gravity-harmonic pole. In an Earth–Moon base scenario, the
+world axes are the pinned dataset's ICRF axes.
+
+| Field | Meaning and accepted range |
+| --- | --- |
+| `periapsis_altitude_m` | Closest two-body radius minus the host's physical radius; must be positive and resolvable after addition to that radius |
+| `eccentricity` | 0 gives a circle; 0..1 an ellipse; 1 a parabola; greater than 1 a hyperbola |
+| `true_anomaly_rad` | Initial angle from periapsis along the orbit, −π..π; for an eccentric orbit, negative is incoming and positive outgoing |
+| `inclination_rad` | Angle from +Z to orbital angular momentum, 0..π; values above π/2 are retrograde relative to the reference plane |
+| `ascending_node_longitude_rad` | Rotation of the ascending node from +X in the XY plane, 0..2π |
+| `argument_of_periapsis_rad` | Angle in the orbit plane from the ascending node to periapsis, 0..2π |
+
+Orientation is the conventional `Rz(node) Rx(inclination) Rz(periapsis)`
+rotation. A circle has no distinguished periapsis and an equatorial orbit has
+no distinguished node, but the supplied angles still provide a deterministic
+construction phase. With periapsis radius `q`, SGL forms `p = q (1 + e)` and
+`r = p / (1 + e cos(anomaly))`; it does not divide by `1 - e`, so the parabolic
+case remains supported. The host must have positive gravitational source mass.
+
+For an open conic, the anomaly must lie strictly inside
+`±acos(-1 / eccentricity)`. Points on/beyond an asymptote are rejected, along with
+non-finite numbers, unresolved radii and states outside the existing 10¹⁸ m
+position / 10⁸ m/s inertial-speed limits. Inputs are not silently clamped or
+wrapped onto a different physical branch. Unknown fields and omitted angles are
+also rejected.
+
+These elements construct an initial state at the current world's epoch. They do
+not describe a scheduled launch, propagate a historical ephemeris, apply an
+insertion burn or constrain the later trajectory. Other bodies, selected
+harmonics and actual propulsion affect the next advance immediately. The lunar
+arrival in `conic-flight-school.scenario.json` begins near the Moon; it does not
+claim to be a completed Earth-to-Moon transfer. Import this file directly into
+the desktop cockpit, choose any of its three craft and fly it with ordinary
+controls. No application menu, spacecraft enum or spawn function is added.
 
 `reference_body_id` selects the navigation/attitude reference. If omitted, a
 placement host becomes that reference. A separate `docking_target_body_id`
@@ -265,3 +339,20 @@ cargo test -p solarlab-physics docking
 python3 tools/test_spacecraft_catalog.py
 python3 tools/test_import_spacecraft_gltf.py
 ```
+
+Conic construction has a separate twelve-case reference generated by NASA NAIF
+**CSPICE N0067**, through SpiceyPy 6.0.0. CSPICE constructs state from mean anomaly;
+SGL independently constructs it from true anomaly. The checked-in fixture covers
+circular/polar/retrograde cases, eccentric and near-parabolic ellipses, and
+incoming/outgoing parabolas and hyperbolas. Native tests compare position within
+20 micrometres and velocity within 2 nanometres/second for these synthetic
+initial states. Additional tests check energy, angular-momentum direction,
+apsides, translated/boosted hosts, branch boundaries and atomic insertion
+failure, then burn and resume the public example exactly. These tolerances
+validate a numerical coordinate conversion, not planetary ephemeris accuracy.
+
+The [NAIF conics reference](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/conics_c.html)
+documents the corresponding conic conventions and two-body scope. The optional
+`tools/generate_authoring_conic_reference.py` regenerates the fixture without
+loading SGL or ephemeris kernels; its output records the generator digest and
+reference versions. SPICE is not required to build, test or run SGL.
