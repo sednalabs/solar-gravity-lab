@@ -19,7 +19,7 @@ let browser,token;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(test,description,timeout=15000){const start=Date.now();while(Date.now()-start<timeout){if(await test())return;await wait(100);}throw Error(`Timed out: ${description}`);}
 async function native(){const r=await fetch(base+'/api/state',{headers:{'X-SGL-Token':token}});assert.equal(r.status,200);return r.json();}
-const errors=[],httpErrors=[],captures={},poweredCaptures=[];
+const errors=[],httpErrors=[],captures={},poweredCaptures=[],plannerViews={};
 async function capture(page,name,expectedCamera){
  // Node timers do not advance the browser's presentation clock under software
  // WebGL. Finish finite UI transitions and observe two browser frames before
@@ -47,6 +47,20 @@ async function visibleControls(page){
  const selectors=['#playButton','#cutButton','#throttle','#craftSelect','#centreButton','#fineButton','[data-axis="4"]'];
  const result=await page.evaluate(selectors=>Object.fromEntries(selectors.map(selector=>{const e=document.querySelector(selector),r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,top=document.elementFromPoint(x,y);return [selector,r.width>0&&r.height>0&&r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight&&(top===e||e.contains(top))];})),selectors);
  assert.ok(Object.values(result).every(Boolean),`Core controls must be visible and reachable: ${JSON.stringify(result)}`);return result;
+}
+async function visiblePlanner(page){
+ const selectors=['#burnSeconds','#burnThrottle','#burnAssist','#previewButton','#planNavigation','#burnAttitude','#previewResult .preview-heading','#previewResult .result-grid','#previewResult .orbit-shape svg','#previewResult .orbit-shape figcaption'];
+ const result=await page.evaluate(selectors=>{
+  const dialog=document.querySelector('#planner').getBoundingClientRect();
+  const elements=Object.fromEntries(selectors.map(selector=>{
+   const element=document.querySelector(selector),bounds=element.getBoundingClientRect(),hit=document.elementFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+   const visible=bounds.width>0&&bounds.height>0&&bounds.left>=Math.max(0,dialog.left)&&bounds.top>=Math.max(0,dialog.top)&&bounds.right<=Math.min(innerWidth,dialog.right)&&bounds.bottom<=Math.min(innerHeight,dialog.bottom)&&(hit===element||element.contains(hit));
+   return [selector,{visible,bounds:{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height}}];
+  }));
+  return {viewport:{width:innerWidth,height:innerHeight},dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height},elements};
+ },selectors);
+ assert.ok(Object.values(result.elements).every(value=>value.visible),`Burn controls, full orbit diagram and projection caption must be simultaneously visible without scrolling: ${JSON.stringify(result)}`);
+ return result;
 }
 async function scenePixels(page){
  return page.evaluate(()=>{const c=document.querySelector('#universe'),gl=c.getContext('webgl2'),bytes=new Uint8Array(c.width*c.height*4);gl.readPixels(0,0,c.width,c.height,gl.RGBA,gl.UNSIGNED_BYTE,bytes);let colored=0;const shades=new Set();for(let i=0;i<bytes.length;i+=16){const r=bytes[i],g=bytes[i+1],b=bytes[i+2];if(Math.max(r,g,b)>40)colored++;shades.add(`${r>>4},${g>>4},${b>>4}`);}return {coloredSamples:colored,shades:shades.size,meshKind:c.dataset.meshKind,assetId:c.dataset.assetId,solidVertices:Number(c.dataset.solidVertices),exhaustVertices:Number(c.dataset.exhaustVertices)};});
@@ -131,7 +145,9 @@ try{
  assert.ok((await page.locator('#previewResult .burn-effect').innerText()).includes('Apoapsis rises'));
  for(const selector of ['#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),false);
  const afterPreview=await native();assert.equal(afterPreview.epoch,initial.epoch);assert.equal(afterPreview.ship.fuel,initial.ship.fuel);assert.deepEqual(afterPreview.ship.control,initial.ship.control);
- await capture(page,'desktop-burn-preview.png','orbit');
+ await capture(page,'desktop-burn-preview.png','orbit');plannerViews.large=await visiblePlanner(page);
+ await page.setViewportSize({width:1100,height:760});await capture(page,'desktop-burn-preview-compact.png','orbit');plannerViews.compact=await visiblePlanner(page);
+ await page.setViewportSize({width:1440,height:960});
  await page.click('details.science > summary');
  await page.selectOption('#integrator','yoshida-fourth-order');await until(async()=>(await native()).settings.integrator==='yoshida-fourth-order','native coast setting change');
  await page.waitForFunction(()=>document.querySelector('#previewResult').classList.contains('preview-stale'));
@@ -161,7 +177,7 @@ try{
  const authoredPixels=await scenePixels(page);assert.equal(authoredPixels.assetId,'example:pathfinder');assert.ok(authoredPixels.solidVertices>3000);assert.equal(authoredPixels.exhaustVertices,0);
  await page.setViewportSize({width:1100,height:760});await wait(200);const controlsCompact=await visibleControls(page);await capture(page,'desktop-compact-window.png','orbit');
  assert.deepEqual(httpErrors,[],'Every requested resource and native command must succeed');assert.deepEqual(errors,[],'Browser must not report JS or graphics failures');
- const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,previewInputsLockedDuringNativeResponse:true,previewRemainsLockedAcrossStatePolls:true,nativeOrbitShapeComparison:true,stalePreviewMarked:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,captures,poweredCaptures},httpErrors,browserErrors:errors};
+ const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,previewInputsLockedDuringNativeResponse:true,previewRemainsLockedAcrossStatePolls:true,nativeOrbitShapeComparison:true,stalePreviewMarked:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,plannerViews,captures,poweredCaptures},httpErrors,browserErrors:errors};
  await writeFile(path.join(output,'result.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));console.log(`Evidence: ${output}`);
 }catch(e){await writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(e),httpErrors,browserErrors:errors,captures,poweredCaptures,serverOutput},null,2));if(browser){const pages=browser.contexts().flatMap(c=>c.pages());if(pages[0]){await pages[0].screenshot({path:path.join(output,'failure.png')}).catch(()=>{});console.error(await pages[0].locator('body').innerText().catch(()=>''));}}console.error(serverOutput);throw e;
 }finally{if(browser)await browser.close();server.kill('SIGTERM');}

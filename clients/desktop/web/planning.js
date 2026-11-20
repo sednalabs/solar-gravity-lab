@@ -88,6 +88,11 @@ function shapeFigure(shape,document){
  return figure;
 }
 
+export function clearBurnPreview(result){
+ const placeholder=result.ownerDocument.createElement('p');placeholder.className='preview-placeholder';placeholder.textContent='Calculate a burn to compare its orbit, fuel use and timing.';
+ result.replaceChildren(placeholder);result.classList.remove('preview-stale');for(const key of ['revision','epoch','generation'])delete result.dataset[key];
+}
+
 export function renderBurnPreview(result,preview,generation){
  const document=result.ownerDocument,p=preview;
  result.replaceChildren();result.classList.remove('preview-stale');result.dataset.revision=String(p.revision);result.dataset.epoch=String(p.epochSeconds);result.dataset.generation=String(generation);

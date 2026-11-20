@@ -56,7 +56,9 @@ Guide also shows the ideal instantaneous circularisation impulse, including
 radial-velocity cancellation. This is not a finite burn duration or a command to
 burn prograde. Pending previews lock their inputs across native polling; changed
 world revisions, epochs or generations mark the result stale. Reopening the
-planner starts a fresh comparison. Docking craft are outside this burn-preview scope.
+planner starts a fresh comparison. At desktop widths, settings and results sit
+side by side so the complete orbit diagram and its projection caption stay
+visible at both 1440×960 and 1100×760. Narrower windows retain stacked scrolling. Docking craft are outside this burn-preview scope.
 
 ## Build from data
 
@@ -125,7 +127,9 @@ CUT, keyboard pause, checkpoint restore,
 native coast prediction, download preservation and a new data-authored Ariadne
 spacecraft using the distinct Pathfinder visual. Keyboard pitch, opposing held keys,
 release and 20% fine control must reach native state. Actual WebGL pixel diversity,
-selected mesh identity and core control reachability are checked at both sizes. Six screenshots and a JSON receipt require actual browser execution.
+selected mesh identity and core control reachability are checked at both sizes. The full planner diagram, caption and calculation controls
+must also fit together without scrolling at both desktop sizes. Seven screenshots
+and a JSON receipt require actual browser execution.
 
 The managed command sandbox can deny Chromium's local sockets. An automatically
 rejected escalation is not browser evidence: use a permitted hosted runner.
