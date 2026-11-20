@@ -123,8 +123,14 @@ try{
  await page.click('#guideButton');await page.waitForFunction(()=>document.querySelector('#guide').open);
  assert.equal((await native()).nextControlSequence,releasedSequence,'Key-repeat after CUT must not submit old held input');
  await page.click('#guide .close-guide');
- await page.click('[data-assist="Hold"]');await until(async()=>(await native()).ship.control.attitude_mode==='Hold','stabilise restore');
+ // Deliberately delayed replies also delay serialized browser heartbeats.
+ // Start from real idle controls: paused Stabilise is still an armed control
+ // and the unchanged native watchdog correctly clears it after lost contact.
+ await page.click('[data-assist="Manual"]');await until(async()=>(await native()).ship.control.attitude_mode==='Manual','neutral manual controls');
  const initial=await native();assert.equal(initial.paused,true);assert.equal(initial.ship.altitude,400000);
+ assert.equal(initial.ship.control.throttle,0);
+ assert.deepEqual(initial.ship.control.translation_body,{x:0,y:0,z:0});
+ assert.deepEqual(initial.ship.control.rotation_body,{x:0,y:0,z:0});
  // A double-click must acquire one opening before the real pause reply arrives.
  // Keep counting pause requests until the preview reaches native code so a
  // second opener hidden in the serial command queue cannot escape this check.
@@ -171,7 +177,7 @@ try{
  assert.equal(await page.locator('#planner').evaluate(dialog=>dialog.open),false,'Completing a closed preview must not reopen it');
  await page.click('#planButton');
  await page.waitForFunction(()=>document.querySelector('#planner').open);
- assert.equal(await page.locator('#burnAssist').inputValue(),'Hold');
+ assert.equal(await page.locator('#burnAssist').inputValue(),'Manual');
  assert.equal(await page.locator('#burnThrottle').inputValue(),'25');
  assert.equal(await page.locator('#previewResult .orbit-shape').count(),0);
  assert.equal(await page.locator('#previewResult').getAttribute('data-revision'),null,'Reopened form must clear the previous request identity');
