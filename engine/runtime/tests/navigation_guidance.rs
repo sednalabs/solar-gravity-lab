@@ -27,9 +27,15 @@ fn cross(a: Vector3d, b: Vector3d) -> Vector3d {
     )
 }
 fn rotate(p: Vector3d) -> Vector3d {
-    // Orthogonal signed permutation plus a 3/5,4/5 rotation; reverses no axes.
-    v(0.6 * p.z - 0.8 * p.x, p.y, 0.8 * p.z + 0.6 * p.x)
+    // A proper 3D rotation by pi around (2/3, 1/3, 2/3). Every entry
+    // is nonzero, so an apsis also exercises cancellation in dot(r, v).
+    v(
+        (-p.x + 4.0 * p.y + 8.0 * p.z) / 9.0,
+        (4.0 * p.x - 7.0 * p.y + 4.0 * p.z) / 9.0,
+        (8.0 * p.x + 4.0 * p.y - p.z) / 9.0,
+    )
 }
+
 fn state(e: f64, anomaly: f64) -> (Vector3d, Vector3d) {
     let periapsis = 7_000_000.0;
     let semilatus = periapsis * (1.0 + e);
@@ -57,6 +63,21 @@ fn json_vector(value: &serde_json::Value) -> Vector3d {
         value[1].as_f64().unwrap(),
         value[2].as_f64().unwrap(),
     )
+}
+
+#[test]
+fn reference_frame_transform_is_a_proper_nonaxial_rotation() {
+    let x = rotate(v(1.0, 0.0, 0.0));
+    let y = rotate(v(0.0, 1.0, 0.0));
+    let z = rotate(v(0.0, 0.0, 1.0));
+    for axis in [x, y, z] {
+        close(norm(axis), 1.0, 2e-16);
+        assert!(axis.x != 0.0 && axis.y != 0.0 && axis.z != 0.0);
+    }
+    close(dot(x, y), 0.0, 1e-16);
+    close(dot(y, z), 0.0, 1e-16);
+    close(dot(x, z), 0.0, 1e-16);
+    close(dot(cross(x, y), z), 1.0, 2e-16);
 }
 
 #[test]
@@ -260,12 +281,32 @@ fn event_countdowns_distinguish_current_passage_next_lap_and_escape() {
                 );
             }
         }
-        let (p, velocity) = state(e, 1e-5);
-        let just_after = OrbitGuidance::from_relative(p, velocity, MU).unwrap();
-        assert!(just_after.time_to_periapsis_seconds.unwrap() > 0.99 * period);
-        let (p, velocity) = state(e, -1e-5);
-        let just_before = OrbitGuidance::from_relative(p, velocity, MU).unwrap();
-        assert!(just_before.time_to_periapsis_seconds.unwrap() < 0.01 * period);
+        for (anomaly, approaching, event) in [
+            (1e-5, false, "peri"),
+            (-1e-5, true, "peri"),
+            (PI - 1e-5, true, "apo"),
+            (-PI + 1e-5, false, "apo"),
+        ] {
+            let (p, velocity) = state(e, anomaly);
+            for rotated in [false, true] {
+                let (p, velocity) = if rotated {
+                    (rotate(p), rotate(velocity))
+                } else {
+                    (p, velocity)
+                };
+                let guidance = OrbitGuidance::from_relative(p, velocity, MU).unwrap();
+                let time = if event == "peri" {
+                    guidance.time_to_periapsis_seconds.unwrap()
+                } else {
+                    guidance.time_to_apoapsis_seconds.unwrap()
+                };
+                if approaching {
+                    assert!(time > 0.0 && time < 0.01 * period, "{event} {time}");
+                } else {
+                    assert!(time > 0.99 * period && time < period, "{event} {time}");
+                }
+            }
+        }
     }
     for anomaly in [-1.0, 0.0, 1.0] {
         let (p, velocity) = state(1.5, anomaly);

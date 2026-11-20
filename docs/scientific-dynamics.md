@@ -219,7 +219,7 @@ cargo test -p solarlab-runtime --lib scientific_flight
 ```
 
 Initial local comparison across both orientations gave a maximum event-time
-difference of `4.08e-8 s` and apsis-position difference of `9.22e-5 m`. The
+difference of `4.08e-8 s` and apsis-position difference of `7.45e-5 m`. The
 fixture's own refinement differed by at most `1.51e-7 s` and `0.00114 m`.
 These are synthetic point-mass checks, not an error bound for perturbations,
 long forecasts or real flight. Hosted exact-source qualification and physical
