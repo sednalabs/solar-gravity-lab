@@ -137,13 +137,31 @@ try{
  await page.route('**/api/command',holdNativePreview);
  try{
   await page.click('#previewButton');await until(()=>heldPreview&&pendingStatePolls>=2,'state polls during native burn preview');
-  for(const selector of ['#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),true,`${selector} must stay disabled through pending native response and state polling`);
+  for(const selector of ['#planButton','#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),true,`${selector} must stay disabled through pending native response and state polling`);
+  await page.click('#closePlanner');
+  const pollsAtClose=pendingStatePolls;
+  await page.locator('#planButton').evaluate(button=>button.click());
+  await until(()=>pendingStatePolls>=pollsAtClose+2,'state polls after closing a pending preview');
+  assert.equal(await page.locator('#planButton').isDisabled(),true,'A pending calculation must prevent reopening and resetting its form');
+  assert.equal(await page.locator('#planner').evaluate(dialog=>dialog.open),false,'Reopening must wait for the original response to finish');
+  assert.equal(await page.locator('#burnAssist').inputValue(),'Prograde');
+  assert.equal(await page.locator('#burnThrottle').inputValue(),'40');
  }finally{releasePreview();page.off('response',countPendingPolls);}
  await page.waitForFunction(()=>document.querySelector('#previewResult').textContent.includes('Native source'));
  await page.unroute('**/api/command',holdNativePreview);
+ assert.equal(await page.locator('#planner').evaluate(dialog=>dialog.open),false,'Completing a closed preview must not reopen it');
+ await page.click('#planButton');
+ await page.waitForFunction(()=>document.querySelector('#planner').open);
+ assert.equal(await page.locator('#burnAssist').inputValue(),'Hold');
+ assert.equal(await page.locator('#burnThrottle').inputValue(),'25');
+ assert.equal(await page.locator('#previewResult .orbit-shape').count(),0);
+ assert.equal(await page.locator('#previewResult').getAttribute('data-revision'),null,'Reopened form must clear the previous request identity');
+ assert.equal((await page.locator('#previewResult').innerText()).includes('Native source'),false,'A previous response must not describe the reopened form');
+ await page.selectOption('#burnAssist','Prograde');await page.fill('#burnSeconds','30');await page.fill('#burnThrottle','40');
+ await page.click('#previewButton');await page.waitForFunction(()=>document.querySelector('#previewResult').textContent.includes('Native source'));
  assert.equal(await page.locator('#previewResult .orbit-shape ellipse').count(),2,'Native before/after bound orbits both need a size curve');
  assert.ok((await page.locator('#previewResult .burn-effect').innerText()).includes('Apoapsis rises'));
- for(const selector of ['#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),false);
+ for(const selector of ['#planButton','#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),false);
  const afterPreview=await native();assert.equal(afterPreview.epoch,initial.epoch);assert.equal(afterPreview.ship.fuel,initial.ship.fuel);assert.deepEqual(afterPreview.ship.control,initial.ship.control);
  await capture(page,'desktop-burn-preview.png','orbit');plannerViews.large=await visiblePlanner(page);
  await page.setViewportSize({width:1100,height:760});await capture(page,'desktop-burn-preview-compact.png','orbit');plannerViews.compact=await visiblePlanner(page);
@@ -177,7 +195,7 @@ try{
  const authoredPixels=await scenePixels(page);assert.equal(authoredPixels.assetId,'example:pathfinder');assert.ok(authoredPixels.solidVertices>3000);assert.equal(authoredPixels.exhaustVertices,0);
  await page.setViewportSize({width:1100,height:760});await wait(200);const controlsCompact=await visibleControls(page);await capture(page,'desktop-compact-window.png','orbit');
  assert.deepEqual(httpErrors,[],'Every requested resource and native command must succeed');assert.deepEqual(errors,[],'Browser must not report JS or graphics failures');
- const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,previewInputsLockedDuringNativeResponse:true,previewRemainsLockedAcrossStatePolls:true,nativeOrbitShapeComparison:true,stalePreviewMarked:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,plannerViews,captures,poweredCaptures},httpErrors,browserErrors:errors};
+ const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,previewInputsLockedDuringNativeResponse:true,previewRemainsLockedAcrossStatePolls:true,previewCannotReopenWhilePending:true,reopenedPlannerClearsPreviousResponse:true,nativeOrbitShapeComparison:true,stalePreviewMarked:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,plannerViews,captures,poweredCaptures},httpErrors,browserErrors:errors};
  await writeFile(path.join(output,'result.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));console.log(`Evidence: ${output}`);
 }catch(e){await writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(e),httpErrors,browserErrors:errors,captures,poweredCaptures,serverOutput},null,2));if(browser){const pages=browser.contexts().flatMap(c=>c.pages());if(pages[0]){await pages[0].screenshot({path:path.join(output,'failure.png')}).catch(()=>{});console.error(await pages[0].locator('body').innerText().catch(()=>''));}}console.error(serverOutput);throw e;
 }finally{if(browser)await browser.close();server.kill('SIGTERM');}
