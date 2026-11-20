@@ -125,7 +125,24 @@ try{
  await page.click('#guide .close-guide');
  await page.click('[data-assist="Hold"]');await until(async()=>(await native()).ship.control.attitude_mode==='Hold','stabilise restore');
  const initial=await native();assert.equal(initial.paused,true);assert.equal(initial.ship.altitude,400000);
- await page.click('#planButton');await page.selectOption('#burnAssist','Prograde');await page.fill('#burnSeconds','30');await page.fill('#burnThrottle','40');
+ // A double-click must acquire one opening before the real pause reply arrives.
+ // Keep counting pause requests until the preview reaches native code so a
+ // second opener hidden in the serial command queue cannot escape this check.
+ let heldOpening=false,openingStatePolls=0,openingPauseRequests=0,releaseOpening;
+ const openingReleased=new Promise(resolve=>{releaseOpening=resolve;});
+ const countOpeningPolls=response=>{if(heldOpening&&new URL(response.url()).pathname==='/api/state')openingStatePolls++;};
+ const countOpeningPauses=request=>{if(new URL(request.url()).pathname==='/api/command'&&request.postDataJSON()?.command?.action==='pause')openingPauseRequests++;};
+ const holdNativeOpening=async route=>{if(route.request().postDataJSON()?.command?.action!=='pause'){await route.continue();return;}const response=await route.fetch();heldOpening=true;await openingReleased;await route.fulfill({response});};
+ page.on('response',countOpeningPolls);page.on('request',countOpeningPauses);
+ await page.route('**/api/command',holdNativeOpening);
+ try{
+  await page.dblclick('#planButton');await until(()=>heldOpening&&openingStatePolls>=2,'state polls during native planner opening');
+  assert.equal(await page.locator('#planButton').isDisabled(),true,'Opening must remain acquired across native pause delay and state polling');
+  assert.equal(await page.locator('#planner').evaluate(dialog=>dialog.open),false,'The planner must wait for its native pause response');
+ }finally{releaseOpening();page.off('response',countOpeningPolls);}
+ await page.waitForFunction(()=>document.querySelector('#planner').open);
+ await page.unroute('**/api/command',holdNativeOpening);
+ await page.selectOption('#burnAssist','Prograde');await page.fill('#burnSeconds','30');await page.fill('#burnThrottle','40');
  assert.ok((await page.locator('#planNavigation').innerText()).length>0);assert.ok((await page.locator('#burnAttitude').innerText()).includes('aligned'));
  // Hold only the actual native response. State polls remain real and active;
  // the test never substitutes a simulated burn result.
@@ -137,6 +154,8 @@ try{
  await page.route('**/api/command',holdNativePreview);
  try{
   await page.click('#previewButton');await until(()=>heldPreview&&pendingStatePolls>=2,'state polls during native burn preview');
+  assert.equal(openingPauseRequests,1,'A double-click must issue only one planner-opening pause, with no queued form reset');
+  page.off('request',countOpeningPauses);
   for(const selector of ['#planButton','#previewButton','#burnSeconds','#burnThrottle','#burnAssist','#integrator'])assert.equal(await page.locator(selector).isDisabled(),true,`${selector} must stay disabled through pending native response and state polling`);
   await page.click('#closePlanner');
   const pollsAtClose=pendingStatePolls;
@@ -195,7 +214,7 @@ try{
  const authoredPixels=await scenePixels(page);assert.equal(authoredPixels.assetId,'example:pathfinder');assert.ok(authoredPixels.solidVertices>3000);assert.equal(authoredPixels.exhaustVertices,0);
  await page.setViewportSize({width:1100,height:760});await wait(200);const controlsCompact=await visibleControls(page);await capture(page,'desktop-compact-window.png','orbit');
  assert.deepEqual(httpErrors,[],'Every requested resource and native command must succeed');assert.deepEqual(errors,[],'Browser must not report JS or graphics failures');
- const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,previewInputsLockedDuringNativeResponse:true,previewRemainsLockedAcrossStatePolls:true,previewCannotReopenWhilePending:true,reopenedPlannerClearsPreviousResponse:true,nativeOrbitShapeComparison:true,stalePreviewMarked:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,plannerViews,captures,poweredCaptures},httpErrors,browserErrors:errors};
+ const report={renderer:'Chromium WebGL2, SwiftShader software rendering',nativeHost:'solarlab-desktop',checks:{previewUnchanged:true,plannerOpeningSinglePause:true,plannerOpeningLockedAcrossStatePolls:true,previewInputsLockedDuringNativeResponse:true,previewRemainsLockedAcrossStatePolls:true,previewCannotReopenWhilePending:true,reopenedPlannerClearsPreviousResponse:true,nativeOrbitShapeComparison:true,stalePreviewMarked:true,realFuelUsed:marked.ship.fuel-burned.ship.fuel,apoapsisRaisedM:burned.ship.orbit.apoapsis-marked.ship.orbit.apoapsis,cut:true,keyboardPitch:true,heldKeyRepeatAfterCutIgnored:true,opposingKeysCancel:true,fineControl:true,keyboardPause:true,checkpointRestored:true,nativeCoastPrediction:true,dataAuthoredSpacecraft:{id:authored.ship.id,name:authored.ship.name,thrustN:authored.ship.maxThrust,visualAsset:authored.ship.visual.assetId,meshKind:authored.ship.visual.meshKind,geometrySha256:authored.ship.visual.geometrySha256},previousFlightDownloaded:true},visual:{initialPixels,authoredPixels,controlsLarge,controlsCompact,plannerViews,captures,poweredCaptures},httpErrors,browserErrors:errors};
  await writeFile(path.join(output,'result.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));console.log(`Evidence: ${output}`);
 }catch(e){await writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(e),httpErrors,browserErrors:errors,captures,poweredCaptures,serverOutput},null,2));if(browser){const pages=browser.contexts().flatMap(c=>c.pages());if(pages[0]){await pages[0].screenshot({path:path.join(output,'failure.png')}).catch(()=>{});console.error(await pages[0].locator('body').innerText().catch(()=>''));}}console.error(serverOutput);throw e;
 }finally{if(browser)await browser.close();server.kill('SIGTERM');}
