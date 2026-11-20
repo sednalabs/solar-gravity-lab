@@ -29,6 +29,8 @@ data class FlightBurnPreview(
     val warnings: List<String>,
     val epochSeconds: Double,
     val revision: Long,
+    val beforeGuidance: OrbitGuidance? = null,
+    val afterGuidance: OrbitGuidance? = null,
 )
 
 internal fun flightDynamicsFromNative(values: DoubleArray): FlightDynamicsSettings {
@@ -46,7 +48,9 @@ internal fun flightBurnPreviewFromNative(bytes: ByteArray): FlightBurnPreview {
     require(warnings.length() <= 16)
     val result = FlightBurnPreview(optional("beforePeriapsisM"), optional("afterPeriapsisM"),
         optional("beforeApoapsisM"), optional("afterApoapsisM"), scalar("fuelUsedKg"), scalar("elapsedSeconds"),
-        (0 until warnings.length()).map { warnings.getString(it) }, scalar("epochSeconds"), value.getLong("revision"))
+        (0 until warnings.length()).map { warnings.getString(it) }, scalar("epochSeconds"), value.getLong("revision"),
+        orbitGuidanceFromJson(value.optJSONObject("beforeGuidance")),
+        orbitGuidanceFromJson(value.optJSONObject("afterGuidance")))
     require(result.fuelUsedKg >= 0.0 && result.elapsedSeconds > 0.0 && result.epochSeconds >= 0.0 && result.revision >= 0)
     return result
 }
