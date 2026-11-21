@@ -13,6 +13,9 @@ interface RuntimeFacade {
     // State stream is immutable from the UI perspective and sourced from runtime signals.
     val uiState: StateFlow<ShellUiState>
 
+    /** Coherent cumulative boundary counters; sampled on demand, never a UI state stream. */
+    fun observationCounters(): RuntimeObservationCounters? = null
+
     val scenarioPacks: List<RuntimeScenarioPack>
 
     val savedExperiments: StateFlow<List<SavedExperimentInfo>> get() = emptySavedExperiments
@@ -76,6 +79,16 @@ interface RuntimeFacade {
 
     fun cancelManualAdvance() {}
 }
+
+/** Counts work in this runtime bridge instance, including across scenario replacement. */
+data class RuntimeObservationCounters(
+    val scopeId: String,
+    val periodicSummaryPolls: Long,
+    val pausedDuplicateSuppressions: Long,
+    val packetExportAttempts: Long,
+    val packetExportSuccesses: Long,
+    val packetExportFailures: Long,
+)
 
 enum class SessionConnectionState {
     Connecting,

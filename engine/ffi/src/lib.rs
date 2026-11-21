@@ -40,6 +40,8 @@ use solarlab_vulkan_adapter::{
 };
 
 mod persistence;
+#[cfg(target_os = "android")]
+mod benchmark_jni;
 #[cfg(any(target_os = "android", test))]
 mod flight;
 #[cfg(any(target_os = "android", test))]

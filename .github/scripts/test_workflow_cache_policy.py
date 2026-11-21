@@ -18,6 +18,10 @@ WRITE = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
 READ_ONLY = "github.event_name != 'push' || github.ref != 'refs/heads/main'"
 EVENT_SOURCE = "${{ github.sha }}"
 VALIDATION_SOURCE = "${{ github.event.pull_request.head.sha || github.sha }}"
+QUALIFIED_TOOL_CHECKOUTS = {
+    "KhronosGroup/glslang": ("e1b562a8bed273a02f30b59b66a5d499793cede5", ".hardware/glslang"),
+    "KhronosGroup/Vulkan-Headers": ("88487f687f3100ebe1d3559a8a34d971ee85b977", ".hardware/vulkan-headers"),
+}
 
 
 def steps(path: Path, indent: int) -> list[str]:
@@ -50,6 +54,29 @@ def job(path: Path, name: str) -> str:
     return match.group(0)
 
 
+def checkout_identity(step: str, allow_qualified_tools: bool = False) -> str:
+    """Product source is event-bound; only named, pinned tools use another repository."""
+    for key in ("repository", "ref", "path", "persist-credentials"):
+        if len(re.findall(rf"(?m)^\s*{re.escape(key)}:", step)) > 1:
+            raise AssertionError("Duplicate checkout identity field")
+    repository = field(step, "repository")
+    if not repository:
+        if field(step, "ref") != EVENT_SOURCE:
+            raise AssertionError("Product checkout must use the workflow event source")
+        return "product"
+    if not allow_qualified_tools or repository not in QUALIFIED_TOOL_CHECKOUTS:
+        raise AssertionError("Unapproved external checkout repository")
+    expected_ref, expected_path = QUALIFIED_TOOL_CHECKOUTS[repository]
+    pinned = re.fullmatch(r"([0-9a-f]{40})(?:[ \t]+#.*)?", field(step, "ref"))
+    if pinned is None or pinned.group(1) != expected_ref:
+        raise AssertionError("Tool checkout must use its approved immutable commit")
+    if field(step, "path") != expected_path:
+        raise AssertionError("Tool checkout must use its isolated approved directory")
+    if field(step, "persist-credentials") != "false":
+        raise AssertionError("Tool checkout must not retain credentials")
+    return repository
+
+
 class WorkflowCachePolicyTests(unittest.TestCase):
     def test_all_automatic_and_explicit_cache_writes_require_main_push(self) -> None:
         writers = 0
@@ -62,7 +89,7 @@ class WorkflowCachePolicyTests(unittest.TestCase):
                 self.assertTrue(condition.startswith("${{ " + WRITE), (path, condition))
                 # Additional conditions may narrow this policy, never bypass it.
                 self.assertNotIn("||", condition, (path, condition))
-        self.assertEqual(8, writers)
+        self.assertEqual(9, writers)
 
     def test_manual_and_pr_runs_can_restore_the_same_composite_cache_keys(self) -> None:
         for path in ACTIONS:
@@ -73,6 +100,19 @@ class WorkflowCachePolicyTests(unittest.TestCase):
             self.assertEqual("${{ " + READ_ONLY + " }}", field(readonly, "if"), path)
             self.assertEqual(writable.split("      with:\n")[1].strip(),
                              readonly.split("      with:\n")[1].strip(), path)
+
+    def test_shader_tool_restore_does_not_write_and_save_uses_the_restored_key(self) -> None:
+        release_steps = steps(WORKFLOWS[1], 6)
+        restore = next(s for s in release_steps if field(s, "id") == "benchmark-glslang-cache")
+        save = next(s for s in release_steps if field(s, "name") == "Save the qualified QCOM compiler cache")
+        self.assertTrue(field(restore, "uses").startswith("actions/cache/restore@"))
+        self.assertEqual("needs.route.outputs.build_variant == 'benchmark'", field(restore, "if"))
+        self.assertTrue(field(save, "uses").startswith("actions/cache/save@"))
+        self.assertEqual("${{ " + WRITE + " && needs.route.outputs.build_variant == 'benchmark' && "
+                         "steps.benchmark-glslang-cache.outputs.cache-hit != 'true' }}", field(save, "if"))
+        self.assertEqual(".hardware/glslang-build", field(restore, "path"))
+        self.assertEqual(field(restore, "path"), field(save, "path"))
+        self.assertEqual("${{ steps.benchmark-glslang-cache.outputs.cache-primary-key }}", field(save, "key"))
 
     def test_gradle_caches_are_read_only_outside_main_push(self) -> None:
         count = 0
@@ -125,7 +165,38 @@ class WorkflowCachePolicyTests(unittest.TestCase):
         for path, count in ((WORKFLOWS[1], 5), (WORKFLOWS[2], 1)):
             checkout_steps = [s for s in steps(path, 6)
                               if field(s, "uses").startswith("actions/checkout@")]
-            self.assertEqual([EVENT_SOURCE] * count, [field(s, "ref") for s in checkout_steps], path)
+            identities = [checkout_identity(s, allow_qualified_tools=path == WORKFLOWS[1]) for s in checkout_steps]
+            self.assertEqual(count, identities.count("product"), path)
+            self.assertCountEqual(QUALIFIED_TOOL_CHECKOUTS if path == WORKFLOWS[1] else [],
+                                  [identity for identity in identities if identity != "product"], path)
+
+    def test_external_checkout_guard_rejects_dynamic_unapproved_mutable_or_relocated_tools(self) -> None:
+        release_steps = steps(WORKFLOWS[1], 6)
+        tool = next(s for s in release_steps if field(s, "repository") == "KhronosGroup/glslang")
+        self.assertEqual("KhronosGroup/glslang", checkout_identity(tool, allow_qualified_tools=True))
+        with self.assertRaisesRegex(AssertionError, "Unapproved external"):
+            checkout_identity(tool)
+        for repository in ("${{ inputs.repository }}", "unapproved/glslang", "KhronosGroup/Vulkan-Headers"):
+            with self.subTest(repository=repository), self.assertRaises(AssertionError):
+                checkout_identity(tool.replace("repository: KhronosGroup/glslang", "repository: " + repository), True)
+        original_ref = QUALIFIED_TOOL_CHECKOUTS["KhronosGroup/glslang"][0]
+        for ref in ("main", "16.6.0", original_ref[:8], "f" * 40, "${{ inputs.ref }}"):
+            with self.subTest(ref=ref), self.assertRaisesRegex(AssertionError, "approved immutable"):
+                checkout_identity(tool.replace(original_ref, ref), True)
+        for path in (".", "../tool", "${{ inputs.path }}", ".hardware/vulkan-headers"):
+            with self.subTest(path=path), self.assertRaisesRegex(AssertionError, "isolated approved"):
+                checkout_identity(tool.replace("path: .hardware/glslang", "path: " + path), True)
+        with self.assertRaisesRegex(AssertionError, "retain credentials"):
+            checkout_identity(tool.replace("persist-credentials: false", "persist-credentials: true"), True)
+        with self.assertRaisesRegex(AssertionError, "Duplicate checkout identity"):
+            checkout_identity(tool + "\n          repository: ${{ inputs.repository }}", True)
+
+    def test_product_checkout_cannot_borrow_an_external_tool_exemption(self) -> None:
+        product = "      - uses: actions/checkout@pinned\n        with:\n          ref: " + EVENT_SOURCE
+        self.assertEqual("product", checkout_identity(product, allow_qualified_tools=True))
+        for source in ("${{ inputs.ref }}", "main", "f" * 40):
+            with self.subTest(source=source), self.assertRaisesRegex(AssertionError, "workflow event source"):
+                checkout_identity(product.replace(EVENT_SOURCE, source), allow_qualified_tools=True)
 
     def test_manual_alias_verification_precedes_build_actions(self) -> None:
         release_steps = steps(WORKFLOWS[1], 6)

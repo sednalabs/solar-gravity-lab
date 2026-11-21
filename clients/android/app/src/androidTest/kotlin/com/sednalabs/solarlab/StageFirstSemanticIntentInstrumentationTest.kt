@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab
 
 import android.content.Intent
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -94,15 +95,23 @@ class StageFirstSemanticIntentInstrumentationTest {
             sendFocus("intent-focus-42")
             val firstObserved = composeRule.mainClock.currentTime
             composeRule.mainClock.advanceTimeBy(1200)
+            // Publish delayed state before checking a timer checkpoint. With a
+            // manual clock, semantic queries do not advance pending recompositions.
+            composeRule.runOnUiThread { Snapshot.sendApplyNotifications() }
+            composeRule.mainClock.advanceTimeByFrame()
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
                 .assertIsDisplayed()
             sendFocus("intent-focus-43")
             val secondObserved = composeRule.mainClock.currentTime
             assertTrue(secondObserved < firstObserved + 2100)
             composeRule.mainClock.advanceTimeBy(firstObserved + 2300 - secondObserved)
+            composeRule.runOnUiThread { Snapshot.sendApplyNotifications() }
+            composeRule.mainClock.advanceTimeByFrame()
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
                 .assertIsDisplayed().assertTextContains("Frame requested · Earth")
             composeRule.mainClock.advanceTimeBy(secondObserved + 2300 - composeRule.mainClock.currentTime)
+            composeRule.runOnUiThread { Snapshot.sendApplyNotifications() }
+            composeRule.mainClock.advanceTimeByFrame()
             composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
                 .assertCountEquals(0)
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)

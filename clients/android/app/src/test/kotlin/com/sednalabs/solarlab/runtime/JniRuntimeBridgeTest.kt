@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -18,6 +19,120 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 
 class JniRuntimeBridgeTest {
+    @Test
+    fun pausedPollingRequiresSuccessfulCurrentPacketAcknowledgement() = runBlocking {
+        val renderer = FakeRenderHostAdapter(providePackets = true)
+        val bridge = JniRuntimeBridge(FakeNativeRuntimeTransport(ArrayDeque()), renderer)
+        val initial = bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId).lastPacket()
+        bridge.acknowledgeRenderPacket(initial, decoded = false)
+        val afterFailedDecode = bridge.pollRuntime().lastPacket()
+        // Equal metadata or the same lease does not identify the emitted signal itself.
+        bridge.acknowledgeRenderPacket(afterFailedDecode.copy(), decoded = true)
+        val afterMismatchedAck = bridge.pollRuntime().lastPacket()
+        bridge.acknowledgeRenderPacket(afterFailedDecode, decoded = true)
+        val current = bridge.pollRuntime().lastPacket()
+        assertTrue(current !== afterMismatchedAck)
+        bridge.acknowledgeRenderPacket(current, decoded = true)
+        val exports = renderer.refreshCount
+        repeat(5) { assertTrue(bridge.pollRuntime().isEmpty()) }
+        assertEquals(exports, renderer.refreshCount)
+        assertEquals(5L, bridge.observationCounters().pausedDuplicateSuppressions)
+        assertEquals(8L, bridge.observationCounters().periodicSummaryPolls)
+    }
+
+    @Test
+    fun forcedRefreshCommandsWorldChangesAndPlaybackRemainObservable() = runBlocking {
+        val summaries = ArrayDeque<NativeSnapshotSummaryResult>()
+        val transport = FakeNativeRuntimeTransport(summaries)
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter(providePackets = true))
+        bridge.acknowledgeRenderPacket(bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId).lastPacket(), true)
+        assertTrue(bridge.pollRuntime().isEmpty())
+        bridge.acknowledgeRenderPacket(bridge.refresh().lastPacket(), true)
+        bridge.acknowledgeRenderPacket(bridge.applyCommand(RuntimeCommand.PausePlayback).lastPacket(), true)
+        // An external native mutation is observed by the next summary poll too.
+        summaries.add(snapshotSummary(bodyCount = 4).copy(revision = 100))
+        val changed = bridge.pollRuntime()
+        assertEquals(4, changed.filterIsInstance<RuntimeSignal.SnapshotUpdated>().single().summary.bodyCount)
+        bridge.acknowledgeRenderPacket(changed.lastPacket(), true)
+        assertTrue(bridge.pollRuntime().isEmpty())
+        bridge.acknowledgeRenderPacket(bridge.applyCommand(RuntimeCommand.ResumePlayback).lastPacket(), true)
+        repeat(2) { bridge.acknowledgeRenderPacket(bridge.pollRuntime().lastPacket(), true) }
+        if (!BuildConfig.HOSTED_DEBUG_LITE_MODE) assertEquals(2, transport.playbackTicks)
+        assertEquals(2L, bridge.observationCounters().pausedDuplicateSuppressions)
+    }
+
+    @Test
+    fun exportAndSummaryFailuresInvalidatePausedReuseUntilSuccessfulRetry() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque())
+        val renderer = FakeRenderHostAdapter(providePackets = true)
+        val bridge = JniRuntimeBridge(transport, renderer)
+        bridge.acknowledgeRenderPacket(bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId).lastPacket(), true)
+        renderer.unavailableReason = "temporary export failure"
+        assertTrue(bridge.refresh().any { it is RuntimeSignal.RenderUnavailable })
+        assertTrue(bridge.pollRuntime().any { it is RuntimeSignal.RenderUnavailable })
+        renderer.unavailableReason = null
+        bridge.acknowledgeRenderPacket(bridge.pollRuntime().lastPacket(), true)
+        assertTrue(bridge.pollRuntime().isEmpty())
+        transport.refreshError = IllegalStateException("temporary summary failure")
+        assertTrue(bridge.pollRuntime().any { it is RuntimeSignal.Notice })
+        transport.refreshError = null
+        bridge.acknowledgeRenderPacket(bridge.pollRuntime().lastPacket(), true)
+        assertTrue(bridge.pollRuntime().isEmpty())
+        val cancellation = CancellationException("cancelled export")
+        renderer.exportError = cancellation
+        var caught: CancellationException? = null
+        try { bridge.refresh() } catch (error: CancellationException) { caught = error }
+        assertTrue(caught === cancellation)
+        renderer.exportError = null
+        bridge.acknowledgeRenderPacket(bridge.pollRuntime().lastPacket(), true)
+        val counters = bridge.observationCounters()
+        assertEquals(3L, counters.packetExportFailures)
+        assertEquals(counters.packetExportAttempts, counters.packetExportSuccesses + counters.packetExportFailures)
+        assertEquals(2L, counters.pausedDuplicateSuppressions)
+    }
+
+    @Test
+    fun countersAndReuseStayScopedAcrossBridgeInstancesAndSessionReplacement() = runBlocking {
+        val first = JniRuntimeBridge(FakeNativeRuntimeTransport(ArrayDeque(),
+            sessionHandles = ArrayDeque(listOf(42L, 84L, 42L))), FakeRenderHostAdapter(providePackets = true))
+        val second = JniRuntimeBridge(FakeNativeRuntimeTransport(ArrayDeque()), FakeRenderHostAdapter(providePackets = true))
+        assertTrue(first.observationCounters().scopeId != second.observationCounters().scopeId)
+        val initial = first.loadScenario(RuntimeScenarioPacks.default.scenarioId).lastPacket()
+        first.acknowledgeRenderPacket(initial, true)
+        assertTrue(first.pollRuntime().isEmpty())
+        val before = first.observationCounters()
+        first.loadScenario("showcase.jupiter-system")
+        first.acknowledgeRenderPacket(initial, true)
+        assertTrue(first.pollRuntime().any { it is RuntimeSignal.RenderPacketReady })
+        // Reuse of the numeric native handle still must not accept an old packet.
+        first.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        first.acknowledgeRenderPacket(initial, true)
+        first.acknowledgeRenderPacket(first.pollRuntime().lastPacket(), true)
+        assertTrue(first.pollRuntime().isEmpty())
+        assertEquals(before.scopeId, first.observationCounters().scopeId)
+        assertTrue(first.observationCounters().packetExportAttempts > before.packetExportAttempts)
+        assertEquals(0L, second.observationCounters().packetExportAttempts)
+        assertEquals(2L, first.observationCounters().pausedDuplicateSuppressions)
+    }
+
+    @Test
+    fun disconnectClearsReuseButReconnectPreservesCumulativeCounterScope() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(), sessionHandles = ArrayDeque(listOf(42L, 42L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter(providePackets = true))
+        val first = bridge.connect().first { it is RuntimeSignal.RenderPacketReady } as RuntimeSignal.RenderPacketReady
+        val disconnected = bridge.observationCounters()
+        bridge.acknowledgeRenderPacket(first, true)
+        assertTrue(bridge.pollRuntime().isEmpty())
+        assertEquals(disconnected, bridge.observationCounters())
+        bridge.connect().first { it is RuntimeSignal.RenderPacketReady }
+        val reconnected = bridge.observationCounters()
+        assertEquals(disconnected.scopeId, reconnected.scopeId)
+        assertTrue(reconnected.packetExportAttempts > disconnected.packetExportAttempts)
+        assertEquals(listOf(42L, 42L), transport.destroyedHandles.toList())
+    }
+
+    private fun List<RuntimeSignal>.lastPacket() = filterIsInstance<RuntimeSignal.RenderPacketReady>().last()
+
     @Test fun invalidDockingCandidateCannotReplaceTheCurrentWorld() = runBlocking {
         val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
             sessionHandles = ArrayDeque(listOf(42L, 84L)))
@@ -634,12 +749,14 @@ class JniRuntimeBridgeTest {
         assertEquals(binds, renderer.boundSessionHandles)
     }
 
-    private class FakeRenderHostAdapter : RenderHostAdapter {
+    private class FakeRenderHostAdapter(private val providePackets: Boolean = false) : RenderHostAdapter {
         val boundSessionHandles = mutableListOf<Long>()
         var refreshCount: Int = 0
             private set
         var releaseCount: Int = 0
             private set
+        var unavailableReason: String? = null
+        var exportError: Throwable? = null
 
         override fun bindSession(sessionHandle: Long) {
             boundSessionHandles += sessionHandle
@@ -647,8 +764,13 @@ class JniRuntimeBridgeTest {
 
         override fun refreshPacket(): RenderPacketRefreshResult {
             refreshCount += 1
+            exportError?.let { throw it }
+            if (providePackets && unavailableReason == null) {
+                val packet = sampleRenderPacket(refreshCount.toLong())
+                return RenderPacketRefreshResult(lease = PacketLease(packet.packetHandle, packet, "test packet") {})
+            }
             return RenderPacketRefreshResult(
-                unavailableReason = "Render export unavailable: test stub"
+                unavailableReason = unavailableReason ?: "Render export unavailable: test stub"
             )
         }
 
@@ -856,6 +978,17 @@ class JniRuntimeBridgeTest {
 
         fun probeCandidate() = RuntimeBodyState("probe", RuntimeBodyClass.Spacecraft, 1000.0, 17.0, 2.0,
             1.23456789012345e11, 2.34567890123456e10, 3.45678901234567e8, 12.3456789, 23.4567891, 34.5678912)
+
+        fun sampleRenderPacket(handle: Long) = NativeVulkanScenePacket(
+            packetHandle = handle, sceneRevision = "paused-test-scene", epochSeconds = 0.0,
+            observerMode = 1, timelineSemantics = 1,
+            camera = NativeVulkanCameraPacket(0.0, 0.0, 0.0, 0f, 0f, 10f, 0f, 0f, 0f, 0f, 1f, 0f, 45f, 1f),
+            bodyCount = 1, tracerCount = 0, trailSpanCount = 0, trailVertexCount = 0, directionalLightCount = 1,
+            diagnostics = NativeRenderDiagnostics(0, 0.5f, 0.25f, 0),
+            provenanceSource = "fixture", provenanceVersion = "v1", provenanceManifestId = "manifest",
+            provenanceManifestDigest = "digest", provenancePackageDigest = "pkg",
+            bodyInstances = null, tracerInstances = null, trailSpans = null, trailVertices = null, directionalLights = null,
+        )
 
         fun snapshotSummary(
             scenarioId: String = "lab.earth-moon",

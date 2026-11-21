@@ -44,49 +44,55 @@ class StageFirstSearchFocusInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT)
         loadCanonicalCatalogue()
 
-        awaitCondition(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
-        }
-
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
-            .performScrollToIfPossible()
-            .performClick()
-        awaitCondition(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
-        }
-        // Filter before asking for Halley: an unfiltered, scroll-clipped
-        // catalogue need not expose an offscreen result in its semantics tree.
-        // The filtered inclusion/exclusion assertions below remain mandatory.
-        Log.i("SolarLabSearchProof", "Search field ready; entering comet filter")
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick()
-        composeRule.mainClock.advanceTimeByFrame()
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("comet")
-        Log.i("SolarLabSearchProof", "Comet filter entered")
-        awaitCondition(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
-        }
-        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextReplacement("earth")
-        awaitCondition(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
-        }
-        // The 365-body native scene keeps rendering while focus transitions
-        // settle. Compose must not require the entire renderer to become idle to
-        // inspect a stable selection. Control only the test frame clock here,
-        // just as the repeated-search interaction test does for feedback timers.
+        // Keep one clock policy for the entire live-scene interaction, including
+        // opening Search: an idle barrier there failed before the former narrow
+        // selection-only manual-clock section. Every state assertion is retained
+        // and each wait below explicitly advances Compose frames.
         composeRule.mainClock.autoAdvance = false
         try {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_BUTTON)
+                .performScrollToIfPossible()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).fetchSemanticsNodes().isNotEmpty()
+            }
+            // A scroll-clipped catalogue need not expose every offscreen result;
+            // filtered inclusion and exclusion remain mandatory assertions.
+            Log.i("SolarLabSearchProof", "Search field ready; entering comet filter")
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performClick()
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextInput("comet")
+            Log.i("SolarLabSearchProof", "Comet filter entered")
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isEmpty()
+            }
+            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FIELD).performTextReplacement("earth")
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag(SolarLabTestTags.stageFirstSearchFocusTag("halley")).fetchSemanticsNodes().isEmpty()
+            }
             composeRule.onNodeWithTag(SolarLabTestTags.stageFirstSearchFocusTag("earth")).performClick()
 
-            var lastSelectionFailure: Throwable? = null
+            var lastSelectionFailure: AssertionError? = null
             try {
-                awaitCondition(timeoutMillis = 20_000) {
+                composeRule.waitUntil(timeoutMillis = 20_000) {
                     composeRule.mainClock.advanceTimeByFrame()
-                    runCatching {
+                    try {
                         composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                             .assertTextContains("Earth")
-                    }.onFailure { lastSelectionFailure = it }.isSuccess
+                        true
+                    } catch (failure: AssertionError) {
+                        lastSelectionFailure = failure
+                        false
+                    }
                 }
             } catch (failure: ComposeTimeoutException) {
                 throw AssertionError("Selection title did not update to Earth", lastSelectionFailure ?: failure)
@@ -95,7 +101,7 @@ class StageFirstSearchFocusInstrumentationTest {
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE).assertTextContains("Earth")
             composeRule.onNodeWithTag(LabTags.FOLLOW).assertIsDisplayed()
             composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsDisplayed()
-            awaitCondition(timeoutMillis = 20_000) {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
                 composeRule.mainClock.advanceTimeByFrame()
                 composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "earth"
             }
@@ -129,8 +135,14 @@ class StageFirstSearchFocusInstrumentationTest {
                 "request-id=connector-request-42; query=comet; resolved-body=halley"
         SolarLabSemanticActionBridge.clearPendingReplay()
 
+        // The native camera and scene keep publishing independently of Compose's
+        // test clock. Observe explicit frames instead of waiting for the whole
+        // live scene to become idle, as in the search and semantic-intent tests.
+        val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        composeRule.mainClock.autoAdvance = false
         try {
-            awaitCondition(timeoutMillis = 20_000) {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.mainClock.advanceTimeByFrame()
                 composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                     .fetchSemanticsNodes()
                     .isNotEmpty()
@@ -144,17 +156,39 @@ class StageFirstSearchFocusInstrumentationTest {
                 )
             )
 
-            awaitCondition(timeoutMillis = 20_000) {
-                runCatching {
-                    composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                        .assertTextContains("Halley")
-                        .assertContentDescriptionEquals(expectedAcknowledgement)
-                }.isSuccess
+            var lastAcknowledgementFailure: AssertionError? = null
+            try {
+                composeRule.waitUntil(timeoutMillis = 20_000) {
+                    composeRule.mainClock.advanceTimeByFrame()
+                    try {
+                        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                            .assertTextContains("Halley")
+                            .assertContentDescriptionEquals(expectedAcknowledgement)
+                        assertTrue(
+                            "The Rust runtime must also focus Halley",
+                            composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId == "halley",
+                        )
+                        true
+                    } catch (failure: AssertionError) {
+                        // A not-yet-updated semantic node is an expected wait
+                        // condition. Synchronization failures must propagate;
+                        // catching every Throwable hid a 30-second idle timeout.
+                        lastAcknowledgementFailure = failure
+                        false
+                    }
+                }
+            } catch (failure: ComposeTimeoutException) {
+                val focusedBodyId = composeRule.activity.runtimeFacadeForTesting.uiState.value.focusedBodyId
+                throw AssertionError(
+                    "Correlated focus acknowledgement did not reach Halley; runtime focus=$focusedBodyId",
+                    lastAcknowledgementFailure ?: failure,
+                )
             }
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
                 .assertTextContains("Halley")
                 .assertContentDescriptionEquals(expectedAcknowledgement)
         } finally {
+            composeRule.mainClock.autoAdvance = previousAutoAdvance
             SolarLabSemanticActionBridge.clearPendingReplay()
         }
     }
@@ -163,9 +197,9 @@ class StageFirstSearchFocusInstrumentationTest {
         awaitCondition(timeoutMillis = 20_000) {
             facade.uiState.value.connectionState == SessionConnectionState.Active
         }
-        // Native viewport presentation keeps producing Compose state even after
-        // the authoritative world pauses. Step UI frames explicitly throughout
-        // the catalogue journey; global renderer idleness is not an assertion.
+        // Native viewport presentation continues after physics pauses. Enter the
+        // explicit frame policy before loading the catalogue as well as while
+        // interacting with it. The @After guard restores the clock if setup fails.
         composeRule.mainClock.autoAdvance = false
         // This fixture qualifies search/catalogue semantics, not moving playback.
         // Continuous clock recomposition prevents Compose's idle barrier;

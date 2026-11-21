@@ -1,0 +1,5 @@
+#version 450
+layout(local_size_x=1) in;
+layout(std430,binding=2) writeonly buffer Arguments { uint x; uint y; uint z; } args;
+layout(push_constant) uniform Params { uint count; } params;
+void main() { args.x=(params.count+63)/64; args.y=1; args.z=1; }

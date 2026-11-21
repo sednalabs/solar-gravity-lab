@@ -24,7 +24,8 @@ internal object SolarLabVulkanBridge {
     fun cpuCapabilitySummary(): String =
         if (isLibraryLoaded) nativeGetCpuCapabilitySummary() else "cpu=native-library-unavailable"
 
-    fun createRenderer(assetManager: AssetManager): Long = if (isLibraryLoaded) nativeCreateRenderer(assetManager) else 0L
+    fun createRenderer(assetManager: AssetManager, pipelineCachePath: String): Long =
+        if (isLibraryLoaded) nativeCreateRenderer(assetManager, pipelineCachePath) else 0L
 
     /**
      * Takes a native reference to the Surface's ANativeWindow. This is the only JNI surface work
@@ -416,7 +417,7 @@ internal object SolarLabVulkanBridge {
 
     private external fun nativeIsVulkanRuntimeAvailable(): Boolean
     private external fun nativeGetCpuCapabilitySummary(): String
-    private external fun nativeCreateRenderer(assetManager: AssetManager): Long
+    private external fun nativeCreateRenderer(assetManager: AssetManager, pipelineCachePath: String): Long
     private external fun nativeAcquireNativeWindow(surface: Surface): Long
     private external fun nativeReleaseNativeWindow(nativeWindowHandle: Long)
     private external fun nativeDestroyRenderer(handle: Long)

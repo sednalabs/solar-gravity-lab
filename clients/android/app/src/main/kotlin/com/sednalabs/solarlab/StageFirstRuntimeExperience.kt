@@ -81,7 +81,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.graciousgazelles.solarlab.core.math.Vector3d
 import com.sednalabs.solarlab.render.vulkan.RenderInteractionListener
 import com.sednalabs.solarlab.render.vulkan.LabViewportState
@@ -306,10 +305,11 @@ internal fun StageFirstRuntimeExperience(
         // Compose test supplies an unconfined effect dispatcher.
         val coroutineScope = rememberCoroutineScope { kotlinx.coroutines.Dispatchers.Main.immediate }
 
-        val uiState by runtimeFacade.uiState.collectAsStateWithLifecycle()
-        val savedExperiments by runtimeFacade.savedExperiments.collectAsStateWithLifecycle()
-        val experimentStatus by runtimeFacade.experimentStatus.collectAsStateWithLifecycle()
-        val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsStateWithLifecycle()
+        val uiState by runtimeFacade.uiState.collectAsMainThreadState()
+        val researchRecording by com.sednalabs.solarlab.benchmark.LiveResearchCapture.recording.collectAsMainThreadState()
+        val savedExperiments by runtimeFacade.savedExperiments.collectAsMainThreadState()
+        val experimentStatus by runtimeFacade.experimentStatus.collectAsMainThreadState()
+        val lastProbeCommit by runtimeFacade.lastProbeCommit.collectAsMainThreadState()
 
         var flightActive by rememberSaveable { mutableStateOf(false) }
         var flightSceneClearArea by remember { mutableStateOf<Rect?>(null) }
@@ -1260,7 +1260,9 @@ internal fun StageFirstRuntimeExperience(
                     modifier = Modifier.fillMaxSize(),
                     factory = { viewContext ->
                         SolarSystemRenderHostView(viewContext).also { view ->
+                            view.setResearchDiagnosticsEnabled(researchRecording)
                             view.setOnBackendStatusChangedListener { status ->
+                                com.sednalabs.solarlab.benchmark.LiveResearchCapture.rendererStatus(status)
                                 hostRendererStatus = status.message
                             }
                             view.setOnCameraScaleChangedListener { scaleBand ->
@@ -1350,6 +1352,7 @@ internal fun StageFirstRuntimeExperience(
                         }
                     },
                     update = { view ->
+                        view.setResearchDiagnosticsEnabled(researchRecording)
                         val draft = labInteraction.draft
                         val reference = draft?.reference ?: labInteraction.referenceBodies["earth"]
                         val plane = draft?.plane ?: labInteraction.plane
@@ -1409,6 +1412,20 @@ internal fun StageFirstRuntimeExperience(
                     if (!labInteraction.committing) labInteraction.draft?.let { labInteraction.changeDraft(it.withVelocityPoint(point, scale)) }
                 },
             )
+            if (researchRecording) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xE61A3048),
+                ) {
+                    Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Recording performance", style = MaterialTheme.typography.labelMedium)
+                        TextButton(onClick = {
+                            com.sednalabs.solarlab.benchmark.LiveResearchCapture.stop("user_stopped_observatory_capture")
+                        }) { Text("Stop") }
+                    }
+                }
+            }
             }
 
             if (flightActive) FlightModeChrome(

@@ -115,7 +115,7 @@ private const val MISSION_SIGNAL_L6_TRACER_COEFF = 0.34f
 
 @Composable
 fun SolarLabApp(runtimeFacade: RuntimeFacade) {
-    val uiState by runtimeFacade.uiState.collectAsState()
+    val uiState by runtimeFacade.uiState.collectAsState(context = kotlinx.coroutines.Dispatchers.Main.immediate)
     val scope = rememberCoroutineScope()
     val onRefresh: () -> Unit = {
         scope.launch {

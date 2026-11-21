@@ -16,17 +16,18 @@ import android.view.SurfaceView
 import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.runtime.BroadcastFrameClock
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsNodeInteraction
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.graciousgazelles.solarlab.render.core.ObserverMode
@@ -37,9 +38,13 @@ import com.sednalabs.solarlab.render.vulkan.LabViewportState
 import com.sednalabs.solarlab.render.vulkan.SolarSystemRenderHostView
 import com.sednalabs.solarlab.runtime.RuntimeCommand
 import com.sednalabs.solarlab.runtime.RenderFrame
-import com.sednalabs.solarlab.runtime.RenderHostReadiness
 import com.sednalabs.solarlab.runtime.RuntimeObserverMode
 import com.sednalabs.solarlab.runtime.SessionConnectionState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -48,10 +53,10 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.concurrent.thread
+import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.floor
@@ -107,22 +112,16 @@ class LabCameraMotionInstrumentationTest {
                     abs(it.camera.pitchRadians - camera.pitchRadians) < 1e-6 } == true
             }
             proveComputeProjectionAndReuse("compute-portrait")
-            Log.i("SolarLabCameraEvidence", "Portrait compute and native pixel proof passed; rotating")
 
             composeRule.runOnUiThread { composeRule.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             composeRule.waitUntil(25_000) {
                 viewport()?.let { it.widthPx > it.heightPx && abs(it.camera.viewRadiusM - COMPUTE_RADIUS_M) < 1.0 } == true
             }
-            Log.i("SolarLabCameraEvidence", "Landscape viewport retained the compute camera")
             proveComputeProjectionAndReuse("compute-landscape")
             assertEquals("Render stress and resize cannot advance the paused world", pausedEpoch, facade.uiState.value.snapshot!!.epochSeconds, 0.0)
             proof.put("scenario", "stress.trail-density").put("epochSeconds", pausedEpoch).put("passed", true)
         } catch (error: Throwable) {
-            proof.put("passed", false).put("failure", error.toString()).put("rendererAtFailure", rendererStatus())
-            Log.e("SolarLabCameraEvidence", "Native compute journey failed before diagnostic capture", error)
-            // Record the original failure before any best-effort image capture.
-            runCatching { writeJson("compute-proof.json", proof) }
-            runCatching { capture("compute-failure.png") }
+            recordFailure("compute", error)
             throw error
         } finally {
             if (proof.optBoolean("passed")) writeJson("compute-proof.json", proof)
@@ -229,8 +228,7 @@ class LabCameraMotionInstrumentationTest {
             capture("05-after-probe-removal.png")
             proof.put("passed", true)
         } catch (error: Throwable) {
-            proof.put("passed", false).put("failure", error.toString())
-            runCatching { capture("failure.png") }
+            recordFailure("camera", error)
             throw error
         } finally {
             if (proof.optBoolean("passed")) writeJson("camera-proof.json", proof)
@@ -308,138 +306,144 @@ class LabCameraMotionInstrumentationTest {
         point.x > 6f && point.y > 6f && point.x < view.widthPx - 6 && point.y < view.heightPx - 6
 
     private fun setAllTracesVisible(visible: Boolean) {
-        Log.i("SolarLabCameraEvidence", "Setting trace visibility=$visible")
+        // Native frames and their status arrive on the Android clock even when
+        // physics is paused. Reading a scroll target must not require that live
+        // scene to become globally idle. Step the modal UI explicitly; all
+        // native projection, pixel and resource-reuse checks stay unchanged.
         val previousAutoAdvance = composeRule.mainClock.autoAdvance
-        val phase = AtomicReference("initial frame")
-        val completed = CountDownLatch(1)
-        val testThread = Thread.currentThread()
-        // Capture the actual blocked call even if a platform synchronization
-        // primitive never returns to the test's ordinary timeout/catch path.
-        thread(name = "SolarLabCameraWatchdog", isDaemon = true) {
-            if (!completed.await(20, TimeUnit.SECONDS)) {
-                val main = Looper.getMainLooper().thread
-                val heartbeat = CountDownLatch(1)
-                Handler(Looper.getMainLooper()).post { heartbeat.countDown() }
-                val mainResponded = heartbeat.await(2, TimeUnit.SECONDS)
-                Log.e("SolarLabInstrumentation", "Trace visibility=$visible stalled at ${phase.get()}; mainResponded=$mainResponded")
-                for (target in listOf(testThread, main)) {
-                    Log.e("SolarLabInstrumentation", "Camera evidence thread=${target.name} state=${target.state}")
-                    target.stackTrace.take(48).forEach { Log.e("SolarLabInstrumentation", "  at $it") }
-                }
-            }
-        }
-        fun step(name: String) {
-            phase.set(name)
-            Log.i("SolarLabCameraEvidence", "Trace visibility=$visible: $name")
-        }
-        // The stress scene continues submitting native frames while this menu is
-        // open. Qualify each control state on explicit Compose frames instead of
-        // requiring the entire renderer and sheet to become globally idle.
         composeRule.mainClock.autoAdvance = false
         try {
             composeRule.mainClock.advanceTimeByFrame()
-            step("open tools")
             composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_CONTROLS_BUTTON).performClick()
-            step("settle tools")
-            composeRule.mainClock.advanceTimeBy(400)
-            val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
-            repeat(2) { index ->
-                step("scroll trace control ${index + 1}")
-                val node = scrollToolsControlIntoView(tag)
-                step("click trace control ${index + 1}")
-                if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) node.performClick()
-                composeRule.mainClock.advanceTimeBy(64)
-            }
-            step("scroll close control")
-            val close = scrollToolsControlIntoView(LabTags.TOOLS_CLOSE)
-            step("close tools")
-            close.performClick()
             composeRule.waitUntil(10_000) {
-                composeRule.mainClock.advanceTimeBy(32)
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isNotEmpty()
+            }
+            val tag = if (visible) SolarLabTestTags.STAGE_FIRST_TRACE_MORE_BUTTON else SolarLabTestTags.STAGE_FIRST_TRACE_LESS_BUTTON
+            repeat(2) {
+                val node = scrollToSettledControl(tag)
+                if (!node.fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)) {
+                    node.performClick()
+                    composeRule.mainClock.advanceTimeByFrame()
+                }
+            }
+            try {
+                composeRule.waitUntil(10_000) {
+                    composeRule.mainClock.advanceTimeByFrame()
+                    composeRule.onNodeWithTag(tag).fetchSemanticsNode().config.contains(SemanticsProperties.Disabled)
+                }
+            } catch (timeout: ComposeTimeoutException) {
+                throw AssertionError("The two trace taps did not reach ${if (visible) "ALL" else "OFF"}", timeout)
+            }
+            scrollToSettledControl(LabTags.TOOLS_CLOSE).performClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeByFrame()
                 composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL).fetchSemanticsNodes().isEmpty()
             }
-            Log.i("SolarLabCameraEvidence", "Trace visibility=$visible; tools dismissed")
         } finally {
-            completed.countDown()
             composeRule.mainClock.autoAdvance = previousAutoAdvance
         }
     }
 
-    private fun scrollToolsControlIntoView(tag: String): SemanticsNodeInteraction {
-        val control = composeRule.onNodeWithTag(tag)
+    private fun scrollToSettledControl(tag: String): SemanticsNodeInteraction {
+        val node = composeRule.onNodeWithTag(tag)
         val panel = composeRule.onNodeWithTag(LabTags.TOOLS_PANEL)
-        var lastGeometry = "Waiting for the tools sheet to be displayed"
-        var visibleFrames = 0
-        // performScrollTo() repeats synchronously until layout moves. With the
-        // clock paused, its animated ScrollBy cannot progress and the loop never
-        // returns (AndroidX issue 556780784). Drive the real scroll semantics one
-        // bounded step at a time, advancing frames between layout observations.
+        var previousPanelBounds: Rect? = null
+        var previousBounds: Rect? = null
+        var scrollIssued = false
+        var requestedScroll = Offset.Zero
+        val scrollClock = BroadcastFrameClock()
+        val scrollScope = CoroutineScope(Dispatchers.Main.immediate + scrollClock)
+        val scrollCompletion = CompletableFuture<Offset>()
+        var lastObservation = "No visibility sample yet"
         try {
             composeRule.waitUntil(10_000) {
-                composeRule.mainClock.advanceTimeBy(32)
-                // The dialog's semantics can exist before its Android window is
-                // placed. A fixed clock advance does not guarantee that layout
-                // or drawing has happened; zero bounds must never mean success.
-                if (!panel.isDisplayed()) {
-                    visibleFrames = 0
-                    val pending = composeRule.onAllNodesWithTag(LabTags.TOOLS_PANEL)
-                        .fetchSemanticsNodes().singleOrNull()
-                    lastGeometry = pending?.let {
-                        "Tools sheet not displayed: placed=${it.layoutInfo.isPlaced} " +
-                            "size=${it.size} root=${it.boundsInRoot} window=${it.boundsInWindow}"
-                    } ?: "Tools sheet not composed"
+                composeRule.mainClock.advanceTimeByFrame()
+                val frameTimeNanos = TimeUnit.MILLISECONDS.toNanos(composeRule.mainClock.currentTime)
+                composeRule.runOnUiThread { scrollClock.sendFrame(frameTimeNanos) }
+                if (!scrollIssued) {
+                    if (!panel.isDisplayed()) {
+                        lastObservation = "Android reports the tools panel is not displayed"
+                        previousPanelBounds = null
+                        return@waitUntil false
+                    }
+                    val panelSemantics = panel.fetchSemanticsNode()
+                    val viewport = panelSemantics.boundsInWindow
+                    val panelSize = panelSemantics.size
+                    val panelFullyVisible = panelSize.width > 0 && panelSize.height > 0 &&
+                        abs(viewport.width - panelSize.width) <= 1f && abs(viewport.height - panelSize.height) <= 1f
+                    val panelSettled = panelFullyVisible && viewport == previousPanelBounds
+                    lastObservation = "panelWindowBounds=$viewport, panelSize=$panelSize, previousPanelBounds=$previousPanelBounds"
+                    previousPanelBounds = viewport.takeIf { panelFullyVisible }
+                    if (!panelSettled) return@waitUntil false
+
+                    val target = node.fetchSemanticsNode()
+                    val targetTop = target.positionInWindow.y
+                    val targetBottom = targetTop + target.size.height
+                    val delta = when {
+                        targetTop < viewport.top -> targetTop - viewport.top
+                        targetBottom > viewport.bottom -> targetBottom - viewport.bottom
+                        else -> 0f
+                    }
+                    val reverse = panelSemantics.config[SemanticsProperties.VerticalScrollAxisRange].reverseScrolling
+                    // ScrollBy only starts an animation. Even pixel-stable bounds
+                    // can precede its completion, when Scrollable still consumes
+                    // the next down event to stop scrolling. ScrollByOffset returns
+                    // after that state is cleared. Give its suspend action a Main
+                    // frame clock driven by this same bounded test-clock loop.
+                    requestedScroll = Offset(0f, if (reverse) -delta else delta)
+                    val scroll = panelSemantics.config[SemanticsActions.ScrollByOffset]
+                    scrollScope.launch {
+                        try {
+                            // Zero offset still acquires/releases the scroll mutator,
+                            // so an already visible control gets the same completion
+                            // guarantee as a control that needed to move.
+                            scrollCompletion.complete(scroll(requestedScroll))
+                        } catch (error: Throwable) {
+                            scrollCompletion.completeExceptionally(error)
+                            if (error is CancellationException) throw error
+                        }
+                    }
+                    scrollIssued = true
+                    lastObservation = "Issued one scroll delta=$delta; viewport=$viewport, targetTop=$targetTop, targetBottom=$targetBottom"
                     return@waitUntil false
                 }
-                val scrollNode = panel.fetchSemanticsNode()
-                val target = control.fetchSemanticsNode()
-                var root = scrollNode
-                while (true) root = root.parent ?: break
-                // Clip to this dialog's root, not the underlying activity. The
-                // sheet and its scrollable content may still extend off-screen
-                // while the opening animation and Android layout catch up.
-                val viewport = scrollNode.boundsInRoot.intersect(root.boundsInRoot)
-                val top = target.positionInRoot.y
-                val bottom = top + target.size.height
-                val clipped = target.boundsInRoot
-                val placed = target.layoutInfo.isPlaced && scrollNode.layoutInfo.isPlaced &&
-                    target.size.width > 0 && target.size.height > 0 &&
-                    viewport.width > 0f && viewport.height > 0f
-                val displayed = control.isDisplayed()
-                val delta = when {
-                    !placed -> 0f
-                    top < viewport.top -> top - viewport.top
-                    bottom > viewport.bottom -> bottom - viewport.bottom
-                    else -> 0f
+                if (!scrollCompletion.isDone) {
+                    lastObservation = "Waiting for ScrollByOffset completion: requested=$requestedScroll, frameTimeNanos=$frameTimeNanos"
+                    return@waitUntil false
                 }
-                lastGeometry = "$tag placed=$placed displayed=$displayed " +
-                    "position=${target.positionInRoot} size=${target.size} clipped=$clipped " +
-                    "panel=${scrollNode.boundsInRoot} root=${root.boundsInRoot} " +
-                    "viewport=$viewport delta=$delta"
-                if (placed && abs(delta) > 1f) {
-                    visibleFrames = 0
-                    Log.i("SolarLabCameraEvidence", "Scrolling tools: $lastGeometry")
-                    panel.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
-                        assertTrue("Tools must accept scrolling to $tag", scroll(0f, delta))
-                    }
-                    composeRule.mainClock.advanceTimeBy(400)
-                    false
-                } else {
-                    // Keep the actual Compose/Android display gate inside the
-                    // wait, and require the whole control's height to survive
-                    // clipping on consecutive frames before clicking it.
-                    val visible = placed && displayed && clipped.width > 0f &&
-                        clipped.height >= target.size.height - 1f
-                    visibleFrames = if (visible) visibleFrames + 1 else 0
-                    visibleFrames >= 2
+                val consumedScroll = try {
+                    // isDone is permanent: this get cannot wait for another frame.
+                    scrollCompletion.get()
+                } catch (failure: ExecutionException) {
+                    throw AssertionError("ScrollByOffset for '$tag' failed", failure.cause ?: failure)
                 }
+                // Compose 1.7.5 checks placement, Android root visibility and the
+                // visible screen rectangle here. Semantics presence is insufficient.
+                if (!node.isDisplayed()) {
+                    lastObservation = "Android reports the control is not displayed"
+                    previousBounds = null
+                    return@waitUntil false
+                }
+                val semantics = node.fetchSemanticsNode()
+                val bounds = semantics.boundsInWindow
+                val size = semantics.size
+                // Unlike boundsInRoot, boundsInWindow also clamps to root extents.
+                // Compare with the unclipped size, then require consecutive stable
+                // visible frames before the caller's single coordinate click.
+                val fullyVisible = size.width > 0 && size.height > 0 &&
+                    abs(bounds.width - size.width) <= 1f && abs(bounds.height - size.height) <= 1f
+                lastObservation = "scrollCompleted=true, consumed=$consumedScroll, displayed=true, windowBounds=$bounds, fullSize=$size, previousBounds=$previousBounds"
+                val settled = fullyVisible && bounds == previousBounds
+                previousBounds = bounds.takeIf { fullyVisible }
+                settled
             }
-        } catch (error: Throwable) {
-            Log.e("SolarLabCameraEvidence", "Cannot reveal tools control: $lastGeometry", error)
-            proof.put("toolsScrollFailure", lastGeometry)
-            throw error
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Control '$tag' did not finish scrolling and become fully visible and stationary: $lastObservation", timeout)
+        } finally {
+            scrollScope.cancel()
         }
-        Log.i("SolarLabCameraEvidence", "Tools control visible: $lastGeometry")
-        return control.assertIsDisplayed()
+        return node
     }
 
     private fun computeFields(status: String, stream: String): Map<String, String> {
@@ -659,34 +663,80 @@ class LabCameraMotionInstrumentationTest {
         writeImage(name, requireNotNull(instrumentation.uiAutomation.takeScreenshot()))
     }
 
-    private fun copyStageBitmap(): Bitmap {
-        // The stress renderer is deliberately live. Waiting for the entire main
-        // Looper to become idle can block forever even though a native frame is
-        // ready. Qualify the actual surface and submitted viewport instead.
-        Log.i("SolarLabCameraEvidence", "Waiting for submitted native surface before PixelCopy")
-        composeRule.waitUntil(15_000) {
-            var submitted = false
-            composeRule.runOnUiThread {
-                val surface = findSurface(composeRule.activity.window.decorView)
-                val frame = findHost(composeRule.activity.window.decorView)?.currentLabViewportState()
-                submitted = surface != null && surface.isShown && surface.holder.surface.isValid &&
-                    surface.width > 0 && surface.height > 0 && frame != null &&
-                    frame.widthPx == surface.width && frame.heightPx == surface.height
+    private fun recordFailure(prefix: String, error: Throwable) {
+        proof.put("passed", false).put("failure", error.toString())
+        Log.e("SolarLabCameraProof", "$prefix proof failed before optional capture", error)
+        // Persist the primary error before any UI query or screenshot can block.
+        runCatching { writeJson("$prefix-primary-failure.json", proof) }
+            .onFailure { error.addSuppressed(it) }
+        try {
+            val captured = copyStage()
+            proof.put("rendererAtFailure", captured.rendererStatus)
+            writeImage("$prefix-failure-stage.png", captured.bitmap)
+        } catch (captureError: Throwable) {
+            proof.put("captureFailure", captureError.toString())
+            error.addSuppressed(captureError)
+            Log.w("SolarLabCameraProof", "Optional native-stage capture failed", captureError)
+        }
+        // The shell captures the complete failure screen under its own timeout.
+        // Do not call synchronous UiAutomation.takeScreenshot on this error path.
+    }
+
+    private data class CapturedStage(val bitmap: Bitmap, val rendererStatus: String)
+
+    private fun copyStageBitmap(): Bitmap = copyStage().bitmap
+
+    private fun copyStage(): CapturedStage {
+        val completion = CompletableFuture<CapturedStage>()
+        val handler = Handler(Looper.getMainLooper())
+        val request = Runnable {
+            if (completion.isDone) return@Runnable
+            try {
+                val root = composeRule.activity.window.decorView
+                val surface = requireNotNull(findSurface(root))
+                val status = findHost(root)?.currentBackendStatus()?.message.orEmpty()
+                val stage = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
+                try {
+                    PixelCopy.request(surface, stage, { code ->
+                        if (code == PixelCopy.SUCCESS) {
+                            // A timed-out caller no longer owns the eventual bitmap.
+                            if (!completion.complete(CapturedStage(stage, status))) stage.recycle()
+                        } else {
+                            stage.recycle()
+                            completion.completeExceptionally(AssertionError("Native surface copy failed with PixelCopy code $code"))
+                        }
+                    }, handler)
+                } catch (error: Throwable) {
+                    stage.recycle()
+                    completion.completeExceptionally(error)
+                }
+            } catch (error: Throwable) {
+                completion.completeExceptionally(error)
             }
-            submitted && facade.uiState.value.renderStatus.readiness == RenderHostReadiness.Ready
         }
-        val latch = CountDownLatch(1)
-        var result = PixelCopy.ERROR_UNKNOWN
-        lateinit var stage: Bitmap
-        composeRule.runOnUiThread {
-            val surface = requireNotNull(findSurface(composeRule.activity.window.decorView))
-            stage = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
-            PixelCopy.request(surface, stage, { code -> result = code; latch.countDown() }, Handler(Looper.getMainLooper()))
+        if (!handler.post(request)) completion.completeExceptionally(AssertionError("The UI queue rejected native-stage capture"))
+        fun abandon(reason: Throwable) {
+            handler.removeCallbacks(request)
+            if (!completion.completeExceptionally(reason)) {
+                // Handle completion racing the deadline without leaking its bitmap.
+                runCatching { completion.getNow(null) }.getOrNull()?.bitmap?.recycle()
+            }
         }
-        assertTrue("Native stage copy should complete", latch.await(10, TimeUnit.SECONDS))
-        assertEquals("Native surface should be capturable", PixelCopy.SUCCESS, result)
-        Log.i("SolarLabCameraEvidence", "Native PixelCopy completed: ${stage.width}x${stage.height}")
-        return stage
+        return try {
+            // One budget covers posting to Main and the PixelCopy callback. There
+            // is no global UI-idle wait before this native surface fence.
+            completion.get(10, TimeUnit.SECONDS)
+        } catch (timeout: TimeoutException) {
+            val failure = AssertionError("Native stage copy exceeded 10 seconds including UI scheduling", timeout)
+            abandon(failure)
+            throw failure
+        } catch (interrupted: InterruptedException) {
+            abandon(interrupted)
+            Thread.currentThread().interrupt()
+            throw interrupted
+        } catch (failure: ExecutionException) {
+            throw (failure.cause ?: failure)
+        }
     }
 
     private fun writeImage(name: String, bitmap: Bitmap) {

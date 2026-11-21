@@ -635,14 +635,37 @@ fn scene_revision_from_snapshot(
             light.direction_ws.z
         );
     }
+    // Timing is observation metadata, not scene identity. Including extraction
+    // latency made repeated exports of a paused world invalidate native GPU
+    // upload revisions even though all scene payloads were unchanged.
     let _ = write!(
         &mut revision,
-        "|diag:frame={}:cpu={:.3}:gpu={:.3}:drop={}",
+        "|diag:frame={}:drop={}",
         diagnostics.frame_number,
-        diagnostics.cpu_extract_ms,
-        diagnostics.gpu_upload_ms,
         diagnostics.dropped_frames
     );
 
     revision
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn extraction_and_upload_timing_do_not_change_scene_identity() {
+        let runtime = crate::tests::new_runtime();
+        let snapshot = runtime.snapshot();
+        let scene = extract_render_scene(&snapshot);
+        let mut diagnostics = scene.diagnostics;
+        for (cpu_ms, gpu_ms) in [(0.0, 0.0), (12.5, 35.0), (333.0, 1024.0)] {
+            diagnostics.cpu_extract_ms = cpu_ms;
+            diagnostics.gpu_upload_ms = gpu_ms;
+            let revision = scene_revision_from_snapshot(
+                &snapshot, &scene.bodies, &scene.tracers, &scene.trails, &scene.lights,
+                &diagnostics,
+            );
+            assert_eq!(revision, scene.scene_revision);
+        }
+    }
 }

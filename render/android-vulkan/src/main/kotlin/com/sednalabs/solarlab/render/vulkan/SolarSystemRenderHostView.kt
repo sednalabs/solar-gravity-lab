@@ -33,6 +33,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var interactionListener: RenderInteractionListener? = null
     private var interactionMode: SceneInteractionMode = SceneInteractionMode.NAVIGATE_AND_SELECT
     private var processingMode: RenderProcessingMode = RenderProcessingMode.DEFAULT
+    private var researchDiagnosticsEnabled: Boolean = false
     private var selectedBodyId: String? = null
     private var observerMode: ObserverMode = ObserverMode.FREE
     private var placementPlaneZ: Double = 0.0
@@ -228,6 +229,13 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setProcessingMode(mode)
     }
 
+    /** Enables full native diagnostics only for an explicit recording session. */
+    fun setResearchDiagnosticsEnabled(enabled: Boolean) {
+        if (researchDiagnosticsEnabled == enabled) return
+        researchDiagnosticsEnabled = enabled
+        activeSurface?.setResearchDiagnosticsEnabled(enabled)
+    }
+
     fun bindRuntimeSessionHandle(sessionHandle: Long) {
         runtimeSessionHandle = sessionHandle
         activeSurface?.bindRuntimeSessionHandle(sessionHandle)
@@ -339,6 +347,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setInteractionMode(interactionMode)
         activeSurface?.bindRuntimeSessionHandle(runtimeSessionHandle)
         activeSurface?.setProcessingMode(processingMode)
+        activeSurface?.setResearchDiagnosticsEnabled(researchDiagnosticsEnabled)
         activeSurface?.setSelectedBodyId(selectedBodyId)
         activeSurface?.setObserverMode(observerMode)
         activeSurface?.setPlacementPlaneZ(placementPlaneZ)

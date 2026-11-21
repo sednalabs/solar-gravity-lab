@@ -96,6 +96,20 @@ for the commit-by-commit scope and which checkpoints remain historical.
 
 ## Build, validation and operational reference
 
+- [Physical-device research build](device-research-benchmark.md) documents the
+  separate benchmark app, the 61-opportunity coverage ledger, recording/export
+  controls, comparison rules and remaining implementation boundaries. Its
+  publication and phone acceptance are separate from the historical delivery
+  snapshot above.
+- [First benchmark.2 S25 recording](device-research-s25-benchmark2.md) records
+  the measured subgroup gain, negative rsqrt/FP16 findings and first-position
+  bias that motivated counterbalanced protocol v3.
+- [Quota-stopped benchmark.2 Full recording](device-research-s25-full-quota.md)
+  records the dense exact-NEON lead, rsqrt2 slowdown and journal duplication
+  behind the bounded Full cohorts and compact environment encoding. The
+  benchmark.4 follow-up was pending validation and build publication at that
+  source checkpoint; [PR #249](https://github.com/sednalabs/solar-gravity-lab/pull/249)
+  tracks current exact-source proof and release status.
 - [Vulkan runtime acceleration qualification](vulkan-runtime-qualification-20261118.md)
   records optional workload gates, profiling switches and the separate device
   acceptance requirements for the post-#242 implementation.

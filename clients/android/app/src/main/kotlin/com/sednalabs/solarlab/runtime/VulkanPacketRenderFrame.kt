@@ -189,6 +189,7 @@ internal object VulkanPacketRenderFrameDecoder {
     private const val TRACER_STRIDE_BYTES = 132
     private const val TRAIL_VERTEX_STRIDE_BYTES = 20
     private const val TRAIL_SPAN_STRIDE_BYTES = 136
+    private const val DIRECTIONAL_LIGHT_STRIDE_BYTES = 32
     private const val BODY_KIND_OFFSET_BYTES = 40
     private const val BODY_APPEARANCE_OFFSET_BYTES = 44
     private const val BODY_ID_OFFSET_BYTES = 144
@@ -238,6 +239,29 @@ internal object VulkanPacketRenderFrameDecoder {
             tracers = tracers,
             trails = trails,
         )
+    }
+
+    /** A clipped display fallback must not suppress the next attempt to obtain a full packet. */
+    fun isCompleteForReuse(packet: NativeVulkanScenePacket, frame: RenderFrame): Boolean {
+        fun complete(buffer: ByteBuffer?, count: Int, stride: Int): Boolean =
+            count >= 0 && (count == 0 || (buffer != null && count <= buffer.limit() / stride))
+        if (frame.bodies.size != packet.bodyCount || frame.tracers.size != packet.tracerCount ||
+            frame.trails.size != packet.trailSpanCount ||
+            !complete(packet.bodyInstances, packet.bodyCount, BODY_STRIDE_BYTES) ||
+            !complete(packet.tracerInstances, packet.tracerCount, TRACER_STRIDE_BYTES) ||
+            !complete(packet.trailSpans, packet.trailSpanCount, TRAIL_SPAN_STRIDE_BYTES) ||
+            !complete(packet.trailVertices, packet.trailVertexCount, TRAIL_VERTEX_STRIDE_BYTES) ||
+            !complete(packet.directionalLights, packet.directionalLightCount, DIRECTIONAL_LIGHT_STRIDE_BYTES)) return false
+        val spans = preparedBuffer(packet.trailSpans) ?: return packet.trailSpanCount == 0
+        repeat(packet.trailSpanCount) { index ->
+            val base = index * TRAIL_SPAN_STRIDE_BYTES
+            val offset = spans.getInt(base)
+            val count = spans.getInt(base + 4)
+            // Subtraction avoids overflow in an offset + count range check.
+            if (offset < 0 || count < 0 || offset > packet.trailVertexCount ||
+                count > packet.trailVertexCount - offset) return false
+        }
+        return true
     }
 
     private fun decodeBodies(buffer: ByteBuffer?, count: Int): List<RenderBody> {

@@ -397,6 +397,7 @@ val buildSolarlabNative by tasks.registering(BuildSolarlabNativeTask::class) {
             include("Cargo.toml")
             include("Cargo.lock")
             include("engine/**/Cargo.toml")
+            include("engine/**/build.rs")
             include("engine/**/src/**/*.rs")
             include("engine/ffi/include/**/*.h")
         }
@@ -418,6 +419,8 @@ android {
         versionCode = solarlabVersionCode
         versionName = solarlabVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "BUILD_COMMIT", solarlabBuildCommit.get().toBuildConfigStringLiteral())
+        buildConfigField("boolean", "BENCHMARK_ENABLED", "false")
         buildConfigField("String", "DEV_TELEMETRY_ENDPOINT", solarlabDevTelemetryEndpoint.toBuildConfigStringLiteral())
         buildConfigField("String", "DEV_TELEMETRY_TOKEN", solarlabDevTelemetryToken.toBuildConfigStringLiteral())
         buildConfigField("String", "PREFERRED_GPU_BACKEND", solarlabPreferredGpuBackend.toBuildConfigStringLiteral())
@@ -431,6 +434,7 @@ android {
 
     buildTypes {
         getByName("debug") {
+            buildConfigField("boolean", "BENCHMARK_ENABLED", "true")
             buildConfigField("boolean", "STAGE_FIRST_CLIENT", solarlabDebugStageFirstClient.toString())
         }
 
@@ -448,6 +452,25 @@ android {
             applicationIdSuffix = ".internal"
             signingConfig = signingConfigs.getByName("debug")
             resValue("string", "app_name", "Solar Gravity Lab Dev Preview")
+            buildConfigField("boolean", "STAGE_FIRST_CLIENT", "true")
+        }
+
+        create("benchmark") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // Research releases deliberately install side by side. CI debug
+            // keys can differ, so a new version must not replace an old session
+            // store or require uninstalling the user's recorded baseline.
+            applicationIdSuffix = ".benchmark$solarlabVersionCode"
+            signingConfig = signingConfigs.getByName("debug")
+            resValue("string", "app_name", "Solar Gravity Lab Research $solarlabVersionName")
+            buildConfigField("boolean", "BENCHMARK_ENABLED", "true")
             buildConfigField("boolean", "STAGE_FIRST_CLIENT", "true")
         }
 
@@ -489,6 +512,7 @@ android {
 tasks.matching { task ->
     task.name == "mergeDebugJniLibFolders" ||
         task.name == "mergePrereleaseJniLibFolders" ||
+        task.name == "mergeBenchmarkJniLibFolders" ||
         task.name == "mergeReleaseJniLibFolders"
 }.configureEach {
     dependsOn(buildSolarlabNative)

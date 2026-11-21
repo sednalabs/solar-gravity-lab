@@ -42,6 +42,7 @@ on:
         options:
           - prerelease
           - release
+          - benchmark
       publish_release:
         description: Publish or update the GitHub Release page from this run
         required: false
@@ -369,6 +370,75 @@ jobs:
           cache-version: ${{ env.ANDROID_RUST_TOOLCHAIN_CACHE_VERSION }}
           shared-cache-hit: ${{ steps.prerelease_rust_shared_cache.outputs.cache-hit }}
 
+      - name: Checkout the qualified QCOM shader compiler
+        if: needs.route.outputs.build_variant == 'benchmark'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/glslang
+          ref: e1b562a8bed273a02f30b59b66a5d499793cede5 # 16.6.0
+          path: .hardware/glslang
+          persist-credentials: false
+
+      - name: Restore the qualified QCOM compiler cache
+        id: benchmark-glslang-cache
+        if: needs.route.outputs.build_variant == 'benchmark'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .hardware/glslang-build
+          key: benchmark-glslang-${{ runner.os }}-${{ runner.arch }}-e1b562a8-v1
+
+      - name: Compile vendor probes for the research APK
+        if: needs.route.outputs.build_variant == 'benchmark'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S .hardware/glslang -B .hardware/glslang-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_OPT=OFF -DENABLE_HLSL=OFF \
+            -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=ON
+          cmake --build .hardware/glslang-build --target glslang-standalone --parallel 4
+          bash .github/scripts/prepare_benchmark_shaders.sh \
+            "$GITHUB_WORKSPACE/.hardware/glslang-build/StandAlone/glslang" \
+            "$GITHUB_WORKSPACE/dist/benchmark-shaders" \
+            "$GITHUB_WORKSPACE/.hardware/glslang"
+          echo "SOLARLAB_QCOM_SHADER_DIR=$GITHUB_WORKSPACE/dist/benchmark-shaders" >> "$GITHUB_ENV"
+
+      - name: Save the qualified QCOM compiler cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.route.outputs.build_variant == 'benchmark' && steps.benchmark-glslang-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .hardware/glslang-build
+          key: ${{ steps.benchmark-glslang-cache.outputs.cache-primary-key }}
+
+      - name: Checkout qualified Vulkan headers for native research proof
+        if: needs.route.outputs.build_variant == 'benchmark'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: 88487f687f3100ebe1d3559a8a34d971ee85b977
+          path: .hardware/vulkan-headers
+          persist-credentials: false
+
+      - name: Verify native research kernels against software Vulkan
+        if: needs.route.outputs.build_variant == 'benchmark'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers ninja-build
+          mkdir -p dist/native-benchmark-proof
+          cmake -S render/android-vulkan/benchmarks -B dist/native-benchmark-proof/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGLSLC="${ANDROID_NDK_HOME}/shader-tools/linux-x86_64/glslc" \
+            -DVulkan_INCLUDE_DIR="$GITHUB_WORKSPACE/.hardware/vulkan-headers/include" \
+            -DSOLARLAB_QCOM_SHADER_DIR="$SOLARLAB_QCOM_SHADER_DIR" \
+            2>&1 | tee dist/native-benchmark-proof/configure.log
+          cmake --build dist/native-benchmark-proof/build --parallel 4 \
+            2>&1 | tee dist/native-benchmark-proof/build.log
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          ctest --test-dir dist/native-benchmark-proof/build --output-on-failure -V \
+            2>&1 | tee dist/native-benchmark-proof/oracles.log
+
       - name: Assemble prerelease APK
         id: assemble_prerelease
         env:
@@ -389,7 +459,14 @@ jobs:
           mapfile -t gradle_configuration_cache_args < <(
             bash .github/scripts/gradle_configuration_cache_args.sh "${GRADLE_CONFIGURATION_CACHE_MODE}"
           )
+          benchmark_args=()
+          if [[ "$build_variant" == "benchmark" ]]; then
+            : "${SOLARLAB_QCOM_SHADER_DIR:?The research build must contain the compiled QCOM probes}"
+            benchmark_args=(-PsolarLabBufferAddressCompaction=true -PsolarLabCapturePipelineStatistics=true \
+              "-PsolarLabQcomShaderDir=${SOLARLAB_QCOM_SHADER_DIR}")
+          fi
           ./gradlew -p clients/android ":app:assemble${build_variant^}" \
+            "${benchmark_args[@]}" \
             "${gradle_configuration_cache_args[@]}" \
             2>&1 | tee dist/gradle/prerelease-assemble.log
           phase_end="$(date +%s)"
@@ -404,26 +481,6 @@ jobs:
             echo "from_cache_count=${from_cache_count}"
             echo "configuration_cache_status=${configuration_cache_status}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Verify Rust JNI DTO identities after R8
-        shell: bash
-        run: |
-          set -euo pipefail
-          build_variant="${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
-          apk_path="$(find "clients/android/app/build/outputs/apk/${build_variant}" -maxdepth 1 -name '*.apk' -print -quit)"
-          if [[ -z "${apk_path}" ]]; then
-            echo "No packaged APK found for ${build_variant}." >&2
-            exit 1
-          fi
-          if ! command -v apkanalyzer >/dev/null 2>&1; then
-            export PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}"
-          fi
-          if ! command -v apkanalyzer >/dev/null 2>&1; then
-            echo "apkanalyzer is unavailable from the installed Android SDK." >&2
-            exit 1
-          fi
-          python3 .github/scripts/verify_prerelease_jni_r8_contract.py \
-            --apk "${apk_path}"
 
       - name: Derive artifact metadata
         id: meta
@@ -449,8 +506,8 @@ jobs:
               inferred_channel = "prerelease" if "-" in version_name else "stable"
           else:
               inferred_channel = release_channel_input
-          package_label = "internal-dev-preview" if build_variant == "prerelease" else "release"
-          release_name_suffix = " (Internal Dev Preview)" if inferred_channel == "prerelease" else ""
+          package_label = {"prerelease": "internal-dev-preview", "release": "release", "benchmark": "research-benchmark"}[build_variant]
+          release_name_suffix = " (Research Benchmark)" if build_variant == "benchmark" else (" (Internal Dev Preview)" if inferred_channel == "prerelease" else "")
           release_title = f"Solar Gravity Lab {version_name}{release_name_suffix}"
           tag_name = f"v{version_name}"
 
@@ -466,6 +523,10 @@ jobs:
           PY
 
       - name: Stage packaged artifact
+        # Retain the assembled APK even if JNI, page alignment or smoke fails.
+        # A staged artifact is not qualified for publication until every gate passes.
+        env:
+          SOLARLAB_SOURCE_COMMIT: ${{ steps.git_meta.outputs.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -476,6 +537,63 @@ jobs:
             "clients/android/app/build/outputs/apk/${variant_dir}/${{ steps.meta.outputs.apk_name }}" \
             "dist/${artifact_name}"
           sha256sum "dist/${artifact_name}" > "dist/${artifact_name}.sha256"
+          python3 - "dist/${artifact_name}" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          apk = Path(sys.argv[1])
+          provenance = {
+              "source_commit": os.environ["SOLARLAB_SOURCE_COMMIT"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "artifact_name": apk.name,
+              "artifact_sha256": Path(str(apk) + ".sha256").read_text().split()[0],
+              "qualification": "assembled; validation gates have not yet completed",
+          }
+          Path("dist/assembly-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+          PY
+
+      - name: Verify Rust JNI DTO identities after R8
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_variant="${{ needs.route.outputs.build_variant != '' && needs.route.outputs.build_variant || inputs.build_variant || 'prerelease' }}"
+          apk_path="$(find "clients/android/app/build/outputs/apk/${build_variant}" -maxdepth 1 -name '*.apk' -print -quit)"
+          if [[ -z "${apk_path}" ]]; then
+            echo "No packaged APK found for ${build_variant}." >&2
+            exit 1
+          fi
+          if ! command -v apkanalyzer >/dev/null 2>&1; then
+            export PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}"
+          fi
+          if ! command -v apkanalyzer >/dev/null 2>&1; then
+            echo "apkanalyzer is unavailable from the installed Android SDK." >&2
+            exit 1
+          fi
+          benchmark_args=()
+          if [[ "$build_variant" == "benchmark" ]]; then benchmark_args=(--benchmark); fi
+          python3 .github/scripts/verify_prerelease_jni_r8_contract.py \
+            --apk "${apk_path}" "${benchmark_args[@]}"
+
+      - name: Verify research APK native and ZIP page alignment
+        if: needs.route.outputs.build_variant == 'benchmark'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk_path="$(find clients/android/app/build/outputs/apk/benchmark -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$apk_path"
+          elf_status=0
+          python3 .github/scripts/verify_apk_page_alignment.py "$apk_path" \
+            --output dist/native-page-alignment.json || elf_status=$?
+          zip_status=0
+          "${ANDROID_SDK_ROOT}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$apk_path" \
+            > dist/native-zip-alignment.txt 2>&1 || zip_status=$?
+          echo "Native ELF check exit: ${elf_status}; ZIP alignment check exit: ${zip_status}" >> "$GITHUB_STEP_SUMMARY"
+          if (( elf_status != 0 || zip_status != 0 )); then
+            echo "Native page compatibility failed; retained APK and both diagnostics for review." >&2
+            exit 1
+          fi
 
       - name: Emulator launch smoke for packaged APK
         id: launch_smoke
@@ -655,6 +773,10 @@ jobs:
             dist/gradle/**
             dist/startup-smoke/**
             dist/sccache/**
+            dist/benchmark-shaders/**
+            dist/native-benchmark-proof/*.log
+            dist/native-benchmark-proof/build/Testing/**
+            dist/native-zip-alignment.txt
             clients/android/app/build/outputs/apk/${{ steps.meta.outputs.build_variant }}/output-metadata.json
 
   isa-prerelease-proof:

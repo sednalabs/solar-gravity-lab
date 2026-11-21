@@ -920,6 +920,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solarlab-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "solarlab-domain",
+ "solarlab-physics",
+]
+
+[[package]]
 name = "solarlab-conformance"
 version = "0.1.0"
 dependencies = [
@@ -968,6 +978,7 @@ version = "0.1.0"
 dependencies = [
  "jni",
  "serde_json",
+ "solarlab-benchmarks",
  "solarlab-data",
  "solarlab-domain",
  "solarlab-hardware",

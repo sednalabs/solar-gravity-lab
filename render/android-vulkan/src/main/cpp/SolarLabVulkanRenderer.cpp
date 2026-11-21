@@ -11,9 +11,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -40,6 +42,21 @@ constexpr uint32_t kAppearanceHasRingSystem = 1U << 0U;
 constexpr uint32_t kAppearanceHasAtmosphere = 1U << 1U;
 constexpr uint32_t kAppearanceHasComet = 1U << 2U;
 constexpr uint64_t kFrameWaitTimeoutNs = 2'000'000'000ULL;
+
+uint64_t ElapsedNs(std::chrono::steady_clock::time_point started) {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started).count());
+}
+
+solarlab::rendering::PipelineCacheIdentity CacheIdentity(const VkPhysicalDeviceProperties& properties) {
+    solarlab::rendering::PipelineCacheIdentity identity{
+        .vendorId = properties.vendorID,
+        .deviceId = properties.deviceID,
+        .driverVersion = properties.driverVersion,
+    };
+    std::copy_n(properties.pipelineCacheUUID, identity.uuid.size(), identity.uuid.begin());
+    return identity;
+}
 
 VkDrawIndirectCommand MakeInitialIndirectCommand() {
     return VkDrawIndirectCommand{
@@ -193,6 +210,11 @@ void SolarLabVulkanRenderer::SetAssetManager(AAssetManager* assetManager) {
     assetManager_ = assetManager;
 }
 
+void SolarLabVulkanRenderer::SetPipelineCachePath(const std::string& path) {
+    std::scoped_lock lock(stateMutex_);
+    pipelineCachePath_ = path;
+}
+
 bool SolarLabVulkanRenderer::Initialize(ANativeWindow* nativeWindow, int width, int height) {
     std::scoped_lock lock(stateMutex_);
     Cleanup();
@@ -260,6 +282,10 @@ bool SolarLabVulkanRenderer::Initialize(ANativeWindow* nativeWindow, int width, 
         return false;
     }
 
+    // Lifecycle work on the serialized renderer worker. Saving here permits
+    // reuse on the next launch even if Android later kills this process.
+    PersistPipelineCache();
+
     backendLabelCache_ = std::string("Vulkan SPIR-V graphics pipelines") + (computeCompactionEnabled_ ? " + compute compaction" : " + direct medium/far draws");
     sceneSummaryCache_ = BuildSceneSummaryLocked();
     LogInfo("Vulkan renderer initialised with SPIR-V graphics pipelines" + std::string(computeCompactionEnabled_ ? " and compute compaction." : " without compute compaction."));
@@ -324,6 +350,7 @@ bool SolarLabVulkanRenderer::Resize(ANativeWindow* nativeWindow, int width, int 
         return false;
     }
     if (!CreateSyncObjects()) return false;
+    PersistPipelineCache();
     backendLabelCache_ = std::string("Vulkan SPIR-V graphics pipelines") + (computeCompactionEnabled_ ? " + compute compaction" : " + direct medium/far draws");
     sceneSummaryCache_ = BuildSceneSummaryLocked();
     return true;
@@ -611,6 +638,21 @@ std::string SolarLabVulkanRenderer::HardwareSummary() const {
         << " executable=[supported:" << capabilities_.pipelineExecutableInfo
         << ",enabled:" << (optionalFeatures_.executable.pipelineExecutableInfo == VK_TRUE)
         << ",statistics:" << pipelineStatisticCount_ << ']'
+        << " pipelineCachePersistence=[source:" << pipelineCacheDiagnostics_.source
+        << ",load:" << pipelineCacheDiagnostics_.loadStatus
+        << ",save:" << pipelineCacheDiagnostics_.writeStatus
+        << ",loadedBytes:" << pipelineCacheDiagnostics_.loadedBytes
+        << ",savedBytes:" << pipelineCacheDiagnostics_.writtenBytes
+        << ",loadNs:" << pipelineCacheDiagnostics_.loadNs
+        << ",createNs:" << pipelineCacheDiagnostics_.cacheCreateNs
+        << ",pipelineCreateNs:" << pipelineCacheDiagnostics_.graphicsCreateNs + pipelineCacheDiagnostics_.computeCreateNs
+        << ",saveNs:" << pipelineCacheDiagnostics_.writeNs
+        << ",saveAttempts:" << pipelineCacheDiagnostics_.writeAttempts
+        << ",graphicsCalls:" << pipelineCacheDiagnostics_.graphicsCalls
+        << ",computeCalls:" << pipelineCacheDiagnostics_.computeCalls
+        << ",seedResult:" << pipelineCacheDiagnostics_.seedResult
+        << ",emptyRetry:" << pipelineCacheDiagnostics_.emptyRetry
+        << ",scope:device-lifecycle,timing:cpu-host,hits:unmeasured]"
         << " timestamp=[validBits:" << capabilities_.timestampValidBits
         << ",periodNs:" << capabilities_.timestampPeriod
         << ",queries:" << (timestampQueryPool_ != VK_NULL_HANDLE) << ']'
@@ -849,18 +891,83 @@ bool SolarLabVulkanRenderer::CreatePipelineCache() {
         return true;
     }
 
-    const VkPipelineCacheCreateInfo createInfo{
+    pipelineCacheDiagnostics_ = {};
+    pipelineCacheDirty_ = false;
+    const auto loadStarted = std::chrono::steady_clock::now();
+    const auto loaded = solarlab::rendering::PipelineCacheStore::Load(
+        pipelineCachePath_, CacheIdentity(physicalDeviceProperties_));
+    pipelineCacheDiagnostics_.loadNs = ElapsedNs(loadStarted);
+    pipelineCacheDiagnostics_.loadStatus = solarlab::rendering::PipelineCacheFileStatusLabel(loaded.status);
+    pipelineCacheDiagnostics_.loadedBytes = loaded.data.size();
+
+    VkPipelineCacheCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .initialDataSize = 0,
-        .pInitialData = nullptr,
+        .initialDataSize = loaded.data.size(),
+        .pInitialData = loaded.data.empty() ? nullptr : loaded.data.data(),
     };
-    if (vkCreatePipelineCache(device_, &createInfo, nullptr, &pipelineCache_) != VK_SUCCESS) {
+    const auto createStarted = std::chrono::steady_clock::now();
+    auto result = vkCreatePipelineCache(device_, &createInfo, nullptr, &pipelineCache_);
+    pipelineCacheDiagnostics_.seedResult = result;
+    if (result != VK_SUCCESS && !loaded.data.empty()) {
+        // The file is optional acceleration data. A driver refusal must not
+        // prevent rendering; retry the ordinary empty cache once.
+        pipelineCacheDiagnostics_.emptyRetry = true;
+        pipelineCache_ = VK_NULL_HANDLE;
+        createInfo.initialDataSize = 0;
+        createInfo.pInitialData = nullptr;
+        result = vkCreatePipelineCache(device_, &createInfo, nullptr, &pipelineCache_);
+    } else if (result == VK_SUCCESS && !loaded.data.empty()) {
+        // Vulkan can ignore seed data internally. This is not a cache-hit claim.
+        pipelineCacheDiagnostics_.source = "disk-supplied";
+    }
+    pipelineCacheDiagnostics_.cacheCreateNs = ElapsedNs(createStarted);
+    if (result != VK_SUCCESS) {
+        pipelineCache_ = VK_NULL_HANDLE;
         SetError("vkCreatePipelineCache failed.");
         return false;
     }
     return true;
+}
+
+void SolarLabVulkanRenderer::PersistPipelineCache() {
+    if (!pipelineCacheDirty_ || pipelineCache_ == VK_NULL_HANDLE || device_ == VK_NULL_HANDLE) return;
+    if (pipelineCachePath_.empty()) {
+        pipelineCacheDiagnostics_.writeStatus = "disabled";
+        pipelineCacheDirty_ = false;
+        return;
+    }
+
+    ++pipelineCacheDiagnostics_.writeAttempts;
+    const auto started = std::chrono::steady_clock::now();
+    const auto save = [&]() -> const char* {
+        size_t bytes = 0;
+        if (vkGetPipelineCacheData(device_, pipelineCache_, &bytes, nullptr) != VK_SUCCESS) return "query-failed";
+        if (bytes > solarlab::rendering::kMaxPipelineCacheBytes) return "too-large";
+        if (bytes < solarlab::rendering::kPipelineCacheHeaderBytes) return "invalid-header";
+        std::vector<uint8_t> data(bytes);
+        // No cache-modifying Vulkan call runs between the size query and read.
+        // Keep the previous file if the driver still returns an incomplete blob.
+        const auto result = vkGetPipelineCacheData(device_, pipelineCache_, &bytes, data.data());
+        if (result == VK_INCOMPLETE) return "query-incomplete";
+        if (result != VK_SUCCESS || bytes > data.size()) return "query-failed";
+        data.resize(bytes);
+        const auto status = solarlab::rendering::PipelineCacheStore::Save(
+            pipelineCachePath_, CacheIdentity(physicalDeviceProperties_), data);
+        if (status == solarlab::rendering::PipelineCacheFileStatus::Saved) {
+            pipelineCacheDiagnostics_.writtenBytes = bytes;
+            pipelineCacheDirty_ = false;
+        }
+        return solarlab::rendering::PipelineCacheFileStatusLabel(status);
+    };
+    try {
+        pipelineCacheDiagnostics_.writeStatus = save();
+    } catch (const std::bad_alloc&) {
+        pipelineCacheDiagnostics_.writeStatus = "allocation-failed";
+    }
+    // Includes cache extraction, validation, serialization and atomic file I/O.
+    pipelineCacheDiagnostics_.writeNs += ElapsedNs(started);
 }
 
 bool SolarLabVulkanRenderer::CreateSwapchain(int width, int height) {
@@ -1915,6 +2022,7 @@ void SolarLabVulkanRenderer::Cleanup() {
     if (device_ != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_);
     }
+    PersistPipelineCache();
 
     DestroyStagingUploadRing();
     DestroySceneGpuStreams();
@@ -1958,6 +2066,7 @@ void SolarLabVulkanRenderer::Cleanup() {
         device_ = VK_NULL_HANDLE;
     }
     pipelineCache_ = VK_NULL_HANDLE;
+    pipelineCacheDirty_ = false;
     cmdPipelineBarrier2_ = nullptr;
     queueSubmit2_ = nullptr;
     getBufferDeviceAddress_ = nullptr;
@@ -4392,7 +4501,11 @@ bool SolarLabVulkanRenderer::CreateGraphicsPipeline(
         .basePipelineIndex = -1,
     };
 
+    const auto createStarted = std::chrono::steady_clock::now();
     const VkResult createResult = vkCreateGraphicsPipelines(device_, pipelineCache_, 1, &pipelineCreateInfo, nullptr, &pipeline);
+    pipelineCacheDiagnostics_.graphicsCreateNs += ElapsedNs(createStarted);
+    ++pipelineCacheDiagnostics_.graphicsCalls;
+    pipelineCacheDirty_ = true;
     vkDestroyShaderModule(device_, fragmentShader, nullptr);
     vkDestroyShaderModule(device_, vertexShader, nullptr);
 
@@ -4435,7 +4548,11 @@ bool SolarLabVulkanRenderer::CreateComputePipeline(
         .basePipelineIndex = -1,
     };
 
+    const auto createStarted = std::chrono::steady_clock::now();
     const VkResult createResult = vkCreateComputePipelines(device_, pipelineCache_, 1, &createInfo, nullptr, &pipeline);
+    pipelineCacheDiagnostics_.computeCreateNs += ElapsedNs(createStarted);
+    ++pipelineCacheDiagnostics_.computeCalls;
+    pipelineCacheDirty_ = true;
     vkDestroyShaderModule(device_, computeShader, nullptr);
     if (createResult != VK_SUCCESS) {
         SetError(std::string("vkCreateComputePipelines failed for ") + label + ".");

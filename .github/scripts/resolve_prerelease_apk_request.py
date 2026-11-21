@@ -133,8 +133,10 @@ def infer_build_variant(channel: str, explicit_variant: str | None) -> str:
         return "prerelease" if channel == "prerelease" else "release"
 
     variant = explicit_variant.lower()
-    if variant not in {"prerelease", "release"}:
-        raise RequestError("SolarLab-Build-Variant must be either 'prerelease' or 'release'")
+    if variant not in {"prerelease", "release", "benchmark"}:
+        raise RequestError("SolarLab-Build-Variant must be 'prerelease', 'release', or 'benchmark'")
+    if variant == "benchmark" and channel != "prerelease":
+        raise RequestError("The benchmark variant requires a prerelease version")
     return variant
 
 
@@ -142,8 +144,8 @@ def validate_manual_build_variant(value: str) -> str:
     variant = require_single_line(value.strip(), "build_variant").lower()
     if variant == "":
         return "prerelease"
-    if variant not in {"prerelease", "release"}:
-        raise RequestError("build_variant must be either 'prerelease' or 'release'")
+    if variant not in {"prerelease", "release", "benchmark"}:
+        raise RequestError("build_variant must be 'prerelease', 'release', or 'benchmark'")
     return variant
 
 
@@ -175,6 +177,7 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
         version_code = resolve_version_code(version_match, args.input_version_code)
         manual_channel = validate_manual_channel(args.input_release_channel)
         channel = infer_channel(version_match, None if manual_channel == "auto" else manual_channel)
+        build_variant = infer_build_variant(channel, validate_manual_build_variant(args.input_build_variant))
         return {
             "release_requested": "true",
             "reason": "workflow_dispatch",
@@ -183,7 +186,7 @@ def resolve_request(args: argparse.Namespace) -> dict[str, str]:
             "version_name": version_name,
             "version_code": version_code,
             "release_channel": channel,
-            "build_variant": validate_manual_build_variant(args.input_build_variant),
+            "build_variant": build_variant,
             "publish_release": validate_publish_release(args.input_publish_release),
         }
 

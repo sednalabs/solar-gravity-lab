@@ -1,6 +1,8 @@
 package com.sednalabs.solarlab.runtime
 
 import java.util.concurrent.Executors
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,56 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BridgeBackedRuntimeFacadeTest {
+    @Test
+    fun clippedPacketsRemainRetryableUntilAllDeclaredPayloadsDecode() = runBlocking {
+        val body = ByteBuffer.allocate(296)
+        val span = ByteBuffer.allocate(136).order(ByteOrder.nativeOrder()).putInt(0, 0).putInt(4, 1)
+        val base = packetLease(bodyCount = 1, tracerCount = 0, trailSpanCount = 0,
+            trailVertexCount = 0, directionalLightCount = 0, bodyInstances = body).packet
+        val valid = base.copy(tracerCount = 1, tracerInstances = ByteBuffer.allocate(132),
+            trailSpanCount = 1, trailSpans = span, trailVertexCount = 1, trailVertices = ByteBuffer.allocate(20),
+            directionalLightCount = 1, directionalLights = ByteBuffer.allocate(32))
+        val clippedSpan = ByteBuffer.allocate(136).order(ByteOrder.nativeOrder()).putInt(0, 0).putInt(4, 2)
+        val packets = listOf(
+            base.copy(bodyInstances = null), base.copy(bodyInstances = ByteBuffer.allocate(295)),
+            valid.copy(tracerInstances = null), valid.copy(trailVertices = ByteBuffer.allocate(19)),
+            valid.copy(trailSpans = clippedSpan), valid.copy(directionalLights = null), valid,
+        )
+        val signals = packets.map { packet -> RuntimeSignal.RenderPacketReady(
+            PacketLease(packet.packetHandle, packet, "decode admission fixture") {}) }
+        val bridge = FakeRuntimeBridge(connectSignals = flowOf(*signals.toTypedArray()))
+        val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+
+        facade.startSession()
+
+        assertEquals(listOf(false, false, false, false, false, false, true), bridge.packetAcknowledgements.map { it.second })
+        assertTrue(bridge.releasedAtAcknowledgement.all { it })
+        assertEquals(1, facade.uiState.value.renderFrame!!.bodies.size)
+        assertEquals(1, facade.uiState.value.renderFrame!!.tracers.size)
+        assertEquals(1, facade.uiState.value.renderFrame!!.trails.single().points.size)
+    }
+
+    @Test
+    fun packetAcknowledgementRequiresRenderableDecodeAndSuccessfulRelease() = runBlocking {
+        fun ready(release: (Long) -> Unit = {}) = RuntimeSignal.RenderPacketReady(packetLease(
+            bodyCount = 1, tracerCount = 0, trailSpanCount = 0, trailVertexCount = 0,
+            directionalLightCount = 0, bodyInstances = ByteBuffer.allocate(296), releaseAction = release,
+        ))
+        val valid = ready()
+        val superseded = ready().also { it.lease.close() }
+        val empty = RuntimeSignal.RenderPacketReady(packetLease(
+            bodyCount = 0, tracerCount = 0, trailSpanCount = 0, trailVertexCount = 0, directionalLightCount = 0,
+        ))
+        val releaseFailure = ready { throw IllegalStateException("release failed") }
+        val bridge = FakeRuntimeBridge(connectSignals = flowOf(superseded, valid, empty, releaseFailure))
+        val facade = BridgeBackedRuntimeFacade(bridge, DeveloperTelemetryRecorder(enabled = false, sinks = emptyList()))
+
+        facade.startSession()
+
+        assertEquals(listOf(superseded to false, valid to true, empty to false, releaseFailure to false), bridge.packetAcknowledgements)
+        assertEquals(listOf(true, true, true, false), bridge.releasedAtAcknowledgement)
+    }
+
     @Test
     fun startSession_routesBoundaryConnectOffCallerThread() = runBlocking {
         val callerThreadName = Thread.currentThread().name
@@ -637,6 +689,8 @@ class BridgeBackedRuntimeFacadeTest {
         trailVertexCount: Int,
         directionalLightCount: Int,
         sceneRevision: String = "v1",
+        bodyInstances: ByteBuffer? = null,
+        releaseAction: (Long) -> Unit = {},
     ): PacketLease = PacketLease(
         packetHandle = 42L,
         packet = NativeVulkanScenePacket(
@@ -677,14 +731,14 @@ class BridgeBackedRuntimeFacadeTest {
             provenanceManifestId = null,
             provenanceManifestDigest = null,
             provenancePackageDigest = null,
-            bodyInstances = null,
+            bodyInstances = bodyInstances,
             tracerInstances = null,
             trailSpans = null,
             trailVertices = null,
             directionalLights = null,
         ),
         summaryLineValue = "scenario=sol-system, bodies=0, tracers=0, trails=0/0, lights=0, uploadBytes=0",
-        releaseAction = {},
+        releaseAction = releaseAction,
     )
 
     private class FakeRuntimeBridge(
@@ -699,6 +753,13 @@ class BridgeBackedRuntimeFacadeTest {
         val refreshThreadNames = mutableListOf<String>()
         val applyCommandThreadNames = mutableListOf<String>()
         val loadScenarioThreadNames = mutableListOf<String>()
+        val packetAcknowledgements = mutableListOf<Pair<RuntimeSignal.RenderPacketReady, Boolean>>()
+        val releasedAtAcknowledgement = mutableListOf<Boolean>()
+
+        override fun acknowledgeRenderPacket(signal: RuntimeSignal.RenderPacketReady, decoded: Boolean) {
+            packetAcknowledgements += signal to decoded
+            releasedAtAcknowledgement += signal.lease.isReleased
+        }
 
         override fun connect(): Flow<RuntimeSignal> {
             connectThreadNames += Thread.currentThread().name

@@ -1,0 +1,285 @@
+# Benchmark PR review dispositions
+
+This records all 20 inline threads present on PR #249 at source checkpoint `67dd93f8ad578a68cd0c7e1e1ca4aab18120f9fd`. Each finding was assessed against the implementation; scanner findings were not dismissed as a group. Validation evidence belongs to its exact source revision and is linked from the PR. This record does not assert physical-device execution.
+
+| Review | File | Disposition |
+|---|---|---|
+| [4613147244](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613147244) | `.github/scripts/prepare_benchmark_shaders.sh` | Public glslang commit pin, not a credential. The shader script now verifies the actual compiler checkout revision and retains the compiler binary SHA-256 as well as its version and shader hashes. |
+| [4613147355](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613147355) | `tools/analyse_benchmark_report.py` | Retained the seeded PRNG for reproducible statistical bootstrap resampling. It generates no secrets, tokens or integrity material; the source states that boundary explicitly. Export integrity uses SHA-256. |
+| [4613147452](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613147452) | `clients/android/app/src/main/res/xml/benchmark_paths.xml` | The URL was the standard XML namespace identifier, not an HTTP request. This paths file did not use that namespace, so the unused declaration was removed. |
+| [4613147539](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613147539) | `render/android-vulkan/probes/QcomOffscreenProbe.cpp` | Replaced embedded shader memcpy with bounded little-endian word decoding from known-size static arrays, including null, nonzero-length, alignment and SPIR-V magic checks. |
+| [4613147620](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613147620) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | Replaced compaction readback memcpy with a typed copy after checking the GPU count against the allocated body/output capacity. |
+| [4613147694](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613147694) | `render/android-vulkan/src/main/cpp/BenchmarkNative.cpp` | The CRC copy has an eight-byte destination and a checked eight-byte source slice. Added a null guard and overflow-safe remaining-size condition; memcpy avoids unaligned/aliasing-unsafe loads. Corrected ARM CRC intrinsics to IEEE CRC32 to match the scalar polynomial. |
+| [4613147758](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613147758) | `render/android-vulkan/src/main/cpp/BenchmarkNative.cpp` | This experiment intentionally measures libc memcpy. Equal nonzero sizes, live allocations and distinct owning vectors are checked before timing; the entire copied result is checked afterwards. |
+| [4613159751](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613159751) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | Vulkan writes the queue count through an output pointer. Selection now uses the returned vector extent and find_if, retaining the API count and preventing indexing beyond the allocated extent. Host execution selects a queue and executes the portable kernels. |
+| [4613159874](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613159874) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | Reformatted and documented GPU workload phases, resource ownership, pipeline-cache boundaries, synchronisation and timing/oracle scope. |
+| [4613159959](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613159959) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | vkGetPipelineCacheData writes cacheBytes through its output pointer. Host execution produced a 32-byte cache. The bounded 16 MiB guard remains; no fabricated initial size or suppression was introduced. |
+| [4613160043](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613160043) | `render/android-vulkan/probes/QcomOffscreenProbe.cpp` | Rewrote consuming CLI option parsing as an explicit while loop, so argument consumption no longer changes a for-loop counter in its body. |
+| [4613160132](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613160132) | `render/android-vulkan/probes/QcomOffscreenProbe.cpp` | Covered by the same explicit consuming while loop for --shaders/--mode arguments; missing/unknown arguments retain an error result. |
+| [4613160209](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613160209) | `render/android-vulkan/src/main/cpp/BenchmarkNative.cpp` | Exact comparison is intentional: values are bounded integer multiples of binary fractions and every partial sum is exactly representable in binary64. Documented this instead of weakening the omitted-load oracle with a tolerance. |
+| [4613163441](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613163441) | `engine/benchmarks/src/neon.rs` | Adopted explicit vdupq_n_f64/vsetq_lane_f64 lane construction. Optimised AArch64 assembly showed LLVM had already removed temporary array traffic, so no store-to-load-forwarding speedup is claimed. |
+| [4613163477](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613163477) | `engine/benchmarks/src/neon.rs` | Adopted vgetq_lane_f64 lane stores with odd-tail guards. Before/after assembly retained the same aggregate stack-reference count; wide-block register spills remain a measured question. |
+| [4613163486](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613163486) | `engine/benchmarks/src/kernels.rs` | Added equal input/output-length assertion before force evaluation, clearing or accounting. Added short/long output mismatch regression coverage. |
+| [4613163494](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613163494) | `clients/android/app/src/main/AndroidManifest.xml` | Locked the current orientation only during a run and restored the previous request afterwards. Avoided a permanent portrait restriction. Platforms may override requests, so lifecycle cancellation still saves partial evidence; instrumentation checks request/restoration. |
+| [4613163502](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613163502) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | Audited ownership: TryCreateCounterBuffer transfers its buffer/memory to Device. QcomTileMemory::ResetDevice only clears device/function/feature bindings and frees no allocations. Kept one destruction path and documented this contract. |
+| [4613165979](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613165979) | `tools/analyse_benchmark_report.py` | The local CLI intentionally accepts a user-selected report path. Directory members come only from a fixed filename allowlist, reject symlinks and enforce individual/aggregate size limits. Added a symlink regression test. ZIP members are read without extraction. |
+| [4613166094](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613166094) | `tools/analyse_benchmark_report.py` | This path use checks whether the caller-selected input is a directory; report content never becomes a filesystem path. Documented the read-only boundary and retained ZIP member/hash validation. There is no server-supplied path or ZIP extraction. |
+
+## Related runtime refactor
+
+PR #246 was also checked while it was a separate draft. Its three review threads had author responses identifying their changes. The initial research implementation built on main including #245, #247 and #248 and did not overwrite the refactor branch. After #246 merged, this branch integrated main `20c1ae79d15889fbf02e6fd376335eeed1810003`, including its reviewed runtime module split, bounded archive lookups and #250 documentation reconciliation. The original draft review and the later merged integration are distinct checkpoints.
+
+## Follow-up scan at `5afae4ed`
+
+A further 20 inline findings were assessed (40 total across the two reviewed revisions). Repeated findings retain their earlier reasoning. No scanner was disabled and no blanket suppression was added.
+
+| Review | File | Disposition |
+|---|---|---|
+| [4613584400](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613584400) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | AHardwareBuffer upload now verifies a nonempty bounded source, validates the returned BLOB descriptor/width/row/layer and copies a bounded byte range. Null-map, unlock and fence checks remain. |
+| [4613584511](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613584511) | `render/android-vulkan/src/main/cpp/BenchmarkNative.cpp` | Repeat of the audited CRC/copy/exact-equality findings above. Bounds and the exact binary-fraction oracle remain intentional; no suppression or weaker oracle was added. |
+| [4613584597](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613584597) | `render/android-vulkan/src/main/cpp/BenchmarkNative.cpp` | Repeat of the audited CRC/copy/exact-equality findings above. Bounds and the exact binary-fraction oracle remain intentional; no suppression or weaker oracle was added. |
+| [4613584674](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613584674) | `render/android-vulkan/src/main/cpp/BenchmarkOpenCl.cpp` | Static OpenCL source is now a constexpr char array; its explicit length is sizeof(array)-1, removing strlen and terminator scanning. |
+| [4613593405](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593405) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | Added feature/entrypoint qualification, pNext lifetime, ownership, activation and timing-boundary documentation to the named function. |
+| [4613593523](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593523) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | The actual switch has four unconditional distinct Vulkan enum cases. A compiled branch proof executed boolean, signed/unsigned integer, finite/nonfinite float and unknown-format paths successfully. Driver output writes replace initial values. Missing driver-output modelling/build-mode-none extraction is an inferred explanation, not a source defect. |
+| [4613593616](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593616) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | The actual switch has four unconditional distinct Vulkan enum cases. A compiled branch proof executed boolean, signed/unsigned integer, finite/nonfinite float and unknown-format paths successfully. Driver output writes replace initial values. Missing driver-output modelling/build-mode-none extraction is an inferred explanation, not a source defect. |
+| [4613593685](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593685) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | The actual switch has four unconditional distinct Vulkan enum cases. A compiled branch proof executed boolean, signed/unsigned integer, finite/nonfinite float and unknown-format paths successfully. Driver output writes replace initial values. Missing driver-output modelling/build-mode-none extraction is an inferred explanation, not a source defect. |
+| [4613593760](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593760) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | Added feature/entrypoint qualification, pNext lifetime, ownership, activation and timing-boundary documentation to the named function. |
+| [4613593821](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593821) | `render/android-vulkan/src/main/cpp/BenchmarkOpenCl.cpp` | Added feature/entrypoint qualification, pNext lifetime, ownership, activation and timing-boundary documentation to the named function. |
+| [4613593895](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593895) | `render/android-vulkan/src/main/cpp/BenchmarkGpu.cpp` | The actual switch has four unconditional distinct Vulkan enum cases. A compiled branch proof executed boolean, signed/unsigned integer, finite/nonfinite float and unknown-format paths successfully. Driver output writes replace initial values. Missing driver-output modelling/build-mode-none extraction is an inferred explanation, not a source defect. |
+| [4613593974](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613593974) | `render/android-vulkan/src/main/cpp/BenchmarkNative.cpp` | Repeat of the audited CRC/copy/exact-equality findings above. Bounds and the exact binary-fraction oracle remain intentional; no suppression or weaker oracle was added. |
+| [4613600300](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613600300) | `render/android-vulkan/benchmarks/verify_cases.py` | CTest intentionally supplies the trusted locally built executable to this CLI helper. It uses an argument vector without a shell and a timeout; exported report contents and network inputs do not select the binary. Documented this local test boundary. |
+| [4613600416](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613600416) | `tools/analyse_benchmark_report.py` | Repeat of the local CLI path boundary: the caller chooses the input root, members use a constant allowlist, symlinks/oversize inputs are rejected, and ZIP entries are never extracted. These are intentional reads on the selected report, not report-controlled paths. |
+| [4613600503](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613600503) | `tools/analyse_benchmark_report.py` | Repeat of the local CLI path boundary: the caller chooses the input root, members use a constant allowlist, symlinks/oversize inputs are rejected, and ZIP entries are never extracted. These are intentional reads on the selected report, not report-controlled paths. |
+| [4613600568](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613600568) | `tools/analyse_benchmark_report.py` | Repeat of the local CLI path boundary: the caller chooses the input root, members use a constant allowlist, symlinks/oversize inputs are rejected, and ZIP entries are never extracted. These are intentional reads on the selected report, not report-controlled paths. |
+| [4613600648](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613600648) | `tools/analyse_benchmark_report.py` | Repeat of the local CLI path boundary: the caller chooses the input root, members use a constant allowlist, symlinks/oversize inputs are rejected, and ZIP entries are never extracted. These are intentional reads on the selected report, not report-controlled paths. |
+| [4613600738](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613600738) | `tools/analyse_benchmark_report.py` | Repeat of the local CLI path boundary: the caller chooses the input root, members use a constant allowlist, symlinks/oversize inputs are rejected, and ZIP entries are never extracted. These are intentional reads on the selected report, not report-controlled paths. |
+| [4613600828](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613600828) | `tools/analyse_benchmark_report.py` | Repeat of the local CLI path boundary: the caller chooses the input root, members use a constant allowlist, symlinks/oversize inputs are rejected, and ZIP entries are never extracted. These are intentional reads on the selected report, not report-controlled paths. |
+| [4613630882](https://github.com/sednalabs/solar-gravity-lab/pull/249#discussion_r4613630882) | `clients/android/app/src/main/kotlin/com/sednalabs/solarlab/benchmark/BenchmarkFileStore.kt` | The exporter writes each input chunk before closeEntry inside nested use blocks. The JVM export test now also asserts exact nonempty manifest and journal bytes, beyond matching hashes, so accidental empty exports cannot pass. A truly empty source member can legitimately remain empty. |
+
+## Hosted Android regression at `5afae4ed`
+
+[Validation Lab run 44300055248](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44300055248) passed Android JVM tests and lint. Its [emulator job 134787325156](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44300055248/job/134787325156) remains failed: `EarthMoonLabJourneyInstrumentationTest` reported a `SnapshotStateObserver` thread violation, and `StageFirstSearchFocusInstrumentationTest` hit the Compose idle timeout while opening Search. All five new benchmark tests passed (Bridge: three; lifecycle: one; live recorder: one). Those passes do not make the overall emulator run green.
+
+The journey stack shows a runtime `StateFlow` update on `DefaultDispatcher-worker-3` resuming the inherited Compose test continuation into measure/layout. UI flow collectors now explicitly use `Dispatchers.Main.immediate`, including the semantic-action collector. The facade's serialized native boundary remains on its worker dispatcher; numerical work is not moved to the UI thread. `RuntimeUiStateInstrumentationTest` publishes 24 updates from a background worker and checks that snapshot application and layout stay on Android's main thread.
+
+The search timeout occurs before the previous selection-only manual-clock section. The same manual-clock policy now covers opening Search, filtering and selecting, with explicit frame advancement at each wait. The canonical fixture, inclusion/exclusion checks, selection and camera-control assertions, and bounded timeouts remain intact. Read-only tracing found no evidence of an endless native timestamp-query presentation loop: presentation pending state tracks bounded interpolation, and paused refresh sets its duration to zero. No retry or blanket suppression was added. The next complete run must qualify the changed source; this failed run is retained as evidence.
+
+## Release packaging RELRO check at `2d5a9d6`
+
+[Prerelease run 44306852136](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44306852136), [build job 134810613575](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44306852136/job/134810613575), assembled the benchmark APK and passed JNI/R8 validation at `2d5a9d60177c5f939ad121049537eb2d0dbe35c2`. It then failed the new structural check with `GNU_RELRO end is not 16 KiB aligned: 0x6000`. That run remains failed. Its small retained artifact contains the build/proof logs but no APK, because staging originally occurred after this gate.
+
+The retained Validation Lab debug APK from the same source identifies the matching layout in AndroidX `graphics-path:1.0.1`, brought in by Compose. Both packaged ABIs use a dedicated RELRO LOAD with linker padding and a separate writable BSS LOAD:
+
+| Library ABI | RELRO-owning LOAD bytes | Declared RELRO bytes | 16 KiB protection range | Mutable BSS bytes |
+|---|---|---|---|---|
+| arm64-v8a | `[0x5c40, 0x5fd0)` | `[0x5c40, 0x6000)` | `[0x4000, 0x8000)` | `[0x9fd0, 0x9fe0)` |
+| x86_64 | `[0x5ec0, 0x6268)` | `[0x5ec0, 0x7000)` | `[0x4000, 0x8000)` | `[0xa268, 0xa278)` |
+
+The ARM64 dependency is 10,096 bytes with SHA-256 `41e9a793c43a0f4fddb19e33f346bace464f30f888ba7b9eaf96294ea115bfb6`. This diagnoses the same-source retained debug package; the failed benchmark package itself was not retained and is not claimed to have been inspected. Both Solar Lab libraries have 16 KiB aligned RELRO ends in both ABIs.
+
+The unconditional modulo check was too strict. The [Android 16 KiB guide](https://developer.android.com/guide/practices/page-sizes), under “Verify 16 KB compliance for RELRO” and its fourth example, permits a nonaligned RELRO end when no mutable data shares the protected trailing page. [Bionic's loader](https://android.googlesource.com/platform/bionic/+/main/linker/linker_phdr.cpp) rounds the protection start down and end up; its containing-LOAD handling explicitly accommodates a RELRO memory extent at least as large as the LOAD. [LLD's `Writer::setPhdrs`](https://github.com/llvm/llvm-project/blob/llvmorg-17.0.6/lld/ELF/Writer.cpp) also documents and implements RELRO memory-size padding to the common page size.
+
+The corrected validator reads all headers before checking protection ranges. It requires the RELRO start and file bytes to belong to a LOAD, permits trailing padding only inside that LOAD's final mapped page, and rejects rounded protection overlapping mutable bytes before or after RELRO in any writable LOAD. Only actual owning-LOAD bytes count as declared RELRO data; padding cannot hide another LOAD's mutable bytes. LOAD alignment, power-of-two alignment, offset/address congruence, ELF bounds, and the independent `zipalign -P 16` gate remain enforced. C++/Rust link flags and dependencies did not change.
+
+Eighteen automated tests pass, including the two real dependency header layouts, Android's documented safe/unsafe examples, header-order independence, same-LOAD and cross-LOAD overlap, padding that would cover mutable bytes, invalid file extents, 4 KiB LOAD rejection, and failure-report persistence. The corrected check also passes all six actual native libraries in the retained debug APK. An independent reviewer exercised both actual dependency binaries and twelve additional boundary/overlap cases without finding a defect.
+
+APK staging and assembly provenance now precede the JNI/page/smoke gates. ELF failure JSON retains all library identities, hashes, decoded LOAD/RELRO headers and reasons; ZIP validation still runs when the ELF check fails so both diagnostics survive. Either failure still fails the job. Publication continues to require successful packaging, smoke and ARM64 proof. The changed source must complete full remote validation and a fresh benchmark build before release; these structural checks do not assert execution on a 16 KiB device or the user's S25 Ultra.
+
+## Semantic-focus test synchronization at `8702de8`
+
+[Validation Lab run 44310486271](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44310486271), [emulator job 134823178711](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44310486271/job/134823178711), passed 26 of 27 connected tests, including all five research tests, the worker-to-main regression and the search/filter method. Only `connectorFocusAlias_exposesCorrelatedResolvedAcknowledgement` failed. This run remains failed; the same application source had passed all 27 tests at `2d5a9d6`, and `8702de8` changed only packaging validation and evidence retention.
+
+The full retained log establishes the synchronization boundary. The Halley request was issued at 13:18:16.504 UTC and applied at 16.520; the follow-selected observer command completed at 16.614. From 21.520 through 41.758, Espresso repeatedly reported `Compose-Espresso link` non-idle. The test failed at 48.065, after 32.787 seconds, despite its nominal 20-second condition limit. Its `runCatching` predicate swallowed synchronization exceptions and replaced the underlying 30-second idle failure with a generic condition timeout. The post-teardown window dump shows the launcher and cannot establish which acknowledgement was visible before teardown. The render revision's `|sun` prefix is the canonical scene body's serialization, not evidence that focus changed to the Sun.
+
+The connector method now uses the same explicit manual-frame policy as the adjacent search method and the semantic-intent test, with the original clock policy restored in `finally`. This uses Android's documented [manual Compose synchronization](https://developer.android.com/develop/ui/compose/testing/synchronization) for observing a still-busy UI. The exact Halley title and correlated description assertions remain; the wait additionally requires the authoritative runtime focus to be `halley`. Both selection waits catch only assertion mismatches, preserve the last mismatch as the failure cause, and let synchronization exceptions propagate. Timeouts are unchanged, there is one request, and no retries or assertion suppression were added. No application or native runtime behavior changed. A fresh exact-source remote run must qualify the correction.
+
+## Tracer-controls synchronization at `a94a3f3`
+
+[Validation Lab run 44314231307](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44314231307), [emulator job 134836185850](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44314231307/job/134836185850), passed 26 of 27 connected tests across 16 classes, with no skips. Both search/focus methods, the moving-camera method, the worker-to-main regression and all five research tests passed. Only `canonicalTracersUseThreeDimensionalComputeAndReuseResourcesAcrossResize` failed. Computational, JVM, lint and static-analysis lanes passed; this remains a failed qualification and did not advance the release branch.
+
+The retained artifact (SHA-256 `eec0bcc3eae6820eabeef7b8f76266f0498c13f31889dd622d29121ace3d0a48`) locates the failure at `setAllTracesVisible`, before the compute-projection assertions. The paused `stress.trail-density` snapshot had loaded at 13:39:28.930 UTC. Fetching semantics for the trace control then waited for the Compose-Espresso idle link until teardown at 13:40:29 and the final exception at 13:40:31. Native renderer counters continued advancing during the wait. This establishes a test synchronization failure, not a passed projection/resize proof and not evidence that the GPU stopped progressing.
+
+An independent source review found the pre-existing 100 ms paused `RuntimeBridge` refresh loop and alternating snapshot/render UI-status publications. It found no newly introduced direct renderer-status-to-redraw cycle: the Compose scene is remembered by value-equal render data, host/surface submission rejects unchanged frames, unchanged renderer settings are ignored, and display-only frames omit scene-summary/status publication. This inspection does not certify paused-idle efficiency; the physical observatory capture is still needed to quantify that existing work.
+
+The review also identified an existing cause of unnecessary paused submissions: Rust includes wall-clock `cpu_extract_ms` in the `|diag:` scene-revision suffix. The Vulkan adapter strips that suffix for its own cache key but exports the full revision; Kotlin render-frame equality and the stage scene's revision include that full value. Diagnostic variation can therefore defeat the equal-frame guard despite unchanged physics. Those paths are unchanged from the branch base. The retained failure's renderer counters show 384 uploads, 382 command reuses and 541 timing samples, establishing progress rather than efficient idle operation. This is an explicit follow-up measurement/integration opportunity, not a benefit delivered by the test-clock correction.
+
+Only the trace-controls helper changes. It saves the existing Compose clock policy, disables automatic advancement for the modal interaction, steps frames while opening/scrolling/toggling/closing, and restores the policy in `finally`. It retains the same two bounded toggle actions and closing timeout, adds a bounded panel-open condition, and propagates synchronization errors. Projection, visible-pixel, resize, paused-epoch, allocation and command-reuse assertions remain unchanged and run with the previous clock policy restored. The shared scroll helper, application runtime and native renderer are unchanged. Exact-source remote validation remains required before publication.
+
+Review of the initial helper at `e45bb169` identified a further readiness boundary: a Material bottom-sheet control can exist before its animated touch target is usable. The follow-up scrolls each target once, advances frames within a 10-second bound until its full nonzero bounds are visible and unchanged across consecutive frames, checks Android window visibility, and then performs one actual click. It does not retry clicks, add a wall-clock sleep or catch synchronization failures. [Run 44318154597](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44318154597) belongs to the superseded first helper and is not release qualification for this follow-up.
+
+## Main integration checkpoint before the first research release
+
+A final repository refresh found main at `20c1ae79d15889fbf02e6fd376335eeed1810003`, two commits beyond the earlier `b2e3dbed` base: #250 documentation and the now-merged #246 runtime refactor. These integrate cleanly without conflict. Research kernels, Android packaging, logging and the corrected test interaction are unchanged. The new head must pass a fresh full remote qualification before its APK release. [Run 44318909597](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44318909597) compiled the settled-control helper and passed computational/JVM/lint lanes on `3f73c0a`, but that source is superseded by the main integration and is not acceptance for the merged head.
+
+The concurrent [Flight draft #251](https://github.com/sednalabs/solar-gravity-lab/pull/251), at `ffc6bfb0af15101683da369aa35bd38dd58228d6`, was reviewed for overlap rather than imported piecemeal. It changes the FFI ABI and body-packet layout as well as shared renderer/UI files; future integration must keep its Rust/JNI/header/native-renderer set consistent and repeat exact-source qualification. At this check it had 14 review threads, 13 unresolved, concerning its importer, flight-specific UI/tests and documentation. Those threads remain owned by that draft and are not included in this research PR's 40 resolved findings. The benchmark APK retains the latest merged mainline's coherent ABI and separate app identity.
+
+## Window-visible control readiness at `e250563`
+
+[Validation Lab run 44320275842](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44320275842), [emulator job 134857449876](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44320275842/job/134857449876), passed all computational, 251 JVM, lint and static-analysis checks. Connected tests passed 26 of 27 across 16 classes, with no skips. The tracer test advanced beyond the earlier idle timeout but failed after 3.656 seconds at the terminal `assertIsDisplayed()`: the bounds predicate had admitted an off-screen control. This failed run published nothing. The retained Android artifact has SHA-256 `bb3ec4312507736b26390db0f00eb4d82b1bb7cd9e59e2fe457579093ded4009`.
+
+Independent inspection of the exact Google Maven Compose 1.7.5 source JARs confirmed that public `isDisplayed()` checks placement, ancestor/root visibility and screen intersection, while `boundsInWindow` explicitly clamps to root extents. The earlier `boundsInRoot` comment overstated its root-clipping guarantee. The correction requires visibility inside the same 10-second explicit-frame wait, resets stability history for invisible samples, compares the full nonzero target size against window bounds and requires consecutive stationary visible frames. It retains one semantic scroll and one actual click per control action. Only timeout errors gain the target and last observation as diagnostics; their original cause and all unrelated synchronization/assertion failures are preserved. The old clock policy is restored and all native projection, pixel, resize, epoch and resource-reuse checks remain unchanged. A new exact-source remote run must qualify this correction.
+
+## Bounded landscape scrolling at `9bba3a6`
+
+[Validation Lab run 44323947245](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44323947245), [emulator job 134870212656](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44323947245/job/134870212656), passed computational, 251 JVM, lint and static-analysis checks, but the camera class hit its outer 300-second timeout. Later classes were not run; this is not a completed 27-test qualification. The retained artifact (SHA-256 `619b5d70fa8b267b7f0dc41252101ff42ef103d999e0f84c5acc9c50bbd86b02`) contains the portrait hidden/native/full-window images written after the portrait projection, pixel and resource-reuse assertions. It contains no completed landscape proof. The timeout screenshot shows the active landscape stress scene.
+
+Exact Compose 1.7.5 source inspection found the remaining unbounded operation: `performScrollTo` loops until its requested scroll delta becomes zero, before entering this helper's bounded readiness wait. Foundation's `ScrollBy` action launches a frame-clock animation. With automatic advancement disabled, the loop can repeatedly start/cancel that animation without advancing it. Portrait controls already inside the viewport did not exercise the same required scroll. The earlier ten-second bound therefore did not cover all work in the helper. The screenshot path also called unbounded `Instrumentation.waitForIdleSync()` before its otherwise bounded PixelCopy wait, and failure JSON was written after optional capture. Those diagnostic limitations could conceal the primary exception. The retained window dump shows a visible transparent application window above the base window after modal registration; the absent visible sheet is consistent with a frozen entrance/scroll animation. No thread stack was retained, so the precise hang location is strongly supported by the source and timeline, rather than directly sampled.
+
+The corrected sheet helper has one ten-second readiness loop that advances frames throughout. It waits for a displayed, fully visible, stationary panel, compares the target's unclipped window position with that viewport, issues at most one `ScrollBy` action with the proper reverse-scrolling sign, and continues advancing until the target is displayed, fully visible and stationary. No `performScrollTo` remains in this class. Existing coordinate clicks and every native projection, pixel, resize, paused-epoch and resource-reuse assertion remain intact.
+
+Failure handling now logs and writes the primary error before any UI query. Native capture uses one ten-second future deadline for both main-queue scheduling and PixelCopy completion; the global idle wait is removed. Timed-out destinations remain alive until the native callback, and late or deadline-racing successful results are recycled without double ownership. Capture errors are suppressed on the original failure. Optional failure capture uses the native stage; the shell retains responsibility for its separately bounded full-window capture. Successful visual proofs are unchanged. Independent reviews checked the exact Compose scroll APIs and the PixelCopy ownership races separately. This bounds the identified seams, not every platform I/O call; a fresh exact-source remote run remains required.
+
+## Completed scroll ownership at `a0ed4d0`
+
+[Validation Lab run 44329621276](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44329621276), [emulator job 134890328501](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44329621276/job/134890328501), completed all 27 connected tests across 16 classes: 26 passed, one failed, none skipped. All 251 JVM tests across 43 suites, computational lanes, lint and static checks passed. The camera test retained its completed portrait projection/pixel/reuse proof, then failed at the ten-second wait for the tools panel to disappear after the landscape Done tap. The primary JSON and native failure capture survived; there was no outer class timeout. The retained Android archive has SHA-256 `089ac8fb2f45b7f2811c3364c08657de873d29f93d8408f573eda3c7f8a74f9e`. Its failure renderer still reports `TM=99` and `TF=61`, so the earlier trace-off taps had not taken effect either. No release was published from this failed qualification.
+
+The pinned [Foundation 1.7.5 sources](https://dl.google.com/dl/android/maven2/androidx/compose/foundation/foundation-android/1.7.5/foundation-android-1.7.5-sources.jar) explain why stable geometry is insufficient: an active scroll sets `startDragImmediately`, whose gesture detector consumes the initial pointer-down to stop scrolling. Integer pixel positions can stop changing before the animation returns and clears `isScrollInProgress`. The retained failure supports this mechanism, although the individual consumed pointer event was not recorded. The [UI 1.7.5 sources](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-android/1.7.5/ui-android-1.7.5-sources.jar) expose `ScrollByOffset` as a suspend action whose return means scrolling has finished. The fresh modal entrance was separately checked against Material3 1.3.1: its outer draggable is disabled while the initial current state remains Hidden, so this evidence does not require a production modal change.
+
+The follow-up invokes `ScrollByOffset` once for each control, including zero offset for an already visible control, using a private `BroadcastFrameClock` on `Dispatchers.Main.immediate`. The zero-offset path also acquires and releases scroll ownership rather than inventing a completion result. The existing ten-second wait pumps that clock from the Compose test clock and requires actual suspend-action completion before the existing displayed, full-size and stationary geometry checks. Action failures propagate through a completion future, and the coroutine scope is cancelled in `finally`. Every control still receives its original real coordinate tap. The trace controls must now acknowledge the requested OFF/ALL endpoint through the button's Disabled semantics after the existing two control checks and before Done is tapped. This strengthens the UI acknowledgement without replacing the native TM/TF checks, projection/pixel/resize/paused-epoch assertions or allocation/command-reuse proof. There are no additional taps, retries, arbitrary settling delays or production changes. A fresh exact-source remote run must qualify this correction.
+
+## Publishing timer state at `50d2156`
+
+[Validation Lab run 44334903914](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44334903914), [emulator job 134909082430](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44334903914/job/134909082430), passed all 251 JVM tests, computational lanes, lint and static checks. Connected tests completed all 27 cases across 16 classes: 26 passed, one failed, none skipped. Both camera methods passed. The retained `compute-proof.json` has `passed=true` with portrait and landscape projection, pixel and resource-reuse results, and the landscape image was inspected. The sole failure was `StageFirstSemanticIntentInstrumentationTest`'s immediate banner-absence assertion after advancing virtual time: one `Frame requested · Earth` node remained. The retained Android archive has SHA-256 `ca51c336d6ae7e68dd848960bd137d943062b09dad0d934ce2d281efd51544a9`. This failed qualification published nothing.
+
+The pinned [Compose 1.7.5 test sources](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-test-android/1.7.5/ui-test-android-1.7.5-sources.jar) document a distinction between advancing virtual time and publishing resulting state to Android composition. A bulk advance can leave a snapshot notification or recomposition pending, and semantics queries with automatic advancement disabled do not supply another frame. The implementation also normally flushes notifications through `ApplyingContinuationInterceptor`, so the artifact does not prove exactly when the delayed effect cleared its state. The evidence identifies an unguarded publication boundary, rather than establishing a production timer defect. The existing effect remains keyed by the incrementing request token and retains its 2200 ms delay. Caller review found that fresh-lab automatic focus does not renew the banner; three focus-command logs do not establish a third intent or banner reset.
+
+Both tests using the identical timer-check pattern now flush snapshot notifications on Main and deliver one explicit frame after each existing bulk advance. This applies to the still-visible checks as well as the final absence check, so stale semantics cannot make an early expiry or missing refresh pass. The 1200 ms advance, absolute first/second 2300 ms checkpoints, repeated-request bound, banner assertions and correlated request-ID assertions remain unchanged. The second absolute deadline compensates for the earlier publication frame; the final extra frame delivers the deadline's UI state. There is no polling loop, timeout extension, retry, product timer change or camera change. Exact-source remote qualification remains required.
+
+## Published first research baseline
+
+The timer-publication correction was qualified at source `3f4f0fccd08348986d7e98e42a4261d81de73f47` by [Validation Lab 44339853828](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44339853828): all 251 JVM tests and 27 connected tests passed, with zero failures/errors/skips. Computational, Arm64, runtime/FFI and static checks passed. [APK build 44342853950](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44342853950) passed JNI/R8, ELF/ZIP alignment, packaged emulator launch and Arm64 proof, then published [0.2.0-benchmark.1](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-benchmark.1). The downloaded APK SHA-256 `f93052ea901a5c6be99b9ebaa213729b88a670fe591a67d702e675173e58c77b` matched its checksum, provenance and release digest. All six packaged native-library hashes matched the alignment report. This is hosted and packaged-build evidence; physical S25 acceptance remains outstanding.
+
+## Continuation: merged flight and measurable paused-scene reuse
+
+At the continuation checkpoint on 19 November 2026 AEDT (18 November UTC), PR #249 still had all 40 review threads resolved, with no new issue comments, inline changes or submitted reviews since publication. Flight [#251](https://github.com/sednalabs/solar-gravity-lab/pull/251) had now merged with 17/17 threads resolved, and rendezvous [#252](https://github.com/sednalabs/solar-gravity-lab/pull/252) had merged with its one thread resolved. Main `dac95def8a6dda19736f1f41f3261fb19afc082d` is integrated as a coordinated ABI13/296-byte-body change, including native spacecraft and rendezvous, rather than importing isolated ABI consumers.
+
+Three Android instrumentation conflicts were reviewed individually. The camera test remains byte-identical to the validated research parent, preserving completion-bearing scrolling, endpoint acknowledgement, bounded PixelCopy ownership and the native projection/pixel/resource-reuse assertions. Search focus retains the research assertions and native request acknowledgement, while adopting main's setup clock ownership. Search recreation retains research timer-publication checks and main's actual activity replacement, query and focus checks. Main-immediate coroutine ownership, main-thread flow collection, research capture, flight UI, all instrumentation classes and the added importer/native/example checks remain present together.
+
+Opportunity 58 now has actual AArch64 FP64 reciprocal-square-root estimate/refinement gravity cases, with two or three refinements. Their timing control uses the same four-target NEON layout with square root/division; their independent accuracy oracle remains production scalar. Instruction configuration, refinement count, actual execution path and numerical errors are recorded. A new Arm64 lane slice verifies the executed release binary's instruction presence, domain/tail cases and all admitted fixture/step combinations. Approximate comparisons remain accuracy/cost experiments and cannot promote themselves into production dispatch.
+
+Paused-scene reuse now requires a successfully decoded and released current packet for the same native revision/session. Explicit commands and refreshes remain forced, and failed or stale packets remain retryable. Volatile extraction/upload timing is removed from the scene identity while the diagnostics remain available as fields. Per-bridge cumulative counters are sampled at the existing observatory cadence, and the offline analyser reports only valid within-instance deltas. These counts do not establish CPU, GPU or energy savings. This continuation requires its own exact-source remote qualification and published build; the preceding release's green checks do not qualify it.
+
+## Physical-evidence continuation checkpoint, 19 November 2026 AEDT
+
+The owner supplied a verified export from the published benchmark.1 APK. The
+[aggregate evidence](device-research-s25-first-run.md) retains its source/APK/ZIP
+hashes, paired timing results and limits without publishing raw device data.
+The 1.5-second run, two blocks per workload, existing production NEON execution,
+GPU/host timing difference and pipeline-construction result directly motivated
+protocol v2, current-dispatch controls and production renderer cache persistence.
+The scalar numerical oracle and production scientific dispatch are unchanged.
+
+Independent source review of the new protocol checked frozen shared batches,
+clamp rewarming, fairness, finite limits, partial records, pair-scoped retirement
+and clock boundaries. It found a failed system-affinity restoration could admit
+samples labelled system under the preceding restricted placement. All placement
+modes now require native PASS. Pilot/warmup failures veto a later speed claim;
+requested/effective batch mismatches cannot qualify a clean block.
+
+An independent cache review checked the Kotlin worker/JNI/native lifecycle seam,
+bounded little-endian header/driver/device/UUID validation, optional empty-cache
+fallback, private atomic replacement and cumulative-counter interpretation. Its
+separate host build and production-helper tests passed, including real partial
+write failure preserving the previous cache. Disk-supplied is explicitly not a
+cache-hit claim. Structured capture and offline reporting never sum repeated
+lifecycle-counter callbacks as independent loads or saves.
+
+The host analyser regressions cover separated GPU/wrapper/thread/setup timing,
+legacy precision classification, calibration failures, effective-batch admission,
+paused-work scope/reset gaps and repeated cache observations. Native FP16/FP64
+precision-changing cases now declare accuracy/cost classification in catalogue
+and samples; this is checked by the native oracle verifier. The existing live
+capture instrumentation also checks cache-group fields and integer preservation.
+
+At this source checkpoint, remote Android compilation, connected tests, native
+Arm64 instruction/domain proof and final APK qualification remain required.
+Subsequent exact-source run and release links belong in PR #249 and Ops; this
+checkpoint does not turn the earlier physical run into proof of the new changes.
+
+## Counterbalanced continuation, 21 November 2026 AEDT
+
+The first verified benchmark.2 phone recording completed 38 fixed-ABBA blocks
+per workload and exposed a large first-position cost in an identical-case host
+control. [The physical evidence](device-research-s25-benchmark2.md) records the
+positive subgroup result, negative rsqrt3/FP16 results and measurement limits.
+Protocol v3 forms complete complementary ABBA/BAAB units and bootstraps their
+log ratios. Independent review corrected cancelled-cooldown accounting, deadline
+completion with unmatched halves, missing/duplicate calibration admission,
+contradictory native correctness, changing comparison identity/scope and refresh
+excursions between complementary blocks. The raw exports remain private.
+
+Initial source `1ba46698b97841af6d0516ebbe701a6ab7688545` integrated main
+`93ecac86ca1d50b8631d7f4b5b3b9ef89e83bd10` while retaining ABI 13 and the
+research cache/reuse work. [Validation 44883854723](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44883854723)
+failed before any substantive lane ran. The new mainline cache/source checks
+found one benchmark compiler cache that could write outside a main push and
+classified two pinned external tool checkouts as product source. The coverage
+workflow failed on the same two checks. Documentation and Security SARIF passed;
+this failed validation produced no desktop journey, Android acceptance or APK.
+
+The correction separates compiler-cache restoration from main-push-only saving
+and checks external glslang/Vulkan-Headers repositories, paths and immutable
+revisions explicitly. Product checkouts must still use the workflow commit.
+No cache-write or exact-source release gate is removed. A fresh exact-source
+qualification, including the native desktop journey required by current main,
+must pass before the benchmark.3 release branch is cut. Run/release links and
+remaining physical acceptance belong in PR249 and Ops, independently of the
+preceding benchmark.2 qualification.
+
+## Quota-efficient Full continuation, 21 November 2026 AEDT
+
+The preceding cache/source-policy correction was qualified at
+`4ef8210b7e91d3462d525d9bf8b7107cd620896f` by
+[Validation Lab 44884292543](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44884292543)
+and published by [release build 44885548807](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44885548807)
+as [benchmark.3](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-benchmark.3).
+All 322 JVM tests and 38 connected tests passed, as did the native desktop
+journey, computational lanes, JNI/R8, packaged launch and alignment checks.
+The independently downloaded APK matched release metadata and provenance at
+SHA-256 `7f05c92e5e3e49a38320dfb4fbfd41c7dbc69603cc4eed3d327a23b1d91ca9b7`.
+Those results qualify that exact source only; they do not establish physical
+S25 performance for protocol v3.
+
+The newly supplied [Full recording](device-research-s25-full-quota.md) is from
+benchmark.2, before benchmark.3 publication. It preserves 27,504 matched passing
+samples and normal finalisation after the app's 256 MiB journal budget, with
+3,437 one-block comparisons. An independent integrity and sample audit found
+no missing start/end pairs or false supplied native correctness flags. This
+wide but unrepeated evidence prioritises dense exact blocked NEON; the now-run
+two-refinement rsqrt cases mostly cost more than their matched exact controls.
+Neither finding promotes a production numerical path.
+
+The follow-up stores immutable sensor snapshots as durable journal definitions
+and records small references with each use's original observation age and
+policy. Definition publication precedes any reference. Failed or cancelled
+emission cannot authorise reuse, and uncertain writes consume an identifier
+so a retry cannot create duplicate definitions. The reader rejects missing,
+forward, duplicate, conflicting and mixed inline/reference records. Native
+results, calibration, sample-start breadcrumbs, periodic environment events
+and the existing fsync policy remain present. The first cached observation
+now also declares its age and policy explicitly.
+
+Full scheduling closes cohorts of at most 32 comparisons before advancing,
+using five complementary ABBA/BAAB units per remaining pair. Representative
+64-step cases are earlier while the complete matrix is retained. Cohort-local
+round numbers continue across passes; a small targeted Full run continues real
+measurements to the existing duration target. Global completion still checks
+all admitted pairs, so unvisited cohorts cannot count as a completed catalogue.
+Existing storage, time and measured-block bounds remain enforced.
+
+Independent scheduler review checked retirement, cancellation, local-round
+continuity, fixed budgets, targeted-duration continuation and unchanged
+Quick/Sustained scheduling. Its one diagnostic undercount during cancellation
+was corrected by deriving final cohort counts from the ledger. Pure Kotlin
+regressions cover the preserved pair set and deterministic partial cutoffs.
+The Android instrumentation addition exercises the actual JSON implementation,
+large integer/null preservation, on-disk definition-before-reference ordering
+and recovery that removes only a torn final record.
+
+All 52 analyser regressions pass locally. The previous Quick and Full exports
+produce byte-identical canonical analyses with the previous and updated reader.
+The raw exports remain private. At this source checkpoint, the new Kotlin
+code, connected tests and benchmark.4 packaging still require their own
+exact-source remote qualification. Final run/release identity belongs in
+PR #249 and Ops, and physical timing, storage and scientific acceptance remain
+separate from hosted proof.
