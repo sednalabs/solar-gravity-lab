@@ -345,6 +345,12 @@ class ResearchReportTest(unittest.TestCase):
                 self.assertEqual(comparison["clean_counterbalanced_units"], 1)
                 self.assertIn("pair_identity_changed_across_comparison", comparison["measurement_contract_violations"])
                 self.assertEqual(comparison["decision"], "measurement_contract_requires_investigation")
+        rows = counterbalanced_journal(units=6)
+        for row in rows[40:]:
+            if row["data"]["role"] == "B": row["data"]["case_id"] = "late-different-candidate"
+        comparison = analyse(rows, protocol=3)["comparisons"][0]
+        self.assertEqual(comparison["clean_counterbalanced_units"], 5)
+        self.assertEqual(comparison["decision"], "measurement_contract_requires_investigation")
 
     def test_standalone_environment_transitions_between_complements_are_not_missed(self):
         expanded = []

@@ -195,3 +195,33 @@ At this source checkpoint, remote Android compilation, connected tests, native
 Arm64 instruction/domain proof and final APK qualification remain required.
 Subsequent exact-source run and release links belong in PR #249 and Ops; this
 checkpoint does not turn the earlier physical run into proof of the new changes.
+
+## Counterbalanced continuation, 21 November 2026 AEDT
+
+The first verified benchmark.2 phone recording completed 38 fixed-ABBA blocks
+per workload and exposed a large first-position cost in an identical-case host
+control. [The physical evidence](device-research-s25-benchmark2.md) records the
+positive subgroup result, negative rsqrt3/FP16 results and measurement limits.
+Protocol v3 forms complete complementary ABBA/BAAB units and bootstraps their
+log ratios. Independent review corrected cancelled-cooldown accounting, deadline
+completion with unmatched halves, missing/duplicate calibration admission,
+contradictory native correctness, changing comparison identity/scope and refresh
+excursions between complementary blocks. The raw exports remain private.
+
+Initial source `1ba46698b97841af6d0516ebbe701a6ab7688545` integrated main
+`93ecac86ca1d50b8631d7f4b5b3b9ef89e83bd10` while retaining ABI 13 and the
+research cache/reuse work. [Validation 44883854723](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44883854723)
+failed before any substantive lane ran. The new mainline cache/source checks
+found one benchmark compiler cache that could write outside a main push and
+classified two pinned external tool checkouts as product source. The coverage
+workflow failed on the same two checks. Documentation and Security SARIF passed;
+this failed validation produced no desktop journey, Android acceptance or APK.
+
+The correction separates compiler-cache restoration from main-push-only saving
+and checks external glslang/Vulkan-Headers repositories, paths and immutable
+revisions explicitly. Product checkouts must still use the workflow commit.
+No cache-write or exact-source release gate is removed. A fresh exact-source
+qualification, including the native desktop journey required by current main,
+must pass before the benchmark.3 release branch is cut. Run/release links and
+remaining physical acceptance belong in PR249 and Ops, independently of the
+preceding benchmark.2 qualification.

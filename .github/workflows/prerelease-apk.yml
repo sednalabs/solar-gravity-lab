@@ -379,9 +379,10 @@ jobs:
           path: .hardware/glslang
           persist-credentials: false
 
-      - name: Cache the qualified QCOM compiler
+      - name: Restore the qualified QCOM compiler cache
+        id: benchmark-glslang-cache
         if: needs.route.outputs.build_variant == 'benchmark'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .hardware/glslang-build
           key: benchmark-glslang-${{ runner.os }}-${{ runner.arch }}-e1b562a8-v1
@@ -400,6 +401,13 @@ jobs:
             "$GITHUB_WORKSPACE/dist/benchmark-shaders" \
             "$GITHUB_WORKSPACE/.hardware/glslang"
           echo "SOLARLAB_QCOM_SHADER_DIR=$GITHUB_WORKSPACE/dist/benchmark-shaders" >> "$GITHUB_ENV"
+
+      - name: Save the qualified QCOM compiler cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.route.outputs.build_variant == 'benchmark' && steps.benchmark-glslang-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .hardware/glslang-build
+          key: ${{ steps.benchmark-glslang-cache.outputs.cache-primary-key }}
 
       - name: Checkout qualified Vulkan headers for native research proof
         if: needs.route.outputs.build_variant == 'benchmark'
