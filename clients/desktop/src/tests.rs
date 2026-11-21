@@ -5,6 +5,11 @@ use solarlab_domain::{AttitudeMode, FlightControl};
 fn preview_uses_native_solver_without_spending_live_fuel_or_time() {
     let mut session = FlightSession::new().unwrap();
     let before = session.world.export_saved_session().unwrap();
+    let state = session.state().unwrap();
+    let native = session.world.flight_telemetry(&session.selected).unwrap().guidance.unwrap();
+    assert_eq!(state["ship"]["navigation"], serde_json::to_value(native).unwrap());
+    assert_eq!(state["ship"]["navigation"]["regime"], "nearCircular");
+    assert!(state["ship"]["navigation"]["timeToApoapsisSeconds"].is_null());
     let result = session
         .handle(Action::Preview {
             duration: 30.0,
@@ -15,6 +20,9 @@ fn preview_uses_native_solver_without_spending_live_fuel_or_time() {
     assert!(result["preview"]["fuelUsedKg"].as_f64().unwrap() > 0.0);
     assert_eq!(before, session.world.export_saved_session().unwrap());
     assert_eq!(result["preview"]["elapsedSeconds"], 30.0);
+    assert_eq!(result["preview"]["referenceRadiusM"], state["ship"]["hostRadius"]);
+    assert_eq!(result["preview"]["beforeGuidance"], state["ship"]["navigation"]);
+    assert!(result["preview"]["afterGuidance"]["circularisationDeltaVMps"].as_f64().unwrap().is_finite());
 }
 
 #[test]

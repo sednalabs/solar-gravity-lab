@@ -17,7 +17,6 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
@@ -131,10 +130,12 @@ class OrbitalFlightJourneyInstrumentationTest {
         composeRule.onNodeWithText("Fly with intent").assertIsDisplayed()
         composeRule.onNodeWithText("Back to flight").performClick()
         composeRule.onNodeWithTag(FlightTags.PLAN).performClick()
+        composeRule.onNodeWithTag(FlightPlanningTags.NAVIGATION).assertIsDisplayed()
         composeRule.onNodeWithTag(FlightPlanningTags.assist(FlightAssist.Prograde)).performScrollToIfPossible().performClick()
+        composeRule.onNodeWithTag(FlightPlanningTags.ATTITUDE).performScrollToIfPossible().assertIsDisplayed()
         composeRule.onNodeWithTag(FlightPlanningTags.PREVIEW).performScrollToIfPossible().performClick()
         waitUntil(30_000) { nodes(FlightPlanningTags.RESULT) }
-        composeRule.onNodeWithTag(FlightPlanningTags.RESULT).performScrollToIfPossible().assertIsDisplayed()
+        composeRule.onNodeWithTag(FlightPlanningTags.SUMMARY).performScrollToIfPossible().assertIsDisplayed()
         composeRule.onNodeWithText("Current orbit → after burn").assertIsDisplayed()
         composeRule.onNodeWithText("Periapsis  ", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("Apoapsis  ", substring = true).assertIsDisplayed()
@@ -144,6 +145,8 @@ class OrbitalFlightJourneyInstrumentationTest {
         assertEquals("Planning must not spend live fuel", initial.propellantMassKg.toBits(), afterPreview.propellantMassKg.toBits())
         assertEquals("Planning must not change live controls", initial.control, afterPreview.control)
         captureDialog("flight-burn-preview-dialog-portrait.png", FlightPlanningTags.ROOT)
+        composeRule.onNodeWithTag(FlightPlanningTags.SHAPE).performScrollToIfPossible().assertIsDisplayed()
+        captureDialog("flight-burn-orbit-shape-portrait.png", FlightPlanningTags.ROOT)
         composeRule.onNodeWithText("Back to flight").performClick()
         capture("flight-portrait-orbit.png", requireCloseShip = true)
         composeRule.onNodeWithTag(FlightTags.camera(2)).performClick()
@@ -572,12 +575,18 @@ class OrbitalFlightJourneyInstrumentationTest {
     }
 
     private fun captureDialog(name: String, dialogTag: String) {
+        // captureToImage() uses AndroidX WindowCapture.forceRedraw and can
+        // timeout waiting for a frame-commit callback even when the native
+        // manoeuvre preview and visible dialog have already passed assertions.
+        // Capture genuine composed display pixels instead, using the same
+        // UiAutomation path as the scene/window evidence in this journey.
+        // The whole screen deliberately includes the dialog and its context.
+        composeRule.onNodeWithTag(dialogTag).assertIsDisplayed()
         composeRule.waitForIdle()
-        // Semantics/layout can lead the device compositor after scrolling.
-        // Capture the actual dialog window through Compose's redraw + PixelCopy
-        // path, so the result image contains the currently asserted result.
-        val dialog = composeRule.onNodeWithTag(dialogTag).captureToImage().asAndroidBitmap()
-        try { writeImage(name, dialog) } finally { dialog.recycle() }
+        val screen = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()) {
+            "Could not acquire actual on-screen dialog screenshot: $name"
+        }
+        writeImage(name, screen)
     }
 
     private fun saveAndReopenEncounterThroughUi(facade: RuntimeFacade, backupId: String, oldEpoch: Double, targetId: String) {

@@ -586,6 +586,7 @@ jobs:
           cargo run -p solarlab-runtime --example orbital_rendezvous -- match
           cargo run -p solarlab-runtime --example station_docking
           cargo run -p solarlab-runtime --example authoring_lab -- engine/data/authoring/pathfinder.scenario.json --burn 10 --coast 60
+          cargo run -p solarlab-runtime --example authoring_lab -- engine/data/authoring/conic-flight-school.scenario.json --ship school.lunar-arrival --burn 20 --throttle 0.4 --attitude retrograde --coast 300
 
       - name: Measure release physics throughput (x64)
         timeout-minutes: 10
@@ -641,6 +642,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p solarlab-desktop
+          node --test clients/desktop/tools/planning.test.mjs
           cargo build --locked --release -p solarlab-desktop
           mkdir -p dist/desktop-flight
           git rev-parse HEAD > dist/desktop-flight/source.txt

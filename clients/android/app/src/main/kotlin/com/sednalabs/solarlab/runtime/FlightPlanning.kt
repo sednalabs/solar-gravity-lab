@@ -29,6 +29,9 @@ data class FlightBurnPreview(
     val warnings: List<String>,
     val epochSeconds: Double,
     val revision: Long,
+    val beforeGuidance: OrbitGuidance? = null,
+    val afterGuidance: OrbitGuidance? = null,
+    val referenceRadiusM: Double? = null,
 )
 
 internal fun flightDynamicsFromNative(values: DoubleArray): FlightDynamicsSettings {
@@ -42,11 +45,16 @@ internal fun flightBurnPreviewFromNative(bytes: ByteArray): FlightBurnPreview {
     val value = JSONObject(bytes.toString(Charsets.UTF_8))
     fun scalar(key: String) = value.getDouble(key).also { require(it.isFinite()) { "Non-finite burn preview" } }
     fun optional(key: String): Double? = if (value.isNull(key)) null else scalar(key)
+    fun guidance(key: String): OrbitGuidance? = if (!value.has(key) || value.isNull(key)) null
+        else orbitGuidanceFromJson(value.getJSONObject(key))
     val warnings = value.getJSONArray("warnings")
     require(warnings.length() <= 16)
     val result = FlightBurnPreview(optional("beforePeriapsisM"), optional("afterPeriapsisM"),
         optional("beforeApoapsisM"), optional("afterApoapsisM"), scalar("fuelUsedKg"), scalar("elapsedSeconds"),
-        (0 until warnings.length()).map { warnings.getString(it) }, scalar("epochSeconds"), value.getLong("revision"))
+        (0 until warnings.length()).map { warnings.getString(it) }, scalar("epochSeconds"), value.getLong("revision"),
+        guidance("beforeGuidance"), guidance("afterGuidance"),
+        if (value.has("referenceRadiusM") && !value.isNull("referenceRadiusM")) scalar("referenceRadiusM") else null)
     require(result.fuelUsedKg >= 0.0 && result.elapsedSeconds > 0.0 && result.epochSeconds >= 0.0 && result.revision >= 0)
+    require(result.referenceRadiusM == null || result.referenceRadiusM >= 0.0)
     return result
 }

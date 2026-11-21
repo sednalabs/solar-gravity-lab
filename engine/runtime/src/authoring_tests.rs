@@ -1,5 +1,7 @@
 use super::*;
 use serde_json::{json, Value};
+#[path = "authoring_conic_tests.rs"]
+mod conics;
 const WORKSHOP: &[u8] = include_bytes!("../../data/authoring/orbital-workshop.scenario.json");
 const DEPOT: &[u8] = include_bytes!("../../data/authoring/lunar-depot.scenario.json");
 const IRIS: &[u8] = include_bytes!("../../data/authoring/iris.spacecraft.json");

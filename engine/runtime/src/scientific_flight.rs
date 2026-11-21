@@ -32,6 +32,7 @@ fn burn_receipt(
         warnings.push("No bound apoapsis is defined relative to this reference body.".into());
     }
     FlightBurnPreview {
+        reference_radius_m: before.reference_radius_m,
         before_periapsis_m: peri(before),
         after_periapsis_m: peri(after),
         before_apoapsis_m: apo(before),
@@ -41,6 +42,8 @@ fn burn_receipt(
         warnings,
         epoch_seconds: before.epoch_seconds,
         revision: before.revision,
+        before_guidance: before.guidance,
+        after_guidance: after.guidance,
     }
 }
 
@@ -93,6 +96,8 @@ pub struct FlightBurnRequest {
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FlightBurnPreview {
+    /// Surface radius of the same primary used for this preview's altitudes.
+    pub reference_radius_m: f64,
     /// Altitudes above the reference surface, not radii from its centre.
     pub before_periapsis_m: Option<f64>,
     pub after_periapsis_m: Option<f64>,
@@ -103,6 +108,9 @@ pub struct FlightBurnPreview {
     pub warnings: Vec<String>,
     pub epoch_seconds: f64,
     pub revision: u64,
+    /// Native two-body navigation at each end of the full-model finite burn.
+    pub before_guidance: Option<OrbitGuidance>,
+    pub after_guidance: Option<OrbitGuidance>,
 }
 
 #[cfg(test)]
@@ -250,6 +258,7 @@ mod tests {
     fn preview_is_read_only_and_agrees_with_live_finite_burn() {
         let mut runtime = world();
         let original = runtime.export_saved_session().unwrap();
+        let before_guidance = runtime.flight_telemetry("pilot").unwrap().guidance;
         let request = FlightBurnRequest {
             duration_seconds: 3.0,
             throttle: 0.3,
@@ -258,6 +267,7 @@ mod tests {
         let preview = runtime.preview_flight_burn("pilot", request).unwrap();
         assert_eq!(runtime.export_saved_session().unwrap(), original);
         assert_eq!(preview.revision, runtime.snapshot_revision());
+        assert_eq!(preview.before_guidance, before_guidance);
         let fuel = runtime
             .spacecraft_by_id("pilot")
             .unwrap()
@@ -279,6 +289,7 @@ mod tests {
             .apply_command(WorldCommand::AdvanceEpoch { delta_seconds: 3.0 }, 3)
             .unwrap();
         let after = runtime.flight_telemetry("pilot").unwrap();
+        assert_eq!(preview.after_guidance, after.guidance);
         assert_eq!(
             preview.fuel_used_kg,
             fuel - runtime

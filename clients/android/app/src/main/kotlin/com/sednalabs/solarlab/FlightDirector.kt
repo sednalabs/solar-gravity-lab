@@ -29,7 +29,7 @@ private data class FlightVector(val x: Double, val y: Double, val z: Double) {
     }
 }
 
-/** +Z is thrust, +X ship right, +Y ship up; the native quaternion is body to inertial. */
+/** +Z is the nose, +X ship right, +Y ship up; the native quaternion is body to inertial. */
 internal fun flightDirector(state: FlightState, selected: FlightAssist): FlightDirector? {
     val target = when (selected) {
         FlightAssist.Manual, FlightAssist.Hold -> FlightAssist.Prograde

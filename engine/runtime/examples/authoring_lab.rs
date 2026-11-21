@@ -1,5 +1,5 @@
 //! Native authoring validation and flight demonstration, with no application UI.
-//! cargo run -p solarlab-runtime --example authoring_lab -- SCENARIO --burn 10 --coast 60
+//! `cargo run -p solarlab-runtime --example authoring_lab -- SCENARIO --burn 10 --coast 60`
 use solarlab_domain::{AttitudeMode, BodyId, FlightControl};
 use solarlab_hardware::HardwareProfile;
 use solarlab_runtime::{AdvanceState, WorldCommand, WorldRuntime};
@@ -86,13 +86,22 @@ fn main() -> Result<()> {
     for addition in additions {
         world.add_authored_spacecraft(&std::fs::read(addition)?, 0)?;
     }
-    let selected = selected.or_else(|| {
-        world
-            .snapshot()
-            .spacecraft
-            .first()
-            .map(|s| s.body_id.0.clone())
-    });
+    let initial = world.snapshot();
+    let selected = selected
+        .or_else(|| {
+            initial
+                .observer
+                .focus_body_id
+                .filter(|id| world.spacecraft_by_id(&id.0).is_some())
+                .map(|id| id.0)
+        })
+        .or_else(|| initial.spacecraft.first().map(|s| s.body_id.0.clone()));
+    if selected
+        .as_ref()
+        .is_some_and(|id| world.spacecraft_by_id(id).is_none())
+    {
+        return Err("Selected --ship identity does not name a spacecraft in this scenario".into());
+    }
     if burn > 0.0 {
         let id = selected
             .as_ref()
@@ -137,15 +146,37 @@ fn main() -> Result<()> {
     let snapshot = world.snapshot();
     let scene = solarlab_runtime::extract_render_scene(&snapshot);
     let report = serde_json::json!({
+        "format": "solarlab.authoring-report", "version": 1,
         "scenario_id": snapshot.scenario_id.0, "epoch_seconds": snapshot.epoch_seconds,
         "body_count": snapshot.bodies.len(), "spacecraft_count": snapshot.spacecraft.len(),
+        "selected_body_id": selected,
         "save_resume_exact": true,
         "spacecraft": snapshot.spacecraft.iter().map(|ship| {
             let rendered = scene.bodies.iter().find(|body| body.body_id == ship.body_id).unwrap();
             let telemetry = world.flight_telemetry(&ship.body_id.0);
             serde_json::json!({"body_id": ship.body_id.0, "display_name": rendered.display_name,
                 "mesh_kind": rendered.spacecraft.map(|s| s.mesh_kind), "remaining_propellant_kg": ship.propellant_mass_kg,
-                "delivered_delta_v_mps": ship.delivered_delta_v_mps, "altitude_m": telemetry.map(|t| t.altitude_m),
+                "dry_mass_kg": ship.dry_mass_kg, "total_mass_kg": ship.mass_kg(),
+                "delivered_delta_v_mps": ship.delivered_delta_v_mps, "altitude_m": telemetry.as_ref().map(|t| t.altitude_m),
+                "flight": telemetry.as_ref().map(|t| serde_json::json!({
+                    "reference_body_id": t.reference_body_id,
+                    "relative_position_m": t.relative_position_m,
+                    "relative_velocity_mps": t.relative_velocity_mps,
+                    "speed_mps": t.speed_mps, "radial_speed_mps": t.radial_speed_mps,
+                    "main_engine_max_thrust_n": t.main_engine_max_thrust_n,
+                    "main_engine_mass_flow_kgps": t.main_engine_mass_flow_kgps,
+                    "remaining_delta_v_mps": t.remaining_delta_v_mps,
+                    "full_throttle_propellant_seconds": (t.main_engine_mass_flow_kgps > 0.0)
+                        .then(|| ship.propellant_mass_kg / t.main_engine_mass_flow_kgps),
+                    "orbit": t.orbit.map(|o| serde_json::json!({
+                        "model": "instantaneous-two-body",
+                        "eccentricity": o.eccentricity,
+                        "inclination_rad": o.inclination_radians,
+                        "periapsis_altitude_m": o.periapsis_radius_m - t.reference_radius_m,
+                        "apoapsis_altitude_m": o.apoapsis_radius_m.map(|r| r - t.reference_radius_m),
+                        "period_seconds": o.period_seconds,
+                    })),
+                })),
                 "components": ship.authored})
         }).collect::<Vec<_>>()
     });

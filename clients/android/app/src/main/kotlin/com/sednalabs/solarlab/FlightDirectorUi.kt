@@ -34,7 +34,7 @@ import java.util.Locale
 internal fun FlightDirectorReadout(sample: FlightState?, assist: FlightAssist, modifier: Modifier = Modifier) {
     val director = sample?.let { flightDirector(it, assist) }
     val label = director?.let {
-        "${it.target.label}, ${"%.1f".format(Locale.US, it.errorDegrees)} degrees from thrust axis" +
+        "${it.target.label}, ${"%.1f".format(Locale.US, it.errorDegrees)} degrees from nose" +
             if (it.targetBehind) ", behind the spacecraft" else if (it.aligned) ", aligned" else ""
     } ?: "Flight direction unavailable"
     BoxWithConstraints(modifier.testTag(FlightTags.DIRECTOR).semantics { contentDescription = label }) {
@@ -74,12 +74,12 @@ internal fun FlightGuideDialog(sample: FlightState?, assist: FlightAssist, onDis
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 470.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("The main engine pushes along the nose. A camera change never changes the ship’s attitude.",
+                Text("The reference ship pushes along its nose. Authored ships can have other engine layouts. A camera change never changes the ship’s attitude.",
                     color = FlightInk, fontSize = 14.sp, lineHeight = 20.sp)
                 Text("Bring the coloured marker to the crosshair. Its position is the selected orbital direction in the ship’s frame. A hollow marker means the direction is behind you; the number gives the full turn angle.",
                     color = FlightMuted, fontSize = 13.sp, lineHeight = 19.sp)
                 if (director != null) Text(
-                    "Now: ${director.target.label} is ${"%.1f".format(Locale.US, director.errorDegrees)}° from the thrust axis. " +
+                    "Now: ${director.target.label} is ${"%.1f".format(Locale.US, director.errorDegrees)}° from the nose. " +
                         "Spin ${"%.2f".format(Locale.US, director.spinDegreesPerSecond)}°/s.",
                     color = FlightTeal, fontSize = 13.sp, lineHeight = 19.sp)
                 if (assist == FlightAssist.Manual || assist == FlightAssist.Hold) Text(
@@ -97,6 +97,15 @@ internal fun FlightGuideDialog(sample: FlightState?, assist: FlightAssist, onDis
                 Text("Periapsis is the lowest altitude; apoapsis is the highest. These are instantaneous estimates relative to the host, so a burn or a nearby body can change them. Map shows the native trajectory preview.",
                     color = FlightMuted, fontSize = 13.sp, lineHeight = 19.sp)
                 if (sample != null) {
+                    Text(flightNavigationHeading(sample.navigation), color = FlightTeal, fontSize = 13.sp)
+                    sample.navigation?.let {
+                        Text("To circularise here: ideal instantaneous Δv ${"%.1f".format(Locale.US, it.circularisationDeltaVMps)} m/s. " +
+                            "This includes cancelling radial motion; it is not a finite burn duration or an instruction to burn prograde.",
+                            color = FlightMuted, fontSize = 13.sp, lineHeight = 19.sp)
+                    }
+                    Text("Apsis times are instantaneous two-body estimates. A nearly circular orbit has no distinct periapsis; " +
+                        "an open trajectory has no repeating apsides. Burns and other bodies change these estimates.",
+                        color = FlightMuted, fontSize = 13.sp, lineHeight = 19.sp)
                     Text("Speed ${"%.2f".format(Locale.US, sample.speedMps / 1_000.0)} km/s · " +
                         "${if (sample.radialSpeedMps >= 0.0) "outward" else "inward"} ${"%.1f".format(Locale.US, kotlin.math.abs(sample.radialSpeedMps))} m/s",
                         color = FlightTeal, fontSize = 13.sp)

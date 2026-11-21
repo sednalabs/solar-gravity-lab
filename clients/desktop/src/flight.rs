@@ -208,7 +208,8 @@ impl FlightSession {
                 "maxThrust": telemetry.main_engine_max_thrust_n, "massFlow": flow,
                 "altitude": telemetry.altitude_m, "speed": telemetry.speed_mps, "radialSpeed": telemetry.radial_speed_mps,
                 "host": telemetry.reference_body_id, "hostRadius": telemetry.reference_radius_m,
-                "orbit": orbit, "docking": ship.docking.is_some()}, "crafts": crafts, "bodies": bodies}),
+                "orbit": orbit, "navigation": telemetry.guidance,
+                "docking": ship.docking.is_some()}, "crafts": crafts, "bodies": bodies}),
         )
     }
 

@@ -1,7 +1,7 @@
 //! Bounded flight requests. Runtime owns forces and state transitions.
 use super::*;
 use solarlab_domain::{AttitudeMode, FlightControl, RendezvousGuidanceMode, RendezvousStatus};
-pub(super) const FLIGHT_SAMPLE_LEN: usize = 44;
+pub(super) const FLIGHT_SAMPLE_LEN: usize = 48;
 pub(super) const LUNAR_SAMPLE_LEN: usize = 21;
 pub(super) const RENDEZVOUS_SAMPLE_LEN: usize = 27;
 
@@ -386,8 +386,17 @@ pub(super) fn sample(
     } else {
         0.0
     };
+    // Version 2 extends the version 1 prefix with native navigation. Missing
+    // times use -1, never a fabricated zero-second arrival or an infinity.
+    let guidance = t.guidance.as_ref();
+    let regime = guidance.map_or(0.0, |g| match g.regime {
+        solarlab_runtime::OrbitRegime::Elliptic => 1.0,
+        solarlab_runtime::OrbitRegime::NearCircular => 2.0,
+        solarlab_runtime::OrbitRegime::Hyperbolic => 3.0,
+        solarlab_runtime::OrbitRegime::NearParabolic => 4.0,
+    });
     let result = [
-        1.0,
+        2.0,
         t.epoch_seconds,
         t.revision as f64,
         ship.dry_mass_kg,
@@ -444,6 +453,10 @@ pub(super) fn sample(
         ship.control.rotation_body.y,
         ship.control.rotation_body.z,
         t.main_engine_max_thrust_n * firing / ship.mass_kg(),
+        regime,
+        guidance.and_then(|g| g.time_to_periapsis_seconds).unwrap_or(-1.0),
+        guidance.and_then(|g| g.time_to_apoapsis_seconds).unwrap_or(-1.0),
+        guidance.map_or(-1.0, |g| g.circularisation_delta_v_mps),
     ];
     if result.iter().any(|x| !x.is_finite()) {
         return Err("Non-finite flight telemetry".into());
@@ -530,10 +543,22 @@ mod tests {
         set_dynamics(handle, 1, 2).unwrap();
         assert_eq!(dynamics(handle).unwrap(), [1.0, 1.0, 0.0]);
         let before = super::super::persistence::export_save(handle).unwrap();
+        let wire = sample(handle, "pilot").unwrap().unwrap();
+        assert_eq!(wire[0], 2.0);
+        assert_eq!(wire.len(), 48);
+        assert_eq!(wire[44], 2.0, "The initial circular orbit has no privileged apsides");
+        assert_eq!(&wire[45..47], &[-1.0, -1.0]);
+        assert!(wire[47] < 1e-7, "The initial circularisation impulse is negligible");
         let bytes = preview_burn(handle, "pilot", 3.0, 0.25, 6).unwrap();
         let preview: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(preview["fuelUsedKg"].as_f64().unwrap() > 0.0);
         assert_eq!(preview["elapsedSeconds"], 3.0);
+        assert_eq!(preview["referenceRadiusM"].as_f64(), Some(wire[34]));
+        assert_eq!(preview["beforeGuidance"]["regime"], "nearCircular");
+        assert!(preview["beforeGuidance"]["timeToApoapsisSeconds"].is_null());
+        assert!(preview["beforeGuidance"]["timeToPeriapsisSeconds"].is_null());
+        assert_eq!(preview["beforeGuidance"]["circularisationDeltaVMps"].as_f64(), Some(wire[47]));
+        assert!(preview["afterGuidance"]["circularisationDeltaVMps"].as_f64().unwrap() >= 0.0);
         assert_eq!(super::super::persistence::export_save(handle).unwrap(), before);
         assert!(set_dynamics(handle, 99, 3).is_err());
         assert_eq!(super::super::persistence::export_save(handle).unwrap(), before);
@@ -959,6 +984,7 @@ mod tests {
         }
         let state = sample(handle, "flight.odyssey").unwrap().unwrap();
         assert_eq!(state[35], 0.0);
+        assert_eq!(&state[44..48], &[0.0, -1.0, -1.0, -1.0]);
         assert!((state[10] - 123.0).abs() < 1e-9);
         assert!((state[11] - 123.0).abs() < 1e-9);
         sl_v2_session_destroy(handle);
@@ -1024,6 +1050,7 @@ mod tests {
         let restored_values = sample(restored.handle, "flight.odyssey").unwrap().unwrap();
         for index in [
             1, 3, 4, 5, 8, 9, 10, 17, 18, 19, 20, 21, 22, 23, 28, 29, 30, 31, 32, 33,
+            44, 45, 46, 47,
         ] {
             assert_eq!(after[index], restored_values[index], "flight field {index}");
         }

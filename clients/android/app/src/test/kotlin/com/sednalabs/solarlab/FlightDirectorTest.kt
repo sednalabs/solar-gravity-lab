@@ -63,6 +63,17 @@ class FlightDirectorTest {
         assertEquals(1.0, requireNotNull(flightDirector(sample().copy(angularVelocityX = PI / 180.0), FlightAssist.Hold)).spinDegreesPerSecond, 1e-10)
     }
 
+    @Test fun planningReadinessUsesNoseAlignmentAndDistinguishesManualReference() {
+        val state = sample()
+        assertEquals("Nose aligned with prograde", flightBurnAttitude(state, FlightAssist.Prograde, .5))
+        assertEquals("180° to turn · thrust starts before alignment", flightBurnAttitude(state, FlightAssist.Retrograde, .5))
+        assertEquals("Current nose direction · existing spin continues", flightBurnAttitude(state, FlightAssist.Manual, .5))
+        assertEquals("Current nose direction · Stabilise damps spin", flightBurnAttitude(state, FlightAssist.Hold, .5))
+        assertEquals("Coast preview · main engine off", flightBurnAttitude(state, FlightAssist.Prograde, 0.0))
+        assertEquals("No propellant remains for this burn", flightBurnAttitude(state.copy(propellantMassKg = 0.0), FlightAssist.Prograde, .5))
+        assertEquals("Nose aligned · still rotating 1.0°/s", flightBurnAttitude(state.copy(angularVelocityX = PI / 180.0), FlightAssist.Prograde, .5))
+    }
+
     private fun sample(): FlightState = flightStateFromNative(DoubleArray(44).apply {
         this[0] = 1.0; this[1] = 100.0; this[2] = 4.0
         this[3] = 1600.0; this[4] = 2400.0; this[5] = 4000.0; this[6] = 96_000.0
