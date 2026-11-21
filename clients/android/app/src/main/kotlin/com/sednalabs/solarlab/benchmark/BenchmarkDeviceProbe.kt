@@ -23,15 +23,17 @@ class BenchmarkDeviceProbe(private val context: Context) {
     private var lastHeadroomNs = Long.MIN_VALUE
     private var headroom: Any = JSONObject.NULL
     private var headroomStatus = "not_sampled"
-    @Volatile private var lastEnvironment: String? = null
+    @Volatile private var lastEnvironment: BenchmarkEnvironmentSnapshot? = null
 
-    fun cachedSample(): JSONObject {
-        val captured = lastEnvironment ?: return sample()
-        return JSONObject(captured).also {
-            it.put("observation_age_ns", (SystemClock.elapsedRealtimeNanos() - it.optLong("monotonic_ns")).coerceAtLeast(0))
-            it.put("observation_policy", "latest_periodic_sample; before_after_do_not_imply_two_independent_sensor_reads")
+    internal fun cachedObservation(): BenchmarkEnvironmentObservation {
+        val captured = lastEnvironment ?: run {
+            sample()
+            checkNotNull(lastEnvironment)
         }
+        return captured.observedAt(SystemClock.elapsedRealtimeNanos())
     }
+
+    fun cachedSample(): JSONObject = cachedObservation().toInlineJson()
 
     fun identity(): JSONObject = JSONObject()
         .put("schema_version", 1)
@@ -112,7 +114,7 @@ class BenchmarkDeviceProbe(private val context: Context) {
             .put("cpu_frequency_khz", currentFrequencies())
             .put("display_refresh_hz", runCatching { context.getSystemService(DisplayManager::class.java)?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.refreshRate }.getOrNull() ?: JSONObject.NULL)
             .put("collection_duration_ns", SystemClock.elapsedRealtimeNanos() - nowNs)
-            .also { lastEnvironment = it.toString() }
+            .also { lastEnvironment = BenchmarkEnvironmentSnapshot(nowNs, it.toString()) }
     }
 
     fun selfCpuSet(): JSONObject {

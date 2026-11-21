@@ -22,6 +22,7 @@ enum class BenchmarkPlan(
 /** Bounds native batching without changing fixture, timestep or scientific horizon. */
 object BenchmarkProtocol {
     const val VERSION = 3
+    const val FULL_COHORT_SIZE = 32
     const val TARGET_NATIVE_BATCH_NS = 5_000_000L
     const val MAXIMUM_CPU_REPEATS = 11
     // The pipeline-cache workload has a stricter cap than the native API's 32.
@@ -43,12 +44,25 @@ object BenchmarkProtocol {
         if (requested < 1 || baseline == null || candidate == null || baseline !in 1..requested || candidate !in 1..requested) null
         else minOf(baseline, candidate)
 
-    /** Every task gets one block before the next round; rotation avoids a permanent first slot. */
+    /** Full finishes bounded cohorts before advancing, while retaining every planned task index. */
+    fun cohortIndices(plan: BenchmarkPlan, taskCount: Int): List<List<Int>> {
+        if (taskCount <= 0) return emptyList()
+        val cohortSize = if (plan == BenchmarkPlan.FULL) FULL_COHORT_SIZE else taskCount
+        return (0 until taskCount).toList().chunked(cohortSize)
+    }
+
+    /** Every task in the current cohort gets one block per round; rotation avoids a permanent first slot. */
     fun roundOrder(taskCount: Int, round: Int): List<Int> {
         if (taskCount <= 0) return emptyList()
         val start = Math.floorMod(round, taskCount)
         return List(taskCount) { ((start.toLong() + it) % taskCount).toInt() }
     }
+
+    /** Cohort closure is independent of session duration; a fully retired cohort may advance. */
+    fun needsAnotherCohortRound(
+        plan: BenchmarkPlan, completeUnits: Collection<Int>, hasUnmatchedUnits: Boolean = false,
+    ): Boolean = completeUnits.isNotEmpty() &&
+        (completeUnits.any { it < plan.minimumCompleteCounterbalancedUnits } || hasUnmatchedUnits)
 
     fun needsAnotherRound(
         plan: BenchmarkPlan, activeObservationNs: Long, completeUnits: Collection<Int>, hasUnmatchedUnits: Boolean = false,
@@ -134,8 +148,14 @@ class BenchmarkRoundLedger(pairKeys: Collection<String>) {
         return BenchmarkCounterbalancedUnit(round / 2, unitComplete, reason, if (unitComplete) thermalEpoch else null)
     }
     fun activeCompleteBlocks(): List<Int> = completed.filterKeys { it !in retired }.values.toList()
-    fun activeCompleteUnits(): List<Int> = completedUnits.filterKeys { it !in retired }.values.toList()
-    fun hasUnmatchedActiveUnits(): Boolean = (firstBlocks.keys + activeBlocks.keys).any { it !in retired }
+    fun activeCompleteUnits(pairKeys: Collection<String> = completed.keys): List<Int> =
+        activePairs(pairKeys).map { completedUnits.getValue(it) }
+    fun hasUnmatchedActiveUnits(pairKeys: Collection<String> = completed.keys): Boolean =
+        activePairs(pairKeys).any { it in firstBlocks || it in activeBlocks }
+    private fun activePairs(pairKeys: Collection<String>): List<String> {
+        require(pairKeys.all { it in completed })
+        return pairKeys.distinct().filter { it !in retired }
+    }
     fun completedSnapshot(): Map<String, Int> = completed.toMap()
     fun completedUnitsSnapshot(): Map<String, Int> = completedUnits.toMap()
     fun unmatchedUnitsSnapshot(): Map<String, Int> =
@@ -175,6 +195,7 @@ data class BenchmarkPair(
 
 object BenchmarkSchedule {
     val fullSteps: List<Int> = listOf(1, 2, 4, 8, 16, 32, 64)
+    val fullPrioritySteps: List<Int> = listOf(64, 1, 8, 2, 4, 16, 32)
     val abba: List<String> = listOf("A1", "B1", "B2", "A2")
     val baab: List<String> = listOf("B1", "A1", "A2", "B2")
 
@@ -217,9 +238,15 @@ object BenchmarkSchedule {
                 candidate.backend == "hardware" -> listOf(1)
                 plan == BenchmarkPlan.QUICK -> listOf(1, 8, 64)
                 plan == BenchmarkPlan.SUSTAINED -> listOf(64)
-                else -> fullSteps
+                else -> fullPrioritySteps
             }
-            fixtures.flatMap { fixture -> steps.map { BenchmarkPair(baseline, candidate, fixture, it) } }
+            if (plan == BenchmarkPlan.FULL) {
+                // Reach 64-step and dense comparisons before spending the
+                // finite budget on every shorter step count of the first fixture.
+                steps.flatMap { step -> fixtures.map { BenchmarkPair(baseline, candidate, it, step) } }
+            } else {
+                fixtures.flatMap { fixture -> steps.map { BenchmarkPair(baseline, candidate, fixture, it) } }
+            }
         }
         // Spread the finite run budget across candidates before adding more step/fixture cohorts.
         // A costly early candidate must not prevent all later GPU/scientific cases from being visited.

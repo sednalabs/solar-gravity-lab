@@ -225,3 +225,61 @@ qualification, including the native desktop journey required by current main,
 must pass before the benchmark.3 release branch is cut. Run/release links and
 remaining physical acceptance belong in PR249 and Ops, independently of the
 preceding benchmark.2 qualification.
+
+## Quota-efficient Full continuation, 21 November 2026 AEDT
+
+The preceding cache/source-policy correction was qualified at
+`4ef8210b7e91d3462d525d9bf8b7107cd620896f` by
+[Validation Lab 44884292543](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44884292543)
+and published by [release build 44885548807](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44885548807)
+as [benchmark.3](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-benchmark.3).
+All 322 JVM tests and 38 connected tests passed, as did the native desktop
+journey, computational lanes, JNI/R8, packaged launch and alignment checks.
+The independently downloaded APK matched release metadata and provenance at
+SHA-256 `7f05c92e5e3e49a38320dfb4fbfd41c7dbc69603cc4eed3d327a23b1d91ca9b7`.
+Those results qualify that exact source only; they do not establish physical
+S25 performance for protocol v3.
+
+The newly supplied [Full recording](device-research-s25-full-quota.md) is from
+benchmark.2, before benchmark.3 publication. It preserves 27,504 matched passing
+samples and normal finalisation after the app's 256 MiB journal budget, with
+3,437 one-block comparisons. An independent integrity and sample audit found
+no missing start/end pairs or false supplied native correctness flags. This
+wide but unrepeated evidence prioritises dense exact blocked NEON; the now-run
+two-refinement rsqrt cases mostly cost more than their matched exact controls.
+Neither finding promotes a production numerical path.
+
+The follow-up stores immutable sensor snapshots as durable journal definitions
+and records small references with each use's original observation age and
+policy. Definition publication precedes any reference. Failed or cancelled
+emission cannot authorise reuse, and uncertain writes consume an identifier
+so a retry cannot create duplicate definitions. The reader rejects missing,
+forward, duplicate, conflicting and mixed inline/reference records. Native
+results, calibration, sample-start breadcrumbs, periodic environment events
+and the existing fsync policy remain present. The first cached observation
+now also declares its age and policy explicitly.
+
+Full scheduling closes cohorts of at most 32 comparisons before advancing,
+using five complementary ABBA/BAAB units per remaining pair. Representative
+64-step cases are earlier while the complete matrix is retained. Cohort-local
+round numbers continue across passes; a small targeted Full run continues real
+measurements to the existing duration target. Global completion still checks
+all admitted pairs, so unvisited cohorts cannot count as a completed catalogue.
+Existing storage, time and measured-block bounds remain enforced.
+
+Independent scheduler review checked retirement, cancellation, local-round
+continuity, fixed budgets, targeted-duration continuation and unchanged
+Quick/Sustained scheduling. Its one diagnostic undercount during cancellation
+was corrected by deriving final cohort counts from the ledger. Pure Kotlin
+regressions cover the preserved pair set and deterministic partial cutoffs.
+The Android instrumentation addition exercises the actual JSON implementation,
+large integer/null preservation, on-disk definition-before-reference ordering
+and recovery that removes only a torn final record.
+
+All 52 analyser regressions pass locally. The previous Quick and Full exports
+produce byte-identical canonical analyses with the previous and updated reader.
+The raw exports remain private. At this source checkpoint, the new Kotlin
+code, connected tests and benchmark.4 packaging still require their own
+exact-source remote qualification. Final run/release identity belongs in
+PR #249 and Ops, and physical timing, storage and scientific acceptance remain
+separate from hosted proof.

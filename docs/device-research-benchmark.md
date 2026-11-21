@@ -22,8 +22,19 @@ The [first S25 result and resulting changes](device-research-s25-first-run.md)
 record the physical evidence that motivated protocol version 2 and cache persistence.
 The [first benchmark.2 recording](device-research-s25-benchmark2.md) exposed
 first-position bias in fixed ABBA blocks and motivates protocol version 3.
+The [quota-stopped benchmark.2 Full recording](device-research-s25-full-quota.md)
+motivates bounded comparison cohorts, earlier dense-workload coverage and
+compact environment records.
 The installed APK's manifest records its actual protocol; a newer analyser
 does not turn an older recording into a counterbalanced run.
+
+**Follow-up source status:** the Full cohort scheduling, dense-workload priority
+and compact environment encoding described below are intended for
+**benchmark.4**. At this source checkpoint, its exact-source hosted validation,
+remotely built APK and physical-device acceptance are pending.
+[PR #249](https://github.com/sednalabs/solar-gravity-lab/pull/249) tracks the
+current exact-source proof and release status. These source changes alone do
+not establish delivery or a measured performance improvement.
 
 ## First recording on a Galaxy S25 Ultra
 
@@ -44,14 +55,30 @@ public API was unavailable. A `FAIL` preserves the attempted result and error;
 it is never interpreted as a fast candidate.
 
 After the phone has cooled, run **Full investigation**. It seeks at least two
-minutes of active observation and five complete counterbalanced units per eligible pair, with
-a ten-minute ceiling. One block per active pair per round spreads work across
-candidates, fixtures, step counts and placements; the first slot rotates between
-rounds. The declared schedule and completed records identify exactly what ran.
-Normal completion closes the complementary round; budget expiry retains any
-unmatched blocks without counting them as complete units. It is a partial
-result, not evidence for the unvisited cases. Use a
-targeted experiment run to investigate a particular case and its control.
+minutes of active observation and five complete counterbalanced units per
+eligible pair, with a ten-minute ceiling. The benchmark.4 source divides the
+full declared schedule into cohorts of at most 32 fixture/step/placement pairs.
+It completes the five-unit target for the remaining active pairs in one cohort
+before advancing. Each pair receives one block per local round, and the first
+slot rotates within the cohort. Alternating local rounds preserve ABBA/BAAB
+counterbalancing and fixed baseline/candidate roles.
+
+Cohort closure does not wait for the session's two-minute minimum. If a small
+targeted Full schedule finishes its cohorts sooner, further passes continue
+real measurements with increasing local round numbers. The global duration,
+8,192-block and journal limits remain in force. A complete early cohort does
+not complete the whole catalogue: the summary retains every planned pair,
+unvisited counts, retired pairs, partial units and target shortfalls. Normal
+completion closes active complementary units. Budget expiry or cancellation
+retains unmatched evidence without counting it as a complete unit.
+
+Full prioritises step counts **64, 1, 8, 2, 4, 16, 32**, visiting compatible
+fixtures within each step and interleaving candidates before cohort partition.
+This brings dense 192/256-body comparisons into earlier work while retaining
+the complete fixture/step matrix. Hardware cases keep their declared one-step
+scope and appear in the first candidate wave. Quick and Sustained keep their
+existing whole-catalogue rotation. Use a targeted experiment run to investigate
+a particular case and its declared control.
 
 For sustained behaviour, use **15 minute stability run**. It repeats representative
 CPU/GPU workloads, including the dense 256-source CPU fixture where both sides
@@ -116,8 +143,8 @@ fixtures.
 | Phone and OS | Model/SoC, firmware fingerprint, Android/security patch, kernel page size, supported display modes |
 | CPU execution environment | App-process auxv, legal affinity, readable topology/cache/frequency observations, actual placement result and worker-thread scope |
 | GPU and accelerators | Vulkan driver/features/limits and activation reasons, public OpenCL availability, explicit NNAPI device qualification |
-| Controlled runs | Calibration, warmups, A1/B1/B2/A2 order, fixture/steps/requested and effective repeats, native timer scope, JNI wall and calling-thread CPU time, checksums, independent-oracle errors and invariants |
-| Environment | Thermal state, headroom, battery current/charge/energy/voltage/temperature, power-save mode and observed display refresh |
+| Controlled runs | Calibration, warmups, alternating ABBA/BAAB order, local round/unit and chronological position, fixture/steps/requested and effective repeats, native timer scope, JNI wall and calling-thread CPU time, checksums, independent-oracle errors and invariants |
+| Environment | Thermal state, headroom, battery current/charge/energy/voltage/temperature, power-save mode and observed display refresh; immutable snapshot source times and per-use observation ages |
 | Live observatory | Runtime revision/scenario/body counts and playback observations; full native renderer message and hardware summary; Vulkan timing/calibration fields |
 | Capture quality | Queue drops, writer records/bytes/time, sampling cadence, interrupted runs, explicit storage/time budgets and finalisation status |
 
@@ -133,10 +160,23 @@ entering native code; after a native crash, the last uncompleted sample can be
 identified. Recovery retains complete newline-delimited records and handles a
 torn tail without rewriting old-boot records with a new boot's clock.
 
-Each journal is bounded at approximately 256 MiB; the bound is checked between
-atomic records/work items, with finalisation retained. Export is a flat ZIP with
-an index covering each member's size and SHA-256. The FileProvider exposes only
-the research export cache. The analyser reads ZIP members without extracting
+The benchmark.4 source declares `environment_encoding` as
+`journal_snapshot_references_v1`. It writes an immutable `environment_snapshot`
+definition durably before any sample references it. Each before/after use keeps
+its `snapshot_ref`, `observation_age_ns` and `observation_policy`; the referenced
+sensor payload keeps its original monotonic timestamp. Reusing a cached
+observation does not imply another sensor read. Native result bodies, calibration,
+warmups, periodic environment observations and durable `sample_start` records
+remain available. A failed or cancelled definition write cannot authorise a
+subsequent reference. This removes repeated sensor payloads while preserving
+the evidence needed to reconstruct each sample's conditions.
+
+Each session's **uncompressed app journal** is bounded at approximately 256 MiB;
+this is an app collection limit, not the phone's total or remaining disk space.
+The bound is checked between atomic records/work items, with finalisation
+retained, so the final journal can slightly exceed that threshold. Export is a
+flat ZIP with an index covering each member's size and SHA-256. The FileProvider
+exposes only the research export cache. The analyser reads ZIP members without extracting
 them and rejects extra members, duplicates, changed hashes, oversized bundles,
 corrupt completed records and symlinked directory members.
 
@@ -159,11 +199,16 @@ failed pairs retire individually, including placement failures; unrelated pairs
 that share a baseline still run. The summary retains target shortfalls and the
 hard limits of 4,096 Quick, 8,192 Full and 65,536 Sustained measured blocks.
 
-Measured blocks run A1, B1, B2, A2. The offline analyser uses the geometric paired
-ratio `sqrt((B1/A1) * (B2/A2))`; it never compares different step counts or fixtures
-as if they represented equal work. Both wrapper and native correctness results
-must pass. Incomplete blocks, cooldown crossings, severe/unknown thermal state,
-charging changes and placement changes are excluded from the clean cohort.
+Protocol-v3 blocks run **A1, B1, B2, A2** on even pair-local rounds and
+**B1, A1, A2, B2** on the following odd rounds. A always means the declared
+baseline and B the candidate. The offline analyser retains each block's
+geometric paired ratio `sqrt((B1/A1) * (B2/A2))`, then combines the two
+complementary block ratios in log space into one eight-sample unit. It resamples
+complete units, not percentages or individual native repeats. Different step
+counts, fixtures and placements remain separate comparisons. Both wrapper and
+native correctness results must pass. Incomplete units, cooldown crossings,
+severe/unknown thermal state, charging changes and placement changes are excluded
+from the clean cohort.
 
 Numerical/approximate algorithms are labelled accuracy-versus-cost experiments,
 not automatically ranked as equivalent-kernel speedups. Added 1PN, J2 and
@@ -179,7 +224,7 @@ hardware cases declare their iteration and submission boundaries. Native elapsed
 values retain their declared scope, including hardware totals over iterations.
 Matched A/B samples must have the same requested and effective batch. Neither
 pooled results from different batches nor CPU medians and GPU totals represent
-equal work. Native repeats are subsamples, not independent ABBA observations.
+equal work. Native repeats are subsamples, not independent counterbalanced units.
 
 Most ordinary CPU candidates now use the production-selected solver as their
 timing control because the S25 export demonstrated that its existing NEON path
@@ -231,6 +276,12 @@ decision. The analyser reconstructs units from raw samples, combines the two
 complementary block ratios in log space and resamples complete units. It retains
 raw block effects and excludes failed, unmatched or incompatible units. Legacy
 fixed-ABBA recordings remain descriptive and receive explicit order diagnostics.
+The updated analyser accepts both earlier inline environment values and the
+declared compact reference encoding. It resolves references in journal order
+before applying the existing environmental rules; unknown or forward references,
+duplicate definitions, conflicting source observations and malformed ages are
+rejected. Expanding a reference preserves its source clock and per-use age.
+Encoding compatibility does not upgrade a protocol-2 run into protocol v3.
 The seeded bootstrap is reproducible; it does not eliminate systematic drift.
 A practical candidate currently requires at least a 5% median time reduction
 and an upper 95% bootstrap limit below -1%. These are research triage thresholds,

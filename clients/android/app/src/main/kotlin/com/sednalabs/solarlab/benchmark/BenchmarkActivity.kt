@@ -254,7 +254,7 @@ class BenchmarkActivity : ComponentActivity() {
                 Text(progress.detail, style = MaterialTheme.typography.bodyMedium)
                 if (progress.running) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text("${progress.pairsCompleted}/${progress.pairsPlanned} comparisons · ${progress.pass} pass · ${progress.fail} fail · ${progress.skip} skip", style = MaterialTheme.typography.bodySmall)
+                    Text("${progress.pairsCompleted}/${progress.pairsPlanned} comparisons visited · ${progress.pass} pass · ${progress.fail} fail · ${progress.skip} skip", style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = { runJob?.cancel(CancellationException("user_cancelled")) }) { Text("Stop and save partial run") }
                 }
             }

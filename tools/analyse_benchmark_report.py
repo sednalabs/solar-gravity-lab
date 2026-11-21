@@ -13,6 +13,7 @@ import json
 import math
 from pathlib import Path
 import random
+import re
 import statistics
 import sys
 from typing import Any
@@ -27,6 +28,8 @@ ALLOWED_MEMBERS = {
 ABBA = ["A1", "B1", "B2", "A2"]
 BAAB = ["B1", "A1", "A2", "B2"]
 TIMING_METRICS = ("gpu_timestamp", "jni_wrapper_elapsed_ns", "thread_cpu_elapsed_ns", "native_setup")
+ENVIRONMENT_ENCODING = "journal_snapshot_references_v1"
+ENVIRONMENT_USE_FIELDS = {"snapshot_ref", "observation_age_ns", "observation_policy"}
 
 
 def load_export(path: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -98,11 +101,83 @@ def read_journal(content: bytes) -> tuple[list[dict[str, Any]], list[str]]:
         if not isinstance(record, dict) or record.get("schema_version") != 1:
             raise ValueError(f"Unsupported journal schema at record {number}")
         monotonic = record.get("monotonic_ns")
-        if not isinstance(monotonic, int) or monotonic < last_monotonic:
+        if type(monotonic) is not int or monotonic < 0 or monotonic < last_monotonic:
             raise ValueError(f"Non-monotonic journal clock at record {number}")
         last_monotonic = monotonic
         records.append(record)
     return records, warnings
+
+
+def resolve_environment_snapshots(records: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
+    """Expand durable prior definitions without changing sensor clocks or per-use ages.
+
+    Reference encoding changes storage only. Existing numerical and environment
+    qualification consumes the same inline objects as legacy exports. Resolve in
+    journal order so a later definition cannot rescue an earlier missing record.
+    """
+    encoding = manifest.get("environment_encoding")
+    if encoding not in (None, ENVIRONMENT_ENCODING):
+        raise ValueError("Unsupported environment encoding")
+    snapshots: dict[str, dict[str, Any]] = {}
+    sources: dict[int, dict[str, Any]] = {}
+    for number, record in enumerate(records, 1):
+        data = record.get("data")
+        if record.get("event") == "environment_snapshot":
+            if encoding != ENVIRONMENT_ENCODING:
+                raise ValueError("Environment snapshot definition requires its manifest encoding")
+            if not isinstance(data, dict) or set(data) != {"id", "snapshot"}:
+                raise ValueError(f"Malformed environment snapshot definition at record {number}")
+            identifier, snapshot = data["id"], data["snapshot"]
+            if not isinstance(identifier, str) or re.fullmatch(r"env-[1-9][0-9]*", identifier) is None:
+                raise ValueError(f"Malformed environment snapshot id at record {number}")
+            if identifier in snapshots:
+                raise ValueError(f"Duplicate environment snapshot definition: {identifier}")
+            if not isinstance(snapshot, dict) or ENVIRONMENT_USE_FIELDS.intersection(snapshot):
+                raise ValueError(f"Malformed environment snapshot payload: {identifier}")
+            source = snapshot.get("monotonic_ns")
+            if type(source) is not int or source < 0 or source > record["monotonic_ns"]:
+                raise ValueError(f"Invalid environment snapshot source timestamp: {identifier}")
+            if source in sources and sources[source] != snapshot:
+                raise ValueError(f"Conflicting environment snapshots at source timestamp {source}")
+            snapshots[identifier] = snapshot
+            sources[source] = snapshot
+            continue
+        if not isinstance(data, dict):
+            if encoding == ENVIRONMENT_ENCODING and record.get("event") == "sample":
+                raise ValueError(f"Malformed sample payload at record {number}")
+            continue
+        if record.get("event") != "sample":
+            continue
+        uses = []
+        for key in ("environment_before", "environment_after"):
+            value = data.get(key)
+            is_reference = isinstance(value, dict) and "snapshot_ref" in value
+            if encoding is None:
+                if is_reference:
+                    raise ValueError("Environment reference requires its manifest encoding")
+                continue
+            if not isinstance(value, dict) or set(value) != ENVIRONMENT_USE_FIELDS:
+                raise ValueError(f"Malformed or mixed inline/reference {key} at record {number}")
+            identifier = value["snapshot_ref"]
+            if not isinstance(identifier, str) or re.fullmatch(r"env-[1-9][0-9]*", identifier) is None:
+                raise ValueError(f"Malformed environment reference id at record {number}")
+            if identifier not in snapshots:
+                raise ValueError(f"Unknown or forward environment snapshot reference: {identifier}")
+            age, policy = value["observation_age_ns"], value["observation_policy"]
+            if type(age) is not int or age < 0:
+                raise ValueError(f"Invalid environment observation age at record {number}")
+            if not isinstance(policy, str) or not policy.strip():
+                raise ValueError(f"Invalid environment observation policy at record {number}")
+            snapshot = snapshots[identifier]
+            used_at = snapshot["monotonic_ns"] + age
+            if used_at > record["monotonic_ns"]:
+                raise ValueError(f"Environment observation age exceeds sample timestamp at record {number}")
+            uses.append(used_at)
+            # Copy the top level: per-use metadata must never alter a shared
+            # immutable sensor snapshot or overwrite its source timestamp.
+            data[key] = {**snapshot, "observation_age_ns": age, "observation_policy": policy}
+        if uses and uses[0] > uses[1]:
+            raise ValueError(f"Environment before/after observation times are reversed at record {number}")
 
 
 def finite_positive(value: Any) -> bool:
@@ -496,7 +571,12 @@ def recorded_environments(records: list[dict[str, Any]]) -> list[dict[str, Any]]
     environments: dict[int, dict[str, Any]] = {}
     for record in records:
         data = record.get("data", {})
-        candidates = [data] if record.get("event") == "environment" else [data.get(key, {}) for key in ("environment", "environment_before", "environment_after")]
+        if record.get("event") == "environment_snapshot":
+            # A recorded definition is an observed sensor snapshot even if a
+            # later sample was interrupted. Keep intervening refresh changes.
+            candidates = [data["snapshot"]]
+        else:
+            candidates = [data] if record.get("event") == "environment" else [data.get(key, {}) for key in ("environment", "environment_before", "environment_after")]
         for env in candidates:
             if isinstance(env, dict) and isinstance(env.get("monotonic_ns"), int):
                 environments[env["monotonic_ns"]] = env
@@ -566,6 +646,7 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
     manifest = json.loads(files["manifest.json"])
     protocol = manifest.get("protocol_version", 1)
     records, journal_warnings = read_journal(files["events.ndjson"])
+    resolve_environment_snapshots(records, manifest)
     warnings.extend(journal_warnings)
     if not any(record.get("event") == "session_end" for record in records):
         warnings.append("No session_end record: this is an interrupted or still-running session.")

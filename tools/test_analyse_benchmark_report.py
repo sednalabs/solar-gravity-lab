@@ -70,6 +70,36 @@ def counterbalanced_journal(units=5, scale=.75, first_penalty=4.):
     return rows
 
 
+def reference_environment_journal(rows):
+    """Return equivalent inline/reference fixtures; cached sensors keep one identity."""
+    inline = json.loads(json.dumps(rows))
+    encoded, snapshots = [], {}
+    policy = "latest_periodic_sample; before_after_do_not_imply_two_independent_sensor_reads"
+    for row in inline:
+        if row.get("event") != "sample":
+            encoded.append(json.loads(json.dumps(row)))
+            continue
+        for key in ("environment_before", "environment_after"):
+            row["data"][key].setdefault("observation_age_ns", 0)
+            row["data"][key].setdefault("observation_policy", policy)
+        copy = json.loads(json.dumps(row))
+        for key in ("environment_before", "environment_after"):
+            value = row["data"][key]
+            snapshot = {k: v for k, v in value.items() if k not in ("observation_age_ns", "observation_policy")}
+            identity = json.dumps(snapshot, sort_keys=True)
+            if identity not in snapshots:
+                identifier = f"env-{len(snapshots) + 1}"
+                snapshots[identity] = identifier
+                encoded.append({"schema_version": 1, "event": "environment_snapshot",
+                                "monotonic_ns": row["monotonic_ns"],
+                                "data": {"id": identifier, "snapshot": snapshot}})
+            copy["data"][key] = {"snapshot_ref": snapshots[identity],
+                                 "observation_age_ns": value["observation_age_ns"],
+                                 "observation_policy": value["observation_policy"]}
+        encoded.append(copy)
+    return inline, encoded
+
+
 def observation(sequence, scope="bridge-1", polls=100, suppressed=80, exports=30, failures=2):
     return {
         "schema_version": 1, "event": "observatory_snapshot", "monotonic_ns": sequence,
@@ -83,6 +113,189 @@ def observation(sequence, scope="bridge-1", polls=100, suppressed=80, exports=30
 
 
 class ResearchReportTest(unittest.TestCase):
+    def test_reference_storage_preserves_v3_numerical_and_environment_results(self):
+        inline, encoded = reference_environment_journal(counterbalanced_journal())
+        old = analyse(inline, protocol=3)
+        new = analyse(encoded, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+        for key in ("comparisons", "observations", "self_control_diagnostics", "sample_count", "warnings", "promotion"):
+            self.assertEqual(old[key], new[key], key)
+        self.assertEqual(new["comparisons"][0]["clean_counterbalanced_units"], 5)
+        self.assertEqual(new["comparisons"][0]["decision"], "promising_candidate_repeat_on_device")
+
+    def test_references_preserve_per_use_ages_without_extra_sensor_reads(self):
+        rows = counterbalanced_journal()
+        for index, row in enumerate(rows):
+            row["monotonic_ns"] = 10 + index * 10
+            for key, age in (("environment_before", 2), ("environment_after", 4)):
+                row["data"][key].update(monotonic_ns=0, observation_age_ns=index * 10 + age)
+        inline, encoded = reference_environment_journal(rows)
+        definitions = [r for r in encoded if r["event"] == "environment_snapshot"]
+        self.assertEqual(len(definitions), 1)
+        result = analyse(encoded, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+        self.assertEqual(result["observations"]["environment_observation_count"], 1)
+        report.resolve_environment_snapshots(encoded, {"environment_encoding": report.ENVIRONMENT_ENCODING})
+        self.assertEqual([r for r in encoded if r["event"] == "sample"], inline)
+        self.assertNotIn("observation_age_ns", definitions[0]["data"]["snapshot"])
+        self.assertNotIn("observation_policy", definitions[0]["data"]["snapshot"])
+
+    def test_reference_format_requires_an_explicit_known_manifest_encoding(self):
+        _, encoded = reference_environment_journal(counterbalanced_journal())
+        for marker in (None, "future_encoding", 1):
+            with self.subTest(marker=marker), self.assertRaisesRegex(ValueError, "encoding"):
+                analyse(encoded, protocol=3, manifest_fields={"environment_encoding": marker})
+        # Removing definitions must not make an unmarked reference look inline.
+        references_only = [r for r in encoded if r["event"] != "environment_snapshot"]
+        with self.assertRaisesRegex(ValueError, "manifest encoding"):
+            analyse(references_only, protocol=3)
+
+    def test_missing_forward_and_unknown_environment_references_are_rejected(self):
+        for mutation in ("missing", "forward", "unknown"):
+            with self.subTest(mutation=mutation):
+                _, rows = reference_environment_journal(counterbalanced_journal())
+                if mutation == "missing":
+                    rows.pop(0)
+                elif mutation == "forward":
+                    rows.insert(1, rows.pop(0))
+                else:
+                    rows[1]["data"]["environment_before"]["snapshot_ref"] = "env-99999"
+                with self.assertRaisesRegex(ValueError, "Unknown or forward"):
+                    analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+
+    def test_duplicate_and_conflicting_environment_definitions_are_rejected(self):
+        for mutation in ("duplicate", "conflicting_source"):
+            with self.subTest(mutation=mutation):
+                _, rows = reference_environment_journal(counterbalanced_journal())
+                second = json.loads(json.dumps(rows[0]))
+                if mutation == "conflicting_source":
+                    second["data"]["id"] = "env-99999"
+                    second["data"]["snapshot"]["display_refresh_hz"] = 60.
+                rows.insert(1, second)
+                with self.assertRaisesRegex(ValueError, "Duplicate|Conflicting"):
+                    analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+
+    def test_malformed_environment_definition_and_reference_ids_are_rejected(self):
+        for value in (None, True, [], {}, 1, "", "env-0", "env-01", "env--1", "env-١", "env-1/extra"):
+            for location in ("definition", "reference"):
+                with self.subTest(value=value, location=location):
+                    _, rows = reference_environment_journal(counterbalanced_journal())
+                    if location == "definition":
+                        rows[0]["data"]["id"] = value
+                    else:
+                        rows[1]["data"]["environment_before"]["snapshot_ref"] = value
+                    with self.assertRaisesRegex(ValueError, "Malformed environment.*id"):
+                        analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+
+    def test_malformed_environment_snapshot_payloads_are_rejected(self):
+        for value in (None, [], "snapshot", True, {}, {"monotonic_ns": 0, "snapshot_ref": "env-1"},
+                      {"monotonic_ns": 0, "observation_age_ns": 0},
+                      {"monotonic_ns": 0, "observation_policy": "cached"}):
+            with self.subTest(value=value):
+                _, rows = reference_environment_journal(counterbalanced_journal())
+                rows[0]["data"]["snapshot"] = value
+                with self.assertRaisesRegex(ValueError, "snapshot payload|source timestamp"):
+                    analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+        for value in (None, [], {}, {"id": "env-1", "snapshot": {"monotonic_ns": 0}, "extra": True}):
+            with self.subTest(definition=value):
+                _, rows = reference_environment_journal(counterbalanced_journal())
+                rows[0]["data"] = value
+                with self.assertRaisesRegex(ValueError, "Malformed environment snapshot definition"):
+                    analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+
+    def test_mixed_inline_and_reference_sensor_fields_are_rejected(self):
+        for mutation in ("inline_sample", "sensor_override", "source_override", "missing_age", "missing_policy"):
+            with self.subTest(mutation=mutation):
+                inline, rows = reference_environment_journal(counterbalanced_journal())
+                value = rows[1]["data"]["environment_before"]
+                if mutation == "inline_sample":
+                    rows[1]["data"]["environment_before"] = inline[0]["data"]["environment_before"]
+                elif mutation == "sensor_override":
+                    value["thermal_status"] = 0
+                elif mutation == "source_override":
+                    value["monotonic_ns"] = 0
+                elif mutation == "missing_age":
+                    value.pop("observation_age_ns")
+                else:
+                    value.pop("observation_policy")
+                with self.assertRaisesRegex(ValueError, "mixed inline/reference"):
+                    analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+
+    def test_environment_source_and_age_timestamps_are_checked(self):
+        for field in ("source", "age"):
+            for value in (None, True, -1, 0.5, "0", 1):
+                # The first sample/definition envelope is zero, so one is future.
+                with self.subTest(field=field, value=value):
+                    _, rows = reference_environment_journal(counterbalanced_journal())
+                    if field == "source":
+                        rows[0]["data"]["snapshot"]["monotonic_ns"] = value
+                    else:
+                        rows[1]["data"]["environment_before"]["observation_age_ns"] = value
+                    with self.assertRaisesRegex(ValueError, "source timestamp|observation age"):
+                        analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+        _, rows = reference_environment_journal(counterbalanced_journal())
+        # The second sample is at time 1. Reuse source 0 with a later 'before'
+        # than 'after'; both separately fit the sample envelope, but not order.
+        sample = next(r for r in rows if r["event"] == "sample" and r["monotonic_ns"] == 1)
+        sample["data"]["environment_before"].update(snapshot_ref="env-1", observation_age_ns=1)
+        sample["data"]["environment_after"].update(snapshot_ref="env-1", observation_age_ns=0)
+        with self.assertRaisesRegex(ValueError, "times are reversed"):
+            analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+
+    def test_environment_reference_policy_is_preserved_and_must_be_text(self):
+        for value in (None, True, 1, "", "  "):
+            with self.subTest(value=value):
+                _, rows = reference_environment_journal(counterbalanced_journal())
+                rows[1]["data"]["environment_before"]["observation_policy"] = value
+                with self.assertRaisesRegex(ValueError, "observation policy"):
+                    analyse(rows, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+
+    def test_unreferenced_snapshot_transitions_between_complements_are_retained(self):
+        expanded = []
+        for index, row in enumerate(counterbalanced_journal()):
+            timestamp = len(expanded) * 10
+            row["monotonic_ns"] = timestamp
+            for key in ("environment_before", "environment_after"):
+                row["data"][key]["monotonic_ns"] = timestamp
+            expanded.append(row)
+            if index == 3:
+                for hz in (60., 120.):
+                    timestamp = len(expanded) * 10
+                    expanded.append({"schema_version": 1, "event": "environment", "monotonic_ns": timestamp,
+                                     "data": {"monotonic_ns": timestamp, "thermal_status": 0,
+                                              "battery_plugged": 0, "display_refresh_hz": hz}})
+        inline, encoded = reference_environment_journal(expanded)
+        # Definitions not referenced by samples must still carry environmental
+        # evidence. A crash after a definition can leave exactly this shape.
+        for index, row in enumerate(encoded):
+            if row["event"] == "environment":
+                row["event"] = "environment_snapshot"
+                row["data"] = {"id": f"env-{1000 + index}", "snapshot": row["data"]}
+        old = analyse(inline, protocol=3)
+        new = analyse(encoded, protocol=3, manifest_fields={"environment_encoding": report.ENVIRONMENT_ENCODING})
+        self.assertEqual(new["comparisons"], old["comparisons"])
+        self.assertEqual(new["observations"], old["observations"])
+        comparison = new["comparisons"][0]
+        self.assertEqual(comparison["clean_blocks"], 10)
+        self.assertEqual(comparison["clean_counterbalanced_units"], 4)
+        self.assertEqual(comparison["excluded_unit_reasons"]["display_refresh_changed"], 1)
+
+    def test_durable_definition_survives_a_torn_referencing_sample(self):
+        _, rows = reference_environment_journal(counterbalanced_journal())
+        files = {"manifest.json": json.dumps({"schema_version": 1, "protocol_version": 3,
+                 "environment_encoding": report.ENVIRONMENT_ENCODING}).encode(),
+                 "events.ndjson": (json.dumps(rows[0]) + "\n").encode() + b'{"event":"sample"'}
+        result = report.analyse(files)
+        self.assertEqual(result["sample_count"], 0)
+        self.assertEqual(result["observations"]["environment_observation_count"], 1)
+        self.assertTrue(any("partial final record" in warning for warning in result["warnings"]))
+
+    def test_journal_envelope_requires_nonnegative_integer_time(self):
+        for value in (True, -1):
+            with self.subTest(value=value):
+                row = journal(1)[0]
+                row["monotonic_ns"] = value
+                with self.assertRaisesRegex(ValueError, "journal clock"):
+                    report.read_journal((json.dumps(row) + "\n").encode())
+
     def test_cache_callbacks_are_not_added_as_independent_loads_or_saves(self):
         old = {"source": "disk-supplied", "load": "loaded", "save": "saved", "saveAttempts": 3,
                "loadedBytes": 4666, "pipelineCreateNs": 123456, "hits": "unmeasured"}

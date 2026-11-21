@@ -13,6 +13,29 @@ class BenchmarkProtocolTest {
     private fun case(id: String, status: String = "runnable", baseline: String? = null, fixtures: List<String> = listOf("sparse3")) =
         BenchmarkCase(id, id, "cpu", status, "", "cpu", baseline, fixtures)
 
+    private fun fullLedgerAtBlockCutoff(taskCount: Int, blockCutoff: Int): BenchmarkRoundLedger {
+        val plan = BenchmarkPlan.FULL
+        val keys = List(taskCount) { "pair-$it" }
+        val ledger = BenchmarkRoundLedger(keys)
+        val limit = minOf(blockCutoff, plan.maximumMeasuredBlocks)
+        for (cohort in BenchmarkProtocol.cohortIndices(plan, taskCount)) {
+            val cohortKeys = cohort.map { keys[it] }
+            var round = 0
+            while (BenchmarkProtocol.needsAnotherCohortRound(
+                plan, ledger.activeCompleteUnits(cohortKeys), ledger.hasUnmatchedActiveUnits(cohortKeys),
+            )) {
+                for (localIndex in BenchmarkProtocol.roundOrder(cohort.size, round)) {
+                    if (ledger.attemptedBlocks >= limit) return ledger
+                    val pair = keys[cohort[localIndex]]
+                    ledger.visit(pair)
+                    ledger.recordBlock(pair, round, true, 0)
+                }
+                round++
+            }
+        }
+        return ledger
+    }
+
     @Test fun calibrationUsesSlowerPilotAndHonoursBothNativeCapsWithoutOverflow() {
         assertEquals(5, BenchmarkProtocol.calibratedRepeats("cpu", 10_000, 1_000_000))
         assertEquals(5, BenchmarkProtocol.calibratedRepeats("cpu", 1_000_000, 10_000))
@@ -118,6 +141,143 @@ class BenchmarkProtocolTest {
         repeat(20) { round -> assertEquals((0..4).toSet(), BenchmarkProtocol.roundOrder(5, round).toSet()) }
         assertEquals((0..4).toSet(), BenchmarkProtocol.roundOrder(5, Int.MAX_VALUE).toSet())
         assertEquals(emptyList<Int>(), BenchmarkProtocol.roundOrder(0, 0))
+    }
+
+    @Test fun fullCohortsRetainEveryPlannedIndexOnceAndRotateWithinTheirOwnBounds() {
+        val cohorts = BenchmarkProtocol.cohortIndices(BenchmarkPlan.FULL, 4_571)
+        assertEquals(32, BenchmarkProtocol.FULL_COHORT_SIZE)
+        assertEquals(143, cohorts.size)
+        assertTrue(cohorts.dropLast(1).all { it.size == 32 })
+        assertEquals(27, cohorts.last().size)
+        assertEquals((0 until 4_571).toList(), cohorts.flatten())
+        for (cohort in listOf(cohorts.first(), cohorts[1], cohorts.last())) {
+            repeat(40) { round ->
+                val order = BenchmarkProtocol.roundOrder(cohort.size, round).map { cohort[it] }
+                assertEquals(cohort.size, order.distinct().size)
+                assertEquals(cohort.toSet(), order.toSet())
+                assertEquals(cohort[round % cohort.size], order.first())
+            }
+        }
+        assertTrue(BenchmarkProtocol.cohortIndices(BenchmarkPlan.FULL, 0).isEmpty())
+        assertTrue(BenchmarkProtocol.cohortIndices(BenchmarkPlan.FULL, -1).isEmpty())
+    }
+
+    @Test fun quickAndSustainedKeepOneWholeCatalogueCohortAndTheirDurationGate() {
+        for (plan in listOf(BenchmarkPlan.QUICK, BenchmarkPlan.SUSTAINED)) {
+            assertEquals(listOf((0 until 4_571).toList()), BenchmarkProtocol.cohortIndices(plan, 4_571))
+            assertTrue(BenchmarkProtocol.cohortIndices(plan, 0).isEmpty())
+            assertTrue(BenchmarkProtocol.needsAnotherRound(plan, 0, listOf(5)))
+            assertFalse(BenchmarkProtocol.needsAnotherRound(plan, plan.minimumObservationSeconds * 1_000_000_000L, listOf(5)))
+        }
+    }
+
+    @Test fun cohortClosureRequiresFiveWholeUnitsButDoesNotConsumeTheGlobalMinimumDuration() {
+        val plan = BenchmarkPlan.FULL
+        assertTrue(BenchmarkProtocol.needsAnotherCohortRound(plan, listOf(5, 4)))
+        assertTrue(BenchmarkProtocol.needsAnotherCohortRound(plan, listOf(5, 5), hasUnmatchedUnits = true))
+        assertFalse(BenchmarkProtocol.needsAnotherCohortRound(plan, listOf(5, 5)))
+        assertFalse(BenchmarkProtocol.needsAnotherCohortRound(plan, emptyList()))
+        assertFalse(BenchmarkProtocol.needsAnotherCohortRound(plan, emptyList(), hasUnmatchedUnits = true))
+        assertFalse(BenchmarkProtocol.completionTargetsMet(plan, 0, listOf(5, 5), false))
+        assertTrue(BenchmarkProtocol.completionTargetsMet(plan, 120_000_000_000L, listOf(5, 5), false))
+    }
+
+    @Test fun fullBlockBudgetYieldsQualifiedSubsetsWithoutClaimingUnvisitedComparisonsComplete() {
+        val ledger = fullLedgerAtBlockCutoff(4_571, BenchmarkPlan.FULL.maximumMeasuredBlocks)
+        val units = ledger.completedUnitsSnapshot()
+        assertEquals(3, BenchmarkProtocol.VERSION)
+        assertEquals(8_192, ledger.attemptedBlocks)
+        assertEquals(832, ledger.visitedPairs)
+        assertEquals(4_571, units.size)
+        assertEquals(800, units.values.count { it == 5 })
+        assertEquals(32, units.values.count { it == 3 })
+        assertEquals(3_739, units.values.count { it == 0 })
+        assertTrue(ledger.unmatchedUnitsSnapshot().isEmpty())
+        assertFalse(BenchmarkProtocol.completionTargetsMet(
+            BenchmarkPlan.FULL, 600_000_000_000L, ledger.activeCompleteUnits(), ledger.hasUnmatchedActiveUnits(),
+        ))
+    }
+
+    @Test fun observedFullQuotaCutoffRetainsUsefulUnitsAndReportsTheInterruptedCohort() {
+        // The physical Full export stopped after 3,437 completed four-sample
+        // blocks. At that same cutoff, bounded cohorts already close 320 pairs.
+        val ledger = fullLedgerAtBlockCutoff(4_571, 3_437)
+        val units = ledger.completedUnitsSnapshot()
+        assertEquals(3_437, ledger.attemptedBlocks)
+        assertEquals(352, ledger.visitedPairs)
+        assertEquals(4_571, units.size)
+        assertEquals(320, units.values.count { it == 5 })
+        assertEquals(13, units.values.count { it == 4 })
+        assertEquals(19, units.values.count { it == 3 })
+        assertEquals(4_219, units.values.count { it == 0 })
+        assertEquals(19, ledger.unmatchedUnitsSnapshot().size)
+        assertTrue(ledger.unmatchedUnitsSnapshot().values.all { it == 3 })
+        assertTrue(ledger.hasUnmatchedActiveUnits())
+        assertFalse(BenchmarkProtocol.completionTargetsMet(
+            BenchmarkPlan.FULL, 228_000_000_000L, ledger.activeCompleteUnits(), ledger.hasUnmatchedActiveUnits(),
+        ))
+    }
+
+    @Test fun cohortQueriesKeepOtherCohortsAndAnInFlightBlockSeparate() {
+        val ledger = BenchmarkRoundLedger(listOf("qualified", "other-open", "unvisited"))
+        repeat(10) { round -> ledger.recordBlock("qualified", round, true, 0) }
+        ledger.recordBlock("other-open", 0, true, 0)
+        val cohort = listOf("qualified")
+        assertEquals(listOf(5), ledger.activeCompleteUnits(cohort))
+        assertFalse(ledger.hasUnmatchedActiveUnits(cohort))
+        assertTrue(ledger.hasUnmatchedActiveUnits())
+        assertFalse(BenchmarkProtocol.needsAnotherCohortRound(
+            BenchmarkPlan.FULL, ledger.activeCompleteUnits(cohort), ledger.hasUnmatchedActiveUnits(cohort),
+        ))
+        ledger.beginBlock("qualified", 10)
+        assertEquals(listOf(5), ledger.activeCompleteUnits(cohort))
+        assertTrue(ledger.hasUnmatchedActiveUnits(cohort))
+        assertTrue(BenchmarkProtocol.needsAnotherCohortRound(
+            BenchmarkPlan.FULL, ledger.activeCompleteUnits(cohort), ledger.hasUnmatchedActiveUnits(cohort),
+        ))
+        ledger.recordBlock("qualified", 10, true, 0)
+        assertTrue(ledger.hasUnmatchedActiveUnits(cohort))
+        ledger.recordBlock("qualified", 11, true, 0)
+        assertFalse(ledger.hasUnmatchedActiveUnits(cohort))
+        assertEquals(listOf(6), ledger.activeCompleteUnits(listOf("qualified", "qualified")))
+        assertEquals(mapOf("qualified" to 6, "other-open" to 0, "unvisited" to 0), ledger.completedUnitsSnapshot())
+        assertEquals(mapOf("other-open" to 0), ledger.unmatchedUnitsSnapshot())
+        assertTrue(ledger.activeCompleteUnits(emptyList()).isEmpty())
+        assertFalse(ledger.hasUnmatchedActiveUnits(emptyList()))
+    }
+
+    @Test fun retiredCohortsMayAdvanceWithoutErasingTheirUnmatchedDiagnostics() {
+        val ledger = BenchmarkRoundLedger(listOf("retired", "active", "unvisited"))
+        ledger.visit("retired")
+        ledger.recordBlock("retired", 0, true, 0)
+        ledger.retire("retired", "measurement_failed")
+        val retiredCohort = listOf("retired")
+        assertTrue(ledger.activeCompleteUnits(retiredCohort).isEmpty())
+        assertFalse(ledger.hasUnmatchedActiveUnits(retiredCohort))
+        assertFalse(BenchmarkProtocol.needsAnotherCohortRound(
+            BenchmarkPlan.FULL, ledger.activeCompleteUnits(retiredCohort), ledger.hasUnmatchedActiveUnits(retiredCohort),
+        ))
+        repeat(10) { round -> ledger.recordBlock("active", round, true, 0) }
+        assertEquals(listOf(5), ledger.activeCompleteUnits(listOf("retired", "active")))
+        assertEquals(listOf(5, 0), ledger.activeCompleteUnits())
+        assertFalse(ledger.hasUnmatchedActiveUnits())
+        assertEquals(mapOf("retired" to 0), ledger.unmatchedUnitsSnapshot())
+        assertEquals(mapOf("retired" to "measurement_failed"), ledger.retiredSnapshot())
+        assertEquals(3, ledger.completedUnitsSnapshot().size)
+        assertEquals(2, ledger.activePairCount)
+        assertFalse(BenchmarkProtocol.completionTargetsMet(
+            BenchmarkPlan.FULL, 120_000_000_000L, ledger.activeCompleteUnits(), ledger.hasUnmatchedActiveUnits(),
+        ))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun unknownCohortCannotMasqueradeAsAnEmptyCompletedPopulation() {
+        BenchmarkRoundLedger(listOf("known")).activeCompleteUnits(listOf("missing"))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun unmatchedQueryRejectsUnknownCohortKeys() {
+        BenchmarkRoundLedger(listOf("known")).hasUnmatchedActiveUnits(listOf("missing"))
     }
 
     @Test fun complementaryRoundsKeepRolesStableAndBalanceEveryChronologicalPosition() {
@@ -237,9 +397,40 @@ class BenchmarkProtocolTest {
         val schedule = BenchmarkSchedule.pairs(cases, BenchmarkPlan.FULL)
         assertFalse(schedule.any { it.candidate.id in setOf("unsupported", "proposal") })
         val selected = schedule.filter { it.candidate.id == "candidate" }
-        assertEquals(BenchmarkSchedule.fullSteps, selected.map { it.steps })
+        assertEquals(BenchmarkSchedule.fullPrioritySteps, selected.map { it.steps })
         assertTrue(selected.all { it.fixture == "kepler" && it.baseline.id == "reference" })
         assertEquals(listOf("A1", "B1", "B2", "A2"), BenchmarkSchedule.abba)
+    }
+
+    @Test fun fullPriorityReachesDense64StepPairsEarlyWithoutDroppingCasesFixturesOrSteps() {
+        val fixtures = listOf("sparse3", "dense192", "dense256") + (1..10).map { "fixture-$it" }
+        val cpuReference = case("reference", fixtures = fixtures)
+        val cpu = listOf(cpuReference) + (1..49).map { case("candidate-$it", baseline = "reference", fixtures = fixtures) }
+        val hardwareReference = case("reference", fixtures = listOf("native-fixed")).copy(backend = "hardware")
+        val hardware = listOf(hardwareReference) + (1..20).map {
+            case("hardware-$it", baseline = "reference", fixtures = listOf("native-fixed")).copy(backend = "hardware")
+        }
+        val cases = cpu + hardware
+        val schedule = BenchmarkSchedule.pairs(cases, BenchmarkPlan.FULL)
+        val expectedKeys = cpu.flatMap { candidate ->
+            fixtures.flatMap { fixture -> BenchmarkSchedule.fullSteps.map { "${candidate.key}/$fixture/$it" } }
+        } + hardware.map { "${it.key}/native-fixed/1" }
+        assertEquals(listOf(1, 2, 4, 8, 16, 32, 64), BenchmarkSchedule.fullSteps)
+        assertEquals(listOf(64, 1, 8, 2, 4, 16, 32), BenchmarkSchedule.fullPrioritySteps)
+        assertEquals(4_571, schedule.size)
+        assertEquals(expectedKeys.toSet(), schedule.map { it.key }.toSet())
+        assertEquals(schedule.size, schedule.map { it.key }.distinct().size)
+        assertTrue(schedule.all { it.baseline == if (it.candidate.backend == "cpu") cpuReference else hardwareReference })
+        assertEquals(cases.map { it.key }.toSet(), schedule.take(cases.size).map { it.candidate.key }.toSet())
+        assertEquals(hardware.map { it.key }.toSet(), schedule.take(cases.size)
+            .filter { it.candidate.backend == "hardware" }.map { it.candidate.key }.toSet())
+        val earlyPairs = schedule.take(800)
+        for (fixture in listOf("dense192", "dense256")) {
+            assertEquals(cpu.map { it.key }.toSet(), earlyPairs.filter { it.fixture == fixture && it.steps == 64 }
+                .map { it.candidate.key }.toSet())
+        }
+        assertEquals(fixtures, schedule.filter { it.candidate == cpu.last() }.take(fixtures.size).map { it.fixture })
+        assertTrue(schedule.filter { it.candidate == cpu.last() }.take(fixtures.size).all { it.steps == 64 })
     }
 
     @Test fun missingReferenceIsLabelledSelfComparisonNotAnInventedBaseline() {
@@ -265,7 +456,7 @@ class BenchmarkProtocolTest {
         val all = listOf(cpuReference, cpuCandidate, hardwareCandidate, hardwareReference)
         val cpu = BenchmarkSchedule.pairs(all, BenchmarkPlan.FULL, "cpu:candidate")
         assertTrue(cpu.all { it.candidate == cpuCandidate && it.baseline == cpuReference && it.fixture == "kepler" })
-        assertEquals(BenchmarkSchedule.fullSteps, cpu.map { it.steps })
+        assertEquals(BenchmarkSchedule.fullPrioritySteps, cpu.map { it.steps })
         val hardware = BenchmarkSchedule.pairs(all, BenchmarkPlan.FULL, "hardware:candidate")
         assertEquals(1, hardware.size)
         assertEquals(hardwareReference, hardware.single().baseline)
